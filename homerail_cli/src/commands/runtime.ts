@@ -620,6 +620,7 @@ function startService(name: RuntimeServiceName, relativeScript: string, env: Rec
     },
     detached: true,
     stdio: ["ignore", out, err],
+    windowsHide: true,
   });
   child.unref();
   if (!child.pid) throw new Error(`failed to start ${name}`);
@@ -762,6 +763,7 @@ function startUiProcess(opts: StartUiProcessOpts): number {
       },
       detached: true,
       stdio: ["ignore", out, err],
+      windowsHide: true,
     });
   } else {
     child = spawn(npmExecutable(), [
@@ -794,6 +796,7 @@ function startUiProcess(opts: StartUiProcessOpts): number {
       },
       detached: true,
       stdio: ["ignore", out, err],
+      windowsHide: true,
     });
   }
   child.unref();
@@ -961,6 +964,7 @@ function killProcessTree(pid: number, signal: NodeJS.Signals): boolean {
   if (process.platform === "win32") {
     const result = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
       stdio: "ignore",
+      windowsHide: true,
     });
     return result.status === 0;
   }
@@ -1012,6 +1016,7 @@ function ensureUiCertificate(host: string): UiCertificate {
   ], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
   if (result.error && (result.error as NodeJS.ErrnoException).code === "ENOENT") {
     throw new Error("openssl is required to generate the local Agent UI HTTPS certificate");
@@ -1245,6 +1250,7 @@ function ensureWorkerImage(forceRebuild = false): void {
   });
   const dockerVersion = spawnSync(dockerBin, ["--version"], {
     encoding: "utf-8",
+    windowsHide: true,
   });
   if (dockerVersion.error && (dockerVersion.error as NodeJS.ErrnoException).code === "ENOENT") {
     throw new Error(dockerMissingMessage(dockerBin));
@@ -1263,6 +1269,7 @@ function ensureWorkerImage(forceRebuild = false): void {
     WORKER_IMAGE_TAG,
   ], {
     encoding: "utf-8",
+    windowsHide: true,
   });
   const reason = workerImageBuildReason(inspect.status === 0, inspect.stdout, sourceFingerprint, forceRebuild);
   if (!reason) {
@@ -1290,6 +1297,7 @@ function ensureWorkerImage(forceRebuild = false): void {
     cwd: resolveRepoRoot(),
     stdio: "inherit",
     env: { ...process.env, ...loadLocalSecrets(), HOMERAIL_HOME: getHomerailHome() },
+    windowsHide: true,
   });
   if (build.status !== 0) {
     throw new Error(`failed to build ${WORKER_IMAGE_TAG}`);

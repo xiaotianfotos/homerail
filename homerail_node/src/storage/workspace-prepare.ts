@@ -75,6 +75,7 @@ async function defaultRunCommand(
     cwd: options.cwd,
     timeout: 120_000,
     maxBuffer: 1024 * 1024,
+    windowsHide: true,
   });
 }
 
