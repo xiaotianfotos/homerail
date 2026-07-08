@@ -212,7 +212,7 @@ export async function deprovisionWorkerContainer(
       const { spawnSync } = await import("node:child_process");
       const result = spawnSync("docker", [
         "ps", "-a", "--filter", `label=${options.labelKey}=${options.labelValue}`, "-q",
-      ], { encoding: "utf-8", timeout: 10_000 });
+      ], { encoding: "utf-8", timeout: 10_000, windowsHide: true });
       dockerCleanupVerified = (result.stdout ?? "").trim() === "";
     } catch {
       dockerCleanupVerified = false;

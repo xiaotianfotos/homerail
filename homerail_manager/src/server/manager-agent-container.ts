@@ -175,6 +175,7 @@ async function ensureLocalDockerNode(options: ManagerAgentContainerOptions, proj
       cwd: runtimeRoot(),
       detached: true,
       stdio: ["ignore", out, err],
+      windowsHide: true,
       env: {
         ...process.env,
         HOMERAIL_HOME: getHomerailHome(),
