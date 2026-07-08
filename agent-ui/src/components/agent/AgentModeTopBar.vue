@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Eye, EyeOff, Loader2, Network, Settings } from 'lucide-vue-next'
+import { Eye, EyeOff, Loader2, Network, RotateCcw, Settings } from 'lucide-vue-next'
 import { http } from '@/api/clients/http-client'
 
 const props = defineProps<{
@@ -35,11 +35,22 @@ const activeRunCount = ref(0)
 let activeRunTimer: ReturnType<typeof setInterval> | null = null
 
 const hasActiveRuns = computed(() => activeRunCount.value > 0)
+const desktopUpdateStatus = ref<DesktopUpdateStatus | null>(null)
+const updateInstalling = ref(false)
+let removeUpdateListener: (() => void) | null = null
+
 const runtimeTitle = computed(() =>
   hasActiveRuns.value
     ? `DAG dashboard: ${activeRunCount.value} run${activeRunCount.value === 1 ? '' : 's'} running`
     : 'DAG dashboard',
 )
+const downloadedUpdate = computed(() =>
+  Boolean(desktopUpdateStatus.value?.supported && desktopUpdateStatus.value.state === 'downloaded'),
+)
+const updateButtonTitle = computed(() => {
+  const version = desktopUpdateStatus.value?.update?.version
+  return version ? `HomeRail ${version} 已下载，重启后安装` : '新版本已下载，重启后安装'
+})
 
 async function refreshActiveRuns(): Promise<void> {
   if (!props.showRuntime) {
@@ -69,8 +80,51 @@ function stopActiveRunPolling(): void {
   activeRunTimer = null
 }
 
+function desktopBridge(): HomeRailDesktopBridge | null {
+  return typeof window === 'undefined' ? null : window.homerailDesktop ?? null
+}
+
+function startDesktopUpdateWatcher(): void {
+  const bridge = desktopBridge()
+  if (!bridge?.updateStatus) return
+
+  void bridge.updateStatus()
+    .then((status) => {
+      desktopUpdateStatus.value = status
+    })
+    .catch(() => {
+      desktopUpdateStatus.value = null
+    })
+
+  removeUpdateListener = bridge.onUpdateStatus?.((status) => {
+    desktopUpdateStatus.value = status
+  }) ?? null
+
+  void bridge.checkForUpdates?.().catch(() => undefined)
+}
+
+function stopDesktopUpdateWatcher(): void {
+  removeUpdateListener?.()
+  removeUpdateListener = null
+}
+
+async function installDesktopUpdate(): Promise<void> {
+  const bridge = desktopBridge()
+  if (!bridge?.installUpdate || updateInstalling.value) return
+  updateInstalling.value = true
+  try {
+    const status = await bridge.installUpdate()
+    if (status.state !== 'downloaded') {
+      updateInstalling.value = false
+    }
+  } catch {
+    updateInstalling.value = false
+  }
+}
+
 onMounted(() => {
   if (props.showRuntime) startActiveRunPolling()
+  startDesktopUpdateWatcher()
 })
 
 watch(() => props.showRuntime, (showRuntime) => {
@@ -82,7 +136,10 @@ watch(() => props.showRuntime, (showRuntime) => {
   }
 })
 
-onBeforeUnmount(stopActiveRunPolling)
+onBeforeUnmount(() => {
+  stopActiveRunPolling()
+  stopDesktopUpdateWatcher()
+})
 </script>
 
 <template>
@@ -114,6 +171,16 @@ onBeforeUnmount(stopActiveRunPolling)
 
     <div class="agent-mode-topbar__right flex flex-shrink-0 items-center gap-2">
       <slot name="right" />
+      <button
+        v-if="downloadedUpdate"
+        class="flex h-9 items-center gap-2 rounded-full border border-cyan-200/35 bg-cyan-300/14 px-3 text-sm font-medium text-cyan-50 shadow-[0_0_18px_rgba(103,232,249,0.18)] transition-colors hover:bg-cyan-300/20"
+        :title="updateButtonTitle"
+        type="button"
+        @click="installDesktopUpdate"
+      >
+        <RotateCcw class="h-4 w-4" :class="updateInstalling ? 'animate-spin' : ''" />
+        重启更新
+      </button>
       <button
         v-if="showRuntime"
         class="flex h-9 items-center gap-2 rounded-full border px-3 text-sm transition-colors hover:bg-cyan-200/10 hover:text-white"
