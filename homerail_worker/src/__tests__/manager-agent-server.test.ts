@@ -163,6 +163,21 @@ class AbortAwareHangingAgent implements AgentClient {
   }
 }
 
+class SlowCompletingAgent implements AgentClient {
+  observedAbort = false;
+
+  async *run(
+    _prompt: string,
+    _tools: DagToolDefinition[],
+    context: AgentRunContext,
+  ): AsyncIterable<AgentEvent> {
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    this.observedAbort = context.abortSignal?.aborted === true;
+    yield { type: "text", text: "slow turn completed" };
+    yield { type: "done" };
+  }
+}
+
 describe("manager-agent server", () => {
   const tmpDirs: string[] = [];
 
@@ -553,6 +568,42 @@ describe("manager-agent server", () => {
       expect(body.error).toContain("timed out");
       expect(body.data?.objective_tool_calls).toEqual([]);
       expect(agent.observedAbort).toBe(true);
+    } finally {
+      await close(server);
+      await close(managerApi);
+    }
+  });
+
+  it("does not apply an absolute Manager Agent turn timeout by default", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    const agent = new SlowCompletingAgent();
+    registerAgentBackend("manager-agent-slow-completing-test", () => agent);
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const managerApi = makeManagerApiServer();
+    const managerPort = await listen(managerApi);
+    vi.stubEnv("MANAGER_REST_URL", `http://127.0.0.1:${managerPort}/api`);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "慢一点完成",
+          agent_config: { agent_type: "manager-agent-slow-completing-test", model: "test-model" },
+        }),
+      });
+      const body = await response.json() as { text?: string; error?: string };
+      expect(response.status).toBe(200);
+      expect(body.error).toBeUndefined();
+      expect(body.text).toBe("slow turn completed");
+      expect(agent.observedAbort).toBe(false);
     } finally {
       await close(server);
       await close(managerApi);

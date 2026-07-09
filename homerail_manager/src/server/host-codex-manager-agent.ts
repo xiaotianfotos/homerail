@@ -148,7 +148,11 @@ const CLIENT_NAME = "homerail_host_codex_manager_agent";
 const CLIENT_TITLE = "HomeRail Host Codex Manager Agent";
 const DEFAULT_CODEX_BIN = "codex";
 const RESPONSE_TIMEOUT_MS = 60_000;
-const TURN_TIMEOUT_MS = 240_000;
+
+function managerAgentTurnTimeoutMs(): number {
+  const raw = Number(process.env.MANAGER_AGENT_TURN_TIMEOUT_MS ?? "0");
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+}
 
 const SECRET_KEYS = [
   "apiKey",
@@ -1094,8 +1098,9 @@ async function* runHostCodexManagerAgentTurnEvents(
   const toolCommentaryTexts: string[] = [];
   let emittedVoiceSurfaceCommentaryCount = 0;
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), TURN_TIMEOUT_MS);
-  timeout.unref?.();
+  const turnTimeoutMs = managerAgentTurnTimeoutMs();
+  const timeout = turnTimeoutMs > 0 ? setTimeout(() => abortController.abort(), turnTimeoutMs) : undefined;
+  timeout?.unref?.();
   const adapter = new HostCodexAppServerAdapter();
   try {
     for await (const event of adapter.run(
@@ -1135,7 +1140,7 @@ async function* runHostCodexManagerAgentTurnEvents(
       }
     }
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
   }
   const remainingSurfaceCommentary = state.voiceSurface.commentaryTexts.slice(emittedVoiceSurfaceCommentaryCount);
   for (const text of remainingSurfaceCommentary) {

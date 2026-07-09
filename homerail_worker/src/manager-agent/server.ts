@@ -135,7 +135,7 @@ function managerRestUrl(): string {
 }
 
 function managerAgentTurnTimeoutMs(): number {
-  const raw = Number(process.env.MANAGER_AGENT_TURN_TIMEOUT_MS ?? "240000");
+  const raw = Number(process.env.MANAGER_AGENT_TURN_TIMEOUT_MS ?? "0");
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
 }
 
