@@ -40,6 +40,7 @@ const existingSettings = ref<LLMSetting[]>([])
 const providersLoading = ref(true)
 const dockerProbeRunning = ref(false)
 const dockerProbeResult = ref<DockerWorkspaceProbeResult | null>(null)
+const applyingExistingAgentId = ref<string | null>(null)
 
 onMounted(async () => {
   await Promise.all([
@@ -204,15 +205,36 @@ function isDedicatedManagerAgentSetting(setting: LLMSetting | undefined): settin
   return Boolean(setting?.id && setting.supports_llm && !setting.supports_asr && !setting.supports_tts)
 }
 
+const existingManagerAgentSettings = computed(() => existingSettings.value.filter(isDedicatedManagerAgentSetting))
+
+function harnessForManagerAgentSetting(setting: LLMSetting): 'kimi_code' | 'claude_agent_sdk' {
+  return setting.provider_id === 'kimi' ? 'kimi_code' : 'claude_agent_sdk'
+}
+
 async function applyCreatedManagerAgentSetting(setting: LLMSetting | undefined): Promise<void> {
   if (currentStep.value.id !== 'agent' || !isDedicatedManagerAgentSetting(setting)) return
-  const harness = setting.provider_id === 'kimi' ? 'kimi_code' : 'claude_agent_sdk'
-  await agentSettingsApi.updateVoiceAgentConfig({
-    harness,
-    llm_setting_id: setting.id,
-    provider_name: setting.provider_id,
-    model_name: setting.model_name,
-  })
+  await applyExistingManagerAgentSetting(setting)
+}
+
+async function applyExistingManagerAgentSetting(setting: LLMSetting): Promise<void> {
+  applyingExistingAgentId.value = setting.id
+  try {
+    const harness = harnessForManagerAgentSetting(setting)
+    await agentSettingsApi.updateVoiceAgentConfig({
+      harness,
+      llm_setting_id: setting.id,
+      provider_name: setting.provider_id,
+      model_name: setting.model_name,
+    })
+    await Promise.all([
+      refresh(),
+      loadExistingSettings(),
+    ])
+    await store.loadManagerRuntimeOptions()
+    advanceIfDone()
+  } finally {
+    applyingExistingAgentId.value = null
+  }
 }
 
 async function checkDockerWorkspace(): Promise<void> {
@@ -323,6 +345,25 @@ async function checkDockerWorkspace(): Promise<void> {
           <template v-else-if="currentStep.id === 'agent' && !agentRuntimeReady">
             <div class="onboarding-wizard__codex-hint">
               主 Agent 运行时未就绪。模型凭证在这里配置，本机依赖和 Docker 授权请到环境检查页处理。
+            </div>
+            <div v-if="existingManagerAgentSettings.length" class="onboarding-wizard__existing-agents">
+              <div class="onboarding-wizard__existing-title">已有主 Agent 配置</div>
+              <button
+                v-for="setting in existingManagerAgentSettings"
+                :key="setting.id"
+                type="button"
+                class="onboarding-wizard__existing-agent"
+                :disabled="applyingExistingAgentId !== null"
+                @click="applyExistingManagerAgentSetting(setting)"
+              >
+                <span>
+                  <strong>{{ setting.display_name || setting.model_name }}</strong>
+                  <em>{{ harnessForManagerAgentSetting(setting) === 'kimi_code' ? 'Kimi Code' : 'Claude Code' }} · {{ setting.model_name }}</em>
+                </span>
+                <span class="onboarding-wizard__existing-action">
+                  {{ applyingExistingAgentId === setting.id ? '切换中...' : '使用' }}
+                </span>
+              </button>
             </div>
             <OnboardingStepForm
               :capability="currentStep.capability"
@@ -679,6 +720,71 @@ async function checkDockerWorkspace(): Promise<void> {
   color: rgba(254, 243, 199, 0.8);
   font-size: 0.75rem;
   line-height: 1.5;
+}
+
+.onboarding-wizard__existing-agents {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.onboarding-wizard__existing-title {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.onboarding-wizard__existing-agent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  width: 100%;
+  padding: 0.65rem 0.72rem;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(103, 232, 249, 0.18);
+  background: rgba(34, 211, 238, 0.06);
+  color: rgba(255, 255, 255, 0.9);
+  text-align: left;
+}
+
+.onboarding-wizard__existing-agent:not(:disabled):hover {
+  border-color: rgba(103, 232, 249, 0.36);
+  background: rgba(34, 211, 238, 0.1);
+}
+
+.onboarding-wizard__existing-agent:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.onboarding-wizard__existing-agent span:first-child {
+  display: grid;
+  gap: 0.16rem;
+  min-width: 0;
+}
+
+.onboarding-wizard__existing-agent strong,
+.onboarding-wizard__existing-agent em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onboarding-wizard__existing-agent strong {
+  font-size: 0.82rem;
+}
+
+.onboarding-wizard__existing-agent em {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 0.68rem;
+  font-style: normal;
+}
+
+.onboarding-wizard__existing-action {
+  flex: 0 0 auto;
+  color: #67e8f9;
+  font-size: 0.72rem;
+  font-weight: 800;
 }
 
 .onboarding-wizard__blockers {
