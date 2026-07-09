@@ -18,6 +18,13 @@ export interface CodexBinaryResolveOptions {
   fileExists?: (filePath: string) => boolean;
 }
 
+export interface CodexCommandRunOptions {
+  timeoutMs?: number;
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  spawnSyncImpl?: typeof spawnSync;
+}
+
 function isWindows(platform: NodeJS.Platform): boolean {
   return platform === "win32";
 }
@@ -136,11 +143,48 @@ export function resolveCodexBinary(
   return null;
 }
 
-export function runCodexCommandSync(command: string, args: string[], timeoutMs = 5_000): SpawnSyncReturns<string> {
-  return spawnSync(command, args, {
-    timeout: timeoutMs,
-    encoding: "utf-8",
-    env: process.env,
-    shell: windowsCommandNeedsShell(command),
-  });
+export function codexBinaryNotFoundMessage(
+  requested?: string,
+  resolveOptionsInput: CodexBinaryResolveOptions = {},
+): string {
+  const options = resolveOptions(resolveOptionsInput);
+  const effectiveRequested = requested ?? options.env.HOMERAIL_CODEX_BIN ?? options.env.CODEX_BIN_PATH ?? DEFAULT_CODEX_BIN;
+  const trimmed = effectiveRequested.trim() || DEFAULT_CODEX_BIN;
+  if (isPathLike(trimmed, options.platform)) {
+    return `Codex binary not found at: ${trimmed}. Install codex or set HOMERAIL_CODEX_BIN.`;
+  }
+  return "Codex binary not found. Install codex or set HOMERAIL_CODEX_BIN.";
+}
+
+function failedSpawnResult(error: unknown): SpawnSyncReturns<string> {
+  const message = error instanceof Error ? error.message : String(error);
+  const result: SpawnSyncReturns<string> = {
+    pid: 0,
+    output: [null, "", message],
+    stdout: "",
+    stderr: message,
+    status: null,
+    signal: null,
+  };
+  if (error instanceof Error) result.error = error;
+  return result;
+}
+
+export function runCodexCommandSync(
+  command: string,
+  args: string[],
+  optionsOrTimeout: number | CodexCommandRunOptions = 5_000,
+): SpawnSyncReturns<string> {
+  const options: CodexCommandRunOptions =
+    typeof optionsOrTimeout === "number" ? { timeoutMs: optionsOrTimeout } : optionsOrTimeout;
+  try {
+    return (options.spawnSyncImpl ?? spawnSync)(command, args, {
+      timeout: options.timeoutMs ?? 5_000,
+      encoding: "utf-8",
+      env: options.env ?? process.env,
+      shell: windowsCommandNeedsShell(command, options.platform ?? process.platform),
+    });
+  } catch (error) {
+    return failedSpawnResult(error);
+  }
 }

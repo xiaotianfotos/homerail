@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { ensureDefaultWorkspacePath, getHomerailHome } from "../config/env.js";
-import { resolveCodexBinary } from "./codex-binary.js";
+import { codexBinaryNotFoundMessage, resolveCodexBinary } from "./codex-binary.js";
 import {
   readWidgetFile,
   removeWidgetFile,
@@ -1608,7 +1608,7 @@ class HostCodexAppServerAdapter {
       this.codexNeedsShell = resolved.needsShell;
       return;
     }
-    throw new Error("Codex binary not found. Install codex or set HOMERAIL_CODEX_BIN.");
+    throw new Error(codexBinaryNotFoundMessage(this.codexBin));
   }
 
   private buildDynamicToolSpecs(tools: ToolDefinition[]): Array<Record<string, unknown>> {
