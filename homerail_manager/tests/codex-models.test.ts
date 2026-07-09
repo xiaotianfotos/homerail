@@ -55,8 +55,27 @@ describe("Codex model catalog", () => {
                 supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }],
                 serviceTiers: [{ id: "priority", name: "Fast", description: "Faster responses" }],
               },
+              {
+                id: "gpt-5.6-sol-duplicate",
+                model: "gpt-5.6-sol",
+                displayName: "Duplicate Sol",
+              },
               { id: "hidden-model", model: "hidden-model", hidden: true },
             ],
+            nextCursor: "page-2",
+          },
+        })}\n`);
+      } else if (request.id === 3) {
+        child.stdout.write(`${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3,
+          result: {
+            data: [{
+              id: "gpt-5.5",
+              model: "gpt-5.5",
+              displayName: "GPT-5.5",
+              hidden: false,
+            }],
           },
         })}\n`);
       }
@@ -75,9 +94,12 @@ describe("Codex model catalog", () => {
       timeoutMs: 1_000,
     });
 
-    expect(requests.map((request) => request.method)).toEqual(["initialize", "model/list"]);
+    expect(requests.map((request) => request.method)).toEqual(["initialize", "model/list", "model/list"]);
     expect(requests[1]).toMatchObject({
       params: { limit: 100, includeHidden: false },
+    });
+    expect(requests[2]).toMatchObject({
+      params: { limit: 100, includeHidden: false, cursor: "page-2" },
     });
     expect(spawnOptions).toMatchObject({
       shell: false,
@@ -86,17 +108,44 @@ describe("Codex model catalog", () => {
     });
     expect(catalog).toEqual({
       binary: "C:\\Program Files\\OpenAI\\Codex\\codex.exe",
-      models: [{
-        id: "gpt-5.6-sol",
-        model: "gpt-5.6-sol",
-        display_name: "GPT-5.6 Sol",
-        description: "Latest Codex model",
-        is_default: true,
-        default_reasoning_effort: "medium",
-        supported_reasoning_efforts: ["medium", "high"],
-        service_tiers: [{ id: "priority", name: "Fast", description: "Faster responses" }],
-      }],
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          model: "gpt-5.6-sol",
+          display_name: "GPT-5.6 Sol",
+          description: "Latest Codex model",
+          is_default: true,
+          default_reasoning_effort: "medium",
+          supported_reasoning_efforts: ["medium", "high"],
+          service_tiers: [{ id: "priority", name: "Fast", description: "Faster responses" }],
+        },
+        {
+          id: "gpt-5.5",
+          model: "gpt-5.5",
+          display_name: "GPT-5.5",
+          description: "",
+          is_default: false,
+          default_reasoning_effort: "",
+          supported_reasoning_efforts: [],
+          service_tiers: [],
+        },
+      ],
     });
+  });
+
+  it("reports a successful app-server exit without a model catalog clearly", async () => {
+    const child = new FakeChildProcess();
+    child.stdin.on("data", () => child.emit("exit", 0, null));
+
+    await expect(listCodexModels({
+      resolution: {
+        command: "C:\\Program Files\\OpenAI\\Codex\\codex.exe",
+        requested: "codex",
+        needsShell: false,
+      },
+      spawnImpl: (() => child as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+      timeoutMs: 1_000,
+    })).rejects.toThrow("Codex app-server exited without returning a model catalog");
   });
 
   it("serves the model catalog from the Manager Agent API", async () => {

@@ -30,6 +30,7 @@ import AgentModeTopBar from '@/components/agent/AgentModeTopBar.vue'
 import DagResourceStatusPill from '@/components/agent/DagResourceStatusPill.vue'
 import VoiceDynamicWidget from '@/components/agent/VoiceDynamicWidget.vue'
 import {
+  isCodexModelUnavailable,
   resolveCodexModelOptions,
   resolveSelectedCodexModel
 } from '@/components/agent/codex-model-selection'
@@ -345,14 +346,22 @@ const voiceAgentHarness = computed<VoiceAgentConfig['harness']>(
 )
 const codexHarnessActive = computed(() => voiceAgentHarness.value === 'codex_appserver')
 const kimiHarnessActive = computed(() => voiceAgentHarness.value === 'kimi_code')
+const configuredCodexModel = computed(() =>
+  codexHarnessActive.value ? voiceAgentConfig.value?.model_name : null
+)
 const codexModelOptions = computed<CodexModel[]>(() => resolveCodexModelOptions(
   codexModels.value,
-  voiceAgentConfig.value?.model_name,
+  configuredCodexModel.value,
   codexModelsLoaded.value
 ))
 const selectedCodexModel = computed(() => resolveSelectedCodexModel(
   codexModelOptions.value,
-  voiceAgentConfig.value?.model_name
+  configuredCodexModel.value
+))
+const configuredCodexModelUnavailable = computed(() => isCodexModelUnavailable(
+  codexModels.value,
+  configuredCodexModel.value,
+  codexModelsLoaded.value
 ))
 const managerAgentModelOptions = computed(() => {
   if (kimiHarnessActive.value) {
@@ -906,7 +915,7 @@ function toggleModelMenu(): void {
   }
   modelMenuOpen.value = !modelMenuOpen.value
   if (modelMenuOpen.value) {
-    void loadCodexModelCatalog().then(() => reconcileCodexModelSelection())
+    void loadCodexModelCatalog()
   }
 }
 
@@ -2203,6 +2212,9 @@ async function loadCodexModelCatalog(): Promise<void> {
     const response = await getCodexModels()
     codexModels.value = response.data?.models ?? []
     codexModelsLoaded.value = true
+    if (!codexModels.value.length) {
+      codexModelsError.value = 'No Codex models are available for the current account'
+    }
   } catch (err: any) {
     codexModelsLoaded.value = false
     codexModelsError.value = err?.message || 'Codex models unavailable'
@@ -2223,20 +2235,11 @@ async function loadVoiceRuntime(): Promise<void> {
     ])
     voiceSettings.value = settingsRes.data
     voiceAgentConfig.value = voiceAgentRes?.data ?? null
-    await reconcileCodexModelSelection()
   } catch (err: any) {
     voiceConfigError.value = err?.message || '语音设置加载失败'
   } finally {
     asrLoading.value = false
   }
-}
-
-async function reconcileCodexModelSelection(): Promise<void> {
-  if (!codexModelsLoaded.value || voiceAgentConfig.value?.harness !== 'codex_appserver') return
-  const current = voiceAgentConfig.value.model_name
-  if (current && codexModels.value.some(model => model.model === current)) return
-  const fallback = codexModels.value.find(model => model.is_default) ?? codexModels.value[0]
-  if (fallback) await setCodexModel(fallback.model)
 }
 
 function voiceSettingsPayload(
@@ -2420,7 +2423,7 @@ function changeVoiceAgentHarness(event: Event): void {
 }
 
 async function setCodexReasoningEffort(reasoningEffort: CodexReasoningEffort): Promise<void> {
-  if (!selectedCodexModel.value) return
+  if (!selectedCodexModel.value || configuredCodexModelUnavailable.value) return
   voiceAgentSaving.value = true
   voiceConfigError.value = ''
   try {
@@ -4375,7 +4378,19 @@ function summarizeTask(value: string): string {
                   data-testid="voice-model-agent-model-select"
                   @change="handleCodexModelChange"
                 >
-                  <option v-if="!codexModelOptions.length" value="" disabled>
+                  <option
+                    v-if="configuredCodexModelUnavailable"
+                    :value="configuredCodexModel"
+                    disabled
+                    class="bg-[#111315] text-white"
+                  >
+                    {{ configuredCodexModel }}（当前账号不可用）
+                  </option>
+                  <option
+                    v-if="!codexModelOptions.length && !configuredCodexModelUnavailable"
+                    value=""
+                    disabled
+                  >
                     当前账号没有可用的 Codex 模型
                   </option>
                   <option
@@ -4426,7 +4441,7 @@ function summarizeTask(value: string): string {
               </span>
               <select
                 :value="codexReasoningEffort"
-                :disabled="voiceAgentSaving || !selectedCodexModel"
+                :disabled="voiceAgentSaving || !selectedCodexModel || configuredCodexModelUnavailable"
                 title="Codex reasoning effort"
                 data-testid="voice-model-agent-reasoning-select"
                 @change="handleCodexReasoningEffortChange"

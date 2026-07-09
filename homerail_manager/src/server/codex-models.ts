@@ -137,6 +137,10 @@ function queryCodexModels(
     let settled = false;
     let stdout = "";
     let stderr = "";
+    let nextRequestId = 2;
+    let pendingModelRequestId = 0;
+    const modelsByName = new Map<string, CodexModel>();
+    const seenCursors = new Set<string>();
     const timeout = setTimeout(() => {
       finish(new Error(`Timed out while loading Codex models after ${options.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`));
     }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -153,6 +157,16 @@ function queryCodexModels(
 
     function send(id: number, method: string, params: Record<string, unknown>): void {
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    }
+
+    function requestModelPage(cursor?: string): void {
+      pendingModelRequestId = nextRequestId;
+      nextRequestId += 1;
+      send(pendingModelRequestId, "model/list", {
+        limit: 100,
+        includeHidden: false,
+        ...(cursor ? { cursor } : {}),
+      });
     }
 
     child.stdout.on("data", (chunk: Buffer | string) => {
@@ -172,10 +186,10 @@ function queryCodexModels(
             finish(new Error(errorMessage(message.error)));
             return;
           }
-          send(2, "model/list", { limit: 100, includeHidden: false });
+          requestModelPage();
           continue;
         }
-        if (message.id !== 2) continue;
+        if (message.id !== pendingModelRequestId) continue;
         if (message.error) {
           finish(new Error(errorMessage(message.error)));
           return;
@@ -184,7 +198,20 @@ function queryCodexModels(
         const models = Array.isArray(result?.data)
           ? result.data.map(normalizeModel).filter((model): model is CodexModel => Boolean(model))
           : [];
-        finish(undefined, { binary: resolution.command, models });
+        for (const model of models) {
+          if (!modelsByName.has(model.model)) modelsByName.set(model.model, model);
+        }
+        const nextCursor = stringValue(result?.nextCursor);
+        if (nextCursor) {
+          if (seenCursors.has(nextCursor)) {
+            finish(new Error(`Codex app-server returned a repeated model catalog cursor: ${nextCursor}`));
+            return;
+          }
+          seenCursors.add(nextCursor);
+          requestModelPage(nextCursor);
+          continue;
+        }
+        finish(undefined, { binary: resolution.command, models: [...modelsByName.values()] });
         return;
       }
     });
@@ -195,7 +222,10 @@ function queryCodexModels(
     child.on("error", (error) => finish(error));
     child.on("exit", (code) => {
       if (!settled) {
-        finish(new Error(stderr.trim() || `Codex app-server exited before returning models (code ${code ?? "unknown"})`));
+        const message = code === 0
+          ? "Codex app-server exited without returning a model catalog"
+          : `Codex app-server exited before returning models (code ${code ?? "unknown"})`;
+        finish(new Error(stderr.trim() || message));
       }
     });
 

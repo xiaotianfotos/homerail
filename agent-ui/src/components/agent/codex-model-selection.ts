@@ -19,13 +19,25 @@ export function resolveCodexModelOptions(
   catalogLoaded: boolean
 ): CodexModel[] {
   if (catalogLoaded) return [...models]
-  return [fallbackModel(currentModel || 'gpt-5.5')]
+  return currentModel ? [fallbackModel(currentModel)] : []
 }
 
 export function resolveSelectedCodexModel(
   models: CodexModel[],
   currentModel: string | null | undefined
 ): string {
-  if (currentModel && models.some(model => model.model === currentModel)) return currentModel
+  if (currentModel) return currentModel
   return models.find(model => model.is_default)?.model || models[0]?.model || ''
+}
+
+export function isCodexModelUnavailable(
+  models: CodexModel[],
+  currentModel: string | null | undefined,
+  catalogLoaded: boolean
+): boolean {
+  return Boolean(
+    catalogLoaded &&
+    currentModel &&
+    !models.some(model => model.model === currentModel)
+  )
 }
