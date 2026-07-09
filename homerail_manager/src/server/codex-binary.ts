@@ -11,96 +11,128 @@ export interface CodexBinaryResolution {
   needsShell: boolean;
 }
 
-function isWindows(): boolean {
-  return process.platform === "win32";
+export interface CodexBinaryResolveOptions {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
+  fileExists?: (filePath: string) => boolean;
 }
 
-function isPathLike(command: string): boolean {
-  return path.isAbsolute(command) || command.includes("/") || command.includes("\\");
+function isWindows(platform: NodeJS.Platform): boolean {
+  return platform === "win32";
 }
 
-function windowsCommandNeedsShell(command: string): boolean {
-  return isWindows() && /\.(cmd|bat)$/i.test(command);
+function pathApi(platform: NodeJS.Platform): typeof path.win32 | typeof path.posix {
+  return isWindows(platform) ? path.win32 : path.posix;
 }
 
-function windowsExecutableNames(command: string): string[] {
-  if (!isWindows()) return [command];
+function isPathLike(command: string, platform: NodeJS.Platform): boolean {
+  return pathApi(platform).isAbsolute(command) || command.includes("/") || command.includes("\\");
+}
+
+function windowsCommandNeedsShell(command: string, platform = process.platform): boolean {
+  return isWindows(platform) && /\.(cmd|bat)$/i.test(command);
+}
+
+function windowsExecutableNames(command: string, platform: NodeJS.Platform): string[] {
+  if (!isWindows(platform)) return [command];
   if (/\.(exe|cmd|bat)$/i.test(command)) return [command];
   return [`${command}.exe`, `${command}.cmd`, `${command}.bat`, command];
 }
 
-function pathCandidates(command: string): string[] {
-  if (!isWindows()) return [command];
-  const parsed = path.parse(command);
+function pathCandidates(command: string, platform: NodeJS.Platform): string[] {
+  if (!isWindows(platform)) return [command];
+  const paths = pathApi(platform);
+  const parsed = paths.parse(command);
   if (/\.(exe|cmd|bat)$/i.test(parsed.base)) return [command];
-  return windowsExecutableNames(parsed.base).map((name) => path.join(parsed.dir, name));
+  return windowsExecutableNames(parsed.base, platform).map((name) => paths.join(parsed.dir, name));
 }
 
-function existingFile(filePath: string): string | null {
+function existingFile(filePath: string, fileExists: (filePath: string) => boolean): string | null {
   try {
-    return fs.existsSync(filePath) && fs.statSync(filePath).isFile() ? filePath : null;
+    return fileExists(filePath) ? filePath : null;
   } catch {
     return null;
   }
 }
 
-function findExecutableOnPath(command: string): string | null {
-  const pathEnv = process.env.PATH ?? "";
-  const names = windowsExecutableNames(command);
-  for (const dir of pathEnv.split(path.delimiter)) {
+function defaultFileExists(filePath: string): boolean {
+  return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+}
+
+function findExecutableOnPath(command: string, options: Required<CodexBinaryResolveOptions>): string | null {
+  const pathEnv = options.env.PATH ?? "";
+  const paths = pathApi(options.platform);
+  const names = windowsExecutableNames(command, options.platform);
+  for (const dir of pathEnv.split(paths.delimiter)) {
     if (!dir) continue;
     for (const name of names) {
-      const candidate = path.join(dir, name);
-      const found = existingFile(candidate);
+      const candidate = paths.join(dir, name);
+      const found = existingFile(candidate, options.fileExists);
       if (found) return found;
     }
   }
   return null;
 }
 
-function commonCodexCandidates(): string[] {
-  const home = os.homedir();
+function commonCodexCandidates(options: Required<CodexBinaryResolveOptions>): string[] {
+  const paths = pathApi(options.platform);
+  const home = options.homeDir;
   const candidates = [
-    path.join(home, ".codex", "bin", "codex"),
+    paths.join(home, ".codex", "bin", "codex"),
     "/opt/homebrew/bin/codex",
     "/usr/local/bin/codex",
     "/usr/bin/codex",
   ];
 
-  if (isWindows()) {
-    const appData = process.env.APPDATA;
-    const localAppData = process.env.LOCALAPPDATA;
-    candidates.push(...pathCandidates(path.join(home, ".codex", "bin", "codex")));
-    if (appData) candidates.push(...pathCandidates(path.join(appData, "npm", "codex")));
+  if (isWindows(options.platform)) {
+    const appData = options.env.APPDATA;
+    const localAppData = options.env.LOCALAPPDATA;
+    candidates.push(...pathCandidates(paths.join(home, ".codex", "bin", "codex"), options.platform));
+    if (appData) candidates.push(...pathCandidates(paths.join(appData, "npm", "codex"), options.platform));
     if (localAppData) {
-      candidates.push(...pathCandidates(path.join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex")));
-      candidates.push(...pathCandidates(path.join(localAppData, "Microsoft", "WindowsApps", "codex")));
-      candidates.push(...pathCandidates(path.join(localAppData, "pnpm", "codex")));
-      candidates.push(...pathCandidates(path.join(localAppData, "Volta", "bin", "codex")));
+      candidates.push(...pathCandidates(paths.join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex"), options.platform));
+      candidates.push(...pathCandidates(paths.join(localAppData, "Microsoft", "WindowsApps", "codex"), options.platform));
+      candidates.push(...pathCandidates(paths.join(localAppData, "pnpm", "codex"), options.platform));
+      candidates.push(...pathCandidates(paths.join(localAppData, "Volta", "bin", "codex"), options.platform));
     }
   }
 
   return Array.from(new Set(candidates));
 }
 
-export function resolveCodexBinary(requested = process.env.HOMERAIL_CODEX_BIN ?? process.env.CODEX_BIN_PATH ?? DEFAULT_CODEX_BIN): CodexBinaryResolution | null {
-  const trimmed = requested.trim() || DEFAULT_CODEX_BIN;
+function resolveOptions(options: CodexBinaryResolveOptions): Required<CodexBinaryResolveOptions> {
+  return {
+    platform: options.platform ?? process.platform,
+    env: options.env ?? process.env,
+    homeDir: options.homeDir ?? os.homedir(),
+    fileExists: options.fileExists ?? defaultFileExists,
+  };
+}
 
-  if (isPathLike(trimmed)) {
-    for (const candidate of pathCandidates(trimmed)) {
-      const found = existingFile(candidate);
-      if (found) return { command: found, requested: trimmed, needsShell: windowsCommandNeedsShell(found) };
+export function resolveCodexBinary(
+  requested?: string,
+  resolveOptionsInput: CodexBinaryResolveOptions = {},
+): CodexBinaryResolution | null {
+  const options = resolveOptions(resolveOptionsInput);
+  const effectiveRequested = requested ?? options.env.HOMERAIL_CODEX_BIN ?? options.env.CODEX_BIN_PATH ?? DEFAULT_CODEX_BIN;
+  const trimmed = effectiveRequested.trim() || DEFAULT_CODEX_BIN;
+
+  if (isPathLike(trimmed, options.platform)) {
+    for (const candidate of pathCandidates(trimmed, options.platform)) {
+      const found = existingFile(candidate, options.fileExists);
+      if (found) return { command: found, requested: trimmed, needsShell: windowsCommandNeedsShell(found, options.platform) };
     }
     return null;
   }
 
-  for (const candidate of commonCodexCandidates()) {
-    const found = existingFile(candidate);
-    if (found) return { command: found, requested: trimmed, needsShell: windowsCommandNeedsShell(found) };
+  for (const candidate of commonCodexCandidates(options)) {
+    const found = existingFile(candidate, options.fileExists);
+    if (found) return { command: found, requested: trimmed, needsShell: windowsCommandNeedsShell(found, options.platform) };
   }
 
-  const fromPath = findExecutableOnPath(trimmed);
-  if (fromPath) return { command: fromPath, requested: trimmed, needsShell: windowsCommandNeedsShell(fromPath) };
+  const fromPath = findExecutableOnPath(trimmed, options);
+  if (fromPath) return { command: fromPath, requested: trimmed, needsShell: windowsCommandNeedsShell(fromPath, options.platform) };
   return null;
 }
 
