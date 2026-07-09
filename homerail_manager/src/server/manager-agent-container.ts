@@ -174,6 +174,7 @@ async function ensureLocalDockerNode(options: ManagerAgentContainerOptions, proj
     const child = spawn(process.execPath, [cliPath], {
       cwd: runtimeRoot(),
       detached: true,
+      shell: false,
       stdio: ["ignore", out, err],
       windowsHide: true,
       env: {

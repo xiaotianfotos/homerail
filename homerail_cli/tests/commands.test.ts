@@ -1,15 +1,19 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
+import type { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createProgram } from "../src/index.js";
 import { readLineFromStdin, redactSecret } from "../src/commands/llm-settings.js";
 import {
+  agentUiDevServerCommand,
   dockerMissingMessage,
   isMissingModelCredential,
   shouldAbortStartForModelConfig,
   shouldServeStaticAgentUi,
+  runWorkerImageDockerBuild,
   workerImageBuildReason,
   workerImageDockerBuildSpawnOptions,
   workerImageSourceFingerprint,
@@ -1913,10 +1917,68 @@ describe("runtime command", () => {
   it("builds the worker image without inheriting a Windows console", () => {
     const options = workerImageDockerBuildSpawnOptions();
     expect(options.stdio).toEqual(["ignore", "pipe", "pipe"]);
+    expect(options.shell).toBe(false);
     expect(options.windowsHide).toBe(true);
-    expect(options.encoding).toBe("utf-8");
-    expect(options.maxBuffer).toBeGreaterThanOrEqual(20 * 1024 * 1024);
+    expect(options).not.toHaveProperty("maxBuffer");
     expect(options.env?.HOMERAIL_HOME).toBe(tempHome);
+  });
+
+  it("streams worker image build output without buffering it", async () => {
+    class FakeChildProcess extends EventEmitter {
+      stdin = new PassThrough();
+      stdout = new PassThrough();
+      stderr = new PassThrough();
+    }
+    const child = new FakeChildProcess();
+    let stdout = "";
+    let stderr = "";
+    const build = runWorkerImageDockerBuild(
+      "docker",
+      ["build", "."],
+      (() => child as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+      (chunk) => { stdout += chunk.toString(); },
+      (chunk) => { stderr += chunk.toString(); },
+    );
+
+    child.stdout.write("build output\n");
+    child.stderr.write("build warning\n");
+    child.emit("close", 0, null);
+
+    await build;
+    expect(stdout).toBe("build output\n");
+    expect(stderr).toBe("build warning\n");
+  });
+
+  it("reports worker image build exit failures after streaming output", async () => {
+    class FakeChildProcess extends EventEmitter {
+      stdin = new PassThrough();
+      stdout = new PassThrough();
+      stderr = new PassThrough();
+    }
+    const child = new FakeChildProcess();
+    let stderr = "";
+    const build = runWorkerImageDockerBuild(
+      "docker",
+      ["build", "."],
+      (() => child as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+      () => {},
+      (chunk) => { stderr += chunk.toString(); },
+    );
+
+    child.stderr.write("docker failed\n");
+    child.emit("close", 17, null);
+
+    await expect(build).rejects.toThrow("failed to build homerail-worker:latest (exit code 17)");
+    expect(stderr).toBe("docker failed\n");
+  });
+
+  it("launches the Agent UI dev server directly through Node", () => {
+    const uiDir = join(tempHome, "agent-ui");
+    const command = agentUiDevServerCommand(uiDir);
+
+    expect(command.command).toBe(process.execPath);
+    expect(command.args).toEqual([join(uiDir, "node_modules", "vite", "bin", "vite.js")]);
+    expect(command.command.toLowerCase()).not.toMatch(/\.(cmd|bat)$/);
   });
 
   it("serves prebuilt Agent UI statically on Windows when dist exists", () => {

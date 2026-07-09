@@ -271,6 +271,7 @@ export async function ensureHostShellManagerAgent(
   const child = spawn(process.execPath, [diagnostics.worker_entry], {
     cwd: processCwd,
     detached: true,
+    shell: false,
     stdio: ["ignore", out, err],
     env: {
       ...process.env,
