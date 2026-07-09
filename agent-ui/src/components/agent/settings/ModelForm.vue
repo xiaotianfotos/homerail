@@ -916,7 +916,7 @@ async function submit(): Promise<void> {
     <!-- ═══ 能力（自动填 + 手动微调）════════════════════════════ -->
     <div v-if="!isCustom" class="space-y-2">
       <div class="flex items-center justify-between">
-        <span class="text-xs font-medium text-gray-400">模型能力（自动检测，可微调）</span>
+        <span class="text-xs font-medium text-gray-400">模型能力</span>
       </div>
       <div class="flex flex-wrap gap-2">
         <CapabilityToggle capability="llm" :model-value="effectiveCapabilities.supports_llm" @update:model-value="setCapability('supports_llm', $event)" />

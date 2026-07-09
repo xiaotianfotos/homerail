@@ -75,6 +75,7 @@ const CLAUDE_SDK_COMPATIBLE_PROVIDER_IDS = new Set([
   "deepseek",
   "kimi",
   "minimax",
+  "minimax_cn",
   "aliyun",
 ]);
 

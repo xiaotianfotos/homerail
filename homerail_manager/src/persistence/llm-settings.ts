@@ -131,7 +131,16 @@ interface StoredLLMSetting extends Omit<LLMSetting, "api_key"> {
   secret_storage?: "manager_encrypted" | "legacy_plaintext";
 }
 
-const LEGACY_CLAUDE_SDK_COMPATIBLE_PROVIDER_IDS = ["anthropic", "glm", "xiaomi", "deepseek", "kimi", "minimax", "aliyun"];
+const LEGACY_CLAUDE_SDK_COMPATIBLE_PROVIDER_IDS = [
+  "anthropic",
+  "glm",
+  "xiaomi",
+  "deepseek",
+  "kimi",
+  "minimax",
+  "minimax_cn",
+  "aliyun",
+];
 
 export function getDefaultProviders(): ProviderInfo[] {
   return listProviders();
