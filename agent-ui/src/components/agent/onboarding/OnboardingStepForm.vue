@@ -15,6 +15,7 @@ import { Loader2, Eye, EyeOff, Server, Package } from 'lucide-vue-next'
 import { agentSettingsApi } from '@/api/agent'
 import { probeModels } from '@/api/services/providers-api'
 import { useToast } from '@/components/controls/useToast'
+import { createProtocolLabels } from '@/lib/protocol-labels'
 import { cn } from '@/lib/utils'
 import type {
   Provider,
@@ -39,20 +40,12 @@ const emit = defineEmits<{
 
 const { showToast } = useToast()
 const { t } = useI18n()
+const { planLabel: localizedPlanLabel } = createProtocolLabels(t)
 
 function capabilityLabel(capability: CapabilityKey): string {
   if (capability === 'supports_llm') return t('onboarding.form.capabilities.llm')
   if (capability === 'supports_asr') return t('onboarding.form.capabilities.asr')
   return t('onboarding.form.capabilities.tts')
-}
-
-function localizedPlanLabel(plan?: string): string {
-  if (plan === 'api_billing') return t('settings.models.plans.apiBilling')
-  if (plan === 'token_plan') return t('settings.models.plans.tokenPlan')
-  if (plan === 'coding_plan') return t('settings.models.plans.codingPlan')
-  if (plan === 'agent_plan') return t('settings.models.plans.agentPlan')
-  if (plan === 'subscription') return t('settings.models.plans.subscription')
-  return t('settings.models.plans.custom')
 }
 
 // ── 模式切换 ──────────────────────────────────────────────────

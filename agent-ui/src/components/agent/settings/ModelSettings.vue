@@ -14,6 +14,7 @@ import { useAgentStore } from '@/stores/agent-store'
 import { useToast } from '@/components/controls/useToast'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
 import type { Provider } from '@/api/types/orchestration-v2.types'
+import { createProtocolLabels } from '@/lib/protocol-labels'
 import CapabilityBadge from './CapabilityBadge.vue'
 import ModelForm from './ModelForm.vue'
 import type { ModelFormPayload } from './ModelForm.vue'
@@ -33,6 +34,7 @@ const emit = defineEmits<{
 
 const store = useAgentStore()
 const { t } = useI18n()
+const { planLabel: localizedPlanLabel } = createProtocolLabels(t)
 const { showToast } = useToast()
 
 const dialogOpen = ref(false)
@@ -105,15 +107,6 @@ function messageOf(err: unknown): string {
     if (typeof message === 'string' && message.trim()) return message
   }
   return String(err || t('settings.actions.operationFailed'))
-}
-
-function localizedPlanLabel(plan?: string): string {
-  if (plan === 'api_billing') return t('settings.models.plans.apiBilling')
-  if (plan === 'token_plan') return t('settings.models.plans.tokenPlan')
-  if (plan === 'coding_plan') return t('settings.models.plans.codingPlan')
-  if (plan === 'agent_plan') return t('settings.models.plans.agentPlan')
-  if (plan === 'subscription') return t('settings.models.plans.subscription')
-  return t('settings.models.plans.custom')
 }
 
 async function runAction<T>(key: string, action: () => Promise<T>): Promise<T | undefined> {

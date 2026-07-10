@@ -17,7 +17,7 @@
     "nodes": "{count} nodes",
     "justNow": "Just now",
     "minutesAgo": "{count} min ago",
-    "hoursAgo": "{count} hr ago"
+    "hoursAgo": "{count} hr ago | {count} hrs ago"
   },
   "toolbar": {
     "runtime": "DAG Runtime",

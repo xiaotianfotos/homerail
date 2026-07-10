@@ -20,6 +20,7 @@ import type {
   ProviderModelPreset,
   ProviderProtocol,
 } from '@/api/types/orchestration-v2.types'
+import { createProtocolLabels } from '@/lib/protocol-labels'
 import CapabilityToggle from './CapabilityToggle.vue'
 
 export interface ModelFormPayload {
@@ -100,28 +101,10 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-
-function localizedPlanLabel(plan?: string): string {
-  if (plan === 'api_billing') return t('settings.models.plans.apiBilling')
-  if (plan === 'token_plan') return t('settings.models.plans.tokenPlan')
-  if (plan === 'coding_plan') return t('settings.models.plans.codingPlan')
-  if (plan === 'agent_plan') return t('settings.models.plans.agentPlan')
-  if (plan === 'subscription') return t('settings.models.plans.subscription')
-  return t('settings.models.plans.custom')
-}
-
-function localizedProtocolLabel(protocol?: string): string {
-  if (!protocol) return '—'
-  if (protocol === 'openai_compatible') return 'Chat Completions'
-  if (protocol === 'anthropic_compatible') return 'Anthropic'
-  if (protocol === 'dashscope_native') return 'DashScope'
-  if (protocol === 'volcengine_doubao_voice') return t('settings.models.protocols.volcengineVoice')
-  if (protocol === 'volcengine_ark_voice' || protocol === 'volcengine_openspeech') {
-    return t('settings.models.protocols.volcengineOpenSpeech')
-  }
-  if (protocol === 'custom') return t('settings.models.protocols.custom')
-  return protocol
-}
+const {
+  planLabel: localizedPlanLabel,
+  protocolLabel: localizedProtocolLabel,
+} = createProtocolLabels(t)
 
 // ── 状态 ──────────────────────────────────────────────────────
 const isCustom = ref(false)

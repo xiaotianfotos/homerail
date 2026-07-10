@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createI18n } from 'vue-i18n'
 import enUS from '@/locales/en-US'
 import zhCN from '@/locales/zh-CN'
 import {
@@ -43,5 +44,18 @@ describe('application locale resolution', () => {
 
   it('keeps the Chinese and English resource trees in sync', () => {
     expect(resourceKeys(enUS)).toEqual(resourceKeys(zhCN))
+  })
+
+  it('selects English plural forms from a named count parameter', () => {
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en-US',
+      messages: { 'en-US': enUS },
+    })
+
+    expect(i18n.global.t('shell.sidebar.daysAgo', { count: 1 })).toBe('1 day ago')
+    expect(i18n.global.t('shell.sidebar.daysAgo', { count: 2 })).toBe('2 days ago')
+    expect(i18n.global.t('dag.runList.hoursAgo', { count: 1 })).toBe('1 hr ago')
+    expect(i18n.global.t('dag.runList.hoursAgo', { count: 2 })).toBe('2 hrs ago')
   })
 })
