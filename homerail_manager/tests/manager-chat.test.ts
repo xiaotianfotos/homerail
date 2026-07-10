@@ -32,6 +32,21 @@ import {
   managerAgentHostPort,
   registerFakeDockerNode,
 } from "./helpers/fake-manager-agent-node.js";
+import type { CodexModelCatalog } from "../src/server/codex-models.js";
+
+const TEST_CODEX_MODEL_CATALOG: CodexModelCatalog = {
+  binary: "codex",
+  models: [{
+    id: "gpt-5.5",
+    model: "gpt-5.5",
+    display_name: "GPT-5.5",
+    description: "",
+    is_default: true,
+    default_reasoning_effort: "medium",
+    supported_reasoning_efforts: ["low", "medium", "high", "xhigh"],
+    service_tiers: [],
+  }],
+};
 
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -70,7 +85,9 @@ describe("/api/manager/chat", () => {
     _clearAllSessions();
     _clearNodes();
     clearLlmSettings();
-    server = createServer(0, undefined, undefined, false);
+    server = createServer(0, undefined, undefined, false, {
+      loadCodexModels: async () => TEST_CODEX_MODEL_CATALOG,
+    });
   });
 
   afterEach(async () => {
