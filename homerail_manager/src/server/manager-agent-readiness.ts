@@ -3,7 +3,7 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getAllNodes, isDockerCapableNode } from "../node/registry.js";
-import { readManagerAgentConfig } from "../persistence/manager-agent-config.js";
+import { readManagerAgentConfig, type ManagerAgentConfig } from "../persistence/manager-agent-config.js";
 import { sendLifecycleRequest } from "../node/lifecycle-request.js";
 import { getHomerailHome } from "../config/env.js";
 import {
@@ -13,6 +13,10 @@ import {
 import { hostShellDiagnostics } from "./host-shell-manager-agent.js";
 import { readDagResourceStatus, type DagResourceStatus } from "./dag-resource-status.js";
 import { resolveCodexBinary, runCodexCommandSync } from "./codex-binary.js";
+import {
+  ensurePreferredManagerAgentConfig,
+  type ManagerAgentConfigRoutesOptions,
+} from "./manager-agent-config.js";
 
 interface ReadinessBlocker {
   code: string;
@@ -186,8 +190,9 @@ async function probeDockerWorkspaceMount(
 
 export function managerAgentReadiness(
   managerAgentOptions?: ManagerAgentContainerOptions,
+  effectiveConfig?: ManagerAgentConfig,
 ): ManagerAgentReadiness {
-  const config = readManagerAgentConfig();
+  const config = effectiveConfig ?? readManagerAgentConfig();
   const blockers: ReadinessBlocker[] = [];
   let runtimeConfig;
   try {
@@ -198,6 +203,7 @@ export function managerAgentReadiness(
       config.llm_setting_id ?? undefined,
       config.harness,
       config.reasoning_effort,
+      config.service_tier,
     );
   } catch (err) {
     blockers.push({
@@ -281,6 +287,7 @@ export function managerAgentReadinessRoutesHandler(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   managerAgentOptions?: ManagerAgentContainerOptions,
+  managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
 ): boolean {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
   if (pathname === "/api/manager-agent/readiness") {
@@ -288,7 +295,12 @@ export function managerAgentReadinessRoutesHandler(
       methodNotAllowed(res);
       return true;
     }
-    ok(res, "Manager Agent readiness checked", managerAgentReadiness(managerAgentOptions));
+    void ensurePreferredManagerAgentConfig(managerAgentConfigOptions)
+      .then((config) => ok(res, "Manager Agent readiness checked", managerAgentReadiness(managerAgentOptions, config)))
+      .catch((error) => json(res, 500, {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      }));
     return true;
   }
   if (pathname === "/api/manager-agent/docker-workspace-probe") {

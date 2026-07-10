@@ -46,8 +46,10 @@ import {
   getExperienceGraphSummary,
   getAssetDiagnostics,
   getOrchestrationTemplates,
+  getCodexModels,
   type VoiceSettings,
   type VoiceTtsOutputChannel,
+  type CodexModel,
   type ExperienceGraphSummary,
   type AssetDiagnostics,
   type OrchestrationTemplate,
@@ -152,6 +154,7 @@ const workspaceSettings = ref<AgentWorkspaceSettings | null>(null)
 const storageInfo = ref<AgentStorageRetentionInfo | null>(null)
 const voiceSettings = ref<VoiceSettings | null>(null)
 const voiceAgentConfig = ref<VoiceAgentConfig | null>(null)
+const codexModels = ref<CodexModel[]>([])
 const voiceForm = ref({
   recognition_mode: 'asr' as 'omni' | 'asr',
   omni_base_url: '',
@@ -759,6 +762,7 @@ async function refreshAll(): Promise<void> {
       experienceRes,
       voiceRes,
       voiceAgentRes,
+      codexModelRes,
       assetDiagRes,
       orchestrationTemplateRes,
       runtimeStatusRes,
@@ -777,6 +781,7 @@ async function refreshAll(): Promise<void> {
       hiddenSettingsTabs.has('memory') ? Promise.resolve(null) : loadExperienceGraph(12),
       agentSettingsApi.getVoiceSettings().catch(() => null),
       agentSettingsApi.getVoiceAgentConfig().catch(() => null),
+      getCodexModels().catch(() => null),
       hiddenSettingsTabs.has('memory') ? Promise.resolve(null) : loadAssetDiagnostics(),
       hiddenSettingsTabs.has('memory') ? Promise.resolve(null) : loadOrchestrationTemplates(),
       agentSettingsApi.getRuntimeStatus().catch(() => null),
@@ -797,6 +802,7 @@ async function refreshAll(): Promise<void> {
     assetDiagnostics.value = assetDiagRes ?? null
     orchestrationTemplates.value = orchestrationTemplateRes ?? []
     voiceAgentConfig.value = voiceAgentRes?.data ?? null
+    codexModels.value = codexModelRes?.data?.models ?? []
     runtimeStatus.value = runtimeStatusRes ?? null
     workspaceSettings.value = workspaceSettingsRes ?? null
     storageInfo.value = storageInfoRes ?? null
@@ -1683,6 +1689,8 @@ onUnmounted(() => {
           v-if="activeTab === 'providers'"
           :providers="providers"
           :llm-settings="llmSettings"
+          :manager-config="voiceAgentConfig"
+          :codex-models="codexModels"
           :loading="loading"
           @refresh="refreshAll"
           @set-notice="setNotice"

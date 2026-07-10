@@ -17,7 +17,10 @@ import { dagWorkflowRoutesHandler } from "./dag-workflows.js";
 import { settingsBootstrapHandler } from "./settings-bootstrap.js";
 import { settingsStorageInfoHandler } from "./settings-storage-info.js";
 import { voiceAgentBootstrapHandler } from "./voice-agent-bootstrap.js";
-import { managerAgentConfigRoutesHandler } from "./manager-agent-config.js";
+import {
+  managerAgentConfigRoutesHandler,
+  type ManagerAgentConfigRoutesOptions,
+} from "./manager-agent-config.js";
 import { managerAgentReadinessRoutesHandler } from "./manager-agent-readiness.js";
 import { setupEventWebSocket } from "./events-websocket.js";
 import { ChangeOrchestrator } from "../orchestration/change-orchestrator.js";
@@ -114,6 +117,7 @@ export function createServer(
   wsOptions?: WorkerWebSocketOptions & NodeWebSocketOptions,
   dispatcher?: DAGDispatcher,
   provisionerOptions?: WsDispatchAdapterOptions | false,
+  managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
 ) {
   let server: http.Server;
   const workerImage = process.env.HOMERAIL_WORKER_IMAGE || "homerail-worker:latest";
@@ -172,7 +176,7 @@ export function createServer(
       return;
     }
 
-    if (mutationRoutesHandler(req, res, changeOrchestrator, managerAgentContainerOptions)) {
+    if (mutationRoutesHandler(req, res, changeOrchestrator, managerAgentContainerOptions, managerAgentConfigOptions)) {
       return;
     }
 
@@ -216,15 +220,15 @@ export function createServer(
       return;
     }
 
-    if (managerAgentConfigRoutesHandler(req, res)) {
+    if (managerAgentConfigRoutesHandler(req, res, managerAgentConfigOptions)) {
       return;
     }
 
-    if (managerAgentReadinessRoutesHandler(req, res, managerAgentContainerOptions)) {
+    if (managerAgentReadinessRoutesHandler(req, res, managerAgentContainerOptions, managerAgentConfigOptions)) {
       return;
     }
 
-    if (voiceAgentBootstrapHandler(req, res, managerAgentContainerOptions)) {
+    if (voiceAgentBootstrapHandler(req, res, managerAgentContainerOptions, managerAgentConfigOptions)) {
       return;
     }
 

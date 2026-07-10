@@ -22,6 +22,21 @@ import {
 } from "../src/server/host-codex-manager-agent.js";
 import { _clearNodes } from "../src/node/registry.js";
 import { managerAgentHostPort, registerFakeDockerNode } from "./helpers/fake-manager-agent-node.js";
+import type { CodexModelCatalog } from "../src/server/codex-models.js";
+
+const TEST_CODEX_MODEL_CATALOG: CodexModelCatalog = {
+  binary: "codex",
+  models: [{
+    id: "gpt-5.5",
+    model: "gpt-5.5",
+    display_name: "GPT-5.5",
+    description: "",
+    is_default: true,
+    default_reasoning_effort: "medium",
+    supported_reasoning_efforts: ["low", "medium", "high", "xhigh"],
+    service_tiers: [],
+  }],
+};
 
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -83,7 +98,10 @@ describe("voice bootstrap routes", () => {
     _clearStoredVoiceSettings();
     _clearAllSettings();
     _clearNodes();
-    server = createServer(0, undefined, undefined, false);
+    server = createServer(0, undefined, undefined, false, {
+      loadCodexModels: async () => TEST_CODEX_MODEL_CATALOG,
+      autoDetectCodex: true,
+    });
   });
 
   afterEach(async () => {
@@ -126,11 +144,80 @@ describe("voice bootstrap routes", () => {
   it("keeps voice-agent config readable without creating workspaces", async () => {
     const port = await listen(server);
     const response = await fetch(`http://127.0.0.1:${port}/api/voice-agent/config`);
-    const body = await response.json() as { success: boolean; data: { agent_type: string } };
+    const body = await response.json() as {
+      success: boolean;
+      data: { agent_type: string; harness: string; model_name: string; reasoning_effort: string };
+    };
 
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
-    expect(body.data.agent_type).toBe("manager_agent");
+    expect(body.data).toMatchObject({
+      agent_type: "manager_agent",
+      harness: "codex_appserver",
+      model_name: "gpt-5.5",
+      reasoning_effort: "medium",
+    });
+  });
+
+  it("keeps an available user-configured Claude SDK runtime ahead of Codex auto-detection", async () => {
+    upsertProvider({
+      id: "claude-priority",
+      name: "Claude Priority",
+      default_model: "claude-priority-model",
+      base_url: "https://claude-priority.example/v1",
+      anthropic_base_url: "https://claude-priority.example/v1",
+    });
+    const setting = createSetting({
+      provider_id: "claude-priority",
+      endpoint_id: "custom",
+      model_name: "claude-priority-model",
+      api_key: "sk-claude-priority",
+      protocol: "anthropic_compatible",
+      base_url: "https://claude-priority.example/v1",
+      anthropic_base_url: "https://claude-priority.example/v1",
+      supports_llm: true,
+      is_active: true,
+      is_default: true,
+    });
+    const port = await listen(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/manager-agent/config`);
+    const body = await response.json() as {
+      data: { harness: string; llm_setting_id: string; model_name: string };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({
+      harness: "claude_agent_sdk",
+      llm_setting_id: setting.id,
+      model_name: "claude-priority-model",
+    });
+  });
+
+  it("rejects unsupported Codex reasoning efforts through the legacy config route without persisting", async () => {
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const response = await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.5",
+        reasoning_effort: "minimal",
+      }),
+    });
+    const body = await response.json() as { success: boolean; error: string };
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      success: false,
+      error: "Codex model 'gpt-5.5' does not support reasoning effort 'minimal'. Supported values: low, medium, high, xhigh.",
+    });
+    expect(getDb()
+      .prepare("SELECT id FROM manager_agent_config WHERE id = ?")
+      .get("default"))
+      .toBeUndefined();
   });
 
   it("stores and returns the current-session pointer for cross-device sync", async () => {
@@ -314,6 +401,8 @@ describe("voice bootstrap routes", () => {
   });
 
   it("creates and processes a voice-agent workspace", async () => {
+    await close(server);
+    server = createServer(0, undefined, undefined, false, { autoDetectCodex: false });
     const port = await listen(server);
     const response = await fetch(`http://127.0.0.1:${port}/api/voice-agent/sessions`, {
       method: "POST",
@@ -660,6 +749,8 @@ describe("voice bootstrap routes", () => {
   });
 
   it("keeps project_id from stream turns when the workspace was created without one", async () => {
+    await close(server);
+    server = createServer(0, undefined, undefined, false, { autoDetectCodex: false });
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
     const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {

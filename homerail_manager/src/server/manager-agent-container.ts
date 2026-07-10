@@ -12,6 +12,7 @@ import {
   type ManagerAgentHarness,
   type ManagerAgentRuntimePlacement,
   type ManagerAgentReasoningEffort,
+  type ManagerAgentServiceTier,
 } from "homerail-protocol";
 
 export interface ManagerAgentRuntimeConfig {
@@ -26,6 +27,7 @@ export interface ManagerAgentRuntimeConfig {
   project_workspace?: string;
   /** 每轮实时生效的推理幅度，codex 传 model_reasoning_effort */
   reasoning_effort?: ManagerAgentReasoningEffort;
+  service_tier: ManagerAgentServiceTier;
 }
 
 export interface ManagerAgentContainerOptions {
@@ -293,11 +295,12 @@ export function resolveManagerAgentConfig(
   settingId?: string,
   harness?: ManagerAgentHarness | string | null,
   reasoningEffort?: ManagerAgentReasoningEffort | string | null,
+  serviceTier?: ManagerAgentServiceTier,
 ): ManagerAgentRuntimeConfig {
-  const effort = (reasoningEffort === "minimal" || reasoningEffort === "low" || reasoningEffort === "medium"
-    || reasoningEffort === "high" || reasoningEffort === "xhigh")
-    ? reasoningEffort
+  const effort = typeof reasoningEffort === "string" && reasoningEffort.trim()
+    ? reasoningEffort.trim()
     : undefined;
+  const normalizedServiceTier = serviceTier === "fast" ? "priority" : serviceTier ?? null;
   return {
     ...resolveAgentRuntimeConfig({
       surface: "manager_agent",
@@ -309,6 +312,7 @@ export function resolveManagerAgentConfig(
     project_id: projectId,
     project_workspace: resolveProjectWorkspace(projectId),
     reasoning_effort: effort ?? "low",
+    service_tier: normalizedServiceTier,
   };
 }
 

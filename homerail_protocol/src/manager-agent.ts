@@ -23,7 +23,9 @@ export type ManagerAgentRuntimePlacement =
 // variants, but these canonical values should not be renamed casually.
 export type ManagerAgentRuntimeAgentType = "claude-sdk" | "codex_appserver" | "kimi_code";
 
-export type ManagerAgentReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+// app-server advertises model-specific, forward-compatible effort strings via model/list.
+export type ManagerAgentReasoningEffort = string;
+export type ManagerAgentServiceTier = string | null;
 
 export interface ManagerAgentHarnessDefinition {
   harness: ManagerAgentHarness;

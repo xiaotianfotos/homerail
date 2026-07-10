@@ -2,11 +2,13 @@
 import { computed, ref } from 'vue'
 import {
   Loader2,
+  LockKeyhole,
   Pencil,
   Plus,
   Trash2,
 } from 'lucide-vue-next'
 import { agentSettingsApi } from '@/api/agent'
+import type { CodexModel, VoiceAgentConfig } from '@/api/agent'
 import { useAgentStore } from '@/stores/agent-store'
 import { planLabel } from '@/lib/protocol-labels'
 import { useToast } from '@/components/controls/useToast'
@@ -19,6 +21,8 @@ import type { ModelFormPayload } from './ModelForm.vue'
 const props = defineProps<{
   providers: Provider[]
   llmSettings: LLMSetting[]
+  managerConfig: VoiceAgentConfig | null
+  codexModels: CodexModel[]
   loading: boolean
 }>()
 
@@ -36,6 +40,38 @@ const savingId = ref<string | null>(null)
 
 const activeSettings = computed(() => props.llmSettings.filter(s => s.is_active))
 const inactiveSettings = computed(() => props.llmSettings.filter(s => !s.is_active))
+const currentManagerUsesCodex = computed(() => props.managerConfig?.harness === 'codex_appserver')
+const showCodexRuntime = computed(() => currentManagerUsesCodex.value || props.codexModels.length > 0)
+const activeManagerSettings = computed(() => activeSettings.value.filter(setting =>
+  setting.supports_llm && !setting.supports_asr && !setting.supports_tts
+))
+const availableManagerModelCount = computed(() => activeManagerSettings.value.length + props.codexModels.length)
+const configuredModelCount = computed(() => props.llmSettings.length + (showCodexRuntime.value ? 1 : 0))
+
+function codexModelLabel(modelName: string | null | undefined): string {
+  if (!modelName) return '-'
+  const model = props.codexModels.find(item => item.model === modelName || item.id === modelName)
+  return model?.display_name || modelName
+}
+
+const currentCodexModelName = computed(() => {
+  if (currentManagerUsesCodex.value && props.managerConfig?.model_name) {
+    return props.managerConfig.model_name
+  }
+  return props.codexModels.find(model => model.is_default)?.model
+    || props.codexModels[0]?.model
+    || null
+})
+const currentCodexModelLabel = computed(() => codexModelLabel(currentCodexModelName.value))
+const currentCodexServiceTierLabel = computed(() => {
+  const serviceTier = props.managerConfig?.service_tier
+  if (!serviceTier) return 'Standard'
+  const model = props.codexModels.find(item => item.model === currentCodexModelName.value)
+  return model?.service_tiers.find(tier => tier.id === serviceTier)?.name || serviceTier
+})
+const codexModelSummary = computed(() => props.codexModels
+  .map(model => model.display_name || model.model)
+  .join(', '))
 
 function handleManagerProviderChange(event: Event): void {
   store.setManagerRuntime((event.target as HTMLSelectElement).value)
@@ -240,9 +276,30 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
           <h2 class="font-semibold">Manager Runtime</h2>
           <div class="mt-1 text-xs text-gray-500">当前会话使用的模型</div>
         </div>
-        <span class="rounded-full border border-white/10 px-3 py-1 text-xs text-gray-400">{{ activeSettings.length }} 个可用模型</span>
+        <span data-testid="agent-settings-manager-runtime-count" class="rounded-full border border-white/10 px-3 py-1 text-xs text-gray-400">{{ availableManagerModelCount }} 个可用模型</span>
       </div>
-      <div class="mt-4 grid gap-3 md:grid-cols-2">
+      <div v-if="currentManagerUsesCodex" class="mt-4 grid gap-3 md:grid-cols-2">
+        <div
+          data-testid="agent-settings-manager-runtime-provider-readonly"
+          class="flex h-10 items-center justify-between rounded-md border border-white/10 bg-[#343434] px-3 text-sm"
+        >
+          <span>Codex</span>
+          <span class="inline-flex items-center gap-1 text-xs text-cyan-200/70">
+            <LockKeyhole class="h-3.5 w-3.5" />
+            自动检测
+          </span>
+        </div>
+        <div
+          data-testid="agent-settings-manager-runtime-model-readonly"
+          class="flex h-10 items-center justify-between rounded-md border border-white/10 bg-[#343434] px-3 text-sm"
+        >
+          <span>{{ currentCodexModelLabel }}</span>
+          <span class="text-xs text-gray-500">
+            <template v-if="managerConfig?.reasoning_effort">{{ managerConfig.reasoning_effort }} · </template>{{ currentCodexServiceTierLabel }}
+          </span>
+        </div>
+      </div>
+      <div v-else class="mt-4 grid gap-3 md:grid-cols-2">
         <select
           :value="store.managerProviderName"
           class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none"
@@ -264,7 +321,10 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
           </option>
         </select>
       </div>
-      <div class="mt-3 text-xs leading-relaxed text-gray-500">
+      <div v-if="currentManagerUsesCodex" class="mt-3 text-xs leading-relaxed text-gray-500">
+        本机 Codex CLI · 当前配置由自动检测结果管理
+      </div>
+      <div v-else class="mt-3 text-xs leading-relaxed text-gray-500">
         切换 runtime 后，新 Manager 会话会使用所选模型。当前已进行中的会话不受影响。
       </div>
     </div>
@@ -273,7 +333,7 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
       <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
         <div>
           <h2 class="font-semibold">已配置模型</h2>
-          <div class="mt-1 text-xs text-gray-500">{{ providers.length }} 个供应商 · {{ llmSettings.length }} 个模型配置</div>
+          <div class="mt-1 text-xs text-gray-500">{{ providers.length }} 个供应商 · {{ configuredModelCount }} 个模型配置</div>
         </div>
         <button
           class="inline-flex items-center gap-2 rounded-md bg-blue-500 px-3 py-2 text-sm text-white hover:bg-blue-400 disabled:opacity-50"
@@ -285,16 +345,57 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
         </button>
       </div>
 
-      <div v-if="loading && !llmSettings.length" class="px-4 py-8 text-center text-sm text-gray-500">
+      <div v-if="loading && !configuredModelCount" class="px-4 py-8 text-center text-sm text-gray-500">
         <Loader2 class="mx-auto h-5 w-5 animate-spin" />
         <div class="mt-2">加载中...</div>
       </div>
 
-      <div v-else-if="!llmSettings.length" class="px-4 py-8 text-center text-sm text-gray-500">
+      <div v-else-if="!configuredModelCount" class="px-4 py-8 text-center text-sm text-gray-500">
         暂无模型配置，点击右上角添加。
       </div>
 
       <template v-else>
+        <div
+          v-if="showCodexRuntime"
+          data-testid="agent-settings-model-item-codex"
+          class="border-b border-white/10 px-4 py-4"
+        >
+          <div class="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-medium">Codex</span>
+                <span v-if="currentManagerUsesCodex" class="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200">当前 Manager</span>
+                <span v-if="codexModels.length" class="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-200">自动检测</span>
+                <span class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">只读</span>
+              </div>
+              <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                <span>OpenAI Codex</span>
+                <span>·</span>
+                <span>本机 CLI</span>
+                <template v-if="codexModels.length">
+                  <span>·</span>
+                  <span>{{ codexModels.length }} 个可用模型: {{ codexModelSummary }}</span>
+                </template>
+                <template v-else-if="currentCodexModelName">
+                  <span>·</span>
+                  <span>当前模型: {{ currentCodexModelLabel }}</span>
+                </template>
+              </div>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <CapabilityBadge capability="llm" :active="true" />
+                <span v-if="currentManagerUsesCodex" class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">
+                  {{ currentCodexModelLabel }}<template v-if="managerConfig?.reasoning_effort"> · {{ managerConfig.reasoning_effort }}</template> · {{ currentCodexServiceTierLabel }}
+                </span>
+              </div>
+            </div>
+
+            <div class="inline-flex items-center gap-1.5 text-xs text-gray-500 xl:pt-1">
+              <LockKeyhole class="h-3.5 w-3.5" />
+              系统自动管理
+            </div>
+          </div>
+        </div>
+
         <div
           v-for="setting in activeSettings"
           :key="setting.id"

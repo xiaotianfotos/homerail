@@ -23,6 +23,7 @@ import {
   type ManagerAgentWidgetFileToolAdapter,
   type ManagerAgentWidgetFileToolResult,
   type ManagerAgentToolName,
+  type ManagerAgentReasoningEffort,
 } from "homerail-protocol";
 
 type ToolHandlerResult = {
@@ -80,7 +81,8 @@ interface AgentRunContext {
   workspace?: string;
   maxIterations?: number;
   abortSignal?: AbortSignal;
-  reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+  reasoning_effort?: ManagerAgentReasoningEffort;
+  service_tier?: string | null;
 }
 
 interface JsonRpcRequest {
@@ -108,6 +110,8 @@ interface PendingRequest {
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
+
+type CodexReasoningEffort = NonNullable<AgentRunContext["reasoning_effort"]>;
 
 export interface HostCodexManagerAgentInput {
   message: string;
@@ -143,6 +147,53 @@ export function _setHostCodexManagerAgentRunnerForTest(runner?: HostCodexManager
 
 export function _setHostCodexManagerAgentStreamRunnerForTest(runner?: HostCodexManagerAgentStreamRunner): void {
   hostStreamRunnerOverride = runner;
+}
+
+export function _buildCodexAppServerArgsForTest(): string[] {
+  return ["app-server"];
+}
+
+export function _buildCodexThreadStartParamsForTest(input: {
+  systemPrompt?: string;
+  cwd: string;
+  model: string;
+  provider?: string;
+  serviceTier?: string | null;
+  sandbox: string;
+  dynamicTools: Array<Record<string, unknown>>;
+  reasoningEffort?: CodexReasoningEffort;
+}): Record<string, unknown> {
+  return {
+    baseInstructions: input.systemPrompt ?? null,
+    developerInstructions: null,
+    cwd: input.cwd,
+    model: input.model,
+    modelProvider: input.provider || null,
+    serviceTier: input.serviceTier ?? null,
+    approvalPolicy: "never",
+    sandbox: input.sandbox,
+    ephemeral: true,
+    dynamicTools: input.dynamicTools,
+    ...(input.reasoningEffort ? { config: { model_reasoning_effort: input.reasoningEffort } } : {}),
+  };
+}
+
+export function _buildCodexTurnStartParamsForTest(input: {
+  threadId: string;
+  prompt?: string;
+  cwd: string;
+  model: string;
+  reasoningEffort?: CodexReasoningEffort;
+  serviceTier?: string | null;
+}): Record<string, unknown> {
+  return {
+    threadId: input.threadId,
+    input: input.prompt ? [{ type: "text", text: input.prompt, text_elements: [] }] : [],
+    cwd: input.cwd,
+    model: input.model,
+    ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
+    serviceTier: input.serviceTier ?? null,
+  };
 }
 
 const CLIENT_NAME = "homerail_host_codex_manager_agent";
@@ -1056,6 +1107,7 @@ function buildHostCodexManagerAgentResult(
       provider: config.provider_name || null,
       model: config.model || null,
       reasoning_effort: config.reasoning_effort || null,
+      service_tier: config.service_tier,
       workspace: state.workspace,
       voice_system_source: voiceSystemContract?.source ?? null,
       voice_system_hash: voiceSystemContract ? createHash("sha256").update(voiceSystemContract.prompt).digest("hex").slice(0, 16) : null,
@@ -1116,6 +1168,7 @@ async function* runHostCodexManagerAgentTurnEvents(
         workspace,
         abortSignal: abortController.signal,
         reasoning_effort: config.reasoning_effort,
+        service_tier: config.service_tier,
       },
     )) {
       if (event.type === "text") {
@@ -1220,8 +1273,7 @@ class HostCodexAppServerAdapter {
       return;
     }
     try {
-      const serviceTier = process.env.HOMERAIL_CODEX_SERVICE_TIER || "fast";
-      this.process = spawn(this.codexBin, ["app-server", "-c", `service_tier="${serviceTier}"`], {
+      this.process = spawn(this.codexBin, _buildCodexAppServerArgsForTest(), {
         stdio: ["pipe", "pipe", "pipe"],
         env: this.buildEnv(context),
         cwd: context.workspace ?? process.cwd(),
@@ -1257,7 +1309,7 @@ class HostCodexAppServerAdapter {
         workspace: context.workspace ?? process.cwd(),
         tool_count: tools.length,
         home: os.homedir(),
-        service_tier: process.env.HOMERAIL_CODEX_SERVICE_TIER || "fast",
+        service_tier: context.service_tier ?? null,
       });
       const initResult = await this.sendRequest("initialize", {
         clientInfo: {
@@ -1272,20 +1324,17 @@ class HostCodexAppServerAdapter {
       });
       yield this.debugEvent("appserver_initialized", this.redactSecrets(initResult));
       const dynamicTools = this.buildDynamicToolSpecs(tools);
-      const threadResult = await this.sendRequest("thread/start", {
-        baseInstructions: context.systemPrompt ?? null,
-        developerInstructions: null,
-        cwd: context.workspace ?? process.cwd(),
+      const cwd = context.workspace ?? process.cwd();
+      const threadResult = await this.sendRequest("thread/start", _buildCodexThreadStartParamsForTest({
+        systemPrompt: context.systemPrompt,
+        cwd,
         model: context.model,
-        modelProvider: context.provider || null,
-        serviceTier: process.env.HOMERAIL_CODEX_SERVICE_TIER || "fast",
-        approvalPolicy: "never",
+        provider: context.provider,
+        serviceTier: context.service_tier,
         sandbox: process.env.HOMERAIL_CODEX_MANAGER_SANDBOX || "workspace-write",
-        ephemeral: true,
         dynamicTools,
-        // 每轮实时生效的推理幅度（对齐 Python config={"model_reasoning_effort": ...}）
-        ...(context.reasoning_effort ? { modelReasoningEffort: context.reasoning_effort } : {}),
-      });
+        reasoningEffort: context.reasoning_effort,
+      }));
       const threadId =
         (threadResult.thread_id as string | undefined) ??
         ((threadResult.thread as Record<string, unknown> | undefined)?.id as string | undefined);
@@ -1296,14 +1345,14 @@ class HostCodexAppServerAdapter {
       let turnComplete = false;
       while (iteration < maxIterations && !turnComplete && !context.abortSignal?.aborted) {
         iteration++;
-        const turnResult = await this.sendRequest("turn/start", {
+        const turnResult = await this.sendRequest("turn/start", _buildCodexTurnStartParamsForTest({
           threadId,
-          input: iteration === 1 ? [{ type: "text", text: prompt, text_elements: [] }] : [],
-          cwd: context.workspace ?? process.cwd(),
+          prompt: iteration === 1 ? prompt : undefined,
+          cwd,
           model: context.model,
-          // 每轮显式传推理幅度，确保改配置即时生效（对齐 Python effort= 每轮取 config）
-          ...(context.reasoning_effort ? { modelReasoningEffort: context.reasoning_effort } : {}),
-        });
+          reasoningEffort: context.reasoning_effort,
+          serviceTier: context.service_tier,
+        }));
         const turnId =
           (turnResult.turn_id as string | undefined) ??
           ((turnResult.turn as Record<string, unknown> | undefined)?.id as string | undefined) ??

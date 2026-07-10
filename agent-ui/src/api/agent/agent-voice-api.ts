@@ -26,6 +26,7 @@ export type {
   ManagerAgentReadiness,
   CodexModel,
   CodexModelCatalog,
+  CodexReasoningEffortOption,
   CodexModelServiceTier,
   VoiceAgentConfig,
   UpdateVoiceAgentConfigRequest,

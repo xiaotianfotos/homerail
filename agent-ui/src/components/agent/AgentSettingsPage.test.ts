@@ -40,6 +40,7 @@ vi.mock('@/api/agent', () => ({
   uploadSkill: vi.fn(() => Promise.resolve({ data: {} })),
   listVoiceModels: vi.fn(() => Promise.resolve({ data: { models: [] } })),
   testVoiceConnection: vi.fn(() => Promise.resolve({ data: { models: [] } })),
+  getCodexModels: vi.fn(() => Promise.resolve({ data: { binary: '', models: [] } })),
   getExperienceGraphSummary: vi.fn(() => Promise.resolve({ data: null })),
   getAssetDiagnostics: vi.fn(() => Promise.resolve({ data: null })),
   getOrchestrationTemplates: vi.fn(() => Promise.resolve({ data: { orchestrations: [] } })),
