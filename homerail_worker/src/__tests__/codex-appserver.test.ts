@@ -167,6 +167,15 @@ describe("CodexAppServerAdapter", () => {
     await expect(adapter.resume("s1")).rejects.toThrow("transcript resume is not implemented");
   });
 
+  it("uses a shell only for Windows command shims", async () => {
+    const { _codexWindowsCommandNeedsShellForTest } = await import("../agent/codex-appserver.js");
+
+    expect(_codexWindowsCommandNeedsShellForTest("C:\\Tools\\codex.cmd", "win32")).toBe(true);
+    expect(_codexWindowsCommandNeedsShellForTest("C:\\Tools\\codex.bat", "win32")).toBe(true);
+    expect(_codexWindowsCommandNeedsShellForTest("C:\\Tools\\codex.exe", "win32")).toBe(false);
+    expect(_codexWindowsCommandNeedsShellForTest("/usr/bin/codex.cmd", "linux")).toBe(false);
+  });
+
   it("emits error when codex binary not found", async () => {
     vi.doMock("node:fs", async () => {
       const actual = await vi.importActual<typeof import("node:fs")>("node:fs");

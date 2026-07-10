@@ -72,6 +72,17 @@ function writeExecutable(dir: string, name: string, source: string): string {
   return file;
 }
 
+function writeCodexFixture(dir: string): string {
+  if (process.platform !== "win32") {
+    return writeExecutable(dir, "codex", codexFixtureSource());
+  }
+
+  const script = writeExecutable(dir, "codex-fixture.js", codexFixtureSource());
+  const shim = join(dir, "codex.cmd");
+  writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`, "utf8");
+  return join(dir, "codex");
+}
+
 function kimiFixtureSource(): string {
   return `#!/usr/bin/env node
 const { spawn } = require("node:child_process");
@@ -245,7 +256,7 @@ describe.sequential("release harness simple DAG handoff", () => {
 
   it("runs a simple DAG handoff through codex_appserver", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "homerail-codex-fixture-"));
-    const codexBin = writeExecutable(tempDir, "codex", codexFixtureSource());
+    const codexBin = writeCodexFixture(tempDir);
     vi.stubEnv("HOMERAIL_HOME", tempDir);
     registerAgentBackend("fixture-codex-appserver", () => new CodexAppServerAdapter(codexBin));
 

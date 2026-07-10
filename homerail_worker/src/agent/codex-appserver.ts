@@ -53,8 +53,32 @@ function spawnProcess(bin: string, args: string[], env: Record<string, string | 
   return spawn(bin, args, {
     stdio: ["pipe", "pipe", "pipe"],
     env,
+    shell: windowsCommandNeedsShell(bin),
     windowsHide: true,
   });
+}
+
+function windowsCommandNeedsShell(command: string, platform = process.platform): boolean {
+  return platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
+function isPathLike(command: string): boolean {
+  return path.isAbsolute(command) || command.includes("/") || command.includes("\\");
+}
+
+function executableCandidates(command: string, platform = process.platform): string[] {
+  if (platform !== "win32" || /\.(exe|cmd|bat)$/i.test(command)) return [command];
+  const parsed = path.win32.parse(command);
+  return [".exe", ".cmd", ".bat"]
+    .map((extension) => path.win32.join(parsed.dir, `${parsed.base}${extension}`))
+    .concat(command);
+}
+
+function findExistingBinary(command: string): string | null {
+  for (const candidate of executableCandidates(command)) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 export class CodexAppServerAdapter implements AgentClient {
@@ -585,15 +609,21 @@ export class CodexAppServerAdapter implements AgentClient {
   }
 
   private async validateBinary(): Promise<void> {
-    if (this.codexBin !== DEFAULT_CODEX_BIN && this.codexBin.includes(path.sep)) {
-      if (!fs.existsSync(this.codexBin)) {
+    if (isPathLike(this.codexBin)) {
+      const found = findExistingBinary(this.codexBin);
+      if (!found) {
         throw new Error(`Codex binary not found at: ${this.codexBin}`);
       }
+      this.codexBin = found;
       return;
     }
 
     // Check default codex path
-    if (fs.existsSync(DEFAULT_CODEX_BIN)) return;
+    const localBinary = findExistingBinary(this.codexBin);
+    if (localBinary) {
+      this.codexBin = localBinary;
+      return;
+    }
 
     // Check common alternative locations
     const alternatives = [
@@ -602,8 +632,9 @@ export class CodexAppServerAdapter implements AgentClient {
       "/usr/bin/codex",
     ];
     for (const alt of alternatives) {
-      if (fs.existsSync(alt)) {
-        this.codexBin = alt;
+      const found = findExistingBinary(alt);
+      if (found) {
+        this.codexBin = found;
         return;
       }
     }
@@ -632,8 +663,12 @@ function findExecutableOnPath(command: string): string | null {
   const pathEnv = process.env.PATH ?? "";
   for (const dir of pathEnv.split(path.delimiter)) {
     if (!dir) continue;
-    const candidate = path.join(dir, command);
-    if (fs.existsSync(candidate)) return candidate;
+    for (const name of executableCandidates(command)) {
+      const candidate = path.join(dir, name);
+      if (fs.existsSync(candidate)) return candidate;
+    }
   }
   return null;
 }
+
+export const _codexWindowsCommandNeedsShellForTest = windowsCommandNeedsShell;
