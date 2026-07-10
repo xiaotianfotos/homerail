@@ -52,7 +52,10 @@ describe("Codex model catalog", () => {
                 hidden: false,
                 isDefault: true,
                 defaultReasoningEffort: "medium",
-                supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }],
+                supportedReasoningEfforts: [
+                  { reasoningEffort: "medium", description: "Balanced reasoning" },
+                  { reasoningEffort: "high", description: "Deeper reasoning" },
+                ],
                 serviceTiers: [{ id: "priority", name: "Fast", description: "Faster responses" }],
               },
               {
@@ -117,6 +120,10 @@ describe("Codex model catalog", () => {
           is_default: true,
           default_reasoning_effort: "medium",
           supported_reasoning_efforts: ["medium", "high"],
+          reasoning_effort_options: [
+            { reasoning_effort: "medium", description: "Balanced reasoning" },
+            { reasoning_effort: "high", description: "Deeper reasoning" },
+          ],
           service_tiers: [{ id: "priority", name: "Fast", description: "Faster responses" }],
         },
         {
@@ -127,6 +134,7 @@ describe("Codex model catalog", () => {
           is_default: false,
           default_reasoning_effort: "",
           supported_reasoning_efforts: [],
+          reasoning_effort_options: [],
           service_tiers: [],
         },
       ],
@@ -211,7 +219,7 @@ describe("Codex model catalog", () => {
     });
   });
 
-  it("rejects legacy Codex reasoning effort values before they can fall back to config.toml", async () => {
+  it("rejects a reasoning effort that the selected Codex model does not advertise", async () => {
     const catalog: CodexModelCatalog = {
       binary: "C:\\Codex\\codex.exe",
       models: [{
@@ -242,7 +250,91 @@ describe("Codex model catalog", () => {
     expect(response.status).toBe(400);
     expect(body).toMatchObject({
       success: false,
-      error: "Unsupported Manager Agent reasoning effort 'max'. Supported values: minimal, low, medium, high, xhigh.",
+      error: "Codex model 'gpt-5.5' does not support reasoning effort 'max'. Supported values: low, medium, high, xhigh.",
+    });
+  });
+
+  it("accepts Sol ultra reasoning and OpenAI's priority service tier", async () => {
+    const catalog: CodexModelCatalog = {
+      binary: "C:\\Codex\\codex.exe",
+      models: [{
+        id: "gpt-5.6-sol",
+        model: "gpt-5.6-sol",
+        display_name: "GPT-5.6-Sol",
+        description: "",
+        is_default: true,
+        default_reasoning_effort: "low",
+        supported_reasoning_efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        service_tiers: [{ id: "priority", name: "Fast", description: "1.5x speed, increased usage" }],
+      }],
+    };
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res, { loadCodexModels: async () => catalog });
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.6-sol",
+        reasoning_effort: "ultra",
+        service_tier: "priority",
+      }),
+    });
+    const body = await response.json() as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      success: true,
+      data: {
+        model_name: "gpt-5.6-sol",
+        reasoning_effort: "ultra",
+        service_tier: "priority",
+      },
+    });
+  });
+
+  it("rejects service tiers not advertised by the selected model", async () => {
+    const catalog: CodexModelCatalog = {
+      binary: "C:\\Codex\\codex.exe",
+      models: [{
+        id: "gpt-5.6-sol",
+        model: "gpt-5.6-sol",
+        display_name: "GPT-5.6-Sol",
+        description: "",
+        is_default: true,
+        default_reasoning_effort: "low",
+        supported_reasoning_efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        service_tiers: [{ id: "priority", name: "Fast", description: "1.5x speed, increased usage" }],
+      }],
+    };
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res, { loadCodexModels: async () => catalog });
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.6-sol",
+        reasoning_effort: "low",
+        service_tier: "flex",
+      }),
+    });
+    const body = await response.json() as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      success: false,
+      error: "Codex model 'gpt-5.6-sol' does not support service tier 'flex'. Supported values: standard, priority.",
     });
   });
 });

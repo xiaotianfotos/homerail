@@ -830,15 +830,25 @@ describe("/api/manager/chat", () => {
   });
 
   it("resolves codex_appserver as a Manager Agent harness without an LLM setting", () => {
-    const config = resolveManagerAgentConfig(undefined, undefined, "gpt-5.5", undefined, "codex_appserver");
+    const config = resolveManagerAgentConfig(
+      undefined,
+      undefined,
+      "gpt-5.6-sol",
+      undefined,
+      "codex_appserver",
+      "ultra",
+      "priority",
+    );
 
     expect(config).toMatchObject({
       provider_name: "",
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       agent_type: "codex_appserver",
       runtime_placement: "host",
       api_key: "",
       base_url: "",
+      reasoning_effort: "ultra",
+      service_tier: "priority",
     });
   });
 

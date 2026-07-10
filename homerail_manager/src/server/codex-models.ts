@@ -19,6 +19,11 @@ export interface CodexModelServiceTier {
   description: string;
 }
 
+export interface CodexReasoningEffortOption {
+  reasoning_effort: string;
+  description: string;
+}
+
 export interface CodexModel {
   id: string;
   model: string;
@@ -27,6 +32,7 @@ export interface CodexModel {
   is_default: boolean;
   default_reasoning_effort: string;
   supported_reasoning_efforts: string[];
+  reasoning_effort_options?: CodexReasoningEffortOption[];
   service_tiers: CodexModelServiceTier[];
 }
 
@@ -53,11 +59,17 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function normalizeReasoningEfforts(value: unknown): string[] {
+function normalizeReasoningEffortOptions(value: unknown): CodexReasoningEffortOption[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => stringValue(record(item)?.reasoningEffort ?? item))
-    .filter(Boolean);
+  return value.flatMap((item) => {
+    const raw = record(item);
+    const reasoningEffort = stringValue(raw?.reasoningEffort ?? item);
+    if (!reasoningEffort) return [];
+    return [{
+      reasoning_effort: reasoningEffort,
+      description: stringValue(raw?.description),
+    }];
+  });
 }
 
 function normalizeServiceTiers(value: unknown): CodexModelServiceTier[] {
@@ -81,6 +93,7 @@ function normalizeModel(value: unknown): CodexModel | null {
   const id = stringValue(raw.id) || stringValue(raw.model);
   if (!id) return null;
   const model = stringValue(raw.model) || id;
+  const reasoningEffortOptions = normalizeReasoningEffortOptions(raw.supportedReasoningEfforts);
   return {
     id,
     model,
@@ -88,7 +101,8 @@ function normalizeModel(value: unknown): CodexModel | null {
     description: stringValue(raw.description),
     is_default: raw.isDefault === true,
     default_reasoning_effort: stringValue(raw.defaultReasoningEffort),
-    supported_reasoning_efforts: normalizeReasoningEfforts(raw.supportedReasoningEfforts),
+    supported_reasoning_efforts: reasoningEffortOptions.map((option) => option.reasoning_effort),
+    reasoning_effort_options: reasoningEffortOptions,
     service_tiers: normalizeServiceTiers(raw.serviceTiers),
   };
 }

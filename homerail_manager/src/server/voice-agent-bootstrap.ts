@@ -1011,7 +1011,8 @@ async function submitVoiceWorkspaceToManagerAgent(
     const providerName = typeof config.provider_name === "string" ? config.provider_name : undefined;
     const modelName = typeof config.model_name === "string" ? config.model_name : undefined;
     const reasoningEffort = typeof config.reasoning_effort === "string" ? config.reasoning_effort : undefined;
-    agentConfig = resolveManagerAgentConfig(workspace.project_id ?? undefined, providerName, modelName, settingId, requestedHarness, reasoningEffort);
+    const serviceTier = typeof config.service_tier === "string" ? config.service_tier : null;
+    agentConfig = resolveManagerAgentConfig(workspace.project_id ?? undefined, providerName, modelName, settingId, requestedHarness, reasoningEffort, serviceTier);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return markManagerAgentBlocker(workspace, "manager_config_error", detail);

@@ -63,6 +63,12 @@ const currentCodexModelName = computed(() => {
     || null
 })
 const currentCodexModelLabel = computed(() => codexModelLabel(currentCodexModelName.value))
+const currentCodexServiceTierLabel = computed(() => {
+  const serviceTier = props.managerConfig?.service_tier
+  if (!serviceTier) return 'Standard'
+  const model = props.codexModels.find(item => item.model === currentCodexModelName.value)
+  return model?.service_tiers.find(tier => tier.id === serviceTier)?.name || serviceTier
+})
 const codexModelSummary = computed(() => props.codexModels
   .map(model => model.display_name || model.model)
   .join(', '))
@@ -288,7 +294,9 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
           class="flex h-10 items-center justify-between rounded-md border border-white/10 bg-[#343434] px-3 text-sm"
         >
           <span>{{ currentCodexModelLabel }}</span>
-          <span v-if="managerConfig?.reasoning_effort" class="text-xs text-gray-500">{{ managerConfig.reasoning_effort }}</span>
+          <span class="text-xs text-gray-500">
+            <template v-if="managerConfig?.reasoning_effort">{{ managerConfig.reasoning_effort }} · </template>{{ currentCodexServiceTierLabel }}
+          </span>
         </div>
       </div>
       <div v-else class="mt-4 grid gap-3 md:grid-cols-2">
@@ -376,7 +384,7 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
               <div class="mt-2 flex flex-wrap items-center gap-2">
                 <CapabilityBadge capability="llm" :active="true" />
                 <span v-if="currentManagerUsesCodex" class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">
-                  {{ currentCodexModelLabel }}<template v-if="managerConfig?.reasoning_effort"> · {{ managerConfig.reasoning_effort }}</template>
+                  {{ currentCodexModelLabel }}<template v-if="managerConfig?.reasoning_effort"> · {{ managerConfig.reasoning_effort }}</template> · {{ currentCodexServiceTierLabel }}
                 </span>
               </div>
             </div>

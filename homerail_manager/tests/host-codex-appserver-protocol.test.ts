@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  _buildCodexAppServerArgsForTest,
   _buildCodexThreadStartParamsForTest,
   _buildCodexTurnStartParamsForTest,
 } from "../src/server/host-codex-manager-agent.js";
@@ -11,15 +12,15 @@ describe("Host Codex app-server protocol params", () => {
       systemPrompt: "You are HomeRail.",
       cwd: "/workspace",
       model: "gpt-5.5",
-      serviceTier: "fast",
       sandbox: "workspace-write",
       dynamicTools: [{ name: "write_widget_file" }],
-      reasoningEffort: "xhigh",
+      reasoningEffort: "ultra",
     });
 
     expect(params).toMatchObject({
       model: "gpt-5.5",
-      config: { model_reasoning_effort: "xhigh" },
+      config: { model_reasoning_effort: "ultra" },
+      serviceTier: null,
     });
     expect(params).not.toHaveProperty("modelReasoningEffort");
   });
@@ -30,15 +31,21 @@ describe("Host Codex app-server protocol params", () => {
       prompt: "Run this task.",
       cwd: "/workspace",
       model: "gpt-5.5",
-      reasoningEffort: "xhigh",
+      reasoningEffort: "max",
+      serviceTier: "priority",
     });
 
     expect(params).toMatchObject({
       threadId: "thread-1",
       model: "gpt-5.5",
-      effort: "xhigh",
+      effort: "max",
+      serviceTier: "priority",
       input: [{ type: "text", text: "Run this task.", text_elements: [] }],
     });
     expect(params).not.toHaveProperty("modelReasoningEffort");
+  });
+
+  it("starts app-server without a hidden Fast service-tier override", () => {
+    expect(_buildCodexAppServerArgsForTest()).toEqual(["app-server"]);
   });
 });

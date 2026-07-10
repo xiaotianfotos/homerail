@@ -133,6 +133,7 @@ export interface ManagerAgentConfig {
   provider_name?: string | null
   model_name?: string | null
   reasoning_effort?: ManagerAgentReasoningEffort
+  service_tier?: string | null
   system_prompt: string
   session_policy: Record<string, unknown>
 }
@@ -145,6 +146,7 @@ export interface UpdateManagerAgentConfigRequest {
   provider_name?: string | null
   model_name?: string | null
   reasoning_effort?: ManagerAgentReasoningEffort
+  service_tier?: string | null
   system_prompt?: string
   session_policy?: Record<string, unknown>
 }
@@ -251,6 +253,11 @@ export interface CodexModelServiceTier {
   description: string
 }
 
+export interface CodexReasoningEffortOption {
+  reasoning_effort: string
+  description: string
+}
+
 export interface CodexModel {
   id: string
   model: string
@@ -259,6 +266,7 @@ export interface CodexModel {
   is_default: boolean
   default_reasoning_effort: string
   supported_reasoning_efforts: string[]
+  reasoning_effort_options?: CodexReasoningEffortOption[]
   service_tiers: CodexModelServiceTier[]
 }
 

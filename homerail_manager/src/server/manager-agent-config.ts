@@ -73,10 +73,6 @@ function _string(value: unknown): string | null | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function isReasoningEffort(value: string): value is ManagerAgentConfig["reasoning_effort"] {
-  return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
-}
-
 function autoDetectCodex(options: ManagerAgentConfigRoutesOptions): boolean {
   return options.autoDetectCodex ?? process.env.NODE_ENV !== "test";
 }
@@ -90,7 +86,12 @@ function validateManagerConfig(config: ReturnType<typeof readManagerAgentConfig>
     config.llm_setting_id ?? undefined,
     config.harness,
     config.reasoning_effort,
+    config.service_tier,
   );
+}
+
+function normalizedServiceTier(value: string | null): string | null {
+  return value === "fast" ? "priority" : value;
 }
 
 function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
@@ -99,16 +100,15 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
   const providerName = _string(patch.provider_name);
   const modelName = _string(patch.model_name);
   const reasoningEffort = _string(patch.reasoning_effort);
-  if (reasoningEffort !== undefined && reasoningEffort !== null && !isReasoningEffort(reasoningEffort)) {
-    throw new Error(`Unsupported Manager Agent reasoning effort '${reasoningEffort}'. Supported values: minimal, low, medium, high, xhigh.`);
-  }
+  const serviceTier = _string(patch.service_tier);
   const harness = normalizeManagerAgentHarness(patch.harness) ?? current.harness;
   const mergedSettingId = settingId === undefined ? current.llm_setting_id : settingId;
   const mergedProviderName = providerName === undefined ? current.provider_name : providerName;
   const mergedModelName = modelName === undefined ? current.model_name : modelName;
-  const mergedReasoningEffort = reasoningEffort && isReasoningEffort(reasoningEffort)
-    ? reasoningEffort
-    : current.reasoning_effort;
+  const mergedReasoningEffort = reasoningEffort ?? current.reasoning_effort;
+  const mergedServiceTier = serviceTier === undefined
+    ? current.service_tier
+    : normalizedServiceTier(serviceTier);
   if (harness === "codex_appserver") {
     return {
       ...current,
@@ -117,6 +117,7 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
       provider_name: null,
       model_name: mergedSettingId || mergedProviderName ? "gpt-5.5" : mergedModelName ?? "gpt-5.5",
       reasoning_effort: mergedReasoningEffort,
+      service_tier: mergedServiceTier,
     };
   }
   return {
@@ -126,6 +127,7 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
     provider_name: mergedProviderName,
     model_name: mergedModelName,
     reasoning_effort: mergedReasoningEffort,
+    service_tier: mergedServiceTier,
   };
 }
 
@@ -148,11 +150,23 @@ function validateCodexReasoningEffort(config: ManagerAgentConfig, catalog: Codex
   }
 }
 
-function preferredCodexConfig(catalog: CodexModelCatalog): Pick<ManagerAgentConfig, "model_name" | "reasoning_effort"> | null {
+function validateCodexServiceTier(config: ManagerAgentConfig, catalog: CodexModelCatalog): void {
+  if (config.harness !== "codex_appserver" || !config.service_tier) return;
+  const modelName = config.model_name || "gpt-5.5";
+  const model = catalog.models.find((item) => codexModelMatches(item, modelName));
+  if (!model) return;
+  const supported = model.service_tiers.map((tier) => tier.id);
+  if (!supported.includes(config.service_tier)) {
+    throw new Error(
+      `Codex model '${modelName}' does not support service tier '${config.service_tier}'. Supported values: standard${supported.length ? `, ${supported.join(", ")}` : ""}.`,
+    );
+  }
+}
+
+function preferredCodexConfig(catalog: CodexModelCatalog): Pick<ManagerAgentConfig, "model_name" | "reasoning_effort" | "service_tier"> | null {
   const candidates = catalog.models.flatMap((model) => {
-    const supported = model.supported_reasoning_efforts.filter(isReasoningEffort);
-    if (model.supported_reasoning_efforts.length > 0 && supported.length === 0) return [];
-    const defaultEffort = isReasoningEffort(model.default_reasoning_effort) &&
+    const supported = model.supported_reasoning_efforts;
+    const defaultEffort = model.default_reasoning_effort &&
       (supported.length === 0 || supported.includes(model.default_reasoning_effort))
       ? model.default_reasoning_effort
       : supported.includes("medium")
@@ -162,7 +176,7 @@ function preferredCodexConfig(catalog: CodexModelCatalog): Pick<ManagerAgentConf
   });
   const selected = candidates.find(({ model }) => model.is_default) ?? candidates[0];
   return selected
-    ? { model_name: selected.model.model, reasoning_effort: selected.reasoning_effort }
+    ? { model_name: selected.model.model, reasoning_effort: selected.reasoning_effort, service_tier: null }
     : null;
 }
 
@@ -189,6 +203,7 @@ export async function validateAndSaveManagerAgentConfig(
     const catalog = await (options.loadCodexModels ?? listCodexModels)();
     try {
       validateCodexReasoningEffort(next, catalog);
+      validateCodexServiceTier(next, catalog);
     } catch (error) {
       throw validationError(error);
     }

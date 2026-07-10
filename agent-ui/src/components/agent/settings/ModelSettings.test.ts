@@ -54,6 +54,7 @@ function managerConfig(harness: 'codex_appserver' | 'claude_agent_sdk') {
     provider_name: null,
     model_name: harness === 'codex_appserver' ? 'gpt-5.5' : null,
     reasoning_effort: 'xhigh' as const,
+    service_tier: null,
     system_prompt: '',
     session_policy: {},
   }
@@ -89,6 +90,7 @@ describe('ModelSettings detected Codex runtime', () => {
 
     expect(root.querySelector('[data-testid="agent-settings-manager-runtime-provider-readonly"]')?.textContent).toContain('Codex')
     expect(root.querySelector('[data-testid="agent-settings-manager-runtime-model-readonly"]')?.textContent).toContain('GPT-5.5')
+    expect(root.querySelector('[data-testid="agent-settings-manager-runtime-model-readonly"]')?.textContent).toContain('Standard')
     expect(root.querySelector('[data-testid="agent-settings-manager-runtime-count"]')?.textContent).toContain('4 个可用模型')
     expect(codexItem?.textContent).toContain('自动检测')
     expect(codexItem?.textContent).toContain('只读')

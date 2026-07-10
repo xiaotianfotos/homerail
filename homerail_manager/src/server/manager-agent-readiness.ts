@@ -203,6 +203,7 @@ export function managerAgentReadiness(
       config.llm_setting_id ?? undefined,
       config.harness,
       config.reasoning_effort,
+      config.service_tier,
     );
   } catch (err) {
     blockers.push({

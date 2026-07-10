@@ -32,7 +32,11 @@ import VoiceDynamicWidget from '@/components/agent/VoiceDynamicWidget.vue'
 import {
   isCodexModelUnavailable,
   resolveCodexModelOptions,
-  resolveSelectedCodexModel
+  resolveSelectedCodexModel,
+  resolveCodexReasoningEffortForModel,
+  resolveCodexReasoningEffortOptions,
+  resolveCodexServiceTierForModel,
+  resolveCodexServiceTierOptions
 } from '@/components/agent/codex-model-selection'
 import { voiceWs } from '@/api/clients/events-ws'
 import { useOnboardingStatus } from '@/composables/useOnboardingStatus'
@@ -375,17 +379,16 @@ const selectedManagerAgentModelId = computed(() => {
   return managerAgentModelOptions.value[0]?.id ?? ''
 })
 const codexReasoningEffort = computed(() => voiceAgentConfig.value?.reasoning_effort || 'low')
-const codexReasoningEffortOptions: Array<{
-  value: CodexReasoningEffort
-  label: string
-  description: string
-}> = [
-  { value: 'minimal', label: 'minimal', description: '最快，适合简单整理。' },
-  { value: 'low', label: 'low', description: '低推理，适合语音交互默认流程。' },
-  { value: 'medium', label: 'medium', description: '平衡速度和推理。' },
-  { value: 'high', label: 'high', description: '更强推理，响应更慢。' },
-  { value: 'xhigh', label: 'xhigh', description: '最高推理，通常不适合实时语音。' }
-]
+const codexReasoningEffortOptions = computed(() => resolveCodexReasoningEffortOptions(
+  codexModels.value,
+  selectedCodexModel.value,
+  codexReasoningEffort.value
+))
+const codexServiceTier = computed(() => voiceAgentConfig.value?.service_tier || '')
+const codexServiceTierOptions = computed(() => resolveCodexServiceTierOptions(
+  codexModels.value,
+  selectedCodexModel.value
+))
 const recognitionMode = computed<'omni' | 'asr'>(() =>
   voiceSettings.value?.recognition_mode === 'asr' ? 'asr' : 'omni'
 )
@@ -2397,8 +2400,20 @@ async function setVoiceAgentHarness(harness: VoiceAgentConfig['harness']): Promi
             null,
       reasoning_effort:
         harness === 'codex_appserver'
-          ? codexReasoningEffort.value
+          ? resolveCodexReasoningEffortForModel(
+              codexModels.value,
+              selectedCodexModel.value,
+              codexReasoningEffort.value
+            )
           : voiceAgentConfig.value?.reasoning_effort,
+      service_tier:
+        harness === 'codex_appserver'
+          ? resolveCodexServiceTierForModel(
+              codexModels.value,
+              selectedCodexModel.value,
+              codexServiceTier.value
+            )
+          : voiceAgentConfig.value?.service_tier,
       session_policy:
         harness === 'codex_appserver'
           ? {
@@ -2444,17 +2459,50 @@ function handleCodexReasoningEffortChange(event: Event): void {
   void setCodexReasoningEffort((event.target as HTMLSelectElement).value as CodexReasoningEffort)
 }
 
+async function setCodexServiceTier(serviceTier: string): Promise<void> {
+  if (!selectedCodexModel.value || configuredCodexModelUnavailable.value) return
+  voiceAgentSaving.value = true
+  voiceConfigError.value = ''
+  try {
+    const res = await updateVoiceAgentConfig({
+      harness: 'codex_appserver',
+      model_name: selectedCodexModel.value,
+      service_tier: serviceTier || null
+    })
+    voiceAgentConfig.value = res.data
+  } catch (err: any) {
+    voiceConfigError.value = err?.message || 'Codex speed save failed'
+  } finally {
+    voiceAgentSaving.value = false
+  }
+}
+
+function handleCodexServiceTierChange(event: Event): void {
+  void setCodexServiceTier((event.target as HTMLSelectElement).value)
+}
+
 async function setCodexModel(model: string): Promise<void> {
   if (!model || voiceAgentConfig.value?.model_name === model) return
   voiceAgentSaving.value = true
   voiceConfigError.value = ''
   try {
+    const reasoningEffort = resolveCodexReasoningEffortForModel(
+      codexModels.value,
+      model,
+      codexReasoningEffort.value
+    )
+    const serviceTier = resolveCodexServiceTierForModel(
+      codexModels.value,
+      model,
+      codexServiceTier.value
+    )
     const response = await updateVoiceAgentConfig({
       harness: 'codex_appserver',
       llm_setting_id: null,
       provider_name: null,
       model_name: model,
-      reasoning_effort: codexReasoningEffort.value
+      reasoning_effort: reasoningEffort,
+      service_tier: serviceTier
     })
     voiceAgentConfig.value = response.data
   } catch (err: any) {
@@ -4449,6 +4497,32 @@ function summarizeTask(value: string): string {
                 <option
                   v-for="option in codexReasoningEffortOptions"
                   :key="option.value"
+                  :value="option.value"
+                  class="bg-[#111315] text-white"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+
+            <label v-if="codexHarnessActive" class="voice-model-menu__row">
+              <span class="voice-model-menu__label">
+                <strong>Codex 速度</strong>
+                <em>{{
+                  codexServiceTierOptions.find(option => option.value === codexServiceTier)
+                    ?.description
+                }}</em>
+              </span>
+              <select
+                :value="codexServiceTier"
+                :disabled="voiceAgentSaving || !selectedCodexModel || configuredCodexModelUnavailable"
+                title="Codex speed"
+                data-testid="voice-model-agent-service-tier-select"
+                @change="handleCodexServiceTierChange"
+              >
+                <option
+                  v-for="option in codexServiceTierOptions"
+                  :key="option.value || 'standard'"
                   :value="option.value"
                   class="bg-[#111315] text-white"
                 >

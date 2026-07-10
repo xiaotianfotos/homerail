@@ -154,6 +154,7 @@ export function mutationRoutesHandler(
           requestedSettingId,
           savedManagerConfig.harness,
           savedManagerConfig.reasoning_effort,
+          savedManagerConfig.service_tier,
         );
         const parentSessionId = session && (existingSettingId || existingProvider || existingModel) &&
           (existingSettingId !== requestedSettingId || existingProvider !== agentConfig.provider_name || existingModel !== agentConfig.model)
