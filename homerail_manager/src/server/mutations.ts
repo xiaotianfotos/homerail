@@ -11,7 +11,10 @@ import {
   resolveManagerAgentConfig,
   type ManagerAgentContainerOptions,
 } from "./manager-agent-container.js";
-import { readManagerAgentConfig } from "../persistence/manager-agent-config.js";
+import {
+  ensurePreferredManagerAgentConfig,
+  type ManagerAgentConfigRoutesOptions,
+} from "./manager-agent-config.js";
 import { getSetting } from "../persistence/llm-settings.js";
 import { ManagerAgentRuntimeError, runManagerAgentTurn } from "./manager-agent-runtime.js";
 import { dagResourcesUnavailableForRun } from "./dag-resource-status.js";
@@ -92,6 +95,7 @@ export function mutationRoutesHandler(
   res: http.ServerResponse,
   changeOrchestrator: ChangeOrchestrator,
   managerAgentOptions?: ManagerAgentContainerOptions,
+  managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
 ): boolean {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
 
@@ -123,7 +127,7 @@ export function mutationRoutesHandler(
           : [];
         let sessionId = typeof b.session_id === "string" && b.session_id.trim() ? b.session_id.trim() : undefined;
         let session = sessionId ? loadSession(sessionId) : undefined;
-        const savedManagerConfig = readManagerAgentConfig();
+        const savedManagerConfig = await ensurePreferredManagerAgentConfig(managerAgentConfigOptions);
         const existingSettingId = typeof session?.metadata.manager_llm_setting_id === "string"
           ? session.metadata.manager_llm_setting_id
           : typeof session?.metadata.llm_setting_id === "string"

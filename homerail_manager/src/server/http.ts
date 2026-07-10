@@ -176,7 +176,7 @@ export function createServer(
       return;
     }
 
-    if (mutationRoutesHandler(req, res, changeOrchestrator, managerAgentContainerOptions)) {
+    if (mutationRoutesHandler(req, res, changeOrchestrator, managerAgentContainerOptions, managerAgentConfigOptions)) {
       return;
     }
 
@@ -224,7 +224,7 @@ export function createServer(
       return;
     }
 
-    if (managerAgentReadinessRoutesHandler(req, res, managerAgentContainerOptions)) {
+    if (managerAgentReadinessRoutesHandler(req, res, managerAgentContainerOptions, managerAgentConfigOptions)) {
       return;
     }
 

@@ -6,7 +6,6 @@ import * as path from "node:path";
 import { getDataRoot } from "../config/env.js";
 import { encodeJson, getDb, parseJsonRow } from "../persistence/db.js";
 import { getProject } from "../persistence/projects-changes.js";
-import { readManagerAgentConfig } from "../persistence/manager-agent-config.js";
 import { normalizeStatus } from "../persistence/status.js";
 import {
   resolveManagerAgentConfig,
@@ -22,6 +21,7 @@ import {
 } from "./manager-agent-runtime.js";
 import {
   ManagerAgentConfigValidationError,
+  ensurePreferredManagerAgentConfig,
   validateAndSaveManagerAgentConfig,
   type ManagerAgentConfigRoutesOptions,
 } from "./manager-agent-config.js";
@@ -352,9 +352,10 @@ function voiceCompatConfig(config: Record<string, unknown>): Record<string, unkn
   return { ...DEFAULT_VOICE_AGENT_CONFIG, ...config };
 }
 
-function readConfig(): Record<string, unknown> {
+async function readConfig(options: ManagerAgentConfigRoutesOptions = {}): Promise<Record<string, unknown>> {
   try {
-    return voiceCompatConfig(readManagerAgentConfig() as unknown as Record<string, unknown>);
+    const config = await ensurePreferredManagerAgentConfig(options);
+    return voiceCompatConfig(config as unknown as Record<string, unknown>);
   } catch {
     return voiceCompatConfig(DEFAULT_VOICE_AGENT_CONFIG);
   }
@@ -1138,10 +1139,11 @@ async function processTurn(
   text: string,
   options?: ManagerAgentContainerOptions,
   realtimeHooks?: ManagerAgentRealtimeHooks,
+  managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
 ): Promise<VoiceTurnResult> {
   appendConversation(workspace, "user", text);
   ensureVoiceSessionTitle(workspace, text);
-  const config = readConfig();
+  const config = await readConfig(managerAgentConfigOptions);
 
   // 真实调用 Manager Agent：与文本模式 /api/manager/chat 走同一条链路。
   // voice agent 和 manager agent 是同一个主 Agent 的不同 I/O 表面。
@@ -1204,7 +1206,9 @@ export function voiceAgentBootstrapHandler(
   }
 
   if (method === "GET" && pathname === "/api/voice-agent/config") {
-    ok(res, "Voice Agent config loaded", readConfig());
+    void readConfig(managerAgentConfigOptions)
+      .then((config) => ok(res, "Voice Agent config loaded", config))
+      .catch((error) => serverError(res, error instanceof Error ? error.message : String(error)));
     return true;
   }
 
@@ -1391,7 +1395,7 @@ export function voiceAgentBootstrapHandler(
           if (projectIdPatch && !workspace.project_id) workspace.project_id = projectIdPatch;
           registerTurn(sessionId, "running");
           try {
-            const r = await processTurn(workspace, text, managerAgentOptions);
+            const r = await processTurn(workspace, text, managerAgentOptions, undefined, managerAgentConfigOptions);
             const saved = saveWorkspace(workspace);
             completeTurn(sessionId, saved.progress_brief?.status || "done");
             return { result: r, saved };
@@ -1455,7 +1459,7 @@ export function voiceAgentBootstrapHandler(
                 const saved = saveWorkspace(workspace);
                 streamLine(res, { type: "speech", event, workspace: saved });
               },
-            });
+            }, managerAgentConfigOptions);
             const saved = saveWorkspace(workspace);
             completeTurn(sessionId, saved.progress_brief?.status || "done");
             return { result: r, saved };
@@ -1500,7 +1504,7 @@ export function voiceAgentBootstrapHandler(
       .then(async (body) => {
         const sessionId = decodeURIComponent(confirmMatch[1]);
         const requested = typeof body.confirmation_id === "string" ? body.confirmation_id : "";
-        const config = readConfig();
+        const config = await readConfig(managerAgentConfigOptions);
         // workspace 在锁内重新读取，确保 confirm 基于最新 workspace。
         const result = await withSessionLock(sessionId, async () => {
           const workspace = loadWorkspace(sessionId);
@@ -1546,7 +1550,7 @@ export function voiceAgentBootstrapHandler(
     readJsonBody(req)
       .then(async () => {
         const sessionId = decodeURIComponent(confirmStreamMatch[1]);
-        const config = readConfig();
+        const config = await readConfig(managerAgentConfigOptions);
         res.writeHead(200, { "Content-Type": "application/x-ndjson" });
         // workspace 在锁内重新读取。
         const result = await withSessionLock(sessionId, async () => {

@@ -1,8 +1,13 @@
 import * as http from "node:http";
 import {
+  hasManagerAgentConfig,
   readManagerAgentConfig,
   saveManagerAgentConfig,
 } from "../persistence/manager-agent-config.js";
+import {
+  findActiveClaudeSdkCompatibleSetting,
+  findActiveLlmRuntimeSetting,
+} from "../persistence/llm-settings.js";
 import { resolveManagerAgentConfig } from "./manager-agent-container.js";
 import { normalizeManagerAgentHarness } from "homerail-protocol";
 import { listCodexModels, type CodexModel, type CodexModelCatalog } from "./codex-models.js";
@@ -17,6 +22,7 @@ interface BaseResponse {
 
 export interface ManagerAgentConfigRoutesOptions {
   loadCodexModels?: () => Promise<CodexModelCatalog>;
+  autoDetectCodex?: boolean;
 }
 
 export class ManagerAgentConfigValidationError extends Error {
@@ -69,6 +75,10 @@ function _string(value: unknown): string | null | undefined {
 
 function isReasoningEffort(value: string): value is ManagerAgentConfig["reasoning_effort"] {
   return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
+}
+
+function autoDetectCodex(options: ManagerAgentConfigRoutesOptions): boolean {
+  return options.autoDetectCodex ?? process.env.NODE_ENV !== "test";
 }
 
 function validateManagerConfig(config: ReturnType<typeof readManagerAgentConfig>): void {
@@ -138,6 +148,24 @@ function validateCodexReasoningEffort(config: ManagerAgentConfig, catalog: Codex
   }
 }
 
+function preferredCodexConfig(catalog: CodexModelCatalog): Pick<ManagerAgentConfig, "model_name" | "reasoning_effort"> | null {
+  const candidates = catalog.models.flatMap((model) => {
+    const supported = model.supported_reasoning_efforts.filter(isReasoningEffort);
+    if (model.supported_reasoning_efforts.length > 0 && supported.length === 0) return [];
+    const defaultEffort = isReasoningEffort(model.default_reasoning_effort) &&
+      (supported.length === 0 || supported.includes(model.default_reasoning_effort))
+      ? model.default_reasoning_effort
+      : supported.includes("medium")
+        ? "medium"
+        : supported[0] ?? "medium";
+    return [{ model, reasoning_effort: defaultEffort }];
+  });
+  const selected = candidates.find(({ model }) => model.is_default) ?? candidates[0];
+  return selected
+    ? { model_name: selected.model.model, reasoning_effort: selected.reasoning_effort }
+    : null;
+}
+
 function validationError(error: unknown): ManagerAgentConfigValidationError {
   if (error instanceof ManagerAgentConfigValidationError) return error;
   return new ManagerAgentConfigValidationError(
@@ -168,6 +196,72 @@ export async function validateAndSaveManagerAgentConfig(
   return saveManagerAgentConfig(next as unknown as Record<string, unknown>);
 }
 
+export async function ensurePreferredManagerAgentConfig(
+  options: ManagerAgentConfigRoutesOptions = {},
+): Promise<ManagerAgentConfig> {
+  const current = readManagerAgentConfig();
+  if (hasManagerAgentConfig()) {
+    try {
+      validateManagerConfig(current);
+      return current;
+    } catch {
+      // Fall through to an available runtime when a stored config is stale.
+    }
+  }
+
+  const claudeSetting = findActiveClaudeSdkCompatibleSetting();
+  if (claudeSetting) {
+    const next = saveManagerAgentConfig({
+      harness: "claude_agent_sdk",
+      llm_setting_id: claudeSetting.id,
+      provider_name: claudeSetting.provider_id,
+      model_name: claudeSetting.model_name,
+    });
+    validateManagerConfig(next);
+    return next;
+  }
+
+  if (autoDetectCodex(options)) {
+    try {
+      const catalog = await (options.loadCodexModels ?? listCodexModels)();
+      const selected = preferredCodexConfig(catalog);
+      if (selected) {
+        return saveManagerAgentConfig({
+          harness: "codex_appserver",
+          llm_setting_id: null,
+          provider_name: null,
+          ...selected,
+        });
+      }
+    } catch {
+      // Codex is optional; continue to other configured runtimes.
+    }
+  }
+
+  const fallbackSetting = findActiveLlmRuntimeSetting();
+  if (fallbackSetting) {
+    try {
+      resolveManagerAgentConfig(
+        undefined,
+        fallbackSetting.provider_id,
+        fallbackSetting.model_name,
+        fallbackSetting.id,
+        "kimi_code",
+      );
+      return saveManagerAgentConfig({
+        harness: "kimi_code",
+        llm_setting_id: fallbackSetting.id,
+        provider_name: fallbackSetting.provider_id,
+        model_name: fallbackSetting.model_name,
+      });
+    } catch {
+      // No supported harness can execute this setting.
+    }
+  }
+
+  return current;
+}
+
 export function managerAgentConfigRoutesHandler(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -190,7 +284,9 @@ export function managerAgentConfigRoutesHandler(
   if (pathname !== "/api/manager-agent/config") return false;
 
   if (method === "GET") {
-    ok(res, "Manager Agent config loaded", readManagerAgentConfig());
+    void ensurePreferredManagerAgentConfig(options)
+      .then((config) => ok(res, "Manager Agent config loaded", config))
+      .catch((error) => serverError(res, error instanceof Error ? error.message : String(error)));
     return true;
   }
 

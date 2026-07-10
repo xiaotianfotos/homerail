@@ -104,6 +104,12 @@ export function readManagerAgentConfig(): ManagerAgentConfig {
   return DEFAULT_MANAGER_AGENT_CONFIG;
 }
 
+export function hasManagerAgentConfig(): boolean {
+  return Boolean(getDb()
+    .prepare("SELECT 1 FROM manager_agent_config WHERE id = ?")
+    .get("default"));
+}
+
 export function saveManagerAgentConfig(patch: Record<string, unknown>): ManagerAgentConfig {
   const current = readManagerAgentConfig();
   const next = _normalize({
