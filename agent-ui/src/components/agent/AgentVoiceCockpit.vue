@@ -294,7 +294,23 @@ let screenWakeLock: { release: () => Promise<void> } | null = null
 let noSleepPlayerActive = false
 let fullscreenRequesting = false
 
-const CLEAR_COMMANDS = ['删除', '清空', '清除', '重新来', '重来', '撤销', 'delete', 'clear', 'reset', 'start over', 'undo']
+const CLEAR_COMMANDS = [
+  '删除',
+  '刪除',
+  '清空',
+  '清除',
+  '重新来',
+  '重新來',
+  '重来',
+  '重來',
+  '撤销',
+  '撤銷',
+  'delete',
+  'clear',
+  'reset',
+  'start over',
+  'undo',
+]
 const VOICE_ROOT_LOCK_CLASS = 'voice-cockpit-root-active'
 const VOICE_TTS_CHANNEL = 'homerail.voice.tts.v1'
 const SILENT_WAV_DATA_URI =
@@ -1643,7 +1659,9 @@ function dagNodeDisplayName(node: { id: string; name: string }, index: number): 
   const normalized = raw.toLowerCase()
   const internalNames = new Set([
     '代码实现',
+    '代碼實現',
     '前端代码实现',
+    '前端代碼實現',
     'coding',
     'testing',
     'coder',
@@ -1660,7 +1678,8 @@ function isDuplicateTaskDraftWidget(widget: VoiceWidget): boolean {
   return (
     marker.includes('task-draft') ||
     marker.includes('task_draft') ||
-    widget.title.trim() === '任务草稿'
+    widget.title.trim() === '任务草稿' ||
+    widget.title.trim() === '任務草稿'
   )
 }
 
@@ -1723,7 +1742,7 @@ function xiaohongshuWidgetQuality(widget: VoiceWidget): number {
       ? cleanInlineText((widget.data.author as Record<string, unknown>).nickname, 80)
       : ''
   const tags = Array.isArray(widget.data?.tags) ? widget.data.tags.length : 0
-  const genericTitle = /^(小红书图文产物|小红书笔记|artifact)$/i.test(title)
+  const genericTitle = /^(小红书图文产物|小紅書圖文產物|小红书笔记|小紅書筆記|artifact)$/i.test(title)
   return (
     (genericTitle ? 0 : 100) +
     Math.min(body.length, 160) +
@@ -2121,7 +2140,8 @@ function widgetSurface(widget: VoiceWidget): 'task' | 'execution' {
     marker.includes('issue') ||
     marker.includes('orchestrator') ||
     marker.includes('提交') ||
-    marker.includes('执行')
+    marker.includes('执行') ||
+    marker.includes('執行')
   ) {
     return 'execution'
   }
@@ -3708,7 +3728,7 @@ function openSelectedWidgetPreview(): void {
   }
   const root = selectedWidgetElement()
   const previewButton = Array.from(root?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-    button => !button.disabled && /预览|打开/.test(button.textContent || button.title || '')
+    button => !button.disabled && /预览|預覽|打开|打開/.test(button.textContent || button.title || '')
   )
   previewButton?.click()
 }

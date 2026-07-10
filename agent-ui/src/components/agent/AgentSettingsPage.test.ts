@@ -97,7 +97,7 @@ function mountSettings(): { app: App<Element>; root: HTMLElement } {
 describe('AgentSettingsPage Android TV WireGuard settings', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
-    i18n.global.locale.value = 'zh-CN'
+    i18n.global.locale.value = 'zh-Hans'
     showToast.mockClear()
     loadManagerRuntimeOptions.mockClear()
     const storage = new Map<string, string>()

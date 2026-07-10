@@ -14,7 +14,14 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useStorage } from '@vueuse/core'
-import { zhCN, enUS, dateZhCN, dateEnUS } from 'naive-ui'
+import {
+  zhCN as naiveZhHans,
+  zhTW as naiveZhHant,
+  enUS as naiveEnUS,
+  dateZhCN as naiveDateZhHans,
+  dateZhTW as naiveDateZhHant,
+  dateEnUS as naiveDateEnUS,
+} from 'naive-ui'
 import type { NLocale, NDateLocale } from 'naive-ui'
 import {
   applyLocaleToDocument,
@@ -77,11 +84,15 @@ export const useUiStore = defineStore('ui', () => {
 
   // Naive UI 的语言环境
   const naiveLocale = computed<NLocale>(() => {
-    return locale.value === 'zh-CN' ? zhCN : enUS
+    if (locale.value === 'zh-Hans') return naiveZhHans
+    if (locale.value === 'zh-Hant') return naiveZhHant
+    return naiveEnUS
   })
 
   const naiveDateLocale = computed<NDateLocale>(() => {
-    return locale.value === 'zh-CN' ? dateZhCN : dateEnUS
+    if (locale.value === 'zh-Hans') return naiveDateZhHans
+    if (locale.value === 'zh-Hant') return naiveDateZhHant
+    return naiveDateEnUS
   })
 
   // --------------------------------------------------------------------------

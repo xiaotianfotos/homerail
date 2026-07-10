@@ -96,7 +96,7 @@ export function parseJsonl(content: string): UnifiedMessage[] {
  */
 export function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp)
-  return date.toLocaleTimeString('zh-CN', {
+  return date.toLocaleTimeString('zh-Hans', {
     hour12: false,
     hour: '2-digit',
     minute: '2-digit',

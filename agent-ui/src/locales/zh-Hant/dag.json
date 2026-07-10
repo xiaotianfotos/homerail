@@ -1,0 +1,68 @@
+{
+  "status": {
+    "active": "運行中",
+    "running": "運行中",
+    "completed": "已完成",
+    "failed": "失敗",
+    "cancelled": "已取消",
+    "ready": "就緒",
+    "pending": "等待",
+    "skipped": "跳過"
+  },
+  "runList": {
+    "title": "DAG Runs",
+    "empty": "還沒有任何 DAG run",
+    "emptyDescription": "通過語音或文字模式啓動一個 DAG，完成後會出現在這裏。",
+    "current": "當前",
+    "nodes": "{count} 節點",
+    "justNow": "剛剛",
+    "minutesAgo": "{count} 分鐘前",
+    "hoursAgo": "{count} 小時前"
+  },
+  "toolbar": {
+    "runtime": "DAG Runtime",
+    "nodesProgress": "{completed}/{total} 節點",
+    "tools": "工具",
+    "failures": "失敗",
+    "legend": {
+      "running": "運行",
+      "completed": "完成",
+      "failed": "失敗",
+      "ready": "就緒",
+      "pending": "等待",
+      "skipped": "跳過"
+    },
+    "back": "返回 Run 列表 (○)",
+    "runList": "Run 列表",
+    "resumePhysics": "恢復物理佈局",
+    "pausePhysics": "暫停物理佈局",
+    "resetView": "重置視圖",
+    "close": "關閉",
+    "closeEsc": "關閉 (ESC)"
+  },
+  "detail": {
+    "close": "關閉 (○)",
+    "task": "任務詳情",
+    "collapse": "■ 摺疊",
+    "role": "節點職責",
+    "userTask": "用戶任務",
+    "noTask": "無任務描述",
+    "logs": "聊天日誌",
+    "noLogs": "該節點暫無日誌"
+  },
+  "overlay": {
+    "loadingMetrics": "加載指標中...",
+    "runListHelp": "↑↓ 選擇 Run · × 打開 · ○ 退出",
+    "detailHelp": "↑↓ 切換面板 · ■ 展開/摺疊 · ←→ 遍歷節點 · 右搖桿 滾動 · ○ 關閉",
+    "graphHelp": "←→ 遍歷節點 · × 查看日誌 · ○ 返回 · 左搖桿 平移 · L2/R2 縮放"
+  },
+  "resources": {
+    "preparingShort": "準備 DAG",
+    "resources": "DAG 資源",
+    "preparation": "DAG 準備",
+    "preparing": "正在準備 DAG 資源",
+    "preparingDescription": "正在準備 DAG 的運行資源，稍後即可啓動。",
+    "skipped": "本次啓動跳過了 worker 鏡像構建，Docker DAG 可能暫時不可用。",
+    "status": "DAG 資源狀態"
+  }
+}

@@ -312,20 +312,20 @@ export function formatDate(
   const d = typeof date === 'string' ? new Date(date) : date
 
   if (format === 'short') {
-    return d.toLocaleDateString('zh-CN', {
+    return d.toLocaleDateString('zh-Hans', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
     })
   } else if (format === 'long') {
-    return d.toLocaleDateString('zh-CN', {
+    return d.toLocaleDateString('zh-Hans', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
       weekday: 'long'
     })
   } else {
-    return d.toLocaleString('zh-CN', {
+    return d.toLocaleString('zh-Hans', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',

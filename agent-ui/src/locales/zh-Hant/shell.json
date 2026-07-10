@@ -1,0 +1,109 @@
+{
+  "mode": {
+    "text": "文字模式",
+    "voice": "語音模式"
+  },
+  "updates": {
+    "downloadedVersion": "HomeRail {version} 已下載，重啓後安裝",
+    "downloaded": "新版本已下載，重啓後安裝",
+    "restart": "重啓更新"
+  },
+  "dashboard": {
+    "title": "DAG 儀表盤",
+    "running": "DAG 儀表盤：{count} 個運行正在執行",
+    "button": "儀表盤"
+  },
+  "details": {
+    "show": "顯示詳情",
+    "hide": "隱藏詳情",
+    "button": "詳情"
+  },
+  "settings": "設置",
+  "sidebar": {
+    "history": "歷史會話",
+    "newChat": "新對話",
+    "search": "搜索",
+    "projects": "項目",
+    "conversations": "對話",
+    "justNow": "剛剛",
+    "minutesAgo": "{count} 分鐘前",
+    "hoursAgo": "{count} 小時前",
+    "daysAgo": "{count} 天前"
+  },
+  "header": {
+    "selectProject": "選擇項目",
+    "noProjects": "暫無項目"
+  },
+  "landing": {
+    "tagline": "智能體編排平臺 · 描述任務，調動專業 Agent",
+    "placeholder": "描述你的任務...",
+    "voiceCockpit": "進入語音 Cockpit",
+    "history": "查看歷史會話",
+    "hints": {
+      "demo": "用 demo-ceremony 模板啓動演示",
+      "projects": "列出所有項目",
+      "review": "用 review-loop 做一個代碼審查"
+    }
+  },
+  "chat": {
+    "placeholder": "輸入任務描述...",
+    "welcome": "我是 HomeRail 智能體編排器。請輸入任務描述，我將協調多個專業 Agent 完成工作。",
+    "runStarting": "已開始運行編排...",
+    "runStarted": "DAG 已啓動：run_id={runId}",
+    "requestFailed": "請求失敗",
+    "error": "錯誤：{message}",
+    "empty": "輸入任務描述開始...",
+    "toolCalls": "工具調用",
+    "status": {
+      "completed": "已完成",
+      "failed": "失敗",
+      "running": "進行中"
+    },
+    "voice": {
+      "clickToStart": "點擊語音圖標開始",
+      "requestingMicrophone": "正在請求麥克風權限...",
+      "microphoneUnavailable": "麥克風不可用",
+      "notStarted": "語音輸入未啓動",
+      "unsupported": "當前瀏覽器不支持實時語音採集",
+      "listening": "正在聽...",
+      "listeningActive": "正在聆聽",
+      "stopped": "語音輸入已停止",
+      "recognizing": "正在識別...",
+      "noTranscript": "沒有識別到可用文本",
+      "inserted": "已寫入輸入框，繼續說話",
+      "recognitionFailed": "語音識別失敗",
+      "retry": "識別失敗，請再說一次",
+      "ttsFailed": "TTS 播放失敗",
+      "start": "開始語音輸入",
+      "stop": "停止語音輸入"
+    },
+    "send": "發送"
+  },
+  "startup": {
+    "ready": "{count} 個智能體已就緒，等待任務指令...",
+    "roles": {
+      "scout": "偵察兵",
+      "engineerA": "工程師 A",
+      "engineerB": "工程師 B",
+      "testerA": "質檢師 A",
+      "testerB": "質檢師 B",
+      "reviewer": "督導",
+      "publisher": "發佈官"
+    }
+  },
+  "workspace": {
+    "nodes": "{count} 個節點",
+    "progress": "{running} 個運行中 · {completed} 個已完成",
+    "experience": {
+      "notStarted": "經驗圖未寫入",
+      "applied": "經驗圖已寫入",
+      "failed": "經驗圖寫入失敗",
+      "skipped": "經驗圖已跳過",
+      "status": "經驗圖：{status}",
+      "retryTitle": "重試經驗圖寫入"
+    },
+    "emptyTitle": "無 DAG 運行",
+    "emptyDescription": "Manager 啓動運行後，這裏會顯示進度、節點和證據。",
+    "openSettings": "打開設置"
+  }
+}

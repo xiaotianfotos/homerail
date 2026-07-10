@@ -80,7 +80,7 @@ async function mountSettings(harness: 'codex_appserver' | 'claude_agent_sdk') {
 }
 
 beforeEach(() => {
-  i18n.global.locale.value = 'zh-CN'
+  i18n.global.locale.value = 'zh-Hans'
 })
 
 afterEach(() => {

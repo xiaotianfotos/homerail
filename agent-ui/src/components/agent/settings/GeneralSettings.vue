@@ -29,7 +29,7 @@ function selectLocale(nextLocale: AppLocale): void {
           <div class="text-sm font-medium text-white/85">{{ t('settings.general.language.title') }}</div>
           <div class="mt-1 text-sm text-white/42">{{ t('settings.general.language.description') }}</div>
 
-          <div class="mt-4 grid max-w-xl gap-2 sm:grid-cols-2" role="radiogroup" :aria-label="t('settings.general.language.title')">
+          <div class="mt-4 grid max-w-2xl gap-2 sm:grid-cols-3" role="radiogroup" :aria-label="t('settings.general.language.title')">
             <button
               v-for="option in APP_LOCALE_OPTIONS"
               :key="option.code"

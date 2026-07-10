@@ -8,7 +8,7 @@ describe('AgentModeTopBar localization', () => {
   let root: HTMLElement | null = null
 
   beforeEach(() => {
-    i18n.global.locale.value = 'zh-CN'
+    i18n.global.locale.value = 'zh-Hans'
   })
 
   afterEach(() => {

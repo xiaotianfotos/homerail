@@ -1,8 +1,8 @@
-export const APP_LOCALES = ['zh-CN', 'en-US'] as const
+export const APP_LOCALES = ['zh-Hans', 'zh-Hant', 'en-US'] as const
 
 export type AppLocale = (typeof APP_LOCALES)[number]
 
-export const DEFAULT_APP_LOCALE: AppLocale = 'zh-CN'
+export const DEFAULT_APP_LOCALE: AppLocale = 'zh-Hans'
 export const LOCALE_STORAGE_KEY = 'app-locale'
 
 export interface AppLocaleOption {
@@ -12,15 +12,25 @@ export interface AppLocaleOption {
 }
 
 export const APP_LOCALE_OPTIONS: readonly AppLocaleOption[] = [
-  { code: 'zh-CN', label: '简体中文', translationKey: 'settings.general.language.options.zhCN' },
+  { code: 'zh-Hans', label: '简体中文', translationKey: 'settings.general.language.options.zhHans' },
+  { code: 'zh-Hant', label: '繁體中文', translationKey: 'settings.general.language.options.zhHant' },
   { code: 'en-US', label: 'English', translationKey: 'settings.general.language.options.enUS' },
 ]
 
 export function normalizeAppLocale(value: unknown): AppLocale | null {
   if (typeof value !== 'string') return null
-  const normalized = value.trim().toLowerCase().replace('_', '-')
-  if (normalized === 'zh' || normalized.startsWith('zh-')) return 'zh-CN'
-  if (normalized === 'en' || normalized.startsWith('en-')) return 'en-US'
+  const normalized = value.trim().replace(/_/g, '-')
+  if (!normalized) return null
+
+  try {
+    const locale = new Intl.Locale(normalized)
+    if (locale.language === 'zh') {
+      return locale.maximize().script === 'Hant' ? 'zh-Hant' : 'zh-Hans'
+    }
+    if (locale.language === 'en') return 'en-US'
+  } catch {
+    // Invalid or unsupported BCP 47 tag.
+  }
   return null
 }
 

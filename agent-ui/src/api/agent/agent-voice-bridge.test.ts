@@ -28,13 +28,13 @@ describe('Agent voice-text bridge', () => {
     const create = vi.spyOn(agentSessionApi, 'createNativeSession').mockResolvedValue(session)
 
     await expect(
-      createVoiceModeSession({ source: 'attempted-override', locale: 'zh-CN' })
+      createVoiceModeSession({ source: 'attempted-override', locale: 'zh-Hans' })
     ).resolves.toBe(session)
     expect(create).toHaveBeenCalledWith({
       metadata: {
         voice_mode: true,
         source: 'attempted-override',
-        locale: 'zh-CN'
+        locale: 'zh-Hans'
       }
     })
   })

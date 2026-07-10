@@ -28,7 +28,8 @@
       "description": "Choose the language used by the HomeRail interface.",
       "current": "Current language",
       "options": {
-        "zhCN": "Simplified Chinese",
+        "zhHans": "Simplified Chinese",
+        "zhHant": "Traditional Chinese",
         "enUS": "English"
       }
     }

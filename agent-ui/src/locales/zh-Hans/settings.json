@@ -28,7 +28,8 @@
       "description": "选择 HomeRail 界面使用的语言。",
       "current": "当前语言",
       "options": {
-        "zhCN": "简体中文",
+        "zhHans": "简体中文",
+        "zhHant": "繁体中文",
         "enUS": "英语"
       }
     }

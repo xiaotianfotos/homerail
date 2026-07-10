@@ -1,0 +1,210 @@
+{
+  "title": "Agent 編排器",
+  "header": {
+    "title": "OmniArtifacts 編排器",
+    "newSession": "新會話"
+  },
+  "chat": {
+    "placeholder": "輸入任務描述，或直接對話...",
+    "systemWelcome": "你好，我是編排器。請描述你想完成的任務。",
+    "sending": "發送中...",
+    "send": "發送",
+    "stop": "停止",
+    "analyzing": "正在分析問題...",
+    "creatingChange": "正在創建任務...",
+    "startingRun": "正在啓動執行...",
+    "toolCall": {
+      "searchCode": "搜索相關代碼",
+      "createChange": "創建任務",
+      "createYaml": "創建編排",
+      "startRun": "啓動執行",
+      "completed": "已完成",
+      "inProgress": "執行中...",
+      "failed": "失敗"
+    }
+  },
+  "workspace": {
+    "title": "Agent 工作區",
+    "tabs": {
+      "team": "團隊",
+      "dag": "DAG",
+      "log": "日誌"
+    },
+    "status": {
+      "idle": "空閒",
+      "running": "運行中",
+      "completed": "已完成",
+      "failed": "失敗"
+    },
+    "empty": {
+      "team": "暫無團隊信息",
+      "dag": "暫無 DAG 拓撲",
+      "log": "選擇節點查看日誌"
+    }
+  },
+  "team": {
+    "title": "團隊陣容",
+    "status": {
+      "pending": "等待中",
+      "ready": "就緒",
+      "running": "運行中",
+      "completed": "已完成",
+      "failed": "失敗",
+      "skipped": "已跳過"
+    },
+    "clickToViewLog": "點擊查看日誌"
+  },
+  "statusBar": {
+    "status": {
+      "pending": "等待",
+      "ready": "就緒",
+      "running": "運行中",
+      "completed": "已完成",
+      "failed": "失敗",
+      "skipped": "已跳過"
+    },
+    "viewLog": "查看日誌",
+    "stop": "停止",
+    "allLogs": "全部日誌",
+    "stopNotImplemented": "停止功能尚未實現"
+  },
+  "nav": {
+    "agent": "Agent"
+  },
+  "inspector": {
+    "title": "檢查器",
+    "noDag": "無 DAG 運行",
+    "noNodes": "暫無節點",
+    "selectNodeLogs": "選擇節點查看日誌",
+    "noLogs": "暫無日誌",
+    "tabs": {
+      "progress": "進度",
+      "artifacts": "產物",
+      "evidence": "證據",
+      "settings": "設置",
+      "nodes": "節點",
+      "topology": "拓撲",
+      "logs": "日誌"
+    }
+  },
+  "progress": {
+    "title": "運行進度",
+    "noRun": "未選擇運行",
+    "noDag": "暫無 DAG 數據",
+    "noNodes": "暫無 Worker",
+    "workerRatio": "{completed}/{total} 個 Worker",
+    "items": {
+      "run": "運行",
+      "dag": "DAG 健康",
+      "workers": "Worker",
+      "audit": "用量審計",
+      "scorecard": "Scorecard"
+    },
+    "auditReady": "審計摘要可用",
+    "auditPending": "等待審計數據",
+    "auditLoading": "正在加載審計摘要...",
+    "auditUnavailable": "審計不可用",
+    "scorecardPending": "等待 DAG 證據",
+    "scorecardResult": "{result} {score}/{total}",
+    "scorecardUnavailable": "Scorecard 不可用",
+    "scorecardLoading": "正在計算 scorecard...",
+    "scorecardClean": "未發現 scorecard 失敗項",
+    "scorecardFailures": {
+      "failedNodes": "{count} 個 Worker 失敗",
+      "testerValidation": "Tester 未運行任務相關驗證命令",
+      "testerOutput": "Tester 未包含驗證輸出",
+      "reviewerDiff": "Reviewer 未檢查 diff",
+      "gitAddDot": "Committer 使用了寬泛 git add",
+      "contractHook": "Handoff contract hook 失敗",
+      "contractSkipped": "Handoff contract hook 被跳過"
+    },
+    "failedNodes": "失敗 Worker",
+    "viewEvidence": "查看日誌",
+    "tokens": "Tokens",
+    "cost": "成本",
+    "agents": "{count} 個 Agent",
+    "workerEvidence": "Worker 證據",
+    "toolCalls": "工具調用",
+    "toolResults": "工具結果",
+    "background": "後臺任務",
+    "backgroundQuiet": "暫無後臺任務"
+  },
+  "evidence": {
+    "title": "Worker 證據",
+    "loading": "加載中",
+    "loadFailed": "證據加載失敗",
+    "selectNode": "選擇 Worker 查看證據",
+    "toolCalls": "工具調用",
+    "toolResults": "工具結果",
+    "handoffs": "Handoffs",
+    "errors": "錯誤",
+    "timeline": "證據時間線",
+    "noText": "暫無文本輸出",
+    "noToolCalls": "暫無工具調用",
+    "noMessages": "暫無消息"
+  },
+  "artifacts": {
+    "title": "Git / PR 產物",
+    "loading": "加載中",
+    "loadFailed": "產物加載失敗",
+    "branch": "分支",
+    "current": "當前",
+    "base": "基線",
+    "pullRequest": "Pull Request",
+    "sourceIssue": "來源 Issue",
+    "changedFiles": "變更文件",
+    "moreLinks": "更多鏈接",
+    "unavailable": "不可用",
+    "noPullRequest": "暫未發現 PR 鏈接",
+    "noIssue": "暫未發現來源 Issue",
+    "noChangedFiles": "暫未發現 diff 文件",
+    "noMoreLinks": "暫無更多鏈接",
+    "review": {
+      "approved": "review 通過",
+      "changes_requested": "需要修改",
+      "unknown": "未確認"
+    }
+  },
+  "settings": {
+    "title": "Agent 設置",
+    "refresh": "刷新",
+    "loadFailed": "設置加載失敗",
+    "managerApi": "Manager API",
+    "gitServers": "Git 服務器",
+    "providers": "供應商",
+    "models": "模型配置",
+    "defaults": "默認編排",
+    "defaultsGap": "當前後端還沒有統一的默認 DAG 模板 / 默認 Worker provider API；這裏先暴露缺口，避免前端僞造不可持久化設置。",
+    "verify": "驗證",
+    "valid": "有效",
+    "invalid": "無效",
+    "active": "啓用",
+    "inactive": "停用",
+    "unavailable": "不可用",
+    "noGitServers": "暫無 Git 服務器配置",
+    "noProviders": "暫無供應商配置",
+    "noModels": "暫無啓用模型配置",
+    "health": {
+      "unknown": "未知",
+      "healthy": "健康",
+      "failed": "不可用"
+    }
+  },
+  "sidebar": {
+    "newSession": "新會話",
+    "empty": "暫無歷史會話",
+    "runs": "{count} 個 Run",
+    "delete": "刪除會話",
+    "selectProject": "選擇項目",
+    "noProjects": "暫無項目",
+    "search": "搜索會話...",
+    "dagRuns": "DAG 運行",
+    "noMatch": "沒有匹配的會話",
+    "status": {
+      "running": "運行中",
+      "completed": "已完成",
+      "failed": "失敗",
+      "interrupted": "已中斷"
+    }
+  }
+}
