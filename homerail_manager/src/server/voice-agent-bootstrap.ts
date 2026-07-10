@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { getDataRoot } from "../config/env.js";
 import { encodeJson, getDb, parseJsonRow } from "../persistence/db.js";
 import { getProject } from "../persistence/projects-changes.js";
-import { readManagerAgentConfig, saveManagerAgentConfig } from "../persistence/manager-agent-config.js";
+import { readManagerAgentConfig } from "../persistence/manager-agent-config.js";
 import { normalizeStatus } from "../persistence/status.js";
 import {
   resolveManagerAgentConfig,
@@ -20,7 +20,11 @@ import {
   runManagerAgentTurnStream,
   type RunManagerAgentTurnInput,
 } from "./manager-agent-runtime.js";
-import { validateConfigPatch } from "./manager-agent-config.js";
+import {
+  ManagerAgentConfigValidationError,
+  validateAndSaveManagerAgentConfig,
+  type ManagerAgentConfigRoutesOptions,
+} from "./manager-agent-config.js";
 import { resolveCodexBinary, runCodexCommandSync } from "./codex-binary.js";
 import { managerAgentRuntimePlacementForHarness, normalizeManagerAgentHarness } from "homerail-protocol";
 import {
@@ -356,9 +360,11 @@ function readConfig(): Record<string, unknown> {
   }
 }
 
-function saveConfig(patch: Record<string, unknown>): Record<string, unknown> {
-  validateConfigPatch(patch);
-  const saved = saveManagerAgentConfig(patch) as unknown as Record<string, unknown>;
+async function saveConfig(
+  patch: Record<string, unknown>,
+  options: ManagerAgentConfigRoutesOptions,
+): Promise<Record<string, unknown>> {
+  const saved = await validateAndSaveManagerAgentConfig(patch, options) as unknown as Record<string, unknown>;
   return voiceCompatConfig(saved);
 }
 
@@ -1187,6 +1193,7 @@ export function voiceAgentBootstrapHandler(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   managerAgentOptions?: ManagerAgentContainerOptions,
+  managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
 ): boolean {
   const url = new URL(req.url || "/", "http://localhost");
   const pathname = url.pathname;
@@ -1256,8 +1263,17 @@ export function voiceAgentBootstrapHandler(
 
   if (method === "PUT" && pathname === "/api/voice-agent/config") {
     readJsonBody(req)
-      .then((body) => ok(res, "Voice Agent config saved", saveConfig(body)))
-      .catch((err) => serverError(res, err instanceof Error ? err.message : String(err)));
+      .then(async (body) => {
+        try {
+          const next = await saveConfig(body, managerAgentConfigOptions);
+          ok(res, "Voice Agent config saved", next);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (err instanceof ManagerAgentConfigValidationError) badRequest(res, message);
+          else serverError(res, message);
+        }
+      })
+      .catch((err) => badRequest(res, err instanceof Error ? err.message : "Invalid JSON body"));
     return true;
   }
 

@@ -19,6 +19,16 @@ export interface ManagerAgentConfigRoutesOptions {
   loadCodexModels?: () => Promise<CodexModelCatalog>;
 }
 
+export class ManagerAgentConfigValidationError extends Error {
+  readonly cause: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "ManagerAgentConfigValidationError";
+    this.cause = cause;
+  }
+}
+
 function json(res: http.ServerResponse, status: number, body: BaseResponse): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
@@ -109,10 +119,6 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
   };
 }
 
-export function validateConfigPatch(patch: Record<string, unknown>): void {
-  validateManagerConfig(patchedConfig(patch));
-}
-
 function codexModelMatches(model: CodexModel, modelName: string): boolean {
   return model.model === modelName || model.id === modelName;
 }
@@ -132,15 +138,34 @@ function validateCodexReasoningEffort(config: ManagerAgentConfig, catalog: Codex
   }
 }
 
-async function validateConfigPatchWithCatalog(
+function validationError(error: unknown): ManagerAgentConfigValidationError {
+  if (error instanceof ManagerAgentConfigValidationError) return error;
+  return new ManagerAgentConfigValidationError(
+    error instanceof Error ? error.message : String(error),
+    error,
+  );
+}
+
+export async function validateAndSaveManagerAgentConfig(
   patch: Record<string, unknown>,
-  loadCodexModels: () => Promise<CodexModelCatalog>,
-): Promise<void> {
-  const next = patchedConfig(patch);
-  validateManagerConfig(next);
-  if (next.harness !== "codex_appserver") return;
-  const catalog = await loadCodexModels();
-  validateCodexReasoningEffort(next, catalog);
+  options: ManagerAgentConfigRoutesOptions = {},
+): Promise<ManagerAgentConfig> {
+  let next: ManagerAgentConfig;
+  try {
+    next = patchedConfig(patch);
+    validateManagerConfig(next);
+  } catch (error) {
+    throw validationError(error);
+  }
+  if (next.harness === "codex_appserver") {
+    const catalog = await (options.loadCodexModels ?? listCodexModels)();
+    try {
+      validateCodexReasoningEffort(next, catalog);
+    } catch (error) {
+      throw validationError(error);
+    }
+  }
+  return saveManagerAgentConfig(next as unknown as Record<string, unknown>);
 }
 
 export function managerAgentConfigRoutesHandler(
@@ -173,15 +198,15 @@ export function managerAgentConfigRoutesHandler(
     readJsonBody(req)
       .then(async (body) => {
         try {
-          await validateConfigPatchWithCatalog(body, options.loadCodexModels ?? listCodexModels);
+          const next = await validateAndSaveManagerAgentConfig(body, options);
+          ok(res, "Manager Agent config saved", next);
         } catch (err) {
-          badRequest(res, err instanceof Error ? err.message : String(err));
-          return;
+          const message = err instanceof Error ? err.message : String(err);
+          if (err instanceof ManagerAgentConfigValidationError) badRequest(res, message);
+          else serverError(res, message);
         }
-        const next = saveManagerAgentConfig(body);
-        ok(res, "Manager Agent config saved", next);
       })
-      .catch((err) => serverError(res, err instanceof Error ? err.message : String(err)));
+      .catch((err) => badRequest(res, err instanceof Error ? err.message : "Invalid JSON body"));
     return true;
   }
 

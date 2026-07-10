@@ -22,6 +22,21 @@ import {
 } from "../src/server/host-codex-manager-agent.js";
 import { _clearNodes } from "../src/node/registry.js";
 import { managerAgentHostPort, registerFakeDockerNode } from "./helpers/fake-manager-agent-node.js";
+import type { CodexModelCatalog } from "../src/server/codex-models.js";
+
+const TEST_CODEX_MODEL_CATALOG: CodexModelCatalog = {
+  binary: "codex",
+  models: [{
+    id: "gpt-5.5",
+    model: "gpt-5.5",
+    display_name: "GPT-5.5",
+    description: "",
+    is_default: true,
+    default_reasoning_effort: "medium",
+    supported_reasoning_efforts: ["low", "medium", "high", "xhigh"],
+    service_tiers: [],
+  }],
+};
 
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -83,7 +98,9 @@ describe("voice bootstrap routes", () => {
     _clearStoredVoiceSettings();
     _clearAllSettings();
     _clearNodes();
-    server = createServer(0, undefined, undefined, false);
+    server = createServer(0, undefined, undefined, false, {
+      loadCodexModels: async () => TEST_CODEX_MODEL_CATALOG,
+    });
   });
 
   afterEach(async () => {
@@ -131,6 +148,42 @@ describe("voice bootstrap routes", () => {
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data.agent_type).toBe("manager_agent");
+  });
+
+  it("rejects unsupported Codex reasoning efforts through the legacy config route without persisting", async () => {
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const response = await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.5",
+        reasoning_effort: "minimal",
+      }),
+    });
+    const body = await response.json() as { success: boolean; error: string };
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      success: false,
+      error: "Codex model 'gpt-5.5' does not support reasoning effort 'minimal'. Supported values: low, medium, high, xhigh.",
+    });
+    expect(getDb()
+      .prepare("SELECT id FROM manager_agent_config WHERE id = ?")
+      .get("default"))
+      .toBeUndefined();
+
+    const stored = await fetch(`${baseUrl}/api/manager-agent/config`);
+    const storedBody = await stored.json() as {
+      data: { harness: string; model_name: string | null; reasoning_effort: string };
+    };
+    expect(storedBody.data).toMatchObject({
+      harness: "claude_agent_sdk",
+      model_name: null,
+      reasoning_effort: "low",
+    });
   });
 
   it("stores and returns the current-session pointer for cross-device sync", async () => {
