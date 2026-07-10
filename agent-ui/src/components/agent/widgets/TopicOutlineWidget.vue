@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ExternalLink, Lightbulb, Target, Users } from 'lucide-vue-next'
 import type { VoiceWidget } from '@/api/agent'
 
@@ -19,6 +20,8 @@ const props = defineProps<{
   widget: VoiceWidget
 }>()
 
+const { t } = useI18n()
+
 const data = computed(() => props.widget.data ?? {})
 const brief = computed(() => text(data.value.brief || props.widget.body, 220))
 const audience = computed(() => text(data.value.audience, 60))
@@ -34,7 +37,7 @@ const outline = computed<OutlineSection[]>(() => {
     const row = item && typeof item === 'object' ? item as Record<string, unknown> : {}
     const points = Array.isArray(row.points) ? row.points.map(point => text(point, 120)).filter(Boolean) : []
     return {
-      title: text(row.title || `段落 ${index + 1}`, 72),
+      title: text(row.title || t('voice.widgets.section', { index: index + 1 }), 72),
       status: text(row.status || 'draft', 28),
       points,
     }
@@ -76,7 +79,7 @@ function clampPercent(value: unknown): number {
   <section class="topic-outline-widget">
     <div class="topic-outline-widget__brief-pane">
       <div class="topic-outline-widget__pane-head">
-        <span>需求整理</span>
+        <span>{{ t('voice.widgets.requirements') }}</span>
         <em>live</em>
       </div>
 
@@ -90,12 +93,12 @@ function clampPercent(value: unknown): number {
       </div>
 
       <div v-if="thesis" class="topic-outline-widget__thesis">
-        <span>主张</span>
+        <span>{{ t('voice.widgets.claim') }}</span>
         <strong>{{ thesis }}</strong>
       </div>
 
       <div v-if="questions.length" class="topic-outline-widget__questions">
-        <span>待确认</span>
+        <span>{{ t('voice.widgets.pending') }}</span>
         <p v-for="item in questions.slice(0, 3)" :key="item">{{ item }}</p>
       </div>
 
@@ -117,8 +120,8 @@ function clampPercent(value: unknown): number {
 
     <div class="topic-outline-widget__outline-pane">
       <div class="topic-outline-widget__pane-head">
-        <span>实时大纲</span>
-        <em v-if="outline.length">{{ outline.length }} 段</em>
+        <span>{{ t('voice.widgets.outline') }}</span>
+        <em v-if="outline.length">{{ t('voice.widgets.sections', { count: outline.length }) }}</em>
       </div>
 
       <div v-if="outline.length" class="topic-outline-widget__outline">
@@ -138,7 +141,7 @@ function clampPercent(value: unknown): number {
         </article>
       </div>
 
-      <div v-else class="topic-outline-widget__empty">等待大纲更新</div>
+      <div v-else class="topic-outline-widget__empty">{{ t('voice.widgets.waitingOutline') }}</div>
     </div>
   </section>
 </template>

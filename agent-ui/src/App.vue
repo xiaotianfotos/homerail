@@ -24,6 +24,8 @@ import { provideToast } from '@/components/controls/useToast'
 // GLOBAL TOAST NOTIFICATION
 // ============================================================================
 const toast = provideToast()
+const uiStore = useUiStore()
+const { locale: i18nLocale, t } = useI18n()
 
 function messageOf(err: unknown): string {
   if (err instanceof Error) return err.message
@@ -31,7 +33,7 @@ function messageOf(err: unknown): string {
     const message = (err as { message?: unknown }).message
     if (typeof message === 'string' && message.trim()) return message
   }
-  return String(err || '未知错误')
+  return String(err || t('common.messages.unknownError'))
 }
 
 function notifyGlobalError(message: string): void {
@@ -49,15 +51,8 @@ function handleWindowError(event: ErrorEvent): void {
 // ============================================================================
 // UI STORE & i18n (needed by all routes)
 // ============================================================================
-const uiStore = useUiStore()
-const { locale: i18nLocale } = useI18n()
-
 onMounted(async () => {
-  // 初始化 UI store first, which loads locale from localStorage
   uiStore.initialize()
-
-  // Then sync i18n with whatever locale was loaded
-  i18nLocale.value = uiStore.locale
 
   window.addEventListener('unhandledrejection', handleUnhandledRejection)
   window.addEventListener('error', handleWindowError)
@@ -73,6 +68,7 @@ watch(
   () => uiStore.locale,
   (newLocale) => {
     i18nLocale.value = newLocale
-  }
+  },
+  { immediate: true },
 )
 </script>

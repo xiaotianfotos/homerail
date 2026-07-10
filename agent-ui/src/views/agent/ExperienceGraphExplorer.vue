@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Database, Filter, Network, RefreshCw, Search, XCircle } from 'lucide-vue-next'
 import { getExperienceGraph } from '@/api/services/experience-api'
@@ -19,6 +20,7 @@ interface CanvasPoint {
 }
 
 const router = useRouter()
+const { t } = useI18n()
 const graph = ref<ExperienceGraphDetail | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const canvasNodes = ref<CanvasNode[]>([])
@@ -477,15 +479,15 @@ onUnmounted(() => {
     <div class="experience-shell">
       <header class="experience-topbar">
         <div class="experience-topbar__left">
-          <button class="experience-icon-button" title="返回 Agent" aria-label="返回 Agent" @click="router.push('/agent')">
+          <button class="experience-icon-button" :title="t('experience.back')" :aria-label="t('experience.back')" @click="router.push('/agent')">
             <ArrowLeft class="h-4 w-4" />
           </button>
           <div class="experience-brand">HomeRail</div>
           <div class="experience-topbar__divider" />
           <div class="experience-title-group">
             <div class="experience-title-line">
-              <h1>运行经验图谱</h1>
-              <span>记忆</span>
+              <h1>{{ t('experience.title') }}</h1>
+              <span>{{ t('experience.memory') }}</span>
             </div>
             <div class="experience-path-line" :title="graph?.graph_path || 'assets/run-experience-memory/db/graph.json'">
               <Database class="h-3.5 w-3.5" />
@@ -494,8 +496,8 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="experience-topbar__metrics">
-          <span>{{ graph?.node_count ?? 0 }}/{{ graph?.total_node_count ?? 0 }} 节点</span>
-          <span>{{ graph?.relationship_count ?? 0 }}/{{ graph?.total_relationship_count ?? 0 }} 关系</span>
+          <span>{{ t('experience.nodes', { shown: graph?.node_count ?? 0, total: graph?.total_node_count ?? 0 }) }}</span>
+          <span>{{ t('experience.relationships', { shown: graph?.relationship_count ?? 0, total: graph?.total_relationship_count ?? 0 }) }}</span>
         </div>
       </header>
 
@@ -503,24 +505,24 @@ onUnmounted(() => {
         <aside class="experience-panel experience-panel--filters">
           <div class="experience-panel__head">
             <div>
-              <span>筛选</span>
-              <h2>定位经验</h2>
+              <span>{{ t('experience.filter') }}</span>
+              <h2>{{ t('experience.locate') }}</h2>
             </div>
             <Network class="h-4 w-4" />
           </div>
 
           <div class="experience-control-group">
-            <label>搜索</label>
+            <label>{{ t('experience.search') }}</label>
             <div class="experience-search">
               <Search class="h-4 w-4" />
-              <input v-model="searchText" placeholder="run、issue、模板、失败原因" @keyup.enter="refreshGraph" />
+              <input v-model="searchText" :placeholder="t('experience.searchPlaceholder')" @keyup.enter="refreshGraph" />
             </div>
             <div class="experience-action-row">
               <button class="experience-primary-button" :disabled="loading" @click="refreshGraph">
                 <RefreshCw class="h-4 w-4" :class="loading && 'animate-spin'" />
-                刷新
+                {{ t('experience.refresh') }}
               </button>
-              <button class="experience-icon-button experience-icon-button--soft" title="清除过滤" aria-label="清除过滤" @click="clearFilters">
+              <button class="experience-icon-button experience-icon-button--soft" :title="t('experience.clearFilters')" :aria-label="t('experience.clearFilters')" @click="clearFilters">
                 <XCircle class="h-4 w-4" />
               </button>
             </div>
@@ -530,9 +532,9 @@ onUnmounted(() => {
             <div class="experience-filter-title">
               <div>
                 <Filter class="h-4 w-4" />
-                <span>节点类型</span>
+                <span>{{ t('experience.nodeTypes') }}</span>
               </div>
-              <button @click="selectedTypes = []">全部</button>
+              <button @click="selectedTypes = []">{{ t('experience.all') }}</button>
             </div>
             <button
               v-for="[type, count] in nodeTypeCounts"
@@ -550,11 +552,11 @@ onUnmounted(() => {
           </div>
 
           <div class="experience-control-group">
-            <label>结果上限</label>
+            <label>{{ t('experience.resultLimit') }}</label>
             <input v-model.number="resultLimit" class="experience-number-input" type="number" min="50" max="2000" step="50" />
             <label class="experience-checkbox">
               <input v-model="includeNeighbors" type="checkbox" />
-              <span>搜索时带上相邻节点</span>
+              <span>{{ t('experience.includeNeighbors') }}</span>
             </label>
           </div>
 
@@ -594,9 +596,9 @@ onUnmounted(() => {
             @wheel="onCanvasWheel"
           />
           <div v-else class="experience-empty-state">
-            <span>经验图谱</span>
-            <h2>{{ loading ? '正在加载图谱' : '没有可展示的图谱节点' }}</h2>
-            <p>{{ loading ? '正在从运行经验库读取节点和关系。' : '当前筛选条件没有命中可展示节点。' }}</p>
+            <span>{{ t('experience.graph') }}</span>
+            <h2>{{ loading ? t('experience.loading') : t('experience.empty') }}</h2>
+            <p>{{ loading ? t('experience.loadingDescription') : t('experience.emptyDescription') }}</p>
           </div>
           <div class="experience-stage-toolbar">
             <div class="experience-stage-pill">{{ graphStatusLabel }}</div>
@@ -613,7 +615,7 @@ onUnmounted(() => {
             </div>
 
             <div class="experience-property-section">
-              <h3>属性</h3>
+              <h3>{{ t('experience.properties') }}</h3>
               <div class="experience-property-list">
                 <div v-for="(value, key) in selectedNode.properties" :key="String(key)" class="experience-property">
                   <span>{{ key }}</span>
@@ -622,7 +624,7 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
-          <div v-else class="experience-detail-empty">选择一个节点查看详情。</div>
+          <div v-else class="experience-detail-empty">{{ t('experience.selectNode') }}</div>
         </aside>
       </section>
     </div>

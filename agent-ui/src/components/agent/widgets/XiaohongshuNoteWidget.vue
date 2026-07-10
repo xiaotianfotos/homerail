@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ChevronLeft, ChevronRight, ExternalLink, Heart, Star, MessageCircle } from 'lucide-vue-next'
 import type { VoiceWidget } from '@/api/agent'
 
@@ -15,6 +16,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'open-preview', payload: { title: string; url: string; kind: 'html' | 'image' | 'gallery'; layout?: 'fluid' | 'portrait'; images?: string[] }): void
 }>()
+
+const { t } = useI18n()
 
 const data = computed(() => props.widget.data as Record<string, unknown>)
 const images = computed<string[]>(() => normalizeImages((data.value.images as string[]) ?? []))
@@ -39,7 +42,7 @@ const pageCount = computed(() => {
   if (Number.isFinite(value) && value > 0) return Math.round(value)
   return images.value.length
 })
-const noteTitle = computed(() => text(data.value.title || props.widget.title, 160) || '小红书图文')
+const noteTitle = computed(() => text(data.value.title || props.widget.title, 160) || t('voice.widgets.noteTitle'))
 
 function prevImage() {
   if (canGoPrev.value) currentIndex.value--
@@ -88,11 +91,11 @@ const author = computed<XhsAuthor>(() => {
   if (raw && typeof raw === 'object' && raw !== null) {
     const a = raw as Record<string, unknown>
     return {
-      nickname: String(a.nickname || 'AI 助手'),
+      nickname: String(a.nickname || t('voice.widgets.assistant')),
       avatar_url: String(a.avatar_url || ''),
     }
   }
-  return { nickname: 'AI 助手', avatar_url: '' }
+  return { nickname: t('voice.widgets.assistant'), avatar_url: '' }
 })
 
 function normalizeImages(rawImages: string[]): string[] {
@@ -135,7 +138,7 @@ function text(value: unknown, limit = 96): string {
         v-if="currentImage"
         :src="currentImage"
         class="xhs-note-widget__image"
-        alt="笔记图片"
+        :alt="t('voice.widgets.noteImage')"
       />
 
       <!-- 图片计数器 -->
@@ -162,13 +165,13 @@ function text(value: unknown, limit = 96): string {
       </button>
     </div>
 
-    <div v-if="images.length > 1" class="xhs-note-widget__dots" aria-label="图片页码">
+    <div v-if="images.length > 1" class="xhs-note-widget__dots" :aria-label="t('voice.widgets.pagination')">
       <button
         v-for="(_, i) in images"
         :key="i"
         class="xhs-note-widget__dot"
         :class="{ 'xhs-note-widget__dot--active': i === currentIndex }"
-        :aria-label="`切换到第 ${i + 1} 页`"
+        :aria-label="t('voice.widgets.goToPage', { page: i + 1 })"
         @click="currentIndex = i"
       />
     </div>
@@ -179,7 +182,7 @@ function text(value: unknown, limit = 96): string {
         <div v-else class="xhs-note-widget__avatar xhs-note-widget__avatar--placeholder">AI</div>
         <div class="xhs-note-widget__author-text">
           <span class="xhs-note-widget__nickname">{{ author.nickname }}</span>
-          <small v-if="pageCount">{{ pageCount }} 页图文</small>
+          <small v-if="pageCount">{{ t('voice.widgets.pageCount', { count: pageCount }) }}</small>
         </div>
         <button
           v-if="previewUrl || images.length > 0"
@@ -188,7 +191,7 @@ function text(value: unknown, limit = 96): string {
           @click="openPreview"
         >
           <ExternalLink :size="14" />
-          <span>完整预览</span>
+          <span>{{ t('voice.widgets.fullPreview') }}</span>
         </button>
       </div>
 

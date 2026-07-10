@@ -8,6 +8,7 @@
  */
 
 import { computed, ref, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { RunListItem } from './useRunList'
 import { getAgentPersona } from '@/lib/agentPersonas'
 import { cn } from '@/lib/utils'
@@ -24,18 +25,20 @@ const emit = defineEmits<{
   'select-run': [runId: string]
 }>()
 
+const { t } = useI18n()
+
 const listRef = ref<HTMLElement | null>(null)
 
 const statusMeta = computed(() => (status: string) => {
   switch (status) {
     case 'active':
-      return { icon: Loader2, color: 'text-emerald-300', bg: 'border-emerald-300/25 bg-emerald-300/10', spin: true, label: '运行中' }
+      return { icon: Loader2, color: 'text-emerald-300', bg: 'border-emerald-300/25 bg-emerald-300/10', spin: true, label: t('dag.status.active') }
     case 'completed':
-      return { icon: CheckCircle2, color: 'text-blue-300', bg: 'border-blue-300/25 bg-blue-300/10', spin: false, label: '已完成' }
+      return { icon: CheckCircle2, color: 'text-blue-300', bg: 'border-blue-300/25 bg-blue-300/10', spin: false, label: t('dag.status.completed') }
     case 'failed':
-      return { icon: XCircle, color: 'text-red-300', bg: 'border-red-400/30 bg-red-500/15', spin: false, label: '失败' }
+      return { icon: XCircle, color: 'text-red-300', bg: 'border-red-400/30 bg-red-500/15', spin: false, label: t('dag.status.failed') }
     case 'cancelled':
-      return { icon: XCircle, color: 'text-amber-300', bg: 'border-amber-300/25 bg-amber-300/10', spin: false, label: '已取消' }
+      return { icon: XCircle, color: 'text-amber-300', bg: 'border-amber-300/25 bg-amber-300/10', spin: false, label: t('dag.status.cancelled') }
     default:
       return { icon: Clock, color: 'text-white/40', bg: 'border-white/10 bg-white/[0.04]', spin: false, label: status }
   }
@@ -46,9 +49,9 @@ function fmtTime(ts?: number): string {
   const d = new Date(ts)
   const now = Date.now()
   const diff = now - ts
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  if (diff < 60_000) return t('dag.runList.justNow')
+  if (diff < 3_600_000) return t('dag.runList.minutesAgo', { count: Math.floor(diff / 60_000) })
+  if (diff < 86_400_000) return t('dag.runList.hoursAgo', { count: Math.floor(diff / 3_600_000) })
   return d.toLocaleString()
 }
 
@@ -66,7 +69,7 @@ watch(() => props.focusedIndex, async (idx) => {
     <!-- 标题 -->
     <div class="flex items-center gap-3 px-8 pb-4 pt-24 flex-shrink-0">
       <Network class="h-6 w-6 text-cyan-200/60" />
-      <h2 class="text-xl font-semibold tracking-wide text-white/85">DAG Runs</h2>
+      <h2 class="text-xl font-semibold tracking-wide text-white/85">{{ t('dag.runList.title') }}</h2>
       <span class="ml-1 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-sm text-white/45">
         {{ runs.length }}
       </span>
@@ -82,9 +85,9 @@ watch(() => props.focusedIndex, async (idx) => {
       <!-- 空态 -->
       <div v-else-if="!runs.length" class="flex flex-col items-center justify-center py-16 text-center">
         <Network class="mb-3 h-10 w-10 text-cyan-200/15" />
-        <div class="text-sm text-white/45">还没有任何 DAG run</div>
+        <div class="text-sm text-white/45">{{ t('dag.runList.empty') }}</div>
         <div class="mt-1 max-w-xs text-xs leading-5 text-white/25">
-          通过语音或文字模式启动一个 DAG，完成后会出现在这里。
+          {{ t('dag.runList.emptyDescription') }}
         </div>
       </div>
 
@@ -133,13 +136,13 @@ watch(() => props.focusedIndex, async (idx) => {
               v-if="run.runId === currentRunId"
               class="rounded-full border border-cyan-200/30 bg-cyan-200/10 px-1.5 py-0.5 text-[9px] font-medium text-cyan-100"
             >
-              当前
+              {{ t('dag.runList.current') }}
             </span>
           </div>
           <div class="mt-1 flex items-center gap-2.5 text-sm text-white/45">
             <span class="font-mono">{{ run.runId.slice(-12) }}</span>
             <span class="text-white/20">·</span>
-            <span>{{ run.nodeCount ?? '?' }} 节点</span>
+            <span>{{ t('dag.runList.nodes', { count: run.nodeCount ?? '?' }) }}</span>
             <span class="text-white/20">·</span>
             <span>{{ fmtTime(run.createdAt) }}</span>
           </div>

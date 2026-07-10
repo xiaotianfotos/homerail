@@ -16,6 +16,13 @@ import { ref, computed } from 'vue'
 import { useStorage } from '@vueuse/core'
 import { zhCN, enUS, dateZhCN, dateEnUS } from 'naive-ui'
 import type { NLocale, NDateLocale } from 'naive-ui'
+import {
+  applyLocaleToDocument,
+  LOCALE_STORAGE_KEY,
+  normalizeAppLocale,
+  resolveInitialLocale,
+  type AppLocale,
+} from '@/i18n/locales'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type NotificationType = 'success' | 'error' | 'warning' | 'info'
@@ -44,8 +51,7 @@ export const useUiStore = defineStore('ui', () => {
   const loadingMessage = ref<string>('')
   const notifications = ref<Notification[]>([])
 
-  // 国际化状态
-  const locale = useStorage<string>('app-locale', getDefaultLocale())
+  const locale = useStorage<AppLocale>(LOCALE_STORAGE_KEY, resolveInitialLocale())
 
   // --------------------------------------------------------------------------
   // Getters
@@ -157,30 +163,16 @@ export const useUiStore = defineStore('ui', () => {
     return addNotification({ type: 'info', title, message, duration })
   }
 
-  // 设置语言
-  function setLocale(newLocale: string) {
-    console.log('UI Store setLocale: switching from', locale.value, 'to', newLocale)
-    locale.value = newLocale
-    console.log('UI Store setLocale: locale.value is now', locale.value)
-    if (typeof window !== 'undefined') {
-      document.documentElement.setAttribute('lang', newLocale)
-      // 同时也存入 localStorage 确保持久化 (useStorage 应该已经处理了，但为了保险)
-      localStorage.setItem('app-locale', newLocale)
-      console.log('UI Store setLocale: saved to localStorage, HTML lang set to', newLocale)
-    }
+  function setLocale(newLocale: AppLocale | string) {
+    const normalized = normalizeAppLocale(newLocale)
+    if (!normalized) return
+    locale.value = normalized
+    applyLocaleToDocument(normalized)
   }
 
   // --------------------------------------------------------------------------
   // Initialization
   // --------------------------------------------------------------------------
-
-  // 自动检测默认语言
-  function getDefaultLocale(): string {
-    if (typeof window === 'undefined') return 'zh-CN'
-    const browserLang = navigator.language
-    if (browserLang.startsWith('zh')) return 'zh-CN'
-    return 'en-US'
-  }
 
   function initialize() {
     if (typeof window !== 'undefined') {
@@ -199,10 +191,9 @@ export const useUiStore = defineStore('ui', () => {
       // Apply theme to HTML
       updateHtmlClass()
 
-      // Apply initial locale to HTML
-      if (locale.value) {
-        document.documentElement.setAttribute('lang', locale.value)
-      }
+      const normalizedLocale = normalizeAppLocale(locale.value) ?? resolveInitialLocale()
+      locale.value = normalizedLocale
+      applyLocaleToDocument(normalizedLocale)
 
       // Listen for system theme changes
       if (theme.value === 'system') {

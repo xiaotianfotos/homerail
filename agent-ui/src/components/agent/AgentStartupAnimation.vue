@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   Target,
   Code2,
@@ -30,9 +31,19 @@ const props = withDefaults(defineProps<{
   nodeCount: 7,
 })
 
+const { t } = useI18n()
+
 const ICONS = [Target, Code2, Code2, TestTube2, TestTube2, ShieldCheck, Rocket]
 const COLORS = ['#a855f7', '#3b82f6', '#3b82f6', '#f59e0b', '#f59e0b', '#10b981', '#ef4444']
-const LABELS = ['侦察兵', '工程师 A', '工程师 B', '质检师 A', '质检师 B', '督导', '发布官']
+const labels = computed(() => [
+  t('shell.startup.roles.scout'),
+  t('shell.startup.roles.engineerA'),
+  t('shell.startup.roles.engineerB'),
+  t('shell.startup.roles.testerA'),
+  t('shell.startup.roles.testerB'),
+  t('shell.startup.roles.reviewer'),
+  t('shell.startup.roles.publisher'),
+])
 
 const W = 600
 const H = 500
@@ -49,7 +60,7 @@ const nodes = computed<AnimNode[]>(() => {
     { x: CX, y: 370 },
     { x: CX, y: 460 },
   ]
-  return LABELS.slice(0, props.nodeCount).map((label, i) => ({
+  return labels.value.slice(0, props.nodeCount).map((label, i) => ({
     id: String(i),
     label,
     icon: ICONS[i] || Bot,
@@ -224,7 +235,7 @@ const edgePath = (from: AnimNode, to: AnimNode) =>
         font-size="11"
         font-family="system-ui, sans-serif"
       >
-        {{ nodes.length }} 个智能体已就绪，等待任务指令...
+        {{ t('shell.startup.ready', { count: nodes.length }) }}
       </text>
     </svg>
   </div>

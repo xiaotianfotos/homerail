@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App } from 'vue'
+import { i18n } from '@/plugins/i18n'
 import ModelSettings from './ModelSettings.vue'
 
 const managerStore = {
@@ -72,10 +73,15 @@ async function mountSettings(harness: 'codex_appserver' | 'claude_agent_sdk') {
     codexModels,
     loading: false,
   })
+  app.use(i18n)
   app.mount(root)
   await nextTick()
   return root
 }
+
+beforeEach(() => {
+  i18n.global.locale.value = 'zh-CN'
+})
 
 afterEach(() => {
   app?.unmount()
@@ -90,7 +96,7 @@ describe('ModelSettings detected Codex runtime', () => {
 
     expect(root.querySelector('[data-testid="agent-settings-manager-runtime-provider-readonly"]')?.textContent).toContain('Codex')
     expect(root.querySelector('[data-testid="agent-settings-manager-runtime-model-readonly"]')?.textContent).toContain('GPT-5.5')
-    expect(root.querySelector('[data-testid="agent-settings-manager-runtime-model-readonly"]')?.textContent).toContain('Standard')
+    expect(root.querySelector('[data-testid="agent-settings-manager-runtime-model-readonly"]')?.textContent).toContain('标准')
     expect(root.querySelector('[data-testid="agent-settings-manager-runtime-count"]')?.textContent).toContain('4 个可用模型')
     expect(codexItem?.textContent).toContain('自动检测')
     expect(codexItem?.textContent).toContain('只读')

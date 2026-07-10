@@ -69,12 +69,12 @@ function timeAgo(dateStr: string | null): string {
   if (!dateStr) return ''
   const diff = Date.now() - new Date(dateStr).getTime()
   const mins = Math.floor(diff / 60000)
-  if (mins < 1) return '刚刚'
-  if (mins < 60) return `${mins}分钟前`
+  if (mins < 1) return t('shell.sidebar.justNow')
+  if (mins < 60) return t('shell.sidebar.minutesAgo', { count: mins })
   const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}小时前`
+  if (hours < 24) return t('shell.sidebar.hoursAgo', { count: hours })
   const days = Math.floor(hours / 24)
-  return `${days}天前`
+  return t('shell.sidebar.daysAgo', { count: days })
 }
 
 function sessionLabel(s: ManagerSessionItem): string {
@@ -139,7 +139,7 @@ const toggle = () => store.sidebarCollapsed = !store.sidebarCollapsed
             <component :is="statusIcon(s.status)" :class="cn('h-4 w-4', s.status === 'running' && 'animate-spin')" />
           </button>
         </div>
-        <button class="rounded-full border border-cyan-200/14 p-2 text-cyan-100/55 hover:bg-cyan-200/10 hover:text-white" title="设置" @click="openSettings">
+        <button class="rounded-full border border-cyan-200/14 p-2 text-cyan-100/55 hover:bg-cyan-200/10 hover:text-white" :title="t('shell.settings')" @click="openSettings">
           <Settings class="h-4 w-4" />
         </button>
       </div>
@@ -149,7 +149,7 @@ const toggle = () => store.sidebarCollapsed = !store.sidebarCollapsed
       <div class="flex h-16 flex-shrink-0 items-center justify-between px-4">
         <div>
           <div class="text-[11px] uppercase tracking-[0.22em] text-cyan-200/45">Agent</div>
-          <div class="mt-1 text-lg font-semibold text-white">历史会话</div>
+          <div class="mt-1 text-lg font-semibold text-white">{{ t('shell.sidebar.history') }}</div>
         </div>
         <div class="flex items-center gap-2">
           <button class="rounded-full border border-cyan-200/14 p-2 text-cyan-100/60 hover:bg-cyan-200/10 hover:text-white" @click="toggle">
@@ -167,21 +167,21 @@ const toggle = () => store.sidebarCollapsed = !store.sidebarCollapsed
           @click="newSession"
         >
           <MessageSquare class="h-4 w-4 text-cyan-200/75" />
-          新对话
+          {{ t('shell.sidebar.newChat') }}
         </button>
         <div class="relative">
           <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
           <input
             v-model="store.sidebarSearch"
             type="text"
-            placeholder="搜索"
+            :placeholder="t('shell.sidebar.search')"
             class="h-10 w-full rounded-full border border-white/10 bg-white/[0.035] pl-9 pr-3 text-sm text-white/80 outline-none placeholder:text-white/30 hover:bg-white/[0.055] focus:border-cyan-200/35"
           />
         </div>
       </div>
 
       <div class="mt-6 px-4">
-        <div class="mb-2 px-1 text-xs text-white/40">项目</div>
+        <div class="mb-2 px-1 text-xs text-white/40">{{ t('shell.sidebar.projects') }}</div>
         <div class="relative">
           <button
             class="flex w-full items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-sm text-white/70 hover:border-cyan-200/20 hover:bg-white/[0.055]"
@@ -217,7 +217,7 @@ const toggle = () => store.sidebarCollapsed = !store.sidebarCollapsed
       </div>
 
       <div class="mt-6 px-4">
-        <div class="mb-2 px-1 text-xs text-white/40">对话</div>
+        <div class="mb-2 px-1 text-xs text-white/40">{{ t('shell.sidebar.conversations') }}</div>
       </div>
 
       <div class="flex-1 overflow-y-auto px-4 pb-4">
@@ -282,7 +282,7 @@ const toggle = () => store.sidebarCollapsed = !store.sidebarCollapsed
           @click="openSettings"
         >
           <Settings class="h-4 w-4 text-cyan-100/55" />
-          设置
+          {{ t('shell.settings') }}
         </button>
       </div>
     </template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   Loader2,
   LockKeyhole,
@@ -10,7 +11,6 @@ import {
 import { agentSettingsApi } from '@/api/agent'
 import type { CodexModel, VoiceAgentConfig } from '@/api/agent'
 import { useAgentStore } from '@/stores/agent-store'
-import { planLabel } from '@/lib/protocol-labels'
 import { useToast } from '@/components/controls/useToast'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
 import type { Provider } from '@/api/types/orchestration-v2.types'
@@ -32,6 +32,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useAgentStore()
+const { t } = useI18n()
 const { showToast } = useToast()
 
 const dialogOpen = ref(false)
@@ -65,7 +66,7 @@ const currentCodexModelName = computed(() => {
 const currentCodexModelLabel = computed(() => codexModelLabel(currentCodexModelName.value))
 const currentCodexServiceTierLabel = computed(() => {
   const serviceTier = props.managerConfig?.service_tier
-  if (!serviceTier) return 'Standard'
+  if (!serviceTier) return t('settings.models.standardServiceTier')
   const model = props.codexModels.find(item => item.model === currentCodexModelName.value)
   return model?.service_tiers.find(tier => tier.id === serviceTier)?.name || serviceTier
 })
@@ -103,7 +104,16 @@ function messageOf(err: unknown): string {
     const message = (err as { message?: unknown }).message
     if (typeof message === 'string' && message.trim()) return message
   }
-  return String(err || '操作失败')
+  return String(err || t('settings.actions.operationFailed'))
+}
+
+function localizedPlanLabel(plan?: string): string {
+  if (plan === 'api_billing') return t('settings.models.plans.apiBilling')
+  if (plan === 'token_plan') return t('settings.models.plans.tokenPlan')
+  if (plan === 'coding_plan') return t('settings.models.plans.codingPlan')
+  if (plan === 'agent_plan') return t('settings.models.plans.agentPlan')
+  if (plan === 'subscription') return t('settings.models.plans.subscription')
+  return t('settings.models.plans.custom')
 }
 
 async function runAction<T>(key: string, action: () => Promise<T>): Promise<T | undefined> {
@@ -226,7 +236,9 @@ async function handleSubmit(payload: ModelFormPayload): Promise<void> {
     await store.loadManagerRuntimeOptions()
     dialogOpen.value = false
     editingSetting.value = null
-    emit('set-notice', payload.id ? '模型配置已更新' : `已添加 ${payload.modelConfigs?.length || 1} 个模型配置`)
+    emit('set-notice', payload.id
+      ? t('settings.models.updated')
+      : t('settings.models.added', { count: payload.modelConfigs?.length || 1 }))
   })
 }
 
@@ -247,12 +259,12 @@ async function setDefault(setting: LLMSetting): Promise<void> {
 }
 
 async function remove(setting: LLMSetting): Promise<void> {
-  if (!window.confirm(`删除模型配置 ${setting.display_name || setting.model_name}？`)) return
+  if (!window.confirm(t('settings.models.deleteConfirm', { name: setting.display_name || setting.model_name }))) return
   await runAction(`delete-${setting.id}`, async () => {
     await agentSettingsApi.deleteLLMSetting(setting.id)
     emit('refresh')
     await store.loadManagerRuntimeOptions()
-    emit('set-notice', '模型配置已删除')
+    emit('set-notice', t('settings.models.deleted'))
   })
 }
 
@@ -273,10 +285,10 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
     <div class="rounded-lg border border-white/10 bg-[#252525] p-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 class="font-semibold">Manager Runtime</h2>
-          <div class="mt-1 text-xs text-gray-500">当前会话使用的模型</div>
+          <h2 class="font-semibold">{{ t('settings.models.runtimeTitle') }}</h2>
+          <div class="mt-1 text-xs text-gray-500">{{ t('settings.models.runtimeSubtitle') }}</div>
         </div>
-        <span data-testid="agent-settings-manager-runtime-count" class="rounded-full border border-white/10 px-3 py-1 text-xs text-gray-400">{{ availableManagerModelCount }} 个可用模型</span>
+        <span data-testid="agent-settings-manager-runtime-count" class="rounded-full border border-white/10 px-3 py-1 text-xs text-gray-400">{{ t('settings.models.available', { count: availableManagerModelCount }) }}</span>
       </div>
       <div v-if="currentManagerUsesCodex" class="mt-4 grid gap-3 md:grid-cols-2">
         <div
@@ -286,7 +298,7 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
           <span>Codex</span>
           <span class="inline-flex items-center gap-1 text-xs text-cyan-200/70">
             <LockKeyhole class="h-3.5 w-3.5" />
-            自动检测
+            {{ t('settings.models.autoDetected') }}
           </span>
         </div>
         <div
@@ -322,18 +334,18 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
         </select>
       </div>
       <div v-if="currentManagerUsesCodex" class="mt-3 text-xs leading-relaxed text-gray-500">
-        本机 Codex CLI · 当前配置由自动检测结果管理
+        {{ t('settings.models.codexRuntimeHint') }}
       </div>
       <div v-else class="mt-3 text-xs leading-relaxed text-gray-500">
-        切换 runtime 后，新 Manager 会话会使用所选模型。当前已进行中的会话不受影响。
+        {{ t('settings.models.runtimeHint') }}
       </div>
     </div>
 
     <div class="rounded-lg border border-white/10 bg-[#252525]">
       <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
         <div>
-          <h2 class="font-semibold">已配置模型</h2>
-          <div class="mt-1 text-xs text-gray-500">{{ providers.length }} 个供应商 · {{ configuredModelCount }} 个模型配置</div>
+          <h2 class="font-semibold">{{ t('settings.models.configuredTitle') }}</h2>
+          <div class="mt-1 text-xs text-gray-500">{{ t('settings.models.summary', { providers: providers.length, models: configuredModelCount }) }}</div>
         </div>
         <button
           class="inline-flex items-center gap-2 rounded-md bg-blue-500 px-3 py-2 text-sm text-white hover:bg-blue-400 disabled:opacity-50"
@@ -341,17 +353,17 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
           @click="openCreate"
         >
           <Plus class="h-4 w-4" />
-          添加模型
+          {{ t('settings.models.addModel') }}
         </button>
       </div>
 
       <div v-if="loading && !configuredModelCount" class="px-4 py-8 text-center text-sm text-gray-500">
         <Loader2 class="mx-auto h-5 w-5 animate-spin" />
-        <div class="mt-2">加载中...</div>
+        <div class="mt-2">{{ t('settings.models.loading') }}</div>
       </div>
 
       <div v-else-if="!configuredModelCount" class="px-4 py-8 text-center text-sm text-gray-500">
-        暂无模型配置，点击右上角添加。
+        {{ t('settings.models.empty') }}
       </div>
 
       <template v-else>
@@ -364,21 +376,21 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-2">
                 <span class="font-medium">Codex</span>
-                <span v-if="currentManagerUsesCodex" class="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200">当前 Manager</span>
-                <span v-if="codexModels.length" class="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-200">自动检测</span>
-                <span class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">只读</span>
+                <span v-if="currentManagerUsesCodex" class="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200">{{ t('settings.models.currentManager') }}</span>
+                <span v-if="codexModels.length" class="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-200">{{ t('settings.models.autoDetected') }}</span>
+                <span class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">{{ t('settings.models.readOnly') }}</span>
               </div>
               <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
                 <span>OpenAI Codex</span>
                 <span>·</span>
-                <span>本机 CLI</span>
+                <span>{{ t('settings.models.localCli') }}</span>
                 <template v-if="codexModels.length">
                   <span>·</span>
-                  <span>{{ codexModels.length }} 个可用模型: {{ codexModelSummary }}</span>
+                  <span>{{ t('settings.models.availableModelList', { count: codexModels.length, models: codexModelSummary }) }}</span>
                 </template>
                 <template v-else-if="currentCodexModelName">
                   <span>·</span>
-                  <span>当前模型: {{ currentCodexModelLabel }}</span>
+                  <span>{{ t('settings.models.currentModel', { model: currentCodexModelLabel }) }}</span>
                 </template>
               </div>
               <div class="mt-2 flex flex-wrap items-center gap-2">
@@ -391,7 +403,7 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
 
             <div class="inline-flex items-center gap-1.5 text-xs text-gray-500 xl:pt-1">
               <LockKeyhole class="h-3.5 w-3.5" />
-              系统自动管理
+              {{ t('settings.models.systemManaged') }}
             </div>
           </div>
         </div>
@@ -406,16 +418,16 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <span class="font-medium">{{ setting.display_name || setting.model_name }}</span>
-                <span v-if="setting.is_default" class="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200">默认</span>
-                <span class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-200">启用</span>
+                <span v-if="setting.is_default" class="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200">{{ t('settings.models.default') }}</span>
+                <span class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-200">{{ t('settings.models.active') }}</span>
               </div>
               <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
                 <span>{{ setting.provider_name }}</span>
                 <span>·</span>
-                <span>{{ planLabel(setting.plan_type) }}</span>
+                <span>{{ localizedPlanLabel(setting.plan_type) }}</span>
                 <span>·</span>
                 <span v-if="setting.models && setting.models.length > 1" class="text-gray-400">
-                  {{ setting.models.length }} 个模型: {{ setting.models.slice(0, 3).join(', ') }}{{ setting.models.length > 3 ? '...' : '' }}
+                  {{ t('settings.models.modelList', { count: setting.models.length, models: setting.models.slice(0, 3).join(', ') }) }}{{ setting.models.length > 3 ? '...' : '' }}
                 </span>
                 <span v-else>{{ setting.model_name }}</span>
                 <span>·</span>
@@ -428,8 +440,8 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
                   :capability="cap.key"
                   :active="cap.active"
                 />
-                <span v-if="setting.plan_type === 'custom' || setting.endpoint_id?.endsWith('_custom')" class="rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-200">自定义</span>
-                <span class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">{{ planLabel(setting.plan_type) }}</span>
+                <span v-if="setting.plan_type === 'custom' || setting.endpoint_id?.endsWith('_custom')" class="rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-200">{{ t('settings.models.custom') }}</span>
+                <span class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">{{ localizedPlanLabel(setting.plan_type) }}</span>
               </div>
             </div>
 
@@ -440,7 +452,7 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
                 @click="setDefault(setting)"
               >
                 <Loader2 v-if="savingId === `default-${setting.id}`" class="inline h-3 w-3 animate-spin" />
-                <span v-else>设为默认</span>
+                <span v-else>{{ t('settings.models.setDefault') }}</span>
               </button>
               <button
                 class="rounded-md border border-white/10 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
@@ -454,7 +466,7 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
                 @click="toggleActive(setting)"
               >
                 <Loader2 v-if="savingId === `active-${setting.id}`" class="inline h-3 w-3 animate-spin" />
-                <span v-else>停用</span>
+                <span v-else>{{ t('settings.actions.disable') }}</span>
               </button>
               <button
                 class="rounded-md border border-red-500/30 px-2 py-1.5 text-red-300 hover:bg-red-500/10"
@@ -469,7 +481,7 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
         </div>
 
         <div v-if="inactiveSettings.length" class="border-t border-dashed border-white/10 px-4 py-2">
-          <div class="text-xs text-gray-500">已停用 ({{ inactiveSettings.length }})</div>
+          <div class="text-xs text-gray-500">{{ t('settings.models.inactive', { count: inactiveSettings.length }) }}</div>
         </div>
         <div
           v-for="setting in inactiveSettings"
@@ -482,8 +494,8 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
               <div class="text-sm font-medium text-gray-400">{{ setting.display_name || setting.model_name }}</div>
               <div class="mt-0.5 text-xs text-gray-600">
                 {{ setting.provider_name }}
-                <span v-if="setting.plan_type === 'custom' || setting.endpoint_id?.endsWith('_custom')" class="ml-1 rounded bg-amber-400/10 px-1 text-amber-200/70">自定义</span>
-                · {{ planLabel(setting.plan_type) }} · {{ setting.models && setting.models.length > 1 ? setting.models.length + ' 个模型' : setting.model_name }}
+                <span v-if="setting.plan_type === 'custom' || setting.endpoint_id?.endsWith('_custom')" class="ml-1 rounded bg-amber-400/10 px-1 text-amber-200/70">{{ t('settings.models.custom') }}</span>
+                · {{ localizedPlanLabel(setting.plan_type) }} · {{ setting.models && setting.models.length > 1 ? t('settings.models.modelsCount', { count: setting.models.length }) : setting.model_name }}
               </div>
             </div>
             <div class="flex items-center gap-2">
@@ -493,7 +505,7 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
                 @click="toggleActive(setting)"
               >
                 <Loader2 v-if="savingId === `active-${setting.id}`" class="inline h-3 w-3 animate-spin" />
-                <span v-else>启用</span>
+                <span v-else>{{ t('settings.actions.enable') }}</span>
               </button>
               <button
                 class="rounded-md border border-red-500/30 px-2 py-1.5 text-red-300/70 hover:bg-red-500/10"
@@ -517,8 +529,8 @@ function capabilityList(setting: LLMSetting): Array<{ key: 'llm' | 'asr' | 'tts'
         <div v-if="dialogOpen" class="settings-model-panel" data-testid="agent-settings-model-dialog" @click.stop>
           <div class="flex h-full flex-col">
             <div class="flex items-center justify-between border-b border-cyan-200/10 px-5 py-4 flex-shrink-0">
-              <h2 class="text-base font-semibold text-cyan-50">{{ editingSetting ? '编辑模型配置' : '添加模型配置' }}</h2>
-              <button class="rounded-md border border-cyan-200/14 px-3 py-1.5 text-sm text-gray-400 transition-colors hover:bg-cyan-200/10 hover:text-white" @click="closeDialog">关闭</button>
+              <h2 class="text-base font-semibold text-cyan-50">{{ editingSetting ? t('settings.models.editTitle') : t('settings.models.addTitle') }}</h2>
+              <button class="rounded-md border border-cyan-200/14 px-3 py-1.5 text-sm text-gray-400 transition-colors hover:bg-cyan-200/10 hover:text-white" @click="closeDialog">{{ t('settings.actions.close') }}</button>
             </div>
             <div class="min-h-0 flex-1 overflow-y-auto">
               <ModelForm

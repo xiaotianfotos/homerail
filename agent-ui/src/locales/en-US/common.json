@@ -33,6 +33,7 @@
   "messages": {
     "errorLoading": "Failed to load",
     "errorOccurred": "An error occurred",
+    "unknownError": "Unknown error",
     "successSaved": "Saved successfully",
     "successDeleted": "Deleted successfully",
     "confirmDelete": "Are you sure you want to delete?"

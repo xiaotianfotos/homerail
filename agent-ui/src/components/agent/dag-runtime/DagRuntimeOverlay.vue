@@ -9,6 +9,7 @@
  */
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
 import { useDagRuntime } from './useDagRuntime'
 import { useDagRuntimeGamepad, type DagGamepadEvent, type DagGamepadAnalog } from './useDagRuntimeGamepad'
@@ -28,6 +29,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useAgentStore()
+const { t } = useI18n()
 const { runs, loading: runsLoading, refresh: refreshRuns } = useRunList()
 
 // ── 视图状态 ──────────────────────────────────────────────────
@@ -378,7 +380,7 @@ onUnmounted(() => {
             v-if="metricsLoading"
             class="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-cyan-200/14 bg-black/50 px-3 py-1.5 text-[10px] text-white/50 backdrop-blur"
           >
-            加载指标中…
+            {{ t('dag.overlay.loadingMetrics') }}
           </div>
         </div>
 
@@ -400,13 +402,13 @@ onUnmounted(() => {
         class="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-cyan-200/15 bg-black/65 px-6 py-2.5 text-sm text-white/60 backdrop-blur"
       >
         <template v-if="view === 'run_list'">
-          ↑↓ 选择 Run · × 打开 · ○ 退出
+          {{ t('dag.overlay.runListHelp') }}
         </template>
         <template v-else-if="selectedNodeId">
-          ↑↓ 切换面板 · ■ 展开/折叠 · ←→ 遍历节点 · 右摇杆 滚动 · ○ 关闭
+          {{ t('dag.overlay.detailHelp') }}
         </template>
         <template v-else>
-          ←→ 遍历节点 · × 查看日志 · ○ 返回 · 左摇杆 平移 · L2/R2 缩放
+          {{ t('dag.overlay.graphHelp') }}
         </template>
       </div>
     </div>

@@ -1,0 +1,109 @@
+{
+  "mode": {
+    "text": "文字模式",
+    "voice": "语音模式"
+  },
+  "updates": {
+    "downloadedVersion": "HomeRail {version} 已下载，重启后安装",
+    "downloaded": "新版本已下载，重启后安装",
+    "restart": "重启更新"
+  },
+  "dashboard": {
+    "title": "DAG 仪表盘",
+    "running": "DAG 仪表盘：{count} 个运行正在执行",
+    "button": "仪表盘"
+  },
+  "details": {
+    "show": "显示详情",
+    "hide": "隐藏详情",
+    "button": "详情"
+  },
+  "settings": "设置",
+  "sidebar": {
+    "history": "历史会话",
+    "newChat": "新对话",
+    "search": "搜索",
+    "projects": "项目",
+    "conversations": "对话",
+    "justNow": "刚刚",
+    "minutesAgo": "{count} 分钟前",
+    "hoursAgo": "{count} 小时前",
+    "daysAgo": "{count} 天前"
+  },
+  "header": {
+    "selectProject": "选择项目",
+    "noProjects": "暂无项目"
+  },
+  "landing": {
+    "tagline": "智能体编排平台 · 描述任务，调动专业 Agent",
+    "placeholder": "描述你的任务...",
+    "voiceCockpit": "进入语音 Cockpit",
+    "history": "查看历史会话",
+    "hints": {
+      "demo": "用 demo-ceremony 模板启动演示",
+      "projects": "列出所有项目",
+      "review": "用 review-loop 做一个代码审查"
+    }
+  },
+  "chat": {
+    "placeholder": "输入任务描述...",
+    "welcome": "我是 HomeRail 智能体编排器。请输入任务描述，我将协调多个专业 Agent 完成工作。",
+    "runStarting": "已开始运行编排...",
+    "runStarted": "DAG 已启动：run_id={runId}",
+    "requestFailed": "请求失败",
+    "error": "错误：{message}",
+    "empty": "输入任务描述开始...",
+    "toolCalls": "工具调用",
+    "status": {
+      "completed": "已完成",
+      "failed": "失败",
+      "running": "进行中"
+    },
+    "voice": {
+      "clickToStart": "点击语音图标开始",
+      "requestingMicrophone": "正在请求麦克风权限...",
+      "microphoneUnavailable": "麦克风不可用",
+      "notStarted": "语音输入未启动",
+      "unsupported": "当前浏览器不支持实时语音采集",
+      "listening": "正在听...",
+      "listeningActive": "正在聆听",
+      "stopped": "语音输入已停止",
+      "recognizing": "正在识别...",
+      "noTranscript": "没有识别到可用文本",
+      "inserted": "已写入输入框，继续说话",
+      "recognitionFailed": "语音识别失败",
+      "retry": "识别失败，请再说一次",
+      "ttsFailed": "TTS 播放失败",
+      "start": "开始语音输入",
+      "stop": "停止语音输入"
+    },
+    "send": "发送"
+  },
+  "startup": {
+    "ready": "{count} 个智能体已就绪，等待任务指令...",
+    "roles": {
+      "scout": "侦察兵",
+      "engineerA": "工程师 A",
+      "engineerB": "工程师 B",
+      "testerA": "质检师 A",
+      "testerB": "质检师 B",
+      "reviewer": "督导",
+      "publisher": "发布官"
+    }
+  },
+  "workspace": {
+    "nodes": "{count} 个节点",
+    "progress": "{running} 个运行中 · {completed} 个已完成",
+    "experience": {
+      "notStarted": "经验图未写入",
+      "applied": "经验图已写入",
+      "failed": "经验图写入失败",
+      "skipped": "经验图已跳过",
+      "status": "经验图：{status}",
+      "retryTitle": "重试经验图写入"
+    },
+    "emptyTitle": "无 DAG 运行",
+    "emptyDescription": "Manager 启动运行后，这里会显示进度、节点和证据。",
+    "openSettings": "打开设置"
+  }
+}

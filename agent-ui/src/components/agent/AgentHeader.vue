@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
 import { listProjects } from '@/api/agent'
 import { cn } from '@/lib/utils'
 import { Terminal, Folder, ChevronDown } from 'lucide-vue-next'
 
 const store = useAgentStore()
+const { t } = useI18n()
 const projectOpen = ref(false)
 const projects = ref<Array<{ id: string; name: string; description?: string }>>([])
 
@@ -45,7 +47,7 @@ const selectedProject = () =>
         >
           <Folder class="h-3 w-3" />
           <span class="max-w-[120px] truncate">
-            {{ selectedProject()?.name ?? '选择项目' }}
+            {{ selectedProject()?.name ?? t('shell.header.selectProject') }}
           </span>
           <ChevronDown class="h-3 w-3" />
         </button>
@@ -55,7 +57,7 @@ const selectedProject = () =>
           v-if="projectOpen"
           class="absolute top-full left-0 mt-1 w-56 max-h-64 overflow-y-auto bg-gray-800 border border-gray-700/60 rounded-lg shadow-xl z-20 py-1"
         >
-          <div v-if="projects.length === 0" class="px-3 py-2 text-xs text-gray-500">暂无项目</div>
+          <div v-if="projects.length === 0" class="px-3 py-2 text-xs text-gray-500">{{ t('shell.header.noProjects') }}</div>
           <button
             v-for="p in projects"
             :key="p.id"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
   Brain,
@@ -21,6 +22,7 @@ import {
   XCircle,
 } from 'lucide-vue-next'
 import ModelSettings from './settings/ModelSettings.vue'
+import GeneralSettings from './settings/GeneralSettings.vue'
 import {
   listProjects,
   listProjectStorages,
@@ -110,6 +112,7 @@ import type { Project, ProjectStorage } from '@/api/types/project.types'
 import type { Provider, Skill } from '@/api/types/orchestration-v2.types'
 
 type SettingsTab =
+  | 'general'
   | 'workspace'
   | 'nodes'
   | 'git'
@@ -122,12 +125,13 @@ type SettingsTab =
 
 const store = useAgentStore()
 const router = useRouter()
+const { t } = useI18n()
 const { showToast: showGlobalToast } = useToast()
 let settingsGamepadFrame = 0
 let settingsGamepadPressedButtons = new Set<number>()
 let settingsGamepadAxisLocks = new Set<string>()
 let nativeSettingsGamepadAnalogAt = 0
-const activeTab = ref<SettingsTab>('git')
+const activeTab = ref<SettingsTab>('general')
 const loading = ref(false)
 const saving = ref<string | null>(null)
 const error = ref<string | null>(null)
@@ -225,11 +229,11 @@ const wireGuardProfileOptions = computed(() => {
   return names.size ? [...names] : [createEmptyWireGuardConfig().name]
 })
 const wireGuardConnectionLabel = computed(() => {
-  if (!wireGuardConfigured.value && !wireGuardStatus.value.configured) return '未配置'
-  if (wireGuardStatus.value.connected) return '已连接'
-  if (wireGuardStatus.value.event === 'authorization_requested') return '等待授权'
-  if (wireGuardStatus.value.lastError) return '连接错误'
-  return '未连接'
+  if (!wireGuardConfigured.value && !wireGuardStatus.value.configured) return t('settings.wireguard.notConfigured')
+  if (wireGuardStatus.value.connected) return t('settings.wireguard.connected')
+  if (wireGuardStatus.value.event === 'authorization_requested') return t('settings.wireguard.waitingAuthorization')
+  if (wireGuardStatus.value.lastError) return t('settings.wireguard.connectionError')
+  return t('settings.wireguard.disconnected')
 })
 
 function normalizeTtsOutputChannels(channels: VoiceTtsOutputChannel[] | undefined): VoiceTtsOutputChannel[] {
@@ -283,28 +287,30 @@ const memoryQuery = ref('')
 const memoryKind = ref('')
 const newMemory = ref({ content: '', kind: 'note', topic: '' })
 
-const tabs: Array<{ id: SettingsTab; label: string; icon: typeof Settings }> = [
-  { id: 'workspace', label: '工作区', icon: FolderTree },
-  { id: 'nodes', label: 'Node 节点', icon: Server },
-  { id: 'git', label: 'Git', icon: GitBranch },
-  { id: 'providers', label: '供应商与模型', icon: Settings },
-  { id: 'voice', label: '语音', icon: Volume2 },
-  { id: 'device', label: 'Wireguard', icon: Network },
-  { id: 'skills', label: 'Skills', icon: Package },
-  { id: 'mcp', label: 'MCP 服务器', icon: Network },
-  { id: 'memory', label: '记忆', icon: Brain },
-]
+const tabs = computed<Array<{ id: SettingsTab; label: string; icon: typeof Settings }>>(() => [
+  { id: 'general', label: t('settings.tabs.general'), icon: Settings },
+  { id: 'workspace', label: t('settings.tabs.workspace'), icon: FolderTree },
+  { id: 'nodes', label: t('settings.tabs.nodes'), icon: Server },
+  { id: 'git', label: t('settings.tabs.git'), icon: GitBranch },
+  { id: 'providers', label: t('settings.tabs.providers'), icon: Settings },
+  { id: 'voice', label: t('settings.tabs.voice'), icon: Volume2 },
+  { id: 'device', label: t('settings.tabs.device'), icon: Network },
+  { id: 'skills', label: t('settings.tabs.skills'), icon: Package },
+  { id: 'mcp', label: t('settings.tabs.mcp'), icon: Network },
+  { id: 'memory', label: t('settings.tabs.memory'), icon: Brain },
+])
 const hiddenSettingsTabs = new Set<SettingsTab>(['workspace', 'nodes', 'skills', 'mcp', 'memory'])
 const visibleTabs = computed(() =>
-  tabs.filter(tab => !hiddenSettingsTabs.has(tab.id) && (tab.id !== 'device' || androidTvLocalSettingsVisible.value))
+  tabs.value.filter(tab => !hiddenSettingsTabs.has(tab.id) && (tab.id !== 'device' || androidTvLocalSettingsVisible.value))
 )
-const activeTabLabel = computed(() => tabs.find(tab => tab.id === activeTab.value)?.label || '设置')
+const activeTabLabel = computed(() => tabs.value.find(tab => tab.id === activeTab.value)?.label || t('settings.title'))
 const activeTabDescription = computed(() => {
-  if (activeTab.value === 'git') return '管理 Git Server token。项目和仓库在新增目录时关联。'
-  if (activeTab.value === 'providers') return '维护供应商、模型能力和本地加密保存的模型配置。'
-  if (activeTab.value === 'voice') return '配置语音播报和按键控制。'
+  if (activeTab.value === 'general') return t('settings.descriptions.general')
+  if (activeTab.value === 'git') return t('settings.descriptions.git')
+  if (activeTab.value === 'providers') return t('settings.descriptions.providers')
+  if (activeTab.value === 'voice') return t('settings.descriptions.voice')
   if (activeTab.value === 'device') return ''
-  return '配置 HomeRail Agent UI 使用的本地能力。'
+  return t('settings.descriptions.default')
 })
 
 const apiBaseUrl = computed(() => agentSettingsApi.getApiBaseUrl())
@@ -917,7 +923,7 @@ async function saveWireGuardSettings(): Promise<void> {
     })
     applyWireGuardResponse(response.configured, response.config, response.endpoint)
     refreshWireGuardStatus()
-    setNotice('WireGuard 配置已保存到本机 Android TV')
+    setNotice(t('settings.wireguard.saved'))
   })
 }
 
@@ -935,9 +941,9 @@ async function connectWireGuardSettings(): Promise<void> {
       wireGuardProfileName.value = status.profileName || status.tunnelName
     }
     if (status.code === 'vpn_authorization_requested') {
-      setNotice('请在电视上确认 Android VPN 授权，授权后会自动连接')
+      setNotice(t('settings.wireguard.authorize'))
     } else {
-      setNotice('WireGuard 隧道已连接')
+      setNotice(t('settings.wireguard.tunnelConnected'))
     }
   })
 }
@@ -948,17 +954,17 @@ async function disconnectWireGuardSettings(): Promise<void> {
     if (wireGuardStatus.value.profileName || wireGuardStatus.value.tunnelName) {
       wireGuardProfileName.value = wireGuardStatus.value.profileName || wireGuardStatus.value.tunnelName
     }
-    setNotice('WireGuard 隧道已断开')
+    setNotice(t('settings.wireguard.tunnelDisconnected'))
   })
 }
 
 async function clearWireGuardSettings(): Promise<void> {
-  if (!window.confirm('清除本机 Android TV 保存的 WireGuard 配置？')) return
+  if (!window.confirm(t('settings.wireguard.clearConfirm'))) return
   await runWireGuardAction('wireguard-clear', async () => {
     const response = clearAndroidTvWireGuardConfig()
     applyWireGuardResponse(response.configured, response.config, response.endpoint)
     refreshWireGuardStatus()
-    setNotice('WireGuard 本机配置已清除')
+    setNotice(t('settings.wireguard.cleared'))
   })
 }
 
@@ -970,7 +976,7 @@ function importWireGuardRawConfig(): void {
     )
     wireGuardProfileName.value = wireGuardForm.value.name
     wireGuardError.value = ''
-    setNotice('已从 wg 配置文本填充字段')
+    setNotice(t('settings.wireguard.imported'))
   } catch (err) {
     const message = messageOf(err)
     wireGuardError.value = message
@@ -993,7 +999,7 @@ function formatWireGuardBytes(value: number): string {
 }
 
 function formatWireGuardHandshake(value: number): string {
-  if (!value) return '从未'
+  if (!value) return t('settings.wireguard.never')
   return new Date(value).toLocaleString()
 }
 
@@ -1034,7 +1040,7 @@ async function createGit(): Promise<void> {
     resetNewGitServer()
     gitDrawerOpen.value = false
     await refreshAll()
-    setNotice('Git Server 已添加')
+    setNotice(t('settings.git.added'))
   })
 }
 
@@ -1042,12 +1048,12 @@ async function verifyGit(server: GitServer): Promise<void> {
   await runAction(`verify-git-${server.server_id}`, async () => {
     await agentSettingsApi.verifyGitServer(server.server_id)
     await refreshAll()
-    setNotice(`${server.name} 已验证`)
+    setNotice(t('settings.git.verifiedNotice', { name: server.name }))
   })
 }
 
 async function removeGit(server: GitServer): Promise<void> {
-  if (!window.confirm(`删除 Git Server ${server.name}？`)) return
+  if (!window.confirm(t('settings.git.deleteConfirm', { name: server.name }))) return
   await runAction(`delete-git-${server.server_id}`, async () => {
     await agentSettingsApi.deleteGitServer(server.server_id, false)
     await refreshAll()
@@ -1127,7 +1133,7 @@ async function saveVoiceSettings(): Promise<void> {
     voiceForm.value.asr_token = ''
     voiceForm.value.tts_token = ''
     await syncVoiceAgentLlmConfig(res.data)
-    setNotice('语音设置已保存')
+    setNotice(t('settings.voice.saved'))
   })
 }
 
@@ -1155,13 +1161,13 @@ async function syncVoiceAgentLlmConfig(settings: VoiceSettings): Promise<void> {
 function saveVoiceVadSilenceSetting(): void {
   const savedMs = saveVoiceVadSilenceMs(voiceVadSilenceSeconds.value * 1000)
   voiceVadSilenceSeconds.value = savedMs / 1000
-  setNotice(`VAD 静音结束时间已保存为 ${voiceVadSilenceSeconds.value.toFixed(1)} 秒`)
+  setNotice(t('settings.voice.vadSaved', { seconds: voiceVadSilenceSeconds.value.toFixed(1) }))
 }
 
 async function refreshVoiceAudioInputs(): Promise<void> {
   if (!navigator.mediaDevices?.enumerateDevices) {
     voiceAudioInputDevices.value = []
-    voiceAudioInputStatus.value = '当前浏览器不支持麦克风设备列表。'
+    voiceAudioInputStatus.value = t('settings.voice.deviceListUnsupported')
     return
   }
   voiceAudioInputLoading.value = true
@@ -1176,9 +1182,9 @@ async function refreshVoiceAudioInputs(): Promise<void> {
     } else {
       selectedVoiceAudioInputDeviceId.value = savedDeviceId
     }
-    if (devices.length === 0) voiceAudioInputStatus.value = '未检测到可用麦克风。'
-    else if (devices.length === 1) voiceAudioInputStatus.value = `当前麦克风：${devices[0].label}`
-    else voiceAudioInputStatus.value = `${devices.length} 个麦克风可用`
+    if (devices.length === 0) voiceAudioInputStatus.value = t('settings.voice.noMicrophone')
+    else if (devices.length === 1) voiceAudioInputStatus.value = t('settings.voice.currentMicrophone', { name: devices[0].label })
+    else voiceAudioInputStatus.value = t('settings.voice.microphonesAvailable', { count: devices.length })
   } catch (err) {
     voiceAudioInputStatus.value = messageOf(err)
   } finally {
@@ -1194,27 +1200,27 @@ function selectVoiceAudioInput(event: Event): void {
     ...device,
     isSelected: Boolean(deviceId && device.deviceId === deviceId),
   }))
-  setNotice(deviceId ? '麦克风输入已保存' : '麦克风输入已切回自动选择')
+  setNotice(deviceId ? t('settings.voice.inputSaved') : t('settings.voice.inputAutomatic'))
 }
 
 async function bindVoiceHidButton(): Promise<void> {
   if (!window.isSecureContext) {
-    voiceHidBindingStatus.value = '当前页面不是 secure context，WebHID 不可用。请使用 HTTPS 或 localhost。'
+    voiceHidBindingStatus.value = t('settings.voice.insecureContext')
     return
   }
   const hid = getHidApi()
   if (!hid) {
-    voiceHidBindingStatus.value = '当前浏览器不支持 WebHID。请使用 Chrome 或 Edge。'
+    voiceHidBindingStatus.value = t('settings.voice.hidUnsupported')
     return
   }
 
   voiceHidBindingActive.value = true
-  voiceHidBindingStatus.value = '请选择 DJI Mic 接收器，然后按一下要绑定的按键。'
+  voiceHidBindingStatus.value = t('settings.voice.selectHid')
   try {
     const devices = await hid.requestDevice({ filters: [] })
     const device = devices[0]
     if (!device) {
-      voiceHidBindingStatus.value = '未选择 HID 设备。'
+      voiceHidBindingStatus.value = t('settings.voice.noHidSelected')
       return
     }
     if (!device.opened) await device.open()
@@ -1222,7 +1228,7 @@ async function bindVoiceHidButton(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         device.removeEventListener('inputreport', onReport)
-        reject(new Error('等待按键超时，请重新绑定。'))
+        reject(new Error(t('settings.voice.bindingTimeout')))
       }, 15000)
 
       function onReport(event: any): void {
@@ -1244,14 +1250,14 @@ async function bindVoiceHidButton(): Promise<void> {
         }
         saveVoiceHidButtonBinding(binding)
         voiceHidBinding.value = binding
-        voiceHidBindingStatus.value = `已绑定：${formatVoiceHidBinding(binding)}`
+        voiceHidBindingStatus.value = t('settings.voice.bound', { binding: formatVoiceHidBinding(binding) })
         resolve()
       }
 
       device.addEventListener('inputreport', onReport)
     })
   } catch (err: any) {
-    voiceHidBindingStatus.value = err?.message || '绑定失败'
+    voiceHidBindingStatus.value = err?.message || t('settings.voice.bindingFailed')
   } finally {
     voiceHidBindingActive.value = false
   }
@@ -1262,13 +1268,13 @@ function clearVoiceHidBinding(): void {
   clearVoiceKeyboardButtonBinding()
   voiceHidBinding.value = null
   voiceKeyboardBinding.value = null
-  voiceHidBindingStatus.value = '已清除按键绑定。'
+  voiceHidBindingStatus.value = t('settings.voice.bindingCleared')
 }
 
 function bindVoiceKeyboardButton(): void {
   if (typeof window === 'undefined') return
   voiceHidBindingActive.value = true
-  voiceHidBindingStatus.value = '请按一下智能眼镜/蓝牙遥控器要绑定的按键。'
+  voiceHidBindingStatus.value = t('settings.voice.pressKeyboard')
   window.addEventListener('keydown', captureVoiceKeyboardButton, true)
 }
 
@@ -1278,7 +1284,7 @@ function captureVoiceKeyboardButton(event: KeyboardEvent): void {
   const binding = keyboardBindingFromEvent(event)
   saveVoiceKeyboardButtonBinding(binding)
   voiceKeyboardBinding.value = binding
-  voiceHidBindingStatus.value = `已绑定键盘按键：${formatVoiceKeyboardBinding(binding)}`
+  voiceHidBindingStatus.value = t('settings.voice.keyboardBound', { binding: formatVoiceKeyboardBinding(binding) })
   voiceHidBindingActive.value = false
   window.removeEventListener('keydown', captureVoiceKeyboardButton, true)
 }
@@ -1468,23 +1474,23 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="agent-settings-shell relative flex h-screen overflow-hidden bg-[#080b0d] p-4 text-gray-100">
+  <div class="agent-settings-shell relative flex h-screen flex-col overflow-hidden bg-[#080b0d] p-2 text-gray-100 md:flex-row md:p-4">
     <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_24%_12%,rgba(32,160,150,0.18),transparent_32%),radial-gradient(circle_at_82%_4%,rgba(84,201,216,0.12),transparent_28%)]" />
-    <aside class="relative z-10 flex w-[224px] flex-shrink-0 flex-col rounded-l-[30px] border border-r-0 border-cyan-200/14 bg-black/26 shadow-2xl backdrop-blur-xl xl:w-[338px]">
-      <div class="h-10 flex-shrink-0" />
-      <div class="px-4">
+    <aside class="relative z-10 flex w-full flex-shrink-0 flex-col rounded-t-[24px] border border-b-0 border-cyan-200/14 bg-black/26 shadow-2xl backdrop-blur-xl md:w-[224px] md:rounded-l-[30px] md:rounded-tr-none md:border-b md:border-r-0 xl:w-[338px]">
+      <div class="hidden h-10 flex-shrink-0 md:block" />
+      <div class="px-3 pt-3 md:px-4 md:pt-0">
         <button class="flex h-11 w-full items-center gap-2 rounded-full border border-cyan-200/14 bg-cyan-200/[0.055] px-3 text-left text-base text-cyan-50 hover:bg-cyan-200/10 hover:text-white" @click="back">
           <ArrowLeft class="h-4 w-4" />
-          返回应用
+          {{ t('settings.backToApp') }}
         </button>
       </div>
-      <nav class="mt-6 flex-1 overflow-y-auto px-4 text-[15px]">
-        <div class="mb-3 px-1 text-[11px] tracking-[0.22em] text-cyan-200/45">HomeRail</div>
+      <nav class="mt-3 flex flex-none gap-1 overflow-x-auto px-3 pb-2 text-sm md:mt-6 md:block md:flex-1 md:overflow-y-auto md:px-4 md:pb-0 md:text-[15px]">
+        <div class="mb-3 hidden px-1 text-[11px] tracking-[0.22em] text-cyan-200/45 md:block">HomeRail</div>
         <button
           v-for="tab in visibleTabs"
           :key="tab.id"
           :data-testid="`agent-settings-tab-${tab.id}`"
-          class="mb-1 flex h-11 w-full items-center gap-3 rounded-2xl px-3 text-left"
+          class="mb-1 flex h-10 w-auto flex-shrink-0 items-center gap-2 rounded-2xl px-3 text-left md:h-11 md:w-full md:gap-3"
           :class="activeTab === tab.id ? 'border border-cyan-200/20 bg-cyan-200/12 text-white' : 'border border-transparent text-white/66 hover:border-white/10 hover:bg-white/[0.055] hover:text-white'"
           @click="activeTab = tab.id"
         >
@@ -1492,24 +1498,26 @@ onUnmounted(() => {
           {{ tab.label }}
         </button>
       </nav>
-      <div class="border-t border-cyan-200/10 px-4 py-4 text-xs text-cyan-100/45">
+      <div class="hidden border-t border-cyan-200/10 px-4 py-4 text-xs text-cyan-100/45 md:block">
         API {{ apiBaseUrl }}
       </div>
     </aside>
 
-    <main class="relative z-10 min-w-0 flex-1 overflow-y-auto rounded-r-[30px] border border-cyan-200/14 bg-[#071012]/76 shadow-2xl backdrop-blur-xl">
-      <div class="mx-auto w-full max-w-[1040px] px-5 py-7 xl:px-10 xl:py-12">
+    <main class="relative z-10 min-h-0 min-w-0 flex-1 overflow-y-auto rounded-b-[24px] border border-cyan-200/14 bg-[#071012]/76 shadow-2xl backdrop-blur-xl md:rounded-bl-none md:rounded-r-[30px]">
+      <div class="mx-auto w-full max-w-[1040px] px-4 py-5 sm:px-5 sm:py-7 xl:px-10 xl:py-12">
         <div class="flex items-start justify-between gap-4">
           <div>
-            <h1 class="text-3xl font-semibold tracking-normal text-white">{{ activeTabLabel }}</h1>
+            <h1 class="text-2xl font-semibold tracking-normal text-white sm:text-3xl">{{ activeTabLabel }}</h1>
             <p v-if="activeTabDescription" class="mt-3 text-sm text-white/42">{{ activeTabDescription }}</p>
           </div>
-          <button class="flex h-11 items-center gap-2 rounded-full border border-cyan-200/14 px-4 text-sm text-cyan-50 hover:bg-cyan-200/10" @click="refreshAll">
+          <button class="flex h-10 flex-shrink-0 items-center gap-2 rounded-full border border-cyan-200/14 px-3 text-sm text-cyan-50 hover:bg-cyan-200/10 sm:h-11 sm:px-4" @click="refreshAll">
             <Loader2 v-if="loading" class="h-4 w-4 animate-spin" />
             <RefreshCw v-else class="h-4 w-4" />
-            刷新
+            {{ t('settings.actions.refresh') }}
           </button>
         </div>
+
+        <GeneralSettings v-if="activeTab === 'general'" />
 
         <section v-if="activeTab === 'workspace'" data-testid="agent-settings-section-workspace" class="mt-10 space-y-6">
           <div class="grid gap-3 sm:grid-cols-3">
@@ -1627,21 +1635,21 @@ onUnmounted(() => {
               <div class="mt-2 text-2xl font-semibold text-white">{{ gitServers.length }}</div>
             </div>
             <div class="rounded-md border border-white/10 bg-white/[0.045] p-4">
-              <div class="text-xs text-white/42">Token 状态</div>
+              <div class="text-xs text-white/42">{{ t('settings.git.tokenStatus') }}</div>
               <div class="mt-2 text-2xl font-semibold text-emerald-200">{{ validGitServerCount }}/{{ gitServers.length }}</div>
             </div>
             <div class="rounded-md border border-white/10 bg-white/[0.045] p-4">
-              <div class="text-xs text-white/42">项目关联</div>
-              <div class="mt-2 text-sm font-medium text-white">新增目录时选择</div>
-              <div class="mt-1 text-xs text-white/42">此页只维护 token，不做目录绑定。</div>
+              <div class="text-xs text-white/42">{{ t('settings.git.projectLink') }}</div>
+              <div class="mt-2 text-sm font-medium text-white">{{ t('settings.git.selectWhenAdding') }}</div>
+              <div class="mt-1 text-xs text-white/42">{{ t('settings.git.linkHint') }}</div>
             </div>
           </div>
 
           <section class="overflow-hidden rounded-lg border border-white/10 bg-white/[0.045]">
             <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3.5">
               <div>
-                <h2 class="text-base font-semibold text-white/88">已保存的 Git Server</h2>
-                <p class="mt-1 text-sm text-white/42">{{ gitServers.length }} 个 token 配置 · Token 加密保存</p>
+                <h2 class="text-base font-semibold text-white/88">{{ t('settings.git.savedTitle') }}</h2>
+                <p class="mt-1 text-sm text-white/42">{{ t('settings.git.savedSummary', { count: gitServers.length }) }}</p>
               </div>
               <button
                 class="inline-flex h-10 items-center gap-2 rounded-md bg-blue-500 px-4 text-sm text-white hover:bg-blue-400 disabled:opacity-40"
@@ -1650,7 +1658,7 @@ onUnmounted(() => {
                 data-testid="agent-settings-git-open-create"
               >
                 <Plus class="h-4 w-4" />
-                添加 Git Server
+                {{ t('settings.git.addServer') }}
               </button>
             </div>
             <div v-if="gitServers.length" class="divide-y divide-white/10">
@@ -1662,25 +1670,25 @@ onUnmounted(() => {
                   </div>
                   <div class="mt-1 truncate font-mono text-xs text-white/42">{{ server.api_endpoint }}</div>
                   <div class="mt-1 text-xs text-white/35">
-                    {{ server.git_user_name || '未设置 Git user' }} · {{ server.git_user_email || '未设置 Git email' }}
+                    {{ server.git_user_name || t('settings.git.userUnset') }} · {{ server.git_user_email || t('settings.git.emailUnset') }}
                   </div>
                 </div>
                 <div class="flex items-center gap-1.5 text-sm" :class="server.token_valid ? 'text-emerald-300' : 'text-red-300'" :data-testid="`agent-settings-git-validity-${server.server_id}`">
                   <CheckCircle2 v-if="server.token_valid" class="h-4 w-4" />
                   <XCircle v-else class="h-4 w-4" />
-                  {{ server.token_valid ? '已验证' : '未验证' }}
+                  {{ server.token_valid ? t('settings.git.verified') : t('settings.git.unverified') }}
                 </div>
                 <div class="flex justify-start gap-2 md:justify-end">
                   <button class="inline-flex h-9 items-center rounded-md border border-white/10 px-3 text-sm text-white/70 hover:bg-white/5 disabled:opacity-40" :disabled="saving === `verify-git-${server.server_id}`" @click="verifyGit(server)" :data-testid="`agent-settings-git-verify-${server.server_id}`">
                     <Loader2 v-if="saving === `verify-git-${server.server_id}`" class="mr-2 h-4 w-4 animate-spin" />
-                    验证
+                    {{ t('settings.actions.verify') }}
                   </button>
                   <button class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-500/30 text-red-300 hover:bg-red-500/10 disabled:opacity-40" :disabled="saving === `delete-git-${server.server_id}`" @click="removeGit(server)" :data-testid="`agent-settings-git-delete-${server.server_id}`"><Trash2 class="h-4 w-4" /></button>
                 </div>
               </div>
             </div>
             <div v-else class="px-4 py-8 text-sm text-white/45">
-              还没有 Git Server。点击右上角添加 Gitea、GitHub 或 GitLab token。
+              {{ t('settings.git.empty') }}
             </div>
           </section>
         </section>
@@ -1704,7 +1712,7 @@ onUnmounted(() => {
           <section class="space-y-4">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h2 class="text-base font-semibold text-white/88">连接</h2>
+                <h2 class="text-base font-semibold text-white/88">{{ t('settings.wireguard.connection') }}</h2>
               </div>
               <span
                 data-testid="agent-settings-wireguard-status"
@@ -1737,7 +1745,7 @@ onUnmounted(() => {
                   >
                     <Loader2 v-if="saving === 'wireguard-connect'" class="mr-2 inline h-4 w-4 animate-spin" />
                     <Network v-else class="mr-2 inline h-4 w-4" />
-                    连接
+                    {{ t('settings.wireguard.connect') }}
                   </button>
                   <button
                     class="inline-flex h-10 items-center rounded-md border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/5 disabled:opacity-40"
@@ -1747,7 +1755,7 @@ onUnmounted(() => {
                   >
                     <Loader2 v-if="saving === 'wireguard-disconnect'" class="mr-2 inline h-4 w-4 animate-spin" />
                     <XCircle v-else class="mr-2 inline h-4 w-4" />
-                    断开
+                    {{ t('settings.wireguard.disconnect') }}
                   </button>
                   <button
                     class="inline-flex h-10 items-center rounded-md border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/5 disabled:opacity-40"
@@ -1756,7 +1764,7 @@ onUnmounted(() => {
                     @click="refreshWireGuardSettings"
                   >
                     <Loader2 v-if="wireGuardLoading" class="mr-2 inline h-4 w-4 animate-spin" />
-                    刷新
+                    {{ t('settings.actions.refresh') }}
                   </button>
                   <button
                     class="inline-flex h-10 items-center rounded-md bg-blue-500 px-3 py-2 text-sm text-white hover:bg-blue-400 disabled:opacity-40"
@@ -1765,7 +1773,7 @@ onUnmounted(() => {
                     @click="saveWireGuardSettings"
                   >
                     <Loader2 v-if="saving === 'wireguard-save'" class="mr-2 inline h-4 w-4 animate-spin" />
-                    保存
+                    {{ t('settings.actions.save') }}
                   </button>
                 </div>
               </div>
@@ -1795,7 +1803,7 @@ onUnmounted(() => {
               </div>
               <div class="grid gap-3 px-4 py-4 xl:grid-cols-2">
                 <label class="grid gap-2 text-sm text-gray-400">
-                  配置名称
+                  {{ t('settings.wireguard.profileName') }}
                   <input
                     v-model="wireGuardForm.name"
                     data-testid="agent-settings-wireguard-name"
@@ -1895,7 +1903,7 @@ onUnmounted(() => {
                   data-testid="agent-settings-wireguard-import-raw"
                   @click="importWireGuardRawConfig"
                 >
-                  从 wg0.conf 填充
+                  {{ t('settings.wireguard.importConfig') }}
                 </button>
                 <button
                   class="inline-flex h-10 items-center rounded-md border border-red-500/30 px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-40"
@@ -1903,7 +1911,7 @@ onUnmounted(() => {
                   data-testid="agent-settings-wireguard-clear"
                   @click="clearWireGuardSettings"
                 >
-                  清除
+                  {{ t('settings.actions.clear') }}
                 </button>
               </div>
               <div
@@ -1920,15 +1928,15 @@ onUnmounted(() => {
         <section v-if="activeTab === 'voice'" data-testid="agent-settings-section-voice" class="mt-10 space-y-8">
           <section class="space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-white/88">播报</h2>
-              <p class="mt-1 text-sm text-white/42">控制 Codex Voice Agent 的 TTS 播报范围。</p>
+              <h2 class="text-base font-semibold text-white/88">{{ t('settings.voice.narration') }}</h2>
+              <p class="mt-1 text-sm text-white/42">{{ t('settings.voice.narrationDescription') }}</p>
             </div>
             <div class="overflow-hidden rounded-xl border border-white/10 bg-white/[0.045]">
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 px-4 py-3.5">
                 <div class="min-w-0">
-                  <div class="font-medium text-white/88">进度旁白</div>
+                  <div class="font-medium text-white/88">{{ t('settings.voice.commentary') }}</div>
                   <div class="mt-1 text-sm leading-6 text-white/44">
-                    播报 commentary 进度；最终答复仍会正常播报。仅适用 Codex。
+                    {{ t('settings.voice.commentaryDescription') }}
                   </div>
                 </div>
                 <button
@@ -1952,32 +1960,32 @@ onUnmounted(() => {
 
           <section class="space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-white/88">控制</h2>
-              <p class="mt-1 text-sm text-white/40">绑定外部按键，并调整语音结束自动发送时间。</p>
+              <h2 class="text-base font-semibold text-white/88">{{ t('settings.voice.controls') }}</h2>
+              <p class="mt-1 text-sm text-white/40">{{ t('settings.voice.controlsDescription') }}</p>
             </div>
             <div class="overflow-hidden rounded-xl border border-white/10 bg-white/[0.045]">
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 px-4 py-3.5">
                 <div>
-                  <div class="font-medium text-white/88">输入按键</div>
+                  <div class="font-medium text-white/88">{{ t('settings.voice.inputButton') }}</div>
                   <div class="mt-1 text-sm leading-6 text-white/44">
-                    桌面使用 WebHID；其他设备可使用键盘/遥控器按键。
+                    {{ t('settings.voice.inputButtonDescription') }}
                   </div>
                 </div>
                 <span
                   class="rounded-full px-3 py-1.5 text-sm"
                   :class="voiceButtonBindingMode === 'hid' ? 'bg-cyan-500/10 text-cyan-100' : 'bg-emerald-500/10 text-emerald-100'"
                 >
-                  {{ voiceButtonBindingMode === 'hid' ? 'WebHID' : '键盘按键' }}
+                  {{ voiceButtonBindingMode === 'hid' ? 'WebHID' : t('settings.voice.keyboardButton') }}
                 </span>
               </div>
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
                 <div class="min-w-0">
                   <div class="flex items-center gap-2 font-medium text-white/88">
                     <Mic class="h-4 w-4 text-cyan-200/70" />
-                    麦克风输入
+                    {{ t('settings.voice.microphone') }}
                   </div>
                   <div class="mt-1 text-sm leading-6 text-white/44">
-                    Android TV 会自动优先使用 USB / headset / 外置麦克风；多设备时可手动选择。
+                    {{ t('settings.voice.microphoneDescription') }}
                   </div>
                   <div v-if="voiceAudioInputStatus" class="mt-1 text-xs text-cyan-100/70">{{ voiceAudioInputStatus }}</div>
                 </div>
@@ -1989,13 +1997,13 @@ onUnmounted(() => {
                     class="h-10 min-w-[260px] rounded-lg border border-white/10 bg-black/[0.24] px-3 text-sm text-white/82 outline-none"
                     @change="selectVoiceAudioInput"
                   >
-                    <option value="">自动选择</option>
+                    <option value="">{{ t('settings.voice.automatic') }}</option>
                     <option
                       v-for="device in voiceAudioInputDevices"
                       :key="device.deviceId || device.label"
                       :value="device.deviceId"
                     >
-                      {{ device.label }}{{ device.isPreferredExternal ? ' · 外置优先' : '' }}
+                      {{ device.label }}{{ device.isPreferredExternal ? ` · ${t('settings.voice.externalPreferred')}` : '' }}
                     </option>
                   </select>
                   <div
@@ -2019,8 +2027,8 @@ onUnmounted(() => {
               </div>
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
                 <div>
-                  <div class="font-medium text-white/88">WebHID 绑定</div>
-                  <div class="mt-1 text-sm text-white/42">已绑定的 HID 设备和报告字节。</div>
+                  <div class="font-medium text-white/88">{{ t('settings.voice.hidBinding') }}</div>
+                  <div class="mt-1 text-sm text-white/42">{{ t('settings.voice.hidBindingDescription') }}</div>
                 </div>
                 <div class="min-w-0 max-w-[360px] truncate font-mono text-sm text-white/70" :title="formatVoiceHidBinding(voiceHidBinding)">
                   {{ formatVoiceHidBinding(voiceHidBinding) }}
@@ -2028,8 +2036,8 @@ onUnmounted(() => {
               </div>
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
                 <div>
-                  <div class="font-medium text-white/88">键盘绑定</div>
-                  <div class="mt-1 text-sm text-white/42">蓝牙键盘或遥控器按键。</div>
+                  <div class="font-medium text-white/88">{{ t('settings.voice.keyboardBinding') }}</div>
+                  <div class="mt-1 text-sm text-white/42">{{ t('settings.voice.keyboardBindingDescription') }}</div>
                 </div>
                 <div class="min-w-0 max-w-[260px] truncate font-mono text-sm text-white/70" :title="formatVoiceKeyboardBinding(voiceKeyboardBinding)">
                   {{ formatVoiceKeyboardBinding(voiceKeyboardBinding) }}
@@ -2037,11 +2045,11 @@ onUnmounted(() => {
               </div>
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
                 <div>
-                  <div class="font-medium text-white/88">状态</div>
+                  <div class="font-medium text-white/88">{{ t('settings.voice.status') }}</div>
                   <div class="mt-1 text-sm" :class="voiceHidSecureContext ? 'text-emerald-300/90' : 'text-yellow-200/90'">
                     {{ voiceButtonBindingMode === 'hid'
-                      ? (voiceHidSecureContext ? 'Secure context，可使用 WebHID。' : 'WebHID 需要 HTTPS 或 localhost。')
-                      : '可捕获键盘类输入设备。' }}
+                      ? (voiceHidSecureContext ? t('settings.voice.secureAvailable') : t('settings.voice.secureRequired'))
+                      : t('settings.voice.keyboardAvailable') }}
                   </div>
                   <div v-if="voiceHidBindingStatus" class="mt-1 text-xs text-cyan-100/70">{{ voiceHidBindingStatus }}</div>
                 </div>
@@ -2052,21 +2060,21 @@ onUnmounted(() => {
                     @click="bindVoiceControlButton"
                   >
                     <Loader2 v-if="voiceHidBindingActive" class="mr-2 inline h-4 w-4 animate-spin" />
-                    {{ voiceHidBindingActive ? '等待按键...' : '绑定按键' }}
+                    {{ voiceHidBindingActive ? t('settings.voice.waitingButton') : t('settings.voice.bindButton') }}
                   </button>
                   <button
                     class="rounded-lg border border-white/10 px-3.5 py-2 text-sm text-white/66 transition hover:bg-white/[0.08] disabled:opacity-40"
                     :disabled="!voiceHidBinding && !voiceKeyboardBinding"
                     @click="clearVoiceHidBinding"
                   >
-                    清除
+                    {{ t('settings.actions.clear') }}
                   </button>
                 </div>
               </div>
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
                 <div>
-                  <label class="font-medium text-white/88" for="voice-vad-silence-seconds">自动发送等待</label>
-                  <div class="mt-1 text-sm text-white/42">检测到静音后等待多久提交语音。</div>
+                  <label class="font-medium text-white/88" for="voice-vad-silence-seconds">{{ t('settings.voice.sendDelay') }}</label>
+                  <div class="mt-1 text-sm text-white/42">{{ t('settings.voice.sendDelayDescription') }}</div>
                 </div>
                 <div class="flex items-center gap-2">
                   <input
@@ -2080,7 +2088,7 @@ onUnmounted(() => {
                     @change="saveVoiceVadSilenceSetting"
                     @blur="saveVoiceVadSilenceSetting"
                   />
-                  <span class="text-sm text-white/42">秒</span>
+                  <span class="text-sm text-white/42">{{ t('settings.voice.seconds') }}</span>
                 </div>
               </div>
             </div>
@@ -2444,13 +2452,13 @@ onUnmounted(() => {
             <header class="flex shrink-0 items-center justify-between border-b border-cyan-200/10 px-5 py-4">
               <div>
                 <div class="text-xs tracking-[0.18em] text-cyan-200/45">Git Server</div>
-                <h2 class="mt-1 text-base font-semibold text-cyan-50">添加 Token</h2>
+                <h2 class="mt-1 text-base font-semibold text-cyan-50">{{ t('settings.git.drawerTitle') }}</h2>
               </div>
               <button
                 type="button"
                 class="inline-flex h-9 w-9 items-center justify-center border border-cyan-200/14 text-gray-400 transition-colors hover:bg-cyan-200/10 hover:text-white"
                 @click="closeGitDrawer"
-                title="关闭"
+                :title="t('settings.actions.close')"
               >
                 <X class="h-4 w-4" />
               </button>
@@ -2459,7 +2467,7 @@ onUnmounted(() => {
             <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5">
               <div class="grid gap-4">
                 <label class="grid gap-2 text-sm text-white/60">
-                  名称
+                  {{ t('settings.git.name') }}
                   <input
                     v-model.trim="newGitServer.name"
                     class="h-10 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none"
@@ -2468,7 +2476,7 @@ onUnmounted(() => {
                   />
                 </label>
                 <label class="grid gap-2 text-sm text-white/60">
-                  平台
+                  {{ t('settings.git.platform') }}
                   <select
                     v-model="newGitServer.platform_type"
                     class="h-10 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none"
@@ -2489,11 +2497,11 @@ onUnmounted(() => {
                 <div class="grid gap-4 sm:grid-cols-2">
                   <label class="grid min-w-0 gap-2 text-sm text-white/60">
                     Git user
-                    <input v-model.trim="newGitServer.git_user_name" class="h-10 min-w-0 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none" placeholder="可选" />
+                    <input v-model.trim="newGitServer.git_user_name" class="h-10 min-w-0 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none" :placeholder="t('settings.git.optional')" />
                   </label>
                   <label class="grid min-w-0 gap-2 text-sm text-white/60">
                     Git email
-                    <input v-model.trim="newGitServer.git_user_email" class="h-10 min-w-0 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none" placeholder="可选" />
+                    <input v-model.trim="newGitServer.git_user_email" class="h-10 min-w-0 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none" :placeholder="t('settings.git.optional')" />
                   </label>
                 </div>
                 <label class="grid gap-2 text-sm text-white/60">
@@ -2508,11 +2516,11 @@ onUnmounted(() => {
                   />
                 </label>
                 <label class="grid gap-2 text-sm text-white/60">
-                  备注
+                  {{ t('settings.git.notes') }}
                   <textarea
                     v-model.trim="newGitServer.description"
                     class="min-h-[86px] resize-none rounded-md border border-white/10 bg-[#202728] px-3 py-2 text-sm text-white outline-none"
-                    placeholder="可选"
+                    :placeholder="t('settings.git.optional')"
                   />
                 </label>
               </div>
@@ -2524,7 +2532,7 @@ onUnmounted(() => {
                 class="h-10 border border-white/10 px-4 text-sm text-white/60 hover:bg-white/5 hover:text-white"
                 @click="closeGitDrawer"
               >
-                取消
+                {{ t('settings.actions.cancel') }}
               </button>
               <button
                 type="submit"
@@ -2534,7 +2542,7 @@ onUnmounted(() => {
               >
                 <Loader2 v-if="saving === 'create-git'" class="h-4 w-4 animate-spin" />
                 <Plus v-else class="h-4 w-4" />
-                添加
+                {{ t('settings.actions.add') }}
               </button>
             </footer>
           </form>

@@ -1,0 +1,68 @@
+{
+  "status": {
+    "active": "Running",
+    "running": "Running",
+    "completed": "Completed",
+    "failed": "Failed",
+    "cancelled": "Cancelled",
+    "ready": "Ready",
+    "pending": "Waiting",
+    "skipped": "Skipped"
+  },
+  "runList": {
+    "title": "DAG Runs",
+    "empty": "No DAG runs yet",
+    "emptyDescription": "Start a DAG from voice or text mode and it will appear here.",
+    "current": "Current",
+    "nodes": "{count} nodes",
+    "justNow": "Just now",
+    "minutesAgo": "{count} min ago",
+    "hoursAgo": "{count} hr ago"
+  },
+  "toolbar": {
+    "runtime": "DAG Runtime",
+    "nodesProgress": "{completed}/{total} nodes",
+    "tools": "Tools",
+    "failures": "Failures",
+    "legend": {
+      "running": "Running",
+      "completed": "Done",
+      "failed": "Failed",
+      "ready": "Ready",
+      "pending": "Waiting",
+      "skipped": "Skipped"
+    },
+    "back": "Back to run list (○)",
+    "runList": "Run list",
+    "resumePhysics": "Resume physics layout",
+    "pausePhysics": "Pause physics layout",
+    "resetView": "Reset view",
+    "close": "Close",
+    "closeEsc": "Close (ESC)"
+  },
+  "detail": {
+    "close": "Close (○)",
+    "task": "Task details",
+    "collapse": "■ Collapse",
+    "role": "Node role",
+    "userTask": "User task",
+    "noTask": "No task description",
+    "logs": "Chat logs",
+    "noLogs": "No logs for this node"
+  },
+  "overlay": {
+    "loadingMetrics": "Loading metrics...",
+    "runListHelp": "↑↓ Select run · × Open · ○ Exit",
+    "detailHelp": "↑↓ Switch panel · ■ Expand/collapse · ←→ Traverse nodes · Right stick Scroll · ○ Close",
+    "graphHelp": "←→ Traverse nodes · × View logs · ○ Back · Left stick Pan · L2/R2 Zoom"
+  },
+  "resources": {
+    "preparingShort": "Preparing DAG",
+    "resources": "DAG resources",
+    "preparation": "DAG preparation",
+    "preparing": "Preparing DAG resources",
+    "preparingDescription": "Preparing runtime resources for the DAG. It will be ready shortly.",
+    "skipped": "Worker image build was skipped, so Docker DAG runs may be temporarily unavailable.",
+    "status": "DAG resource status"
+  }
+}

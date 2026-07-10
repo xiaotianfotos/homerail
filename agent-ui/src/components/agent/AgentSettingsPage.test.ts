@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App } from 'vue'
+import { createPinia } from 'pinia'
 import AgentSettingsPage from './AgentSettingsPage.vue'
+import { i18n } from '@/plugins/i18n'
 
 const loadManagerRuntimeOptions = vi.fn(() => Promise.resolve())
 const showToast = vi.fn()
@@ -86,6 +88,8 @@ function mountSettings(): { app: App<Element>; root: HTMLElement } {
   const root = document.createElement('div')
   document.body.appendChild(root)
   const app = createApp(AgentSettingsPage)
+  app.use(createPinia())
+  app.use(i18n)
   app.mount(root)
   return { app, root }
 }
@@ -93,6 +97,7 @@ function mountSettings(): { app: App<Element>; root: HTMLElement } {
 describe('AgentSettingsPage Android TV WireGuard settings', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    i18n.global.locale.value = 'zh-CN'
     showToast.mockClear()
     loadManagerRuntimeOptions.mockClear()
     const storage = new Map<string, string>()

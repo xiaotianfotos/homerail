@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
 import {
   closeVoiceSession,
@@ -122,10 +123,13 @@ import {
 } from 'lucide-vue-next'
 
 const store = useAgentStore()
+const { t, te } = useI18n()
 // 新手引导配置状态检测（用于"模型配置"按钮的缺配提示）
 const { status: onboardingStatus, refresh: refreshOnboarding } = useOnboardingStatus()
 const needsOnboardingHint = computed(() => onboardingStatus.value.needsOnboarding)
-const modelConfigButtonLabel = computed(() => (needsOnboardingHint.value ? '未完成配置' : '模型配置'))
+const modelConfigButtonLabel = computed(() =>
+  needsOnboardingHint.value ? t('voice.model.incomplete') : t('voice.model.configuration')
+)
 const devOnboardingEntryVisible =
   import.meta.env.DEV && flagEnabled(import.meta.env.VITE_HOMERAIL_DEV_ONBOARDING_ENTRY)
 const props = withDefaults(
@@ -189,7 +193,7 @@ const voiceVadSilenceMs = ref(loadVoiceVadSilenceMs())
 const voiceGamepadStatus = ref('')
 const voiceGamepadConnected = ref(false)
 const voiceGamepadNoticeVisible = ref(false)
-const voiceGamepadNoticeName = ref('手柄')
+const voiceGamepadNoticeName = ref(t('voice.gamepad.generic'))
 const voiceGamepadFocusMode = ref<VoiceGamepadFocusMode>('widgets')
 const voiceGamepadLiveVisible = ref(false)
 const voiceGamepadPressedButtonIds = ref<Set<number>>(new Set())
@@ -290,7 +294,7 @@ let screenWakeLock: { release: () => Promise<void> } | null = null
 let noSleepPlayerActive = false
 let fullscreenRequesting = false
 
-const CLEAR_COMMANDS = ['删除', '清空', '清除', '重新来', '重来', '撤销']
+const CLEAR_COMMANDS = ['删除', '清空', '清除', '重新来', '重来', '撤销', 'delete', 'clear', 'reset', 'start over', 'undo']
 const VOICE_ROOT_LOCK_CLASS = 'voice-cockpit-root-active'
 const VOICE_TTS_CHANNEL = 'homerail.voice.tts.v1'
 const SILENT_WAV_DATA_URI =
@@ -379,16 +383,32 @@ const selectedManagerAgentModelId = computed(() => {
   return managerAgentModelOptions.value[0]?.id ?? ''
 })
 const codexReasoningEffort = computed(() => voiceAgentConfig.value?.reasoning_effort || 'low')
-const codexReasoningEffortOptions = computed(() => resolveCodexReasoningEffortOptions(
-  codexModels.value,
-  selectedCodexModel.value,
-  codexReasoningEffort.value
-))
+const codexReasoningEffortOptions = computed(() =>
+  resolveCodexReasoningEffortOptions(
+    codexModels.value,
+    selectedCodexModel.value,
+    codexReasoningEffort.value
+  ).map(option => {
+    const descriptionKey = `voice.model.reasoningDescriptions.${option.value}`
+    return {
+      ...option,
+      description: te(descriptionKey) ? t(descriptionKey) : option.description
+    }
+  })
+)
 const codexServiceTier = computed(() => voiceAgentConfig.value?.service_tier || '')
-const codexServiceTierOptions = computed(() => resolveCodexServiceTierOptions(
-  codexModels.value,
-  selectedCodexModel.value
-))
+const codexServiceTierOptions = computed(() =>
+  resolveCodexServiceTierOptions(
+    codexModels.value,
+    selectedCodexModel.value
+  ).map(option => option.value
+    ? option
+    : {
+        ...option,
+        label: t('voice.model.standardServiceTier'),
+        description: t('voice.model.standardServiceTierDescription')
+      })
+)
 const recognitionMode = computed<'omni' | 'asr'>(() =>
   voiceSettings.value?.recognition_mode === 'asr' ? 'asr' : 'omni'
 )
@@ -430,11 +450,15 @@ const agentRunning = computed(
 )
 const agentActivityActive = computed(() => agentRunning.value || speaking.value)
 const agentRunStateText = computed(() => {
-  if (speaking.value) return 'AI 正在发言'
-  return agentRunning.value ? 'Agent 正在运行' : 'Agent 空闲'
+  if (speaking.value) return t('voice.state.aiSpeaking')
+  return agentRunning.value ? t('voice.state.agentRunning') : t('voice.state.agentIdle')
 })
-const agentRunButtonText = computed(() => (speaking.value ? 'AI 发言中' : 'Agent 运行中'))
-const agentRunButtonHint = computed(() => (speaking.value ? '正在播报' : '点按停止'))
+const agentRunButtonText = computed(() =>
+  speaking.value ? t('voice.state.speaking') : t('voice.state.agentRunning')
+)
+const agentRunButtonHint = computed(() =>
+  speaking.value ? t('voice.state.narrating') : t('voice.state.tapToStop')
+)
 const terminalProgressStatuses = new Set(['done', 'blocked', 'failed', 'error', 'cancelled'])
 const workspaceTerminal = computed(() => {
   const status = workspace.value?.progress_brief?.status?.trim()
@@ -464,11 +488,13 @@ const voiceState = computed(() => {
   return 'idle'
 })
 const voiceStateText = computed(() => {
-  if (onboardingStatus.value.needsOnboarding) return '请先完成新手配置'
-  if (voiceState.value === 'speaking') return 'AI 正在发言，请稍候'
-  if (voiceState.value === 'listening') return speechActive ? '正在听你说话' : '等待发言'
-  if (voiceState.value === 'thinking') return processingText.value || '处理中'
-  return '点按开始说话'
+  if (onboardingStatus.value.needsOnboarding) return t('voice.state.onboardingRequired')
+  if (voiceState.value === 'speaking') return t('voice.state.aiSpeakingWait')
+  if (voiceState.value === 'listening') {
+    return speechActive ? t('voice.state.listeningToYou') : t('voice.state.waitingForSpeech')
+  }
+  if (voiceState.value === 'thinking') return processingText.value || t('voice.state.processing')
+  return t('voice.state.tapToSpeak')
 })
 const composerSubmitDisabled = computed(
   () => !codexTextDraft.value.trim() || codexTextSubmitting.value || loading.value
@@ -479,19 +505,21 @@ const activeVoiceModelOptions = computed(() =>
 const selectedVoiceModelId = computed(() =>
   recognitionMode.value === 'asr' ? selectedAsrModelId.value : selectedOmniModelId.value
 )
-const voiceModelTitle = computed(() => (recognitionMode.value === 'asr' ? 'ASR 模型' : 'Omni 模型'))
+const voiceModelTitle = computed(() =>
+  recognitionMode.value === 'asr' ? t('voice.model.asr') : t('voice.model.omni')
+)
 const voiceModelFallback = computed(() =>
   recognitionMode.value === 'asr'
-    ? voiceSettings.value?.asr_model || '未配置 ASR 模型'
-    : voiceSettings.value?.omni_model || '未配置 Omni 模型'
+    ? voiceSettings.value?.asr_model || t('voice.model.asrModelUnconfigured')
+    : voiceSettings.value?.omni_model || t('voice.model.omniUnconfigured')
 )
 const asrModelLabel = computed(() => {
   const setting = asrModelOptions.value.find(item => item.id === selectedAsrModelId.value)
-  return modelSettingLabel(setting) || voiceSettings.value?.asr_model || '未配置 ASR'
+  return modelSettingLabel(setting) || voiceSettings.value?.asr_model || t('voice.model.asrUnconfigured')
 })
 const ttsModelLabel = computed(() => {
   const setting = ttsModelOptions.value.find(item => item.id === selectedTtsModelId.value)
-  return modelSettingLabel(setting) || voiceSettings.value?.tts_model || '未配置 TTS'
+  return modelSettingLabel(setting) || voiceSettings.value?.tts_model || t('voice.model.ttsUnconfigured')
 })
 const selectedTtsSetting = computed(
   () => ttsModelOptions.value.find(item => item.id === selectedTtsModelId.value) ?? null
@@ -549,20 +577,22 @@ const voiceWavePaths = computed(() => {
   ]
 })
 const processingText = computed(() => {
-  if (onboardingStatus.value.needsOnboarding) return '请先完成新手配置'
-  if (speaking.value) return 'AI 正在发言，请稍候'
-  if (asrLoading.value) return '语音设置加载中'
-  if (!voiceSettings.value) return '语音设置不可用'
-  if (managerSubmitting.value) return workspaceExecutionProgressText.value || '处理中'
-  if (voiceBusy.value) return recognitionMode.value === 'asr' ? 'ASR 转写中' : 'Omni 理解中'
-  if (loading.value) return 'AI 正在处理'
+  if (onboardingStatus.value.needsOnboarding) return t('voice.state.onboardingRequired')
+  if (speaking.value) return t('voice.state.aiSpeakingWait')
+  if (asrLoading.value) return t('voice.state.settingsLoading')
+  if (!voiceSettings.value) return t('voice.state.settingsUnavailable')
+  if (managerSubmitting.value) return workspaceExecutionProgressText.value || t('voice.state.processing')
+  if (voiceBusy.value) {
+    return recognitionMode.value === 'asr' ? t('voice.state.asrTranscribing') : t('voice.state.omniUnderstanding')
+  }
+  if (loading.value) return t('voice.state.aiProcessing')
   return ''
 })
-const taskCardTitle = computed(() => taskDraft.value?.title || '任务')
+const taskCardTitle = computed(() => taskDraft.value?.title || t('voice.task.title'))
 const taskCardBody = computed(() =>
-  summarizeTask(taskDraft.value?.request || '说出一个需要整理成任务草稿的需求。')
+  summarizeTask(taskDraft.value?.request || t('voice.task.prompt'))
 )
-const taskSubmitTitle = computed(() => confirmation.value?.summary || '确认')
+const taskSubmitTitle = computed(() => confirmation.value?.summary || t('voice.task.confirmation'))
 const xiaohongshuArtifactKeys = computed(
   () =>
     new Set(canvasWidgets.value.filter(isXiaohongshuWidget).map(widgetArtifactKey).filter(Boolean))
@@ -622,7 +652,7 @@ const workspaceExecutionProgressText = computed(() => {
 const executionCardVisible = computed(() =>
   Boolean(primaryExecutionWidget.value || workspace.value?.manager_run_id)
 )
-const executionCardTitle = computed(() => primaryExecutionWidget.value?.title || '状态')
+const executionCardTitle = computed(() => primaryExecutionWidget.value?.title || t('voice.canvas.status'))
 const executionCardStatus = computed(
   () =>
     primaryExecutionWidget.value?.status ||
@@ -650,7 +680,7 @@ const dagNodeRows = computed(() => {
     .map(item => ({
       id: String(item?.node_id || item?.id || ''),
       name: String(item?.name || item?.node_id || ''),
-      status: String(item?.status_label || item?.status || '未知'),
+      status: String(item?.status_label || item?.status || t('voice.canvas.unknown')),
       rawStatus: String(item?.status || ''),
       isCurrent: Boolean(item?.is_current),
       tokens: Number(item?.tokens_total || 0),
@@ -683,7 +713,7 @@ const dagContextRemainingText = computed(() => {
     .filter((value): value is number => value !== null && Number.isFinite(value))
   if (!usages.length) return ''
   const maxUsage = Math.max(...usages)
-  return `${Math.max(0, Math.round(100 - maxUsage))}% 上下文余量`
+  return t('voice.canvas.contextRemaining', { percent: Math.max(0, Math.round(100 - maxUsage)) })
 })
 const dagSignalRows = computed(() =>
   agentDagSignalWidgets.value
@@ -842,12 +872,13 @@ const captionText = computed(() => {
 })
 const voiceInputStatusVisible = computed(() => voiceStateText.value !== captionText.value)
 const composerPlaceholder = computed(() => {
-  if (listening.value) return voiceInputAssist.value ? '正在听，说完可编辑...' : '正在收听...'
-  if (voiceInputAssist.value) return '输入任务，或点麦克风说话...'
-  return '输入任务，或点麦克风说话...'
+  if (listening.value) {
+    return voiceInputAssist.value ? t('voice.state.listeningEditable') : t('voice.state.listening')
+  }
+  return t('voice.composer.placeholder')
 })
 const captionKind = computed(() => {
-  if (liveTranscript.value && !['正在收听...', 'Omni 正在理解...'].includes(liveTranscript.value))
+  if (liveTranscript.value && ![t('voice.state.listening'), t('voice.state.omniProcessing')].includes(liveTranscript.value))
     return 'user'
   if (lastUserTranscript.value) return 'user'
   if (voiceInputLocked.value) return 'state'
@@ -876,15 +907,15 @@ const canRequestElementFullscreen = computed(() => {
   return Boolean(root.requestFullscreen || root.webkitRequestFullscreen)
 })
 const fullscreenGateTitle = computed(() =>
-  canRequestElementFullscreen.value ? '进入全屏语音模式' : 'iPhone 浏览器需要从主屏幕打开'
+  canRequestElementFullscreen.value ? t('voice.fullscreen.enterMode') : t('voice.fullscreen.homeScreenRequired')
 )
 const fullscreenGateHint = computed(() =>
   canRequestElementFullscreen.value
-    ? '移动浏览器需要点按一次确认全屏'
-    : 'iOS 上 Chrome 和 Safari 都不能直接隐藏地址栏。点分享按钮，选择“添加到主屏幕”。'
+    ? t('voice.fullscreen.confirmation')
+    : t('voice.fullscreen.iosHint')
 )
 const fullscreenGateAction = computed(() =>
-  canRequestElementFullscreen.value ? '进入全屏' : '继续使用当前浏览器'
+  canRequestElementFullscreen.value ? t('voice.fullscreen.enter') : t('voice.fullscreen.continue')
 )
 
 function modelSettingLabel(
@@ -1107,7 +1138,7 @@ async function startSession(): Promise<void> {
     await loadVoiceSessionShortcuts()
     void voiceSidebarRef.value?.refresh()
   } catch (err: any) {
-    error.value = err?.message || '语音会话启动失败'
+    error.value = err?.message || t('voice.errors.sessionStart')
   } finally {
     loading.value = false
   }
@@ -1140,7 +1171,7 @@ async function createFreshVoiceSession(): Promise<void> {
     void voiceSidebarRef.value?.refresh()
     void nextTick(() => voiceSidebarRef.value?.ensureGamepadFocus())
   } catch (err: any) {
-    error.value = err?.message || '新会话创建失败'
+    error.value = err?.message || t('voice.errors.sessionCreate')
   } finally {
     loading.value = false
   }
@@ -1219,7 +1250,7 @@ async function handleVoiceSessionSelected(sessionId: string): Promise<void> {
     // 更新服务端当前 session 指针，让其他设备刷新后看到同一个 session。
     void setCurrentVoiceSession(sessionId)
   } catch (err: any) {
-    error.value = err?.message || '语音会话读取失败'
+    error.value = err?.message || t('voice.errors.sessionRead')
   } finally {
     loading.value = false
   }
@@ -1620,7 +1651,7 @@ function dagNodeDisplayName(node: { id: string; name: string }, index: number): 
     'codex appserver smoke worker',
     'kimi smoke worker'
   ])
-  if (!raw || internalNames.has(normalized)) return `节点 ${index + 1}`
+  if (!raw || internalNames.has(normalized)) return t('voice.canvas.nodeFallback', { index: index + 1 })
   return raw
 }
 
@@ -2239,7 +2270,7 @@ async function loadVoiceRuntime(): Promise<void> {
     voiceSettings.value = settingsRes.data
     voiceAgentConfig.value = voiceAgentRes?.data ?? null
   } catch (err: any) {
-    voiceConfigError.value = err?.message || '语音设置加载失败'
+    voiceConfigError.value = err?.message || t('voice.errors.settingsLoad')
   } finally {
     asrLoading.value = false
   }
@@ -2330,7 +2361,7 @@ async function changeOmniModel(event: Event): Promise<void> {
     const res = await updateVoiceSettings(payload)
     voiceSettings.value = res.data
   } catch (err: any) {
-    voiceConfigError.value = err?.message || '模型保存失败'
+    voiceConfigError.value = err?.message || t('voice.model.saveFailed')
   } finally {
     asrSaving.value = false
   }
@@ -2353,7 +2384,7 @@ async function changeLlmModel(event: Event): Promise<void> {
     voiceSettings.value = res.data
     await syncVoiceAgentLlmConfig(setting.id, setting.provider_id, setting.model_name)
   } catch (err: any) {
-    voiceConfigError.value = err?.message || '模型保存失败'
+    voiceConfigError.value = err?.message || t('voice.model.saveFailed')
   } finally {
     asrSaving.value = false
   }
@@ -2362,7 +2393,7 @@ async function changeLlmModel(event: Event): Promise<void> {
 async function setVoiceAgentHarness(harness: VoiceAgentConfig['harness']): Promise<void> {
   if (voiceAgentConfig.value?.harness === harness) return
   if (harness === 'codex_appserver' && !selectedCodexModel.value) {
-    voiceConfigError.value = '当前账号没有可用的 Codex 模型'
+    voiceConfigError.value = t('voice.model.noAvailableCodex')
     return
   }
   voiceAgentSaving.value = true
@@ -2425,7 +2456,7 @@ async function setVoiceAgentHarness(harness: VoiceAgentConfig['harness']): Promi
     })
     voiceAgentConfig.value = res.data
   } catch (err: any) {
-    voiceConfigError.value = err?.message || '主 Agent 保存失败'
+    voiceConfigError.value = err?.message || t('voice.model.managerSaveFailed')
   } finally {
     voiceAgentSaving.value = false
   }
@@ -2449,7 +2480,7 @@ async function setCodexReasoningEffort(reasoningEffort: CodexReasoningEffort): P
     })
     voiceAgentConfig.value = res.data
   } catch (err: any) {
-    voiceConfigError.value = err?.message || 'Codex 推理配置保存失败'
+    voiceConfigError.value = err?.message || t('voice.model.reasoningSaveFailed')
   } finally {
     voiceAgentSaving.value = false
   }
@@ -2471,7 +2502,7 @@ async function setCodexServiceTier(serviceTier: string): Promise<void> {
     })
     voiceAgentConfig.value = res.data
   } catch (err: any) {
-    voiceConfigError.value = err?.message || 'Codex speed save failed'
+    voiceConfigError.value = err?.message || t('voice.model.serviceTierSaveFailed')
   } finally {
     voiceAgentSaving.value = false
   }
@@ -2506,7 +2537,7 @@ async function setCodexModel(model: string): Promise<void> {
     })
     voiceAgentConfig.value = response.data
   } catch (err: any) {
-    voiceConfigError.value = err?.message || 'Codex model save failed'
+    voiceConfigError.value = err?.message || t('voice.model.saveFailed')
   } finally {
     voiceAgentSaving.value = false
   }
@@ -2560,7 +2591,7 @@ async function changeAsrModel(event: Event): Promise<void> {
     )
     voiceSettings.value = res.data
   } catch (err: any) {
-    voiceConfigError.value = err?.message || '模型保存失败'
+    voiceConfigError.value = err?.message || t('voice.model.saveFailed')
   } finally {
     asrSaving.value = false
   }
@@ -2583,7 +2614,7 @@ async function changeTtsModel(event: Event): Promise<void> {
     )
     voiceSettings.value = res.data
   } catch (err: any) {
-    voiceConfigError.value = err?.message || '模型保存失败'
+    voiceConfigError.value = err?.message || t('voice.model.saveFailed')
   } finally {
     ttsSaving.value = false
   }
@@ -2671,7 +2702,7 @@ async function handleVoiceStreamEvent(
   if (event.type === 'error') {
     const payload = event as { workspace?: VoiceWorkspace; message?: string }
     applyStreamWorkspace(payload.workspace, optimisticId)
-    throw new Error(payload.message || '语音助理处理失败')
+    throw new Error(payload.message || t('voice.errors.assistant'))
   }
   return null
 }
@@ -2703,7 +2734,7 @@ async function sendText(text: string, optimisticItemId?: string): Promise<void> 
   } catch (err: any) {
     // 切换 session 时主动 abort 旧 turn 的 stream，这不是错误，静默退出。
     if (turnSignal.aborted || err?.name === 'AbortError') return
-    const message = err?.message || '语音助理处理失败'
+    const message = err?.message || t('voice.errors.assistant')
     error.value = message
     recordDebug('voice_turn_failed', message)
     resetSubmittedTranscriptClear()
@@ -2784,7 +2815,7 @@ function clearCommandMatched(text: string): boolean {
 }
 
 function clearVoiceDraft(): void {
-  liveTranscript.value = '已清空待发送内容'
+  liveTranscript.value = t('voice.composer.cleared')
   lastUserTranscript.value = ''
   spokenText.value = ''
   resetSubmittedTranscriptClear()
@@ -2918,7 +2949,7 @@ async function speak(text: string): Promise<void> {
       `generation=${playbackToken} ${err?.message || 'unknown error'}`,
       'warning'
     )
-    voiceConfigError.value = `TTS 输出失败：${err?.message || '未知错误'}`
+    voiceConfigError.value = `${t('voice.errors.tts')}: ${err?.message || t('voice.errors.unknown')}`
     throw err
   } finally {
     if (playbackToken === ttsPlaybackGeneration) speaking.value = false
@@ -3052,7 +3083,7 @@ function queueNewAssistantSpeech(nextWorkspace: VoiceWorkspace | null | undefine
 
 async function ensureTtsAudioContext(): Promise<AudioContext> {
   const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext
-  if (!AudioContextCtor) throw new Error('当前浏览器不支持 Web Audio')
+  if (!AudioContextCtor) throw new Error(t('voice.errors.webAudioUnsupported'))
   if (!ttsAudioContext || ttsAudioContext.state === 'closed') {
     ttsAudioContext = new AudioContextCtor()
   }
@@ -3246,7 +3277,7 @@ async function setupVoiceHidControl(): Promise<void> {
   voiceKeyboardBinding.value = loadVoiceKeyboardButtonBinding()
   voiceHidBinding.value = binding
   if (!binding && voiceKeyboardBinding.value) {
-    voiceHidStatus.value = '按键已绑定'
+    voiceHidStatus.value = t('voice.hid.bound')
     return
   }
   if (!binding) {
@@ -3254,19 +3285,19 @@ async function setupVoiceHidControl(): Promise<void> {
     return
   }
   if (!window.isSecureContext) {
-    voiceHidStatus.value = 'HID 需要 HTTPS 或 localhost'
+    voiceHidStatus.value = t('voice.hid.secureRequired')
     return
   }
   const hid = getHidApi()
   if (!hid) {
-    voiceHidStatus.value = '当前浏览器不支持 WebHID'
+    voiceHidStatus.value = t('voice.hid.unsupported')
     return
   }
   try {
     const devices = await hid.getDevices()
     const device = devices.find((item: any) => hidDeviceMatchesBinding(binding, item))
     if (!device) {
-      voiceHidStatus.value = 'HID 需授权'
+      voiceHidStatus.value = t('voice.hid.authorizationRequired')
       return
     }
     if (!device.opened) await device.open()
@@ -3274,9 +3305,9 @@ async function setupVoiceHidControl(): Promise<void> {
     voiceHidPressed = false
     device.removeEventListener('inputreport', handleVoiceHidReport)
     device.addEventListener('inputreport', handleVoiceHidReport)
-    voiceHidStatus.value = 'HID 已连接'
+    voiceHidStatus.value = t('voice.hid.connected')
   } catch (err: any) {
-    voiceHidStatus.value = err?.message || 'HID 连接失败'
+    voiceHidStatus.value = err?.message || t('voice.hid.connectionFailed')
   }
 }
 
@@ -3314,7 +3345,7 @@ function handleVoiceHidReport(event: any): void {
 function startVoiceGamepadControl(): void {
   if (typeof navigator === 'undefined' || typeof window === 'undefined') return
   if (!navigator.getGamepads) {
-    voiceGamepadStatus.value = '当前浏览器不支持手柄'
+    voiceGamepadStatus.value = t('voice.gamepad.unsupported')
     return
   }
   const gamepad = currentVoiceGamepad()
@@ -3373,7 +3404,9 @@ function showVoiceGamepadNotice(gamepad: Gamepad, fromHotplug = false): void {
 function updateVoiceGamepadConnection(preferred?: Gamepad | null): void {
   const gamepad = preferred || currentVoiceGamepad()
   voiceGamepadConnected.value = Boolean(gamepad)
-  voiceGamepadStatus.value = gamepad ? `${friendlyGamepadName(gamepad)} 已连接` : '手柄未连接'
+  voiceGamepadStatus.value = gamepad
+    ? `${friendlyGamepadName(gamepad)} ${t('voice.gamepad.connected')}`
+    : t('voice.gamepad.disconnected')
 }
 
 function currentVoiceGamepad(): Gamepad | null {
@@ -3392,7 +3425,7 @@ function currentVoiceGamepad(): Gamepad | null {
 }
 
 function friendlyGamepadName(_gamepad: Gamepad): string {
-  return '手柄'
+  return t('voice.gamepad.generic')
 }
 
 function pollVoiceGamepad(): void {
@@ -3430,7 +3463,7 @@ function gamepadButtonActive(index: number): boolean {
 
 function markNativeGamepadConnected(): void {
   voiceGamepadConnected.value = true
-  voiceGamepadStatus.value = '手柄已连接'
+  voiceGamepadStatus.value = `${t('voice.gamepad.generic')}${t('voice.gamepad.connected')}`
 }
 
 function handleNativeVoiceGamepadButton(event: Event): void {
@@ -3717,7 +3750,7 @@ async function startVoiceCapture(): Promise<void> {
 
     const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext
     if (!navigator.mediaDevices?.getUserMedia || !AudioContextCtor) {
-      throw new Error('当前浏览器不支持实时语音采集')
+      throw new Error(t('voice.errors.liveCaptureUnsupported'))
     }
     mediaStream = await createVoiceMediaStream()
     audioContext = new AudioContextCtor()
@@ -3741,7 +3774,7 @@ async function startVoiceCapture(): Promise<void> {
     if (recognitionMode.value === 'asr') await connectAsrRealtime()
     rafId = window.requestAnimationFrame(updateVoiceWaveform)
   } catch (err: any) {
-    error.value = err?.message || '麦克风不可用'
+    error.value = err?.message || t('voice.errors.microphoneUnavailable')
     stopVoiceCapture()
   }
 }
@@ -3754,10 +3787,10 @@ async function startNativeVoiceCaptureMode(): Promise<void> {
     onSamples: handleNativeVoiceSamples,
     onStatus: handleNativeVoiceStatus,
     onError: err => {
-      error.value = err.message || 'Android TV 原生麦克风采集失败'
+      error.value = err.message || t('voice.errors.microphoneUnavailable')
     }
   })
-  liveTranscript.value = '正在收听...'
+  liveTranscript.value = t('voice.state.listening')
 }
 
 function handleNativeVoiceStatus(status: NativeVoiceStatus): void {
@@ -3787,7 +3820,7 @@ function handleNativeVoiceSamples(samples: Float32Array, sampleRate: number): vo
       liveTranscript.value = ''
       spokenText.value = ''
       asrTranscriptRaw = ''
-      liveTranscript.value = '正在收听...'
+      liveTranscript.value = t('voice.state.listening')
     }
   }
 
@@ -3896,7 +3929,7 @@ function updateVoiceWaveform(now: number): void {
       liveTranscript.value = ''
       spokenText.value = ''
       asrTranscriptRaw = ''
-      liveTranscript.value = '正在收听...'
+      liveTranscript.value = t('voice.state.listening')
     }
   } else if (speechActive && now - lastVoiceAt > voiceVadSilenceMs.value) {
     void finishUtterance()
@@ -3914,13 +3947,13 @@ async function finishUtterance(): Promise<void> {
     try {
       const text = (await finishAsrUtterance()).trim()
       if (token !== voiceSessionToken) return
-      if (!text) throw new Error('没有得到可用文本')
+      if (!text) throw new Error(t('voice.errors.noTranscript'))
       liveTranscript.value = text
       voiceBusy.value = false
       await handleFinalTranscript(text)
     } catch (err: any) {
       if (token !== voiceSessionToken) return
-      error.value = err?.message || 'ASR 实时转写失败'
+      error.value = err?.message || t('voice.errors.asrFailed')
       liveTranscript.value = ''
     } finally {
       if (token === voiceSessionToken) voiceBusy.value = false
@@ -3935,7 +3968,7 @@ async function finishUtterance(): Promise<void> {
     return
   }
   voiceBusy.value = true
-  liveTranscript.value = 'Omni 正在理解...'
+  liveTranscript.value = t('voice.state.omniProcessing')
   voiceAbort?.abort()
   voiceAbort = new AbortController()
   const signal = voiceAbort.signal
@@ -3947,7 +3980,7 @@ async function finishUtterance(): Promise<void> {
     const result = await transcribeVoice(dataUrl, signal, 'omni')
     if (token !== voiceSessionToken || signal.aborted) return
     const text = (result.data?.text || '').trim()
-    if (!text) throw new Error('没有得到可用文本')
+    if (!text) throw new Error(t('voice.errors.noTranscript'))
     liveTranscript.value = text
     voiceBusy.value = false
     await handleFinalTranscript(text)
@@ -3959,8 +3992,8 @@ async function finishUtterance(): Promise<void> {
       token !== voiceSessionToken
     )
       return
-    error.value = err?.message || '语音处理失败'
-    liveTranscript.value = '没有听清，请再说一次'
+    error.value = err?.message || t('voice.errors.voiceFailed')
+    liveTranscript.value = t('voice.state.notHeard')
   } finally {
     if (token === voiceSessionToken) {
       voiceBusy.value = false
@@ -3976,7 +4009,7 @@ async function connectAsrRealtime(): Promise<void> {
     const socket = createAsrRealtimeSocket()
     const timer = window.setTimeout(() => {
       socket.close()
-      reject(new Error('ASR Realtime 连接超时'))
+      reject(new Error(t('voice.errors.asrTimeout')))
     }, 5000)
     socket.binaryType = 'arraybuffer'
     socket.onopen = () => {
@@ -3986,14 +4019,14 @@ async function connectAsrRealtime(): Promise<void> {
     }
     socket.onerror = () => {
       window.clearTimeout(timer)
-      reject(new Error('ASR Realtime 连接失败'))
+      reject(new Error(t('voice.errors.asrConnectionFailed')))
     }
     socket.onclose = () => {
       const wasActiveSocket = asrSocket === socket
       if (wasActiveSocket) asrSocket = null
       if (wasActiveSocket && !asrClosing && listening.value) {
-        rejectAsrFinal(new Error('ASR Realtime 连接已断开'))
-        error.value = 'ASR Realtime 连接已断开'
+        rejectAsrFinal(new Error(t('voice.errors.asrDisconnected')))
+        error.value = t('voice.errors.asrDisconnected')
       }
     }
     socket.onmessage = event => handleAsrRealtimeMessage(event.data)
@@ -4012,7 +4045,7 @@ function disconnectAsrRealtime(): void {
 
 function sendAsrAudio(samples: Float32Array, sampleRate: number): void {
   if (!asrSocket || asrSocket.readyState !== WebSocket.OPEN) {
-    error.value = 'ASR Realtime 未连接'
+    error.value = t('voice.errors.asrNotConnected')
     return
   }
   const pcm = encodePcm16(samples, sampleRate, 16000)
@@ -4021,12 +4054,12 @@ function sendAsrAudio(samples: Float32Array, sampleRate: number): void {
 
 function finishAsrUtterance(): Promise<string> {
   if (!asrSocket || asrSocket.readyState !== WebSocket.OPEN) {
-    throw new Error('ASR Realtime 未连接')
+    throw new Error(t('voice.errors.asrNotConnected'))
   }
   return new Promise((resolve, reject) => {
     asrFinalResolve = resolve
     asrFinalReject = reject
-    asrFinalTimer = window.setTimeout(() => rejectAsrFinal(new Error('ASR 实时转写超时')), 9000)
+    asrFinalTimer = window.setTimeout(() => rejectAsrFinal(new Error(t('voice.errors.asrTranscriptionTimeout'))), 9000)
     asrSocket?.send(JSON.stringify({ type: 'finish' }))
   })
 }
@@ -4040,7 +4073,7 @@ function handleAsrRealtimeMessage(payload: unknown): void {
     return
   }
   if (event.type === 'error') {
-    const message = asrTextField(event, ['error', 'message']) || 'ASR Realtime 返回错误'
+    const message = asrTextField(event, ['error', 'message']) || t('voice.errors.asrResponse')
     rejectAsrFinal(new Error(message))
     error.value = message
     return
@@ -4395,20 +4428,20 @@ function summarizeTask(value: string): string {
             role="menu"
           >
             <div class="voice-model-menu__header">
-              <span>模型配置</span>
-              <em>主 Agent / ASR / TTS</em>
+              <span>{{ t('voice.model.configuration') }}</span>
+              <em>{{ t('voice.model.summary') }}</em>
             </div>
 
             <div class="voice-model-menu__row">
               <span class="voice-model-menu__label">
-                <strong>主 Agent</strong>
-                <em>选择主Agent和模型</em>
+                <strong>{{ t('voice.model.manager') }}</strong>
+                <em>{{ t('voice.model.managerDescription') }}</em>
               </span>
               <div class="voice-model-menu__controls">
                 <select
                   :value="voiceAgentHarness"
                   :disabled="asrLoading || voiceAgentSaving"
-                  title="主 Agent Harness"
+                  :title="t('voice.model.managerHarness')"
                   data-testid="voice-model-agent-harness-select"
                   @change="changeVoiceAgentHarness"
                 >
@@ -4432,14 +4465,14 @@ function summarizeTask(value: string): string {
                     disabled
                     class="bg-[#111315] text-white"
                   >
-                    {{ configuredCodexModel }}（当前账号不可用）
+                    {{ configuredCodexModel }} ({{ t('voice.model.accountUnavailable') }})
                   </option>
                   <option
                     v-if="!codexModelOptions.length && !configuredCodexModelUnavailable"
                     value=""
                     disabled
                   >
-                    当前账号没有可用的 Codex 模型
+                    {{ t('voice.model.noCodexModels') }}
                   </option>
                   <option
                     v-for="model in codexModelOptions"
@@ -4460,12 +4493,12 @@ function summarizeTask(value: string): string {
                     !voiceSettings ||
                     !managerAgentModelOptions.length
                   "
-                  :title="kimiHarnessActive ? 'Kimi Code 主 Agent 模型' : 'Claude Code 主 Agent 模型'"
+                  :title="t('voice.model.managerModel', { harness: kimiHarnessActive ? 'Kimi Code' : 'Claude Code' })"
                   data-testid="voice-model-agent-model-select"
                   @change="changeLlmModel"
                 >
                   <option v-if="!managerAgentModelOptions.length" value="" class="bg-[#111315] text-white">
-                    {{ voiceSettings?.llm_model || '未配置主 Agent' }}
+                    {{ voiceSettings?.llm_model || t('voice.model.managerUnconfigured') }}
                   </option>
                   <option
                     v-for="setting in managerAgentModelOptions"
@@ -4481,7 +4514,7 @@ function summarizeTask(value: string): string {
 
             <label v-if="codexHarnessActive" class="voice-model-menu__row">
               <span class="voice-model-menu__label">
-                <strong>Codex 推理</strong>
+                <strong>{{ t('voice.model.reasoning') }}</strong>
                 <em>{{
                   codexReasoningEffortOptions.find(option => option.value === codexReasoningEffort)
                     ?.description
@@ -4490,7 +4523,7 @@ function summarizeTask(value: string): string {
               <select
                 :value="codexReasoningEffort"
                 :disabled="voiceAgentSaving || !selectedCodexModel || configuredCodexModelUnavailable"
-                title="Codex reasoning effort"
+                :title="t('voice.model.reasoning')"
                 data-testid="voice-model-agent-reasoning-select"
                 @change="handleCodexReasoningEffortChange"
               >
@@ -4507,7 +4540,7 @@ function summarizeTask(value: string): string {
 
             <label v-if="codexHarnessActive" class="voice-model-menu__row">
               <span class="voice-model-menu__label">
-                <strong>Codex 速度</strong>
+                <strong>{{ t('voice.model.serviceTier') }}</strong>
                 <em>{{
                   codexServiceTierOptions.find(option => option.value === codexServiceTier)
                     ?.description
@@ -4516,7 +4549,7 @@ function summarizeTask(value: string): string {
               <select
                 :value="codexServiceTier"
                 :disabled="voiceAgentSaving || !selectedCodexModel || configuredCodexModelUnavailable"
-                title="Codex speed"
+                :title="t('voice.model.serviceTier')"
                 data-testid="voice-model-agent-service-tier-select"
                 @change="handleCodexServiceTierChange"
               >
@@ -4539,11 +4572,11 @@ function summarizeTask(value: string): string {
               <select
                 :value="selectedAsrModelId"
                 :disabled="asrLoading || asrSaving || !voiceSettings || !asrModelOptions.length"
-                title="ASR 模型"
+                :title="t('voice.model.asr')"
                 @change="changeAsrModel"
               >
                 <option v-if="!asrModelOptions.length" value="" class="bg-[#111315] text-white">
-                  {{ voiceSettings?.asr_model || '未配置 ASR' }}
+                  {{ voiceSettings?.asr_model || t('voice.model.asrUnconfigured') }}
                 </option>
                 <option
                   v-for="setting in asrModelOptions"
@@ -4564,11 +4597,11 @@ function summarizeTask(value: string): string {
               <select
                 :value="selectedTtsModelId"
                 :disabled="asrLoading || ttsSaving || !voiceSettings || !ttsModelOptions.length"
-                title="TTS 模型"
+                :title="t('voice.model.tts')"
                 @change="changeTtsModel"
               >
                 <option v-if="!ttsModelOptions.length" value="" class="bg-[#111315] text-white">
-                  {{ voiceSettings?.tts_model || '未配置 TTS' }}
+                  {{ voiceSettings?.tts_model || t('voice.model.ttsUnconfigured') }}
                 </option>
                 <option
                   v-for="setting in ttsModelOptions"
@@ -4585,7 +4618,7 @@ function summarizeTask(value: string): string {
               v-if="asrSaving || ttsSaving || voiceAgentSaving || voiceConfigError"
               class="voice-model-menu__footer"
             >
-              <span v-if="asrSaving || ttsSaving || voiceAgentSaving">保存中</span>
+              <span v-if="asrSaving || ttsSaving || voiceAgentSaving">{{ t('voice.model.saving') }}</span>
               <span v-else>{{ voiceConfigError }}</span>
             </div>
           </div>
@@ -4593,13 +4626,13 @@ function summarizeTask(value: string): string {
         <button
           v-if="devOnboardingEntryVisible"
           class="voice-runtime-pill voice-runtime-pill--dev-onboarding flex h-9 items-center gap-2 rounded-full border border-amber-300/24 bg-amber-300/10 px-3 text-xs text-amber-100 transition-colors hover:bg-amber-300/16 hover:text-white"
-          title="开发模式：打开新手引导"
+          :title="t('voice.onboarding.devTitle')"
           type="button"
           data-testid="voice-dev-onboarding-button"
           @click="openDevOnboarding"
         >
           <Sparkles class="h-4 w-4" />
-          <span>新手引导</span>
+          <span>{{ t('voice.onboarding.button') }}</span>
         </button>
         <button
           class="voice-runtime-pill voice-runtime-pill--gamepad flex h-9 items-center rounded-full border px-3 text-xs"
@@ -4609,7 +4642,7 @@ function summarizeTask(value: string): string {
             'voice-runtime-pill--gamepad-live': voiceGamepadLiveVisible
           }"
           :title="
-            voiceGamepadLiveVisible ? '隐藏手柄按键监视' : voiceGamepadStatus || '显示手柄按键监视'
+            voiceGamepadLiveVisible ? t('voice.gamepad.hideMonitor') : voiceGamepadStatus || t('voice.gamepad.showMonitor')
           "
           type="button"
           data-testid="voice-gamepad-toggle"
@@ -4644,7 +4677,7 @@ function summarizeTask(value: string): string {
           >
             <button
               class="rounded-full border border-cyan-200/14 p-2 text-cyan-100/55 transition-colors hover:bg-cyan-200/10 hover:text-white"
-              title="展开项目与会话"
+              :title="t('voice.sidebar.expand')"
               @click="openSessionSidebar"
             >
               <PanelLeftOpen class="h-4 w-4" />
@@ -4652,7 +4685,7 @@ function summarizeTask(value: string): string {
             <div class="mt-4 flex flex-1 flex-col items-center gap-2 overflow-hidden">
               <button
                 class="rounded-full p-2 text-cyan-100/45 transition-colors hover:bg-cyan-200/10 hover:text-white"
-                title="新会话"
+                :title="t('voice.sidebar.newSession')"
                 @click="createFreshVoiceSession"
               >
                 <Plus class="h-4 w-4" />
@@ -4661,7 +4694,7 @@ function summarizeTask(value: string): string {
                 v-for="session in voiceSessionShortcuts"
                 :key="session.session_id"
                 class="rounded-full p-2 text-cyan-100/35 transition-colors hover:bg-cyan-200/10 hover:text-white"
-                :title="session.title || session.prompt || '新会话'"
+                :title="session.title || session.prompt || t('voice.sidebar.newSession')"
                 @click="handleVoiceSessionSelected(session.session_id)"
               >
                 <MessageSquareText class="h-4 w-4" />
@@ -4700,9 +4733,9 @@ function summarizeTask(value: string): string {
               }"
             >
               <div v-if="!hasVoiceStageContent" class="voice-empty-state">
-                <div class="voice-empty-state__kicker">动态画布</div>
-                <h1>说出你的任务</h1>
-                <p>AI 会把语音内容整理成任务卡、状态、列表和进度面板，按需要填充这里。</p>
+                <div class="voice-empty-state__kicker">{{ t('voice.canvas.dynamicCanvas') }}</div>
+                <h1>{{ t('voice.canvas.emptyTitle') }}</h1>
+                <p>{{ t('voice.canvas.emptyDescription') }}</p>
               </div>
               <article
                 v-if="taskDraft"
@@ -4713,7 +4746,7 @@ function summarizeTask(value: string): string {
               >
                 <div class="flex items-start justify-between gap-4">
                   <div class="min-w-0">
-                    <div class="voice-card-kicker">任务</div>
+                    <div class="voice-card-kicker">{{ t('voice.task.title') }}</div>
                     <h1 class="voice-task-title">
                       {{ taskCardTitle }}
                     </h1>
@@ -4721,7 +4754,7 @@ function summarizeTask(value: string): string {
                   <div class="flex shrink-0 items-center gap-2">
                     <button
                       class="voice-card-tool"
-                      title="取消任务"
+                      :title="t('voice.task.cancel')"
                       :disabled="!taskDraft"
                       @click="cancelDraft"
                     >
@@ -4754,16 +4787,16 @@ function summarizeTask(value: string): string {
                 <div v-if="taskDraft" class="voice-task-meta">
                   <span>{{
                     taskDraft.status === 'submitted'
-                      ? '已提交'
+                      ? t('voice.task.submitted')
                       : taskDraft.status === 'clarifying'
-                        ? '整理中'
-                        : '等待确认'
+                        ? t('voice.task.clarifying')
+                        : t('voice.task.waitingConfirmation')
                   }}</span>
                   <span v-if="taskDraft.acceptance?.length"
-                    >{{ taskDraft.acceptance.length }} 项验收</span
+                    >{{ t('voice.task.acceptanceCount', { count: taskDraft.acceptance.length }) }}</span
                   >
                   <span v-if="taskDraft.constraints?.length"
-                    >{{ taskDraft.constraints.length }} 条约束</span
+                    >{{ t('voice.task.constraintCount', { count: taskDraft.constraints.length }) }}</span
                   >
                 </div>
               </article>
@@ -4830,14 +4863,14 @@ function summarizeTask(value: string): string {
                     title="Artifact preview"
                   />
                 </div>
-                <div v-else class="voice-artifact-empty">Artifact 预览地址未就绪。</div>
+                <div v-else class="voice-artifact-empty">{{ t('voice.canvas.artifactUnavailable') }}</div>
                 <button
                   v-if="artifactPreviewUrl(widget)"
                   class="voice-card-link"
                   type="button"
                   @click="openArtifactPreview(widget)"
                 >
-                  打开预览
+                  {{ t('voice.canvas.openPreview') }}
                 </button>
               </article>
               <article
@@ -4878,12 +4911,12 @@ function summarizeTask(value: string): string {
                 </div>
                 <div v-if="dagNodeRows.length" class="voice-dag-panel">
                   <div class="voice-dag-summary">
-                    <span>{{ dagNodeRows.length }} 节点</span>
+                    <span>{{ t('voice.canvas.nodes', { count: dagNodeRows.length }) }}</span>
                     <span
                       >{{ dagTelemetryTotals.toolSuccess }}/{{
                         dagTelemetryTotals.toolFailed
                       }}
-                      工具</span
+                      {{ t('voice.canvas.tools') }}</span
                     >
                     <span>{{ formatTokenCount(dagTelemetryTotals.tokens) }} tok</span>
                     <span v-if="dagContextRemainingText">{{ dagContextRemainingText }}</span>
@@ -4906,7 +4939,7 @@ function summarizeTask(value: string): string {
                         <span class="voice-dag-node__status">{{ node.status }}</span>
                       </div>
                       <div class="voice-dag-node__metrics">
-                        <span>工具 {{ node.toolSuccess }}/{{ node.toolFailed }}</span>
+                        <span>{{ t('voice.canvas.toolMetrics', { success: node.toolSuccess, failed: node.toolFailed }) }}</span>
                         <span>{{ formatTokenCount(node.tokens) }} tok</span>
                         <span v-if="node.contextPct !== null"
                           >{{ Math.round(node.contextPct) }}%</span
@@ -4930,12 +4963,12 @@ function summarizeTask(value: string): string {
                 <button
                   v-if="workspace?.manager_run_id"
                   class="voice-card-link"
-                  title="查看 DAG"
+                  :title="t('voice.canvas.viewDag')"
                   @click="
                     store.switchToRun(workspace.manager_run_id, workspace.project_id ?? undefined)
                   "
                 >
-                  打开运行
+                  {{ t('voice.canvas.openRun') }}
                 </button>
               </article>
               <VoiceDynamicWidget
@@ -4959,7 +4992,7 @@ function summarizeTask(value: string): string {
             <button
               v-if="agentActivityActive"
               class="voice-agent-run-button voice-agent-run-button--running"
-              :title="speaking ? agentRunStateText : `${agentRunStateText}，点击停止`"
+              :title="speaking ? agentRunStateText : `${agentRunStateText}. ${t('voice.state.tapToStop')}`"
               @click="speaking ? undefined : stopAgentLoop"
             >
               <span class="voice-agent-run-button__ring" aria-hidden="true">
@@ -4982,7 +5015,7 @@ function summarizeTask(value: string): string {
                   'voice-input-zone--locked': voiceInputLocked,
                   'voice-input-zone--agent-running': agentActivityActive && !listening
                 }"
-                :title="voiceInputLocked ? processingText || voiceStateText : '开始或暂停语音输入'"
+                :title="voiceInputLocked ? processingText || voiceStateText : t('voice.composer.toggleVoice')"
                 :disabled="voiceInputLocked"
                 @click="toggleListening"
               >
@@ -5043,26 +5076,26 @@ function summarizeTask(value: string): string {
               data-testid="voice-composer"
               @submit.prevent="submitComposerDraft"
             >
-              <div class="voice-composer__mode" role="group" aria-label="语音输入模式">
+              <div class="voice-composer__mode" role="group" :aria-label="t('voice.composer.modeLabel')">
                 <button
                   type="button"
                   class="voice-composer__mode-btn"
                   :class="{ 'voice-composer__mode-btn--active': !voiceInputAssist }"
                   :disabled="!voiceInputAssist"
-                  title="实时模式：说话后自动发送"
+                  :title="t('voice.composer.realtimeTitle')"
                   @click="voiceInputAssist ? toggleVoiceInputAssist() : undefined"
                 >
-                  实时
+                  {{ t('voice.composer.realtime') }}
                 </button>
                 <button
                   type="button"
                   class="voice-composer__mode-btn"
                   :class="{ 'voice-composer__mode-btn--active': voiceInputAssist }"
                   :disabled="voiceInputAssist"
-                  title="辅助模式：语音转文字后手动发送"
+                  :title="t('voice.composer.assistTitle')"
                   @click="voiceInputAssist ? undefined : toggleVoiceInputAssist()"
                 >
-                  辅助
+                  {{ t('voice.composer.assist') }}
                 </button>
               </div>
               <div class="voice-composer__row">
@@ -5074,9 +5107,9 @@ function summarizeTask(value: string): string {
                     'voice-composer__mic--locked': voiceInputLocked
                   }"
                   type="button"
-                  :title="voiceInputLocked ? processingText || voiceStateText : '开始或暂停语音输入'"
+                  :title="voiceInputLocked ? processingText || voiceStateText : t('voice.composer.toggleVoice')"
                   :disabled="voiceInputLocked"
-                  aria-label="语音输入"
+                  :aria-label="t('voice.composer.voiceInput')"
                   @click="toggleListening"
                 >
                   <Volume2 v-if="speaking" class="h-5 w-5" />
@@ -5105,8 +5138,8 @@ function summarizeTask(value: string): string {
                   type="submit"
                   data-testid="voice-codex-text-submit"
                   :disabled="composerSubmitDisabled"
-                  title="发送"
-                  aria-label="发送"
+                  :title="t('voice.composer.send')"
+                  :aria-label="t('voice.composer.send')"
                 >
                   <SendHorizontal class="h-5 w-5" />
                 </button>
@@ -5127,11 +5160,11 @@ function summarizeTask(value: string): string {
             <div class="mb-4 flex items-center justify-between">
               <div class="flex items-center gap-2 text-sm text-white/50">
                 <MessageSquareText class="h-4 w-4" />
-                记录
+                {{ t('voice.sidebar.records') }}
               </div>
               <button
                 class="rounded-full p-1.5 text-white/35 transition hover:bg-white/10 hover:text-white/80"
-                title="隐藏详情"
+                :title="t('voice.sidebar.hideDetails')"
                 @click="toggleDetails"
               >
                 <EyeOff class="h-4 w-4" />
@@ -5160,7 +5193,7 @@ function summarizeTask(value: string): string {
                 v-if="!conversationItems.length"
                 class="px-1 py-2 text-sm leading-6 text-white/35"
               >
-                暂无记录。
+                {{ t('voice.sidebar.emptyRecords') }}
               </div>
             </div>
           </section>
@@ -5184,7 +5217,7 @@ function summarizeTask(value: string): string {
             <button
               class="voice-card-tool"
               type="button"
-              title="关闭预览"
+              :title="t('voice.preview.close')"
               @click="closeArtifactPreview"
             >
               <X class="h-4 w-4" />
@@ -5209,7 +5242,7 @@ function summarizeTask(value: string): string {
               v-if="artifactPreviewModal.kind === 'gallery' && artifactPreviewImages.length > 1"
               class="voice-artifact-modal__nav voice-artifact-modal__nav--prev"
               type="button"
-              title="上一页"
+              :title="t('voice.preview.previous')"
               :disabled="!canPreviewPrevImage"
               @click="prevArtifactPreviewImage"
             >
@@ -5219,7 +5252,7 @@ function summarizeTask(value: string): string {
               v-if="artifactPreviewModal.kind === 'gallery' && artifactPreviewImages.length > 1"
               class="voice-artifact-modal__nav voice-artifact-modal__nav--next"
               type="button"
-              title="下一页"
+              :title="t('voice.preview.next')"
               :disabled="!canPreviewNextImage"
               @click="nextArtifactPreviewImage"
             >
@@ -5228,7 +5261,7 @@ function summarizeTask(value: string): string {
             <div
               v-if="artifactPreviewModal.kind === 'gallery' && artifactPreviewImages.length > 1"
               class="voice-artifact-modal__dots"
-              aria-label="图片页码"
+              :aria-label="t('voice.preview.pagination')"
             >
               <button
                 v-for="(_, index) in artifactPreviewImages"
@@ -5238,7 +5271,7 @@ function summarizeTask(value: string): string {
                   'voice-artifact-modal__dot--active': index === artifactPreviewImageIndex
                 }"
                 type="button"
-                :aria-label="`切换到第 ${index + 1} 页`"
+                :aria-label="t('voice.preview.goToPage', { page: index + 1 })"
                 @click="showArtifactPreviewImage(index)"
               />
             </div>
@@ -5265,7 +5298,7 @@ function summarizeTask(value: string): string {
           class="voice-gamepad-connect__svg"
           viewBox="0 0 420 260"
           role="img"
-          aria-label="手柄按键状态"
+          :aria-label="t('voice.gamepad.buttonStatus')"
         >
           <g class="voice-gamepad-connect__shoulders">
             <rect
@@ -5424,7 +5457,7 @@ function summarizeTask(value: string): string {
         </svg>
         <div class="voice-gamepad-connect__copy">
           <strong>{{ voiceGamepadNoticeName }}</strong>
-          <span>{{ voiceGamepadLiveVisible ? '按键监视中' : '已连接' }}</span>
+          <span>{{ voiceGamepadLiveVisible ? t('voice.gamepad.monitoring') : t('voice.gamepad.connected') }}</span>
         </div>
       </div>
     </div>

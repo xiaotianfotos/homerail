@@ -11,6 +11,7 @@
  */
 
 import { computed, ref, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
 import { useDagNodeMessages } from '@/composables/useDagNodeMessages'
 import { getAgentPersona, fmtTokens, contextBarColor, contextUsageText } from '@/lib/agentPersonas'
@@ -38,6 +39,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useAgentStore()
+const { t } = useI18n()
 const dagRunId = computed(() => store.currentRunId ?? undefined)
 const isSelectedManager = computed(() => store.selectedNodeIsManager)
 
@@ -103,8 +105,8 @@ watch(
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
-    pending: '等待', ready: '就绪', running: '运行中',
-    completed: '已完成', failed: '失败', skipped: '跳过',
+    pending: t('dag.status.pending'), ready: t('dag.status.ready'), running: t('dag.status.running'),
+    completed: t('dag.status.completed'), failed: t('dag.status.failed'), skipped: t('dag.status.skipped'),
   }
   return map[status] ?? status
 }
@@ -190,7 +192,7 @@ defineExpose({ scrollBy })
         </span>
         <button
           class="rounded-full p-2 text-white/50 transition-colors hover:bg-white/10 hover:text-white"
-          title="关闭 (○)"
+          :title="t('dag.detail.close')"
           @click="emit('close')"
         >
           <X class="h-5 w-5" />
@@ -228,23 +230,23 @@ defineExpose({ scrollBy })
         @click="$emit('close')"
       >
         <FileText class="h-4 w-4 flex-shrink-0" :class="isPanelFocused('task') ? 'text-cyan-300' : 'text-white/40'" />
-        <span class="flex-1 text-sm font-medium" :class="isPanelFocused('task') ? 'text-cyan-100' : 'text-white/60'">任务详情</span>
-        <span v-if="isPanelFocused('task')" class="rounded bg-cyan-200/15 px-1.5 py-0.5 text-[10px] text-cyan-200/70">■ 折叠</span>
+        <span class="flex-1 text-sm font-medium" :class="isPanelFocused('task') ? 'text-cyan-100' : 'text-white/60'">{{ t('dag.detail.task') }}</span>
+        <span v-if="isPanelFocused('task')" class="rounded bg-cyan-200/15 px-1.5 py-0.5 text-[10px] text-cyan-200/70">{{ t('dag.detail.collapse') }}</span>
         <component :is="isPanelExpanded('task') ? ChevronUp : ChevronDown" class="h-4 w-4 text-white/40" />
       </button>
       <div v-if="isPanelExpanded('task')" ref="taskScrollRef" class="dag-task-detail flex-shrink-0 overflow-y-auto border-b border-cyan-200/8 px-6 py-4 max-h-[40vh]">
         <div v-if="taskSystem" class="mb-4">
-          <div class="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">节点职责</div>
+          <div class="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">{{ t('dag.detail.role') }}</div>
           <div class="agent-markdown text-[15px] leading-relaxed text-white/75" v-html="renderMarkdown(taskSystem)" />
         </div>
         <div v-if="taskPrompt">
-          <div class="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">用户任务</div>
+          <div class="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">{{ t('dag.detail.userTask') }}</div>
           <div class="rounded-xl border border-cyan-200/18 bg-cyan-200/[0.07] px-5 py-4">
             <div class="agent-markdown text-[15px] leading-relaxed text-white/90" v-html="renderMarkdown(taskPrompt)" />
           </div>
         </div>
         <div v-if="!taskSystem && !taskPrompt" class="py-6 text-center text-sm text-white/30">
-          无任务描述
+          {{ t('dag.detail.noTask') }}
         </div>
       </div>
 
@@ -256,15 +258,15 @@ defineExpose({ scrollBy })
         )"
       >
         <MessageSquare class="h-4 w-4 flex-shrink-0" :class="isPanelFocused('logs') ? 'text-cyan-300' : 'text-white/40'" />
-        <span class="flex-1 text-sm font-medium" :class="isPanelFocused('logs') ? 'text-cyan-100' : 'text-white/60'">聊天日志</span>
-        <span v-if="isPanelFocused('logs')" class="rounded bg-cyan-200/15 px-1.5 py-0.5 text-[10px] text-cyan-200/70">■ 折叠</span>
+        <span class="flex-1 text-sm font-medium" :class="isPanelFocused('logs') ? 'text-cyan-100' : 'text-white/60'">{{ t('dag.detail.logs') }}</span>
+        <span v-if="isPanelFocused('logs')" class="rounded bg-cyan-200/15 px-1.5 py-0.5 text-[10px] text-cyan-200/70">{{ t('dag.detail.collapse') }}</span>
         <component :is="isPanelExpanded('logs') ? ChevronUp : ChevronDown" class="h-4 w-4 text-white/40" />
       </button>
       <div v-if="isPanelExpanded('logs')" ref="logScrollRef" class="dag-chat-log min-h-0 flex-1 overflow-y-auto px-4 py-3">
         <MessageList
           :messages="messages"
           :loading="loading"
-          empty-text="该节点暂无日志"
+          :empty-text="t('dag.detail.noLogs')"
         />
       </div>
 

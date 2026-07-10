@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Check, ChevronLeft, CornerUpLeft, Folder, FolderOpen, GitBranch, Loader2, Server, X } from 'lucide-vue-next'
 import {
   browseProjectDirectories,
@@ -25,6 +26,8 @@ const emit = defineEmits<{
   'update:open': [value: boolean]
   created: [project: Project]
 }>()
+
+const { t } = useI18n()
 
 const servers = ref<ProjectDirectoryServer[]>([])
 const roots = ref<ProjectDirectoryRoot[]>([])
@@ -112,7 +115,7 @@ async function loadRoots(): Promise<void> {
     const path = res.data?.default_path || roots.value[0]?.path || ''
     if (path) await browse(path)
   } catch (err: any) {
-    error.value = err?.message || '目录根加载失败'
+    error.value = err?.message || t('voice.directoryPicker.rootLoadFailed')
   } finally {
     loading.value = false
   }
@@ -126,7 +129,7 @@ async function loadGitServers(): Promise<void> {
     gitServers.value = (res.data?.servers ?? []).filter(server => server.is_active)
   } catch (err: any) {
     gitServers.value = []
-    gitError.value = err?.message || 'Git Server 加载失败'
+    gitError.value = err?.message || t('voice.directoryPicker.gitServerLoadFailed')
   } finally {
     gitServersLoading.value = false
   }
@@ -140,7 +143,7 @@ async function loadRepos(serverId: string): Promise<void> {
     availableRepos.value = res.data?.repositories ?? []
   } catch (err: any) {
     availableRepos.value = []
-    gitError.value = err?.message || '仓库列表加载失败'
+    gitError.value = err?.message || t('voice.directoryPicker.repositoryLoadFailed')
   } finally {
     loadingRepos.value = false
   }
@@ -174,7 +177,7 @@ async function browse(path: string): Promise<void> {
       projectNameAuto.value = true
     }
   } catch (err: any) {
-    error.value = err?.message || '目录浏览失败'
+    error.value = err?.message || t('voice.directoryPicker.browseFailed')
   } finally {
     loading.value = false
   }
@@ -225,7 +228,7 @@ async function handleCreate(): Promise<void> {
     emit('created', res.data)
     emit('update:open', false)
   } catch (err: any) {
-    error.value = err?.message || '目录创建失败'
+    error.value = err?.message || t('voice.directoryPicker.createFailed')
   } finally {
     creating.value = false
   }
@@ -243,15 +246,15 @@ function handleProjectNameInput(event: Event): void {
       <aside class="flex w-64 shrink-0 flex-col border-r border-white/10 bg-white/[0.025] p-4">
         <div class="mb-4 flex items-center justify-between">
           <div>
-            <div class="text-xs tracking-[0.18em] text-cyan-200/45">目录</div>
-            <div class="mt-1 text-lg font-semibold">选择目录</div>
+            <div class="text-xs tracking-[0.18em] text-cyan-200/45">{{ t('voice.sidebar.directories') }}</div>
+            <div class="mt-1 text-lg font-semibold">{{ t('voice.directoryPicker.select') }}</div>
           </div>
           <button class="rounded-full p-2 text-white/45 hover:bg-white/10 hover:text-white" @click="$emit('update:open', false)">
             <X class="h-4 w-4" />
           </button>
         </div>
 
-        <label class="mb-2 text-xs text-white/45">服务器</label>
+        <label class="mb-2 text-xs text-white/45">{{ t('voice.directoryPicker.server') }}</label>
         <div class="mb-4 flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
           <Server class="h-4 w-4 text-cyan-200/65" />
           <select v-model="serverId" class="min-w-0 flex-1 bg-transparent text-sm text-white/80 outline-none">
@@ -261,10 +264,10 @@ function handleProjectNameInput(event: Event): void {
           </select>
         </div>
         <div class="mb-3 text-xs text-white/35">
-          {{ selectedServer?.kind || 'manager' }} · {{ selectedServer?.can_browse ? '可浏览' : '不可浏览' }}
+          {{ selectedServer?.kind || 'manager' }} · {{ selectedServer?.can_browse ? t('voice.directoryPicker.browsable') : t('voice.directoryPicker.notBrowsable') }}
         </div>
 
-        <div class="mb-2 text-xs text-white/45">快捷位置</div>
+        <div class="mb-2 text-xs text-white/45">{{ t('voice.directoryPicker.quickLocations') }}</div>
         <div class="space-y-1 overflow-y-auto">
           <button
             v-for="root in roots"
@@ -283,16 +286,16 @@ function handleProjectNameInput(event: Event): void {
           <button
             class="flex items-center gap-2 rounded-full border border-white/10 px-3 py-2 text-sm text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-35"
             :disabled="!parentPath || loading"
-            title="去上级目录"
+            :title="t('voice.directoryPicker.parentTitle')"
             @click="parentPath && browse(parentPath)"
           >
             <ChevronLeft class="h-4 w-4" />
-            上级
+            {{ t('voice.directoryPicker.parent') }}
           </button>
           <input
             v-model="pathInput"
             class="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-mono text-sm text-cyan-50/75 outline-none focus:border-cyan-200/45"
-            :placeholder="currentPath || '输入目录路径...'"
+            :placeholder="currentPath || t('voice.directoryPicker.pathPlaceholder')"
             :disabled="loading"
             spellcheck="false"
             @keydown.enter.prevent="submitPathInput"
@@ -300,7 +303,7 @@ function handleProjectNameInput(event: Event): void {
           />
           <label class="flex items-center gap-2 rounded-full border border-white/10 px-3 py-2 text-xs text-white/50">
             <input :checked="showHidden" type="checkbox" class="accent-cyan-300" @change="toggleHidden" />
-            隐藏目录
+            {{ t('voice.directoryPicker.hidden') }}
           </label>
         </header>
 
@@ -308,7 +311,7 @@ function handleProjectNameInput(event: Event): void {
           <div class="min-h-0 overflow-y-auto p-4">
             <div v-if="loading" class="flex h-full items-center justify-center text-white/45">
               <Loader2 class="mr-2 h-4 w-4 animate-spin" />
-              读取目录
+              {{ t('voice.directoryPicker.loading') }}
             </div>
             <div v-else-if="error" class="rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100">
               {{ error }}
@@ -317,12 +320,12 @@ function handleProjectNameInput(event: Event): void {
               <button
                 v-if="parentPath"
                 class="group flex w-full min-w-0 items-center gap-3 rounded-xl border border-cyan-200/18 bg-cyan-200/[0.055] px-3 py-2.5 text-left hover:border-cyan-200/38 hover:bg-cyan-200/12"
-                title="去上级目录"
+                :title="t('voice.directoryPicker.parentTitle')"
                 @click="browse(parentPath)"
               >
                 <CornerUpLeft class="h-4 w-4 shrink-0 text-cyan-200/80" />
                 <div class="min-w-0 flex-1">
-                  <div class="text-sm font-semibold text-cyan-50/86">.. 上级目录</div>
+                  <div class="text-sm font-semibold text-cyan-50/86">{{ t('voice.directoryPicker.parentDirectory') }}</div>
                   <div class="mt-0.5 break-all font-mono text-[10px] leading-4 text-white/35">{{ parentPath }}</div>
                 </div>
               </button>
@@ -346,28 +349,28 @@ function handleProjectNameInput(event: Event): void {
 
           <aside class="overflow-y-auto border-l border-white/10 bg-black/15 p-5">
             <div class="mb-4">
-              <div class="text-xs tracking-[0.18em] text-cyan-200/45">添加</div>
-              <h2 class="mt-1 text-xl font-semibold">新目录</h2>
+              <div class="text-xs tracking-[0.18em] text-cyan-200/45">{{ t('voice.directoryPicker.add') }}</div>
+              <h2 class="mt-1 text-xl font-semibold">{{ t('voice.directoryPicker.newDirectory') }}</h2>
             </div>
-            <label class="mb-1 block text-xs text-white/45">目录名称</label>
+            <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.namePlaceholder') }}</label>
             <input
               :value="projectName"
               class="mb-3 h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 text-sm outline-none focus:border-cyan-200/45"
-              placeholder="目录名称"
+              :placeholder="t('voice.project.namePlaceholder')"
               @input="handleProjectNameInput"
             />
-            <label class="mb-1 block text-xs text-white/45">描述</label>
+            <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.description') }}</label>
             <textarea
               v-model="description"
               class="mb-4 h-24 w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-cyan-200/45"
-              placeholder="可选"
+              :placeholder="t('voice.project.optional')"
             />
             <div class="mb-4 rounded-2xl border border-white/10 bg-white/[0.035] p-3 text-xs text-white/45">
-              <div class="mb-1 text-white/65">当前目录</div>
+              <div class="mb-1 text-white/65">{{ t('voice.directoryPicker.currentDirectory') }}</div>
               <div class="break-all font-mono">{{ currentPath }}</div>
               <div class="mt-2 flex gap-2">
-                <span>{{ pathWritable ? '可写' : '只读' }}</span>
-                <span v-if="pathIsGitRepo">Git 仓库</span>
+                <span>{{ pathWritable ? t('voice.directoryPicker.writable') : t('voice.directoryPicker.readOnly') }}</span>
+                <span v-if="pathIsGitRepo">{{ t('voice.directoryPicker.gitRepository') }}</span>
               </div>
             </div>
             <div class="mb-4 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
@@ -383,32 +386,32 @@ function handleProjectNameInput(event: Event): void {
                 data-testid="voice-directory-create-git-server"
                 @change="handleGitServerChange"
               >
-                <option value="">{{ gitServersLoading ? '读取 Git Server...' : '不关联 Git Token' }}</option>
+                <option value="">{{ gitServersLoading ? t('voice.directoryPicker.loadingGitServers') : t('voice.project.noGitToken') }}</option>
                 <option
                   v-for="server in gitServers"
                   :key="server.server_id"
                   :value="server.server_id"
                   :disabled="!server.token_valid"
                 >
-                  {{ server.name }} · {{ server.platform_type }}{{ server.token_valid ? '' : ' · token 无效' }}
+                  {{ server.name }} · {{ server.platform_type }}{{ server.token_valid ? '' : ` · ${t('voice.project.invalidToken')}` }}
                 </option>
               </select>
 
-              <label class="mb-1 block text-xs text-white/45">仓库</label>
+              <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.repository') }}</label>
               <select
                 v-model="selectedRepoFullName"
                 class="h-10 w-full rounded-xl border border-white/10 bg-[#0f1a1d] px-3 text-sm text-white/80 outline-none focus:border-cyan-200/45 disabled:opacity-45"
                 :disabled="!selectedGitServerId || loadingRepos"
                 data-testid="voice-directory-create-git-repo"
               >
-                <option value="">{{ loadingRepos ? '读取仓库...' : '不绑定具体仓库' }}</option>
+                <option value="">{{ loadingRepos ? t('voice.project.loadingRepositories') : t('voice.project.noRepository') }}</option>
                 <option v-for="repo in availableRepos" :key="repo.full_name" :value="repo.full_name">
                   {{ repo.full_name }}
                 </option>
               </select>
               <div v-if="gitError" class="mt-2 text-xs text-red-200">{{ gitError }}</div>
               <div v-else class="mt-2 text-xs text-white/35">
-                Token 仍由 Git Server 加密保存；目录只保存引用和仓库名。
+                {{ t('voice.directoryPicker.tokenHint') }}
               </div>
             </div>
             <button
@@ -418,7 +421,7 @@ function handleProjectNameInput(event: Event): void {
             >
               <Loader2 v-if="creating" class="h-4 w-4 animate-spin" />
               <Check v-else class="h-4 w-4" />
-              添加目录
+              {{ t('voice.sidebar.addDirectory') }}
             </button>
           </aside>
         </main>

@@ -10,12 +10,12 @@
  */
 
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Loader2, Eye, EyeOff, Server, Package } from 'lucide-vue-next'
 import { agentSettingsApi } from '@/api/agent'
 import { probeModels } from '@/api/services/providers-api'
 import { useToast } from '@/components/controls/useToast'
 import { cn } from '@/lib/utils'
-import { planLabel } from '@/lib/protocol-labels'
 import type {
   Provider,
   ProviderEndpointPreset,
@@ -38,11 +38,21 @@ const emit = defineEmits<{
 }>()
 
 const { showToast } = useToast()
+const { t } = useI18n()
 
-const CAP_LABEL: Record<CapabilityKey, string> = {
-  supports_llm: '主 Agent',
-  supports_asr: 'ASR',
-  supports_tts: 'TTS',
+function capabilityLabel(capability: CapabilityKey): string {
+  if (capability === 'supports_llm') return t('onboarding.form.capabilities.llm')
+  if (capability === 'supports_asr') return t('onboarding.form.capabilities.asr')
+  return t('onboarding.form.capabilities.tts')
+}
+
+function localizedPlanLabel(plan?: string): string {
+  if (plan === 'api_billing') return t('settings.models.plans.apiBilling')
+  if (plan === 'token_plan') return t('settings.models.plans.tokenPlan')
+  if (plan === 'coding_plan') return t('settings.models.plans.codingPlan')
+  if (plan === 'agent_plan') return t('settings.models.plans.agentPlan')
+  if (plan === 'subscription') return t('settings.models.plans.subscription')
+  return t('settings.models.plans.custom')
 }
 
 // ── 模式切换 ──────────────────────────────────────────────────
@@ -198,7 +208,7 @@ const selectedModelPreset = computed(() => {
 
 function credentialLabel(c: CredentialOption): string {
   const hasKey = Boolean(maskedKeyForCredential(c))
-  return `${c.provider.name} · ${planLabel(c.planType)}${hasKey ? '（已有 Key）' : ''}`
+  return `${c.provider.name} · ${localizedPlanLabel(c.planType)}${hasKey ? ` (${t('onboarding.form.existingKey')})` : ''}`
 }
 
 function selectCredential(key: string): void {
@@ -229,7 +239,7 @@ const customFields = ref<CustomFields>({
 
 // 自定义凭证的元信息
 const customProviderId = computed(() => `local-${props.capability.replace('supports_', '')}`)
-const customProviderName = computed(() => `本地 ${CAP_LABEL[props.capability]}`)
+const customProviderName = computed(() => t('onboarding.form.localProvider', { capability: capabilityLabel(props.capability) }))
 
 // 各能力的字段配置 + 示例（基于本地 vLLM 部署实测）
 const customFieldConfig = computed(() => {
@@ -237,8 +247,8 @@ const customFieldConfig = computed(() => {
     return {
       baseUrlPlaceholder: 'http://localhost/v1',
       modelPlaceholder: 'qwen3.6',
-      baseUrlHint: 'vLLM 的 OpenAI 兼容地址（含 /v1）',
-      modelHint: '推理服务暴露的模型 ID（后端调 /v1/chat/completions）',
+      baseUrlHint: t('onboarding.form.llmBaseHint'),
+      modelHint: t('onboarding.form.llmModelHint'),
       defaultModel: 'qwen3.6',
     }
   }
@@ -246,8 +256,8 @@ const customFieldConfig = computed(() => {
     return {
       baseUrlPlaceholder: 'http://localhost/v1',
       modelPlaceholder: 'qwen3-asr-realtime',
-      baseUrlHint: 'ASR 的 /v1 兼容地址（实时走 /v1/realtime，批量走 /v1/audio/transcriptions）',
-      modelHint: '模型 ID，后端会带上',
+      baseUrlHint: t('onboarding.form.asrBaseHint'),
+      modelHint: t('onboarding.form.modelHint'),
       defaultModel: 'qwen3-asr-realtime',
     }
   }
@@ -255,8 +265,8 @@ const customFieldConfig = computed(() => {
   return {
     baseUrlPlaceholder: 'http://localhost/v1',
     modelPlaceholder: 'qwen3-tts',
-    baseUrlHint: 'TTS 的 /v1 兼容地址（后端调 /v1/audio/speech）',
-    modelHint: '模型 ID，后端会带上',
+    baseUrlHint: t('onboarding.form.ttsBaseHint'),
+    modelHint: t('onboarding.form.modelHint'),
     defaultModel: 'qwen3-tts',
   }
 })
@@ -311,10 +321,10 @@ async function submit(): Promise<void> {
       mode.value === 'preset'
         ? await submitPreset()
         : await submitCustom()
-    showToast(`${CAP_LABEL[props.capability]} 配置已添加`, 'success')
+    showToast(t('onboarding.form.added', { capability: capabilityLabel(props.capability) }), 'success')
     emit('created', setting)
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : '保存失败'
+    const message = err instanceof Error ? err.message : t('onboarding.form.saveFailed')
     showToast(message, 'error', 6000)
   } finally {
     saving.value = false
@@ -333,7 +343,7 @@ async function submitPreset(): Promise<LLMSetting | undefined> {
   // 同 credential/endpoint 的模型共用一个 key；不同计费方式不互相复用。
   const submitApiKey = selectedCredentialHasKey.value ? '__reuse_existing__' : apiKey.value.trim()
 
-  const displayName = `${cred.provider.name} ${CAP_LABEL[props.capability]}`
+  const displayName = `${cred.provider.name} ${capabilityLabel(props.capability)}`
 
   const res = await agentSettingsApi.createLLMSetting({
     provider_id: cred.provider.id,
@@ -424,7 +434,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
         @click="mode = 'preset'"
       >
         <Package class="h-3.5 w-3.5" />
-        <span>内置凭证</span>
+        <span>{{ t('onboarding.form.preset') }}</span>
       </button>
       <button
         type="button"
@@ -432,25 +442,25 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
         @click="mode = 'custom'"
       >
         <Server class="h-3.5 w-3.5" />
-        <span>自定义 / 本地部署</span>
+        <span>{{ t('onboarding.form.custom') }}</span>
       </button>
     </div>
 
     <!-- ═══ 内置凭证模式 ═══════════════════════════════════════ -->
     <template v-if="mode === 'preset'">
       <div v-if="!credentials.length" class="onboarding-step-form__empty">
-        暂未提供支持 {{ CAP_LABEL[capability] }} 的内置凭证，请切到「自定义 / 本地部署」。
+        {{ t('onboarding.form.noPreset', { capability: capabilityLabel(capability) }) }}
       </div>
 
       <div v-else class="onboarding-step-form__grid">
         <label class="onboarding-step-form__field">
-          <span class="onboarding-step-form__field-label">凭证</span>
+          <span class="onboarding-step-form__field-label">{{ t('onboarding.form.credential') }}</span>
           <select
             :value="selectedCredentialKey"
             class="onboarding-step-form__select"
             @change="selectCredential(($event.target as HTMLSelectElement).value)"
           >
-            <option value="">选择供应商 / 计费…</option>
+            <option value="">{{ t('onboarding.form.selectCredential') }}</option>
             <option v-for="c in credentials" :key="c.key" :value="c.key" class="bg-[#111315] text-white">
               {{ credentialLabel(c) }}
             </option>
@@ -458,15 +468,15 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
         </label>
 
         <label class="onboarding-step-form__field">
-          <span class="onboarding-step-form__field-label">模型</span>
+          <span class="onboarding-step-form__field-label">{{ t('onboarding.form.model') }}</span>
           <select
             v-model="selectedModelId"
             :disabled="!selectedCredential"
             class="onboarding-step-form__select"
           >
-            <option value="">选择模型…</option>
+            <option value="">{{ t('onboarding.form.selectModel') }}</option>
             <option v-for="m in displayModels" :key="m.id" :value="m.id" class="bg-[#111315] text-white">
-              {{ m.display_name }}{{ m.recommended ? ' · 推荐' : '' }}
+              {{ m.display_name }}{{ m.recommended ? ` · ${t('onboarding.form.recommended')}` : '' }}
             </option>
           </select>
         </label>
@@ -474,7 +484,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
         <!-- credential 已有 key：自动复用并显示 masked 值；否则填新 key -->
         <div v-if="selectedCredentialHasKey" class="onboarding-step-form__field onboarding-step-form__field--key">
           <span class="onboarding-step-form__field-label">API Key</span>
-          <div class="onboarding-step-form__reuse-badge" :title="`该凭证已配置 Key，同一计费方式内复用`">
+          <div class="onboarding-step-form__reuse-badge" :title="t('onboarding.form.reuseKey')">
             <span>{{ selectedMaskedKey }}</span>
           </div>
         </div>
@@ -484,7 +494,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
             <input
               v-model="apiKey"
               :type="showKey ? 'text' : 'password'"
-              :placeholder="selectedEndpoint?.key_hint || '粘贴 API Key'"
+              :placeholder="selectedEndpoint?.key_hint || t('onboarding.form.pasteKey')"
               autocomplete="off"
               spellcheck="false"
               class="onboarding-step-form__input"
@@ -492,7 +502,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
             <button
               type="button"
               class="onboarding-step-form__key-toggle"
-              :title="showKey ? '隐藏' : '显示'"
+              :title="showKey ? t('onboarding.form.hide') : t('onboarding.form.show')"
               @click="showKey = !showKey"
             >
               <EyeOff v-if="showKey" class="h-3.5 w-3.5" />
@@ -507,7 +517,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
     <template v-else>
       <div class="onboarding-step-form__custom">
         <label class="onboarding-step-form__field">
-          <span class="onboarding-step-form__field-label">接入地址</span>
+          <span class="onboarding-step-form__field-label">{{ t('onboarding.form.baseUrl') }}</span>
           <input
             v-model="customFields.baseUrl"
             :placeholder="customFieldConfig.baseUrlPlaceholder"
@@ -519,7 +529,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
         </label>
 
         <label class="onboarding-step-form__field">
-          <span class="onboarding-step-form__field-label">模型</span>
+          <span class="onboarding-step-form__field-label">{{ t('onboarding.form.model') }}</span>
           <input
             v-model="customFields.model"
             :placeholder="customFieldConfig.modelPlaceholder"
@@ -533,28 +543,28 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
         <!-- TTS 音色（可选） -->
         <label v-if="capability === 'supports_tts'" class="onboarding-step-form__field">
           <span class="onboarding-step-form__field-label">
-            音色 <em>可选</em>
+            {{ t('onboarding.form.voice') }} <em>{{ t('onboarding.optional') }}</em>
           </span>
           <input
             v-model="customFields.voice"
-            placeholder="如 vivian、eric、sohee"
+            :placeholder="t('onboarding.form.voicePlaceholder')"
             autocomplete="off"
             spellcheck="false"
             class="onboarding-step-form__input"
           />
-          <span class="onboarding-step-form__field-hint">qwen3-tts 支持：aiden/dylan/eric/ono_anna/ryan/serena/sohee/uncle_fu/vivian</span>
+          <span class="onboarding-step-form__field-hint">{{ t('onboarding.form.voiceHint') }}</span>
         </label>
 
         <!-- 本地服务 Key 可选 -->
         <label class="onboarding-step-form__field">
           <span class="onboarding-step-form__field-label">
-            API Key <em>本地服务通常可留空</em>
+            API Key <em>{{ t('onboarding.form.localKeyOptional') }}</em>
           </span>
           <div class="onboarding-step-form__key">
             <input
               v-model="apiKey"
               :type="showKey ? 'text' : 'password'"
-              placeholder="本地服务一般无需 Key"
+              :placeholder="t('onboarding.form.localKeyPlaceholder')"
               autocomplete="off"
               spellcheck="false"
               class="onboarding-step-form__input"
@@ -562,7 +572,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
             <button
               type="button"
               class="onboarding-step-form__key-toggle"
-              :title="showKey ? '隐藏' : '显示'"
+              :title="showKey ? t('onboarding.form.hide') : t('onboarding.form.show')"
               @click="showKey = !showKey"
             >
               <EyeOff v-if="showKey" class="h-3.5 w-3.5" />
@@ -585,7 +595,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
         @click="submit"
       >
         <Loader2 v-if="saving" class="h-3.5 w-3.5 animate-spin" />
-        <span>{{ saving ? '保存中' : '保存并继续' }}</span>
+        <span>{{ saving ? t('onboarding.form.saving') : t('onboarding.form.saveContinue') }}</span>
       </button>
     </div>
   </div>

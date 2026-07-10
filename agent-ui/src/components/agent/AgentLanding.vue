@@ -1,14 +1,21 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
 import { managerChat, listProjects } from '@/api/agent'
 import { getDagStatus } from '@/api/services/dag-api'
 import { Send, Loader2, History, Mic } from 'lucide-vue-next'
 
 const store = useAgentStore()
+const { t } = useI18n()
 
 const inputValue = ref('')
 const isSending = ref(false)
+const taskHints = computed(() => [
+  t('shell.landing.hints.demo'),
+  t('shell.landing.hints.projects'),
+  t('shell.landing.hints.review'),
+])
 
 onMounted(async () => {
   void store.loadManagerRuntimeOptions()
@@ -119,7 +126,7 @@ async function send(): Promise<void> {
         store.addChatMessage({
           id: `sys-run-${Date.now()}`,
           role: 'system',
-          content: `DAG 已启动: run_id=${spawnedRunId}`,
+          content: t('shell.chat.runStarted', { runId: spawnedRunId }),
           type: 'status',
           timestamp: new Date().toISOString(),
         })
@@ -144,7 +151,7 @@ async function send(): Promise<void> {
       store.addChatMessage({
         id: `assistant-error-${Date.now()}`,
         role: 'assistant',
-        content: response.message || '请求失败',
+        content: response.message || t('shell.chat.requestFailed'),
         type: 'text',
         timestamp: new Date().toISOString(),
       })
@@ -159,7 +166,7 @@ async function send(): Promise<void> {
     store.addChatMessage({
       id: `assistant-error-${Date.now()}`,
       role: 'assistant',
-      content: `错误: ${error.message || '请求失败'}`,
+      content: t('shell.chat.error', { message: error.message || t('shell.chat.requestFailed') }),
       type: 'text',
       timestamp: new Date().toISOString(),
     })
@@ -207,7 +214,7 @@ function openVoiceCockpit(): void {
         HomeRail
       </h1>
       <p class="text-sm text-gray-500">
-        智能体编排平台 · 描述任务，调动千军
+        {{ t('shell.landing.tagline') }}
       </p>
     </div>
 
@@ -249,7 +256,7 @@ function openVoiceCockpit(): void {
           v-model="inputValue"
           class="flex-1 resize-none bg-transparent text-sm text-gray-200 placeholder-gray-500 outline-none max-h-32 min-h-[48px] py-2 px-2"
           :rows="2"
-          placeholder="描述你的任务..."
+          :placeholder="t('shell.landing.placeholder')"
           :disabled="isSending"
           @keydown="handleKeyDown"
         />
@@ -269,14 +276,14 @@ function openVoiceCockpit(): void {
         @click="openVoiceCockpit"
       >
         <Mic class="h-4 w-4" />
-        进入语音 Cockpit
+        {{ t('shell.landing.voiceCockpit') }}
       </button>
     </div>
 
     <!-- Suggestions -->
     <div class="flex flex-wrap gap-2 mt-6 max-w-[620px] justify-center">
       <button
-        v-for="hint in ['用 demo-ceremony 模板启动演示', '列出所有项目', '用 review-loop 做一个代码审查']"
+        v-for="hint in taskHints"
         :key="hint"
         class="px-3 py-1.5 rounded-lg text-xs text-gray-500 bg-gray-800/30 border border-gray-700/30 hover:text-gray-300 hover:bg-gray-800/50 transition-colors"
         @click="inputValue = hint"
@@ -291,7 +298,7 @@ function openVoiceCockpit(): void {
       @click="enterHistory"
     >
       <History class="h-3.5 w-3.5" />
-      查看历史会话
+      {{ t('shell.landing.history') }}
     </button>
   </div>
 </template>

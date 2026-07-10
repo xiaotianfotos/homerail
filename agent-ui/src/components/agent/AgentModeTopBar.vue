@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Eye, EyeOff, Loader2, Network, RotateCcw, Settings } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import { http } from '@/api/clients/http-client'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   activeMode: 'text' | 'voice'
@@ -41,15 +44,15 @@ let removeUpdateListener: (() => void) | null = null
 
 const runtimeTitle = computed(() =>
   hasActiveRuns.value
-    ? `DAG dashboard: ${activeRunCount.value} run${activeRunCount.value === 1 ? '' : 's'} running`
-    : 'DAG dashboard',
+    ? t('shell.dashboard.running', { count: activeRunCount.value })
+    : t('shell.dashboard.title'),
 )
 const downloadedUpdate = computed(() =>
   Boolean(desktopUpdateStatus.value?.supported && desktopUpdateStatus.value.state === 'downloaded'),
 )
 const updateButtonTitle = computed(() => {
   const version = desktopUpdateStatus.value?.update?.version
-  return version ? `HomeRail ${version} 已下载，重启后安装` : '新版本已下载，重启后安装'
+  return version ? t('shell.updates.downloadedVersion', { version }) : t('shell.updates.downloaded')
 })
 
 async function refreshActiveRuns(): Promise<void> {
@@ -159,7 +162,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="emit('selectText')"
         >
-          文字模式
+          {{ t('shell.mode.text') }}
         </button>
         <button
           class="h-8 rounded-full px-3 text-xs font-medium transition-colors"
@@ -167,7 +170,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="emit('selectVoice')"
         >
-          语音模式
+          {{ t('shell.mode.voice') }}
         </button>
       </div>
       <slot />
@@ -183,7 +186,7 @@ onBeforeUnmount(() => {
         @click="installDesktopUpdate"
       >
         <RotateCcw class="h-4 w-4" :class="updateInstalling ? 'animate-spin' : ''" />
-        重启更新
+        {{ t('shell.updates.restart') }}
       </button>
       <button
         v-if="showRuntime"
@@ -195,7 +198,7 @@ onBeforeUnmount(() => {
       >
         <Loader2 v-if="hasActiveRuns" class="h-4 w-4 animate-spin" />
         <Network v-else class="h-4 w-4" />
-        仪表盘
+        {{ t('shell.dashboard.button') }}
         <span
           v-if="hasActiveRuns"
           class="min-w-5 rounded-full border border-emerald-200/35 bg-emerald-300/15 px-1.5 text-center text-[11px] font-semibold leading-5 text-emerald-50"
@@ -206,13 +209,13 @@ onBeforeUnmount(() => {
       <button
         v-if="showDetails"
         class="flex h-9 items-center gap-2 rounded-full border border-cyan-200/14 px-3 text-sm text-white/60 transition-colors hover:bg-cyan-200/10 hover:text-white"
-        :title="detailsOpen ? '隐藏详情' : '显示详情'"
+        :title="detailsOpen ? t('shell.details.hide') : t('shell.details.show')"
         type="button"
         @click="emit('toggleDetails')"
       >
         <EyeOff v-if="detailsOpen" class="h-4 w-4" />
         <Eye v-else class="h-4 w-4" />
-        详情
+        {{ t('shell.details.button') }}
       </button>
       <button
         v-if="showSettings"
@@ -222,7 +225,7 @@ onBeforeUnmount(() => {
         @click="emit('openSettings')"
       >
         <Settings class="h-4 w-4" />
-        设置
+        {{ t('shell.settings') }}
       </button>
     </div>
   </header>

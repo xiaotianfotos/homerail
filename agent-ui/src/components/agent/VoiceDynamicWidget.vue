@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import XiaohongshuNoteWidget from './widgets/XiaohongshuNoteWidget.vue'
 import TopicOutlineWidget from './widgets/TopicOutlineWidget.vue'
 import SlideDeckWidget from './widgets/SlideDeckWidget.vue'
@@ -53,6 +54,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (event: 'open-preview', payload: WidgetPreviewRequest): void
 }>()
+
+const { t, locale } = useI18n()
 
 const data = computed(() => props.widget.data ?? {})
 const uiState = computed(() => String(data.value.ui_state || 'visible'))
@@ -115,7 +118,7 @@ const nodes = computed<WidgetNode[]>(() => {
   if (!Array.isArray(raw)) return []
   return raw.map((item, index) => ({
     id: clean(item?.id || `node-${index}`),
-    label: clean(item?.label || item?.id || `节点 ${index + 1}`),
+    label: clean(item?.label || item?.id || t('voice.widgets.nodeFallback', { index: index + 1 })),
     status: clean(item?.status || 'pending'),
     detail: clean(item?.detail),
     progress: clampNumber(item?.progress),
@@ -137,7 +140,7 @@ const htmlDocument = computed(() => {
   if (/<!doctype|<html[\s>]/i.test(html)) return html
   const css = rawString(data.value.css, 12000)
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="${locale.value}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

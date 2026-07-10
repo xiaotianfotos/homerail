@@ -86,11 +86,11 @@ function statusColor(status: string): string {
 
 const experienceIngestLabel = computed(() => {
   const status = experienceIngest.value?.status
-  if (!status || status === 'not_started') return '经验图未写入'
-  if (status === 'applied') return '经验图已写入'
-  if (status === 'failed') return '经验图写入失败'
-  if (status === 'skipped') return '经验图已跳过'
-  return `经验图${status}`
+  if (!status || status === 'not_started') return t('shell.workspace.experience.notStarted')
+  if (status === 'applied') return t('shell.workspace.experience.applied')
+  if (status === 'failed') return t('shell.workspace.experience.failed')
+  if (status === 'skipped') return t('shell.workspace.experience.skipped')
+  return t('shell.workspace.experience.status', { status })
 })
 
 const experienceIngestClass = computed(() => {
@@ -191,10 +191,10 @@ onBeforeUnmount(stopExperienceIngestPoll)
         </span>
         <span class="font-mono text-white/35">{{ store.currentRunId?.slice(-8) }}</span>
         <span class="text-white/20">·</span>
-        <span class="text-white/35">{{ store.nodes.length }} nodes</span>
+        <span class="text-white/35">{{ t('shell.workspace.nodes', { count: store.nodes.length }) }}</span>
         <span class="text-white/20">·</span>
         <span class="text-white/35">
-          {{ store.statusSummary.running }} running · {{ store.statusSummary.completed }} done
+          {{ t('shell.workspace.progress', { running: store.statusSummary.running, completed: store.statusSummary.completed }) }}
         </span>
         <span class="text-white/20">·</span>
         <span
@@ -211,7 +211,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
           v-if="experienceIngest?.status === 'failed'"
           class="inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-1 font-medium text-white/45 transition-colors hover:bg-white/[0.08] hover:text-white/75"
           :disabled="experienceIngestLoading"
-          title="重试经验图写入"
+          :title="t('shell.workspace.experience.retryTitle')"
           @click="retryExperienceIngest"
         >
           <RefreshCw :class="cn('h-3 w-3', experienceIngestLoading && 'animate-spin')" />
@@ -247,15 +247,15 @@ onBeforeUnmount(stopExperienceIngestPoll)
       >
         <div class="max-w-[220px] text-center">
           <Activity class="mx-auto mb-3 h-7 w-7 text-cyan-100/25" />
-          <div class="text-xs font-medium text-white/45">无 DAG 运行</div>
+          <div class="text-xs font-medium text-white/45">{{ t('shell.workspace.emptyTitle') }}</div>
           <div class="mt-1 text-[11px] leading-5 text-white/32">
-            Manager 启动 run 后，这里会显示进度、节点和证据。
+            {{ t('shell.workspace.emptyDescription') }}
           </div>
           <button
             class="mt-4 rounded-full border border-cyan-200/14 px-3 py-1.5 text-[11px] text-cyan-100/55 transition-colors hover:bg-cyan-200/10 hover:text-white"
             @click="store.settingsPageOpen = true"
           >
-            打开设置
+            {{ t('shell.workspace.openSettings') }}
           </button>
         </div>
       </div>

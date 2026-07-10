@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { AlertTriangle, Hammer, Loader2 } from 'lucide-vue-next'
 import { getManagerAgentReadiness, type ManagerAgentReadiness } from '@/api/services/voice-agent-api'
 import { cn } from '@/lib/utils'
 
 type WorkerImage = NonNullable<ManagerAgentReadiness['checks']['dag_resources']>['worker_image']
+
+const { t } = useI18n()
 
 const workerImage = ref<WorkerImage | null>(null)
 const open = ref(false)
@@ -21,16 +24,16 @@ const preparing = computed(() => {
 })
 
 const label = computed(() => {
-  if (preparing.value) return '准备 DAG'
-  if (workerImage.value?.status === 'error') return 'DAG 资源'
-  return 'DAG 准备'
+  if (preparing.value) return t('dag.resources.preparingShort')
+  if (workerImage.value?.status === 'error') return t('dag.resources.resources')
+  return t('dag.resources.preparation')
 })
 
 const title = computed(() => {
-  if (!workerImage.value) return '正在准备 DAG 资源'
-  if (preparing.value) return '正在准备 DAG 的运行资源，稍后即可启动。'
+  if (!workerImage.value) return t('dag.resources.preparing')
+  if (preparing.value) return t('dag.resources.preparingDescription')
   if (workerImage.value.status === 'error') return workerImage.value.error || workerImage.value.message
-  if (workerImage.value.status === 'skipped') return '本次启动跳过了 worker 镜像构建，Docker DAG 可能暂时不可用。'
+  if (workerImage.value.status === 'skipped') return t('dag.resources.skipped')
   return workerImage.value.message
 })
 
@@ -75,7 +78,7 @@ onBeforeUnmount(() => {
       <span>{{ label }}</span>
     </button>
     <div v-if="open" class="dag-resource-status__tooltip">
-      <strong>{{ preparing ? '正在准备 DAG 资源' : 'DAG 资源状态' }}</strong>
+      <strong>{{ preparing ? t('dag.resources.preparing') : t('dag.resources.status') }}</strong>
       <span>{{ title }}</span>
       <em v-if="workerImage?.image">{{ workerImage.image }}</em>
     </div>

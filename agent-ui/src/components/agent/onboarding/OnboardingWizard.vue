@@ -12,6 +12,7 @@
  */
 
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Check, Sparkles, ArrowRight, Terminal, Mic, Volume2, X, FolderCheck, RefreshCw } from 'lucide-vue-next'
 import { useAgentStore } from '@/stores/agent-store'
 import { useOnboardingStatus } from '@/composables/useOnboardingStatus'
@@ -33,6 +34,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useAgentStore()
+const { t } = useI18n()
 const { status, refresh } = useOnboardingStatus()
 
 const providers = ref<Provider[]>([])
@@ -86,15 +88,15 @@ interface StepDef {
   optional: boolean
 }
 
-const STEPS: StepDef[] = [
-  { id: 'agent', title: '主 Agent', subtitle: '需要一个 LLM 或已登录的 Codex', icon: Terminal, capability: 'supports_llm', optional: false },
-  { id: 'asr', title: '语音识别', subtitle: '需要一个支持 ASR 的模型', icon: Mic, capability: 'supports_asr', optional: false },
-  { id: 'tts', title: '语音合成', subtitle: '可跳过，不配也能用文字', icon: Volume2, capability: 'supports_tts', optional: true },
-]
+const steps = computed<StepDef[]>(() => [
+  { id: 'agent', title: t('onboarding.steps.agent'), subtitle: t('onboarding.steps.agentSubtitle'), icon: Terminal, capability: 'supports_llm', optional: false },
+  { id: 'asr', title: t('onboarding.steps.asr'), subtitle: t('onboarding.steps.asrSubtitle'), icon: Mic, capability: 'supports_asr', optional: false },
+  { id: 'tts', title: t('onboarding.steps.tts'), subtitle: t('onboarding.steps.ttsSubtitle'), icon: Volume2, capability: 'supports_tts', optional: true },
+])
 
 const currentIdx = ref(0)
 const activePane = ref<OnboardingPane>('models')
-const currentStep = computed<StepDef>(() => STEPS[currentIdx.value])
+const currentStep = computed<StepDef>(() => steps.value[currentIdx.value])
 
 // ── 每阶段状态 ────────────────────────────────────────────────
 // agent 阶段：后端 Manager Agent runtime readiness 为准
@@ -118,21 +120,21 @@ function stepStatus(id: StepId): 'done' | 'pending' | 'loading' {
 // （仅在初次加载或刚完成保存后触发，避免和用户手动点击冲突）
 function advanceIfDone(): void {
   if (props.manualDebug) return
-  for (let i = currentIdx.value; i < STEPS.length; i++) {
-    if (stepStatus(STEPS[i].id) !== 'done') {
+  for (let i = currentIdx.value; i < steps.value.length; i++) {
+    if (stepStatus(steps.value[i].id) !== 'done') {
       currentIdx.value = i
       return
     }
   }
   // 全部 done
-  currentIdx.value = STEPS.length - 1
+  currentIdx.value = steps.value.length - 1
   maybeFinish()
 }
 
 // ── 完成 ──────────────────────────────────────────────────────
 function maybeFinish(): void {
   if (props.manualDebug) return
-  const allDone = STEPS.every(s => stepStatus(s.id) === 'done')
+  const allDone = steps.value.every(s => stepStatus(s.id) === 'done')
   if (allDone && !status.value.loading) {
     store.completeOnboarding()
     emit('close')
@@ -151,7 +153,7 @@ async function onCreated(setting?: LLMSetting): Promise<void> {
 }
 
 function next(): void {
-  if (currentIdx.value < STEPS.length - 1) {
+  if (currentIdx.value < steps.value.length - 1) {
     currentIdx.value += 1
   } else {
     maybeFinish()
@@ -164,7 +166,7 @@ function skipTts(): void {
 }
 
 function gotoStep(idx: number): void {
-  if (idx < 0 || idx >= STEPS.length) return
+  if (idx < 0 || idx >= steps.value.length) return
   // 允许跳到任意已完成或当前未完成阶段
   currentIdx.value = idx
 }
@@ -179,26 +181,26 @@ const agentRuntimeReady = computed(() => status.value.managerAgentReady)
 const hostShellRequired = computed(() => status.value.hostShell?.required === true || status.value.managerAgentRuntimePlacement === 'host_shell')
 const hostShellReady = computed(() => !hostShellRequired.value || status.value.hostShell?.available === true)
 const hostShellMessage = computed(() => {
-  if (!hostShellRequired.value) return '当前 Manager Agent 不需要 Git Bash host-shell 环境'
+  if (!hostShellRequired.value) return t('onboarding.environmentCheck.hostNotRequired')
   if (status.value.hostShell?.available) {
     return status.value.hostShell.shellPath
-      ? `Git Bash 已就绪：${status.value.hostShell.shellPath}`
-      : 'Git Bash host-shell 环境已就绪'
+      ? t('onboarding.environmentCheck.gitBashReadyPath', { path: status.value.hostShell.shellPath })
+      : t('onboarding.environmentCheck.gitBashReady')
   }
   if (status.value.hostShell?.error) return status.value.hostShell.error
-  return '请安装 Git Bash，并确认 packaged shell 包内 worker 运行文件可用'
+  return t('onboarding.environmentCheck.gitBashRequired')
 })
 const dockerWorkspaceHostPath = computed(() => status.value.dockerWorkspace?.hostPath || '')
 const dockerWorkspaceReady = computed(() => dockerProbeResult.value?.available === true)
 const dockerWorkspaceRequired = computed(() => status.value.dockerWorkspace?.required === true)
 const environmentNeedsAttention = computed(() => !hostShellReady.value || (dockerWorkspaceRequired.value && !dockerWorkspaceReady.value))
 const dockerWorkspaceMessage = computed(() => {
-  if (dockerProbeRunning.value) return '正在检查 Docker 工作区授权...'
-  if (dockerProbeResult.value?.available) return 'Docker 工作区授权已确认'
+  if (dockerProbeRunning.value) return t('onboarding.environmentCheck.checkingDocker')
+  if (dockerProbeResult.value?.available) return t('onboarding.environmentCheck.dockerReady')
   if (dockerProbeResult.value?.error) return dockerProbeResult.value.error
   return dockerWorkspaceHostPath.value
-    ? `请确认 Docker Desktop 已允许共享 ${dockerWorkspaceHostPath.value}`
-    : '请确认 Docker Desktop 已允许共享 HomeRail 工作区'
+    ? t('onboarding.environmentCheck.dockerSharePath', { path: dockerWorkspaceHostPath.value })
+    : t('onboarding.environmentCheck.dockerShareHomeRail')
 })
 
 function isDedicatedManagerAgentSetting(setting: LLMSetting | undefined): setting is LLMSetting {
@@ -270,16 +272,16 @@ async function checkDockerWorkspace(): Promise<void> {
               <Sparkles class="h-4 w-4" />
             </span>
             <div>
-              <h2>欢迎使用 HomeRail</h2>
-              <p>完成最小配置即可启用语音 Agent</p>
+              <h2>{{ t('onboarding.title') }}</h2>
+              <p>{{ t('onboarding.subtitle') }}</p>
             </div>
           </div>
-          <button class="onboarding-wizard__close" title="稍后配置" @click="dismiss">
+          <button class="onboarding-wizard__close" :title="t('onboarding.later')" @click="dismiss">
             <X class="h-4 w-4" />
           </button>
         </header>
 
-        <nav class="onboarding-wizard__tabs" role="tablist" aria-label="引导配置分类">
+        <nav class="onboarding-wizard__tabs" role="tablist" :aria-label="t('onboarding.categories')">
           <button
             type="button"
             role="tab"
@@ -287,7 +289,7 @@ async function checkDockerWorkspace(): Promise<void> {
             :class="cn('onboarding-wizard__tab', activePane === 'models' && 'onboarding-wizard__tab--active')"
             @click="activePane = 'models'"
           >
-            模型配置
+            {{ t('onboarding.models') }}
           </button>
           <button
             type="button"
@@ -296,7 +298,7 @@ async function checkDockerWorkspace(): Promise<void> {
             :class="cn('onboarding-wizard__tab', activePane === 'environment' && 'onboarding-wizard__tab--active')"
             @click="activePane = 'environment'"
           >
-            环境检查
+            {{ t('onboarding.environment') }}
             <span v-if="environmentNeedsAttention" class="onboarding-wizard__tab-dot" />
           </button>
         </nav>
@@ -304,7 +306,7 @@ async function checkDockerWorkspace(): Promise<void> {
         <!-- Stepper -->
         <nav v-if="activePane === 'models'" class="onboarding-wizard__stepper">
           <button
-            v-for="(step, idx) in STEPS"
+            v-for="(step, idx) in steps"
             :key="step.id"
             type="button"
             :class="cn(
@@ -320,7 +322,7 @@ async function checkDockerWorkspace(): Promise<void> {
             </span>
             <span class="onboarding-wizard__step-text">
               <strong>{{ step.title }}</strong>
-              <em v-if="step.optional" class="onboarding-wizard__step-optional">可选</em>
+              <em v-if="step.optional" class="onboarding-wizard__step-optional">{{ t('onboarding.optional') }}</em>
             </span>
           </button>
         </nav>
@@ -336,18 +338,18 @@ async function checkDockerWorkspace(): Promise<void> {
           <div v-if="currentStep.id === 'agent' && agentRuntimeReady" class="onboarding-wizard__ready">
             <Check class="h-5 w-5 text-emerald-400" />
             <div>
-              <div class="onboarding-wizard__ready-title">主 Agent 运行时已就绪</div>
-              <div class="onboarding-wizard__ready-hint">当前 Harness：{{ status.managerAgentHarness || 'manager_agent' }}</div>
+              <div class="onboarding-wizard__ready-title">{{ t('onboarding.runtime.ready') }}</div>
+              <div class="onboarding-wizard__ready-hint">{{ t('onboarding.runtime.currentHarness', { harness: status.managerAgentHarness || 'manager_agent' }) }}</div>
             </div>
           </div>
 
           <!-- Agent 阶段：runtime 未就绪，需要建 LLM 或修复运行环境 -->
           <template v-else-if="currentStep.id === 'agent' && !agentRuntimeReady">
             <div class="onboarding-wizard__codex-hint">
-              主 Agent 运行时未就绪。模型凭证在这里配置，本机依赖和 Docker 授权请到环境检查页处理。
+              {{ t('onboarding.runtime.notReady') }}
             </div>
             <div v-if="existingManagerAgentSettings.length" class="onboarding-wizard__existing-agents">
-              <div class="onboarding-wizard__existing-title">已有主 Agent 配置</div>
+              <div class="onboarding-wizard__existing-title">{{ t('onboarding.runtime.existing') }}</div>
               <button
                 v-for="setting in existingManagerAgentSettings"
                 :key="setting.id"
@@ -361,7 +363,7 @@ async function checkDockerWorkspace(): Promise<void> {
                   <em>{{ harnessForManagerAgentSetting(setting) === 'kimi_code' ? 'Kimi Code' : 'Claude Code' }} · {{ setting.model_name }}</em>
                 </span>
                 <span class="onboarding-wizard__existing-action">
-                  {{ applyingExistingAgentId === setting.id ? '切换中...' : '使用' }}
+                  {{ applyingExistingAgentId === setting.id ? t('onboarding.runtime.switching') : t('onboarding.runtime.use') }}
                 </span>
               </button>
             </div>
@@ -377,8 +379,8 @@ async function checkDockerWorkspace(): Promise<void> {
           <div v-else-if="stepStatus(currentStep.id) === 'done'" class="onboarding-wizard__ready">
             <Check class="h-5 w-5 text-emerald-400" />
             <div>
-              <div class="onboarding-wizard__ready-title">{{ currentStep.title }}已就绪</div>
-              <div class="onboarding-wizard__ready-hint">可以进入下一步</div>
+              <div class="onboarding-wizard__ready-title">{{ t('onboarding.runtime.stepReady', { step: currentStep.title }) }}</div>
+              <div class="onboarding-wizard__ready-hint">{{ t('onboarding.runtime.nextAvailable') }}</div>
             </div>
           </div>
 
@@ -396,8 +398,8 @@ async function checkDockerWorkspace(): Promise<void> {
         <section v-else class="onboarding-wizard__body">
           <div class="onboarding-wizard__body-title">
             <Terminal class="h-4 w-4 text-cyan-300" />
-            <span>环境检查</span>
-            <em>确认本机运行依赖和 Docker 工作区授权</em>
+            <span>{{ t('onboarding.environment') }}</span>
+            <em>{{ t('onboarding.environmentCheck.description') }}</em>
           </div>
 
           <div class="onboarding-wizard__docker-check">
@@ -407,25 +409,25 @@ async function checkDockerWorkspace(): Promise<void> {
               <div class="onboarding-wizard__docker-check-hint">{{ hostShellMessage }}</div>
             </div>
             <span :class="cn('onboarding-wizard__check-pill', hostShellReady && 'onboarding-wizard__check-pill--ready')">
-              {{ hostShellReady ? '已通过' : '需处理' }}
+              {{ hostShellReady ? t('onboarding.environmentCheck.passed') : t('onboarding.environmentCheck.needsAttention') }}
             </span>
           </div>
 
           <div class="onboarding-wizard__docker-check">
             <FolderCheck :class="cn('h-5 w-5', dockerWorkspaceReady ? 'text-emerald-400' : 'text-cyan-300')" />
             <div class="onboarding-wizard__docker-check-copy">
-              <div class="onboarding-wizard__docker-check-title">Docker 工作区授权</div>
+              <div class="onboarding-wizard__docker-check-title">{{ t('onboarding.environmentCheck.dockerTitle') }}</div>
               <div class="onboarding-wizard__docker-check-hint">{{ dockerWorkspaceMessage }}</div>
             </div>
             <button
               type="button"
               class="onboarding-wizard__docker-check-button"
               :disabled="dockerProbeRunning"
-              title="检查 Docker 工作区授权"
+              :title="t('onboarding.environmentCheck.checkTitle')"
               @click="checkDockerWorkspace"
             >
               <RefreshCw :class="cn('h-3.5 w-3.5', dockerProbeRunning && 'animate-spin')" />
-              <span>{{ dockerProbeRunning ? '检查中' : '检查' }}</span>
+              <span>{{ dockerProbeRunning ? t('onboarding.environmentCheck.checking') : t('onboarding.environmentCheck.check') }}</span>
             </button>
           </div>
 
@@ -444,7 +446,7 @@ async function checkDockerWorkspace(): Promise<void> {
         <!-- 底部操作 -->
         <footer class="onboarding-wizard__footer">
           <button class="onboarding-wizard__ghost" @click="dismiss">
-            稍后配置
+            {{ t('onboarding.later') }}
           </button>
           <div class="onboarding-wizard__footer-right">
             <button
@@ -452,14 +454,14 @@ async function checkDockerWorkspace(): Promise<void> {
               class="onboarding-wizard__ghost"
               @click="skipTts"
             >
-              跳过 TTS
+              {{ t('onboarding.actions.skipTts') }}
             </button>
             <button
               v-if="activePane === 'environment'"
               class="onboarding-wizard__primary"
               @click="activePane = 'models'"
             >
-              <span>返回模型配置</span>
+              <span>{{ t('onboarding.actions.backToModels') }}</span>
               <ArrowRight class="h-3.5 w-3.5" />
             </button>
             <button
@@ -471,7 +473,7 @@ async function checkDockerWorkspace(): Promise<void> {
               )"
               @click="next"
             >
-              <span>{{ currentIdx === STEPS.length - 1 ? '完成' : '下一步' }}</span>
+              <span>{{ currentIdx === steps.length - 1 ? t('onboarding.actions.finish') : t('onboarding.actions.next') }}</span>
               <ArrowRight class="h-3.5 w-3.5" />
             </button>
           </div>

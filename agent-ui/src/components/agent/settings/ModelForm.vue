@@ -10,6 +10,7 @@
  */
 
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Loader2, Minus, Plus, Search, RefreshCw } from 'lucide-vue-next'
 import { probeModels } from '@/api/services/providers-api'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
@@ -19,7 +20,6 @@ import type {
   ProviderModelPreset,
   ProviderProtocol,
 } from '@/api/types/orchestration-v2.types'
-import { protocolLabel, planLabel } from '@/lib/protocol-labels'
 import CapabilityToggle from './CapabilityToggle.vue'
 
 export interface ModelFormPayload {
@@ -98,6 +98,30 @@ const emit = defineEmits<{
   (e: 'submit', payload: ModelFormPayload): void
   (e: 'cancel'): void
 }>()
+
+const { t } = useI18n()
+
+function localizedPlanLabel(plan?: string): string {
+  if (plan === 'api_billing') return t('settings.models.plans.apiBilling')
+  if (plan === 'token_plan') return t('settings.models.plans.tokenPlan')
+  if (plan === 'coding_plan') return t('settings.models.plans.codingPlan')
+  if (plan === 'agent_plan') return t('settings.models.plans.agentPlan')
+  if (plan === 'subscription') return t('settings.models.plans.subscription')
+  return t('settings.models.plans.custom')
+}
+
+function localizedProtocolLabel(protocol?: string): string {
+  if (!protocol) return '—'
+  if (protocol === 'openai_compatible') return 'Chat Completions'
+  if (protocol === 'anthropic_compatible') return 'Anthropic'
+  if (protocol === 'dashscope_native') return 'DashScope'
+  if (protocol === 'volcengine_doubao_voice') return t('settings.models.protocols.volcengineVoice')
+  if (protocol === 'volcengine_ark_voice' || protocol === 'volcengine_openspeech') {
+    return t('settings.models.protocols.volcengineOpenSpeech')
+  }
+  if (protocol === 'custom') return t('settings.models.protocols.custom')
+  return protocol
+}
 
 // ── 状态 ──────────────────────────────────────────────────────
 const isCustom = ref(false)
@@ -226,7 +250,7 @@ const filteredCredentials = computed<CredentialOption[]>(() => {
   return allCredentials.value.filter(({ provider, planType }) => {
     return (
       provider.name.toLowerCase().includes(q) ||
-      planLabel(planType).toLowerCase().includes(q)
+      localizedPlanLabel(planType).toLowerCase().includes(q)
     )
   })
 })
@@ -357,7 +381,7 @@ async function runProbe(): Promise<void> {
     probedModels.value = result.models
     if (result.error) probeError.value = result.error
   } catch (e: any) {
-    probeError.value = e?.message || '探测失败'
+    probeError.value = e?.message || t('settings.models.form.probeFailedFallback')
     probedModels.value = []
   } finally {
     probing.value = false
@@ -674,13 +698,13 @@ async function submit(): Promise<void> {
     <template v-if="!isCustom">
       <div>
         <div class="mb-2 flex items-center justify-between">
-          <span class="text-xs font-medium text-gray-400">选择凭证类型</span>
+          <span class="text-xs font-medium text-gray-400">{{ t('settings.models.form.credentialType') }}</span>
           <div class="relative">
             <Search class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-600" />
             <input
               v-model="searchQuery"
               class="h-8 w-44 rounded-lg border border-white/10 bg-[#343434] pl-7 pr-2 text-xs text-gray-200 outline-none focus:border-cyan-400/40"
-              placeholder="搜索供应商/计费..."
+              :placeholder="t('settings.models.form.search')"
             />
           </div>
         </div>
@@ -714,11 +738,11 @@ async function submit(): Promise<void> {
                   <span v-if="isSelectedCredentialOption(item)" class="h-1.5 w-1.5 rounded-full bg-black" />
                 </span>
                 <div class="min-w-0 flex-1">
-                  <div class="text-sm font-medium text-gray-200">{{ planLabel(item.planType) }}</div>
+                  <div class="text-sm font-medium text-gray-200">{{ localizedPlanLabel(item.planType) }}</div>
                   <div class="mt-0.5 flex items-center gap-2 text-[11px] text-gray-500">
-                    <span>{{ item.models.length }} 个模型</span>
+                    <span>{{ t('settings.models.modelsCount', { count: item.models.length }) }}</span>
                     <span>·</span>
-                    <span>{{ item.protocols.map(p => protocolLabel(p)).join(' / ') }}</span>
+                    <span>{{ item.protocols.map(p => localizedProtocolLabel(p)).join(' / ') }}</span>
                   </div>
                 </div>
               </button>
@@ -726,19 +750,19 @@ async function submit(): Promise<void> {
           </div>
 
           <div v-if="!groupedCredentials.length" class="py-6 text-center text-xs text-gray-600">
-            无匹配的凭证
+            {{ t('settings.models.form.noCredentials') }}
           </div>
         </div>
 
         <!-- 底部信息：协议 + 接入地址 -->
         <div v-if="selectedCredential" class="mt-3 space-y-1.5 rounded-lg border border-white/8 bg-white/[0.02] px-3 py-2.5">
           <div class="flex items-center gap-2 text-[11px] text-gray-500">
-            <span>支持协议：</span>
+            <span>{{ t('settings.models.form.supportedProtocols') }}</span>
             <span
               v-for="p in selectedCredential.protocols"
               :key="p"
               class="rounded bg-white/5 px-1.5 py-0.5 text-gray-300"
-            >{{ protocolLabel(p) }}</span>
+            >{{ localizedProtocolLabel(p) }}</span>
           </div>
           <div v-for="row in endpointUrlRows" :key="row.label" class="flex items-center gap-2 text-[11px] text-gray-500">
             <span>{{ row.label }}：</span>
@@ -762,35 +786,35 @@ async function submit(): Promise<void> {
           @click="enableCustomMode"
         >
           <Plus class="h-3.5 w-3.5" />
-          新建自定义供应商
+          {{ t('settings.models.form.newCustomProvider') }}
         </button>
       </div>
 
       <!-- ═══ 模型多选（catalog 预设 + 动态探测）════════════════ -->
       <div v-if="selectedCredential" class="space-y-2">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-medium text-gray-400">{{ editing ? '当前模型' : '可添加模型' }}</span>
+          <span class="text-xs font-medium text-gray-400">{{ editing ? t('settings.models.form.currentModel') : t('settings.models.form.availableModels') }}</span>
           <div v-if="!editing" class="flex items-center gap-2">
             <span v-if="probing" class="flex items-center gap-1 text-[11px] text-cyan-300/70">
-              <Loader2 class="h-3 w-3 animate-spin" /> 探测中...
+              <Loader2 class="h-3 w-3 animate-spin" /> {{ t('settings.models.form.probing') }}
             </span>
             <span v-else-if="probedModels.length" class="text-[11px] text-emerald-300/60">
-              已探测 {{ probedModels.length }} 个
+              {{ t('settings.models.form.probedCount', { count: probedModels.length }) }}
             </span>
             <button
               v-if="apiKey && !probing && !isArkVoiceCredential"
               type="button"
               class="flex items-center gap-1 text-[11px] text-gray-500 transition-colors hover:text-cyan-300"
-              title="重新探测可用模型"
+              :title="t('settings.models.form.reprobe')"
               @click="runProbe"
             >
               <RefreshCw class="h-3 w-3" />
             </button>
-            <span class="text-[11px] text-gray-500">待创建 {{ selectedModels.size }}</span>
+            <span class="text-[11px] text-gray-500">{{ t('settings.models.form.pendingCount', { count: selectedModels.size }) }}</span>
           </div>
         </div>
         <div v-if="!editing && probeError" class="rounded-md border border-amber-400/20 bg-amber-400/5 px-3 py-1.5 text-[11px] text-amber-300/70">
-          探测失败：{{ probeError }}（仍可从下方预设模型选择）
+          {{ t('settings.models.form.probeFailed', { error: probeError }) }}
         </div>
         <div v-if="!editing && availableDisplayModels.length" class="grid gap-2 sm:grid-cols-2">
           <button
@@ -807,7 +831,7 @@ async function submit(): Promise<void> {
           >
             <span class="min-w-0">
               <span class="block truncate">{{ m.display_name }}</span>
-              <span v-if="m.probed" class="mt-0.5 block text-[9px] text-emerald-300/55">探测</span>
+              <span v-if="m.probed" class="mt-0.5 block text-[9px] text-emerald-300/55">{{ t('settings.models.form.probed') }}</span>
             </span>
             <span class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-cyan-300/25 bg-cyan-300/10 text-cyan-100">
               <Plus class="h-3.5 w-3.5" />
@@ -815,14 +839,14 @@ async function submit(): Promise<void> {
           </button>
         </div>
         <div v-else-if="!editing" class="rounded-lg border border-white/8 bg-black/15 px-3 py-4 text-center text-xs text-gray-500">
-          该凭证下模型已全部加入下方配置列表。
+          {{ t('settings.models.form.allAdded') }}
         </div>
 
         <!-- 已配置模型列表（每个模型提交为一个独立配置，共用同一个 key）-->
         <div v-if="selectedModels.size > 0" class="space-y-2 rounded-lg border border-white/8 bg-black/20 p-3">
           <div class="flex items-center justify-between gap-3">
-            <div class="text-[11px] text-gray-500">{{ editing ? '模型配置' : '待创建模型配置（共用上方 API Key）' }}</div>
-            <div class="text-[11px] text-gray-600">{{ selectedModels.size }} 个</div>
+            <div class="text-[11px] text-gray-500">{{ editing ? t('settings.models.form.modelConfig') : t('settings.models.form.pendingConfigs') }}</div>
+            <div class="text-[11px] text-gray-600">{{ t('settings.models.modelsCount', { count: selectedModels.size }) }}</div>
           </div>
           <div
             v-for="model in selectedModelRows"
@@ -835,13 +859,13 @@ async function submit(): Promise<void> {
             <input
               :value="model.alias"
               class="h-8 flex-1 rounded-md border border-white/10 bg-[#343434] px-2 text-xs text-gray-200 outline-none focus:border-cyan-400/40"
-              placeholder="别名（留空用模型 ID）"
+              :placeholder="t('settings.models.form.aliasPlaceholder')"
               @input="setModelAlias(model.id, ($event.target as HTMLInputElement).value)"
             />
             <button
               type="button"
               class="flex h-8 w-8 items-center justify-center rounded-full border border-red-400/25 text-red-200/80 transition hover:bg-red-400/10 hover:text-red-100"
-              title="移除此模型配置"
+              :title="t('settings.models.form.removeModel')"
               @click="removeModel(model.id)"
             >
               <Minus class="h-3.5 w-3.5" />
@@ -855,27 +879,27 @@ async function submit(): Promise<void> {
     <template v-else>
       <div class="space-y-3 rounded-xl border border-white/8 bg-black/20 p-4">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-medium text-gray-400">自定义供应商</span>
+          <span class="text-xs font-medium text-gray-400">{{ t('settings.models.form.customProvider') }}</span>
           <button
             type="button"
             class="text-xs text-cyan-300/70 hover:text-cyan-200"
             @click="reset"
           >
-            ← 返回内置列表
+            {{ t('settings.models.form.backToBuiltIn') }}
           </button>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="space-y-1">
             <span class="text-xs text-gray-500">Provider ID</span>
-            <input v-model="customProviderId" class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40" placeholder="例如 custom-openai" />
+            <input v-model="customProviderId" class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40" :placeholder="t('settings.models.form.providerIdExample')" />
           </label>
           <label class="space-y-1">
-            <span class="text-xs text-gray-500">显示名称</span>
-            <input v-model="customProviderName" class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40" placeholder="例如 Custom OpenAI" />
+            <span class="text-xs text-gray-500">{{ t('settings.models.form.displayName') }}</span>
+            <input v-model="customProviderName" class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40" :placeholder="t('settings.models.form.displayNameExample')" />
           </label>
         </div>
         <label class="space-y-1">
-          <span class="text-xs text-gray-500">API 格式</span>
+          <span class="text-xs text-gray-500">{{ t('settings.models.form.apiFormat') }}</span>
           <select v-model="customProtocol" class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40">
             <option value="openai_compatible">Chat Completions</option>
             <option value="anthropic_compatible">Anthropic</option>
@@ -896,8 +920,8 @@ async function submit(): Promise<void> {
           </label>
         </div>
         <label class="space-y-1">
-          <span class="text-xs text-gray-500">模型名称</span>
-          <input v-model="customModelInput" class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40" placeholder="模型 ID" />
+          <span class="text-xs text-gray-500">{{ t('settings.models.form.modelName') }}</span>
+          <input v-model="customModelInput" class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40" :placeholder="t('settings.models.form.modelId')" />
         </label>
       </div>
     </template>
@@ -909,14 +933,14 @@ async function submit(): Promise<void> {
         v-model="apiKey"
         type="password"
         class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
-        :placeholder="editing ? '留空则保留原 Key' : (representativeEndpoint?.key_hint || 'sk-...')"
+        :placeholder="editing ? t('settings.models.form.keepKey') : (representativeEndpoint?.key_hint || 'sk-...')"
       />
     </label>
 
     <!-- ═══ 能力（自动填 + 手动微调）════════════════════════════ -->
     <div v-if="!isCustom" class="space-y-2">
       <div class="flex items-center justify-between">
-        <span class="text-xs font-medium text-gray-400">模型能力</span>
+        <span class="text-xs font-medium text-gray-400">{{ t('settings.models.form.capabilities') }}</span>
       </div>
       <div class="flex flex-wrap gap-2">
         <CapabilityToggle capability="llm" :model-value="effectiveCapabilities.supports_llm" @update:model-value="setCapability('supports_llm', $event)" />
@@ -932,18 +956,18 @@ async function submit(): Promise<void> {
     <div class="flex items-center gap-6">
       <label class="flex cursor-pointer items-center gap-2">
         <input type="checkbox" v-model="isDefault" class="h-4 w-4 rounded border-white/20 bg-[#343434]" />
-        <span class="text-sm text-gray-300">设为默认</span>
+        <span class="text-sm text-gray-300">{{ t('settings.models.setDefault') }}</span>
       </label>
       <label class="flex cursor-pointer items-center gap-2">
         <input type="checkbox" v-model="isActive" class="h-4 w-4 rounded border-white/20 bg-[#343434]" />
-        <span class="text-sm text-gray-300">启用</span>
+        <span class="text-sm text-gray-300">{{ t('settings.actions.enable') }}</span>
       </label>
     </div>
 
     <!-- ═══ 操作 ════════════════════════════════════════════════ -->
     <div class="flex justify-end gap-2 pt-2">
       <button type="button" class="rounded-lg border border-white/10 px-4 py-2 text-sm text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200" @click="emit('cancel')">
-        取消
+        {{ t('settings.actions.cancel') }}
       </button>
       <button
         type="button"
@@ -955,7 +979,7 @@ async function submit(): Promise<void> {
         @click="submit"
       >
         <Loader2 v-if="isSubmitting" class="h-4 w-4 animate-spin" />
-        {{ editing ? '保存' : '添加' }}
+        {{ editing ? t('settings.actions.save') : t('settings.actions.add') }}
       </button>
     </div>
   </div>

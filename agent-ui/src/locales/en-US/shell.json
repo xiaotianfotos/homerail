@@ -1,0 +1,109 @@
+{
+  "mode": {
+    "text": "Text",
+    "voice": "Voice"
+  },
+  "updates": {
+    "downloadedVersion": "HomeRail {version} is ready. Restart to install.",
+    "downloaded": "An update is ready. Restart to install.",
+    "restart": "Restart to update"
+  },
+  "dashboard": {
+    "title": "DAG dashboard",
+    "running": "DAG dashboard: {count} run in progress | DAG dashboard: {count} runs in progress",
+    "button": "Dashboard"
+  },
+  "details": {
+    "show": "Show details",
+    "hide": "Hide details",
+    "button": "Details"
+  },
+  "settings": "Settings",
+  "sidebar": {
+    "history": "Session history",
+    "newChat": "New chat",
+    "search": "Search",
+    "projects": "Projects",
+    "conversations": "Conversations",
+    "justNow": "Just now",
+    "minutesAgo": "{count} min ago | {count} min ago",
+    "hoursAgo": "{count} hr ago | {count} hrs ago",
+    "daysAgo": "{count} day ago | {count} days ago"
+  },
+  "header": {
+    "selectProject": "Select project",
+    "noProjects": "No projects"
+  },
+  "landing": {
+    "tagline": "Agent orchestration for complex work",
+    "placeholder": "Describe your task...",
+    "voiceCockpit": "Open Voice Cockpit",
+    "history": "View session history",
+    "hints": {
+      "demo": "Start a demo with the demo-ceremony template",
+      "projects": "List all projects",
+      "review": "Review code with review-loop"
+    }
+  },
+  "chat": {
+    "placeholder": "Describe a task...",
+    "welcome": "I am the HomeRail agent orchestrator. Describe a task and I will coordinate specialized agents to complete it.",
+    "runStarting": "The orchestration has started...",
+    "runStarted": "DAG started: run_id={runId}",
+    "requestFailed": "Request failed",
+    "error": "Error: {message}",
+    "empty": "Describe a task to begin...",
+    "toolCalls": "Tool calls",
+    "status": {
+      "completed": "Completed",
+      "failed": "Failed",
+      "running": "In progress"
+    },
+    "voice": {
+      "clickToStart": "Select the microphone to start",
+      "requestingMicrophone": "Requesting microphone access...",
+      "microphoneUnavailable": "Microphone unavailable",
+      "notStarted": "Voice input did not start",
+      "unsupported": "This browser does not support live voice capture",
+      "listening": "Listening...",
+      "listeningActive": "Listening",
+      "stopped": "Voice input stopped",
+      "recognizing": "Transcribing...",
+      "noTranscript": "No usable speech was recognized",
+      "inserted": "Added to the input. Keep speaking.",
+      "recognitionFailed": "Voice recognition failed",
+      "retry": "Recognition failed. Please try again.",
+      "ttsFailed": "TTS playback failed",
+      "start": "Start voice input",
+      "stop": "Stop voice input"
+    },
+    "send": "Send"
+  },
+  "startup": {
+    "ready": "{count} agents ready and waiting for a task...",
+    "roles": {
+      "scout": "Scout",
+      "engineerA": "Engineer A",
+      "engineerB": "Engineer B",
+      "testerA": "Tester A",
+      "testerB": "Tester B",
+      "reviewer": "Reviewer",
+      "publisher": "Publisher"
+    }
+  },
+  "workspace": {
+    "nodes": "{count} nodes",
+    "progress": "{running} running · {completed} done",
+    "experience": {
+      "notStarted": "Experience graph not written",
+      "applied": "Experience graph updated",
+      "failed": "Experience graph write failed",
+      "skipped": "Experience graph skipped",
+      "status": "Experience graph: {status}",
+      "retryTitle": "Retry experience graph write"
+    },
+    "emptyTitle": "No DAG run",
+    "emptyDescription": "Progress, nodes, and evidence will appear here after Manager starts a run.",
+    "openSettings": "Open settings"
+  }
+}

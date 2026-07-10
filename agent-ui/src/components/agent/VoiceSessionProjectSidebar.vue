@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   Check,
   CheckCircle2,
@@ -45,6 +46,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useAgentStore()
+const { t } = useI18n()
 const projects = ref<Project[]>([])
 const loadingProjects = ref(false)
 const projectQuery = ref('')
@@ -488,22 +490,23 @@ function timeAgo(dateStr: string | null | undefined): string {
   if (!dateStr) return ''
   const diff = Date.now() - new Date(dateStr).getTime()
   const mins = Math.floor(diff / 60000)
-  if (mins < 1) return '刚刚'
-  if (mins < 60) return `${mins}分钟前`
+  if (mins < 1) return t('shell.sidebar.justNow')
+  if (mins < 60) return t('shell.sidebar.minutesAgo', { count: mins })
   const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}小时前`
-  return `${Math.floor(hours / 24)}天前`
+  if (hours < 24) return t('shell.sidebar.hoursAgo', { count: hours })
+  const days = Math.floor(hours / 24)
+  return t('shell.sidebar.daysAgo', { count: days })
 }
 
 function sessionLabel(session: VoiceSessionItem): string {
   const raw = String(session.title || session.prompt || '').trim()
-  if (!raw) return '新会话'
+  if (!raw) return t('voice.sidebar.newSession')
   const firstSentence = raw.split(/[。！？!?；;\r\n]/)[0]?.trim() || raw
   return firstSentence.length > 8 ? `${firstSentence.slice(0, 8)}...` : firstSentence
 }
 
 function sessionTitle(session: VoiceSessionItem): string {
-  return String(session.title || session.prompt || '新会话').trim() || '新会话'
+  return String(session.title || session.prompt || t('voice.sidebar.newSession')).trim() || t('voice.sidebar.newSession')
 }
 
 function selectSession(session: VoiceSessionItem): void {
@@ -533,19 +536,19 @@ defineExpose({
   >
     <div class="mb-4 flex items-center justify-between">
       <div class="min-w-0">
-        <div class="truncate text-xl font-semibold text-white">工作区</div>
+        <div class="truncate text-xl font-semibold text-white">{{ t('voice.sidebar.workspace') }}</div>
       </div>
       <div class="flex items-center gap-2">
         <button
           class="rounded-full border border-cyan-200/15 p-2 text-cyan-100/70 hover:bg-cyan-200/10 hover:text-white"
-          title="收起左栏"
+          :title="t('voice.sidebar.collapse')"
           @click="emit('collapse')"
         >
           <PanelLeftClose class="h-4 w-4" />
         </button>
         <button
           class="rounded-full border border-cyan-200/15 p-2 text-cyan-100/70 hover:bg-cyan-200/10 hover:text-white"
-          title="添加目录"
+          :title="t('voice.sidebar.addDirectory')"
           @click="createOpen = true"
         >
           <Plus class="h-4 w-4" />
@@ -560,13 +563,13 @@ defineExpose({
       <input
         v-model="projectQuery"
         class="h-10 w-full rounded-full border border-white/10 bg-white/[0.035] pl-9 pr-3 text-sm text-white/80 outline-none placeholder:text-white/30 focus:border-cyan-200/35"
-        placeholder="搜索目录或会话"
+        :placeholder="t('voice.sidebar.search')"
       />
     </div>
 
     <section class="flex min-h-0 flex-1 flex-col">
       <div class="mb-2 flex items-center justify-between px-1 text-xs text-white/40">
-        <span>目录</span>
+        <span>{{ t('voice.sidebar.directories') }}</span>
         <Loader2 v-if="loadingProjects || voiceSessionsLoading" class="h-3.5 w-3.5 animate-spin" />
       </div>
       <div class="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
@@ -600,7 +603,7 @@ defineExpose({
             >
               <button
                 class="rounded-full p-1.5 text-cyan-50/45 hover:bg-cyan-200/10 hover:text-cyan-100"
-                title="配置目录"
+                :title="t('voice.sidebar.configureDirectory')"
                 @click="openProjectSettings(project, $event)"
               >
                 <Settings class="h-3.5 w-3.5" />
@@ -608,7 +611,7 @@ defineExpose({
               <button
                 class="rounded-full p-1.5 text-cyan-50/35 hover:bg-red-400/10 hover:text-red-200 disabled:opacity-45"
                 :class="confirmDeleteProjectId === project.id ? 'bg-red-400/10 text-red-200 opacity-100' : ''"
-                title="删除目录"
+                :title="t('voice.sidebar.deleteDirectory')"
                 :disabled="deletingProjectId === project.id"
                 @click="openProjectDeleteConfirm(project, $event)"
               >
@@ -629,14 +632,14 @@ defineExpose({
                 <Trash2 class="h-4 w-4" />
               </div>
               <div class="min-w-0 flex-1">
-                <div class="text-sm font-semibold text-white">移除目录引用「{{ project.name }}」？</div>
+                <div class="text-sm font-semibold text-white">{{ t('voice.sidebar.removeDirectoryConfirm', { name: project.name }) }}</div>
                 <div class="mt-1 break-all font-mono text-xs text-white/42">
                   {{ projectPath(project) || project.id }}
                 </div>
                 <div class="mt-3 space-y-1.5 text-xs leading-relaxed text-white/58">
-                  <p>这里只会从 HomeRail 的目录列表中移除此项目引用。</p>
-                  <p>不会删除本机目录、不会删除历史对话、不会清理 Manager 或 Voice 会话。</p>
-                  <p>DAG 工作区暂时保留，后续需要时再单独清理。</p>
+                  <p>{{ t('voice.sidebar.removeDirectoryOnly') }}</p>
+                  <p>{{ t('voice.sidebar.removeDirectoryKeepsData') }}</p>
+                  <p>{{ t('voice.sidebar.removeDirectoryKeepsDag') }}</p>
                 </div>
               </div>
             </div>
@@ -650,13 +653,13 @@ defineExpose({
                   v-if="deletingProjectId === project.id"
                   class="mr-1 inline h-3.5 w-3.5 animate-spin"
                 />
-                移除引用
+                {{ t('voice.sidebar.removeReference') }}
               </button>
               <button
                 class="flex-1 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white/68 transition hover:bg-white/[0.08]"
                 @click.stop="cancelProjectDelete"
               >
-                取消
+                {{ t('settings.actions.cancel') }}
               </button>
             </div>
           </div>
@@ -675,7 +678,7 @@ defineExpose({
               @click="emit('newSession')"
             >
               <Plus class="h-3.5 w-3.5" />
-              新会话
+              {{ t('voice.sidebar.newSession') }}
             </button>
             <div
               v-for="session in visibleProjectSessions(project)"
@@ -717,7 +720,7 @@ defineExpose({
               <button
                 class="shrink-0 rounded-full p-1.5 text-white/30 transition hover:bg-red-400/10 hover:text-red-200 group-hover/session:opacity-100 disabled:opacity-45"
                 :class="confirmDeleteSessionId === session.session_id ? 'opacity-100' : 'opacity-0'"
-                title="删除会话"
+                :title="t('voice.sidebar.deleteSession')"
                 :disabled="deletingSessionId === session.session_id"
                 @click="openSessionDeleteConfirm(session, $event)"
               >
@@ -733,7 +736,7 @@ defineExpose({
                 class="absolute right-0 top-full z-30 mt-1 w-48 rounded-2xl border border-cyan-200/15 bg-black/40 p-3 backdrop-blur-md"
               >
                 <p class="pb-2.5 text-xs leading-relaxed text-white/55">
-                  删除此会话？对话记录将清除且无法恢复。
+                  {{ t('voice.sidebar.deleteSessionConfirm') }}
                 </p>
                 <div class="flex gap-2">
                   <button
@@ -745,13 +748,13 @@ defineExpose({
                       v-if="deletingSessionId === session.session_id"
                       class="mr-1 inline h-3 w-3 animate-spin"
                     />
-                    删除
+                    {{ t('voice.sidebar.delete') }}
                   </button>
                   <button
                     class="flex-1 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/60 transition hover:bg-white/[0.08]"
                     @click.stop="cancelSessionDelete"
                   >
-                    取消
+                    {{ t('settings.actions.cancel') }}
                   </button>
                 </div>
               </div>
@@ -793,7 +796,7 @@ defineExpose({
                 class="h-3.5 w-3.5 transition-transform"
                 :class="expandedProjectIds.has(project.id) ? 'rotate-180' : ''"
               />
-              {{ expandedProjectIds.has(project.id) ? '收起' : '展开显示' }}
+              {{ expandedProjectIds.has(project.id) ? t('voice.sidebar.collapseSessions') : t('voice.sidebar.expandSessions') }}
               <span v-if="!expandedProjectIds.has(project.id)"
                 >({{ hiddenProjectSessionCount(project) }})</span
               >
@@ -802,7 +805,7 @@ defineExpose({
               v-if="!voiceSessionsLoading && !projectSessions(project).length"
               class="px-3 py-2 text-xs text-white/28"
             >
-              这个目录还没有会话
+              {{ t('voice.sidebar.directoryEmpty') }}
             </div>
           </div>
         </div>
@@ -810,7 +813,7 @@ defineExpose({
           v-if="!loadingProjects && !filteredProjects.length"
           class="rounded-2xl border border-white/10 p-4 text-center text-xs text-white/35"
         >
-          没有目录
+          {{ t('voice.sidebar.noDirectories') }}
         </div>
       </div>
     </section>
@@ -827,8 +830,8 @@ defineExpose({
     >
       <div class="mb-5 flex items-start justify-between gap-4">
         <div>
-          <div class="text-xs tracking-[0.18em] text-cyan-200/45">目录</div>
-          <h2 class="mt-1 text-xl font-semibold">目录配置</h2>
+          <div class="text-xs tracking-[0.18em] text-cyan-200/45">{{ t('voice.sidebar.directories') }}</div>
+          <h2 class="mt-1 text-xl font-semibold">{{ t('voice.project.configuration') }}</h2>
         </div>
         <button
           class="rounded-full p-2 text-white/45 hover:bg-white/10 hover:text-white"
@@ -838,34 +841,34 @@ defineExpose({
         </button>
       </div>
 
-      <label class="mb-1 block text-xs text-white/45">名称</label>
+      <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.name') }}</label>
       <input
         v-model="editName"
         class="mb-3 h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 text-sm outline-none focus:border-cyan-200/45"
-        placeholder="目录名称"
+        :placeholder="t('voice.project.namePlaceholder')"
       />
 
-      <label class="mb-1 block text-xs text-white/45">描述</label>
+      <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.description') }}</label>
       <textarea
         v-model="editDescription"
         class="mb-3 h-20 w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-cyan-200/45"
-        placeholder="可选"
+        :placeholder="t('voice.project.optional')"
       />
 
-      <label class="mb-1 block text-xs text-white/45">目录路径</label>
+      <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.path') }}</label>
       <input
         v-model="editWorkspacePath"
         class="mb-2 h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 font-mono text-sm outline-none focus:border-cyan-200/45"
         placeholder="/path/to/directory"
       />
       <div class="mb-5 text-xs text-white/35">
-        保存后，Manager Agent 和 Voice Agent 会用这个目录作为上下文。
+        {{ t('voice.project.contextHint') }}
       </div>
 
       <div class="mb-5 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
         <div class="mb-3 flex items-center gap-2 text-sm font-medium text-white/80">
           <GitBranch class="h-4 w-4 text-cyan-200/70" />
-          Git Token 与仓库
+          {{ t('voice.project.gitRepository') }}
         </div>
         <label class="mb-1 block text-xs text-white/45">Git Token</label>
         <select
@@ -873,7 +876,7 @@ defineExpose({
           class="mb-3 h-10 w-full rounded-xl border border-white/10 bg-[#0f1a1d] px-3 text-sm text-white/80 outline-none focus:border-cyan-200/45"
           @change="handleGitServerChange"
         >
-          <option value="">不关联 Git Token</option>
+          <option value="">{{ t('voice.project.noGitToken') }}</option>
           <option
             v-for="server in gitServers"
             :key="server.server_id"
@@ -881,23 +884,23 @@ defineExpose({
             :disabled="!server.token_valid"
           >
             {{ server.name }} · {{ server.platform_type
-            }}{{ server.token_valid ? '' : ' · token 无效' }}
+            }}{{ server.token_valid ? '' : ` · ${t('voice.project.invalidToken')}` }}
           </option>
         </select>
 
-        <label class="mb-1 block text-xs text-white/45">仓库</label>
+        <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.repository') }}</label>
         <select
           v-model="selectedRepoFullName"
           class="h-10 w-full rounded-xl border border-white/10 bg-[#0f1a1d] px-3 text-sm text-white/80 outline-none focus:border-cyan-200/45 disabled:opacity-45"
           :disabled="!selectedGitServerId || loadingRepos"
         >
-          <option :value="null">{{ loadingRepos ? '读取仓库...' : '不绑定具体仓库' }}</option>
+          <option :value="null">{{ loadingRepos ? t('voice.project.loadingRepositories') : t('voice.project.noRepository') }}</option>
           <option v-for="repo in availableRepos" :key="repo.full_name" :value="repo.full_name">
             {{ repo.full_name }}
           </option>
         </select>
         <div class="mt-2 text-xs text-white/35">
-          目录只保存 GitServer 凭据引用和仓库名，Token 仍由 GitServer 加密保存。
+          {{ t('voice.project.gitHint') }}
         </div>
       </div>
 
@@ -906,7 +909,7 @@ defineExpose({
           class="rounded-full px-4 py-2 text-sm text-white/55 hover:bg-white/10 hover:text-white"
           @click="closeProjectSettings"
         >
-          取消
+          {{ t('settings.actions.cancel') }}
         </button>
         <button
           class="flex items-center gap-2 rounded-full bg-cyan-300 px-4 py-2 text-sm font-medium text-black hover:bg-cyan-200 disabled:opacity-45"
@@ -915,7 +918,7 @@ defineExpose({
         >
           <Loader2 v-if="savingProject" class="h-4 w-4 animate-spin" />
           <Check v-else class="h-4 w-4" />
-          保存
+          {{ t('settings.actions.save') }}
         </button>
       </div>
     </section>

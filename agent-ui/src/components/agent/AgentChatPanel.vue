@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
 import { invokeManagerAgent, managerChat } from '@/api/agent'
 import { getDagStatus } from '@/api/services/dag-api'
@@ -24,6 +25,7 @@ import {
 } from 'lucide-vue-next'
 
 const store = useAgentStore()
+const { t } = useI18n()
 
 const inputValue = ref('')
 const isSending = ref(false)
@@ -31,7 +33,7 @@ const messageListRef = ref<HTMLElement | null>(null)
 const expandedToolCalls = ref<Set<string>>(new Set())
 const isAtBottom = ref(true)
 const voiceMode = ref(false)
-const voiceStatus = ref('点击语音图标开始')
+const voiceStatusKey = ref('shell.chat.voice.clickToStart')
 const voiceError = ref('')
 const voiceLevel = ref(0)
 const waveformBars = ref<number[]>(Array.from({ length: 34 }, () => 0.08))
@@ -62,7 +64,8 @@ function renderMarkdown(text: string): string {
   return md.render(stripSayTags(text))
 }
 
-const placeholder = '输入任务描述...'
+const placeholder = computed(() => t('shell.chat.placeholder'))
+const voiceStatus = computed(() => t(voiceStatusKey.value))
 const voiceLevelPct = computed(() => `${Math.round(voiceLevel.value * 100)}%`)
 
 onMounted(() => {
@@ -74,7 +77,7 @@ function addSystemWelcome(): void {
     store.chatMessages.push({
       id: `sys-welcome-${Date.now()}`,
       role: 'system',
-      content: '我是 Omni 智能体编排器。请输入任务描述，我将协调多个专业 Agent 完成工作。',
+      content: t('shell.chat.welcome'),
       type: 'text',
       timestamp: new Date().toISOString(),
     })
@@ -141,7 +144,7 @@ async function sendUserText(text: string, asVoice: boolean, signal?: AbortSignal
       store.addChatMessage({
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: (response as any).message || '已开始运行编排...',
+        content: (response as any).message || t('shell.chat.runStarting'),
         type: 'text',
         timestamp: new Date().toISOString(),
       })
@@ -149,7 +152,7 @@ async function sendUserText(text: string, asVoice: boolean, signal?: AbortSignal
         const dag = await getDagStatus(runId)
         if (dag) store.setDagExecution(dag)
       } catch (e: any) {
-        console.warn('获取 DAG 状态失败:', e.message)
+        console.warn('Failed to fetch DAG status:', e.message)
       }
     } else {
       // Path A: real Manager Agent turn. The backend owns session creation,
@@ -186,7 +189,7 @@ async function sendUserText(text: string, asVoice: boolean, signal?: AbortSignal
         store.addChatMessage({
           id: `sys-run-${Date.now()}`,
           role: 'system',
-          content: `DAG 已启动: run_id=${spawnedRunId}`,
+          content: t('shell.chat.runStarted', { runId: spawnedRunId }),
           type: 'status',
           timestamp: new Date().toISOString(),
         })
@@ -194,7 +197,7 @@ async function sendUserText(text: string, asVoice: boolean, signal?: AbortSignal
           const dag = await getDagStatus(spawnedRunId)
           if (dag) store.setDagExecution(dag)
         } catch (e: any) {
-          console.warn('获取 DAG 状态失败:', e.message)
+          console.warn('Failed to fetch DAG status:', e.message)
         }
       }
 
@@ -205,7 +208,7 @@ async function sendUserText(text: string, asVoice: boolean, signal?: AbortSignal
     store.addChatMessage({
       id: `assistant-error-${Date.now()}`,
       role: 'assistant',
-      content: `错误: ${error.message || '请求失败'}`,
+      content: t('shell.chat.error', { message: error.message || t('shell.chat.requestFailed') }),
       type: 'text',
       timestamp: new Date().toISOString(),
     })
@@ -310,20 +313,19 @@ async function toggleVoiceMode(): Promise<void> {
   }
   voiceMode.value = true
   voiceError.value = ''
-  voiceStatus.value = '正在请求麦克风权限...'
+  voiceStatusKey.value = 'shell.chat.voice.requestingMicrophone'
   try {
     await startVoiceCapture()
   } catch (err: any) {
-    voiceError.value = err?.message || '麦克风不可用'
-    voiceStatus.value = '语音输入未启动'
-    stopVoiceMode()
+    voiceError.value = err?.message || t('shell.chat.voice.microphoneUnavailable')
+    stopVoiceMode('shell.chat.voice.notStarted')
   }
 }
 
 async function startVoiceCapture(): Promise<void> {
   const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext
   if (!navigator.mediaDevices?.getUserMedia || !AudioContextCtor) {
-    throw new Error('当前浏览器不支持实时语音采集')
+    throw new Error(t('shell.chat.voice.unsupported'))
   }
 
   mediaStream = await createVoiceMediaStream()
@@ -344,11 +346,11 @@ async function startVoiceCapture(): Promise<void> {
     pcmChunks.push(new Float32Array(event.inputBuffer.getChannelData(0)))
   }
 
-  voiceStatus.value = '正在听...'
+  voiceStatusKey.value = 'shell.chat.voice.listening'
   rafId = window.requestAnimationFrame(updateVoiceWaveform)
 }
 
-function stopVoiceMode(): void {
+function stopVoiceMode(statusKey = 'shell.chat.voice.stopped'): void {
   voiceSessionToken += 1
   voiceAbort?.abort()
   voiceAbort = null
@@ -374,7 +376,7 @@ function stopVoiceMode(): void {
   mediaStream = null
   audioContext = null
   voiceLevel.value = 0
-  voiceStatus.value = '语音输入已停止'
+  voiceStatusKey.value = statusKey
   waveformBars.value = waveformBars.value.map(() => 0.08)
 }
 
@@ -400,7 +402,7 @@ function updateVoiceWaveform(now: number): void {
     if (!speechActive && !voiceBusy.value) {
       speechActive = true
       pcmChunks = []
-      voiceStatus.value = '正在聆听'
+      voiceStatusKey.value = 'shell.chat.voice.listeningActive'
     }
   } else if (speechActive && now - lastVoiceAt > 850) {
     void finishUtterance()
@@ -415,11 +417,11 @@ async function finishUtterance(): Promise<void> {
   const chunks = pcmChunks
   pcmChunks = []
   if (chunks.reduce((total, chunk) => total + chunk.length, 0) < 2400) {
-    if (voiceMode.value && token === voiceSessionToken) voiceStatus.value = '正在听...'
+    if (voiceMode.value && token === voiceSessionToken) voiceStatusKey.value = 'shell.chat.voice.listening'
     return
   }
   voiceBusy.value = true
-  voiceStatus.value = '正在识别...'
+  voiceStatusKey.value = 'shell.chat.voice.recognizing'
   voiceAbort?.abort()
   voiceAbort = new AbortController()
   const signal = voiceAbort.signal
@@ -431,20 +433,22 @@ async function finishUtterance(): Promise<void> {
     const result = await transcribeVoice(dataUrl, signal)
     if (token !== voiceSessionToken || signal.aborted) return
     const transcript = (result.data?.text || '').trim()
-    if (!transcript) throw new Error('没有识别到可用文本')
+    if (!transcript) throw new Error(t('shell.chat.voice.noTranscript'))
     appendVoiceInput(transcript)
-    voiceStatus.value = '已写入输入框，继续说话'
+    voiceStatusKey.value = 'shell.chat.voice.inserted'
   } catch (err: any) {
     if (err?.name === 'CanceledError' || err?.name === 'AbortError' || signal.aborted || token !== voiceSessionToken) {
       return
     }
-    voiceError.value = err?.message || '语音识别失败'
-    voiceStatus.value = '识别失败，请再说一次'
+    voiceError.value = err?.message || t('shell.chat.voice.recognitionFailed')
+    voiceStatusKey.value = 'shell.chat.voice.retry'
   } finally {
     if (token === voiceSessionToken) {
       voiceBusy.value = false
       voiceAbort = null
-      if (voiceMode.value && voiceStatus.value === '正在识别...') voiceStatus.value = '正在听...'
+      if (voiceMode.value && voiceStatusKey.value === 'shell.chat.voice.recognizing') {
+        voiceStatusKey.value = 'shell.chat.voice.listening'
+      }
     }
   }
 }
@@ -523,7 +527,7 @@ function enqueueSpeech(text: string): void {
   const spoken = stripSayTags(text).trim()
   if (!spoken) return
   ttsQueue = ttsQueue.then(() => playSpeech(spoken)).catch(err => {
-    voiceError.value = err?.message || 'TTS 播放失败'
+    voiceError.value = err?.message || t('shell.chat.voice.ttsFailed')
   })
 }
 
@@ -697,7 +701,7 @@ async function playBlob(blob: Blob): Promise<void> {
       <div v-if="store.chatMessages.length === 0" class="flex items-center justify-center h-full text-gray-500 text-sm">
         <div class="text-center space-y-2">
           <div class="text-4xl opacity-20">💬</div>
-          <div>输入任务描述开始...</div>
+          <div>{{ t('shell.chat.empty') }}</div>
         </div>
       </div>
 
@@ -753,7 +757,7 @@ async function playBlob(blob: Blob): Promise<void> {
                   <ChevronDown v-if="expandedToolCalls.has(msg.id)" class="h-3.5 w-3.5" />
                   <ChevronUp v-else class="h-3.5 w-3.5" />
                   <Wrench class="h-3.5 w-3.5 text-cyan-200/80" />
-                  <span class="text-white/35">工具调用</span>
+                  <span class="text-white/35">{{ t('shell.chat.toolCalls') }}</span>
                   <span class="font-medium text-white/[0.86]">{{ msg.toolName }}</span>
                   <span v-if="msg.toolSummary" class="text-white/35">{{ msg.toolSummary }}</span>
                   <span
@@ -764,7 +768,7 @@ async function playBlob(blob: Blob): Promise<void> {
                       msg.status === 'pending' && 'text-amber-400'
                     )"
                   >
-                    {{ msg.status === 'completed' ? '已完成' : msg.status === 'failed' ? '失败' : '进行中' }}
+                    {{ msg.status === 'completed' ? t('shell.chat.status.completed') : msg.status === 'failed' ? t('shell.chat.status.failed') : t('shell.chat.status.running') }}
                   </span>
                 </button>
                 <div
@@ -826,7 +830,7 @@ async function playBlob(blob: Blob): Promise<void> {
             'flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors',
             voiceMode ? 'bg-cyan-200/15 text-cyan-100 hover:bg-cyan-200/20' : 'bg-transparent text-white/45 hover:bg-white/10 hover:text-white'
           )"
-          :title="voiceMode ? '停止语音输入' : '开始语音输入'"
+          :title="voiceMode ? t('shell.chat.voice.stop') : t('shell.chat.voice.start')"
           @click="toggleVoiceMode"
         >
           <MicOff v-if="voiceMode" class="h-4 w-4" />
@@ -868,7 +872,7 @@ async function playBlob(blob: Blob): Promise<void> {
               ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
               : 'bg-cyan-300 text-black hover:bg-cyan-200'
           )"
-          title="发送"
+          :title="t('shell.chat.send')"
           @click="isSending ? undefined : sendMessage()"
         >
           <Send v-if="!isSending" class="h-4 w-4" />

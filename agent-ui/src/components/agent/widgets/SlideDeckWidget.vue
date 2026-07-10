@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ExternalLink, MonitorPlay, Presentation, StickyNote } from 'lucide-vue-next'
 import type { VoiceWidget } from '@/api/agent'
 
@@ -15,6 +16,8 @@ type SlideRow = {
 const props = defineProps<{
   widget: VoiceWidget
 }>()
+
+const { t } = useI18n()
 
 const data = computed(() => props.widget.data ?? {})
 const activeIndex = ref(0)
@@ -76,7 +79,7 @@ function text(value: unknown, limit: number): string {
         class="slide-deck-widget__open"
       >
         <MonitorPlay :size="15" />
-        打开
+        {{ t('voice.widgets.open') }}
       </a>
     </header>
 
@@ -129,7 +132,7 @@ function text(value: unknown, limit: number): string {
 
     <div v-else class="slide-deck-widget__empty">
       <Presentation :size="22" />
-      <span>等待 PPT 产物</span>
+      <span>{{ t('voice.widgets.waitingSlides') }}</span>
     </div>
 
     <footer v-if="updatedAt" class="slide-deck-widget__footer">{{ updatedAt }}</footer>

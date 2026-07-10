@@ -7,6 +7,7 @@
  */
 
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
 import { fmtTokens } from '@/lib/agentPersonas'
 import { cn } from '@/lib/utils'
@@ -30,6 +31,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useAgentStore()
+const { t } = useI18n()
 const physicsPaused = defineModel<boolean>('physicsPaused', { default: false })
 
 const completedCount = computed(() => store.statusSummary.completed + store.statusSummary.skipped)
@@ -55,14 +57,14 @@ const totals = computed(() => {
   return { tokens, toolCalls: calls, failures: fails, available: tokens > 0 }
 })
 
-const statusItems = [
-  { key: 'running', label: '运行', color: 'bg-emerald-400' },
-  { key: 'completed', label: '完成', color: 'bg-blue-500' },
-  { key: 'failed', label: '失败', color: 'bg-red-500' },
-  { key: 'ready', label: '就绪', color: 'bg-blue-300' },
-  { key: 'pending', label: '等待', color: 'bg-gray-400' },
-  { key: 'skipped', label: '跳过', color: 'bg-yellow-500' },
-] as const
+const statusItems = computed(() => [
+  { key: 'running', label: t('dag.toolbar.legend.running'), color: 'bg-emerald-400' },
+  { key: 'completed', label: t('dag.toolbar.legend.completed'), color: 'bg-blue-500' },
+  { key: 'failed', label: t('dag.toolbar.legend.failed'), color: 'bg-red-500' },
+  { key: 'ready', label: t('dag.toolbar.legend.ready'), color: 'bg-blue-300' },
+  { key: 'pending', label: t('dag.toolbar.legend.pending'), color: 'bg-gray-400' },
+  { key: 'skipped', label: t('dag.toolbar.legend.skipped'), color: 'bg-yellow-500' },
+])
 </script>
 
 <template>
@@ -71,9 +73,9 @@ const statusItems = [
     <template v-if="view === 'run_list'">
       <div class="flex items-center gap-3">
         <Network class="h-7 w-7 text-cyan-200/70" />
-        <span class="text-2xl font-bold tracking-wide text-white/90">DAG Runs</span>
+        <span class="text-2xl font-bold tracking-wide text-white/90">{{ t('dag.runList.title') }}</span>
         <span class="rounded-full border border-cyan-200/20 bg-cyan-200/10 px-3 py-1 text-base font-medium text-cyan-100/80">
-          {{ store.nodes.length ? runsCount : 0 }}
+          {{ runsCount ?? 0 }}
         </span>
       </div>
     </template>
@@ -84,7 +86,7 @@ const statusItems = [
     <div class="flex min-w-0 items-center gap-3">
       <div class="flex flex-col">
         <div class="flex items-center gap-2.5">
-          <span class="text-base font-bold uppercase tracking-[0.18em] text-cyan-200/70">DAG Runtime</span>
+          <span class="text-base font-bold uppercase tracking-[0.18em] text-cyan-200/70">{{ t('dag.toolbar.runtime') }}</span>
           <span
             :class="cn(
               'rounded-full border px-3 py-1 text-sm font-medium',
@@ -100,7 +102,7 @@ const statusItems = [
         <div class="mt-1 flex items-center gap-2 text-sm text-white/50">
           <span class="font-mono">{{ store.currentRunId ? store.currentRunId.slice(-12) : '—' }}</span>
           <span class="text-white/20">·</span>
-          <span>{{ completedCount }}/{{ store.nodes.length }} 节点</span>
+          <span>{{ t('dag.toolbar.nodesProgress', { completed: completedCount, total: store.nodes.length }) }}</span>
         </div>
       </div>
       <!-- 进度条 -->
@@ -126,12 +128,12 @@ const statusItems = [
       </div>
       <div class="flex items-center gap-2">
         <Wrench class="h-4 w-4 text-blue-300/70" />
-        <span class="text-xs text-white/45">工具</span>
+        <span class="text-xs text-white/45">{{ t('dag.toolbar.tools') }}</span>
         <span class="font-mono text-sm font-semibold text-white/90">{{ totals.toolCalls }}</span>
       </div>
       <div class="flex items-center gap-2">
         <AlertTriangle class="h-4 w-4" :class="totals.failures > 0 ? 'text-red-400' : 'text-white/30'" />
-        <span class="text-xs text-white/45">失败</span>
+        <span class="text-xs text-white/45">{{ t('dag.toolbar.failures') }}</span>
         <span
           class="font-mono text-sm font-semibold"
           :class="totals.failures > 0 ? 'text-red-300' : 'text-white/90'"
@@ -152,15 +154,15 @@ const statusItems = [
       <button
         v-if="showBack"
         class="flex h-9 items-center gap-1.5 rounded-full border border-cyan-200/14 px-3 text-xs text-white/70 transition-colors hover:bg-cyan-200/10 hover:text-white"
-        title="返回 Run 列表 (○)"
+        :title="t('dag.toolbar.back')"
         @click="emit('back')"
       >
         <ArrowLeft class="h-3.5 w-3.5" />
-        <span class="hidden sm:inline">Run 列表</span>
+        <span class="hidden sm:inline">{{ t('dag.toolbar.runList') }}</span>
       </button>
       <button
         class="rounded-full border border-cyan-200/14 p-2 text-white/55 transition-colors hover:bg-cyan-200/10 hover:text-white"
-        :title="physicsPaused ? '恢复物理布局' : '暂停物理布局'"
+        :title="physicsPaused ? t('dag.toolbar.resumePhysics') : t('dag.toolbar.pausePhysics')"
         @click="physicsPaused = !physicsPaused"
       >
         <Play v-if="physicsPaused" class="h-3.5 w-3.5" />
@@ -168,14 +170,14 @@ const statusItems = [
       </button>
       <button
         class="rounded-full border border-cyan-200/14 p-2 text-white/55 transition-colors hover:bg-cyan-200/10 hover:text-white"
-        title="重置视图"
+        :title="t('dag.toolbar.resetView')"
         @click="emit('fit-view')"
       >
         <Maximize2 class="h-3.5 w-3.5" />
       </button>
       <button
         class="flex items-center gap-1.5 rounded-full border border-cyan-200/14 px-3 py-2 text-xs text-white/70 transition-colors hover:bg-red-500/15 hover:text-red-200"
-        title="关闭 (ESC)"
+        :title="t('dag.toolbar.closeEsc')"
         @click="emit('close')"
       >
         <X class="h-3.5 w-3.5" />
@@ -187,11 +189,11 @@ const statusItems = [
     <button
       v-if="view === 'run_list'"
       class="ml-auto flex items-center gap-1.5 rounded-full border border-cyan-200/14 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-red-500/15 hover:text-red-200"
-      title="关闭 (ESC)"
+      :title="t('dag.toolbar.closeEsc')"
       @click="emit('close')"
     >
       <X class="h-4 w-4" />
-      <span>关闭</span>
+      <span>{{ t('dag.toolbar.close') }}</span>
     </button>
   </div>
 </template>
