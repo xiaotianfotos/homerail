@@ -84,6 +84,18 @@ npm run install:all
 npm run build
 ```
 
+Run the deterministic checks directly with `npm run ci`. To execute the Linux
+GitHub Actions jobs locally, install Docker, [`act`](https://github.com/nektos/act),
+and [`actionlint`](https://github.com/rhysd/actionlint), then run:
+
+```bash
+npm run ci:local
+npm run ci:local -- core-linux  # run one job
+```
+
+The local runner covers the Linux core, UI coverage, and Docker smoke jobs. The
+Windows job remains on GitHub's `windows-latest` runner.
+
 The CLI is exposed as `hr`. Link it locally so the rest of this guide works as
 written:
 

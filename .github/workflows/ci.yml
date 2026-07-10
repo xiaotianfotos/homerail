@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-linux:
+    name: Core (Linux, Node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            homerail_protocol/package-lock.json
+            homerail_manager/package-lock.json
+            homerail_node/package-lock.json
+            homerail_worker/package-lock.json
+            homerail_cli/package-lock.json
+            agent-ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Typecheck, build, and test
+        run: npm run ci
+
+  core-windows:
+    name: Core (Windows, Node 24)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            homerail_protocol/package-lock.json
+            homerail_manager/package-lock.json
+            homerail_node/package-lock.json
+            homerail_worker/package-lock.json
+            homerail_cli/package-lock.json
+            agent-ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Typecheck, build, and test
+        run: npm run ci
+
+  agent-ui-coverage:
+    name: Agent UI coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            homerail_protocol/package-lock.json
+            agent-ui/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm --prefix homerail_protocol ci
+          npm --prefix agent-ui ci
+
+      - name: Run full-source coverage
+        run: npm --prefix agent-ui run test:coverage
+
+  docker-smoke:
+    name: Docker smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: homerail_node/package-lock.json
+
+      - name: Install Node dependencies
+        run: npm --prefix homerail_node ci
+
+      - name: Run real Docker lifecycle test
+        env:
+          DOCKER_TEST: "1"
+        run: npm --prefix homerail_node test -- src/providers/__tests__/docker-cli-provider.integration.test.ts
+
+      - name: Build Worker image
+        run: docker build -t homerail-worker:ci -f homerail_worker/Dockerfile .

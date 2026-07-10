@@ -49,6 +49,18 @@ npm run install:all
 npm run build
 ```
 
+直接运行确定性检查可使用 `npm run ci`。若要在本地执行 GitHub Actions 的
+Linux jobs，请先安装 Docker、[`act`](https://github.com/nektos/act) 和
+[`actionlint`](https://github.com/rhysd/actionlint)，然后运行：
+
+```bash
+npm run ci:local
+npm run ci:local -- core-linux  # 只运行一个 job
+```
+
+本地 Runner 覆盖 Linux 核心检查、UI 覆盖率和 Docker smoke；Windows job
+仍由 GitHub 的 `windows-latest` Runner 执行。
+
 CLI 通过 `hr` 暴露。先在本地 link 一下，后面的命令才能直接写成 `hr`：
 
 ```bash

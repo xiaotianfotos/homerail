@@ -26,7 +26,11 @@ import {
   _voiceMemoPathForTest,
   _workspaceFromConfigForTest,
 } from "../src/server/host-codex-manager-agent.js";
-import { managerAgentHostPort, registerFakeDockerNode } from "./helpers/fake-manager-agent-node.js";
+import {
+  findAvailableManagerAgentPort,
+  managerAgentHostPort,
+  registerFakeDockerNode,
+} from "./helpers/fake-manager-agent-node.js";
 
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -45,19 +49,22 @@ describe("/api/manager/chat", () => {
   let oldHome: string | undefined;
   let oldLocalNodeAutostart: string | undefined;
   let oldManagerRuntime: string | undefined;
+  let oldManagerAgentPort: string | undefined;
   let oldHostEntry: string | undefined;
   let oldHostShell: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     oldHome = process.env.HOMERAIL_HOME;
     oldLocalNodeAutostart = process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
     oldManagerRuntime = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
+    oldManagerAgentPort = process.env.HOMERAIL_MANAGER_AGENT_PORT;
     oldHostEntry = process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
     oldHostShell = process.env.HOMERAIL_MANAGER_AGENT_SHELL;
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-chat-"));
     process.env.HOMERAIL_HOME = tmpHome;
     process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = "0";
     process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "container";
+    process.env.HOMERAIL_MANAGER_AGENT_PORT = String(await findAvailableManagerAgentPort());
     _clearActiveRuns();
     _clearAllSessions();
     _clearNodes();
@@ -78,6 +85,8 @@ describe("/api/manager/chat", () => {
     else process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = oldLocalNodeAutostart;
     if (oldManagerRuntime === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
     else process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = oldManagerRuntime;
+    if (oldManagerAgentPort === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_PORT;
+    else process.env.HOMERAIL_MANAGER_AGENT_PORT = oldManagerAgentPort;
     if (oldHostEntry === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
     else process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = oldHostEntry;
     if (oldHostShell === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_SHELL;

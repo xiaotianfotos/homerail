@@ -492,36 +492,3 @@ describe("DockerCliProvider (unit, mocked)", () => {
     });
   });
 });
-
-describe("DockerCliProvider (integration — real Docker)", () => {
-  const provider = new DockerCliProvider();
-  const IMAGE = "node:20-alpine";
-  let containerId: string | null = null;
-
-  it.runIf(Boolean(process.env["CI"] || process.env["DOCKER_TEST"]))(
-    "full lifecycle: create -> start -> exec -> stop -> remove",
-    async () => {
-      const created = await provider.create({
-        image: IMAGE,
-        name: "homerail-smoke-test-it",
-      });
-      expect(created.status).toBe("created");
-      containerId = created.id;
-
-      await provider.start(containerId);
-
-      const result = await provider.exec(containerId, [
-        "node",
-        "-e",
-        "console.log('ok')",
-      ]);
-      expect(result.stdout.trim()).toBe("ok");
-      expect(result.exitCode).toBe(0);
-
-      await provider.stop(containerId);
-      await provider.remove(containerId);
-      containerId = null;
-    },
-    30000,
-  );
-});

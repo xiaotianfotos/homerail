@@ -7,7 +7,22 @@ async function close(server: http.Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
+export async function findAvailableManagerAgentPort(): Promise<number> {
+  const server = http.createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    await close(server);
+    throw new Error("failed to allocate Manager Agent test port");
+  }
+  const port = address.port;
+  await close(server);
+  return port;
+}
+
 export function managerAgentHostPort(projectId?: string): number {
+  const fixed = process.env.HOMERAIL_MANAGER_AGENT_PORT;
+  if (fixed) return Number(fixed);
   const canonical = (projectId ?? "").trim().replace(/[^A-Za-z0-9_.-]/g, "-") || "__default__";
   const digest = createHash("sha256").update(canonical).digest("hex");
   return 39000 + (Number.parseInt(digest.slice(0, 8), 16) % 20000);
