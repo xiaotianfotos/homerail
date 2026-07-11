@@ -5,17 +5,31 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      live_patterns:
+        description: Run model-backed DAG pattern validation on homerail-live-112
+        type: boolean
+        default: false
+      target_ref:
+        description: Branch, tag, or commit to validate (defaults to the selected workflow ref)
+        type: string
+        required: false
+      wake_model:
+        description: Wake the Qwen model host when it is offline
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name == 'workflow_dispatch' && inputs.live_patterns && 'dag-live-112' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   core-linux:
     name: Core (Linux, Node ${{ matrix.node-version }})
+    if: github.event_name != 'workflow_dispatch' || !inputs.live_patterns
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -51,6 +65,7 @@ jobs:
 
   core-windows:
     name: Core (Windows, Node 24)
+    if: github.event_name != 'workflow_dispatch' || !inputs.live_patterns
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -82,6 +97,7 @@ jobs:
 
   agent-ui-coverage:
     name: Agent UI coverage
+    if: github.event_name != 'workflow_dispatch' || !inputs.live_patterns
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -109,6 +125,7 @@ jobs:
 
   docker-smoke:
     name: Docker smoke
+    if: github.event_name != 'workflow_dispatch' || !inputs.live_patterns
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -134,3 +151,58 @@ jobs:
 
       - name: Build Worker image
         run: docker build -t homerail-worker:ci -f homerail_worker/Dockerfile .
+
+  live-dag-patterns:
+    name: Live DAG patterns (.112 to Qwen3.6)
+    if: github.event_name == 'workflow_dispatch' && inputs.live_patterns && github.actor == 'xiaotianfotos'
+    runs-on: [self-hosted, Linux, X64, homerail-live-112]
+    timeout-minutes: 90
+    env:
+      HOMERAIL_RUNNER_BASE: /vol1/1000/homerail_runners
+      HOMERAIL_LIVE_HOME_BASE: /vol1/1000/homerail_runners/homerail_home
+      HOMERAIL_LIVE_ARTIFACTS: /vol1/1000/homerail_runners/artifacts
+      HOMERAIL_MANAGER_PORT: "29191"
+      HOMERAIL_MANAGER_URL: http://127.0.0.1:29191
+      HOMERAIL_LIVE_WORKER_IMAGE_PREFIX: homerail-worker:dag-live
+      HOMERAIL_PATTERN_MODEL_BASE_URL: http://192.168.100.10:5000
+      HOMERAIL_PATTERN_MODEL: qwen3.6
+      HOMERAIL_WAKE_MODEL: ${{ inputs.wake_model && '1' || '0' }}
+      HOMERAIL_LIVE_RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
+      HOMERAIL_LIVE_REPORT_PATH: ${{ github.workspace }}/artifacts/dag-patterns-live.json
+    steps:
+      - name: Check out target revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            homerail_protocol/package-lock.json
+            homerail_manager/package-lock.json
+            homerail_node/package-lock.json
+            homerail_worker/package-lock.json
+            homerail_cli/package-lock.json
+            agent-ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Build packages
+        run: npm run build:packages
+
+      - name: Run isolated live DAG pattern validation
+        run: npm run validate:dag-patterns-runner
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dag-patterns-live-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14

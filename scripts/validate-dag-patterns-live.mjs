@@ -229,6 +229,7 @@ async function runPattern(pattern) {
   const handoffData = await request(`/api/runs/${encodeURIComponent(runId)}/handoffs`);
   const handoffs = handoffData.handoffs ?? [];
   const evidence = await modelEvidence(runId);
+  const evaluation = await request(`/api/runs/${encodeURIComponent(runId)}/eval-run`);
   const wrongModels = evidence.filter((item) =>
     item.setting_id !== settingId || (expectedModel && item.model !== expectedModel),
   );
@@ -237,6 +238,10 @@ async function runPattern(pattern) {
   if (handoffs.length === 0) failures.push("no handoffs");
   if (evidence.length === 0) failures.push("no model dispatch evidence");
   if (wrongModels.length > 0) failures.push(`wrong model evidence on: ${wrongModels.map((item) => item.node_id).join(", ")}`);
+  if (evaluation.verdict !== "pass") failures.push(`eval verdict ${evaluation.verdict ?? "missing"}`);
+  if ((evaluation.artifact_contracts?.empty_handoff_count ?? 0) > 0) failures.push("eval reported empty handoffs");
+  if ((evaluation.artifact_contracts?.auto_handoff_count ?? 0) > 0) failures.push("eval reported automatic handoffs");
+  if ((evaluation.dag_health?.failed_nodes ?? []).length > 0) failures.push("eval reported failed nodes");
   return {
     pattern_id: pattern.id,
     workflow_id: workflowId,
@@ -249,6 +254,12 @@ async function runPattern(pattern) {
       count: matchingHandoffs(handoffs, requirement.node, requirement.port).length,
     })),
     model_evidence: evidence,
+    evaluation: {
+      verdict: evaluation.verdict,
+      failed_nodes: evaluation.dag_health?.failed_nodes ?? [],
+      empty_handoff_count: evaluation.artifact_contracts?.empty_handoff_count ?? 0,
+      auto_handoff_count: evaluation.artifact_contracts?.auto_handoff_count ?? 0,
+    },
     passed: failures.length === 0,
     failures,
   };
