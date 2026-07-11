@@ -24,15 +24,33 @@ export interface DAGNodeRequirements {
 }
 
 export interface DAGGatewayConfig {
-  type?: "loop" | "condition" | string;
-  kind?: "loop" | "condition" | string;
+  type?: "loop" | "condition" | "join" | "while" | string;
+  kind?: "loop" | "condition" | "join" | "while" | string;
+  mode?: "all" | "any" | "n_of_m" | string;
   field?: string;
   routes?: Record<string, string>;
   cases?: Record<string, string>;
   default_port?: string;
   items?: unknown[];
   item_port?: string;
+  result_port?: string;
   done_port?: string;
+  passed_port?: string;
+  failed_port?: string;
+  continue_port?: string;
+  exhausted_port?: string;
+  threshold?: number;
+  success_values?: unknown[];
+  operator?: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "truthy" | "falsy" | string;
+  value?: unknown;
+  max_iterations?: number;
+}
+
+export interface DAGPatternInstanceMeta {
+  id: string;
+  version: string;
+  source?: string;
+  parameters?: Record<string, unknown>;
 }
 
 export interface DAGNodeConfig {
@@ -126,6 +144,7 @@ export interface ResolvedWorkflowMeta {
   runtime_profiles?: Record<string, RuntimeProfile>;
   provider_policy?: ProviderPolicyConfig;
   scorecard?: ScorecardPolicyConfig;
+  pattern?: DAGPatternInstanceMeta;
   image?: string;
   limits?: Record<string, unknown>;
   git?: Record<string, unknown>;

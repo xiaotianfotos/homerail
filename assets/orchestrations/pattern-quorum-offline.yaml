@@ -1,0 +1,100 @@
+name: pattern-quorum-offline
+workflow_id: pattern-quorum-offline
+description: "Concrete offline instance of the built-in quorum pattern: two act votes out of three admit one action."
+
+workspace:
+  mode: isolated
+
+pattern:
+  id: quorum
+  version: 1.0.0
+  source: https://x.com/i/status/2074169173178212621
+  parameters:
+    threshold: 2
+
+runtime_profiles:
+  offline-deterministic:
+    agents:
+      "*":
+        agent_type: deterministic
+
+agents:
+  signal:
+    system: "HANDOFF port=collected content=normalized-signal"
+  voter_one:
+    system: "HANDOFF port=vote content=act"
+  voter_two:
+    system: "HANDOFF port=vote content=act"
+  voter_three:
+    system: "HANDOFF port=vote content=stop"
+  conductor:
+    system: "HANDOFF port=decided content=quorum-action-admitted"
+  reporter:
+    system: "HANDOFF port=done content=quorum-pattern-complete"
+
+nodes:
+  collect_signal:
+    agent: signal
+    outputs:
+      collected:
+        to:
+          - voter_one.in:signal
+          - voter_two.in:signal
+          - voter_three.in:signal
+
+  voter_one:
+    agent: voter_one
+    after: [collect_signal]
+    outputs:
+      vote:
+        to: quorum.in:one
+
+  voter_two:
+    agent: voter_two
+    after: [collect_signal]
+    outputs:
+      vote:
+        to: quorum.in:two
+
+  voter_three:
+    agent: voter_three
+    after: [collect_signal]
+    outputs:
+      vote:
+        to: quorum.in:three
+
+  quorum:
+    type: join_gateway
+    gateway_config:
+      mode: n_of_m
+      threshold: 2
+      success_values: [act]
+      passed_port: act
+      failed_port: stop
+    after: [voter_one, voter_two, voter_three]
+    outputs:
+      act:
+        to: conduct.in:votes
+      stop:
+        to: stopped.in:votes
+
+  conduct:
+    agent: conductor
+    after: [quorum]
+    outputs:
+      decided:
+        to: acted.in:result
+
+  acted:
+    agent: reporter
+    after: [conduct]
+    outputs:
+      done:
+        to: ""
+
+  stopped:
+    agent: reporter
+    after: [quorum]
+    outputs:
+      done:
+        to: ""

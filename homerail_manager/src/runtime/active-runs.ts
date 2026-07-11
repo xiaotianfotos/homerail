@@ -13,7 +13,7 @@ import {
   isRunTerminal,
   startNode,
 } from "../orchestration/dag-engine.js";
-import type { DAGAgentConfig, DAGEdge, DAGGatewayConfig, DAGGraphNode, DAGOutputRoute, ParsedDAG, ScorecardPolicyConfig } from "../orchestration/graph.js";
+import type { DAGAgentConfig, DAGEdge, DAGGatewayConfig, DAGGraphNode, DAGOutputRoute, DAGPatternInstanceMeta, ParsedDAG, ScorecardPolicyConfig } from "../orchestration/graph.js";
 import { _normalizeOutputsToEdges } from "../orchestration/yaml-loader.js";
 import { assertGraphValid } from "../orchestration/graph-validator.js";
 import { findDispatchTarget } from "../orchestration/dispatch-tracker.js";
@@ -66,6 +66,7 @@ export interface ActiveRun {
   agents?: Record<string, DAGAgentConfig>;
   workspace?: Record<string, unknown>;
   scorecard?: ScorecardPolicyConfig;
+  pattern?: DAGPatternInstanceMeta;
   dagRun: DAGRun;
   createdAt: number;
   status: "active" | "completed" | "failed" | "cancelled";
@@ -122,6 +123,7 @@ export interface DAGRunCounters {
   corrections: Record<string, number>;
   dispatch_retries: Record<string, number>;
   gateway_iterations: Record<string, number>;
+  gateway_results: Record<string, unknown[]>;
   abort_reason?: string;
 }
 
@@ -189,6 +191,21 @@ function _initialCounters(): DAGRunCounters {
     corrections: {},
     dispatch_retries: {},
     gateway_iterations: {},
+    gateway_results: {},
+  };
+}
+
+function _restoreCounters(counters: DAGRunCounters | undefined): DAGRunCounters {
+  const defaults = _initialCounters();
+  if (!counters) return defaults;
+  return {
+    ...defaults,
+    ...counters,
+    edge_traversals: { ...(counters.edge_traversals ?? {}) },
+    corrections: { ...(counters.corrections ?? {}) },
+    dispatch_retries: { ...(counters.dispatch_retries ?? {}) },
+    gateway_iterations: { ...(counters.gateway_iterations ?? {}) },
+    gateway_results: { ...(counters.gateway_results ?? {}) },
   };
 }
 
@@ -354,6 +371,9 @@ export function createActiveRun(
     scorecard: parsedDAG.meta.scorecard
       ? { ...parsedDAG.meta.scorecard }
       : undefined,
+    pattern: parsedDAG.meta.pattern
+      ? { ...parsedDAG.meta.pattern, parameters: { ...(parsedDAG.meta.pattern.parameters ?? {}) } }
+      : undefined,
     dagRun,
     createdAt: Date.now(),
     status: "active",
@@ -431,7 +451,9 @@ function _graphFromPersisted(data: PersistedGraphData): {
   const nodes = data.nodes.map((node): DAGGraphNode => ({ ...node }));
   const edges = data.edges.map((edge): DAGEdge => ({ ...edge }));
   const loopSources = new Set(
-    nodes.filter((n) => n.node_type === "loop_gateway").map((n) => n.node_id),
+    nodes
+      .filter((n) => n.node_type === "loop_gateway" || n.node_type === "while_gateway")
+      .map((n) => n.node_id),
   );
   return { nodes, edges, loopSources };
 }
@@ -550,11 +572,14 @@ export function restoreActiveRun(
       : undefined,
     workspace: metadata.workspace ? { ...metadata.workspace } : undefined,
     scorecard: metadata.scorecard ? { ...metadata.scorecard } : undefined,
+    pattern: metadata.pattern
+      ? { ...metadata.pattern, parameters: { ...(metadata.pattern.parameters ?? {}) } }
+      : undefined,
     dagRun,
     createdAt: metadata.createdAt,
     status: "active",
     limits: metadata.limits ?? { ...DEFAULT_LIMITS },
-    counters: metadata.counters ?? _initialCounters(),
+    counters: _restoreCounters(metadata.counters),
     nodeIndex: _buildNodeIndex(nodes),
     nodeSessions: new Map(),
   };
@@ -951,9 +976,10 @@ export function handoffActiveRun(
     const key = `${edge.from_node}/${edge.from_port}->${edge.to_node}/${edge.to_port}`;
     const nextCount = (run.counters.edge_traversals[key] ?? 0) + 1;
     run.counters.edge_traversals[key] = nextCount;
-    if (nextCount > run.limits.max_edge_traversals) {
-      abortActiveRun(runId, `max_edge_traversals (${run.limits.max_edge_traversals}) exceeded for ${key}`, fromNode);
-      throw new Error(`max_edge_traversals (${run.limits.max_edge_traversals}) exceeded for ${key}`);
+    const edgeLimit = edge.retry_policy?.max_retries ?? run.limits.max_edge_traversals;
+    if (nextCount > edgeLimit) {
+      abortActiveRun(runId, `edge retry limit (${edgeLimit}) exceeded for ${key}`, fromNode);
+      throw new Error(`edge retry limit (${edgeLimit}) exceeded for ${key}`);
     }
   }
 
@@ -1009,6 +1035,11 @@ function _afterDepEdges(node: DAGGraphNode): DAGEdge[] {
 }
 
 function _isBackwardEdge(run: ActiveRun, edge: DAGEdge): boolean {
+  const target = run.dagRun.graph.nodes.find((node) => node.node_id === edge.to_node);
+  if (target?.node_type === "loop_gateway" || target?.node_type === "while_gateway") {
+    const source = run.dagRun.graph.nodes.find((node) => node.node_id === edge.from_node);
+    return source?.after.includes(target.node_id) ?? false;
+  }
   const fromIndex = run.nodeIndex.get(edge.from_node);
   const toIndex = run.nodeIndex.get(edge.to_node);
   return fromIndex !== undefined && toIndex !== undefined && fromIndex > toIndex;
@@ -1179,7 +1210,10 @@ function _nodeInputs(
 }
 
 function _isGatewayNode(node: DAGGraphNode): boolean {
-  return node.node_type === "loop_gateway" || node.node_type === "condition_gateway";
+  return node.node_type === "loop_gateway" ||
+    node.node_type === "condition_gateway" ||
+    node.node_type === "join_gateway" ||
+    node.node_type === "while_gateway";
 }
 
 function _firstInputValue(inputs: Record<string, unknown[]>): unknown {
@@ -1189,9 +1223,20 @@ function _firstInputValue(inputs: Record<string, unknown[]>): unknown {
   return undefined;
 }
 
+function _structuredGatewayValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return value;
+  }
+}
+
 function _fieldValue(value: unknown, field: string | undefined): unknown {
-  if (!field) return value;
-  let current = value;
+  let current = _structuredGatewayValue(value);
+  if (!field) return current;
   for (const part of field.split(".").map((item) => item.trim()).filter(Boolean)) {
     if (typeof current !== "object" || current === null || Array.isArray(current)) return undefined;
     current = (current as Record<string, unknown>)[part];
@@ -1214,10 +1259,103 @@ function _conditionGatewayPort(config: DAGGatewayConfig | undefined, input: unkn
 
 function _loopGatewayItems(config: DAGGatewayConfig | undefined, inputs: Record<string, unknown[]>): unknown[] {
   if (Array.isArray(config?.items)) return config.items;
-  const fromItemsPort = inputs.items?.find((value) => Array.isArray(value));
+  const fromItemsPort = inputs.items
+    ?.map(_structuredGatewayValue)
+    .find((value) => Array.isArray(value));
   if (Array.isArray(fromItemsPort)) return fromItemsPort;
-  const first = _firstInputValue(inputs);
+  const first = _structuredGatewayValue(_firstInputValue(inputs));
   return Array.isArray(first) ? first : [];
+}
+
+function _gatewayComparison(actual: unknown, operator: string | undefined, expected: unknown): boolean {
+  switch (operator ?? "eq") {
+    case "eq":
+      return actual === expected;
+    case "ne":
+      return actual !== expected;
+    case "gt":
+      return typeof actual === "number" && typeof expected === "number" && actual > expected;
+    case "gte":
+      return typeof actual === "number" && typeof expected === "number" && actual >= expected;
+    case "lt":
+      return typeof actual === "number" && typeof expected === "number" && actual < expected;
+    case "lte":
+      return typeof actual === "number" && typeof expected === "number" && actual <= expected;
+    case "truthy":
+      return Boolean(actual);
+    case "falsy":
+      return !actual;
+    default:
+      return false;
+  }
+}
+
+function _joinGatewayResult(config: DAGGatewayConfig | undefined, inputs: Record<string, unknown[]>): {
+  port: string;
+  payload: Record<string, unknown>;
+} {
+  const values = Object.values(inputs).flat();
+  const successValues = config?.success_values ?? [true, "pass", "passed", "success", "approved", "yes", "act", "actionable"];
+  const votes = values.map((value) => {
+    const selected = _fieldValue(value, config?.field);
+    return successValues.some((candidate) => selected === candidate);
+  });
+  const successes = votes.filter(Boolean).length;
+  const mode = config?.mode === "any" || config?.mode === "n_of_m" ? config.mode : "all";
+  const threshold = mode === "any"
+    ? 1
+    : mode === "n_of_m"
+      ? Math.max(1, Math.floor(config?.threshold ?? Math.ceil(values.length / 2)))
+      : values.length;
+  const passed = values.length > 0 && successes >= threshold;
+  return {
+    port: passed ? config?.passed_port || "passed" : config?.failed_port || "failed",
+    payload: {
+      mode,
+      total: values.length,
+      successes,
+      failures: values.length - successes,
+      threshold,
+      passed,
+      values,
+    },
+  };
+}
+
+function _terminateLoopSource(run: ActiveRun, nodeId: string): void {
+  // loopSources is run-local execution state; removal makes this gateway terminal for the rest of this run.
+  run.dagRun.loopSources.delete(nodeId);
+}
+
+function _whileGatewayResult(
+  run: ActiveRun,
+  node: DAGGraphNode,
+  input: unknown,
+): { port: string; payload: Record<string, unknown> } {
+  const config = node.gateway_config;
+  const selected = _fieldValue(input, config?.field);
+  const matched = _gatewayComparison(selected, config?.operator, config?.value);
+  const iteration = run.counters.gateway_iterations[node.node_id] ?? 0;
+  const maxIterations = Math.max(1, Math.floor(config?.max_iterations ?? 3));
+  if (matched) {
+    _terminateLoopSource(run, node.node_id);
+    return {
+      port: config?.done_port || "done",
+      payload: { input, iteration, max_iterations: maxIterations, matched: true },
+    };
+  }
+  if (iteration >= maxIterations) {
+    _terminateLoopSource(run, node.node_id);
+    return {
+      port: config?.exhausted_port || "exhausted",
+      payload: { input, iteration, max_iterations: maxIterations, matched: false, exhausted: true },
+    };
+  }
+  run.counters.gateway_iterations[node.node_id] = iteration + 1;
+  return {
+    port: config?.continue_port || "continue",
+    payload: { input, iteration: iteration + 1, max_iterations: maxIterations, matched: false },
+  };
 }
 
 function _executeGatewayNode(runId: string, run: ActiveRun, node: DAGGraphNode): boolean {
@@ -1241,15 +1379,22 @@ function _executeGatewayNode(runId: string, run: ActiveRun, node: DAGGraphNode):
     const items = _loopGatewayItems(node.gateway_config, inputs);
     const index = run.counters.gateway_iterations[node.node_id] ?? 0;
     const itemPort = node.gateway_config?.item_port || "next_item";
+    const resultPort = node.gateway_config?.result_port || "result";
     const donePort = node.gateway_config?.done_port || "done";
+    const results = run.counters.gateway_results[node.node_id] ?? [];
+    const resultValues = inputs[resultPort];
+    if (index > 0 && resultValues && resultValues.length > 0) {
+      results.push(_structuredGatewayValue(resultValues[resultValues.length - 1]));
+      run.counters.gateway_results[node.node_id] = results;
+    }
     const port = index < items.length ? itemPort : donePort;
     const payload = index < items.length
-      ? { item: items[index], index, total: items.length }
-      : { total: items.length, completed: true };
+      ? { item: items[index], index, total: items.length, completed_results: [...results] }
+      : { total: items.length, completed: true, results: [...results] };
     if (index < items.length) {
       run.counters.gateway_iterations[node.node_id] = index + 1;
     } else {
-      run.dagRun.loopSources.delete(node.node_id);
+      _terminateLoopSource(run, node.node_id);
     }
     const next = handoffActiveRun(runId, node.node_id, port, payload);
     if (!next) return false;
@@ -1258,6 +1403,33 @@ function _executeGatewayNode(runId: string, run: ActiveRun, node: DAGGraphNode):
       nodeId: node.node_id,
       gatewayType: node.node_type,
       port,
+    });
+    return true;
+  }
+
+  if (node.node_type === "join_gateway") {
+    const result = _joinGatewayResult(node.gateway_config, _nodeInputs(run.dagRun, node.node_id));
+    const next = handoffActiveRun(runId, node.node_id, result.port, result.payload);
+    if (!next) return false;
+    emit("dag:gateway_executed", {
+      runId,
+      nodeId: node.node_id,
+      gatewayType: node.node_type,
+      port: result.port,
+    });
+    return true;
+  }
+
+  if (node.node_type === "while_gateway") {
+    const inputs = _nodeInputs(run.dagRun, node.node_id);
+    const result = _whileGatewayResult(run, node, _firstInputValue(inputs));
+    const next = handoffActiveRun(runId, node.node_id, result.port, result.payload);
+    if (!next) return false;
+    emit("dag:gateway_executed", {
+      runId,
+      nodeId: node.node_id,
+      gatewayType: node.node_type,
+      port: result.port,
     });
     return true;
   }

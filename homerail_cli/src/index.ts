@@ -16,6 +16,7 @@ import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerSmokeCommand } from "./commands/smoke.js";
 import { registerConfigCommand } from "./commands/config.js";
 import { registerRuntimeCommands } from "./commands/runtime.js";
+import { registerPatternsCommand } from "./commands/patterns.js";
 import { DEFAULT_MANAGER_URL } from "./local-config.js";
 
 export { HomeRailClient } from "./client.js";
@@ -32,6 +33,7 @@ export function createProgram(): Command {
     .option("--json", "Output as JSON");
 
   registerTemplatesCommand(program);
+  registerPatternsCommand(program);
   registerRunCommand(program);
   registerRunsCommand(program);
   registerStatusCommand(program);

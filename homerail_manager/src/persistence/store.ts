@@ -8,7 +8,7 @@ import type {
   PersistedGraphData,
   NodeUsageRecord,
 } from "./types.js";
-import type { DAGGraphData, ScorecardPolicyConfig } from "../orchestration/graph.js";
+import type { DAGGraphData, DAGPatternInstanceMeta, ScorecardPolicyConfig } from "../orchestration/graph.js";
 import { DAG_EVENT_TYPES, subscribe, type DAGEventPayload } from "../events/bus.js";
 import type { DAGRunCounters, DAGRunLimits } from "../runtime/active-runs.js";
 import { assertStatus, type DagRunStatus } from "./status.js";
@@ -24,6 +24,7 @@ interface SerializableRun {
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;
   scorecard?: ScorecardPolicyConfig;
+  pattern?: DAGPatternInstanceMeta;
   createdAt: number;
   status: DagRunStatus;
   completedAt?: number;
@@ -187,6 +188,7 @@ export function serializeRunMetadata(run: SerializableRun): PersistedRunMetadata
     agents: run.agents,
     workspace: run.workspace,
     scorecard: run.scorecard,
+    pattern: run.pattern,
     createdAt: run.createdAt,
     status: run.status,
     completedAt: run.completedAt,

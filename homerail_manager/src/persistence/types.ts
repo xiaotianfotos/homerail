@@ -1,5 +1,10 @@
 import type { DAGEventType, DAGEventPayload } from "../events/bus.js";
-import type { DAGGatewayConfig, DAGNodeRequirements, ScorecardPolicyConfig } from "../orchestration/graph.js";
+import type {
+  DAGGatewayConfig,
+  DAGNodeRequirements,
+  DAGPatternInstanceMeta,
+  ScorecardPolicyConfig,
+} from "../orchestration/graph.js";
 import type { DAGRunCounters, DAGRunLimits } from "../runtime/active-runs.js";
 import type { DagRunStatus } from "./status.js";
 
@@ -41,6 +46,7 @@ export interface PersistedRunMetadata {
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;
   scorecard?: ScorecardPolicyConfig;
+  pattern?: DAGPatternInstanceMeta;
   createdAt: number;
   status: DagRunStatus;
   completedAt?: number;

@@ -16,7 +16,16 @@ export class GraphExecutor {
   }
 
   tick(runId: string): number {
-    return dispatchReadyNodes(runId, this.dispatcher);
+    const run = getActiveRun(runId);
+    if (!run) return 0;
+    const maxPasses = Math.max(1, run.dagRun.graph.nodes.length * 2);
+    let total = 0;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      const advanced = dispatchReadyNodes(runId, this.dispatcher);
+      total += advanced;
+      if (advanced === 0) break;
+    }
+    return total;
   }
 
   getRun(runId: string): ActiveRun | undefined {

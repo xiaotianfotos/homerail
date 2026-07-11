@@ -183,4 +183,173 @@ nodes:
       "Feedback-loop risk: on_failure edge second.error -> first.retry has max_retries 11",
     );
   });
+
+  it("allows a bounded feedback cycle that targets a while gateway", () => {
+    const parsed = parseDAGYaml(`
+name: valid-while-cycle
+nodes:
+  work:
+    agent: worker
+    after: [gate]
+    outputs:
+      measured:
+        to: gate.in:measurement
+        retry_policy:
+          max_retries: 2
+  gate:
+    type: while_gateway
+    gateway_config:
+      operator: eq
+      value: done
+      max_iterations: 2
+    outputs:
+      continue:
+        to: work.in:task
+      done:
+        to: ""
+      exhausted:
+        to: ""
+`);
+
+    const result = validateGraph(parsed.graph);
+    expect(result.valid).toBe(true);
+    expect(result.entry_nodes).toEqual(["gate"]);
+    expect(parsed.loop_sources).toContain("gate");
+  });
+
+  it("rejects invalid join, while, and retry configurations before runtime", () => {
+    expect(() => parseDAGYaml(`
+name: invalid-join
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  voter:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:vote
+  join:
+    type: join_gateway
+    gateway_config:
+      mode: n_of_m
+      threshold: 0
+    after: [voter]
+    outputs:
+      passed:
+        to: ""
+`)).toThrow(/positive integer threshold/);
+
+    expect(() => parseDAGYaml(`
+name: invalid-while
+nodes:
+  gate:
+    type: while_gateway
+    gateway_config:
+      operator: approximately
+      max_iterations: 0
+    outputs:
+      done:
+        to: ""
+`)).toThrow(/unsupported operator/);
+
+    expect(() => parseDAGYaml(`
+name: invalid-retry
+nodes:
+  start:
+    agent: worker
+    outputs:
+      done:
+        to: ""
+        retry_policy:
+          max_retries: -1
+`)).toThrow(/non-negative integer/);
+  });
+
+  it("rejects join gateways without a complete dependency input contract", () => {
+    expect(() => parseDAGYaml(`
+name: join-without-dependencies
+nodes:
+  join:
+    type: join_gateway
+    outputs:
+      passed:
+        to: ""
+`)).toThrow(/requires at least one after dependency/);
+
+    expect(() => parseDAGYaml(`
+name: join-with-missing-input
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  voter_one:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:one
+  voter_two:
+    agent: worker
+    outputs:
+      done:
+        to: ""
+  join:
+    type: join_gateway
+    after: [voter_one, voter_two]
+    outputs:
+      passed:
+        to: ""
+`)).toThrow(/missing routed input from after dependencies: voter_two/);
+
+    expect(() => parseDAGYaml(`
+name: join-with-unawaited-input
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  awaited_voter:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:awaited
+  unawaited_voter:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:unawaited
+  join:
+    type: join_gateway
+    after: [awaited_voter]
+    outputs:
+      passed:
+        to: ""
+`)).toThrow(/routed input from undeclared after dependencies: unawaited_voter/);
+
+    expect(() => parseDAGYaml(`
+name: join-with-impossible-threshold
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  voter_one:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:one
+  voter_two:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:two
+  join:
+    type: join_gateway
+    gateway_config:
+      mode: n_of_m
+      threshold: 3
+    after: [voter_one, voter_two]
+    outputs:
+      passed:
+        to: ""
+`)).toThrow(/threshold 3 exceeds its 2 after dependencies/);
+  });
 });

@@ -14,6 +14,13 @@ Supported target directories:
 
 - Codex: `${CODEX_HOME:-$HOME/.codex}/skills`
 - Claude Code: `$HOME/.claude/skills`
+- HomeRail Manager Agent: `${HOMERAIL_HOME:-$HOME/.homerail}/skills`
+
+Manager automatically creates the HomeRail Manager Agent skill directory and
+links missing built-in `homerail-*` skills from the active checkout. Existing
+entries are never replaced, so a user-owned skill with the same directory id
+overrides the built-in version. Every directory containing `SKILL.md` under
+this root is exposed to all Manager Agent harnesses on the next turn.
 
 ## macOS / Linux
 
@@ -90,3 +97,5 @@ Direct invocation examples:
 
 - Codex: `$homerail-install-ops`
 - Claude Code: `/homerail-install-ops`
+- DAG pattern selection in Codex: `$homerail-dag-patterns`
+- DAG pattern selection in Claude Code: `/homerail-dag-patterns`

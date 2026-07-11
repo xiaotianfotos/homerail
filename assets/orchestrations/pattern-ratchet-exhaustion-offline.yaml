@@ -1,0 +1,76 @@
+name: pattern-ratchet-exhaustion-offline
+workflow_id: pattern-ratchet-exhaustion-offline
+description: "Concrete offline instance of the built-in ratchet pattern: bounded feedback stops after two unsuccessful attempts."
+
+workspace:
+  mode: isolated
+
+pattern:
+  id: ratchet
+  version: 1.0.0
+  source: https://x.com/i/status/2074169173178212621
+  parameters:
+    target: done
+    max_iterations: 2
+
+runtime_profiles:
+  offline-deterministic:
+    agents:
+      "*":
+        agent_type: deterministic
+
+agents:
+  measurer:
+    system: "HANDOFF port=measured content=not-done"
+  improver:
+    system: "HANDOFF port=measured content=not-done"
+  reporter:
+    system: "HANDOFF port=done content=ratchet-stopped-at-bounded-limit"
+
+nodes:
+  baseline:
+    agent: measurer
+    outputs:
+      measured:
+        to: target_gate.in:measurement
+
+  target_gate:
+    type: while_gateway
+    gateway_config:
+      operator: eq
+      value: done
+      max_iterations: 2
+      continue_port: improve
+      done_port: reached
+      exhausted_port: exhausted
+    after: [baseline]
+    outputs:
+      improve:
+        to: improve.in:measurement
+      reached:
+        to: achieved.in:result
+      exhausted:
+        to: stopped.in:result
+
+  improve:
+    agent: improver
+    after: [target_gate]
+    outputs:
+      measured:
+        to: target_gate.in:measurement
+        retry_policy:
+          max_retries: 2
+
+  achieved:
+    agent: reporter
+    after: [target_gate]
+    outputs:
+      done:
+        to: ""
+
+  stopped:
+    agent: reporter
+    after: [target_gate]
+    outputs:
+      done:
+        to: ""

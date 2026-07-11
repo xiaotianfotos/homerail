@@ -44,6 +44,12 @@ function singleNodeDag() {
   return parseDAGYaml(`
 name: cold-recovery
 workflow_id: cold-recovery
+pattern:
+  id: heartbeat
+  version: 1.0.0
+  source: https://x.com/i/status/2074169173178212621
+  parameters:
+    workflow_id: cold-recovery
 workspace:
   project_id: project-a
 agents:
@@ -127,6 +133,12 @@ describe("manager cold recovery", () => {
     expect(run!.limits.max_dispatches).toBeGreaterThan(0);
     expect(run!.dagRun.graph.nodes).toHaveLength(1);
     expect(run!.nodeIndex.has("work")).toBe(true);
+    expect(run!.pattern).toEqual({
+      id: "heartbeat",
+      version: "1.0.0",
+      source: "https://x.com/i/status/2074169173178212621",
+      parameters: { workflow_id: "cold-recovery" },
+    });
   });
 
   it("replays handoff history so a downstream node receives upstream output in its mailbox", () => {
@@ -295,6 +307,23 @@ describe("manager cold recovery", () => {
     if (result.status === "restored") {
       expect(result.run.runId).toBe("run-direct");
       expect(result.demotedFromRunning).toEqual(["work"]);
+    }
+  });
+
+  it("fills newly added counter collections when restoring older metadata", () => {
+    createActiveRun("run-old-counters", singleNodeDag());
+    const metadata = loadRunMetadata("run-old-counters")!;
+    if (metadata.counters) {
+      delete (metadata.counters as Partial<typeof metadata.counters> & { gateway_results?: unknown }).gateway_results;
+    }
+    writeRunMetadata("run-old-counters", metadata);
+    _clearActiveRuns();
+
+    const result = restoreActiveRun(loadRunMetadata("run-old-counters")!);
+
+    expect(result.status).toBe("restored");
+    if (result.status === "restored") {
+      expect(result.run.counters.gateway_results).toEqual({});
     }
   });
 

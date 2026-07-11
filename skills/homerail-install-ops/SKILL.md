@@ -62,6 +62,8 @@ After restart, route user requests to the root skills this way:
   `$homerail-install-ops`; Claude Code invocation: `/homerail-install-ops`.
 - Use `homerail-dag-ops` for running DAGs, monitoring runs, checking handoffs,
   and writing DAG templates.
+- Use `homerail-dag-patterns` for selecting, composing, instantiating, and
+  validating built-in DAG design patterns.
 - Use `homerail-cli` for command syntax, flags, and evidence commands.
 - Use `homerail-shared` as background rules for all HomeRail operations.
 

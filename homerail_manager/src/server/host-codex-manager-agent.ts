@@ -24,6 +24,7 @@ import {
   type ManagerAgentWidgetFileToolResult,
   type ManagerAgentToolName,
   type ManagerAgentReasoningEffort,
+  type ManagerAgentPromptSkill,
 } from "homerail-protocol";
 
 type ToolHandlerResult = {
@@ -124,6 +125,7 @@ export interface HostCodexManagerAgentInput {
   managerRestUrl?: string | (() => string);
   response_mode?: "chat" | "voice";
   voice_ui_rules?: VoiceUiRules;
+  manager_skills?: ManagerAgentPromptSkill[];
 }
 
 export type HostCodexManagerAgentRunner = (
@@ -497,6 +499,22 @@ function createManagerTools(state: {
       },
     },
     {
+      ...managerAgentToolSpec("list_skills"),
+      async handler() {
+        const body = await requestManager(state.restUrl, "/skills");
+        return { content: [{ type: "text", text: short(body, 12000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("read_skill"),
+      async handler(args) {
+        const skillId = String(args.skill_id || "").trim();
+        if (!skillId) throw new Error("read_skill requires skill_id");
+        const body = await requestManager(state.restUrl, `/skills/${encodeURIComponent(skillId)}`);
+        return { content: [{ type: "text", text: short(body, 30000) }] };
+      },
+    },
+    {
       name: "list_orchestrations",
       description: "List repo-local orchestration YAML templates available to create runs.",
       input_schema: { type: "object", properties: {}, additionalProperties: false },
@@ -511,6 +529,75 @@ function createManagerTools(state: {
             text: JSON.stringify({ root: "assets/orchestrations", files }),
           }],
         };
+      },
+    },
+    {
+      ...managerAgentToolSpec("list_dag_patterns"),
+      async handler() {
+        const body = await requestManager(state.restUrl, "/dag/patterns");
+        return { content: [{ type: "text", text: short(body, 20000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("get_dag_pattern"),
+      async handler(args) {
+        const patternId = String(args.pattern_id || "").trim();
+        if (!patternId) throw new Error("get_dag_pattern requires pattern_id");
+        const body = await requestManager(state.restUrl, `/dag/patterns/${encodeURIComponent(patternId)}`);
+        return { content: [{ type: "text", text: short(body, 30000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("instantiate_dag_pattern"),
+      async handler(args) {
+        const patternId = String(args.pattern_id || "").trim();
+        if (!patternId) throw new Error("instantiate_dag_pattern requires pattern_id");
+        try {
+          const instantiated = await requestManager(
+            state.restUrl,
+            `/dag/patterns/${encodeURIComponent(patternId)}/instantiate`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                parameters: args.parameters && typeof args.parameters === "object" && !Array.isArray(args.parameters)
+                  ? args.parameters
+                  : {},
+              }),
+            },
+          ) as Record<string, unknown>;
+          const data = instantiated.data as Record<string, unknown> | undefined;
+          const yamlText = typeof data?.yaml_text === "string" ? data.yaml_text : "";
+          const shouldSync = args.sync !== false;
+          let syncResult: unknown = null;
+          if (shouldSync) {
+            if (!yamlText) throw new Error("Pattern instantiation did not return yaml_text");
+            syncResult = await requestManager(state.restUrl, "/dag/workflows/sync", {
+              method: "POST",
+              body: JSON.stringify({ yaml_text: yamlText, source_path: `builtin:${patternId}` }),
+            });
+          }
+          state.objectiveToolCalls.push({ name: "instantiate_dag_pattern", success: true });
+          return {
+            content: [{
+              type: "text",
+              text: short({
+                pattern_id: patternId,
+                parameters: data?.parameters,
+                workflow: data?.workflow,
+                validation: data?.validation,
+                synced: shouldSync,
+                sync: syncResult,
+              }, 16000),
+            }],
+          };
+        } catch (error) {
+          state.objectiveToolCalls.push({
+            name: "instantiate_dag_pattern",
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
       },
     },
     {
@@ -773,11 +860,11 @@ export function _hostCodexVoiceToolCatalogForTest(): Array<{ name: string; descr
 export async function _invokeHostCodexVoiceToolForTest(
   name: string,
   args: Record<string, unknown>,
-  options: { projectId?: string; sessionId?: string } = {},
+  options: { projectId?: string; sessionId?: string; managerRestUrl?: string } = {},
 ): Promise<{ result: ToolHandlerResult; voiceSurface: VoiceSurfaceState }> {
   const voiceSurface = emptyVoiceSurface();
   const tools = createManagerTools({
-    restUrl: "http://127.0.0.1:0/api",
+    restUrl: options.managerRestUrl ?? "http://127.0.0.1:0/api",
     workspace: process.cwd(),
     projectId: options.projectId ?? "test-project",
     sessionId: options.sessionId ?? "test-session",
@@ -982,6 +1069,7 @@ function systemPrompt(
   responseMode: "chat" | "voice" = "chat",
   voiceUiRules?: VoiceUiRules,
   voiceSystemContract?: VoiceSystemContract,
+  skills?: ManagerAgentPromptSkill[],
 ): string {
   return buildManagerAgentSystemPrompt({
     responseMode,
@@ -992,6 +1080,7 @@ function systemPrompt(
     },
     voiceUiRules: responseMode === "voice" ? voiceUiRules ?? loadVoiceUiRules() : undefined,
     voiceSystem: responseMode === "voice" ? voiceSystemContract ?? loadVoiceSystemContract() : undefined,
+    skills,
   });
 }
 
@@ -1000,8 +1089,9 @@ export function _systemPromptForTest(
   responseMode: "chat" | "voice" = "chat",
   voiceUiRules?: VoiceUiRules,
   voiceSystemContract?: VoiceSystemContract,
+  skills?: ManagerAgentPromptSkill[],
 ): string {
-  return systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract);
+  return systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, skills);
 }
 
 function buildPrompt(
@@ -1028,6 +1118,14 @@ function toolCallCommentary(name: string): string | undefined {
   switch (name) {
     case "list_orchestrations":
       return "正在查看可用的 DAG 编排。";
+    case "list_skills":
+    case "read_skill":
+      return "正在加载 HomeRail Skill。";
+    case "list_dag_patterns":
+    case "get_dag_pattern":
+      return "正在选择合适的 DAG 模式。";
+    case "instantiate_dag_pattern":
+      return "正在生成并同步 DAG 模式。";
     case "create_and_run":
       return "正在启动 DAG。";
     case "invoke_run":
@@ -1160,7 +1258,7 @@ async function* runHostCodexManagerAgentTurnEvents(
       buildPrompt(input.history, message, input.continue_chat !== false),
       createManagerTools(state, responseMode),
       {
-        systemPrompt: systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract),
+        systemPrompt: systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, input.manager_skills),
         provider: config.provider_name || undefined,
         model: config.model || "codex",
         apiKey: config.api_key || "",

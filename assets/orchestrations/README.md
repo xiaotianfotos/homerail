@@ -36,6 +36,19 @@ node homerail_cli/dist/cli.js run assets/orchestrations/public-two-node.yaml.tem
   --prompt "Draft a short checklist for a backend release"
 ```
 
+The concrete offline pattern instances exercise the Manager's built-in gateway
+semantics without a model provider:
+
+```bash
+node homerail_cli/dist/cli.js run assets/orchestrations/pattern-quorum-offline.yaml \
+  --profile offline-deterministic --prompt "verify quorum routing"
+node homerail_cli/dist/cli.js run assets/orchestrations/pattern-ratchet-exhaustion-offline.yaml \
+  --profile offline-deterministic --prompt "verify bounded feedback"
+```
+
+Use `hr patterns list` and `hr patterns show <id>` for the abstract catalog;
+these files are concrete examples, not the catalog source of truth.
+
 The five-node smoke writes its standard example artifacts to the shared
 run-level workspace:
 

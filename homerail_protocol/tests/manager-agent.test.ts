@@ -105,6 +105,13 @@ describe("Manager Agent harness contract", () => {
     const chatNames = managerAgentCommonToolCatalog("chat").map((tool) => tool.name);
     const voiceNames = managerAgentCommonToolCatalog("voice").map((tool) => tool.name);
     expect(chatNames).toContain("create_and_run");
+    expect(chatNames).toEqual(expect.arrayContaining([
+      "list_skills",
+      "read_skill",
+      "list_dag_patterns",
+      "get_dag_pattern",
+      "instantiate_dag_pattern",
+    ]));
     expect(chatNames).not.toContain("write_widget_file");
     expect(voiceNames).toContain("write_widget_file");
     expect(voiceNames).toContain("update_voice_memo");
@@ -119,6 +126,11 @@ describe("Manager Agent harness contract", () => {
       { required: ["workflowId"] },
       { required: ["yamlPath"] },
     ]);
+    expect(managerAgentToolSpec("instantiate_dag_pattern").input_schema.properties).toMatchObject({
+      pattern_id: { type: "string" },
+      parameters: { type: "object", additionalProperties: true },
+      sync: { type: "boolean" },
+    });
     expect(managerAgentToolSpec("write_widget_file").input_schema.properties).toMatchObject({
       widget_type: { type: "string", enum: MANAGER_AGENT_WIDGET_FILE_TYPES },
     });
@@ -192,6 +204,30 @@ describe("Manager Agent harness contract", () => {
     expect(prompt).toContain("Voice UI rules hash: abc123");
     expect(prompt).toContain("VOICE_RULES");
     expect(prompt).toContain("Use tool-created widgets for generated UI");
+  });
+
+  it("renders HomeRail skill metadata and the pattern-first DAG workflow", () => {
+    const prompt = buildManagerAgentSystemPrompt({
+      runtime: { placement: "host", provider: "codex", model: "gpt-5.5" },
+      skills: [
+        {
+          id: "homerail-dag-patterns",
+          description: "Select and instantiate reusable DAG patterns.",
+          source: "home",
+        },
+        {
+          id: "custom-operator",
+          description: "Apply local operations policy.",
+          source: "home",
+        },
+      ],
+    });
+
+    expect(prompt).toContain("Available HomeRail Skills");
+    expect(prompt).toContain("homerail-dag-patterns: Select and instantiate reusable DAG patterns. [home]");
+    expect(prompt).toContain("custom-operator: Apply local operations policy. [home]");
+    expect(prompt).toContain("call read_skill before acting");
+    expect(prompt).toContain("instantiate_dag_pattern and create_and_run");
   });
 
   it("describes host-shell manager agents separately from containers", () => {

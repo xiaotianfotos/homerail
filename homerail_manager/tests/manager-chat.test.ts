@@ -241,6 +241,9 @@ describe("/api/manager/chat", () => {
           model: "qwen3.6",
           base_url: "http://127.0.0.1:5000",
         },
+        manager_skills: expect.arrayContaining([
+          expect.objectContaining({ id: "homerail-dag-patterns", source: "home" }),
+        ]),
       });
       expect(fakeNode.requests.map((item) => `${item.resource_type}:${item.operation}`)).toEqual([
         "container:list",
@@ -979,9 +982,11 @@ describe("/api/manager/chat", () => {
   it("routes codex_appserver Manager Agent chat through host Codex without a container", async () => {
     let seenMessage = "";
     let seenAgentType = "";
+    let seenSkills: Array<{ id: string; source?: string }> = [];
     _setHostCodexManagerAgentRunnerForTest(async (input) => {
       seenMessage = input.message;
       seenAgentType = input.agent_config.agent_type;
+      seenSkills = input.manager_skills ?? [];
       return {
         text: "host codex handled",
         session_id: input.session_id,
@@ -1029,6 +1034,10 @@ describe("/api/manager/chat", () => {
     expect(body.data.manager_agent_config.runtime_placement).toBe("host");
     expect(seenMessage).toBe("启动一个 DAG");
     expect(seenAgentType).toBe("codex_appserver");
+    expect(seenSkills).toContainEqual(expect.objectContaining({
+      id: "homerail-dag-patterns",
+      source: "home",
+    }));
   });
 
   it("normalizes container-only manager URLs for host Codex tools", () => {
@@ -1145,6 +1154,11 @@ describe("/api/manager/chat", () => {
     const names = tools.map((tool) => tool.name);
 
     expect(names).toEqual(expect.arrayContaining([
+      "list_skills",
+      "read_skill",
+      "list_dag_patterns",
+      "get_dag_pattern",
+      "instantiate_dag_pattern",
       "update_voice_memo",
       "validate_widget_file",
       "write_widget_file",
@@ -1156,6 +1170,54 @@ describe("/api/manager/chat", () => {
       const tool = tools.find((item) => item.name === name);
       expect(tool?.description).toContain("Manager-internal");
     }
+  });
+
+  it("exposes skill and DAG pattern operations through host Codex tools", async () => {
+    const port = await listen(server);
+    const managerRestUrl = `http://127.0.0.1:${port}/api`;
+
+    const listedSkills = await _invokeHostCodexVoiceToolForTest(
+      "list_skills",
+      {},
+      { managerRestUrl },
+    );
+    expect(listedSkills.result.content[0].text).toContain("homerail-dag-patterns");
+
+    const skill = await _invokeHostCodexVoiceToolForTest(
+      "read_skill",
+      { skill_id: "homerail-dag-patterns" },
+      { managerRestUrl },
+    );
+    expect(skill.result.content[0].text).toContain("Manager Agent Native Path");
+
+    const patterns = await _invokeHostCodexVoiceToolForTest(
+      "list_dag_patterns",
+      {},
+      { managerRestUrl },
+    );
+    expect(patterns.result.content[0].text).toContain("heartbeat");
+
+    const pattern = await _invokeHostCodexVoiceToolForTest(
+      "get_dag_pattern",
+      { pattern_id: "heartbeat" },
+      { managerRestUrl },
+    );
+    expect(pattern.result.content[0].text).toContain("condition_gateway");
+
+    const instantiated = await _invokeHostCodexVoiceToolForTest(
+      "instantiate_dag_pattern",
+      {
+        pattern_id: "heartbeat",
+        parameters: { workflow_id: "host-skill-heartbeat", name: "Host Skill Heartbeat" },
+        sync: true,
+      },
+      { managerRestUrl },
+    );
+    expect(instantiated.result.is_error).toBeFalsy();
+    expect(instantiated.result.content[0].text).toContain('"synced":true');
+
+    const workflow = await fetch(`http://127.0.0.1:${port}/api/dag/workflows/host-skill-heartbeat`);
+    expect(workflow.status).toBe(200);
   });
 
   it("writes voice widgets only after TOML validation succeeds", async () => {

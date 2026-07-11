@@ -14,6 +14,7 @@ import {
   type ManagerAgentWidgetFileToolAdapter,
   type ManagerAgentWidgetFileToolResult,
   type ManagerAgentToolName,
+  type ManagerAgentPromptSkill,
 } from "homerail-protocol";
 
 interface ManagerAgentConfig {
@@ -37,6 +38,7 @@ interface ChatRequest {
   agent_config?: ManagerAgentConfig;
   voice_ui_rules?: { prompt?: string; hash?: string; sources?: string[] };
   voice_system_contract?: { prompt?: string; source?: string };
+  manager_skills?: ManagerAgentPromptSkill[];
 }
 
 interface ChatSession {
@@ -344,6 +346,22 @@ function createManagerTools(state: {
       },
     },
     {
+      ...managerAgentToolSpec("list_skills"),
+      async handler() {
+        const body = await requestManager("/skills");
+        return { content: [{ type: "text", text: short(body, 12000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("read_skill"),
+      async handler(args) {
+        const skillId = String(args.skill_id || "").trim();
+        if (!skillId) throw new Error("read_skill requires skill_id");
+        const body = await requestManager(`/skills/${encodeURIComponent(skillId)}`);
+        return { content: [{ type: "text", text: short(body, 30000) }] };
+      },
+    },
+    {
       name: "list_orchestrations",
       description: "List repo-local orchestration YAML templates available to create runs.",
       input_schema: { type: "object", properties: {}, additionalProperties: false },
@@ -361,6 +379,74 @@ function createManagerTools(state: {
             }),
           }],
         };
+      },
+    },
+    {
+      ...managerAgentToolSpec("list_dag_patterns"),
+      async handler() {
+        const body = await requestManager("/dag/patterns");
+        return { content: [{ type: "text", text: short(body, 20000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("get_dag_pattern"),
+      async handler(args) {
+        const patternId = String(args.pattern_id || "").trim();
+        if (!patternId) throw new Error("get_dag_pattern requires pattern_id");
+        const body = await requestManager(`/dag/patterns/${encodeURIComponent(patternId)}`);
+        return { content: [{ type: "text", text: short(body, 30000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("instantiate_dag_pattern"),
+      async handler(args) {
+        const patternId = String(args.pattern_id || "").trim();
+        if (!patternId) throw new Error("instantiate_dag_pattern requires pattern_id");
+        try {
+          const instantiated = await requestManager(
+            `/dag/patterns/${encodeURIComponent(patternId)}/instantiate`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                parameters: args.parameters && typeof args.parameters === "object" && !Array.isArray(args.parameters)
+                  ? args.parameters
+                  : {},
+              }),
+            },
+          ) as Record<string, unknown>;
+          const data = instantiated.data as Record<string, unknown> | undefined;
+          const yamlText = typeof data?.yaml_text === "string" ? data.yaml_text : "";
+          const shouldSync = args.sync !== false;
+          let syncResult: unknown = null;
+          if (shouldSync) {
+            if (!yamlText) throw new Error("Pattern instantiation did not return yaml_text");
+            syncResult = await requestManager("/dag/workflows/sync", {
+              method: "POST",
+              body: JSON.stringify({ yaml_text: yamlText, source_path: `builtin:${patternId}` }),
+            });
+          }
+          state.objectiveToolCalls.push({ name: "instantiate_dag_pattern", success: true });
+          return {
+            content: [{
+              type: "text",
+              text: short({
+                pattern_id: patternId,
+                parameters: data?.parameters,
+                workflow: data?.workflow,
+                validation: data?.validation,
+                synced: shouldSync,
+                sync: syncResult,
+              }, 16000),
+            }],
+          };
+        } catch (error) {
+          state.objectiveToolCalls.push({
+            name: "instantiate_dag_pattern",
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
       },
     },
     {
@@ -617,6 +703,7 @@ function systemPrompt(
   responseMode: "chat" | "voice" = "chat",
   voiceUiRules?: ChatRequest["voice_ui_rules"],
   voiceSystemContract?: ChatRequest["voice_system_contract"],
+  skills?: ManagerAgentPromptSkill[],
 ): string {
   const placement = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT === "host_shell"
     ? "host_shell"
@@ -641,6 +728,7 @@ function systemPrompt(
           source: voiceSystemContract.source,
         }
       : undefined,
+    skills,
   });
 }
 
@@ -704,7 +792,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     timeout.unref?.();
   }
   const context: AgentRunContext = {
-    systemPrompt: systemPrompt(config, responseMode, body.voice_ui_rules, body.voice_system_contract),
+    systemPrompt: systemPrompt(config, responseMode, body.voice_ui_rules, body.voice_system_contract, body.manager_skills),
     provider: config.provider_name,
     model,
     apiKey: String(config.api_key || ""),

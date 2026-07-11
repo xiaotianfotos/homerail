@@ -14,6 +14,7 @@ import {
   runHostCodexManagerAgentTurnStream,
   type VoiceUiRules,
 } from "./host-codex-manager-agent.js";
+import { listManagerSkills, type ManagerSkillSummary } from "./manager-skills.js";
 import {
   managerAgentRuntimePlacementForHarness,
   normalizeManagerAgentHarness,
@@ -33,6 +34,7 @@ export interface RunManagerAgentTurnInput {
   required_tool_calls?: string[];
   agent_config: ManagerAgentRuntimeConfig;
   voice_ui_rules?: VoiceUiRules;
+  manager_skills?: ManagerSkillSummary[];
 }
 
 export interface RunManagerAgentTurnResult {
@@ -79,6 +81,7 @@ export async function runManagerAgentTurn(
   options?: ManagerAgentContainerOptions,
 ): Promise<RunManagerAgentTurnResult> {
   const runtimePlacement = managerAgentRuntimePlacement(input.agent_config);
+  const managerSkills = input.manager_skills ?? listManagerSkills();
   if (runtimePlacement === "host") {
     try {
       const result = await runHostCodexManagerAgentTurn({
@@ -92,6 +95,7 @@ export async function runManagerAgentTurn(
         managerRestUrl: options?.managerRestUrl,
         response_mode: input.response_mode,
         voice_ui_rules: input.voice_ui_rules,
+        manager_skills: managerSkills,
       });
       return {
         result,
@@ -144,6 +148,7 @@ export async function runManagerAgentTurn(
         agent_config: input.agent_config,
         voice_ui_rules: input.voice_ui_rules,
         voice_system_contract: input.response_mode === "voice" ? loadVoiceSystemContract() : undefined,
+        manager_skills: managerSkills,
       });
       return {
         result,
@@ -185,6 +190,7 @@ export async function runManagerAgentTurn(
       agent_config: input.agent_config,
       voice_ui_rules: input.voice_ui_rules,
       voice_system_contract: input.response_mode === "voice" ? loadVoiceSystemContract() : undefined,
+      manager_skills: managerSkills,
     });
     return {
       result,
@@ -217,6 +223,7 @@ export async function* runManagerAgentTurnStream(
   }
 
   try {
+    const managerSkills = input.manager_skills ?? listManagerSkills();
     for await (const event of runHostCodexManagerAgentTurnStream({
       message: input.message,
       project_id: input.project_id ?? undefined,
@@ -228,6 +235,7 @@ export async function* runManagerAgentTurnStream(
       managerRestUrl: options?.managerRestUrl,
       response_mode: input.response_mode,
       voice_ui_rules: input.voice_ui_rules,
+      manager_skills: managerSkills,
     })) {
       if (event.type === "commentary") {
         yield { type: "commentary", text: event.text };

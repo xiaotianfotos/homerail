@@ -6,6 +6,11 @@ import {
   upsertDagRuntimeProfileFromYaml,
   upsertDagWorkflowFromYaml,
 } from "../persistence/dag-workflows.js";
+import {
+  getDAGPattern,
+  instantiateDAGPattern,
+  listDAGPatterns,
+} from "../orchestration/dag-patterns.js";
 
 interface BaseResponse {
   success: boolean;
@@ -66,9 +71,65 @@ function workflowIdFromPath(pathname: string): string | undefined {
   return id && !id.includes("/") ? decodeURIComponent(id) : undefined;
 }
 
+function patternPath(pathname: string): { id: string; action?: "instantiate" } | undefined {
+  const prefix = "/api/dag/patterns/";
+  if (!pathname.startsWith(prefix)) return undefined;
+  const parts = pathname.slice(prefix.length).split("/").filter(Boolean);
+  if (parts.length === 1) return { id: decodeURIComponent(parts[0]) };
+  if (parts.length === 2 && parts[1] === "instantiate") {
+    return { id: decodeURIComponent(parts[0]), action: "instantiate" };
+  }
+  return undefined;
+}
+
+function objectField(body: Record<string, unknown>, name: string): Record<string, unknown> | undefined {
+  const value = body[name];
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
 export function dagWorkflowRoutesHandler(req: http.IncomingMessage, res: http.ServerResponse): boolean {
   const url = new URL(req.url || "/", "http://localhost");
   const pathname = url.pathname;
+
+  if (pathname === "/api/dag/patterns" && req.method === "GET") {
+    const patterns = listDAGPatterns();
+    ok(res, `Found ${patterns.length} built-in DAG pattern(s)`, { patterns, total: patterns.length });
+    return true;
+  }
+
+  const patternRoute = patternPath(pathname);
+  if (patternRoute && !patternRoute.action && req.method === "GET") {
+    const pattern = getDAGPattern(patternRoute.id);
+    if (!pattern) notFound(res, `DAG pattern not found: ${patternRoute.id}`);
+    else ok(res, "DAG pattern retrieved", pattern);
+    return true;
+  }
+
+  if (patternRoute?.action === "instantiate" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const parameters = objectField(body, "parameters");
+        if (body.parameters !== undefined && !parameters) {
+          throw new Error("Field 'parameters' must be an object.");
+        }
+        const instance = instantiateDAGPattern(patternRoute.id, parameters ?? {});
+        ok(res, "DAG pattern instantiated", {
+          pattern: instance.pattern,
+          parameters: instance.parameters,
+          workflow: instance.workflow,
+          yaml_text: instance.yaml_text,
+          validation: instance.validation,
+        });
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.startsWith("DAG pattern not found:")) notFound(res, message);
+        else badRequest(res, message);
+      });
+    return true;
+  }
 
   if (pathname === "/api/dag/workflows" && req.method === "GET") {
     const workflows = listDagWorkflows();

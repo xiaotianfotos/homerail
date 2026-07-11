@@ -40,6 +40,61 @@ function makeManagerApiServer(createAndRunBodies: Record<string, unknown>[] = []
   });
 }
 
+function makePatternManagerApiServer(observed: Array<{ method: string; path: string; body?: Record<string, unknown> }>): http.Server {
+  return http.createServer((req, res) => {
+    const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    const finish = (status: number, data: unknown) => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: status < 400, data }));
+    };
+    if (req.method === "GET") {
+      observed.push({ method: "GET", path: pathname });
+      if (pathname === "/api/skills") {
+        finish(200, { skills: [{ id: "homerail-dag-patterns", description: "Pattern guidance" }], total: 1 });
+        return;
+      }
+      if (pathname === "/api/skills/homerail-dag-patterns") {
+        finish(200, { id: "homerail-dag-patterns", content: "# HomeRail DAG Patterns\nUse heartbeat." });
+        return;
+      }
+      if (pathname === "/api/dag/patterns") {
+        finish(200, { patterns: [{ id: "heartbeat", summary: "One bounded action" }], total: 1 });
+        return;
+      }
+      if (pathname === "/api/dag/patterns/heartbeat") {
+        finish(200, { id: "heartbeat", parameters: { workflow_id: { type: "string" } } });
+        return;
+      }
+      finish(404, { error: "not found" });
+      return;
+    }
+    let raw = "";
+    req.on("data", (chunk) => { raw += chunk; });
+    req.on("end", () => {
+      const body = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+      observed.push({ method: req.method || "POST", path: pathname, body });
+      if (pathname === "/api/dag/patterns/heartbeat/instantiate") {
+        finish(200, {
+          parameters: { workflow_id: "manager-heartbeat" },
+          workflow: { workflow_id: "manager-heartbeat", name: "Manager heartbeat" },
+          yaml_text: "name: Manager heartbeat\nworkflow_id: manager-heartbeat\nnodes: {}\n",
+          validation: { valid: true },
+        });
+        return;
+      }
+      if (pathname === "/api/dag/workflows/sync") {
+        finish(200, { workflow_id: "manager-heartbeat" });
+        return;
+      }
+      if (pathname === "/api/runs/create-and-run") {
+        finish(201, { runId: "run-pattern-skill-123" });
+        return;
+      }
+      finish(404, { error: "not found" });
+    });
+  });
+}
+
 function writeOrchestrationFiles(workspace: string): void {
   const dir = path.join(workspace, "assets", "orchestrations");
   fs.mkdirSync(dir, { recursive: true });
@@ -142,6 +197,47 @@ class ToolCatalogAgent implements AgentClient {
     this.toolNames = tools.map((tool) => tool.name).sort();
     this.systemPrompt = context.systemPrompt ?? "";
     yield { type: "text", text: "catalog captured" };
+    yield { type: "done" };
+  }
+}
+
+class PatternSkillAgent implements AgentClient {
+  systemPrompt = "";
+
+  async *run(
+    _prompt: string,
+    tools: DagToolDefinition[],
+    context: AgentRunContext,
+  ): AsyncIterable<AgentEvent> {
+    this.systemPrompt = context.systemPrompt ?? "";
+    const calls: Array<{ name: string; input: Record<string, unknown> }> = [
+      { name: "list_skills", input: {} },
+      { name: "read_skill", input: { skill_id: "homerail-dag-patterns" } },
+      { name: "list_dag_patterns", input: {} },
+      { name: "get_dag_pattern", input: { pattern_id: "heartbeat" } },
+      {
+        name: "instantiate_dag_pattern",
+        input: { pattern_id: "heartbeat", parameters: { workflow_id: "manager-heartbeat" }, sync: true },
+      },
+      {
+        name: "create_and_run",
+        input: { workflow_id: "manager-heartbeat", prompt: "Inspect one bounded signal" },
+      },
+    ];
+    for (const [index, call] of calls.entries()) {
+      const tool = tools.find((item) => item.name === call.name);
+      if (!tool) throw new Error(`${call.name} tool missing`);
+      const id = `pattern-tool-${index + 1}`;
+      yield { type: "tool_use", id, name: call.name, input: call.input };
+      const result = await tool.handler(call.input);
+      yield {
+        type: "tool_result",
+        tool_use_id: id,
+        content: result.content.map((item) => item.text).join(""),
+        is_error: result.is_error,
+      };
+    }
+    yield { type: "text", text: "pattern skill run started" };
     yield { type: "done" };
   }
 }
@@ -531,6 +627,72 @@ describe("manager-agent server", () => {
       expect(agent.systemPrompt).toContain("VOICE_SYSTEM_CONTRACT_TEST");
       expect(agent.systemPrompt).toContain("Voice UI rules hash: rules-hash");
       expect(agent.systemPrompt).toContain("VOICE_RULES_TEST");
+    } finally {
+      await close(server);
+      await close(managerApi);
+    }
+  });
+
+  it("loads a HomeRail skill, instantiates its DAG pattern, syncs it, and starts a run", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    const agent = new PatternSkillAgent();
+    registerAgentBackend("manager-agent-pattern-skill-test", () => agent);
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const observed: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
+    const managerApi = makePatternManagerApiServer(observed);
+    const managerPort = await listen(managerApi);
+    vi.stubEnv("MANAGER_REST_URL", `http://127.0.0.1:${managerPort}/api`);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "用 Skill 启动一个周期检查 DAG",
+          required_tool_calls: ["instantiate_dag_pattern", "create_and_run"],
+          manager_skills: [{
+            id: "homerail-dag-patterns",
+            description: "Select reusable DAG patterns",
+            source: "home",
+          }],
+          agent_config: { agent_type: "manager-agent-pattern-skill-test", model: "test" },
+        }),
+      });
+      const body = await response.json() as {
+        run_id?: string;
+        objective?: { satisfied?: boolean };
+        tool_calls?: Array<{ name: string }>;
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.run_id).toBe("run-pattern-skill-123");
+      expect(body.objective?.satisfied).toBe(true);
+      expect(body.tool_calls?.map((call) => call.name)).toEqual([
+        "list_skills",
+        "read_skill",
+        "list_dag_patterns",
+        "get_dag_pattern",
+        "instantiate_dag_pattern",
+        "create_and_run",
+      ]);
+      expect(agent.systemPrompt).toContain("homerail-dag-patterns: Select reusable DAG patterns [home]");
+      expect(observed).toContainEqual(expect.objectContaining({
+        method: "POST",
+        path: "/api/dag/workflows/sync",
+        body: expect.objectContaining({ source_path: "builtin:heartbeat" }),
+      }));
+      expect(observed).toContainEqual(expect.objectContaining({
+        method: "POST",
+        path: "/api/runs/create-and-run",
+        body: expect.objectContaining({ workflow_id: "manager-heartbeat" }),
+      }));
     } finally {
       await close(server);
       await close(managerApi);

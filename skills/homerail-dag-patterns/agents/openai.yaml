@@ -1,0 +1,4 @@
+interface:
+  display_name: "HomeRail DAG Patterns"
+  short_description: "Choose and instantiate reusable DAG design patterns."
+  default_prompt: "Use $homerail-dag-patterns to select, adapt, and validate a HomeRail DAG design pattern."

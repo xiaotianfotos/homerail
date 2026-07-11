@@ -82,15 +82,22 @@ function _normalizeNodeType(cfg: DAGNodeConfig): string {
   const type = rawType || (gateway ? "gateway" : "agent");
   if (type === "loop" || type === "loop_gateway") return "loop_gateway";
   if (type === "condition" || type === "condition_gateway") return "condition_gateway";
+  if (type === "join" || type === "join_gateway") return "join_gateway";
+  if (type === "while" || type === "while_gateway") return "while_gateway";
   if (type === "gateway") {
     if (kind === "loop") return "loop_gateway";
     if (kind === "condition") return "condition_gateway";
+    if (kind === "join") return "join_gateway";
+    if (kind === "while") return "while_gateway";
   }
   return type || "agent";
 }
 
 function _isGatewayNodeType(nodeType: string): boolean {
-  return nodeType === "loop_gateway" || nodeType === "condition_gateway";
+  return nodeType === "loop_gateway" ||
+    nodeType === "condition_gateway" ||
+    nodeType === "join_gateway" ||
+    nodeType === "while_gateway";
 }
 
 export function _detectLoopSources(
@@ -158,8 +165,15 @@ export function _detectLoopSources(
   }
 
   const loopSources = new Set<string>();
+  const nodeById = new Map(nodes.map((node) => [node.node_id, node]));
   for (const e of edges) {
     if (e.label === "after_dep" || e.to_node === "") continue;
+    const target = nodeById.get(e.to_node);
+    const source = nodeById.get(e.from_node);
+    if (target?.node_type === "loop_gateway" || target?.node_type === "while_gateway") {
+      if (source?.after.includes(target.node_id)) loopSources.add(target.node_id);
+      continue;
+    }
     const fromIdx = topoIndex.get(e.from_node);
     const toIdx = topoIndex.get(e.to_node);
     if (fromIdx !== undefined && toIdx !== undefined && fromIdx > toIdx) {
@@ -184,6 +198,7 @@ export function parseDAGYaml(yamlString: string): ParsedDAG {
     runtime_profiles: raw.runtime_profiles,
     provider_policy: raw.provider_policy,
     scorecard: raw.scorecard,
+    pattern: raw.pattern,
     image: raw.image,
     limits: raw.limits,
     git: raw.git,
