@@ -157,8 +157,14 @@ jobs:
         run: docker build -t homerail-worker:ci -f homerail_worker/Dockerfile .
 
   live-dag-patterns:
-    name: Live DAG patterns (.112 to Qwen3.6)
-    if: github.event_name == 'workflow_dispatch' && inputs.live_patterns && github.actor == 'xiaotianfotos'
+    name: Live DAG patterns (.112 model-backed)
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.live_patterns &&
+       github.actor == 'xiaotianfotos') ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'xiaotianfotos' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, Linux, X64, homerail-live-112]
     timeout-minutes: 90
     env:
@@ -168,17 +174,15 @@ jobs:
       HOMERAIL_MANAGER_PORT: "29191"
       HOMERAIL_MANAGER_URL: http://127.0.0.1:29191
       HOMERAIL_LIVE_WORKER_IMAGE_PREFIX: homerail-worker:dag-live
-      HOMERAIL_PATTERN_MODEL_BASE_URL: http://192.168.100.10:5000
-      HOMERAIL_PATTERN_MODEL: qwen3.6
-      HOMERAIL_WAKE_MODEL: ${{ inputs.wake_model && '1' || '0' }}
-      HOMERAIL_LIVE_PATTERNS: ${{ inputs.patterns }}
+      HOMERAIL_WAKE_MODEL: ${{ github.event_name == 'pull_request' && '1' || inputs.wake_model && '1' || '0' }}
+      HOMERAIL_LIVE_PATTERNS: ${{ github.event_name == 'workflow_dispatch' && inputs.patterns || '' }}
       HOMERAIL_LIVE_RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
       HOMERAIL_LIVE_REPORT_PATH: ${{ github.workspace }}/artifacts/dag-patterns-live.json
     steps:
       - name: Check out target revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ inputs.target_ref || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || github.ref }}
           persist-credentials: false
 
       - name: Set up Node.js

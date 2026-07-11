@@ -4,7 +4,16 @@ const managerUrl = (process.env.HOMERAIL_MANAGER_URL ?? "http://127.0.0.1:29191"
 const modelBaseUrl = (process.env.HOMERAIL_PATTERN_MODEL_BASE_URL ?? "http://192.168.100.10:5000")
   .replace(/\/+$/, "");
 const modelName = process.env.HOMERAIL_PATTERN_MODEL ?? "qwen3.6";
-const providerId = "homerail-runner-qwen36";
+const providerId = process.env.HOMERAIL_PATTERN_PROVIDER_ID ?? "homerail-runner-live";
+const providerName = process.env.HOMERAIL_PATTERN_PROVIDER_NAME ?? `HomeRail Runner ${modelName}`;
+const modelApiKey = process.env.HOMERAIL_PATTERN_MODEL_API_KEY ?? "local-no-key";
+const modelProtocol = process.env.HOMERAIL_PATTERN_MODEL_PROTOCOL ?? "anthropic_compatible";
+
+if (modelProtocol !== "anthropic_compatible") {
+  throw new Error(
+    `Live DAG validation requires an Anthropic-compatible endpoint; received ${modelProtocol}`,
+  );
+}
 
 async function request(path, init) {
   const response = await fetch(`${managerUrl}${path}`, init);
@@ -20,7 +29,7 @@ await request("/api/llm/providers", {
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     id: providerId,
-    name: "HomeRail Runner Qwen3.6",
+    name: providerName,
     status: "active",
     default_model: modelName,
     base_url: modelBaseUrl,
@@ -36,8 +45,8 @@ const setting = await request("/api/llm/settings", {
     provider_id: providerId,
     endpoint_id: `${providerId}_custom`,
     model_name: modelName,
-    api_key: "local-no-key",
-    protocol: "anthropic_compatible",
+    api_key: modelApiKey,
+    protocol: modelProtocol,
     base_url: modelBaseUrl,
     anthropic_base_url: modelBaseUrl,
     is_active: true,
