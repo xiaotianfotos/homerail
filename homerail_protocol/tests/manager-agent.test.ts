@@ -111,10 +111,16 @@ describe("Manager Agent harness contract", () => {
       "list_dag_patterns",
       "get_dag_pattern",
       "instantiate_dag_pattern",
+      "list_dag_approvals",
+      "list_dag_triggers",
+      "fire_dag_event",
+      "get_dag_state",
+      "set_dag_state",
       "get_dag_schema",
       "validate_dag_workflow",
       "sync_dag_workflow",
     ]));
+    expect(chatNames).not.toContain("decide_dag_approval");
     expect(chatNames).not.toContain("write_widget_file");
     expect(voiceNames).toContain("write_widget_file");
     expect(voiceNames).toContain("update_voice_memo");

@@ -26,7 +26,7 @@ import {
 } from "../runtime/active-runs.js";
 import { getPort } from "../config/env.js";
 import { registerProvisionedWorker } from "./provisioned-cleanup.js";
-import { normalizeManagerAgentRuntimeAgentType } from "homerail-protocol";
+import { normalizeManagerAgentRuntimeAgentType, redactTelemetry } from "homerail-protocol";
 import WebSocket from "ws";
 
 export interface WsDispatchAdapterOptions {
@@ -36,19 +36,8 @@ export interface WsDispatchAdapterOptions {
   projectId?: string;
 }
 
-function redactDispatchEnvelope(envelope: DispatchEnvelope): DispatchEnvelope {
-  const llm = envelope.agentConfig.llm;
-  if (!llm?.api_key) return envelope;
-  return {
-    ...envelope,
-    agentConfig: {
-      ...envelope.agentConfig,
-      llm: {
-        ...llm,
-        api_key: "****",
-      },
-    },
-  };
+function redactDispatchEnvelope(envelope: DispatchEnvelope): unknown {
+  return redactTelemetry(envelope);
 }
 
 function mirrorDispatchPrompt(envelope: DispatchEnvelope, targetType: "worker" | "node", targetId: string): void {

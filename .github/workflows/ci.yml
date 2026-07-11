@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       live_patterns:
-        description: Run model-backed DAG pattern validation on homerail-live-112
+        description: Run model-backed DAG pattern validation on the self-hosted live runner
         type: boolean
         default: false
       target_ref:
@@ -28,7 +28,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event_name == 'workflow_dispatch' && inputs.live_patterns && 'dag-live-112' || github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name == 'workflow_dispatch' && inputs.live_patterns && 'dag-live' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -166,7 +166,7 @@ jobs:
         run: docker build -t homerail-worker:ci -f homerail_worker/Dockerfile .
 
   live-dag-patterns:
-    name: Live DAG patterns (.112 model-backed)
+    name: Live DAG patterns (self-hosted Qwen3.6)
     if: >-
       (github.event_name == 'workflow_dispatch' &&
        inputs.live_patterns &&
@@ -175,19 +175,20 @@ jobs:
        github.event.pull_request.draft == false &&
        github.actor == 'xiaotianfotos' &&
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, Linux, X64, homerail-live-112]
+    runs-on: [self-hosted, Linux, X64, homerail-live]
     timeout-minutes: 90
     env:
-      HOMERAIL_RUNNER_BASE: /vol1/1000/homerail_runners
-      HOMERAIL_LIVE_HOME_BASE: /vol1/1000/homerail_runners/homerail_home
-      HOMERAIL_LIVE_ARTIFACTS: /vol1/1000/homerail_runners/artifacts
-      HOMERAIL_MANAGER_PORT: "29191"
-      HOMERAIL_MANAGER_URL: http://127.0.0.1:29191
+      HOMERAIL_RUNNER_BASE: ${{ secrets.HOMERAIL_LIVE_RUNNER_BASE }}
+      HOMERAIL_MANAGER_PORT: ${{ secrets.HOMERAIL_LIVE_MANAGER_PORT }}
       HOMERAIL_LIVE_WORKER_IMAGE_PREFIX: homerail-worker:dag-live
       HOMERAIL_WAKE_MODEL: ${{ github.event_name == 'pull_request' && '1' || inputs.wake_model && '1' || '0' }}
       HOMERAIL_LIVE_PATTERNS: ${{ github.event_name == 'workflow_dispatch' && inputs.patterns || '' }}
       HOMERAIL_LIVE_RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
       HOMERAIL_LIVE_REPORT_PATH: ${{ github.workspace }}/artifacts/dag-patterns-live.json
+      HOMERAIL_PATTERN_MODEL: qwen3.6
+      HOMERAIL_PATTERN_MODEL_BASE_URL: ${{ secrets.HOMERAIL_PATTERN_MODEL_BASE_URL }}
+      HOMERAIL_PATTERN_MODEL_PROTOCOL: anthropic_compatible
+      HOMERAIL_PATTERN_AGENT_TYPE: claude-sdk
     steps:
       - name: Check out target revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

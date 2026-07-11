@@ -778,6 +778,74 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
     );
     CREATE INDEX IF NOT EXISTS idx_dag_metrics_run ON dag_metrics(run_id, seq);
 
+    CREATE TABLE IF NOT EXISTS dag_approvals (
+      run_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      approval_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      proposal_hash TEXT NOT NULL,
+      proposal_json TEXT NOT NULL,
+      proposer_actor TEXT NOT NULL,
+      authorized_actors TEXT NOT NULL,
+      decision TEXT,
+      actor TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      expires_at INTEGER,
+      PRIMARY KEY(run_id, node_id),
+      FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_dag_approvals_status ON dag_approvals(status, updated_at);
+
+    CREATE TABLE IF NOT EXISTS dag_state_records (
+      namespace TEXT NOT NULL,
+      state_key TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(namespace, state_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS dag_state_history (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      namespace TEXT NOT NULL,
+      state_key TEXT NOT NULL,
+      before_json TEXT,
+      after_json TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      run_id TEXT,
+      node_id TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dag_state_history_key ON dag_state_history(namespace, state_key, seq);
+
+    CREATE TABLE IF NOT EXISTS dag_triggers (
+      trigger_key TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL,
+      trigger_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      enabled INTEGER NOT NULL,
+      next_fire_at INTEGER,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(workflow_id, trigger_id),
+      FOREIGN KEY(workflow_id) REFERENCES dag_workflows(workflow_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_dag_triggers_due ON dag_triggers(enabled, next_fire_at);
+
+    CREATE TABLE IF NOT EXISTS dag_trigger_deliveries (
+      delivery_key TEXT PRIMARY KEY,
+      trigger_key TEXT NOT NULL,
+      fire_key TEXT NOT NULL,
+      status TEXT NOT NULL,
+      run_id TEXT,
+      payload_json TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(trigger_key, fire_key),
+      FOREIGN KEY(trigger_key) REFERENCES dag_triggers(trigger_key) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS experience_ingest_jobs (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL UNIQUE,
@@ -1031,6 +1099,20 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
   ensureColumn(db, "dag_workflows", "api_version", "TEXT");
   ensureColumn(db, "dag_workflows", "canonical_hash", "TEXT");
   ensureColumn(db, "dag_workflows", "compiler_version", "TEXT");
+  const approvalIdentityMigrationApplied = db.prepare(
+    "SELECT 1 FROM schema_migrations WHERE version = 4",
+  ).get();
+  if (!approvalIdentityMigrationApplied) {
+    db.transaction(() => {
+      ensureColumn(db, "dag_approvals", "proposer_actor", "TEXT NOT NULL DEFAULT ''");
+      db.prepare(`
+        UPDATE dag_approvals
+        SET expires_at = 0, decision = NULL, actor = NULL, updated_at = ?
+        WHERE status = 'waiting' AND TRIM(COALESCE(proposer_actor, '')) = ''
+      `).run(Date.now());
+      db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(4, nowIso());
+    })();
+  }
   seedBuiltinProviderCatalog(db);
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, nowIso());
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(3, nowIso());

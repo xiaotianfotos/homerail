@@ -1,5 +1,11 @@
 # WorkflowSpec v1 Design
 
+> Historical scope note: this document describes the PR #18 foundation. The
+> follow-up runtime-primitives work now implements bounded advisor calls,
+> deterministic command/compensation nodes, durable approvals/state/triggers,
+> workspace policies, and run-local fan-out. Arbitrary Graph Patch remains out
+> of scope.
+
 Status: Accepted for incremental implementation on 2026-07-11. WorkflowSpec
 validation and canonical compilation may land before runtime adoption; legacy
 runtime behavior remains authoritative until the runtime migration phase.

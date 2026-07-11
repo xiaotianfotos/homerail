@@ -151,6 +151,66 @@ nodes:
     expect(run?.dagRun.nodeStates.get("success")).toBe("SKIPPED");
   });
 
+  it("fails immediately when a terminal failure leaves a while source open", () => {
+    const parsed = parseDAGYaml(`
+name: terminal-failure-open-loop
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  gate:
+    type: while_gateway
+    gateway_config:
+      field: score
+      operator: gte
+      value: 1
+      max_iterations: 2
+      continue_port: improve
+      done_port: reached
+      exhausted_port: exhausted
+    outputs:
+      improve:
+        to: rollback.in:task
+      reached:
+        to: success.in:result
+      exhausted:
+        to: exhausted.in:result
+  rollback:
+    agent: worker
+    after: [gate]
+    outputs:
+      retry:
+        to: gate.in:measurement
+        retry_policy:
+          max_retries: 2
+      error:
+        to: ""
+  success:
+    agent: worker
+    after: [gate]
+    outputs:
+      done:
+        to: ""
+  exhausted:
+    agent: worker
+    after: [gate]
+    outputs:
+      done:
+        to: ""
+`);
+    createActiveRun("run-terminal-failure-open-loop", parsed);
+    expect(dispatchReadyNodes("run-terminal-failure-open-loop", new FakeDAGDispatcher())).toBe(1);
+    expect(getActiveRun("run-terminal-failure-open-loop")?.dagRun.nodeStates.get("gate")).toBe("RUNNING");
+
+    const run = handoffActiveRun("run-terminal-failure-open-loop", "rollback", "error", { reason: "rollback failed" });
+
+    expect(run?.status).toBe("failed");
+    expect(run?.dagRun.nodeStates.get("rollback")).toBe("FAILED");
+    expect(run?.dagRun.nodeStates.get("gate")).toBe("CANCELLED");
+    expect(run?.dagRun.nodeStates.get("success")).toBe("SKIPPED");
+    expect(run?.dagRun.nodeStates.get("exhausted")).toBe("SKIPPED");
+  });
+
   it("keeps the run active when node_error has an on_failure recovery branch", () => {
     const parsed = parseDAGYaml(failureBranchYaml());
     createActiveRun("run-node-error-branch", parsed);

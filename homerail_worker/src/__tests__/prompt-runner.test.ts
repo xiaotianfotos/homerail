@@ -109,6 +109,45 @@ describe("prompt runner", () => {
     expect(parsed.map((msg) => msg.type)).toContain("SESSION_END");
   });
 
+  it("defers node_error delivery to the worker lifecycle when requested", async () => {
+    const mockAgent: AgentClient = {
+      run() {
+        return (async function* () {
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-deferred-node-error", () => mockAgent);
+
+    const sent: string[] = [];
+    const terminalMessages: string[] = [];
+    await runPrompt(
+      {
+        task: "test",
+        sender: "test",
+        runId: "run-deferred-node-error",
+        dagConfig: makeConfigWith({ session_id: "session-deferred" }),
+      },
+      {
+        wsSend: (data) => sent.push(data),
+        onTerminalMessage: (data) => terminalMessages.push(data),
+        agentBackend: "test-deferred-node-error",
+      },
+    );
+
+    expect(sent.map((message) => JSON.parse(message).type)).toContain("SESSION_END");
+    expect(sent.map((message) => JSON.parse(message).type)).not.toContain("node_error");
+    expect(terminalMessages.map((message) => JSON.parse(message))).toEqual([{
+      type: "node_error",
+      data: {
+        runId: "run-deferred-node-error",
+        nodeId: "coder",
+        message: "agent ended without DAG handoff",
+        session_id: "session-deferred",
+      },
+    }]);
+  });
+
   it("fails claude-sdk before execution when the protocol is missing", async () => {
     const sent: string[] = [];
     await runPrompt(
@@ -143,8 +182,8 @@ describe("prompt runner", () => {
           yield {
             type: "debug" as const,
             source: "claude-sdk",
-            message: "query_start",
-            data: { model: "claude-sonnet-4-20250514" },
+            message: "query_start sk-debugsecret123",
+            data: { model: "claude-sonnet-4-20250514", api_key: "debug-secret" },
           };
           yield { type: "done" as const };
         })();
@@ -174,10 +213,15 @@ describe("prompt runner", () => {
       data: expect.objectContaining({
         event: "agent_debug",
         source: "claude-sdk",
-        message: "query_start",
+        message: "query_start ***REDACTED***",
+        data: expect.objectContaining({ api_key: "***REDACTED***" }),
       }),
     }));
+    expect(sent.join("\n")).not.toContain("sk-debugsecret123");
+    expect(sent.join("\n")).not.toContain("debug-secret");
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("HOMERAIL_AGENT_DEBUG"));
+    expect(consoleSpy.mock.calls.flat().join("\n")).not.toContain("sk-debugsecret123");
+    expect(consoleSpy.mock.calls.flat().join("\n")).not.toContain("debug-secret");
   });
 
   it("streams redacted tool inputs and result previews", async () => {
@@ -205,6 +249,7 @@ describe("prompt runner", () => {
     registerAgentBackend("test-tool-redaction", () => mockAgent);
 
     const sent: string[] = [];
+    const auditDir = mkdtempSync(join(tmpdir(), "homerail-worker-redacted-audit-"));
     await runPrompt(
       {
         task: "test",
@@ -215,6 +260,7 @@ describe("prompt runner", () => {
       {
         wsSend: (d) => sent.push(d),
         agentBackend: "test-tool-redaction",
+        auditDir,
       },
     );
 
@@ -230,6 +276,63 @@ describe("prompt runner", () => {
     expect(JSON.stringify([toolUse, toolResult])).not.toContain("secret-token-123456");
     expect(JSON.stringify([toolUse, toolResult])).not.toContain("secret-key-value");
     expect(JSON.stringify([toolUse, toolResult])).not.toContain("secret-result-token");
+    const auditText = [
+      readFileSync(join(auditDir, "run-tool-redaction.jsonl"), "utf8"),
+      readFileSync(join(auditDir, "tool-events", "run-tool-redaction.jsonl"), "utf8"),
+    ].join("\n");
+    expect(auditText).not.toContain("secret-token-123456");
+    expect(auditText).not.toContain("secret-key-value");
+    expect(auditText).toContain("***REDACTED***");
+    rmSync(auditDir, { recursive: true, force: true });
+  });
+
+  it("redacts task, text, errors, WS events, audit files, and session files", async () => {
+    const oldHome = process.env.HOMERAIL_HOME;
+    const tmpHome = mkdtempSync(join(tmpdir(), "homerail-worker-all-path-redaction-"));
+    const auditDir = join(tmpHome, "audit-test");
+    process.env.HOMERAIL_HOME = tmpHome;
+    try {
+      const mockAgent: AgentClient = {
+        run() {
+          return (async function* () {
+            yield { type: "text" as const, text: "assistant sk-outputsecret12345" };
+            yield { type: "error" as const, message: "failure token=error-secret-value" };
+            yield { type: "done" as const };
+          })();
+        },
+      };
+      registerAgentBackend("test-all-path-redaction", () => mockAgent);
+      const sent: string[] = [];
+      await runPrompt({
+        task: "task api_key=task-secret-value",
+        sender: "test",
+        runId: "run-all-path-redaction",
+        dagConfig: makeConfigWith({ session_id: "redacted-session" }),
+      }, {
+        wsSend: (data) => sent.push(data),
+        agentBackend: "test-all-path-redaction",
+        auditDir,
+      });
+
+      const evidence = [
+        ...sent,
+        readFileSync(join(auditDir, "run-all-path-redaction.jsonl"), "utf8"),
+        readFileSync(join(tmpHome, "manager", "session-store", "redacted-session", "transcript.jsonl"), "utf8"),
+      ].join("\n");
+      expect(evidence).not.toContain("task-secret-value");
+      expect(evidence).not.toContain("sk-outputsecret12345");
+      expect(evidence).not.toContain("error-secret-value");
+      expect(evidence).toContain("***REDACTED***");
+      const resumableSession = readFileSync(
+        join(tmpHome, "manager", "session-store", "redacted-session", "session.json"),
+        "utf8",
+      );
+      expect(resumableSession).toContain("task api_key=task-secret-value");
+    } finally {
+      if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
+      else process.env.HOMERAIL_HOME = oldHome;
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 
   it("passes job LLM credential fields into the agent context", async () => {
@@ -471,6 +574,7 @@ describe("prompt runner", () => {
   it("deterministic backend sends node_handoff from systemPrompt directive", async () => {
     delete process.env.LLM_BASE_URL;
     const sent: string[] = [];
+    const terminalMessages: string[] = [];
 
     await runPrompt(
       {
@@ -488,12 +592,14 @@ describe("prompt runner", () => {
       },
       {
         wsSend: (d) => sent.push(d),
+        onTerminalMessage: (data) => terminalMessages.push(data),
         agentBackend: "deterministic",
       },
     );
 
     const parsed = sent.map((s) => JSON.parse(s));
-    const handoff = parsed.find((msg) => msg.type === "response");
+    expect(parsed.find((msg) => msg.type === "response")).toBeUndefined();
+    const handoff = terminalMessages.map((message) => JSON.parse(message)).find((msg) => msg.type === "response");
     expect(handoff?.data).toMatchObject({
       type: "node_handoff",
       runId: "run-det",

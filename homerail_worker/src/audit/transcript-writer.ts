@@ -9,6 +9,7 @@ import type { Writable } from "node:stream";
 import { homerailPath } from "../platform/paths.js";
 import { writeTranscriptChecksum } from "./checksum.js";
 import { assertSafeRunId } from "./tool-event-writer.js";
+import { redactTelemetry } from "homerail-protocol";
 
 export interface TranscriptWriter {
   write(entry: Record<string, unknown>): void;
@@ -28,7 +29,7 @@ export function createTranscriptWriter(
 
   return {
     write(entry: Record<string, unknown>) {
-      const line = JSON.stringify({ ...entry, ts: Date.now() }) + "\n";
+      const line = JSON.stringify(redactTelemetry({ ...entry, ts: Date.now() })) + "\n";
       stream.write(line);
     },
     flush() {

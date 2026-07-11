@@ -88,7 +88,7 @@ describe("HomeRailClient.get", () => {
       mockResponse as unknown as Response,
     );
 
-    const client = new HomeRailClient({ baseUrl: "http://test:1234" });
+    const client = new HomeRailClient({ baseUrl: "http://test:1234", mutationToken: "mutation-secret" });
     const result = await client.get("/api/runs");
 
     expect(fetchSpy).toHaveBeenCalledWith(
@@ -109,13 +109,14 @@ describe("HomeRailClient.post", () => {
       mockResponse as unknown as Response,
     );
 
-    const client = new HomeRailClient({ baseUrl: "http://test:1234" });
+    const client = new HomeRailClient({ baseUrl: "http://test:1234", mutationToken: "mutation-secret" });
     const result = await client.post("/api/runs", { yamlPath: "test.yaml" });
 
     expect(fetchSpy).toHaveBeenCalledWith(
       "http://test:1234/api/runs",
       expect.objectContaining({
         method: "POST",
+        headers: expect.objectContaining({ "X-Homerail-Dag-Token": "mutation-secret" }),
         body: JSON.stringify({ yamlPath: "test.yaml" }),
       }),
     );

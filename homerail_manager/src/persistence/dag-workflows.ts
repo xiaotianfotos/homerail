@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 import YAML from "yaml";
 import { encodeJson, getDb, parseJsonRow, clearTables } from "./db.js";
 import { nowIso } from "./time.js";
+import { syncDagTriggers } from "./dag-triggers.js";
 import {
   getSetting,
   isVoiceServiceSetting,
@@ -389,6 +390,7 @@ export function upsertDagWorkflowFromYaml(input: {
       });
     }
   })();
+  syncDagTriggers(workflowId, canonical.triggers);
   return { workflow, created: !existing, revision_created: revisionCreated, parsed };
 }
 

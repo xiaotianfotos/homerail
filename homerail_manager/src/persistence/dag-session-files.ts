@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getSessionStoreRoot } from "../config/env.js";
+import { redactTelemetry } from "homerail-protocol";
 
 export interface SessionTranscriptEntry {
   uuid?: string;
@@ -127,6 +128,8 @@ export function appendSessionTranscriptEntry(
   mkdirSync(dir, { recursive: true });
   const normalized: SessionTranscriptEntry = {
     ...entry,
+    content: redactTelemetry(entry.content),
+    ...(entry.metadata ? { metadata: redactTelemetry(entry.metadata) as Record<string, unknown> } : {}),
     uuid: entry.uuid ?? randomUUID(),
     timestamp: typeof entry.timestamp === "number" ? entry.timestamp : Date.now(),
   };

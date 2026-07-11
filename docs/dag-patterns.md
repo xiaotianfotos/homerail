@@ -6,9 +6,10 @@ model, provider, repository, or task prompt.
 
 ## Four Layers
 
-1. **Runtime primitives**: nodes, typed handoffs, terminal edges, condition and
-   finite-loop gateways, `join_gateway`, `while_gateway`, and bounded feedback
-   edges.
+1. **Runtime primitives**: typed handoffs, terminal edges, condition/loop/join/
+   while gateways, deterministic commands, durable approvals, transactional
+   state, bounded dynamic fan-out, advisor calls, workspace policies, and
+   Manager-owned triggers.
 2. **Abstract patterns**: parameterized, provider-independent workflow
    definitions built into Manager.
 3. **Skill guidance**: selection, adaptation, composition, and validation rules
@@ -61,12 +62,101 @@ The feedback edge must return directly to the while gateway. Add
 `retry_policy.max_retries` to that edge so the local feedback bound is explicit
 in addition to the run-wide traversal limit.
 
+### Deterministic Command
+
+`kind: command` executes an argument vector without a shell. The executable
+must be present in `HOMERAIL_DAG_COMMAND_ALLOWLIST`; timeout, output capture,
+exit codes, optional stdin, and JSON/number parsing are explicit. Use command
+nodes for checks, metric measurement, and compensation. The default allowlist
+is empty because commands run in the Manager host trust boundary. A dynamic
+`command_field` additionally requires `HOMERAIL_DAG_ALLOW_DYNAMIC_COMMANDS=true`.
+When a command node has multiple input ports, `config.input` selects the
+authoritative port used by `command_field` and `stdin_field`; other inputs can
+act as deterministic readiness gates without being able to replace the command.
+Command nodes do not run inside a provisioned Node or agent workspace. A metric
+or rollback that must observe worker filesystem changes therefore needs an
+external target reachable from Manager, or a future explicit command execution
+target; do not assume Manager and a remote Node share a filesystem.
+
+### Durable Approval
+
+`kind: approval` persists the exact proposal and its SHA-256 hash, enters
+`WAITING_FOR_APPROVAL`, and survives Manager restart. Approval requires an
+authorized actor and matching proposal hash. The workflow must declare a
+`proposer_actor`; that actor cannot also be authorized to decide, and the
+persistence boundary rejects matching proposer/approver identities. Approved
+and rejected rows are immutable for the same run and node. Manager Agent may
+list pending approvals but cannot decide them. Decisions are accepted only from
+loopback clients, or with `HOMERAIL_DAG_APPROVAL_TOKEN` when Manager is remote.
+The actor value remains an audited identity asserted by that trusted client;
+the shared token is not per-actor authentication.
+
+### Transactional State And Triggers
+
+`kind: state` provides namespaced versioned records with history. Workflow
+`spec.triggers` supports persisted interval and idempotent event delivery with
+overlap and concurrency policies. Remote DAG writes require
+`HOMERAIL_DAG_MUTATION_TOKEN`, including run lifecycle operations, workflow and
+profile sync, state changes, event delivery, injection, and dynamic graph
+changes; loopback remains the default local trust boundary. `budget_admit`
+requires a positive requested amount and atomically
+reserves it only when `spent + requested <= limit`, so concurrent runs cannot
+all pass from the same stale ledger read. The reservation is a declared upper
+bound, not provider-side enforcement of actual model spend.
+
+### Dynamic Fan-out
+
+`kind: fanout` expands a bounded item array into run-local worker nodes. It
+enforces item and parallelism limits, all/any/n-of-m completion, optional early
+cancellation, and result isolation without mutating the workflow revision.
+`item_field` selects the per-worker array, while optional `context_field`
+selects immutable shared context copied to every worker envelope and to the
+aggregate result for canonical verification. Optional `result_contract`
+validates each dynamic worker's `result` handoff before it can count toward the
+completion threshold.
+
+### Advisor And Workspace Policy
+
+Agent nodes can declare bounded `advisors`. `consult_advisor` returns advice to
+the same executor turn and audits identity, request, response, usage, timeout,
+and call count. Worker content, stream events, errors, transcripts, audit
+records, Manager Agent tool evidence, advisor events, and deterministic command
+telemetry pass through the shared protocol redactor before evidence transport or
+persistence. Authoritative DAG handoffs and resumable `session.json` state remain
+exact so recovery cannot change behavior; they are private runtime state, not
+telemetry, and must not be used to carry credentials. `workspace_access` delays
+handoff until
+final file snapshots show that readonly artifacts and write scopes were
+respected inside the workspace root. It does not observe writes outside that
+root or a protected file changed and restored before the final snapshot;
+OS-level containment remains the responsibility of the selected agent backend
+or container sandbox.
+
+Manager-to-Node and Manager-to-Worker WebSocket transport is trusted-network
+transport in this release. Multi-host deployments must provide network-layer
+isolation or a TLS-authenticated reverse proxy until native `wss` authentication
+is implemented.
+
+The self-hosted catalog validation uses an operator-configured Qwen 3.6 service
+through its Anthropic-compatible endpoint and the HomeRail `claude-sdk`
+adapter. Machine-specific endpoints and storage paths are supplied through CI
+secrets rather than committed to the repository. The runner checks that
+`qwen3.6` is listed before starting the catalog and can wake the model host when
+explicitly enabled.
+
+`workspace.mode: shared` provisions separate workers against the same
+run-scoped `${HOMERAIL_HOME}/workspace/<run-id>` directory. This enables
+breaker/builder/verifier and iterative improvement patterns without exposing a
+host-global workspace; per-node `workspace_access` rules and immutable-file
+hashes still apply.
+
 ## Built-in Patterns
 
 | Pattern | Invariant |
 | --- | --- |
 | `heartbeat` | Cheap quiet exit, one selected action, independent verdict. |
 | `orchestrator-workers` | One planner, independent workers, aggregate, fresh verifier. |
+| `executor-advisor` | One executor retains context and consults a bounded advisor only at ambiguity boundaries. |
 | `budget-gate` | Explicit budget admission before expensive work. |
 | `trust-ledger` | Autonomy is granted per recurring skill from measured history. |
 | `standing-goal-sentinel` | Completed goals become repeatedly checked invariants. |
@@ -112,13 +202,27 @@ Instantiation validates parameter types, rejects unknown parameters, preserves
 numeric and boolean values, substitutes all placeholders, parses the generated
 YAML, and validates the resulting graph before returning it.
 
-## External State Boundaries
+The Ratchet reference topology sends the while gateway's previous measurement
+and the independent remeasurement into an explicit join. A deterministic
+command compares that adjacent pair before feedback is allowed. The improver
+preserves measurement and rollback commands, but it cannot declare or rewrite
+the baseline used by the monotonic gate.
 
-Some patterns need state or triggers outside the DAG graph. Schedules, cost
-records, trust history, standing-goal ledgers, and human approvals remain
-explicit inputs or surrounding services. The pattern encodes how that evidence
-is routed; it does not claim that a DAG alone provides a cron scheduler, billing
-source, durable policy database, or interactive human pause.
+## Runtime State Boundaries
+
+Manager owns schedules, event-delivery idempotency, budget/trust/goal state,
+and approval decisions. External systems still own measured facts such as
+model pricing, repository tests, deployment APIs, and actor authentication.
+Feed those facts through deterministic commands or event payloads.
+
+```bash
+hr dag approvals
+hr dag decide <run-id> <node-id> --decision approved --actor <id> --proposal-hash <sha256>
+hr dag triggers
+hr dag trigger-event <event> --idempotency-key <key> --payload '<json>'
+hr dag state-get <namespace> <key>
+hr dag state-set <namespace> <key> '<json>' --expected-version <n>
+```
 
 ## Inspiration
 

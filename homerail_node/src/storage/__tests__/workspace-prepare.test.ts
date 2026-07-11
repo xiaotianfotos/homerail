@@ -78,6 +78,17 @@ describe("prepareWorkerWorkspace", () => {
     expect(fs.existsSync(result.root)).toBe(true);
   });
 
+  it("creates one run-scoped workspace for shared mode", async () => {
+    const result = await prepareWorkerWorkspace("run-shared", { mode: "shared" });
+    const expectedRoot = normalizePath(path.join(homerailHome, "workspace", "run-shared"));
+
+    expect(result).toEqual({
+      root: expectedRoot,
+      prepared: true,
+    });
+    expect(fs.existsSync(result.root)).toBe(true);
+  });
+
   it("copies an allowed local worktree into repo under the worker workspace root", async () => {
     const source = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-source-worktree-"));
     fs.mkdirSync(path.join(source, ".git"), { recursive: true });

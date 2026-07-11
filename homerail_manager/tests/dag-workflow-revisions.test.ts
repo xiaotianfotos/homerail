@@ -92,7 +92,7 @@ describe("DAG workflow revisions", () => {
     expect(workflow).toMatchObject({
       head_revision: 1,
       api_version: "legacy/v0",
-      compiler_version: "1",
+      compiler_version: "2",
     });
     expect(workflow?.canonical_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(listDagWorkflowRevisions("revision-test")).toEqual([
@@ -135,7 +135,7 @@ spec:
       workflow_id: "v1-revision",
       head_revision: 1,
       api_version: "homerail.ai/v1",
-      compiler_version: "1",
+      compiler_version: "2",
       node_ids: ["execute"],
       agent_ids: ["worker"],
     });

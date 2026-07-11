@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 
 const managerUrl = (process.env.HOMERAIL_MANAGER_URL ?? "http://127.0.0.1:29191").replace(/\/+$/, "");
-const modelBaseUrl = (process.env.HOMERAIL_PATTERN_MODEL_BASE_URL ?? "http://192.168.100.10:5000")
-  .replace(/\/+$/, "");
+const modelBaseUrl = (process.env.HOMERAIL_PATTERN_MODEL_BASE_URL ?? "").replace(/\/+$/, "");
 const modelName = process.env.HOMERAIL_PATTERN_MODEL ?? "qwen3.6";
 const providerId = process.env.HOMERAIL_PATTERN_PROVIDER_ID ?? "homerail-runner-live";
 const providerName = process.env.HOMERAIL_PATTERN_PROVIDER_NAME ?? `HomeRail Runner ${modelName}`;
 const modelApiKey = process.env.HOMERAIL_PATTERN_MODEL_API_KEY ?? "local-no-key";
 const modelProtocol = process.env.HOMERAIL_PATTERN_MODEL_PROTOCOL ?? "anthropic_compatible";
+
+if (!modelBaseUrl) {
+  throw new Error("HOMERAIL_PATTERN_MODEL_BASE_URL is required");
+}
 
 if (modelProtocol !== "anthropic_compatible") {
   throw new Error(

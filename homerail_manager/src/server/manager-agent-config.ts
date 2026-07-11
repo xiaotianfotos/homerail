@@ -115,7 +115,9 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
       harness,
       llm_setting_id: null,
       provider_name: null,
-      model_name: mergedSettingId || mergedProviderName ? "gpt-5.5" : mergedModelName ?? "gpt-5.5",
+      model_name: settingId || providerName
+        ? "gpt-5.5"
+        : modelName ?? (mergedSettingId || mergedProviderName ? "gpt-5.5" : mergedModelName ?? "gpt-5.5"),
       reasoning_effort: mergedReasoningEffort,
       service_tier: mergedServiceTier,
     };

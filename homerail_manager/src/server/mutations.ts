@@ -18,6 +18,8 @@ import {
 import { getSetting } from "../persistence/llm-settings.js";
 import { ManagerAgentRuntimeError, runManagerAgentTurn } from "./manager-agent-runtime.js";
 import { dagResourcesUnavailableForRun } from "./dag-resource-status.js";
+import { fireDagEventTrigger } from "../runtime/dag-triggers.js";
+import { updateDagState } from "../persistence/dag-runtime-primitives.js";
 
 interface BaseResponse {
   success: boolean;
@@ -33,6 +35,10 @@ function json(res: http.ServerResponse, status: number, body: BaseResponse) {
 
 function _badRequest(res: http.ServerResponse, message: string) {
   json(res, 400, { success: false, message, error: message });
+}
+
+function _forbidden(res: http.ServerResponse, message: string) {
+  json(res, 403, { success: false, message, error: message });
 }
 
 function _notFound(res: http.ServerResponse, message: string) {
@@ -53,6 +59,39 @@ function _unavailable(res: http.ServerResponse, message: string, data?: unknown)
 
 function _created(res: http.ServerResponse, message: string, data: unknown) {
   json(res, 201, { success: true, message, data });
+}
+
+export function isDagApprovalRequestAuthorized(input: {
+  remoteAddress?: string;
+  headerToken?: string;
+  bodyToken?: unknown;
+  configuredToken?: string;
+}): boolean {
+  return isDagMutationRequestAuthorized(input);
+}
+
+export function isDagMutationRequestAuthorized(input: {
+  remoteAddress?: string;
+  headerToken?: string;
+  bodyToken?: unknown;
+  configuredToken?: string;
+}): boolean {
+  const configuredToken = input.configuredToken?.trim();
+  if (configuredToken) {
+    const supplied = input.headerToken?.trim() || (typeof input.bodyToken === "string" ? input.bodyToken.trim() : "");
+    return supplied.length > 0 && supplied === configuredToken;
+  }
+  const address = input.remoteAddress ?? "";
+  return address === "::1" || address === "localhost" || address.startsWith("127.") || address.startsWith("::ffff:127.");
+}
+
+export function requiresDagMutationAuthorization(pathname: string, method?: string): boolean {
+  if (method !== "POST") return false;
+  if (/^\/api\/runs\/[^/]+\/node\/[^/]+\/approval$/.test(pathname)) return false;
+  return pathname === "/api/runs"
+    || pathname.startsWith("/api/runs/")
+    || pathname === "/api/dag/workflows/sync"
+    || pathname === "/api/dag/profiles/sync";
 }
 
 async function _readJsonBody(req: http.IncomingMessage): Promise<unknown> {
@@ -389,6 +428,89 @@ export function mutationRoutesHandler(
         _badRequest(res, message);
       }
     }
+    return true;
+  }
+
+  const approvalMatch = pathname.match(/^\/api\/runs\/([^/]+)\/node\/([^/]+)\/approval$/);
+  if (approvalMatch && req.method === "POST") {
+    const runId = decodeURIComponent(approvalMatch[1]);
+    const nodeId = decodeURIComponent(approvalMatch[2]);
+    void _readJsonBody(req).then((raw) => {
+      const body = raw as Record<string, unknown>;
+      const headerToken = Array.isArray(req.headers["x-homerail-approval-token"])
+        ? req.headers["x-homerail-approval-token"]?.[0]
+        : req.headers["x-homerail-approval-token"];
+      if (!isDagApprovalRequestAuthorized({
+        remoteAddress: req.socket.remoteAddress,
+        headerToken,
+        bodyToken: body.authorization_token,
+        configuredToken: process.env.HOMERAIL_DAG_APPROVAL_TOKEN,
+      })) {
+        _forbidden(res, "approval decisions require a local request or valid HOMERAIL_DAG_APPROVAL_TOKEN");
+        return;
+      }
+      const decision = body.decision === "approved" || body.decision === "rejected" ? body.decision : undefined;
+      const actor = typeof body.actor === "string" ? body.actor.trim() : "";
+      const proposalHash = typeof body.proposal_hash === "string" ? body.proposal_hash.trim() : "";
+      if (!decision || !actor || !proposalHash) throw new Error("decision, actor, and proposal_hash are required");
+      const result = changeOrchestrator.decideApproval(runId, nodeId, { decision, actor, proposalHash });
+      _ok(res, `Approval ${decision}`, result);
+    }).catch((error) => _badRequest(res, error instanceof Error ? error.message : String(error)));
+    return true;
+  }
+
+  const triggerEventMatch = pathname.match(/^\/api\/dag\/triggers\/events\/([^/]+)$/);
+  if (triggerEventMatch && req.method === "POST") {
+    void _readJsonBody(req).then((raw) => {
+      const body = raw as Record<string, unknown>;
+      const headerToken = Array.isArray(req.headers["x-homerail-dag-token"])
+        ? req.headers["x-homerail-dag-token"]?.[0]
+        : req.headers["x-homerail-dag-token"];
+      if (!isDagMutationRequestAuthorized({
+        remoteAddress: req.socket.remoteAddress,
+        headerToken,
+        bodyToken: body.authorization_token,
+        configuredToken: process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? process.env.HOMERAIL_DAG_APPROVAL_TOKEN,
+      })) {
+        _forbidden(res, "DAG event delivery requires a local request or valid HOMERAIL_DAG_MUTATION_TOKEN");
+        return;
+      }
+      const idempotencyKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
+      if (!idempotencyKey) throw new Error("idempotency_key is required");
+      const eventName = decodeURIComponent(triggerEventMatch[1]);
+      const deliveries = fireDagEventTrigger(eventName, idempotencyKey, body.payload);
+      _ok(res, `Event trigger '${eventName}' delivered`, { deliveries, total: deliveries.length });
+    }).catch((error) => _badRequest(res, error instanceof Error ? error.message : String(error)));
+    return true;
+  }
+
+  const stateMatch = pathname.match(/^\/api\/dag\/state\/([^/]+)\/([^/]+)$/);
+  if (stateMatch && req.method === "POST") {
+    const namespace = decodeURIComponent(stateMatch[1]);
+    const key = decodeURIComponent(stateMatch[2]);
+    void _readJsonBody(req).then((raw) => {
+      const body = raw as Record<string, unknown>;
+      const headerToken = Array.isArray(req.headers["x-homerail-dag-token"])
+        ? req.headers["x-homerail-dag-token"]?.[0]
+        : req.headers["x-homerail-dag-token"];
+      if (!isDagMutationRequestAuthorized({
+        remoteAddress: req.socket.remoteAddress,
+        headerToken,
+        bodyToken: body.authorization_token,
+        configuredToken: process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? process.env.HOMERAIL_DAG_APPROVAL_TOKEN,
+      })) {
+        _forbidden(res, "DAG state mutation requires a local request or valid HOMERAIL_DAG_MUTATION_TOKEN");
+        return;
+      }
+      if (!("value" in body)) throw new Error("value is required");
+      const expectedVersion = body.expected_version === undefined ? undefined : Number(body.expected_version);
+      if (expectedVersion !== undefined && (!Number.isInteger(expectedVersion) || expectedVersion < 0)) {
+        throw new Error("expected_version must be a non-negative integer");
+      }
+      const result = updateDagState({ namespace, key, value: body.value, expectedVersion });
+      if (!result.updated) throw new Error(`state version conflict: current version is ${result.record.version}`);
+      _ok(res, "DAG state updated", result);
+    }).catch((error) => _badRequest(res, error instanceof Error ? error.message : String(error)));
     return true;
   }
 

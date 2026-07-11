@@ -13,6 +13,7 @@ import { DAG_EVENT_TYPES, subscribe, type DAGEventPayload } from "../events/bus.
 import type { DAGRunCounters, DAGRunLimits } from "../runtime/active-runs.js";
 import { assertStatus, type DagRunStatus } from "./status.js";
 import { assertEpochMs, nowEpochMs } from "./time.js";
+import { redactTelemetry } from "homerail-protocol";
 
 // Contract marker for regression: "dag:instruction_terminal_no_active_target"
 // is persisted through DAG_EVENT_TYPES.
@@ -176,6 +177,7 @@ function _serializeGraph(graph: DAGGraphData): PersistedGraphData {
       to_node: e.to_node,
       to_port: e.to_port,
       condition: e.condition,
+      terminal_outcome: e.terminal_outcome,
       label: e.label,
       retry_policy: e.retry_policy,
     })),
@@ -233,7 +235,12 @@ export function appendChatEntry(runId: string, nodeId: string, entry: ChatEntry)
   _safeNodeId(nodeId);
   getDb()
     .prepare("INSERT INTO dag_chats(run_id, node_id, timestamp, data) VALUES (?, ?, ?, ?)")
-    .run(runId, nodeId, entry.timestamp === undefined ? null : assertEpochMs(entry.timestamp, "dag_chats.timestamp"), encodeJson(entry));
+    .run(
+      runId,
+      nodeId,
+      entry.timestamp === undefined ? null : assertEpochMs(entry.timestamp, "dag_chats.timestamp"),
+      encodeJson(redactTelemetry(entry)),
+    );
 }
 
 export function appendNodeUsage(record: NodeUsageRecord): void {
