@@ -142,6 +142,18 @@ describe("HomeRail Plugin Manifest V1", () => {
     ]));
   });
 
+  it("bounds version axes without allocating from hostile values", () => {
+    const hostile = manifest();
+    hostile.kinds[0].current_version = 4_294_967_296;
+    expect(() => validateHomerailPluginManifest(hostile)).not.toThrow();
+    expect(validateHomerailPluginManifest(hostile).valid).toBe(false);
+
+    const hostileState = manifest();
+    hostileState.state.schema_version = Number.MAX_SAFE_INTEGER;
+    expect(() => validateHomerailPluginManifest(hostileState)).not.toThrow();
+    expect(validateHomerailPluginManifest(hostileState).valid).toBe(false);
+  });
+
   it("checks renderer kind, surface, mode, and exact resolution keys", () => {
     const input = manifest();
     input.renderers[0].surfaces = ["execution"];

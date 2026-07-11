@@ -216,7 +216,7 @@ const schemaRefSchema = {
 const kindVersionSchema = {
   type: "object",
   properties: {
-    version: { type: "integer", minimum: 1 },
+    version: { type: "integer", minimum: 1, maximum: 32 },
     content_schema: localId,
     allowed_surfaces: {
       type: "array",
@@ -255,7 +255,7 @@ const kindSchema = {
   type: "object",
   properties: {
     kind: semanticKind,
-    current_version: { type: "integer", minimum: 1 },
+    current_version: { type: "integer", minimum: 1, maximum: 32 },
     versions: {
       type: "array",
       minItems: 1,
@@ -268,8 +268,8 @@ const kindSchema = {
       items: {
         type: "object",
         properties: {
-          from: { type: "integer", minimum: 1 },
-          to: { type: "integer", minimum: 2 },
+          from: { type: "integer", minimum: 1, maximum: 31 },
+          to: { type: "integer", minimum: 2, maximum: 32 },
           file: packagePath,
         },
         required: ["from", "to", "file"],
@@ -455,8 +455,8 @@ const permissionGrantSchema = {
 const stateMigrationSchema = {
   type: "object",
   properties: {
-    from: { type: "integer", minimum: 1 },
-    to: { type: "integer", minimum: 2 },
+    from: { type: "integer", minimum: 1, maximum: 63 },
+    to: { type: "integer", minimum: 2, maximum: 64 },
     file: packagePath,
     effect,
     permissions,
@@ -532,7 +532,7 @@ export const homerailPluginManifestSchema = {
     state: {
       type: "object",
       properties: {
-        schema_version: { type: "integer", minimum: 1 },
+        schema_version: { type: "integer", minimum: 1, maximum: 64 },
         migrations: { type: "array", maxItems: 63, items: stateMigrationSchema },
       },
       required: ["schema_version", "migrations"],

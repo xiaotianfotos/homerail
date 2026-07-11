@@ -254,10 +254,9 @@ function semanticErrors(manifest: HomerailPluginManifestV1): HomerailPluginValid
     }
     errors.push(...duplicateErrors(kind.versions, (value) => String(value.version), `/kinds/${kindIndex}/versions`));
     const orderedVersions = kind.versions.map((value) => value.version);
-    const expectedVersions = Array.from({ length: kind.current_version }, (_, index) => index + 1);
     if (
-      orderedVersions.length !== expectedVersions.length
-      || orderedVersions.some((version, index) => version !== expectedVersions[index])
+      orderedVersions.length !== kind.current_version
+      || orderedVersions.some((version, index) => version !== index + 1)
     ) {
       errors.push(error(
         `/kinds/${kindIndex}/versions`,
@@ -454,7 +453,15 @@ export function validateHomerailPluginManifest(
     return { valid: false, errors: [error("", "manifest schema validation failed safely", "schemaValidation")] };
   }
   const manifest = stableValue as HomerailPluginManifestV1;
-  const errors = semanticErrors(manifest);
+  let errors: HomerailPluginValidationError[];
+  try {
+    errors = semanticErrors(manifest);
+  } catch {
+    return {
+      valid: false,
+      errors: [error("", "manifest semantic validation failed safely", "semanticValidation")],
+    };
+  }
   return errors.length
     ? { valid: false, errors }
     : { valid: true, value: manifest, errors: [] };
