@@ -67,6 +67,21 @@ Run input is the prompt supplied when the run starts. A JSON object or array
 may be supplied as a JSON-encoded prompt; Manager parses it before validating
 the entry contract.
 
+## Example Library
+
+Tracked provider-neutral examples live in `assets/orchestrations/`:
+
+- `workflow-spec-v1-minimal.yaml.template` for one agent and one terminal;
+- `workflow-spec-v1-fanout.yaml.template` for fan-out and explicit join;
+- `workflow-spec-v1-condition.yaml.template` for field-based routing;
+- `workflow-spec-v1-foreach.yaml.template` for bounded collection iteration;
+- `workflow-spec-v1-bounded-while.yaml.template` for bounded feedback and an
+  explicit exhaustion outcome.
+
+These documents intentionally contain no provider or model binding. Sync a
+database runtime profile for real runs; the test suite binds a deterministic
+dispatcher separately when checking graph behavior.
+
 ## Language Rules
 
 - Root fields are `api_version`, `kind`, `metadata`, and `spec` only.

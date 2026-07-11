@@ -1,0 +1,84 @@
+api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: workflow-spec-v1-foreach
+  name: WorkflowSpec v1 Foreach
+
+spec:
+  description: Process a bounded JSON array one item at a time and collect results.
+
+  contracts:
+    Items:
+      type: array
+      minItems: 1
+      maxItems: 100
+      items: { type: string, maxLength: 4000 }
+    Iteration:
+      type: object
+      required: [item, index, total]
+      properties:
+        item: { type: string, maxLength: 4000 }
+        index: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 1 }
+    ItemResult:
+      type: object
+      additionalProperties: false
+      required: [item, result]
+      properties:
+        item: { type: string, maxLength: 4000 }
+        result: { type: string, maxLength: 20000 }
+    Summary:
+      type: object
+      required: [total, completed, results]
+      properties:
+        total: { type: integer, minimum: 0 }
+        completed: { type: boolean }
+        results:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+
+  agents:
+    worker:
+      system: Process the current iteration and hand off an ItemResult object on result.
+
+  nodes:
+    each:
+      kind: foreach
+      inputs:
+        items: { contract: Items }
+        result: { contract: ItemResult }
+      outputs:
+        next: { contract: Iteration }
+        done: { contract: Summary }
+      config:
+        input: items
+        item_port: next
+        result_port: result
+        done_port: done
+        max_items: 100
+
+    worker:
+      kind: agent
+      agent: worker
+      inputs:
+        task: { contract: Iteration }
+      outputs:
+        result: { contract: ItemResult }
+
+    done:
+      kind: terminal
+      outcome: success
+      inputs:
+        summary: { contract: Summary }
+
+  edges:
+    - { from: $run.input, to: each.items }
+    - { from: each.next, to: worker.task }
+    - kind: feedback
+      from: worker.result
+      to: each.result
+      max_traversals: 100
+    - { from: each.done, to: done.summary }

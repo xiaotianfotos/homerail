@@ -3,8 +3,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ChangeOrchestrator } from "../src/orchestration/change-orchestrator.js";
-import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
+import {
+  FakeDAGDispatcher,
+  type DAGDispatcher,
+  type DispatchEnvelope,
+  type DispatchResult,
+} from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
+import { parseWorkflowSourceFile } from "../src/orchestration/workflow-spec-v1.js";
 import {
   _clearDagWorkflowTablesForTest,
   upsertDagRuntimeProfileFromYaml,
@@ -46,6 +52,24 @@ spec:
     - { from: $run.input, to: execute.task }
     - { from: execute.result, to: terminal.result }
 `;
+}
+
+function publicV1Asset(file: string) {
+  const parsed = parseWorkflowSourceFile(path.resolve("..", "assets", "orchestrations", file));
+  parsed.meta.agents = Object.fromEntries(Object.entries(parsed.meta.agents ?? {}).map(([id, agent]) => [
+    id,
+    { ...agent, agent_type: "deterministic" },
+  ]));
+  return parsed;
+}
+
+class RepeatableDispatcher implements DAGDispatcher {
+  dispatched: DispatchEnvelope[] = [];
+
+  dispatch(envelope: DispatchEnvelope): DispatchResult {
+    this.dispatched.push(envelope);
+    return { status: "dispatched", targetType: "fake", targetId: `fake-${this.dispatched.length}` };
+  }
 }
 
 describe("WorkflowSpec v1 runtime projection", () => {
@@ -168,6 +192,81 @@ describe("WorkflowSpec v1 runtime projection", () => {
     });
     const envelope = buildCurrentDispatchEnvelope("v1-cold-recovery", "execute");
     expect(envelope).toMatchObject({ ok: true, envelope: { inputs: { task: ["recover me"] } } });
+  });
+
+  it("runs the public fan-out and join example to success", () => {
+    const executor = new GraphExecutor(new RepeatableDispatcher());
+    executor.createRun(
+      "v1-example-fanout",
+      publicV1Asset("workflow-spec-v1-fanout.yaml.template"),
+      "Review the release",
+    );
+
+    expect(executor.tick("v1-example-fanout")).toBe(1);
+    handoffActiveRun("v1-example-fanout", "plan", "plan", "Check build and tests");
+    expect(executor.tick("v1-example-fanout")).toBe(2);
+    handoffActiveRun("v1-example-fanout", "worker_one", "result", { status: "done", evidence: "build passed" });
+    handoffActiveRun("v1-example-fanout", "worker_two", "result", { status: "done", evidence: "tests passed" });
+    expect(executor.tick("v1-example-fanout")).toBe(1);
+
+    expect(getActiveRun("v1-example-fanout")?.status).toBe("completed");
+  });
+
+  it("runs the public condition example through its success terminal", () => {
+    const executor = new GraphExecutor(new RepeatableDispatcher());
+    executor.createRun(
+      "v1-example-condition",
+      publicV1Asset("workflow-spec-v1-condition.yaml.template"),
+      "Approve a reversible release",
+    );
+
+    expect(executor.tick("v1-example-condition")).toBe(1);
+    handoffActiveRun("v1-example-condition", "classify", "decision", {
+      route: "approve",
+      reason: "all checks passed",
+    });
+    expect(executor.tick("v1-example-condition")).toBe(1);
+
+    expect(getActiveRun("v1-example-condition")?.status).toBe("completed");
+  });
+
+  it("runs the public foreach example and validates its collected summary", () => {
+    const executor = new GraphExecutor(new RepeatableDispatcher());
+    executor.createRun(
+      "v1-example-foreach",
+      publicV1Asset("workflow-spec-v1-foreach.yaml.template"),
+      JSON.stringify(["alpha", "beta"]),
+    );
+
+    expect(executor.tick("v1-example-foreach")).toBe(2);
+    handoffActiveRun("v1-example-foreach", "worker", "result", { item: "alpha", result: "done" });
+    expect(executor.tick("v1-example-foreach")).toBe(2);
+    handoffActiveRun("v1-example-foreach", "worker", "result", { item: "beta", result: "done" });
+    expect(executor.tick("v1-example-foreach")).toBe(1);
+
+    expect(getActiveRun("v1-example-foreach")?.status).toBe("completed");
+    expect(getActiveRun("v1-example-foreach")?.counters.gateway_results.each).toEqual([
+      { item: "alpha", result: "done" },
+      { item: "beta", result: "done" },
+    ]);
+  });
+
+  it("runs the public bounded-while example to explicit exhaustion", () => {
+    const executor = new GraphExecutor(new RepeatableDispatcher());
+    executor.createRun(
+      "v1-example-while",
+      publicV1Asset("workflow-spec-v1-bounded-while.yaml.template"),
+      JSON.stringify({ score: 10 }),
+    );
+
+    expect(executor.tick("v1-example-while")).toBe(2);
+    for (const score of [20, 30, 40]) {
+      handoffActiveRun("v1-example-while", "improve", "measured", { score });
+      executor.tick("v1-example-while");
+    }
+
+    expect(getActiveRun("v1-example-while")?.status).toBe("failed");
+    expect(getActiveRun("v1-example-while")?.counters.gateway_iterations.target).toBe(3);
   });
 });
 

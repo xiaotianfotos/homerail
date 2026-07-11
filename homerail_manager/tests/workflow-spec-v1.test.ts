@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { Value } from "@sinclair/typebox/value";
 import { compileWorkflowSource, parseWorkflowSourceFile } from "../src/orchestration/workflow-spec-v1.js";
 import { WorkflowSpecV1Schema } from "../src/orchestration/workflow-spec-v1-schema.js";
+
+const PUBLIC_V1_ASSETS = [
+  "workflow-spec-v1-minimal.yaml.template",
+  "workflow-spec-v1-fanout.yaml.template",
+  "workflow-spec-v1-condition.yaml.template",
+  "workflow-spec-v1-foreach.yaml.template",
+  "workflow-spec-v1-bounded-while.yaml.template",
+] as const;
 
 const MINIMAL_WORKFLOW = {
   api_version: "homerail.ai/v1",
@@ -259,5 +268,14 @@ nodes:
     expect(parsed.graph.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ from_node: "execute", from_port: "result", to_node: "" }),
     ]));
+  });
+
+  it.each(PUBLIC_V1_ASSETS)("compiles the public v1 asset: %s", (file) => {
+    const source = fs.readFileSync(path.resolve("..", "assets", "orchestrations", file), "utf8");
+    const result = compileWorkflowSource(source);
+
+    expect(result.valid, result.diagnostics.map((item) => `${item.code} ${item.path}: ${item.message}`).join("\n")).toBe(true);
+    expect(result.source_api_version).toBe("homerail.ai/v1");
+    expect(result.canonical_hash).toMatch(/^[a-f0-9]{64}$/);
   });
 });

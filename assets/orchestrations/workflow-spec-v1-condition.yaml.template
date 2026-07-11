@@ -1,0 +1,66 @@
+api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: workflow-spec-v1-condition
+  name: WorkflowSpec v1 Condition
+
+spec:
+  description: Classify a task and route it through explicit success or failure terminals.
+
+  contracts:
+    Text:
+      type: string
+      maxLength: 20000
+    Decision:
+      type: object
+      additionalProperties: false
+      required: [route, reason]
+      properties:
+        route: { type: string, enum: [approve, reject] }
+        reason: { type: string, maxLength: 4000 }
+
+  agents:
+    classifier:
+      system: Classify the task and hand off a Decision object on decision.
+
+  nodes:
+    classify:
+      kind: agent
+      agent: classifier
+      inputs:
+        task: { contract: Text }
+      outputs:
+        decision: { contract: Decision }
+
+    route:
+      kind: condition
+      inputs:
+        decision: { contract: Decision }
+      outputs:
+        approved: { contract: Decision }
+        rejected: { contract: Decision }
+      config:
+        field: route
+        routes:
+          approve: approved
+          reject: rejected
+        default: rejected
+
+    approved:
+      kind: terminal
+      outcome: success
+      inputs:
+        decision: { contract: Decision }
+
+    rejected:
+      kind: terminal
+      outcome: failure
+      inputs:
+        decision: { contract: Decision }
+
+  edges:
+    - { from: $run.input, to: classify.task }
+    - { from: classify.decision, to: route.decision }
+    - { from: route.approved, to: approved.decision }
+    - { from: route.rejected, to: rejected.decision }

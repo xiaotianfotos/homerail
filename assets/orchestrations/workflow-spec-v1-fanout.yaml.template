@@ -1,0 +1,93 @@
+api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: workflow-spec-v1-fanout
+  name: WorkflowSpec v1 Fan-out and Join
+
+spec:
+  description: Fan one plan out to two workers and join their structured verdicts.
+
+  contracts:
+    Text:
+      type: string
+      maxLength: 20000
+    Verdict:
+      type: object
+      additionalProperties: false
+      required: [status, evidence]
+      properties:
+        status: { type: string, enum: [done, blocked] }
+        evidence: { type: string, maxLength: 20000 }
+    JoinResult:
+      type: object
+      required: [passed]
+      properties:
+        passed: { type: boolean }
+
+  agents:
+    planner:
+      system: Turn the task into one concise work order and hand it off on plan.
+    worker:
+      system: Execute the work order and hand off a Verdict object on result.
+
+  nodes:
+    plan:
+      kind: agent
+      agent: planner
+      inputs:
+        task: { contract: Text }
+      outputs:
+        plan: { contract: Text }
+
+    worker_one:
+      kind: agent
+      agent: worker
+      inputs:
+        task: { contract: Text }
+      outputs:
+        result: { contract: Verdict }
+
+    worker_two:
+      kind: agent
+      agent: worker
+      inputs:
+        task: { contract: Text }
+      outputs:
+        result: { contract: Verdict }
+
+    join:
+      kind: join
+      inputs:
+        one: { contract: Verdict }
+        two: { contract: Verdict }
+      outputs:
+        passed: { contract: JoinResult }
+        failed: { contract: JoinResult }
+      config:
+        mode: all
+        field: status
+        success_values: [done]
+        passed_port: passed
+        failed_port: failed
+
+    done:
+      kind: terminal
+      outcome: success
+      inputs:
+        result: { contract: JoinResult }
+
+    blocked:
+      kind: terminal
+      outcome: failure
+      inputs:
+        result: { contract: JoinResult }
+
+  edges:
+    - { from: $run.input, to: plan.task }
+    - { from: plan.plan, to: worker_one.task }
+    - { from: plan.plan, to: worker_two.task }
+    - { from: worker_one.result, to: join.one }
+    - { from: worker_two.result, to: join.two }
+    - { from: join.passed, to: done.result }
+    - { from: join.failed, to: blocked.result }

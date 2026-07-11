@@ -25,6 +25,17 @@ node homerail_cli/dist/cli.js dag sync \
 
 WorkflowSpec v1 uses named contracts, top-level edges, and explicit terminal
 outcomes. Bind its logical agents through a separate database runtime profile.
+Additional strict v1 examples cover reusable graph primitives:
+
+- `workflow-spec-v1-fanout.yaml.template`: fan-out plus explicit join;
+- `workflow-spec-v1-condition.yaml.template`: field-based routing;
+- `workflow-spec-v1-foreach.yaml.template`: bounded collection iteration;
+- `workflow-spec-v1-bounded-while.yaml.template`: bounded feedback and explicit
+  exhaustion.
+
+Validate any of them with `hr dag validate <path>`. The foreach example expects
+the run prompt to be a JSON-encoded string array; the bounded-while example
+expects a JSON object containing a numeric `score`.
 
 Start with `public-dev-5node.yaml.template` for the release smoke path:
 

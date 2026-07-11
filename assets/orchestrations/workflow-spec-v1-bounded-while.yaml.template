@@ -1,0 +1,77 @@
+api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: workflow-spec-v1-bounded-while
+  name: WorkflowSpec v1 Bounded While
+
+spec:
+  description: Improve a metric until it reaches its target or a hard iteration bound.
+
+  contracts:
+    Metric:
+      type: object
+      additionalProperties: false
+      required: [score]
+      properties:
+        score: { type: number, minimum: 0, maximum: 100 }
+    GateResult:
+      type: object
+      required: [input, iteration, max_iterations, matched]
+      properties:
+        input: { type: object }
+        iteration: { type: integer, minimum: 0 }
+        max_iterations: { type: integer, minimum: 1 }
+        matched: { type: boolean }
+
+  agents:
+    improver:
+      system: Improve the supplied metric and hand off a Metric object on measured.
+
+  nodes:
+    target:
+      kind: while
+      inputs:
+        state: { contract: Metric }
+      outputs:
+        improve: { contract: GateResult }
+        reached: { contract: GateResult }
+        exhausted: { contract: GateResult }
+      config:
+        field: score
+        operator: gte
+        value: 80
+        continue_port: improve
+        done_port: reached
+        exhausted_port: exhausted
+        max_iterations: 3
+
+    improve:
+      kind: agent
+      agent: improver
+      inputs:
+        state: { contract: GateResult }
+      outputs:
+        measured: { contract: Metric }
+
+    done:
+      kind: terminal
+      outcome: success
+      inputs:
+        result: { contract: GateResult }
+
+    stopped:
+      kind: terminal
+      outcome: failure
+      inputs:
+        result: { contract: GateResult }
+
+  edges:
+    - { from: $run.input, to: target.state }
+    - { from: target.improve, to: improve.state }
+    - kind: feedback
+      from: improve.measured
+      to: target.state
+      max_traversals: 3
+    - { from: target.reached, to: done.result }
+    - { from: target.exhausted, to: stopped.result }
