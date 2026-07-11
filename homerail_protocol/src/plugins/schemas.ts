@@ -652,7 +652,9 @@ const toolDescriptorSchema = {
       pattern: "^[A-Za-z][A-Za-z0-9_-]*$",
     },
     capability_ids: capabilityIds,
-    description: shortText,
+    // Turn Context descriptions include the stable qualified Tool identity in
+    // addition to the manifest's bounded human description.
+    description: { type: "string", minLength: 1, maxLength: 600 },
     input_schema: { type: "object" },
     output_schema: { type: "object" },
     effect,
@@ -861,6 +863,20 @@ const jsonPointer = {
   pattern: "^(?:/(?:[^~/]|~[01])*)*$",
 } as const;
 
+const fallbackItemProjectionSchema = {
+  type: "object",
+  properties: {
+    pointer: jsonPointer,
+    mode: { type: "string", enum: ["scalar", "strings", "records"] },
+    prefix: { type: "string", maxLength: 80 },
+    title_pointer: jsonPointer,
+    detail_pointer: jsonPointer,
+    items_pointer: jsonPointer,
+  },
+  required: ["pointer", "mode"],
+  additionalProperties: false,
+} as const;
+
 export const homerailDirectUiProjectionSchema = {
   $id: "homerail-direct-ui-projection-v1",
   type: "object",
@@ -883,6 +899,11 @@ export const homerailDirectUiProjectionSchema = {
         title_pointer: jsonPointer,
         summary_pointer: jsonPointer,
         items_pointer: jsonPointer,
+        item_projections: {
+          type: "array",
+          maxItems: 16,
+          items: fallbackItemProjectionSchema,
+        },
       },
       required: ["title_pointer"],
       additionalProperties: false,
@@ -915,10 +936,56 @@ export const homerailDirectUiProjectionSchema = {
   additionalProperties: false,
 } as const;
 
+export const homerailPluginToolExecutionEnvelopeSchema = {
+  $id: "homerail-plugin-tool-execution-envelope-v1",
+  type: "object",
+  properties: {
+    execution_version: { const: 1 },
+    status: { const: "projected" },
+    committed: { const: false },
+    plugin: {
+      type: "object",
+      properties: { id: pluginId, version: semver },
+      required: ["id", "version"],
+      additionalProperties: false,
+    },
+    tool: {
+      type: "object",
+      properties: {
+        local_id: toolId,
+        qualified_id: qualifiedId,
+        wire_id: {
+          type: "string",
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^[A-Za-z][A-Za-z0-9_-]*$",
+        },
+        handler_digest: sha256Digest,
+      },
+      required: ["local_id", "qualified_id", "wire_id", "handler_digest"],
+      additionalProperties: false,
+    },
+    arguments: { type: "object" },
+    projection: {
+      type: "object",
+      properties: {
+        projection_version: { const: 1 },
+        node: { type: "object" },
+        legacy_widget: { type: "object" },
+      },
+      required: ["projection_version", "node"],
+      additionalProperties: false,
+    },
+  },
+  required: ["execution_version", "status", "committed", "plugin", "tool", "arguments", "projection"],
+  additionalProperties: false,
+} as const;
+
 export const homerailPluginSchemas: Record<string, Record<string, unknown>> = {
   "homerail-plugin-manifest-v1": homerailPluginManifestSchema as Record<string, unknown>,
   "homerail-plugin-turn-context-v1": homerailPluginTurnContextSchema as Record<string, unknown>,
   "homerail-plugin-ui-projection-v1": homerailPluginUiProjectionSchema as Record<string, unknown>,
   "homerail-resolved-plugin-descriptor-v1": homerailResolvedPluginDescriptorSchema as Record<string, unknown>,
   "homerail-direct-ui-projection-v1": homerailDirectUiProjectionSchema as Record<string, unknown>,
+  "homerail-plugin-tool-execution-envelope-v1": homerailPluginToolExecutionEnvelopeSchema as Record<string, unknown>,
 };

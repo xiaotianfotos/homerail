@@ -1,5 +1,6 @@
 import AjvModule, { type ErrorObject, type ValidateFunction } from "ajv";
 import { analyzeGenerativeUiJsonValue } from "../generative-ui/json-value.js";
+import { validateGenerativeUiNode } from "../generative-ui/validation.js";
 import { homerailPluginSchemas } from "./schemas.js";
 import {
   HomerailPluginRendererMode,
@@ -10,6 +11,7 @@ import {
   type HomerailPluginManifestV1,
   type HomerailPluginPermission,
   type HomerailPluginTurnContextV1,
+  type HomerailPluginToolExecutionEnvelopeV1,
   type HomerailPluginUiProjectionV1,
   type HomerailResolvedPluginDescriptorV1,
   type HomerailPluginValidationError,
@@ -88,6 +90,10 @@ function parseSemver(value: string): ParsedSemver | null {
     return null;
   }
   return { core, prerelease };
+}
+
+export function isCanonicalHomerailPluginSemver(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 5 && value.length <= 64 && parseSemver(value) !== null;
 }
 
 function compareSemver(left: string, right: string): number | null {
@@ -257,6 +263,13 @@ function semanticErrors(manifest: HomerailPluginManifestV1): HomerailPluginValid
     }
     if (tool.output_schema && !schemas.has(tool.output_schema)) {
       errors.push(error(`/tools/${index}/output_schema`, `unknown schema: ${tool.output_schema}`, "schemaReference"));
+    }
+    if (tool.handler.type === "projection" && !tool.output_schema) {
+      errors.push(error(
+        `/tools/${index}/output_schema`,
+        "projection Tools require an output schema",
+        "projectionOutputSchema",
+      ));
     }
     errors.push(
       ...referencedPermissionErrors(tool.permissions, declaredPermissions, `/tools/${index}/permissions`),
@@ -660,6 +673,27 @@ export function validateHomerailPluginTurnContext(
     if (!enabled.has(`${entry.plugin_id}@${entry.plugin_version}`)) {
       errors.push(error(`/tools/${index}`, "Tool plugin is not enabled in this context", "enabledPluginReference"));
     }
+    if (
+      entry.handler.type !== "projection"
+      || entry.effect !== "write"
+      || entry.permissions.length !== 0
+      || entry.confirmation !== "never"
+      || !entry.output_schema
+    ) {
+      errors.push(error(
+        `/tools/${index}`,
+        "M3 Tool Context accepts only permissionless, unconfirmed write projections with output schemas",
+        "executableToolPolicy",
+      ));
+    } else {
+      const projection = validateHomerailDirectUiProjection(entry.handler.document);
+      if (!projection.valid) {
+        errors.push(...projection.errors.map((entryError) => ({
+          ...entryError,
+          path: `/tools/${index}/handler/document${entryError.path}`,
+        })));
+      }
+    }
   });
   context.actions.forEach((entry, index) => {
     errors.push(...qualifiedIdentityErrors(entry, `/actions/${index}`));
@@ -758,8 +792,83 @@ export function validateHomerailResolvedPluginDescriptorWire(
 export function validateHomerailDirectUiProjection(
   value: unknown,
 ): HomerailPluginValidationResult<HomerailDirectUiProjectionV1> {
-  return validatePluginWireValue<HomerailDirectUiProjectionV1>(
+  const validation = validatePluginWireValue<HomerailDirectUiProjectionV1>(
     "homerail-direct-ui-projection-v1",
     value,
   );
+  if (!validation.value) return validation;
+  const projection = validation.value;
+  const errors: HomerailPluginValidationError[] = [];
+  projection.fallback.item_projections?.forEach((item, index) => {
+    if (item.mode === "records" && !item.title_pointer) {
+      errors.push(error(
+        `/fallback/item_projections/${index}/title_pointer`,
+        "record fallback projections require title_pointer",
+        "fallbackProjection",
+      ));
+    }
+    if (item.mode !== "records" && (
+      item.title_pointer !== undefined
+      || item.detail_pointer !== undefined
+      || item.items_pointer !== undefined
+    )) {
+      errors.push(error(
+        `/fallback/item_projections/${index}`,
+        "scalar and string fallback projections cannot declare record pointers",
+        "fallbackProjection",
+      ));
+    }
+  });
+  if (projection.legacy_bridge) {
+    if (
+      projection.node_id_pointer !== "/id"
+      || projection.content_pointer !== ""
+      || projection.fallback.title_pointer !== "/title"
+      || projection.omit_content_fields.length !== 1
+      || projection.omit_content_fields[0] !== "id"
+    ) {
+      errors.push(error(
+        "/legacy_bridge",
+        "legacy bridges require the reversible flat projector profile",
+        "reversibleLegacyBridge",
+      ));
+    }
+  }
+  return errors.length ? { valid: false, errors } : validation;
+}
+
+export function validateHomerailPluginToolExecutionEnvelope(
+  value: unknown,
+): HomerailPluginValidationResult<HomerailPluginToolExecutionEnvelopeV1> {
+  const validation = validatePluginWireValue<HomerailPluginToolExecutionEnvelopeV1>(
+    "homerail-plugin-tool-execution-envelope-v1",
+    value,
+  );
+  if (!validation.value) return validation;
+  const envelope = validation.value;
+  const errors: HomerailPluginValidationError[] = [];
+  if (envelope.tool.qualified_id !== `${envelope.plugin.id}:${envelope.tool.local_id}`) {
+    errors.push(error("/tool/qualified_id", "Tool identity does not match plugin", "qualifiedIdentity"));
+  }
+  const node = validateGenerativeUiNode(envelope.projection.node);
+  if (!node.valid || !node.value) {
+    errors.push(...node.errors.map((entry) => ({ ...entry, path: `/projection/node${entry.path}` })));
+  } else if (
+    node.value.owner.id !== envelope.plugin.id
+    || node.value.owner.version !== envelope.plugin.version
+  ) {
+    errors.push(error("/projection/node/owner", "Projected node owner does not match plugin", "pluginOwnership"));
+  }
+  if (node.value && !node.value.id.startsWith(`${envelope.plugin.id}:`)) {
+    errors.push(error(
+      "/projection/node/id",
+      "Projected plugin node id must be namespaced by the owning plugin id",
+      "pluginOwnership",
+    ));
+  }
+  const widget = envelope.projection.legacy_widget;
+  if (widget && widget.id !== envelope.projection.node.id) {
+    errors.push(error("/projection/legacy_widget/id", "Legacy widget id must match projected node", "projectionIdentity"));
+  }
+  return errors.length ? { valid: false, errors } : validation;
 }

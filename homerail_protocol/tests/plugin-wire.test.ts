@@ -6,10 +6,17 @@ import {
   applyHomerailDirectUiProjection,
   validateHomerailDirectUiProjection,
   validateHomerailPluginToolInput,
+  executeHomerailPluginTool,
+  validateHomerailPluginToolExecutionEnvelope,
   type HomerailPluginManifestV1,
   type HomerailPluginTurnContextV1,
   type HomerailResolvedPluginDescriptorV1,
 } from "../src/plugins/index.js";
+import {
+  managerAgentPluginOwnedLegacyWidgetType,
+  managerAgentPluginSkillSnapshot,
+  mergeManagerAgentPluginSkillCatalog,
+} from "../src/manager-agent-tools.js";
 
 const digest = "0".repeat(64);
 
@@ -101,6 +108,7 @@ describe("HomeRail plugin wire contracts", () => {
     expect(validateHomerailPluginTurnContext(invalid).errors).toContainEqual(expect.objectContaining({
       keyword: "qualifiedIdentity",
     }));
+
   });
 
   it("requires canonical ordering and unique harness wire ids", () => {
@@ -125,6 +133,89 @@ describe("HomeRail plugin wire contracts", () => {
     ]));
   });
 
+  it("projects the frozen plugin Skill catalog and dynamic legacy reservations", () => {
+    const frozen = context();
+    expect(managerAgentPluginSkillSnapshot(frozen, "com.example.notes:notes")).toMatchObject({
+      plugin_version: "1.0.0",
+      digest,
+    });
+    expect(mergeManagerAgentPluginSkillCatalog({
+      success: true,
+      data: { skills: [{ id: "local-skill", source: "home" }], total: 1 },
+    }, frozen)).toMatchObject({
+      data: {
+        total: 2,
+        skills: [
+          { id: "com.example.notes:notes", plugin_version: "1.0.0", digest },
+          { id: "local-skill", source: "home" },
+        ],
+      },
+    });
+    expect(managerAgentPluginOwnedLegacyWidgetType({
+      tools: [{
+        handler: {
+          type: "projection",
+          document: { legacy_bridge: { widget_type: "topic_outline", visual: "topic_outline" } },
+        },
+      }],
+    }, {
+      type: "html",
+      data: { visual: "topic_outline" },
+    })).toBe("topic_outline");
+  });
+
+  it("keeps qualified Tool identity plus a maximum manifest description bounded", () => {
+    const bounded = context();
+    bounded.tools = [{
+      plugin_id: "com.example.notes",
+      plugin_version: "1.0.0",
+      local_id: "write_note",
+      qualified_id: "com.example.notes:write_note",
+      wire_id: "p_0123456789_write_note",
+      capability_ids: ["com.example.notes:notes"],
+      description: `Plugin Tool com.example.notes:write_note. ${"x".repeat(240)}`,
+      input_schema: {
+        type: "object",
+        properties: { id: { type: "string" }, title: { type: "string" } },
+        required: ["id", "title"],
+        additionalProperties: false,
+      },
+      output_schema: {
+        type: "object",
+        properties: { title: { type: "string" } },
+        required: ["title"],
+        additionalProperties: false,
+      },
+      effect: "write",
+      permissions: [],
+      confirmation: "never",
+      handler: {
+        type: "projection",
+        file: "ui/write-note.v1.json",
+        digest,
+        document: {
+          projection_version: 1,
+          type: "direct_ui_node",
+          kind: "com.example.notes/note",
+          kind_version: 1,
+          node_id_pointer: "/id",
+          content_pointer: "",
+          omit_content_fields: ["id"],
+          fallback: { title_pointer: "/title" },
+          defaults: {
+            surface: "task",
+            importance: "primary",
+            density: "summary",
+            persistence: "session",
+          },
+        },
+      },
+    }];
+    expect(validateHomerailPluginTurnContext(bounded)).toMatchObject({ valid: true });
+    bounded.tools[0].description = "x".repeat(601);
+    expect(validateHomerailPluginTurnContext(bounded).valid).toBe(false);
+  });
+
   it("validates a strict empty UI registry projection", () => {
     expect(validateHomerailPluginUiProjection({
       registry_revision: 0,
@@ -147,7 +238,12 @@ describe("HomeRail plugin wire contracts", () => {
       node_id_pointer: "/id",
       content_pointer: "",
       omit_content_fields: ["id"],
-      fallback: { title_pointer: "/title", summary_pointer: "/note", items_pointer: "/questions" },
+      fallback: {
+        title_pointer: "/title",
+        summary_pointer: "/note",
+        items_pointer: "/questions",
+        item_projections: [{ pointer: "/thesis", mode: "scalar", prefix: "Thesis: " }],
+      },
       defaults: { surface: "task", importance: "primary", density: "detail", persistence: "session" },
       legacy_bridge: { widget_type: "note", visual: "note" },
     } as const;
@@ -166,6 +262,7 @@ describe("HomeRail plugin wire contracts", () => {
         title: "Research notes",
         note: "Keep the ABI semantic.",
         questions: ["How is history replayed?"],
+        thesis: "The ABI is semantic.",
       },
     })).toMatchObject({
       node: {
@@ -176,14 +273,89 @@ describe("HomeRail plugin wire contracts", () => {
           title: "Research notes",
           note: "Keep the ABI semantic.",
           questions: ["How is history replayed?"],
+          thesis: "The ABI is semantic.",
         },
         fallback: {
           title: "Research notes",
           summary: "Keep the ABI semantic.",
-          items: ["How is history replayed?"],
+          items: ["How is history replayed?", "Thesis: The ABI is semantic."],
         },
       },
       legacy_widget: { id: "note-1", type: "note", data: { visual: "note" } },
     });
+
+    const descriptor = {
+      plugin_id: "com.example.notes",
+      plugin_version: "1.0.0",
+      local_id: "upsert_note",
+      qualified_id: "com.example.notes:upsert_note",
+      wire_id: "upsert_note",
+      capability_ids: ["com.example.notes:notes"],
+      description: "Upsert a note.",
+      input_schema: {
+        type: "object",
+        properties: {
+          id: { type: "string" }, title: { type: "string" }, note: { type: "string" },
+          questions: { type: "array", items: { type: "string" } },
+        },
+        required: ["id", "title", "note"],
+        additionalProperties: false,
+      },
+      output_schema: {
+        type: "object",
+        properties: {
+          title: { type: "string" }, note: { type: "string" },
+          questions: { type: "array", items: { type: "string" } },
+        },
+        required: ["title", "note"],
+        additionalProperties: false,
+      },
+      effect: "write",
+      permissions: [],
+      confirmation: "never",
+      handler: { type: "projection", file: "ui/note.json", digest, document: projection },
+    } as const;
+    const envelope = executeHomerailPluginTool(descriptor, {
+      id: "com.example.notes:note-1", title: "Research notes", note: "Keep the ABI semantic.", questions: [],
+    });
+    expect(envelope).toMatchObject({
+      execution_version: 1,
+      status: "projected",
+      committed: false,
+      tool: { wire_id: "upsert_note" },
+      projection: { node: { kind: "com.example.notes/note" } },
+    });
+    expect(validateHomerailPluginToolExecutionEnvelope(envelope)).toMatchObject({ valid: true });
+    expect(() => executeHomerailPluginTool(descriptor, {
+      id: "task-draft",
+      title: "Attempted Core collision",
+      note: "Must be rejected by the execution envelope.",
+      questions: [],
+    })).toThrow(/execution envelope is invalid/);
+    expect(validateHomerailPluginToolExecutionEnvelope({ ...envelope, unknown: true }).valid).toBe(false);
+    const wrongQualified = structuredClone(envelope);
+    wrongQualified.tool.qualified_id = "com.example.notes:other";
+    expect(validateHomerailPluginToolExecutionEnvelope(wrongQualified).errors).toContainEqual(
+      expect.objectContaining({ keyword: "qualifiedIdentity" }),
+    );
+    const wrongOwner = structuredClone(envelope);
+    wrongOwner.projection.node.owner.id = "com.example.other";
+    wrongOwner.projection.node.kind = "com.example.other/note";
+    expect(validateHomerailPluginToolExecutionEnvelope(wrongOwner).errors).toContainEqual(
+      expect.objectContaining({ keyword: "pluginOwnership" }),
+    );
+    const wrongLegacyId = structuredClone(envelope);
+    wrongLegacyId.projection.legacy_widget!.id = "other";
+    expect(validateHomerailPluginToolExecutionEnvelope(wrongLegacyId).errors).toContainEqual(
+      expect.objectContaining({ keyword: "projectionIdentity" }),
+    );
+    const nestedUnknown = structuredClone(envelope) as typeof envelope & {
+      projection: typeof envelope.projection & { node: typeof envelope.projection.node & { unknown?: boolean } };
+    };
+    nestedUnknown.projection.node.unknown = true;
+    expect(validateHomerailPluginToolExecutionEnvelope(nestedUnknown).valid).toBe(false);
+    expect(() => executeHomerailPluginTool({ ...descriptor, confirmation: "always" }, {
+      id: "com.example.notes:note-1", title: "Research notes", note: "Keep the ABI semantic.", questions: [],
+    })).toThrow(/data-only execution policy/);
   });
 });

@@ -285,6 +285,7 @@ export interface HomerailDirectUiProjectionV1 {
     title_pointer: string;
     summary_pointer?: string;
     items_pointer?: string;
+    item_projections?: HomerailDirectUiFallbackItemProjectionV1[];
   };
   defaults: {
     surface: GenerativeUiSurface;
@@ -299,10 +300,31 @@ export interface HomerailDirectUiProjectionV1 {
   };
 }
 
+export interface HomerailDirectUiFallbackItemProjectionV1 {
+  pointer: string;
+  mode: "scalar" | "strings" | "records";
+  prefix?: string;
+  title_pointer?: string;
+  detail_pointer?: string;
+  items_pointer?: string;
+}
+
 export interface HomerailDirectUiProjectionResultV1 {
   projection_version: 1;
   node: GenerativeUiNodeV1;
   legacy_widget?: Record<string, unknown>;
+}
+
+export interface HomerailPluginToolExecutionEnvelopeV1 {
+  execution_version: 1;
+  status: "projected";
+  /** Projection is validated but not committed until Manager accepts it. */
+  committed: false;
+  plugin: { id: string; version: string };
+  tool: { local_id: string; qualified_id: string; wire_id: string; handler_digest: string };
+  /** Immutable validated input so Manager can deterministically replay the projection. */
+  arguments: Record<string, unknown>;
+  projection: HomerailDirectUiProjectionResultV1;
 }
 
 export interface HomerailPluginCompatibilityTargetV1 {

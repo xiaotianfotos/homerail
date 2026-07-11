@@ -60,7 +60,7 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
   if (skills.length > 0) {
     lines.push(
       "## Available HomeRail Skills",
-      "These enabled skills are refreshed from HOMERAIL_HOME/skills on every Manager Agent turn; built-in HomeRail skills are installed there when missing.",
+      "This catalog is assembled once for the current turn from local Skills and enabled versioned plugins. A missing plugin Skill is unavailable and must not be inferred from an older turn.",
       ...skills.map((skill) => `- ${skill.id}: ${skill.description || skill.name || "HomeRail skill"} [${skill.source || "unknown"}]`),
     );
   } else {
@@ -86,7 +86,7 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
       "When saying a path, model name, command, or identifier in voice mode, use plain text without backticks or Markdown formatting.",
       "For capability questions, answer with two or three broad examples, then ask what the user wants to do next.",
       "Use tools only when the user asks to inspect, start, supervise, or change real state; do not create status widgets or runs for simple chat.",
-      "When the answer needs lists, evidence, task details, long status, artifacts, or execution state, call update_task_draft or the appropriate show_*_card/show_dynamic_widget tool and keep finish text as a short pointer.",
+      "When the answer needs lists, evidence, task details, long status, artifacts, or execution state, use the appropriate currently available Core or plugin Tool and keep finish text as a short pointer.",
       "Use tool-created widgets for generated UI. Do not create a Manager Agent status card for ordinary small talk or capability questions.",
       "Do not put raw reasoning, command output, JSON, paths, or logs in commentary or final spoken text.",
     );

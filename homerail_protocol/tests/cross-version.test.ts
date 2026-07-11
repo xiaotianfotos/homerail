@@ -59,6 +59,7 @@ describe("Protocol version consistency", () => {
       "homerail-plugin-ui-projection-v1",
       "homerail-resolved-plugin-descriptor-v1",
       "homerail-direct-ui-projection-v1",
+      "homerail-plugin-tool-execution-envelope-v1",
       "handoff-request", "handoff-response",
       "tool-call", "tool-result",
       "send-message", "receive-message",

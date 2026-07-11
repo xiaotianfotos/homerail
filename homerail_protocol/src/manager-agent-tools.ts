@@ -65,6 +65,99 @@ export type ManagerAgentToolName = ManagerAgentCommonToolName | ManagerAgentHost
 export const HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL = "homerail_tool_call";
 export const HOMERAIL_PROMPT_HANDOFF_PROTOCOL = "homerail_handoff";
 
+/** Historical widgets remain readable, but new writes for these scene types
+ * must cross their enabled plugin Tool boundary. */
+export interface ManagerAgentPluginLegacyWidgetCatalog {
+  /** Manager-only archived reservations used at the final ingestion boundary. */
+  legacy_widget_reservations?: readonly { legacy_types: readonly string[] }[];
+  /** V1-compatible Host/Worker hint derived from enabled projection Tools. */
+  tools?: ReadonlyArray<{ handler: { type: string; document?: unknown } }>;
+}
+
+export interface ManagerAgentPluginSkillCatalog {
+  skills: ReadonlyArray<{
+    plugin_id: string;
+    plugin_version: string;
+    local_id: string;
+    qualified_id: string;
+    description: string;
+    digest: string;
+  }>;
+}
+
+export function managerAgentPluginSkillSnapshot(
+  catalog: ManagerAgentPluginSkillCatalog | undefined,
+  qualifiedId: string,
+): ManagerAgentPluginSkillCatalog["skills"][number] | undefined {
+  return catalog?.skills.find((skill) => skill.qualified_id === qualifiedId);
+}
+
+export function mergeManagerAgentPluginSkillCatalog(
+  body: unknown,
+  catalog: ManagerAgentPluginSkillCatalog | undefined,
+): Record<string, unknown> {
+  const root = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const data = root.data && typeof root.data === "object" && !Array.isArray(root.data)
+    ? root.data as Record<string, unknown>
+    : {};
+  const localSkills = Array.isArray(data.skills)
+    ? data.skills.filter((skill) => skill && typeof skill === "object" && !Array.isArray(skill))
+    : [];
+  const pluginSkills = (catalog?.skills ?? []).map((skill) => ({
+    id: skill.qualified_id,
+    name: skill.local_id,
+    description: skill.description,
+    relative_path: `plugin://${skill.plugin_id}@${skill.plugin_version}/skills/${skill.local_id}`,
+    source: "plugin",
+    enabled: true,
+    plugin_id: skill.plugin_id,
+    plugin_version: skill.plugin_version,
+    digest: skill.digest,
+  }));
+  const skills = [...localSkills, ...pluginSkills].sort((left, right) => {
+    const leftId = String((left as Record<string, unknown>).id ?? "");
+    const rightId = String((right as Record<string, unknown>).id ?? "");
+    return leftId.localeCompare(rightId);
+  });
+  return {
+    ...root,
+    data: { ...data, skills, total: skills.length },
+  };
+}
+
+export function managerAgentPluginOwnedLegacyWidgetType(
+  catalog: ManagerAgentPluginLegacyWidgetCatalog | undefined,
+  value: unknown,
+): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const reserved = new Set(catalog?.legacy_widget_reservations?.flatMap((entry) => entry.legacy_types) ?? []);
+  for (const tool of catalog?.tools ?? []) {
+    if (tool.handler.type !== "projection") continue;
+    const document = tool.handler.document;
+    if (!document || typeof document !== "object" || Array.isArray(document)) continue;
+    const bridge = (document as Record<string, unknown>).legacy_bridge;
+    if (!bridge || typeof bridge !== "object" || Array.isArray(bridge)) continue;
+    for (const candidate of [
+      (bridge as Record<string, unknown>).widget_type,
+      (bridge as Record<string, unknown>).visual,
+    ]) {
+      if (typeof candidate === "string" && candidate.trim()) reserved.add(candidate.trim().toLowerCase());
+    }
+  }
+  const widget = value as Record<string, unknown>;
+  const data = widget.data && typeof widget.data === "object" && !Array.isArray(widget.data)
+    ? widget.data as Record<string, unknown>
+    : undefined;
+  for (const candidate of [widget.type, widget.widget_type, data?.visual]) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.trim().toLowerCase();
+    if (reserved.has(normalized)) return normalized;
+  }
+  return undefined;
+}
+
 export interface HomeRailPromptToolCall {
   name: string;
   input: Record<string, unknown>;
@@ -434,7 +527,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   show_dynamic_widget: {
     name: "show_dynamic_widget",
-    description: "显示动态小组件。type 可为 html、metric_strip、timeline、dag_flow、chart、topic_outline、slide_deck 等。",
+    description: "显示 Core 兼容动态小组件，例如 html、metric_strip、timeline、dag_flow、chart 或 slide_deck。插件拥有的场景必须使用当前 turn Tool catalog 中的插件 Tool。",
     input_schema: widgetSchema,
   },
   remove_widget: {
