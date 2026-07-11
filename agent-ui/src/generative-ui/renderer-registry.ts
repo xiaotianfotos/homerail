@@ -2,10 +2,11 @@ import type {
   GenerativeUiDevice,
   GenerativeUiStoredNodeV1,
   GenerativeUiSurface,
+  HomerailDeclarativeRendererV1,
 } from 'homerail-protocol'
 import type { Component } from 'vue'
 
-export type GenerativeUiRendererMode = 'specialized' | 'core_projection'
+export type GenerativeUiRendererMode = 'specialized' | 'core_projection' | 'declarative'
 
 export interface GenerativeUiRendererRegistrationV1 {
   renderer_api_version: 1
@@ -17,11 +18,13 @@ export interface GenerativeUiRendererRegistrationV1 {
   surface: GenerativeUiSurface
   device: GenerativeUiDevice
   mode: GenerativeUiRendererMode
-  component: Component
+  component?: Component
+  document?: HomerailDeclarativeRendererV1
 }
 
 export type GenerativeUiRendererResolutionV1 =
   | { mode: 'specialized' | 'core_projection'; component: Component; registration: GenerativeUiRendererRegistrationV1 }
+  | { mode: 'declarative'; document: HomerailDeclarativeRendererV1; registration: GenerativeUiRendererRegistrationV1 }
   | { mode: 'fallback'; reason: 'renderer_not_registered' }
   | { mode: 'unavailable'; reason: 'portable_fallback_invalid' }
 
@@ -71,6 +74,7 @@ function portableFallbackValid(node: GenerativeUiStoredNodeV1): boolean {
 export class GenerativeUiRendererRegistry {
   readonly #specialized = new Map<string, GenerativeUiRendererRegistrationV1>()
   readonly #coreProjections = new Map<string, GenerativeUiRendererRegistrationV1>()
+  readonly #declarative = new Map<string, GenerativeUiRendererRegistrationV1>()
   readonly #registrations: readonly GenerativeUiRendererRegistrationV1[]
 
   constructor(registrations: readonly GenerativeUiRendererRegistrationV1[]) {
@@ -83,10 +87,16 @@ export class GenerativeUiRendererRegistry {
       }
       if (!SURFACES.has(registration.surface)) throw new Error(`Invalid renderer surface: ${registration.surface}`)
       if (!DEVICES.has(registration.device)) throw new Error(`Invalid renderer device: ${registration.device}`)
-      if (registration.mode !== 'specialized' && registration.mode !== 'core_projection') {
+      if (registration.mode !== 'specialized' && registration.mode !== 'core_projection' && registration.mode !== 'declarative') {
         throw new Error(`Invalid renderer mode: ${String(registration.mode)}`)
       }
-      if (!registration.component) throw new Error(`Renderer component is required: ${registration.kind}`)
+      if (registration.mode === 'declarative') {
+        if (!registration.document || registration.component) {
+          throw new Error(`Declarative Renderer document is required without a component: ${registration.kind}`)
+        }
+      } else if (!registration.component || registration.document) {
+        throw new Error(`Renderer component is required without a declarative document: ${registration.kind}`)
+      }
       const registrationKey = key(
         registration.plugin_id,
         registration.plugin_version,
@@ -95,7 +105,11 @@ export class GenerativeUiRendererRegistry {
         registration.surface,
         registration.device,
       )
-      const target = registration.mode === 'specialized' ? this.#specialized : this.#coreProjections
+      const target = registration.mode === 'specialized'
+        ? this.#specialized
+        : registration.mode === 'core_projection'
+          ? this.#coreProjections
+          : this.#declarative
       if (target.has(registrationKey)) {
         throw new Error(
           `Duplicate ${registration.mode} renderer: ${registration.kind}@${registration.kind_version}/${registration.surface}/${registration.device}`,
@@ -127,10 +141,12 @@ export class GenerativeUiRendererRegistry {
       device,
     )
     const specialized = this.#specialized.get(registrationKey)
-    if (specialized) return { mode: 'specialized', component: specialized.component, registration: specialized }
+    if (specialized) return { mode: 'specialized', component: specialized.component!, registration: specialized }
+    const declarative = this.#declarative.get(registrationKey)
+    if (declarative) return { mode: 'declarative', document: declarative.document!, registration: declarative }
     const coreProjection = this.#coreProjections.get(registrationKey)
     if (coreProjection) {
-      return { mode: 'core_projection', component: coreProjection.component, registration: coreProjection }
+      return { mode: 'core_projection', component: coreProjection.component!, registration: coreProjection }
     }
     return portableFallbackValid(node)
       ? { mode: 'fallback', reason: 'renderer_not_registered' }

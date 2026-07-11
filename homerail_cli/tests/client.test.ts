@@ -122,6 +122,34 @@ describe("HomeRailClient.post", () => {
     expect(result).toEqual({ success: true, message: "created", data: { id: "abc" } });
   });
 
+  it("sends plugin archives as exact binary bytes instead of JSON or base64", async () => {
+    const mockResponse = {
+      ok: true,
+      json: async () => ({ success: true, data: { plugin_id: "com.example.demo" } }),
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse as unknown as Response,
+    );
+    const archive = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff]);
+
+    const client = new HomeRailClient({ baseUrl: "http://test:1234" });
+    await client.postBinary("/api/plugins/install?channel=staging", archive);
+
+    const [, init] = fetchSpy.mock.calls[0];
+    expect(fetchSpy.mock.calls[0][0]).toBe(
+      "http://test:1234/api/plugins/install?channel=staging",
+    );
+    expect(init).toEqual(expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({
+        "Content-Type": "application/vnd.homerail.plugin+zip",
+      }),
+    }));
+    expect(init?.body).toBeInstanceOf(Uint8Array);
+    expect(Buffer.from(init?.body as Uint8Array)).toEqual(archive);
+    expect(typeof init?.body).not.toBe("string");
+  });
+
   it("sends checkpoint resume requests to the DAG node endpoint", async () => {
     const mockResponse = {
       ok: true,
@@ -155,6 +183,27 @@ describe("HomeRailClient.post", () => {
   });
 });
 
+describe("HomeRailClient.delete", () => {
+  it("sends a JSON compare-and-swap body for destructive requests", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, message: "removed" }),
+    } as unknown as Response);
+    const client = new HomeRailClient({ baseUrl: "http://test:1234" });
+    await client.delete("/api/plugins/com.example.notes", {
+      expected_version_set_digest: "f".repeat(64),
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://test:1234/api/plugins/com.example.notes",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ expected_version_set_digest: "f".repeat(64) }),
+      }),
+    );
+  });
+});
+
 describe("HomeRailClient error handling", () => {
   it("throws on non-ok response with message from body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
@@ -180,6 +229,18 @@ describe("HomeRailClient error handling", () => {
 
     const client = new HomeRailClient();
     await expect(client.get("/api/broken")).rejects.toThrow("HTTP 500");
+  });
+
+  it("uses the Manager error field for plugin API failures", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ success: false, error: "Plugin is not healthy" }),
+    } as unknown as Response);
+
+    const client = new HomeRailClient();
+    await expect(client.put("/api/plugins/demo/enabled", { enabled: true }))
+      .rejects.toThrow("Plugin is not healthy");
   });
 
   it("throws on timeout", async () => {

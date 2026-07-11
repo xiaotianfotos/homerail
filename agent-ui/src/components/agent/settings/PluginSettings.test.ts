@@ -100,7 +100,7 @@ describe('PluginSettings', () => {
     topic.dispatchEvent(new Event('change', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
     await nextTick()
-    expect(setHomerailPluginEnabled).toHaveBeenCalledWith('com.homerail.topic-outline', false)
+    expect(setHomerailPluginEnabled).toHaveBeenCalledWith('com.homerail.topic-outline', false, 1, '1.0.0')
     expect(mounted.querySelector<HTMLInputElement>(
       '[data-testid="agent-settings-plugin-toggle-com.homerail.topic-outline"]',
     )?.checked).toBe(false)
@@ -154,5 +154,31 @@ describe('PluginSettings', () => {
     await nextTick()
     expect(topic.disabled).toBe(false)
     expect(topic.checked).toBe(false)
+  })
+
+  it('removes an uninstalled plugin when a newer registry snapshot omits it', async () => {
+    const mounted = await mount()
+    setHomerailPluginEnabled.mockResolvedValueOnce({
+      success: true,
+      data: {
+        activation: { enabled: false },
+        registry: {
+          ...structuredClone(registry),
+          registry_revision: 3,
+          plugins: registry.plugins.filter(plugin => plugin.id !== 'com.homerail.topic-outline'),
+        },
+      },
+    })
+    const topic = mounted.querySelector<HTMLInputElement>(
+      '[data-testid="agent-settings-plugin-toggle-com.homerail.topic-outline"]',
+    )!
+    topic.checked = false
+    topic.dispatchEvent(new Event('change', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await nextTick()
+
+    expect(mounted.querySelector('[data-testid="agent-settings-plugin-com.homerail.topic-outline"]'))
+      .toBeNull()
+    expect(mounted.textContent).not.toContain('Topic Outline')
   })
 })

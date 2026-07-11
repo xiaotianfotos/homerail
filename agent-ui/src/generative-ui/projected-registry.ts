@@ -39,6 +39,25 @@ export function buildProjectedGenerativeUiRegistry(
   const unresolved = new Set<string>()
   for (const renderer of projection.renderers) {
     if (!renderer.enabled || renderer.renderer_api !== 1) continue
+    if (renderer.mode === 'declarative' && renderer.source.type === 'declarative') {
+      for (const surface of renderer.surfaces) {
+        for (const device of renderer.devices) {
+          registrations.push({
+            renderer_api_version: 1,
+            plugin_id: renderer.plugin_id,
+            plugin_version: renderer.plugin_version,
+            renderer_id: renderer.renderer_id,
+            kind: renderer.kind,
+            kind_version: renderer.kind_version,
+            surface,
+            device,
+            mode: 'declarative',
+            document: structuredClone(renderer.source.document),
+          })
+        }
+      }
+      continue
+    }
     if (renderer.mode !== 'builtin' || renderer.source.type !== 'builtin') {
       unresolved.add(`${renderer.plugin_id}:${renderer.renderer_id}`)
       continue

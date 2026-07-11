@@ -219,6 +219,27 @@ describe('GenerativeUiNodeHost', () => {
     expect(mounted.textContent).toContain('Manifest')
     expect(mounted.textContent).toContain('Declare the scene')
   })
+
+  it('never turns an unsafe topic source URL into an executable link', () => {
+    const mounted = mount(TopicOutlineRenderer, {
+      node: node('topic-one', {
+        kind: 'com.homerail.topic-outline/outline',
+        owner: { id: 'com.homerail.topic-outline', version: '1.0.0' },
+        content: {
+          sources: [
+            { title: 'Unsafe source', url: 'javascript:alert(document.domain)' },
+            { title: 'Safe source', url: 'https://example.com/reference' },
+          ],
+        },
+      }),
+    })
+    const links = [...mounted.querySelectorAll<HTMLAnchorElement>('.topic-outline-widget__sources a')]
+    expect(links).toHaveLength(2)
+    expect(links[0].textContent).toContain('Unsafe source')
+    expect(links[0].hasAttribute('href')).toBe(false)
+    expect(links[1].getAttribute('href')).toBe('https://example.com/reference')
+    expect(links[1].getAttribute('rel')).toBe('noopener noreferrer')
+  })
 })
 
 describe('GenerativeUiSurfaceHost', () => {

@@ -115,6 +115,40 @@ describe('GenerativeUiRendererRegistry', () => {
     expect(runtime.unresolved_renderer_ids).toEqual(['com.homerail.topic-outline:topic-outline-main'])
   })
 
+  it('projects an exact declarative Renderer without loading plugin code', () => {
+    const projection = topicProjection(true)
+    projection.kinds[0] = {
+      ...projection.kinds[0],
+      plugin_id: 'com.example.plugin',
+      plugin_version: '1.0.0',
+      kind: 'com.example.plugin/card',
+      schema_id: 'card-v1',
+    }
+    projection.renderers[0] = {
+      ...projection.renderers[0],
+      plugin_id: 'com.example.plugin',
+      plugin_version: '1.0.0',
+      renderer_id: 'card-declarative',
+      kind: 'com.example.plugin/card',
+      mode: 'declarative',
+      source: {
+        type: 'declarative',
+        file: 'ui/card.json',
+        digest: 'c'.repeat(64),
+        document: {
+          renderer_version: 1,
+          type: 'card',
+          title_pointer: '/title',
+          sections: [{ id: 'summary', type: 'text', pointer: '/summary' }],
+        },
+      },
+    }
+    const runtime = buildProjectedGenerativeUiRegistry(projection)
+    expect(runtime.renderers.resolve(node({ content: { title: 'Card', summary: 'Safe data.' } }), 'task', 'desktop'))
+      .toMatchObject({ mode: 'declarative', document: { title_pointer: '/title' } })
+    expect(runtime.unresolved_renderer_ids).toEqual([])
+  })
+
   it('keeps the old topic kind inside the isolated legacy compatibility path', () => {
     const runtime = buildProjectedGenerativeUiRegistry(topicProjection(true))
     const legacyTopic = node({

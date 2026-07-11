@@ -1,0 +1,57 @@
+{
+  "renderer_version": 1,
+  "type": "card",
+  "title_pointer": "/title",
+  "subtitle_pointer": "/summary",
+  "empty_message": "No release-note details are available yet.",
+  "sections": [
+    {
+      "id": "status",
+      "type": "metrics",
+      "label": "Snapshot",
+      "items": [
+        {
+          "label": "Version",
+          "pointer": "/version",
+          "format": "text"
+        },
+        {
+          "label": "State",
+          "pointer": "/lifecycle_state",
+          "format": "text"
+        },
+        {
+          "label": "Complete",
+          "pointer": "/completion_percent",
+          "format": "percent"
+        }
+      ]
+    },
+    {
+      "id": "notice",
+      "type": "text",
+      "label": "Notice",
+      "pointer": "/notice",
+      "max_lines": 4
+    },
+    {
+      "id": "changes",
+      "type": "list",
+      "label": "Changes",
+      "pointer": "/changes",
+      "item_title_pointer": "/title",
+      "item_detail_pointer": "/detail",
+      "item_badge_pointer": "/category",
+      "max_items": 24
+    },
+    {
+      "id": "resources",
+      "type": "links",
+      "label": "Resources",
+      "pointer": "/resources",
+      "item_label_pointer": "/label",
+      "item_uri_pointer": "/uri",
+      "max_items": 8
+    }
+  ]
+}

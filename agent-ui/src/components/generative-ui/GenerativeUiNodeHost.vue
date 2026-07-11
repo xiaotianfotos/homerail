@@ -18,6 +18,7 @@ import type {
   GenerativeUiPreviewRequestV1,
 } from '@/generative-ui/types'
 import GenerativeUiFallbackRenderer from './GenerativeUiFallbackRenderer.vue'
+import DeclarativeRenderer from './DeclarativeRenderer.vue'
 import RendererErrorBoundary from './RendererErrorBoundary.vue'
 
 const props = withDefaults(defineProps<{
@@ -50,6 +51,9 @@ const registeredComponent = computed(() => (
   resolution.value.mode === 'specialized' || resolution.value.mode === 'core_projection'
     ? resolution.value.component
     : null
+))
+const declarativeDocument = computed(() => (
+  resolution.value.mode === 'declarative' ? resolution.value.document : null
 ))
 const unavailable = computed(() => resolution.value.mode === 'unavailable')
 const fallbackReason = computed(() => (
@@ -96,6 +100,16 @@ function reportRendererError(payload: { message: string }): void {
         :context="context"
         @open-preview="emit('open-preview', $event)"
       />
+      <template #fallback="{ error }">
+        <GenerativeUiFallbackRenderer :node="node" unavailable :reason="error" />
+      </template>
+    </RendererErrorBoundary>
+    <RendererErrorBoundary
+      v-else-if="declarativeDocument"
+      :reset-key="resetKey"
+      @renderer-error="reportRendererError"
+    >
+      <DeclarativeRenderer :node="node" :document="declarativeDocument" />
       <template #fallback="{ error }">
         <GenerativeUiFallbackRenderer :node="node" unavailable :reason="error" />
       </template>

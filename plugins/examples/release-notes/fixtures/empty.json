@@ -1,0 +1,17 @@
+{
+  "tool": "publish_release_notes",
+  "arguments": {
+    "id": "dev.homerail.release-notes:current",
+    "title": "HomeRail 0.2.0 Release Notes",
+    "version": "0.2.0",
+    "lifecycle_state": "empty",
+    "completion_percent": 0,
+    "changes": [],
+    "resources": []
+  },
+  "expect": {
+    "lifecycle_state": "empty",
+    "changes": [],
+    "resources": []
+  }
+}

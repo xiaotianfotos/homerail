@@ -37,7 +37,9 @@ async function refresh(): Promise<void> {
 
 async function toggle(pluginId: string, enabled: boolean): Promise<void> {
   if (loading.value || saving.value) return
-  const previousEnabled = registry.value?.plugins.find(plugin => plugin.id === pluginId)?.enabled
+  const plugin = registry.value?.plugins.find(candidate => candidate.id === pluginId)
+  const previousEnabled = plugin?.enabled
+  if (!plugin) return
   if (registry.value) {
     registry.value = {
       ...registry.value,
@@ -49,7 +51,12 @@ async function toggle(pluginId: string, enabled: boolean): Promise<void> {
   saving.value = pluginId
   error.value = ''
   try {
-    adoptRegistry((await setHomerailPluginEnabled(pluginId, enabled)).data.registry)
+    adoptRegistry((await setHomerailPluginEnabled(
+      pluginId,
+      enabled,
+      plugin.activation_revision,
+      plugin.version,
+    )).data.registry)
   } catch (cause) {
     // The browser toggles a checkbox before the request completes. Replacing
     // the snapshot forces :checked back to the last confirmed registry state

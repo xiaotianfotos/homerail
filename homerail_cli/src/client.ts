@@ -31,15 +31,36 @@ export class HomeRailClient {
   }
 
   async post<T = BaseResponse>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("POST", path, body);
+    return this.request<T>("POST", path, body === undefined ? undefined : {
+      type: "json",
+      value: body,
+    });
+  }
+
+  async postBinary<T = BaseResponse>(
+    path: string,
+    body: Uint8Array,
+    contentType = "application/vnd.homerail.plugin+zip",
+  ): Promise<T> {
+    return this.request<T>("POST", path, {
+      type: "binary",
+      value: Uint8Array.from(body),
+      contentType,
+    });
   }
 
   async put<T = BaseResponse>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("PUT", path, body);
+    return this.request<T>("PUT", path, body === undefined ? undefined : {
+      type: "json",
+      value: body,
+    });
   }
 
-  async delete<T = BaseResponse>(path: string): Promise<T> {
-    return this.request<T>("DELETE", path);
+  async delete<T = BaseResponse>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>("DELETE", path, body === undefined ? undefined : {
+      type: "json",
+      value: body,
+    });
   }
 
   async getRunStatus(runId: string): Promise<BaseResponse> {
@@ -142,7 +163,9 @@ export class HomeRailClient {
   private async request<T>(
     method: string,
     path: string,
-    body?: unknown,
+    payload?:
+      | { type: "json"; value: unknown }
+      | { type: "binary"; value: Uint8Array; contentType: string },
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const controller = new AbortController();
@@ -151,11 +174,20 @@ export class HomeRailClient {
     try {
       const init: RequestInit = {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(payload ? {
+            "Content-Type": payload.type === "json"
+              ? "application/json"
+              : payload.contentType,
+          } : {}),
+        },
         signal: controller.signal,
       };
-      if (body !== undefined) {
-        init.body = JSON.stringify(body);
+      if (payload?.type === "json") {
+        init.body = JSON.stringify(payload.value);
+      } else if (payload?.type === "binary") {
+        init.body = payload.value as BodyInit;
       }
 
       const response = await fetch(url, init);
@@ -166,6 +198,8 @@ export class HomeRailClient {
           const errBody = (await response.json()) as Record<string, unknown>;
           if (typeof errBody.message === "string") {
             message = errBody.message;
+          } else if (typeof errBody.error === "string") {
+            message = errBody.error;
           }
         } catch {
           // ignore parse error on error body

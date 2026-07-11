@@ -31,9 +31,15 @@ export function listHomerailPlugins(): Promise<ApiResponse<HomerailPluginRegistr
 export function setHomerailPluginEnabled(
   pluginId: string,
   enabled: boolean,
+  expectedRevision: number,
+  expectedActiveVersion: string,
 ): Promise<ApiResponse<{ activation: Record<string, unknown>; registry: HomerailPluginRegistrySummaryV1 }>> {
   return http.put<{ activation: Record<string, unknown>; registry: HomerailPluginRegistrySummaryV1 }>(
     `/api/plugins/${encodeURIComponent(pluginId)}/enabled`,
-    { enabled },
+    {
+      enabled,
+      expected_revision: expectedRevision,
+      expected_active_version: expectedActiveVersion,
+    },
   )
 }
