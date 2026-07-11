@@ -1322,6 +1322,11 @@ function _joinGatewayResult(config: DAGGatewayConfig | undefined, inputs: Record
   };
 }
 
+function _terminateLoopSource(run: ActiveRun, nodeId: string): void {
+  // loopSources is run-local execution state; removal makes this gateway terminal for the rest of this run.
+  run.dagRun.loopSources.delete(nodeId);
+}
+
 function _whileGatewayResult(
   run: ActiveRun,
   node: DAGGraphNode,
@@ -1333,14 +1338,14 @@ function _whileGatewayResult(
   const iteration = run.counters.gateway_iterations[node.node_id] ?? 0;
   const maxIterations = Math.max(1, Math.floor(config?.max_iterations ?? 3));
   if (matched) {
-    run.dagRun.loopSources.delete(node.node_id);
+    _terminateLoopSource(run, node.node_id);
     return {
       port: config?.done_port || "done",
       payload: { input, iteration, max_iterations: maxIterations, matched: true },
     };
   }
   if (iteration >= maxIterations) {
-    run.dagRun.loopSources.delete(node.node_id);
+    _terminateLoopSource(run, node.node_id);
     return {
       port: config?.exhausted_port || "exhausted",
       payload: { input, iteration, max_iterations: maxIterations, matched: false, exhausted: true },
@@ -1389,7 +1394,7 @@ function _executeGatewayNode(runId: string, run: ActiveRun, node: DAGGraphNode):
     if (index < items.length) {
       run.counters.gateway_iterations[node.node_id] = index + 1;
     } else {
-      run.dagRun.loopSources.delete(node.node_id);
+      _terminateLoopSource(run, node.node_id);
     }
     const next = handoffActiveRun(runId, node.node_id, port, payload);
     if (!next) return false;

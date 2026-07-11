@@ -220,12 +220,21 @@ nodes:
   it("rejects invalid join, while, and retry configurations before runtime", () => {
     expect(() => parseDAGYaml(`
 name: invalid-join
+agents:
+  worker:
+    agent_type: deterministic
 nodes:
+  voter:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:vote
   join:
     type: join_gateway
     gateway_config:
       mode: n_of_m
       threshold: 0
+    after: [voter]
     outputs:
       passed:
         to: ""
@@ -255,5 +264,92 @@ nodes:
         retry_policy:
           max_retries: -1
 `)).toThrow(/non-negative integer/);
+  });
+
+  it("rejects join gateways without a complete dependency input contract", () => {
+    expect(() => parseDAGYaml(`
+name: join-without-dependencies
+nodes:
+  join:
+    type: join_gateway
+    outputs:
+      passed:
+        to: ""
+`)).toThrow(/requires at least one after dependency/);
+
+    expect(() => parseDAGYaml(`
+name: join-with-missing-input
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  voter_one:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:one
+  voter_two:
+    agent: worker
+    outputs:
+      done:
+        to: ""
+  join:
+    type: join_gateway
+    after: [voter_one, voter_two]
+    outputs:
+      passed:
+        to: ""
+`)).toThrow(/missing routed input from after dependencies: voter_two/);
+
+    expect(() => parseDAGYaml(`
+name: join-with-unawaited-input
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  awaited_voter:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:awaited
+  unawaited_voter:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:unawaited
+  join:
+    type: join_gateway
+    after: [awaited_voter]
+    outputs:
+      passed:
+        to: ""
+`)).toThrow(/routed input from undeclared after dependencies: unawaited_voter/);
+
+    expect(() => parseDAGYaml(`
+name: join-with-impossible-threshold
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  voter_one:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:one
+  voter_two:
+    agent: worker
+    outputs:
+      vote:
+        to: join.in:two
+  join:
+    type: join_gateway
+    gateway_config:
+      mode: n_of_m
+      threshold: 3
+    after: [voter_one, voter_two]
+    outputs:
+      passed:
+        to: ""
+`)).toThrow(/threshold 3 exceeds its 2 after dependencies/);
   });
 });

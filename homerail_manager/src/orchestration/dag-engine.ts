@@ -143,7 +143,7 @@ function _skipUntakenSatisfiedBranches(run: DAGRun, nodeId: string): void {
   });
   if (hasUntakenRequiredInput) {
     run.nodeStates.set(nodeId, "SKIPPED");
-    _skipDependentNodes(run, nodeId);
+    _skipDependentNodes(run, nodeId, true);
   }
 }
 
@@ -181,15 +181,15 @@ function _hasAlternativePath(run: DAGRun, nodeId: string, excludePred: string): 
   return false;
 }
 
-function _skipDependentNodes(run: DAGRun, failedNodeId: string): void {
+function _skipDependentNodes(run: DAGRun, unavailableNodeId: string, sourceWasSkipped = false): void {
   for (const edge of run.graph.edges) {
-    if (edge.from_node !== failedNodeId) continue;
-    if (edge.condition !== "on_success") continue;
+    if (edge.from_node !== unavailableNodeId) continue;
+    if (!sourceWasSkipped && edge.condition !== "on_success") continue;
     if (!edge.to_node) continue;
     if (run.nodeStates.get(edge.to_node) !== "PENDING") continue;
-    if (_hasAlternativePath(run, edge.to_node, failedNodeId)) continue;
+    if (_hasAlternativePath(run, edge.to_node, unavailableNodeId)) continue;
     run.nodeStates.set(edge.to_node, "SKIPPED");
-    _skipDependentNodes(run, edge.to_node);
+    _skipDependentNodes(run, edge.to_node, true);
   }
 }
 

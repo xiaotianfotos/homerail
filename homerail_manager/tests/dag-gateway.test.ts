@@ -334,7 +334,15 @@ nodes:
     outputs:
       done:
         to: approved_terminal.in:result
+      failed:
+        to: approved_failure_terminal.in:error
   approved_terminal:
+    agent: worker
+    after: [approved]
+    outputs:
+      done:
+        to: ""
+  approved_failure_terminal:
     agent: worker
     after: [approved]
     outputs:
@@ -354,6 +362,7 @@ nodes:
     const run = getActiveRun("run-branch-skip-propagation");
     expect(run?.dagRun.nodeStates.get("approved")).toBe("SKIPPED");
     expect(run?.dagRun.nodeStates.get("approved_terminal")).toBe("SKIPPED");
+    expect(run?.dagRun.nodeStates.get("approved_failure_terminal")).toBe("SKIPPED");
     expect(run?.dagRun.nodeStates.get("rejected")).toBe("READY");
   });
 

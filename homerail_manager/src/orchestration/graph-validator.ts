@@ -141,6 +141,27 @@ function _validateGatewayConfigs(graph: DAGGraphData, errors: string[]): void {
   for (const node of graph.nodes) {
     const config = node.gateway_config;
     if (node.node_type === "join_gateway") {
+      const dependencies = new Set(node.after);
+      const routedSources = new Set(
+        graph.edges
+          .filter((edge) => edge.to_node === node.node_id && edge.label !== "after_dep")
+          .map((edge) => edge.from_node),
+      );
+      if (dependencies.size === 0) {
+        errors.push(`Join gateway ${node.node_id} requires at least one after dependency`);
+      }
+      const missingInputs = Array.from(dependencies).filter((dependency) => !routedSources.has(dependency));
+      if (missingInputs.length > 0) {
+        errors.push(
+          `Join gateway ${node.node_id} is missing routed input from after dependencies: ${missingInputs.sort().join(", ")}`,
+        );
+      }
+      const unawaitedInputs = Array.from(routedSources).filter((source) => !dependencies.has(source));
+      if (unawaitedInputs.length > 0) {
+        errors.push(
+          `Join gateway ${node.node_id} has routed input from undeclared after dependencies: ${unawaitedInputs.sort().join(", ")}`,
+        );
+      }
       const mode = config?.mode ?? "all";
       if (!JOIN_MODES.has(mode)) {
         errors.push(`Join gateway ${node.node_id} has unsupported mode: ${mode}`);
@@ -149,6 +170,10 @@ function _validateGatewayConfigs(graph: DAGGraphData, errors: string[]): void {
         const threshold = config?.threshold;
         if (!Number.isInteger(threshold) || (threshold ?? 0) < 1) {
           errors.push(`Join gateway ${node.node_id} requires a positive integer threshold for n_of_m mode`);
+        } else if ((threshold ?? 0) > dependencies.size) {
+          errors.push(
+            `Join gateway ${node.node_id} threshold ${threshold} exceeds its ${dependencies.size} after dependencies`,
+          );
         }
       }
     }
