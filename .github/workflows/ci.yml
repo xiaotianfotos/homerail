@@ -22,8 +22,6 @@ jobs:
       fail-fast: false
       matrix:
         node-version: [20, 24]
-    env:
-      HOMERAIL_HOME: ${{ runner.temp }}/homerail-ci-node-${{ matrix.node-version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -47,14 +45,14 @@ jobs:
         run: npm run install:all
 
       - name: Typecheck, build, and test
+        env:
+          HOMERAIL_HOME: ${{ runner.temp }}/homerail-ci-node-${{ matrix.node-version }}
         run: npm run ci
 
   core-windows:
     name: Core (Windows, Node 24)
     runs-on: windows-latest
     timeout-minutes: 25
-    env:
-      HOMERAIL_HOME: ${{ runner.temp }}/homerail-ci
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -78,6 +76,8 @@ jobs:
         run: npm run install:all
 
       - name: Typecheck, build, and test
+        env:
+          HOMERAIL_HOME: ${{ runner.temp }}/homerail-ci
         run: npm run ci
 
   agent-ui-coverage:
