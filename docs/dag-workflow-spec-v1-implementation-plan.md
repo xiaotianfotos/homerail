@@ -30,11 +30,14 @@ Implemented on the Draft PR branch:
 - runtime projection for v1, named contract validation, `$run.input`, bounded
   feedback metadata, and explicit success/failure/cancelled terminals;
 - schema, validation, revision, CLI, and Manager Agent access surfaces.
+- all built-in pattern catalog details and generated instances emit strict v1,
+  with runtime graph parity checked against their legacy templates.
 
 Still pending before the Draft can be considered ready:
 
-- migrate built-in generated pattern instances and tracked v1 examples;
-- broaden legacy/v1 transition parity across every gateway asset;
+- add tracked standalone v1 examples and migrate selected public assets;
+- broaden legacy/v1 transition parity beyond built-in patterns to every public
+  gateway asset;
 - complete full repository, Docker, Windows, and model-backed validation;
 - finalize public migration/authoring documentation.
 

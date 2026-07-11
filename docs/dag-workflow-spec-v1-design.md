@@ -7,6 +7,8 @@ runtime behavior remains authoritative until the runtime migration phase.
 For a complete Chinese overview of the proposed DSL, its rationale, execution
 model, compatibility strategy, and future extension boundary, see
 [`dag-workflow-spec-v1-overview.zh-CN.md`](dag-workflow-spec-v1-overview.zh-CN.md).
+For the runnable authoring flow and minimal v1 source, see
+[`workflow-spec-v1-authoring.md`](workflow-spec-v1-authoring.md).
 
 ## Context
 

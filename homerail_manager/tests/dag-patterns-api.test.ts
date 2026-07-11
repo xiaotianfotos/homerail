@@ -54,11 +54,12 @@ describe("DAG patterns API", () => {
 
     const detailResponse = await fetch(`${baseUrl}/api/dag/patterns/ratchet`);
     const detailBody = await detailResponse.json() as {
-      data: { required_primitives: string[]; workflow_template: { nodes: Record<string, unknown> } };
+      data: { required_primitives: string[]; workflow_template: { api_version: string; spec: { nodes: Record<string, unknown> } } };
     };
     expect(detailResponse.status).toBe(200);
     expect(detailBody.data.required_primitives).toContain("while_gateway");
-    expect(detailBody.data.workflow_template.nodes).toHaveProperty("target_gate");
+    expect(detailBody.data.workflow_template.api_version).toBe("homerail.ai/v1");
+    expect(detailBody.data.workflow_template.spec.nodes).toHaveProperty("target_gate");
   });
 
   it("instantiates a typed pattern and returns validated YAML without persisting it", async () => {
@@ -80,7 +81,12 @@ describe("DAG patterns API", () => {
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data.parameters.threshold).toBe(3);
-    expect(body.data.workflow).toMatchObject({ workflow_id: "api-quorum", pattern: { id: "quorum" } });
+    expect(body.data.workflow).toMatchObject({
+      api_version: "homerail.ai/v1",
+      kind: "Workflow",
+      metadata: { id: "api-quorum" },
+      spec: { pattern: { id: "quorum" } },
+    });
     expect(body.data.yaml_text).toContain("threshold: 3");
     expect(body.data.validation.valid).toBe(true);
   });

@@ -228,6 +228,12 @@ export const WorkflowSpecV1Schema = Type.Object({
       maxProperties: 1000,
     }),
     edges: Type.Array(WorkflowEdge, { maxItems: 10_000 }),
+    pattern: Type.Optional(Type.Object({
+      id: Identifier,
+      version: Type.String({ minLength: 1, maxLength: 64 }),
+      source: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+      parameters: Type.Optional(Type.Record(Identifier, JsonValue, { maxProperties: 128 })),
+    }, { additionalProperties: false })),
     policies: Type.Optional(Type.Object({
       max_nodes: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
       max_edges: Type.Optional(Type.Integer({ minimum: 0, maximum: 10_000 })),

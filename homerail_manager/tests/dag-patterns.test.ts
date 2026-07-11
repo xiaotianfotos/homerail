@@ -47,6 +47,14 @@ describe("built-in DAG patterns", () => {
         version: summary.version,
         source: DAG_PATTERN_SOURCE.url,
       });
+      expect(instance.workflow).toMatchObject({
+        api_version: "homerail.ai/v1",
+        kind: "Workflow",
+        metadata: { id: `pattern-${summary.id}` },
+        spec: { pattern: { id: summary.id } },
+      });
+      expect(instance.yaml_text).toMatch(/^api_version: homerail\.ai\/v1/m);
+      expect(instance.yaml_text).not.toMatch(/^workflow_id:/m);
       expect(instance.yaml_text).not.toMatch(/provider:|model:|api_key:/);
       expect(instance.yaml_text).not.toContain("{{");
     }
@@ -88,10 +96,10 @@ describe("built-in DAG patterns", () => {
       (edge) => edge.from_node === "plan" && edge.from_port === "planned" && edge.label !== "after_dep",
     );
 
-    expect(planEdges.map((edge) => [edge.from_port, edge.to_node, edge.to_port])).toEqual([
+    expect(planEdges.map((edge) => [edge.from_port, edge.to_node, edge.to_port]).sort((left, right) => left[1].localeCompare(right[1]))).toEqual([
       ["planned", "worker_one", "order"],
-      ["planned", "worker_two", "order"],
       ["planned", "worker_three", "order"],
+      ["planned", "worker_two", "order"],
     ]);
     expect(pattern.parsed.meta.agents.orchestrator?.system).toContain("work_orders object is keyed");
     expect(pattern.parsed.meta.agents.worker?.system).toContain("may arrive as a JSON string");

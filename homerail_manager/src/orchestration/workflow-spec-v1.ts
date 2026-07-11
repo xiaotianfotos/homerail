@@ -79,6 +79,12 @@ export interface CanonicalWorkflowIR {
     system?: string;
     skills: string[];
   }>;
+  pattern?: {
+    id: string;
+    version: string;
+    source?: string;
+    parameters: Record<string, unknown>;
+  };
   policies: {
     max_nodes: number;
     max_edges: number;
@@ -592,6 +598,14 @@ function compileV1(workflow: WorkflowSpecV1): CanonicalWorkflowIR {
         ...(agent.system ? { system: agent.system } : {}),
         skills: [...(agent.skills ?? [])].sort(),
       }])),
+    ...(workflow.spec.pattern ? {
+      pattern: {
+        id: workflow.spec.pattern.id,
+        version: workflow.spec.pattern.version,
+        ...(workflow.spec.pattern.source ? { source: workflow.spec.pattern.source } : {}),
+        parameters: deepSort(workflow.spec.pattern.parameters ?? {}) as Record<string, unknown>,
+      },
+    } : {}),
     policies: {
       max_nodes: workflow.spec.policies?.max_nodes ?? 1000,
       max_edges: workflow.spec.policies?.max_edges ?? 10_000,
@@ -630,7 +644,7 @@ function legacyTerminalId(edge: DAGEdge, index: number): string {
 function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
   const inputPorts = new Map<string, Set<string>>();
   for (const edge of parsed.graph.edges) {
-    if (edge.to_node) {
+    if (edge.to_node && edge.label !== "after_dep") {
       if (!inputPorts.has(edge.to_node)) inputPorts.set(edge.to_node, new Set());
       inputPorts.get(edge.to_node)?.add(edge.to_port);
     }
@@ -645,6 +659,7 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
     outputs: Object.keys(node.outputs).sort().map((name) => ({ name })),
     ...(legacyKind(node) !== "agent" ? { config: deepSort(node.gateway_config ?? {}) as Record<string, unknown> } : {}),
   }));
+  const sourceNodes = new Map(parsed.graph.nodes.map((node) => [node.node_id, node]));
   const edges: CanonicalEdge[] = [];
   parsed.graph.edges.forEach((edge, index) => {
     if (!edge.to_node) {
@@ -667,13 +682,16 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
       });
       return;
     }
+    const feedback = parsed.loop_sources.includes(edge.to_node) &&
+      sourceNodes.get(edge.from_node)?.after.includes(edge.to_node);
     edges.push({
       id: "",
-      kind: edge.label === "after_dep" ? "control" : "data",
+      kind: edge.label === "after_dep" ? "control" : feedback ? "feedback" : "data",
       from: { node: edge.from_node, port: edge.from_port },
       to: { node: edge.to_node, port: edge.to_port },
       condition: edge.condition as CanonicalEdge["condition"],
       retry: { max_retries: edge.retry_policy?.max_retries ?? 0 },
+      ...(feedback ? { max_traversals: edge.retry_policy?.max_retries ?? 3 } : {}),
     });
   });
   edges.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
@@ -699,6 +717,14 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
         ...(agent.system ? { system: agent.system } : {}),
         skills: [...(agent.skills ?? [])].sort(),
       }])),
+    ...(parsed.meta.pattern ? {
+      pattern: {
+        id: parsed.meta.pattern.id,
+        version: parsed.meta.pattern.version,
+        ...(parsed.meta.pattern.source ? { source: parsed.meta.pattern.source } : {}),
+        parameters: deepSort(parsed.meta.pattern.parameters ?? {}) as Record<string, unknown>,
+      },
+    } : {}),
     policies: {
       max_nodes: 1000,
       max_edges: 10_000,
@@ -713,7 +739,7 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
     edges,
     entry_nodes: nodes.filter((node) => !incoming.has(node.id)).map((node) => node.id).sort(),
     terminal_nodes: nodes.filter((node) => node.kind === "terminal").map((node) => node.id).sort(),
-    feedback_edges: [],
+    feedback_edges: edges.filter((edge) => edge.kind === "feedback").map((edge) => edge.id),
     legacy_compat: deepSort({
       meta: parsed.meta,
       graph: parsed.graph,
@@ -1003,6 +1029,7 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
         max_tool_calls_per_node: canonical.policies.max_tool_calls_per_node,
       },
       agents,
+      pattern: canonical.pattern,
       contracts: canonical.contracts,
       run_input_targets: runInputTargets,
       source_api_version: canonical.source_api_version,
@@ -1015,4 +1042,161 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
       .map((node) => node.id)
       .sort(),
   };
+}
+
+function authoringPorts(ports: CanonicalPort[]): Record<string, { contract?: string; description?: string }> | undefined {
+  if (ports.length === 0) return undefined;
+  return Object.fromEntries(ports.map((port) => [port.name, {
+    ...(port.contract ? { contract: port.contract } : {}),
+    ...(port.description ? { description: port.description } : {}),
+  }]));
+}
+
+function configString(config: Record<string, unknown>, key: string, fallback: string): string {
+  return typeof config[key] === "string" && config[key] ? String(config[key]) : fallback;
+}
+
+function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Record<string, unknown> {
+  const incomingDataDependencies = new Set(
+    canonical.edges
+      .filter((edge) => edge.kind === "data" && edge.to.node === node.id && edge.from.node !== "$run")
+      .map((edge) => edge.from.node),
+  );
+  const dependsOn = node.depends_on.filter((dependency) => !incomingDataDependencies.has(dependency));
+  const base: Record<string, unknown> = {
+    kind: node.kind,
+    ...(node.description ? { description: node.description } : {}),
+    ...(dependsOn.length > 0 ? { depends_on: dependsOn } : {}),
+    ...(authoringPorts(node.inputs) ? { inputs: authoringPorts(node.inputs) } : {}),
+    ...(node.kind !== "terminal" && authoringPorts(node.outputs) ? { outputs: authoringPorts(node.outputs) } : {}),
+  };
+  if (node.kind === "agent") return { ...base, agent: node.agent };
+  if (node.kind === "terminal") {
+    return { ...base, outcome: node.outcome ?? "success", ...(node.reason ? { reason: node.reason } : {}) };
+  }
+  const config = node.config ?? {};
+  if (node.kind === "condition") {
+    return {
+      ...base,
+      config: {
+        field: configString(config, "field", "status"),
+        routes: config.routes ?? config.cases ?? {},
+        ...(config.default_port || config.default ? { default: config.default_port ?? config.default } : {}),
+      },
+    };
+  }
+  if (node.kind === "join") {
+    return {
+      ...base,
+      config: {
+        mode: config.mode === "any" || config.mode === "n_of_m" ? config.mode : "all",
+        ...(config.field ? { field: config.field } : {}),
+        ...(config.success_values ? { success_values: config.success_values } : {}),
+        ...(config.threshold ? { threshold: config.threshold } : {}),
+        ...(config.passed_port ? { passed_port: config.passed_port } : {}),
+        ...(config.failed_port ? { failed_port: config.failed_port } : {}),
+      },
+    };
+  }
+  if (node.kind === "foreach") {
+    const inputs = { ...(base.inputs as Record<string, unknown> | undefined ?? {}) };
+    const outputs = { ...(base.outputs as Record<string, unknown> | undefined ?? {}) };
+    const input = configString(config, "input", inputs.items ? "items" : Object.keys(inputs)[0] ?? "items");
+    const resultPort = configString(config, "result_port", "result");
+    const itemPort = configString(config, "item_port", "next_item");
+    const donePort = configString(config, "done_port", "done");
+    inputs[input] ??= {};
+    inputs[resultPort] ??= {};
+    outputs[itemPort] ??= {};
+    outputs[donePort] ??= {};
+    return {
+      ...base,
+      inputs,
+      outputs,
+      config: {
+        input,
+        item_port: itemPort,
+        result_port: resultPort,
+        done_port: donePort,
+        max_items: typeof config.max_items === "number" ? config.max_items : 10_000,
+      },
+    };
+  }
+  const outputs = { ...(base.outputs as Record<string, unknown> | undefined ?? {}) };
+  const continuePort = configString(config, "continue_port", "continue");
+  const donePort = configString(config, "done_port", "done");
+  const exhaustedPort = configString(config, "exhausted_port", "exhausted");
+  outputs[continuePort] ??= {};
+  outputs[donePort] ??= {};
+  outputs[exhaustedPort] ??= {};
+  return {
+    ...base,
+    outputs,
+    config: {
+      field: configString(config, "field", "status"),
+      operator: configString(config, "operator", "eq"),
+      ...(config.value !== undefined ? { value: config.value } : {}),
+      continue_port: continuePort,
+      done_port: donePort,
+      exhausted_port: exhaustedPort,
+      max_iterations: typeof config.max_iterations === "number" ? config.max_iterations : 3,
+    },
+  };
+}
+
+export function canonicalWorkflowToV1Document(canonical: CanonicalWorkflowIR): Record<string, unknown> {
+  const edges = canonical.edges
+    .filter((edge) => edge.kind !== "control")
+    .map((edge) => {
+      const defaultCondition = FAILURE_PORT_NAMES.has(edge.from.port.toLowerCase()) ? "on_failure" : "on_success";
+      if (edge.kind === "feedback") {
+        return {
+          kind: "feedback",
+          from: `${edge.from.node}.${edge.from.port}`,
+          to: `${edge.to.node}.${edge.to.port}`,
+          max_traversals: edge.max_traversals ?? (edge.retry.max_retries || 3),
+        };
+      }
+      return {
+        from: edge.from.node === "$run" ? "$run.input" : `${edge.from.node}.${edge.from.port}`,
+        to: `${edge.to.node}.${edge.to.port}`,
+        ...(edge.condition !== defaultCondition ? { condition: edge.condition } : {}),
+        ...(edge.retry.max_retries > 0 ? { retry: { max_retries: edge.retry.max_retries } } : {}),
+      };
+    });
+  return {
+    api_version: WORKFLOW_API_VERSION,
+    kind: WORKFLOW_KIND,
+    metadata: {
+      id: canonical.workflow_id,
+      name: canonical.name,
+      ...(Object.keys(canonical.labels).length > 0 ? { labels: canonical.labels } : {}),
+      ...(Object.keys(canonical.annotations).length > 0 ? { annotations: canonical.annotations } : {}),
+    },
+    spec: {
+      ...(canonical.description ? { description: canonical.description } : {}),
+      workspace: canonical.workspace,
+      ...(Object.keys(canonical.contracts).length > 0 ? { contracts: canonical.contracts } : {}),
+      agents: Object.fromEntries(Object.entries(canonical.agents).map(([id, agent]) => [id, {
+        ...(agent.description ? { description: agent.description } : {}),
+        ...(agent.system ? { system: agent.system } : {}),
+        ...(agent.skills.length > 0 ? { skills: agent.skills } : {}),
+      }])),
+      nodes: Object.fromEntries(canonical.nodes.map((node) => [node.id, authoringNode(node, canonical)])),
+      edges,
+      ...(canonical.pattern ? { pattern: canonical.pattern } : {}),
+      ...(_isDefaultPolicies(canonical.policies) ? {} : { policies: canonical.policies }),
+    },
+  };
+}
+
+function _isDefaultPolicies(policies: CanonicalWorkflowIR["policies"]): boolean {
+  return policies.max_nodes === 1000 &&
+    policies.max_edges === 10_000 &&
+    policies.max_parallelism === 32 &&
+    policies.max_dispatches === 30 &&
+    policies.max_handoffs === 50 &&
+    policies.max_corrections_per_node === 2 &&
+    policies.max_edge_traversals === 3 &&
+    policies.max_tool_calls_per_node === 0;
 }
