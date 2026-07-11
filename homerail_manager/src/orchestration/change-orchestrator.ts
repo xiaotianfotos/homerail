@@ -35,6 +35,10 @@ export interface CreateRunResponse {
   runId: string;
   workflowId?: string;
   workflowName?: string;
+  workflowRevision?: number;
+  canonicalHash?: string;
+  compilerVersion?: string;
+  sourceApiVersion?: string;
   nodeCount: number;
   status: string;
   createdAt: number;
@@ -119,6 +123,10 @@ export interface CreateAndRunResponse {
   runId: string;
   workflowId?: string;
   workflowName?: string;
+  workflowRevision?: number;
+  canonicalHash?: string;
+  compilerVersion?: string;
+  sourceApiVersion?: string;
   nodeCount: number;
   status: string;
   createdAt: number;
@@ -258,6 +266,10 @@ export class ChangeOrchestrator {
       runId: run.runId,
       workflowId: run.workflowId,
       workflowName: run.workflowName,
+      workflowRevision: run.workflowRevision,
+      canonicalHash: run.canonicalHash,
+      compilerVersion: run.compilerVersion,
+      sourceApiVersion: run.sourceApiVersion,
       nodeCount: run.nodeCount ?? dagWithRuntime.graph.nodes.length,
       status: run.status,
       createdAt: run.createdAt,
@@ -281,6 +293,10 @@ export class ChangeOrchestrator {
       runId: createResult.runId,
       workflowId: createResult.workflowId,
       workflowName: createResult.workflowName,
+      workflowRevision: createResult.workflowRevision,
+      canonicalHash: createResult.canonicalHash,
+      compilerVersion: createResult.compilerVersion,
+      sourceApiVersion: createResult.sourceApiVersion,
       nodeCount: createResult.nodeCount,
       status: createResult.status,
       createdAt: createResult.createdAt,

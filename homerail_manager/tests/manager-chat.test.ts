@@ -1159,6 +1159,9 @@ describe("/api/manager/chat", () => {
       "list_dag_patterns",
       "get_dag_pattern",
       "instantiate_dag_pattern",
+      "get_dag_schema",
+      "validate_dag_workflow",
+      "sync_dag_workflow",
       "update_voice_memo",
       "validate_widget_file",
       "write_widget_file",
@@ -1215,6 +1218,20 @@ describe("/api/manager/chat", () => {
     );
     expect(instantiated.result.is_error).toBeFalsy();
     expect(instantiated.result.content[0].text).toContain('"synced":true');
+
+    const schema = await _invokeHostCodexVoiceToolForTest(
+      "get_dag_schema",
+      {},
+      { managerRestUrl },
+    );
+    expect(schema.result.content[0].text).toContain("homerail.ai/v1");
+
+    const validation = await _invokeHostCodexVoiceToolForTest(
+      "validate_dag_workflow",
+      { source: "api_version: homerail.ai/v1\nkind: Workflow\n" },
+      { managerRestUrl },
+    );
+    expect(validation.result.content[0].text).toContain("DAG_SCHEMA_REQUIRED_FIELD");
 
     const workflow = await fetch(`http://127.0.0.1:${port}/api/dag/workflows/host-skill-heartbeat`);
     expect(workflow.status).toBe(200);

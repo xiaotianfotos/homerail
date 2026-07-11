@@ -32,6 +32,7 @@ export interface DAGGatewayConfig {
   cases?: Record<string, string>;
   default_port?: string;
   items?: unknown[];
+  input?: string;
   item_port?: string;
   result_port?: string;
   done_port?: string;
@@ -44,6 +45,7 @@ export interface DAGGatewayConfig {
   operator?: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "truthy" | "falsy" | string;
   value?: unknown;
   max_iterations?: number;
+  max_items?: number;
 }
 
 export interface DAGPatternInstanceMeta {
@@ -78,6 +80,7 @@ export interface DAGEdge {
   condition: string;
   label?: string;
   retry_policy?: DAGEdgeRetryPolicy;
+  terminal_outcome?: "success" | "failure" | "cancelled";
 }
 
 export interface RuntimeProfileAgentMapping {
@@ -139,6 +142,12 @@ export interface ScorecardPolicyConfig {
 export interface ResolvedWorkflowMeta {
   name: string;
   workflow_id?: string;
+  workflow_revision?: number;
+  canonical_hash?: string;
+  compiler_version?: string;
+  source_api_version?: string;
+  contracts?: Record<string, unknown>;
+  run_input_targets?: Array<{ node: string; port: string; contract?: string }>;
   description?: string;
   llm?: { provider?: string; model?: string };
   runtime_profiles?: Record<string, RuntimeProfile>;

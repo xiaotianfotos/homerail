@@ -1,7 +1,8 @@
 # WorkflowSpec v1 Implementation Plan
 
-Status: Draft task design. This plan depends on approval of
-`dag-workflow-spec-v1-design.md` and does not authorize implementation yet.
+Status: Active. The WorkflowSpec v1 design decisions were accepted on
+2026-07-11. Delivery remains incremental and legacy runtime behavior must stay
+compatible throughout the migration.
 
 Review the overall DSL model and the Why/How rationale in
 [`dag-workflow-spec-v1-overview.zh-CN.md`](dag-workflow-spec-v1-overview.zh-CN.md)
@@ -15,6 +16,27 @@ immutable workflow revisions, legacy YAML compatibility, and
 
 It does not include dynamic graph mutation, Graph Patch, new gateway behavior,
 new DAG patterns, or a custom textual language.
+
+## Current Implementation State
+
+Implemented on the Draft PR branch:
+
+- accepted v1 decisions and a typed TypeBox schema source of truth;
+- safe YAML/JSON parsing, path/line diagnostics, semantic validation, canonical
+  JSON and SHA-256 hashing;
+- isolated legacy/v0 compilation and unchanged legacy runtime parsing;
+- immutable workflow revisions with formatting-only sync idempotency;
+- run revision/hash/compiler provenance, including cold recovery;
+- runtime projection for v1, named contract validation, `$run.input`, bounded
+  feedback metadata, and explicit success/failure/cancelled terminals;
+- schema, validation, revision, CLI, and Manager Agent access surfaces.
+
+Still pending before the Draft can be considered ready:
+
+- migrate built-in generated pattern instances and tracked v1 examples;
+- broaden legacy/v1 transition parity across every gateway asset;
+- complete full repository, Docker, Windows, and model-backed validation;
+- finalize public migration/authoring documentation.
 
 ## Phase 0: Freeze Existing Behavior
 
@@ -291,14 +313,10 @@ Each PR must keep legacy workflows runnable and include migration or parity
 evidence appropriate to its blast radius. Graph Patch starts only after all four
 are merged and WorkflowSpec v1 is stable.
 
-## Discussion Gate
+## Decision Gate
 
-Implementation remains paused until the design review resolves:
-
-- public envelope shape;
-- edge and `after` semantics;
-- terminal representation;
-- handoff payload schema ownership;
-- schema source-of-truth strategy;
-- RuntimeProfile v1 scope;
-- formatting-only revision retention.
+The design gate is resolved in `dag-workflow-spec-v1-design.md`. Implementation
+must preserve those accepted decisions. Any proposal to change the envelope,
+edge semantics, terminal representation, contract ownership, schema source of
+truth, RuntimeProfile scope, or revision retention returns to design review
+before code changes.

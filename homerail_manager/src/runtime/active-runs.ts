@@ -45,6 +45,7 @@ import {
 } from "../persistence/dag-session-index.js";
 import { checkpointForkSession } from "../persistence/dag-session-files.js";
 import WebSocket from "ws";
+import { validateJsonContract } from "../orchestration/json-contract.js";
 
 export interface InjectResult {
   runId: string;
@@ -62,6 +63,13 @@ export interface ActiveRun {
   runId: string;
   workflowId?: string;
   workflowName?: string;
+  workflowRevision?: number;
+  canonicalHash?: string;
+  compilerVersion?: string;
+  sourceApiVersion?: string;
+  contracts?: Record<string, unknown>;
+  runInputTargets?: Array<{ node: string; port: string; contract?: string }>;
+  initialPrompt?: string;
   nodeCount?: number;
   agents?: Record<string, DAGAgentConfig>;
   workspace?: Record<string, unknown>;
@@ -356,11 +364,25 @@ export function createActiveRun(
   options: CreateActiveRunOptions = {},
 ): ActiveRun {
   const dagRun = createDAGRun(parsedDAG, runId);
-  seedInitialPrompt(dagRun, options.initialPrompt);
+  seedInitialPrompt(
+    dagRun,
+    options.initialPrompt,
+    parsedDAG.meta.run_input_targets,
+    parsedDAG.meta.contracts,
+  );
   const run: ActiveRun = {
     runId,
     workflowId: parsedDAG.meta.workflow_id,
     workflowName: parsedDAG.meta.name,
+    workflowRevision: parsedDAG.meta.workflow_revision,
+    canonicalHash: parsedDAG.meta.canonical_hash,
+    compilerVersion: parsedDAG.meta.compiler_version,
+    sourceApiVersion: parsedDAG.meta.source_api_version,
+    contracts: parsedDAG.meta.contracts ? { ...parsedDAG.meta.contracts } : undefined,
+    runInputTargets: parsedDAG.meta.run_input_targets
+      ? parsedDAG.meta.run_input_targets.map((target) => ({ ...target }))
+      : undefined,
+    initialPrompt: options.initialPrompt,
     nodeCount: parsedDAG.graph.nodes.length,
     agents: parsedDAG.meta.agents
       ? { ...parsedDAG.meta.agents }
@@ -404,8 +426,28 @@ export function createActiveRun(
 export function seedInitialPrompt(
   dagRun: DAGRun,
   prompt: string | undefined,
+  targets?: Array<{ node: string; port: string; contract?: string }>,
+  contracts?: Record<string, unknown>,
 ): void {
   if (prompt === undefined || prompt.trim().length === 0) return;
+  if (targets && targets.length > 0) {
+    const payload = _structuredGatewayValue(prompt);
+    for (const target of targets) {
+      if (target.contract) {
+        const schema = contracts?.[target.contract];
+        const validation = validateJsonContract(schema, payload);
+        if (!validation.valid) {
+          throw new Error(`DAG_RUN_INPUT_CONTRACT_VIOLATION ${target.node}.${target.port}: ${validation.details}`);
+        }
+      }
+      const mailbox = dagRun.mailboxes.get(target.node);
+      if (!mailbox) throw new Error(`DAG run input targets unknown node: ${target.node}`);
+      const values = mailbox.get(target.port) ?? [];
+      values.push(payload);
+      mailbox.set(target.port, values);
+    }
+    return;
+  }
   for (const nodeId of getReadyNodes(dagRun)) {
     const mailbox = dagRun.mailboxes.get(nodeId);
     if (!mailbox) continue;
@@ -562,10 +604,20 @@ export function restoreActiveRun(
   }
 
   const { dagRun, nodes } = _rebuildDagRunFromPersisted(metadata, metadata.graph);
+  seedInitialPrompt(dagRun, metadata.initialPrompt, metadata.runInputTargets, metadata.contracts);
   const run: ActiveRun = {
     runId: metadata.runId,
     workflowId: metadata.workflowId,
     workflowName: metadata.workflowName,
+    workflowRevision: metadata.workflowRevision,
+    canonicalHash: metadata.canonicalHash,
+    compilerVersion: metadata.compilerVersion,
+    sourceApiVersion: metadata.sourceApiVersion,
+    contracts: metadata.contracts ? { ...metadata.contracts } : undefined,
+    runInputTargets: metadata.runInputTargets
+      ? metadata.runInputTargets.map((target) => ({ ...target }))
+      : undefined,
+    initialPrompt: metadata.initialPrompt,
     nodeCount: metadata.nodeCount,
     agents: metadata.agents
       ? { ...metadata.agents }
@@ -961,6 +1013,11 @@ export function handoffActiveRun(
 ): ActiveRun | undefined {
   const run = store.get(runId);
   if (!run) return undefined;
+  const contractViolation = _handoffContractViolation(run, fromNode, port, content);
+  if (contractViolation) {
+    failActiveRun(runId, fromNode, contractViolation);
+    throw new Error(contractViolation);
+  }
   if (run.counters.handoffs >= run.limits.max_handoffs) {
     abortActiveRun(runId, `max_handoffs (${run.limits.max_handoffs}) exceeded`, fromNode);
     throw new Error(`max_handoffs (${run.limits.max_handoffs}) exceeded`);
@@ -984,7 +1041,15 @@ export function handoffActiveRun(
   }
 
   const transition = handoff(run.dagRun, fromNode, port, content);
-  _markNodeSessionStatus(run, fromNode, transition.terminalFailure ? "failed" : "completed");
+  _markNodeSessionStatus(
+    run,
+    fromNode,
+    transition.terminalOutcome === "cancelled"
+      ? "cancelled"
+      : transition.terminalFailure
+        ? "failed"
+        : "completed",
+  );
   appendHandoff(runId, { runId, fromNode, port, content, timestamp: Date.now() });
   writeRunMetadata(runId, serializeRunMetadata(run));
   _emitNodeStateChanges(run, before);
@@ -1000,7 +1065,14 @@ export function handoffActiveRun(
   }
 
   if (run.status === "active" && isRunTerminal(run.dagRun)) {
-    if (transition.terminalFailure) {
+    if (transition.terminalOutcome === "cancelled") {
+      run.status = "cancelled";
+      run.completedAt = Date.now();
+      writeRunMetadata(runId, serializeRunMetadata(run));
+      _emitStatusUpdate(run);
+      emit("dag:run_cancelled", { runId, nodeId: fromNode, reason: `terminal cancelled handoff on port ${port}` });
+      deprovisionProvisionedForRun(runId);
+    } else if (transition.terminalFailure) {
       run.status = "failed";
       run.completedAt = Date.now();
       writeRunMetadata(runId, serializeRunMetadata(run));
@@ -1013,6 +1085,26 @@ export function handoffActiveRun(
   }
 
   return run;
+}
+
+function _handoffContractViolation(
+  run: ActiveRun,
+  fromNode: string,
+  port: string,
+  content: unknown,
+): string | undefined {
+  const node = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === fromNode);
+  const workflowSpec = node?.extra?.workflow_spec_v1;
+  if (!workflowSpec || typeof workflowSpec !== "object" || Array.isArray(workflowSpec)) return undefined;
+  const outputContracts = (workflowSpec as Record<string, unknown>).output_contracts;
+  if (!outputContracts || typeof outputContracts !== "object" || Array.isArray(outputContracts)) return undefined;
+  const contractName = (outputContracts as Record<string, unknown>)[port];
+  if (typeof contractName !== "string" || !contractName) return undefined;
+  const schema = run.contracts?.[contractName];
+  if (!schema) return `DAG_HANDOFF_CONTRACT_VIOLATION ${fromNode}.${port}: contract '${contractName}' is missing`;
+  const validation = validateJsonContract(schema, content);
+  if (validation.valid) return undefined;
+  return `DAG_HANDOFF_CONTRACT_VIOLATION ${fromNode}.${port} (${contractName}): ${validation.details}`;
 }
 
 export function getActiveRunCount(): number {
@@ -1259,7 +1351,8 @@ function _conditionGatewayPort(config: DAGGatewayConfig | undefined, input: unkn
 
 function _loopGatewayItems(config: DAGGatewayConfig | undefined, inputs: Record<string, unknown[]>): unknown[] {
   if (Array.isArray(config?.items)) return config.items;
-  const fromItemsPort = inputs.items
+  const inputPort = config?.input || "items";
+  const fromItemsPort = inputs[inputPort]
     ?.map(_structuredGatewayValue)
     .find((value) => Array.isArray(value));
   if (Array.isArray(fromItemsPort)) return fromItemsPort;
@@ -1377,6 +1470,11 @@ function _executeGatewayNode(runId: string, run: ActiveRun, node: DAGGraphNode):
   if (node.node_type === "loop_gateway") {
     const inputs = _nodeInputs(run.dagRun, node.node_id);
     const items = _loopGatewayItems(node.gateway_config, inputs);
+    const maxItems = Math.max(1, Math.floor(node.gateway_config?.max_items ?? 10_000));
+    if (items.length > maxItems) {
+      abortActiveRun(runId, `foreach max_items (${maxItems}) exceeded`, node.node_id);
+      return false;
+    }
     const index = run.counters.gateway_iterations[node.node_id] ?? 0;
     const itemPort = node.gateway_config?.item_port || "next_item";
     const resultPort = node.gateway_config?.result_port || "result";

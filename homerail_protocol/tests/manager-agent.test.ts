@@ -111,6 +111,9 @@ describe("Manager Agent harness contract", () => {
       "list_dag_patterns",
       "get_dag_pattern",
       "instantiate_dag_pattern",
+      "get_dag_schema",
+      "validate_dag_workflow",
+      "sync_dag_workflow",
     ]));
     expect(chatNames).not.toContain("write_widget_file");
     expect(voiceNames).toContain("write_widget_file");
@@ -130,6 +133,9 @@ describe("Manager Agent harness contract", () => {
       pattern_id: { type: "string" },
       parameters: { type: "object", additionalProperties: true },
       sync: { type: "boolean" },
+    });
+    expect(managerAgentToolSpec("validate_dag_workflow").input_schema.properties).toMatchObject({
+      source: { type: "string", maxLength: 262144 },
     });
     expect(managerAgentToolSpec("write_widget_file").input_schema.properties).toMatchObject({
       widget_type: { type: "string", enum: MANAGER_AGENT_WIDGET_FILE_TYPES },

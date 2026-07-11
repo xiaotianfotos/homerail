@@ -35,6 +35,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_handoffs",
   "dag_events",
   "dag_runs",
+  "dag_workflow_revisions",
   "dag_runtime_profiles",
   "dag_workflows",
   "experience_ingest_jobs",
@@ -704,6 +705,24 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
       data TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS dag_workflow_revisions (
+      workflow_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      api_version TEXT NOT NULL,
+      source_format TEXT NOT NULL,
+      source_text TEXT NOT NULL,
+      source_hash TEXT NOT NULL,
+      canonical_json TEXT NOT NULL,
+      canonical_hash TEXT NOT NULL,
+      compiler_version TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(workflow_id, revision),
+      UNIQUE(workflow_id, canonical_hash),
+      FOREIGN KEY(workflow_id) REFERENCES dag_workflows(workflow_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_dag_workflow_revisions_hash
+      ON dag_workflow_revisions(workflow_id, canonical_hash);
+
     CREATE TABLE IF NOT EXISTS dag_runtime_profiles (
       profile_key TEXT PRIMARY KEY,
       workflow_id TEXT NOT NULL,
@@ -1008,8 +1027,13 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
   `);
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(1, nowIso());
   ensureExpandedColumns(db);
+  ensureColumn(db, "dag_workflows", "head_revision", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "dag_workflows", "api_version", "TEXT");
+  ensureColumn(db, "dag_workflows", "canonical_hash", "TEXT");
+  ensureColumn(db, "dag_workflows", "compiler_version", "TEXT");
   seedBuiltinProviderCatalog(db);
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, nowIso());
+  db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(3, nowIso());
   chmodPrivate(filePath);
 }
 

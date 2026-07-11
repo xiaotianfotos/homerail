@@ -19,6 +19,31 @@ interface GlobalOpts {
   requestTimeout?: number;
 }
 
+interface WorkflowDiagnostic {
+  severity: "error" | "warning";
+  code: string;
+  path: string;
+  message: string;
+  line?: number;
+  column?: number;
+  hint?: string;
+}
+
+interface WorkflowValidationResult {
+  valid: boolean;
+  source_format: "yaml" | "json";
+  source_api_version?: string;
+  canonical_hash?: string;
+  diagnostics: WorkflowDiagnostic[];
+  summary?: {
+    workflow_id: string;
+    node_count: number;
+    edge_count: number;
+    entry_nodes: string[];
+    terminal_nodes: string[];
+  };
+}
+
 export function registerDagCommands(program: Command): void {
   const dagCmd = program.command("dag").description("DAG status and supervision commands");
   const registerResumeCommand = (command: Command) => {
@@ -60,6 +85,66 @@ export function registerDagCommands(program: Command): void {
         const workflow = resp.data?.workflow;
         console.log(`DAG synced: ${workflow?.workflow_id ?? "unknown"} (${workflow?.name ?? "unnamed"})`);
         console.log("workflow_id is the stable identity. Keep it unchanged when editing YAML; change it only for a new workflow/version.");
+      } catch (err: unknown) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  dagCmd
+    .command("validate <template>")
+    .description("Validate a DAG YAML or JSON document without syncing it")
+    .action(async (template: string) => {
+      const globalOpts = program.opts<GlobalOpts>();
+      const filePath = resolveTemplatePath(orchestrationsDir(), template);
+      if (!fs.existsSync(filePath)) {
+        console.error(`Error: DAG document not found: ${template}`);
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        const client = getClient(globalOpts);
+        const response = await client.post("/api/dag/validate", {
+          source: fs.readFileSync(filePath, "utf8"),
+        }) as { data?: WorkflowValidationResult };
+        const result = response.data;
+        if (!result) throw new Error("Manager returned no validation result");
+        if (globalOpts.json) {
+          console.log(JSON.stringify(result));
+        } else if (result.valid) {
+          const summary = result.summary;
+          console.log(`Valid ${result.source_api_version ?? "workflow"}: ${summary?.workflow_id ?? template}`);
+          console.log(`Nodes: ${summary?.node_count ?? 0}  Edges: ${summary?.edge_count ?? 0}`);
+          if (result.canonical_hash) console.log(`Canonical hash: ${result.canonical_hash}`);
+          for (const entry of result.diagnostics.filter((item) => item.severity === "warning")) {
+            console.log(formatWorkflowDiagnostic(entry));
+          }
+        } else {
+          for (const entry of result.diagnostics) console.error(formatWorkflowDiagnostic(entry));
+          process.exitCode = 1;
+        }
+      } catch (err: unknown) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  dagCmd
+    .command("schema")
+    .description("Fetch the live WorkflowSpec JSON Schema from Manager")
+    .action(async () => {
+      const globalOpts = program.opts<GlobalOpts>();
+      try {
+        const client = getClient(globalOpts);
+        const response = await client.get("/api/dag/schema") as {
+          data?: { schema?: unknown; api_version?: string; compiler_version?: string; schema_hash?: string };
+        };
+        if (!response.data?.schema) throw new Error("Manager returned no WorkflowSpec schema");
+        if (globalOpts.json) {
+          console.log(JSON.stringify(response.data));
+        } else {
+          console.log(JSON.stringify(response.data.schema, null, 2));
+        }
       } catch (err: unknown) {
         console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
         process.exitCode = 1;
@@ -198,4 +283,12 @@ export function registerDagCommands(program: Command): void {
     });
 
   registerResumeCommand(program);
+}
+
+function formatWorkflowDiagnostic(entry: WorkflowDiagnostic): string {
+  const location = entry.line !== undefined
+    ? ` line ${entry.line}${entry.column !== undefined ? `:${entry.column}` : ""}`
+    : "";
+  const hint = entry.hint ? ` Hint: ${entry.hint}` : "";
+  return `${entry.code} ${entry.path}${location}: ${entry.message}.${hint}`;
 }

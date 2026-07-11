@@ -892,9 +892,9 @@ WorkflowSpec v1 只有同时满足以下条件才算完成：
 - Linux、Windows、Docker、public smoke 和 live pattern CI 全绿；
 - 没有 Graph Patch 或新增 pattern runtime 能力混入首版。
 
-## 24. 需要评审确认的决策
+## 24. 已确认的 v1 决策
 
-本文当前推荐，但尚未由项目 owner 确认：
+以下决策已于 2026-07-11 确认并进入增量实现：
 
 1. 使用 `api_version / kind / metadata / spec` envelope；
 2. v1 只使用顶层显式 `edges`；
@@ -907,5 +907,5 @@ WorkflowSpec v1 只有同时满足以下条件才算完成：
 9. run input 使用保留 source `$run.input`；
 10. v1 node kind 名称采用 `agent / condition / join / foreach / while / terminal`。
 
-确认后，应把这些条目改为正式 decision，并在主设计文档中删除相应 open question；
-确认前不开始实现。
+这些条目是 WorkflowSpec v1 的实现边界。若后续要改变 envelope、edge、terminal、contract
+或 revision 语义，应重新进入设计评审，而不是在 parser 中增加隐式 alias。

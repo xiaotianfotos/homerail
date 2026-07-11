@@ -20,6 +20,13 @@ interface SerializableRun {
   runId: string;
   workflowId?: string;
   workflowName?: string;
+  workflowRevision?: number;
+  canonicalHash?: string;
+  compilerVersion?: string;
+  sourceApiVersion?: string;
+  contracts?: Record<string, unknown>;
+  runInputTargets?: Array<{ node: string; port: string; contract?: string }>;
+  initialPrompt?: string;
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;
@@ -184,6 +191,13 @@ export function serializeRunMetadata(run: SerializableRun): PersistedRunMetadata
     runId: run.runId,
     workflowId: run.workflowId,
     workflowName: run.workflowName,
+    workflowRevision: run.workflowRevision,
+    canonicalHash: run.canonicalHash,
+    compilerVersion: run.compilerVersion,
+    sourceApiVersion: run.sourceApiVersion,
+    contracts: run.contracts,
+    runInputTargets: run.runInputTargets,
+    initialPrompt: run.initialPrompt,
     nodeCount: run.nodeCount,
     agents: run.agents,
     workspace: run.workspace,

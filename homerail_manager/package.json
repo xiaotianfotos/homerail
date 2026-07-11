@@ -21,6 +21,8 @@
     "npm": ">=10"
   },
   "dependencies": {
+    "@sinclair/typebox": "^0.34.51",
+    "ajv": "^8.20.0",
     "better-sqlite3": "^12.11.1",
     "homerail-protocol": "file:../homerail_protocol",
     "ws": "^8.18.0",

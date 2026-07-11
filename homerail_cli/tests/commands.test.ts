@@ -557,6 +557,101 @@ nodes:
   });
 });
 
+describe("dag WorkflowSpec commands", () => {
+  it("prints structured validation output for AI clients", async () => {
+    const sourcePath = join(tempHome, "workflow.yaml");
+    writeFileSync(sourcePath, "api_version: homerail.ai/v1\nkind: Workflow\n");
+    mockFetch({
+      success: true,
+      message: "DAG workflow is valid",
+      data: {
+        valid: true,
+        source_format: "yaml",
+        source_api_version: "homerail.ai/v1",
+        canonical_hash: "a".repeat(64),
+        diagnostics: [],
+        summary: {
+          workflow_id: "cli-workflow",
+          node_count: 2,
+          edge_count: 2,
+          entry_nodes: ["execute"],
+          terminal_nodes: ["done"],
+        },
+      },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const program = createProgram();
+    await program.parseAsync(["node", "homerail", "--json", "dag", "validate", sourcePath]);
+
+    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+      valid: true,
+      source_api_version: "homerail.ai/v1",
+      summary: { workflow_id: "cli-workflow" },
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:19191/api/dag/validate",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ source: "api_version: homerail.ai/v1\nkind: Workflow\n" }),
+      }),
+    );
+  });
+
+  it("prints source diagnostics and exits non-zero for an invalid workflow", async () => {
+    const sourcePath = join(tempHome, "invalid.yaml");
+    writeFileSync(sourcePath, "api_version: homerail.ai/v1\nkind: Workflow\n");
+    mockFetch({
+      success: false,
+      message: "DAG workflow validation failed",
+      data: {
+        valid: false,
+        source_format: "yaml",
+        source_api_version: "homerail.ai/v1",
+        diagnostics: [{
+          severity: "error",
+          code: "DAG_SCHEMA_REQUIRED_FIELD",
+          path: "/metadata",
+          message: "Expected required property",
+          line: 1,
+          column: 1,
+        }],
+      },
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const program = createProgram();
+    await program.parseAsync(["node", "homerail", "dag", "validate", sourcePath]);
+
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "DAG_SCHEMA_REQUIRED_FIELD /metadata line 1:1",
+    );
+  });
+
+  it("fetches the live schema from Manager", async () => {
+    mockFetch({
+      success: true,
+      message: "WorkflowSpec v1 schema retrieved",
+      data: {
+        api_version: "homerail.ai/v1",
+        compiler_version: "1",
+        schema_hash: "b".repeat(64),
+        schema: { type: "object" },
+      },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const program = createProgram();
+    await program.parseAsync(["node", "homerail", "--json", "dag", "schema"]);
+
+    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+      api_version: "homerail.ai/v1",
+      schema: { type: "object" },
+    });
+  });
+});
+
 describe("provider command", () => {
   it("provider list prints provider table in human-readable mode", async () => {
     mockFetch({

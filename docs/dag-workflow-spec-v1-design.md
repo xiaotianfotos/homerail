@@ -1,7 +1,8 @@
 # WorkflowSpec v1 Design
 
-Status: Draft for design review. No runtime behavior is implemented by this
-document.
+Status: Accepted for incremental implementation on 2026-07-11. WorkflowSpec
+validation and canonical compilation may land before runtime adoption; legacy
+runtime behavior remains authoritative until the runtime migration phase.
 
 For a complete Chinese overview of the proposed DSL, its rationale, execution
 model, compatibility strategy, and future extension boundary, see
@@ -77,7 +78,7 @@ format.
 
 ## Proposed Authoring Envelope
 
-The envelope below is a candidate, not a frozen decision:
+The v1 envelope is:
 
 ```yaml
 api_version: homerail.ai/v1
@@ -92,6 +93,10 @@ spec:
   workspace:
     mode: isolated
 
+  contracts:
+    Task: { type: object }
+    Evidence: { type: object }
+
   agents:
     reviewer:
       system: Review the supplied release evidence.
@@ -100,23 +105,34 @@ spec:
     review:
       kind: agent
       agent: reviewer
+      inputs:
+        task: { contract: Task }
       outputs:
-        reviewed:
-          to: report.in:evidence
+        reviewed: { contract: Evidence }
 
     report:
       kind: agent
       agent: reviewer
-      after: [review]
+      inputs:
+        evidence: { contract: Evidence }
       outputs:
-        done:
-          to: ""
+        done: { contract: Evidence }
+
+    success:
+      kind: terminal
+      outcome: success
+      inputs:
+        result: { contract: Evidence }
+
+  edges:
+    - { from: $run.input, to: review.task }
+    - { from: review.reviewed, to: report.evidence }
+    - { from: report.done, to: success.result }
 ```
 
-The first version should favor a small migration surface. Existing inline
-`outputs.<port>.to` routing can remain authoring syntax while the compiler lowers
-it to explicit canonical edges. The empty-string terminal target is retained in
-this draft only for compatibility and remains an open design decision.
+V1 uses top-level edges and explicit terminal nodes only. Existing inline
+`outputs.<port>.to` routing and empty-string terminal targets remain supported
+only by the isolated legacy/v0 adapter.
 
 ## Strict Schema
 
@@ -283,6 +299,9 @@ Manager should expose:
 
 ```text
 GET /api/dag/schema
+POST /api/dag/validate
+GET /api/dag/workflows/:workflow_id/revisions
+GET /api/dag/workflows/:workflow_id/revisions/:revision
 ```
 
 Proposed response data:
@@ -297,10 +316,14 @@ Proposed response data:
 }
 ```
 
-The endpoint should support ETag or a stable schema hash. It must return the
+The schema endpoint supports ETag and a stable schema hash. It returns the
 same schema used by Manager validation, not a separately maintained copy. CLI
-and Manager Agent tools can use this endpoint to explain validation failures or
-author a compatible document.
+and Manager Agent tools use these endpoints to fetch the live contract, receive
+structured diagnostics, and inspect immutable source/canonical provenance.
+
+CLI entry points are `hr dag schema` and `hr dag validate <file>`. Manager Agent
+uses `get_dag_schema`, `validate_dag_workflow`, and `sync_dag_workflow`; custom
+source is not synced until validation succeeds.
 
 ## Diagnostics
 
@@ -349,20 +372,23 @@ a clean boundary for it:
 - runtime graph snapshots are serializable;
 - completed or traversed graph regions can later be protected by patch policy.
 
-## Open Design Decisions
+## Accepted Decisions
 
-1. Use the proposed `api_version`/`kind`/`metadata`/`spec` envelope, or retain
-   the current flat root with only `schema_version`?
-2. Keep inline output routes in v1, or require a top-level explicit edge list?
-3. Should a data route imply a completion dependency?
-4. How should terminal success, terminal failure, and cancellation be expressed
-   without an empty-string target?
-5. Should input ports declare schemas independently or reference output schemas?
-6. Is JSON Schema the hand-authored source of truth, or generated from a typed
-   schema definition used by TypeScript?
-7. Is strict RuntimeProfile v1 included in the same implementation, or left as
-   a compatible but separately versioned follow-up?
-8. Should formatting-only source changes be retained as non-semantic source
-   versions even when canonical revision does not change?
+1. Use the `api_version`/`kind`/`metadata`/`spec` envelope.
+2. Require top-level explicit `spec.edges`; inline routes are legacy-only.
+3. A data edge implies completion dependency; `depends_on` is control-only.
+4. Express completion with explicit terminal nodes whose outcome is `success`,
+   `failure`, or `cancelled`.
+5. Input and output ports reference the same named, bounded JSON Schema contract.
+6. A typed TypeBox definition generates both TypeScript types and the exact JSON
+   Schema returned by Manager.
+7. RuntimeProfile v1 remains a separately versioned follow-up.
+8. Formatting-only source changes update sync audit metadata but do not create a
+   semantic revision.
+9. Run input is the reserved source `$run.input`.
+10. V1 node kinds are `agent`, `condition`, `join`, `foreach`, `while`, and
+    `terminal`.
 
-Implementation should not begin until these decisions are reviewed.
+These decisions freeze WorkflowSpec v1 authoring semantics. Later additions
+require a compatible schema extension or a new API version; legacy aliases must
+not leak into v1.

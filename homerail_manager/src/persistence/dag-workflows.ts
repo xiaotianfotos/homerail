@@ -11,6 +11,14 @@ import {
 import type { DAGAgentConfig, ParsedDAG } from "../orchestration/graph.js";
 import { parseDAGYaml } from "../orchestration/yaml-loader.js";
 import { assertNoYamlProviderRuntime } from "../orchestration/runtime-selection.js";
+import {
+  compileWorkflowSource,
+  projectCanonicalWorkflowToParsedDAG,
+  type CanonicalWorkflowIR,
+  type WorkflowCompilationResult,
+  type WorkflowSourceFormat,
+  type WorkflowSourceVersion,
+} from "../orchestration/workflow-spec-v1.js";
 
 export interface DagWorkflow {
   workflow_id: string;
@@ -19,10 +27,27 @@ export interface DagWorkflow {
   source_path?: string;
   yaml_text: string;
   yaml_hash: string;
+  head_revision: number;
+  api_version: WorkflowSourceVersion;
+  canonical_hash: string;
+  compiler_version: string;
   node_ids: string[];
   agent_ids: string[];
   created_at: string;
   updated_at: string;
+}
+
+export interface DagWorkflowRevision {
+  workflow_id: string;
+  revision: number;
+  api_version: WorkflowSourceVersion;
+  source_format: WorkflowSourceFormat;
+  source_text: string;
+  source_hash: string;
+  canonical_json: string;
+  canonical_hash: string;
+  compiler_version: string;
+  created_at: string;
 }
 
 export interface DagRuntimeProfileEntry {
@@ -63,6 +88,10 @@ function _string(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function _rawString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function _stringArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
   if (typeof value === "string" && value.trim()) {
@@ -96,12 +125,31 @@ function _workflowFromRow(row: Record<string, unknown>): DagWorkflow {
     name: _string(row.name) ?? _string(raw.name) ?? "",
     description: _string(row.description) ?? _string(raw.description),
     source_path: _string(row.source_path) ?? _string(raw.source_path),
-    yaml_text: _string(row.yaml_text) ?? _string(raw.yaml_text) ?? "",
+    yaml_text: _rawString(row.yaml_text) ?? _rawString(raw.yaml_text) ?? "",
     yaml_hash: _string(row.yaml_hash) ?? _string(raw.yaml_hash) ?? "",
+    head_revision: Number(row.head_revision ?? raw.head_revision ?? 0),
+    api_version: (_string(row.api_version) ?? _string(raw.api_version) ?? "legacy/v0") as WorkflowSourceVersion,
+    canonical_hash: _string(row.canonical_hash) ?? _string(raw.canonical_hash) ?? "",
+    compiler_version: _string(row.compiler_version) ?? _string(raw.compiler_version) ?? "1",
     node_ids: _stringArray(row.node_ids ?? raw.node_ids),
     agent_ids: _stringArray(row.agent_ids ?? raw.agent_ids),
     created_at: _string(row.created_at) ?? _string(raw.created_at) ?? nowIso(),
     updated_at: _string(row.updated_at) ?? _string(raw.updated_at) ?? nowIso(),
+  };
+}
+
+function _revisionFromRow(row: Record<string, unknown>): DagWorkflowRevision {
+  return {
+    workflow_id: _string(row.workflow_id) ?? "",
+    revision: Number(row.revision ?? 0),
+    api_version: (_string(row.api_version) ?? "legacy/v0") as WorkflowSourceVersion,
+    source_format: (_string(row.source_format) ?? "yaml") as WorkflowSourceFormat,
+    source_text: _rawString(row.source_text) ?? "",
+    source_hash: _string(row.source_hash) ?? "",
+    canonical_json: _rawString(row.canonical_json) ?? "",
+    canonical_hash: _string(row.canonical_hash) ?? "",
+    compiler_version: _string(row.compiler_version) ?? "1",
+    created_at: _string(row.created_at) ?? nowIso(),
   };
 }
 
@@ -165,15 +213,20 @@ function _writeWorkflow(workflow: DagWorkflow): void {
   getDb().prepare(`
     INSERT INTO dag_workflows(
       workflow_id, name, description, source_path, yaml_text, yaml_hash,
+      head_revision, api_version, canonical_hash, compiler_version,
       node_ids, agent_ids, created_at, updated_at, data
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(workflow_id) DO UPDATE SET
       name = excluded.name,
       description = excluded.description,
       source_path = excluded.source_path,
       yaml_text = excluded.yaml_text,
       yaml_hash = excluded.yaml_hash,
+      head_revision = excluded.head_revision,
+      api_version = excluded.api_version,
+      canonical_hash = excluded.canonical_hash,
+      compiler_version = excluded.compiler_version,
       node_ids = excluded.node_ids,
       agent_ids = excluded.agent_ids,
       updated_at = excluded.updated_at,
@@ -185,12 +238,80 @@ function _writeWorkflow(workflow: DagWorkflow): void {
     workflow.source_path ?? null,
     workflow.yaml_text,
     workflow.yaml_hash,
+    workflow.head_revision,
+    workflow.api_version,
+    workflow.canonical_hash,
+    workflow.compiler_version,
     encodeJson(workflow.node_ids),
     encodeJson(workflow.agent_ids),
     workflow.created_at,
     workflow.updated_at,
     encodeJson(workflow),
   );
+}
+
+function _writeRevision(revision: DagWorkflowRevision): void {
+  getDb().prepare(`
+    INSERT INTO dag_workflow_revisions(
+      workflow_id, revision, api_version, source_format, source_text,
+      source_hash, canonical_json, canonical_hash, compiler_version, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    revision.workflow_id,
+    revision.revision,
+    revision.api_version,
+    revision.source_format,
+    revision.source_text,
+    revision.source_hash,
+    revision.canonical_json,
+    revision.canonical_hash,
+    revision.compiler_version,
+    revision.created_at,
+  );
+}
+
+function _requireCanonical(compilation: WorkflowCompilationResult): CanonicalWorkflowIR {
+  if (!compilation.valid || !compilation.canonical || !compilation.canonical_json || !compilation.canonical_hash) {
+    const details = compilation.diagnostics
+      .map((entry) => `${entry.code} ${entry.path}: ${entry.message}`)
+      .join("; ");
+    throw new Error(details || "DAG workflow compilation failed");
+  }
+  return compilation.canonical;
+}
+
+function _ensureStoredWorkflowRevisions(): void {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM dag_workflows WHERE head_revision = 0 ORDER BY workflow_id")
+    .all() as Record<string, unknown>[];
+  for (const row of rows) {
+    const workflow = _workflowFromRow(row);
+    const compilation = compileWorkflowSource(workflow.yaml_text);
+    const canonical = _requireCanonical(compilation);
+    const now = workflow.created_at || nowIso();
+    const migrated: DagWorkflow = {
+      ...workflow,
+      head_revision: 1,
+      api_version: canonical.source_api_version,
+      canonical_hash: compilation.canonical_hash!,
+      compiler_version: canonical.compiler_version,
+    };
+    db.transaction(() => {
+      _writeWorkflow(migrated);
+      _writeRevision({
+        workflow_id: workflow.workflow_id,
+        revision: 1,
+        api_version: canonical.source_api_version,
+        source_format: compilation.source_format,
+        source_text: workflow.yaml_text,
+        source_hash: workflow.yaml_hash || _sha256(workflow.yaml_text),
+        canonical_json: compilation.canonical_json!,
+        canonical_hash: compilation.canonical_hash!,
+        compiler_version: canonical.compiler_version,
+        created_at: now,
+      });
+    })();
+  }
 }
 
 function _writeProfile(profile: DagRuntimeProfile): void {
@@ -224,32 +345,55 @@ function _writeProfile(profile: DagRuntimeProfile): void {
 export function upsertDagWorkflowFromYaml(input: {
   yaml_text: string;
   source_path?: string;
-}): { workflow: DagWorkflow; created: boolean; parsed: ParsedDAG } {
-  const parsed = parseDAGYaml(input.yaml_text);
-  assertNoYamlProviderRuntime(parsed);
-  const workflowId = _string(parsed.meta.workflow_id);
-  if (!workflowId) {
-    throw new Error("DAG YAML must define a stable workflow_id before it can be synced to the database.");
-  }
+}): { workflow: DagWorkflow; created: boolean; revision_created: boolean; parsed?: ParsedDAG } {
+  const compilation = compileWorkflowSource(input.yaml_text);
+  const canonical = _requireCanonical(compilation);
+  const parsed = canonical.source_api_version === "legacy/v0" ? parseDAGYaml(input.yaml_text) : undefined;
+  if (parsed) assertNoYamlProviderRuntime(parsed);
+  const workflowId = canonical.workflow_id;
+  if (!workflowId) throw new Error("DAG workflow must define a stable workflow id before it can be synced.");
   const existing = getDagWorkflow(workflowId);
   const now = nowIso();
+  const revisionCreated = !existing || existing.canonical_hash !== compilation.canonical_hash;
+  const headRevision = revisionCreated ? (existing?.head_revision ?? 0) + 1 : existing.head_revision;
   const workflow: DagWorkflow = {
     workflow_id: workflowId,
-    name: parsed.meta.name || workflowId,
-    description: parsed.meta.description,
+    name: canonical.name || workflowId,
+    description: canonical.description,
     source_path: input.source_path,
     yaml_text: input.yaml_text,
     yaml_hash: _sha256(input.yaml_text),
-    node_ids: parsed.graph.nodes.map((node) => node.node_id),
-    agent_ids: _workflowAgentIds(parsed),
+    head_revision: headRevision,
+    api_version: canonical.source_api_version,
+    canonical_hash: compilation.canonical_hash!,
+    compiler_version: canonical.compiler_version,
+    node_ids: canonical.nodes.filter((node) => node.kind !== "terminal").map((node) => node.id),
+    agent_ids: Object.keys(canonical.agents).sort(),
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
-  _writeWorkflow(workflow);
-  return { workflow, created: !existing, parsed };
+  getDb().transaction(() => {
+    _writeWorkflow(workflow);
+    if (revisionCreated) {
+      _writeRevision({
+        workflow_id: workflowId,
+        revision: headRevision,
+        api_version: canonical.source_api_version,
+        source_format: compilation.source_format,
+        source_text: input.yaml_text,
+        source_hash: workflow.yaml_hash,
+        canonical_json: compilation.canonical_json!,
+        canonical_hash: compilation.canonical_hash!,
+        compiler_version: canonical.compiler_version,
+        created_at: now,
+      });
+    }
+  })();
+  return { workflow, created: !existing, revision_created: revisionCreated, parsed };
 }
 
 export function listDagWorkflows(): DagWorkflow[] {
+  _ensureStoredWorkflowRevisions();
   return (getDb()
     .prepare("SELECT * FROM dag_workflows ORDER BY updated_at DESC, workflow_id")
     .all() as Record<string, unknown>[])
@@ -257,10 +401,28 @@ export function listDagWorkflows(): DagWorkflow[] {
 }
 
 export function getDagWorkflow(workflowId: string): DagWorkflow | undefined {
+  _ensureStoredWorkflowRevisions();
   const row = getDb()
     .prepare("SELECT * FROM dag_workflows WHERE workflow_id = ?")
     .get(workflowId) as Record<string, unknown> | undefined;
   return row ? _workflowFromRow(row) : undefined;
+}
+
+export function listDagWorkflowRevisions(workflowId: string): DagWorkflowRevision[] {
+  _ensureStoredWorkflowRevisions();
+  return (getDb().prepare(`
+    SELECT * FROM dag_workflow_revisions
+    WHERE workflow_id = ?
+    ORDER BY revision DESC
+  `).all(workflowId) as Record<string, unknown>[]).map(_revisionFromRow);
+}
+
+export function getDagWorkflowRevision(workflowId: string, revision: number): DagWorkflowRevision | undefined {
+  _ensureStoredWorkflowRevisions();
+  const row = getDb().prepare(`
+    SELECT * FROM dag_workflow_revisions WHERE workflow_id = ? AND revision = ?
+  `).get(workflowId, revision) as Record<string, unknown> | undefined;
+  return row ? _revisionFromRow(row) : undefined;
 }
 
 function _parseProfileYaml(yamlText: string, workflowIdOverride?: string): Omit<DagRuntimeProfile, "profile_key" | "created_at" | "updated_at"> {
@@ -411,9 +573,24 @@ export function resolveDagRuntimeProfile(profile: DagRuntimeProfile): DagRuntime
 }
 
 export function parseStoredDagWorkflow(workflow: DagWorkflow): ParsedDAG {
-  const parsed = parseDAGYaml(workflow.yaml_text);
+  const parsed = workflow.api_version === "homerail.ai/v1"
+    ? (() => {
+        const revision = getDagWorkflowRevision(workflow.workflow_id, workflow.head_revision);
+        if (!revision) throw new Error(`DAG workflow revision not found: ${workflow.workflow_id}@${workflow.head_revision}`);
+        return projectCanonicalWorkflowToParsedDAG(JSON.parse(revision.canonical_json) as CanonicalWorkflowIR);
+      })()
+    : parseDAGYaml(workflow.yaml_text);
   assertNoYamlProviderRuntime(parsed);
-  return parsed;
+  return {
+    ...parsed,
+    meta: {
+      ...parsed.meta,
+      workflow_revision: workflow.head_revision,
+      canonical_hash: workflow.canonical_hash,
+      compiler_version: workflow.compiler_version,
+      source_api_version: workflow.api_version,
+    },
+  };
 }
 
 export function applyDagRuntimeProfile(parsed: ParsedDAG, profile: DagRuntimeProfileResolved): ParsedDAG {
@@ -436,5 +613,5 @@ export function applyDagRuntimeProfile(parsed: ParsedDAG, profile: DagRuntimePro
 }
 
 export function _clearDagWorkflowTablesForTest(): void {
-  clearTables(["dag_runtime_profiles", "dag_workflows"]);
+  clearTables(["dag_runtime_profiles", "dag_workflow_revisions", "dag_workflows"]);
 }

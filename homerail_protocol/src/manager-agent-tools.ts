@@ -26,6 +26,9 @@ export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
   "list_dag_patterns",
   "get_dag_pattern",
   "instantiate_dag_pattern",
+  "get_dag_schema",
+  "validate_dag_workflow",
+  "sync_dag_workflow",
   "create_change",
   "create_and_run",
   "invoke_run",
@@ -244,6 +247,36 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
         sync: { type: "boolean" },
       },
       required: ["pattern_id"],
+      additionalProperties: false,
+    },
+  },
+  get_dag_schema: {
+    name: "get_dag_schema",
+    description: "Fetch the live WorkflowSpec v1 JSON Schema and compiler version before authoring a custom DAG.",
+    input_schema: emptyObjectSchema,
+  },
+  validate_dag_workflow: {
+    name: "validate_dag_workflow",
+    description: "Validate custom WorkflowSpec YAML or JSON without syncing or running it; returns structured source diagnostics and canonical metadata.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source: { type: "string", maxLength: 262144 },
+      },
+      required: ["source"],
+      additionalProperties: false,
+    },
+  },
+  sync_dag_workflow: {
+    name: "sync_dag_workflow",
+    description: "Sync a previously validated WorkflowSpec or legacy DAG source into Manager and create an immutable semantic revision when needed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source: { type: "string", maxLength: 262144 },
+        source_path: { type: "string", maxLength: 1024 },
+      },
+      required: ["source"],
       additionalProperties: false,
     },
   },

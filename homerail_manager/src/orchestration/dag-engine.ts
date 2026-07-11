@@ -26,6 +26,7 @@ export interface DAGTransitionResult {
   affectedNodes: string[];
   routedNodes: string[];
   terminalFailure?: boolean;
+  terminalOutcome?: "success" | "failure" | "cancelled";
 }
 
 export function isFailurePort(port: string): boolean {
@@ -250,12 +251,20 @@ export function handoff(
       edge.to_node !== "" &&
       edgeMatchesHandoff(edge, port),
   );
-  const terminalFailure = isFailurePort(port) && matchingDownstream.length === 0;
+  const matchingTerminal = run.graph.edges.find(
+    (edge) => edge.from_node === fromNode && edge.to_node === "" && edgeMatchesHandoff(edge, port),
+  );
+  const terminalOutcome = matchingTerminal?.terminal_outcome;
+  const terminalFailure = terminalOutcome === "failure" ||
+    (terminalOutcome === undefined && isFailurePort(port) && matchingDownstream.length === 0);
+  const terminalCancelled = terminalOutcome === "cancelled";
   run.handoffedNodes.add(fromNode);
   run.nodeStates.set(
     fromNode,
     terminalFailure
       ? "FAILED"
+      : terminalCancelled
+        ? "CANCELLED"
       : run.loopSources.has(fromNode)
         ? "RUNNING"
         : "COMPLETED",
@@ -285,6 +294,7 @@ export function handoff(
     affectedNodes: Array.from(affected).sort(),
     routedNodes: Array.from(mailboxReceivers).sort(),
     terminalFailure,
+    terminalOutcome,
   };
 }
 
@@ -326,7 +336,7 @@ export function isRunTerminal(run: DAGRun): boolean {
   for (const [id, state] of run.nodeStates) {
     if (state === "READY") return false;
     if (state === "FAILED") continue;
-    if (state === "SKIPPED") continue;
+    if (state === "SKIPPED" || state === "CANCELLED") continue;
     if (run.loopSources.has(id) && state === "RUNNING") continue;
     if (state === "RUNNING" || state === "PENDING") return false;
     if (state !== "COMPLETED") return false;

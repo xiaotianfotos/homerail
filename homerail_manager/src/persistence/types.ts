@@ -42,6 +42,13 @@ export interface PersistedRunMetadata {
   runId: string;
   workflowId?: string;
   workflowName?: string;
+  workflowRevision?: number;
+  canonicalHash?: string;
+  compilerVersion?: string;
+  sourceApiVersion?: string;
+  contracts?: Record<string, unknown>;
+  runInputTargets?: Array<{ node: string; port: string; contract?: string }>;
+  initialPrompt?: string;
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;

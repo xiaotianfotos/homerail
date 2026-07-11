@@ -601,6 +601,41 @@ function createManagerTools(state: {
       },
     },
     {
+      ...managerAgentToolSpec("get_dag_schema"),
+      async handler() {
+        const body = await requestManager(state.restUrl, "/dag/schema");
+        return { content: [{ type: "text", text: short(body, 50000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("validate_dag_workflow"),
+      async handler(args) {
+        const source = typeof args.source === "string" ? args.source : "";
+        if (!source.trim()) throw new Error("validate_dag_workflow requires source");
+        const body = await requestManager(state.restUrl, "/dag/validate", {
+          method: "POST",
+          body: JSON.stringify({ source }),
+        });
+        return { content: [{ type: "text", text: short(body, 50000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("sync_dag_workflow"),
+      async handler(args) {
+        const source = typeof args.source === "string" ? args.source : "";
+        if (!source.trim()) throw new Error("sync_dag_workflow requires source");
+        const body = await requestManager(state.restUrl, "/dag/workflows/sync", {
+          method: "POST",
+          body: JSON.stringify({
+            yaml_text: source,
+            source_path: typeof args.source_path === "string" ? args.source_path : "manager-agent",
+          }),
+        });
+        state.objectiveToolCalls.push({ name: "sync_dag_workflow", success: true });
+        return { content: [{ type: "text", text: short(body, 30000) }] };
+      },
+    },
+    {
       name: "create_change",
       description: "Create a project change record. Use create_and_run to actually start a DAG run.",
       input_schema: {
@@ -1126,6 +1161,12 @@ function toolCallCommentary(name: string): string | undefined {
       return "正在选择合适的 DAG 模式。";
     case "instantiate_dag_pattern":
       return "正在生成并同步 DAG 模式。";
+    case "get_dag_schema":
+      return "正在读取 DAG 规范。";
+    case "validate_dag_workflow":
+      return "正在验证 DAG 定义。";
+    case "sync_dag_workflow":
+      return "正在保存 DAG 定义。";
     case "create_and_run":
       return "正在启动 DAG。";
     case "invoke_run":

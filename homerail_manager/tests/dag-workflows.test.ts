@@ -12,6 +12,7 @@ import {
   upsertDagWorkflowFromYaml,
 } from "../src/persistence/dag-workflows.js";
 import { closeDb } from "../src/persistence/db.js";
+import { loadRunMetadata } from "../src/persistence/store.js";
 import {
   _clearAllSettings,
   createSetting,
@@ -82,7 +83,7 @@ describe("DAG workflow persistence", () => {
       is_active: true,
       is_default: true,
     });
-    upsertDagWorkflowFromYaml({ yaml_text: WORKFLOW_YAML, source_path: "assets/orchestrations/db-workflow.yaml" });
+    const synced = upsertDagWorkflowFromYaml({ yaml_text: WORKFLOW_YAML, source_path: "assets/orchestrations/db-workflow.yaml" });
     upsertDagRuntimeProfileFromYaml({
       yaml_text: `
 profile_id: qwen-main
@@ -102,6 +103,28 @@ default:
     });
 
     expect(result.workflowId).toBe("db-workflow");
+    expect(result).toMatchObject({
+      workflowRevision: 1,
+      canonicalHash: synced.workflow.canonical_hash,
+      compilerVersion: "1",
+      sourceApiVersion: "legacy/v0",
+    });
+    expect(loadRunMetadata(result.runId)).toMatchObject({
+      workflowId: "db-workflow",
+      workflowRevision: 1,
+      canonicalHash: synced.workflow.canonical_hash,
+      compilerVersion: "1",
+      sourceApiVersion: "legacy/v0",
+    });
+
+    const updated = upsertDagWorkflowFromYaml({
+      yaml_text: WORKFLOW_YAML.replace("Plan and hand off.", "Plan, verify, and hand off."),
+    });
+    expect(updated.workflow.head_revision).toBe(2);
+    expect(loadRunMetadata(result.runId)).toMatchObject({
+      workflowRevision: 1,
+      canonicalHash: synced.workflow.canonical_hash,
+    });
     expect(dispatcher.dispatched).toHaveLength(1);
     expect(dispatcher.dispatched[0].agentConfig.llm_setting_id).toBe(setting.id);
     expect(dispatcher.dispatched[0].agentConfig).toMatchObject({
