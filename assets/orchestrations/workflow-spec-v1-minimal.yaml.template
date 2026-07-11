@@ -1,0 +1,37 @@
+api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: workflow-spec-v1-minimal
+  name: WorkflowSpec v1 Minimal
+
+spec:
+  description: Run one provider-neutral agent and finish through an explicit terminal.
+
+  contracts:
+    Text:
+      type: string
+      maxLength: 20000
+
+  agents:
+    worker:
+      system: Complete the supplied task and return a concise result.
+
+  nodes:
+    execute:
+      kind: agent
+      agent: worker
+      inputs:
+        task: { contract: Text }
+      outputs:
+        result: { contract: Text }
+
+    done:
+      kind: terminal
+      outcome: success
+      inputs:
+        result: { contract: Text }
+
+  edges:
+    - { from: $run.input, to: execute.task }
+    - { from: execute.result, to: done.result }

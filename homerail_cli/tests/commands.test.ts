@@ -543,7 +543,7 @@ nodes:
     expect(combined).not.toContain("token-plan-cn.xiaomimimo.com");
   });
 
-  it("requires public orchestration templates to define workflow_id", () => {
+  it("requires public orchestration templates to define a stable workflow identity", () => {
     const orchestrationsDir = new URL("../../assets/orchestrations/", import.meta.url);
     const templatePaths = readdirSync(orchestrationsDir)
       .filter((name) => name.endsWith(".yaml.template"))
@@ -552,7 +552,7 @@ nodes:
     expect(templatePaths.length).toBeGreaterThan(0);
     for (const templatePath of templatePaths) {
       const yaml = readFileSync(templatePath, "utf8");
-      expect(yaml, templatePath.pathname).toMatch(/^workflow_id:\s*\S+/m);
+      expect(yaml, templatePath.pathname).toMatch(/^(?:workflow_id:\s*\S+|\s+id:\s*\S+)/m);
     }
   });
 });

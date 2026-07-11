@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import * as path from "node:path";
 import { Value } from "@sinclair/typebox/value";
-import { compileWorkflowSource } from "../src/orchestration/workflow-spec-v1.js";
+import { compileWorkflowSource, parseWorkflowSourceFile } from "../src/orchestration/workflow-spec-v1.js";
 import { WorkflowSpecV1Schema } from "../src/orchestration/workflow-spec-v1-schema.js";
 
 const MINIMAL_WORKFLOW = {
@@ -240,5 +241,23 @@ nodes:
       expect.objectContaining({ severity: "warning", code: "DAG_LEGACY_UNVERSIONED_SOURCE" }),
     ]);
     expect(result.canonical?.terminal_nodes).toHaveLength(1);
+  });
+
+  it("loads the tracked v1 template through the same path used to create runs", () => {
+    const parsed = parseWorkflowSourceFile(path.resolve(
+      "..",
+      "assets",
+      "orchestrations",
+      "workflow-spec-v1-minimal.yaml.template",
+    ));
+
+    expect(parsed.meta).toMatchObject({
+      workflow_id: "workflow-spec-v1-minimal",
+      source_api_version: "homerail.ai/v1",
+    });
+    expect(parsed.graph.nodes.map((node) => node.node_id)).toEqual(["execute"]);
+    expect(parsed.graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from_node: "execute", from_port: "result", to_node: "" }),
+    ]));
   });
 });

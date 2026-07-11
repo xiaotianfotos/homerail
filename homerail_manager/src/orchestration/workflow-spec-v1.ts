@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { LineCounter, isNode, parseDocument, type Document } from "yaml";
 import { Value } from "@sinclair/typebox/value";
 import type {
@@ -847,6 +848,20 @@ export function compileWorkflowSource(source: string): WorkflowCompilationResult
     };
   }
   return resultForCanonical(format, [], compileV1(workflow));
+}
+
+export function parseWorkflowSource(source: string): ParsedDAG {
+  const compilation = compileWorkflowSource(source);
+  if (!compilation.valid || !compilation.canonical) {
+    throw new Error(compilation.diagnostics.map((entry) => `${entry.code} ${entry.path}: ${entry.message}`).join("; "));
+  }
+  return compilation.source_api_version === "legacy/v0"
+    ? parseDAGYaml(source)
+    : projectCanonicalWorkflowToParsedDAG(compilation.canonical);
+}
+
+export function parseWorkflowSourceFile(filePath: string): ParsedDAG {
+  return parseWorkflowSource(readFileSync(filePath, "utf8"));
 }
 
 export function workflowSchemaHash(): string {

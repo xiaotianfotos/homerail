@@ -2,9 +2,10 @@
 
 This directory contains public DAG templates. They are not implicit runtime
 defaults; pass a template path explicitly or copy a template before editing it.
-The YAML `workflow_id` is the stable database identity. AI edits may change the
-workflow body, prompts, nodes, and edges, but should keep `workflow_id` unchanged
-unless intentionally creating a new workflow/version.
+Legacy YAML uses `workflow_id` as the stable database identity. WorkflowSpec v1
+uses `metadata.id`. AI edits may change the workflow body, prompts, nodes, and
+edges, but should keep that identity unchanged unless intentionally creating a
+different workflow.
 
 Sync a template into the Manager database before treating it as the effective
 runtime instance:
@@ -12,6 +13,18 @@ runtime instance:
 ```bash
 node homerail_cli/dist/cli.js dag sync assets/orchestrations/public-dev-5node.yaml.template
 ```
+
+Use `workflow-spec-v1-minimal.yaml.template` for the smallest strict v1 example:
+
+```bash
+node homerail_cli/dist/cli.js --json dag validate \
+  assets/orchestrations/workflow-spec-v1-minimal.yaml.template
+node homerail_cli/dist/cli.js dag sync \
+  assets/orchestrations/workflow-spec-v1-minimal.yaml.template
+```
+
+WorkflowSpec v1 uses named contracts, top-level edges, and explicit terminal
+outcomes. Bind its logical agents through a separate database runtime profile.
 
 Start with `public-dev-5node.yaml.template` for the release smoke path:
 

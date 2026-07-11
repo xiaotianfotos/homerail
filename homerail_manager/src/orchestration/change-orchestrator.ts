@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { GraphExecutor } from "./graph-executor.js";
 import type { DAGAgentConfig, DAGGraphNode, DAGOutputRoute, ParsedDAG } from "./graph.js";
-import { parseDAGYamlFile } from "./yaml-loader.js";
+import { parseWorkflowSourceFile } from "./workflow-spec-v1.js";
 import { assertProviderPolicy } from "./provider-policy.js";
 import { assertNoYamlProviderRuntime } from "./runtime-selection.js";
 import {
@@ -230,7 +230,7 @@ function _loadDagForRequest(request: CreateRunRequest): ParsedDAG {
     throw new Error("Missing required field: yamlPath or workflow_id");
   }
   const resolvedPath = _resolveYamlPath(request.yamlPath);
-  return parseDAGYamlFile(resolvedPath);
+  return parseWorkflowSourceFile(resolvedPath);
 }
 
 function _applyRuntimeProfile(parsed: ParsedDAG, request: CreateRunRequest): ParsedDAG {
