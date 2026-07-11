@@ -12,6 +12,10 @@ import { resolveManagerAgentConfig } from "./manager-agent-container.js";
 import { normalizeManagerAgentHarness } from "homerail-protocol";
 import { listCodexModels, type CodexModel, type CodexModelCatalog } from "./codex-models.js";
 import type { ManagerAgentConfig } from "../persistence/manager-agent-config.js";
+import {
+  parseGenerativeUiMode,
+  resolveConfiguredGenerativeUiModeDetails,
+} from "../generative-ui/mode.js";
 
 interface BaseResponse {
   success: boolean;
@@ -101,6 +105,9 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
   const modelName = _string(patch.model_name);
   const reasoningEffort = _string(patch.reasoning_effort);
   const serviceTier = _string(patch.service_tier);
+  const generativeUiMode = patch.generative_ui_mode === undefined
+    ? current.generative_ui_mode
+    : parseGenerativeUiMode(patch.generative_ui_mode);
   const harness = normalizeManagerAgentHarness(patch.harness) ?? current.harness;
   const mergedSettingId = settingId === undefined ? current.llm_setting_id : settingId;
   const mergedProviderName = providerName === undefined ? current.provider_name : providerName;
@@ -118,6 +125,7 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
       model_name: mergedSettingId || mergedProviderName ? "gpt-5.5" : mergedModelName ?? "gpt-5.5",
       reasoning_effort: mergedReasoningEffort,
       service_tier: mergedServiceTier,
+      generative_ui_mode: generativeUiMode,
     };
   }
   return {
@@ -128,6 +136,7 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
     model_name: mergedModelName,
     reasoning_effort: mergedReasoningEffort,
     service_tier: mergedServiceTier,
+    generative_ui_mode: generativeUiMode,
   };
 }
 
@@ -188,6 +197,15 @@ function validationError(error: unknown): ManagerAgentConfigValidationError {
   );
 }
 
+function configResponse(config: ManagerAgentConfig): Record<string, unknown> {
+  const mode = resolveConfiguredGenerativeUiModeDetails(config.generative_ui_mode);
+  return {
+    ...config,
+    effective_generative_ui_mode: mode.effective_mode,
+    generative_ui_mode_source: mode.source,
+  };
+}
+
 export async function validateAndSaveManagerAgentConfig(
   patch: Record<string, unknown>,
   options: ManagerAgentConfigRoutesOptions = {},
@@ -208,6 +226,10 @@ export async function validateAndSaveManagerAgentConfig(
       throw validationError(error);
     }
   }
+  // Validate the operational override before the persistence boundary. An
+  // invalid environment value is a server configuration error, but it must
+  // never turn a successful write into a post-commit 500 response.
+  resolveConfiguredGenerativeUiModeDetails(next.generative_ui_mode);
   return saveManagerAgentConfig(next as unknown as Record<string, unknown>);
 }
 
@@ -300,7 +322,7 @@ export function managerAgentConfigRoutesHandler(
 
   if (method === "GET") {
     void ensurePreferredManagerAgentConfig(options)
-      .then((config) => ok(res, "Manager Agent config loaded", config))
+      .then((config) => ok(res, "Manager Agent config loaded", configResponse(config)))
       .catch((error) => serverError(res, error instanceof Error ? error.message : String(error)));
     return true;
   }
@@ -310,7 +332,7 @@ export function managerAgentConfigRoutesHandler(
       .then(async (body) => {
         try {
           const next = await validateAndSaveManagerAgentConfig(body, options);
-          ok(res, "Manager Agent config saved", next);
+          ok(res, "Manager Agent config saved", configResponse(next));
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (err instanceof ManagerAgentConfigValidationError) badRequest(res, message);
