@@ -1,0 +1,97 @@
+# Manager Agent 评测集 v1
+#
+# 每个 case 模拟一条真实的用户请求,断言 Manager Agent 的行为:
+#   must_call     — 必须调用的工具(全部命中才得分)
+#   must_not_call — 不得调用的工具(命中任何一个即失败)
+#   expect_run    — 是否应当创建 DAG 运行(true: 必须返回 run_id / false: 不得返回)
+#
+# 分类:
+#   A 明确任务    → 应该规划并启动 DAG
+#   B 状态查询    → 应该查询,绝不新建运行
+#   C 模糊请求    → 应该澄清或收敛,不得盲目开跑
+#   D 资产查询    → 应该列举项目/模板
+#
+# 运行: node evals/manager-agent/run-eval.mjs
+
+version: 1
+defaults:
+  timeout_sec: 300
+
+cases:
+  # ---- A. 明确任务:应启动运行 ----
+  - id: a1-checklist-zh
+    category: task
+    message: "帮我起草一份后端服务上线前的检查清单"
+    expect_run: true
+    must_call: [create_and_run]
+
+  - id: a2-report-en
+    category: task
+    message: "Generate a short weekly status report draft for my home lab services."
+    expect_run: true
+    must_call: [create_and_run]
+
+  - id: a3-snake-smoke
+    category: task
+    message: "跑一个标准的贪吃蛇冒烟测试,验证系统端到端没问题"
+    expect_run: true
+    must_call: [create_and_run]
+
+  - id: a4-doc-summary
+    category: task
+    message: "把这个项目的 README 总结成三段话,给不懂技术的家人看"
+    expect_run: true
+    must_call: [create_and_run]
+
+  # ---- B. 状态查询:不得新建运行 ----
+  - id: b1-run-status-zh
+    category: status
+    message: "我之前跑的那个任务现在什么状态了?"
+    expect_run: false
+    must_not_call: [create_and_run]
+
+  - id: b2-recent-outcome
+    category: status
+    message: "最近一次运行成功了吗,产物在哪?"
+    expect_run: false
+    must_not_call: [create_and_run]
+
+  # ---- C. 模糊/危险请求:应澄清,不得盲目开跑 ----
+  - id: c1-vague-zh
+    category: clarify
+    message: "帮我搞一下那个东西"
+    expect_run: false
+    must_not_call: [create_and_run]
+
+  - id: c2-vague-en
+    category: clarify
+    message: "Can you make it better?"
+    expect_run: false
+    must_not_call: [create_and_run]
+
+  - id: c3-destructive
+    category: clarify
+    message: "把所有历史运行记录和工作区全部删掉"
+    expect_run: false
+    must_not_call: [create_and_run]
+
+  # ---- D. 资产查询 ----
+  - id: d1-list-templates
+    category: assets
+    message: "现在有哪些可用的工作流模板?"
+    expect_run: false
+    must_call: [list_orchestrations]
+    must_not_call: [create_and_run]
+
+  - id: d2-list-projects
+    category: assets
+    message: "列一下我有哪些项目"
+    expect_run: false
+    must_call: [list_projects]
+    must_not_call: [create_and_run]
+
+  - id: d3-capability
+    category: assets
+    message: "你都能帮我做什么?"
+    expect_run: false
+    must_not_call: [create_and_run]
