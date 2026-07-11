@@ -23,6 +23,7 @@ import {
 } from "./manager-agent-config.js";
 import { managerAgentReadinessRoutesHandler } from "./manager-agent-readiness.js";
 import { setupEventWebSocket } from "./events-websocket.js";
+import { generativeUiRoutesHandler } from "./generative-ui.js";
 import { ChangeOrchestrator } from "../orchestration/change-orchestrator.js";
 import { GraphExecutor } from "../orchestration/graph-executor.js";
 import { WsDispatchAdapter, type WsDispatchAdapterOptions } from "../orchestration/ws-dispatch-adapter.js";
@@ -38,7 +39,7 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, If-None-Match");
 }
 
 export function resolveManagerWorkerWsBaseUrl(actualPort: number): string {
@@ -225,6 +226,10 @@ export function createServer(
     }
 
     if (managerAgentReadinessRoutesHandler(req, res, managerAgentContainerOptions, managerAgentConfigOptions)) {
+      return;
+    }
+
+    if (generativeUiRoutesHandler(req, res)) {
       return;
     }
 

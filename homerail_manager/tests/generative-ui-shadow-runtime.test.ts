@@ -182,6 +182,38 @@ describe("Voice Generative UI shadow runtime", () => {
       },
     });
 
+    const projection = await fetch(`${baseUrl}/api/voice-agent/sessions/${sessionId}/generative-ui`);
+    const projectionBody = await projection.json() as {
+      data: { authoritative: boolean; cursor: number; document: { document_id: string; revision: number } };
+    };
+    expect(projection.status).toBe(200);
+    expect(projectionBody.data).toMatchObject({
+      authoritative: false,
+      cursor: 1,
+      document: { revision: 1 },
+    });
+    const etag = projection.headers.get("etag");
+    expect(etag).toBeTruthy();
+    expect((await fetch(`${baseUrl}/api/voice-agent/sessions/${sessionId}/generative-ui`, {
+      headers: { "If-None-Match": etag! },
+    })).status).toBe(304);
+
+    const ledger = await fetch(
+      `${baseUrl}/api/voice-agent/sessions/${sessionId}/generative-ui/transactions?after_seq=0&limit=1`,
+    );
+    const ledgerBody = await ledger.json() as {
+      data: { transactions: Array<{ seq: number; committed_revision: number }>; has_more: boolean };
+    };
+    expect(ledgerBody.data).toMatchObject({
+      transactions: [{ seq: 1, committed_revision: 1 }],
+      has_more: false,
+    });
+    const replay = await fetch(
+      `${baseUrl}/api/voice-agent/sessions/${sessionId}/generative-ui/stream?after_seq=0&limit=1`,
+    );
+    const replayLines = (await replay.text()).trim().split("\n").map((line) => JSON.parse(line));
+    expect(replayLines.map((line) => line.event)).toEqual(["snapshot", "transaction"]);
+
     await fetch(`${baseUrl}/api/voice-agent/sessions/${sessionId}/manager-status`, { method: "POST" });
     const afterNoop = _getGenerativeUiShadowForTest(sessionId) as ShadowState;
     expect(afterNoop).toMatchObject({
@@ -189,6 +221,13 @@ describe("Voice Generative UI shadow runtime", () => {
       document: { revision: 1 },
     });
     expect(runner).toHaveBeenCalledTimes(1);
+
+    closeDb();
+    const recovered = await fetch(`${baseUrl}/api/voice-agent/sessions/${sessionId}/generative-ui`);
+    expect(recovered.status).toBe(200);
+    expect((await recovered.json()) as unknown).toMatchObject({
+      data: { cursor: 1, document: { revision: 1 } },
+    });
   });
 
   it("keeps the exact legacy path when the session snapshot is off", async () => {
@@ -210,6 +249,7 @@ describe("Voice Generative UI shadow runtime", () => {
     expect(body.data.workspace.widgets.map((item) => item.id)).toEqual(["shadow-note"]);
     expect(body.data.workspace.debug_events.some((event) => event.code.startsWith("generative_ui_shadow"))).toBe(false);
     expect(_getGenerativeUiShadowForTest(sessionId)).toEqual({ snapshot: null, document: null });
+    expect((await fetch(`${baseUrl}/api/voice-agent/sessions/${sessionId}/generative-ui`)).status).toBe(404);
   });
 
   it("honors global off as a reversible emergency kill switch", async () => {
@@ -341,7 +381,25 @@ describe("Voice Generative UI shadow runtime", () => {
       body: JSON.stringify({ text: "Reactivate this session through streaming." }),
     });
     expect(streamed.status).toBe(200);
-    expect(await streamed.text()).toContain('"type":"done"');
+    const streamLines = (await streamed.text()).trim().split("\n").map((line) => JSON.parse(line) as {
+      type: string;
+      event?: string;
+      authoritative?: boolean;
+      committed_revision?: number;
+    });
+    const streamTypes = streamLines.map((line) => line.type);
+    const generativeUiIndex = streamLines.findIndex((line) => (
+      line.type === "generative_ui" && line.event === "transaction"
+    ));
+    expect(streamLines.filter((line) => line.type === "generative_ui")).toHaveLength(1);
+    expect(streamLines[generativeUiIndex]).toMatchObject({
+      event: "transaction",
+      authoritative: false,
+      committed_revision: 1,
+    });
+    expect(generativeUiIndex).toBeGreaterThanOrEqual(0);
+    expect(generativeUiIndex).toBeLessThan(streamTypes.lastIndexOf("workspace"));
+    expect(generativeUiIndex).toBeLessThan(streamTypes.indexOf("done"));
     expect(_getGenerativeUiShadowForTest(sessionId)).toMatchObject({
       snapshot: { status: "ok", document_revision: 1, matched: true },
       document: { revision: 1, nodes: [{ id: "shadow-note" }] },

@@ -51,6 +51,7 @@ import {
 } from "../generative-ui/mode.js";
 import {
   generativeUiShadowService,
+  persistentGenerativeUiDocumentService,
   type GenerativeUiShadowSnapshotV1,
 } from "../generative-ui/shadow-service.js";
 
@@ -1075,6 +1076,57 @@ function reconcileGenerativeUiShadow(workspace: VoiceWorkspace): void {
   }
 }
 
+function activeGenerativeUiCursor(sessionId: string): number {
+  const scope = { type: "voice_session", id: sessionId } as const;
+  const document = persistentGenerativeUiDocumentService.findActiveForScope(scope, "legacy_widget_shadow");
+  return document
+    ? persistentGenerativeUiDocumentService.getCursor(document.document_id, scope)
+    : 0;
+}
+
+function shouldStreamGenerativeUiShadow(workspace: VoiceWorkspace): boolean {
+  if (workspace.generative_ui_mode !== "shadow" || workspace.generative_ui_shadow_released) return false;
+  try {
+    const globalMode = resolveConfiguredGenerativeUiModeDetails(
+      readManagerAgentConfig().generative_ui_mode,
+    ).effective_mode;
+    return resolveSessionGenerativeUiMode(workspace.generative_ui_mode, globalMode) === "shadow";
+  } catch {
+    // Projection must remain best effort and must never break the legacy stream.
+    return false;
+  }
+}
+
+function streamCommittedGenerativeUiTransactions(
+  res: http.ServerResponse,
+  sessionId: string,
+  afterSeq: number,
+): number {
+  const scope = { type: "voice_session", id: sessionId } as const;
+  const document = persistentGenerativeUiDocumentService.findActiveForScope(scope, "legacy_widget_shadow");
+  if (!document) return afterSeq;
+  const committed = persistentGenerativeUiDocumentService.listTransactions(
+    document.document_id,
+    scope,
+    afterSeq,
+    100,
+  );
+  let cursor = afterSeq;
+  for (const entry of committed) {
+    streamLine(res, {
+      type: "generative_ui",
+      event: "transaction",
+      stream_version: 1,
+      authoritative: false,
+      purpose: "legacy_widget_shadow",
+      ...entry,
+      revision: entry.committed_revision,
+    });
+    cursor = entry.seq;
+  }
+  return cursor;
+}
+
 function confirmedTaskMessage(workspace: VoiceWorkspace, fallbackText = ""): string {
   const draft = workspace.task_draft;
   if (!draft) return fallbackText || workspace.session_slate || workspace.active_objective || "用户已确认执行当前任务。";
@@ -1575,6 +1627,8 @@ export function voiceAgentBootstrapHandler(
             return null;
           }
           reactivateGenerativeUiShadowIfReleased(workspace);
+          const streamGenerativeUi = shouldStreamGenerativeUiShadow(workspace);
+          let generativeUiCursor = streamGenerativeUi ? activeGenerativeUiCursor(sessionId) : 0;
           if (projectIdPatch && !workspace.project_id) workspace.project_id = projectIdPatch;
           workspace.progress_brief = {
             status: "running",
@@ -1589,10 +1643,24 @@ export function voiceAgentBootstrapHandler(
               streamedCommentaryTexts,
               onSpeech: (event) => {
                 const saved = saveWorkspace(workspace);
+                if (streamGenerativeUi) {
+                  generativeUiCursor = streamCommittedGenerativeUiTransactions(
+                    res,
+                    sessionId,
+                    generativeUiCursor,
+                  );
+                }
                 streamLine(res, { type: "speech", event, workspace: saved });
               },
             }, managerAgentConfigOptions);
             const saved = saveWorkspace(workspace);
+            if (streamGenerativeUi) {
+              generativeUiCursor = streamCommittedGenerativeUiTransactions(
+                res,
+                sessionId,
+                generativeUiCursor,
+              );
+            }
             completeTurn(sessionId, saved.progress_brief?.status || "done");
             return { result: r, saved };
           } catch (err) {
@@ -1694,6 +1762,8 @@ export function voiceAgentBootstrapHandler(
             return null;
           }
           reactivateGenerativeUiShadowIfReleased(workspace);
+          const streamGenerativeUi = shouldStreamGenerativeUiShadow(workspace);
+          let generativeUiCursor = streamGenerativeUi ? activeGenerativeUiCursor(sessionId) : 0;
           workspace.progress_brief = {
             status: "submitted",
             short_text: "已确认，正在交给主 Agent。",
@@ -1712,11 +1782,25 @@ export function voiceAgentBootstrapHandler(
                 streamedCommentaryTexts,
                 onSpeech: (event) => {
                   const saved = saveWorkspace(workspace);
+                  if (streamGenerativeUi) {
+                    generativeUiCursor = streamCommittedGenerativeUiTransactions(
+                      res,
+                      sessionId,
+                      generativeUiCursor,
+                    );
+                  }
                   streamLine(res, { type: "speech", event, workspace: saved });
                 },
               },
             );
             const saved = saveWorkspace(workspace);
+            if (streamGenerativeUi) {
+              generativeUiCursor = streamCommittedGenerativeUiTransactions(
+                res,
+                sessionId,
+                generativeUiCursor,
+              );
+            }
             completeTurn(sessionId, saved.progress_brief?.status || "done");
             return { result: r, saved };
           } catch (err) {
