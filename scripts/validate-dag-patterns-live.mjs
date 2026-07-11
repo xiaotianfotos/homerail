@@ -59,7 +59,7 @@ function patternParameters(pattern) {
 }
 
 const prompts = {
-  heartbeat: "Treat this as one actionable signal. Execute one bounded action and verify it. Use structured object handoffs and declared ports.",
+  heartbeat: "Use only this synthetic signal and do not inspect or modify the workspace: input value is 2. Classify it actionable and preserve the value in the handoff. The conductor must order exactly one action: multiply the value by 2, with done_when output.value equals 4. The worker returns top-level status success, value 4, and evidence 2 * 2 = 4. The verifier must return top-level verdict pass when value is exactly 4 with that evidence. Use structured object handoffs and declared ports.",
   "orchestrator-workers": "Use only this synthetic record and do not inspect or modify the workspace: {\"id\":\"sample-1\",\"count\":2,\"status\":\"ready\"}. Split it into exactly three independent, self-contained checks: id equals sample-1, count equals 2, and status equals ready. The indexed plan must tell every worker not to use builtin tools. Every worker returns top-level status success with evidence, then verify the aggregate.",
   "budget-gate": "Projected usage is 1 unit against a budget limit of 100. Return status within_budget, execute one bounded check, and audit it.",
   "trust-ledger": "The validation skill has 20 runs and 20 passes. Assign tier auto, execute one check, verify it, and preserve the measured evidence.",
@@ -67,7 +67,7 @@ const prompts = {
   quorum: "Preserve this concrete evidence: health_check=passed, regression_count=0, risk=low. Each independent voter should return top-level vote act with evidence. Continue only after the configured quorum.",
   sparring: "Use this self-contained synthetic case only and do not inspect or modify the workspace: input 1+1, broken output 3, expected output 2. Breaker returns the challenge, builder returns repaired output 2, and fresh verifier returns top-level verdict pass with evidence.",
   ratchet: "Use an in-memory synthetic metric only; do not inspect or modify the workspace. The baseline measurer must return current top-level metric 2 unchanged and stop; it must not simulate improvements. Each later improver returns metric reduced by exactly 1 until target 0.",
-  compost: "Use only these two synthetic repeated failures and do not inspect the workspace: missing top-level verdict twice; missing bounded retry twice. Propose no more than three grounded improvements with top-level status proposed. The terminal reviewer must return status awaiting_human_review and must not approve or apply them.",
+  compost: "Use only these two synthetic repeated failures and do not inspect the workspace: missing top-level verdict twice; missing bounded retry twice. Propose no more than three grounded improvements with top-level status proposed. The terminal reviewer must hand off exactly one object whose top-level key is status with literal value awaiting_human_review, plus proposals and no approval decision; do not use a synonym or nest the status.",
 };
 
 const semanticRequirements = {
@@ -252,6 +252,7 @@ async function runPattern(pattern) {
       node: requirement.node,
       port: requirement.port,
       count: matchingHandoffs(handoffs, requirement.node, requirement.port).length,
+      last_content: parseContent(matchingHandoffs(handoffs, requirement.node, requirement.port).at(-1)?.content),
     })),
     model_evidence: evidence,
     evaluation: {
