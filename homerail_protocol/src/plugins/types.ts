@@ -158,6 +158,16 @@ export type HomerailPluginHandlerV1 =
   | { type: "runtime"; method: string }
   | { type: "builtin"; id: string };
 
+export type HomerailPluginResolvedHandlerV1 =
+  | {
+      type: "projection";
+      file: string;
+      digest: string;
+      document: Record<string, unknown>;
+    }
+  | { type: "runtime"; method: string }
+  | { type: "builtin"; id: string };
+
 export interface HomerailPluginToolV1 {
   id: string;
   description: string;
@@ -315,32 +325,47 @@ export interface HomerailPluginRendererRegistrationV1 {
 
 export interface HomerailPluginUiProjectionV1 {
   registry_revision: number;
+  registry_fingerprint: string;
   kinds: HomerailPluginKindRegistrationV1[];
   renderers: HomerailPluginRendererRegistrationV1[];
   /** Enabled symbolic actions. Disabled historical nodes are read-only. */
-  action_ids: string[];
+  actions: HomerailPluginActionDescriptorV1[];
 }
 
 export interface HomerailPluginToolDescriptorV1 {
   plugin_id: string;
   plugin_version: string;
-  capability_id: string;
-  id: string;
+  local_id: string;
+  qualified_id: string;
+  /** Harness-safe deterministic name, limited to 64 ASCII characters. */
+  wire_id: string;
+  capability_ids: string[];
   description: string;
   input_schema: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
   effect: HomerailPluginEffect;
   permissions: HomerailPluginPermission[];
   confirmation: HomerailPluginConfirmation;
-  handler: HomerailPluginHandlerV1;
+  handler: HomerailPluginResolvedHandlerV1;
 }
 
 export interface HomerailPluginSkillDescriptorV1 {
   plugin_id: string;
   plugin_version: string;
-  capability_id: string;
-  id: string;
+  local_id: string;
+  qualified_id: string;
+  capability_ids: string[];
   description: string;
   digest: string;
+}
+
+export interface HomerailPluginActionDescriptorV1 {
+  plugin_id: string;
+  plugin_version: string;
+  local_id: string;
+  qualified_id: string;
+  capability_ids: string[];
+  intent: string;
 }
 
 export interface HomerailPluginTurnContextV1 {
@@ -353,7 +378,9 @@ export interface HomerailPluginTurnContextV1 {
   }>;
   skills: HomerailPluginSkillDescriptorV1[];
   tools: HomerailPluginToolDescriptorV1[];
-  action_ids: string[];
+  actions: HomerailPluginActionDescriptorV1[];
+  /** Effective grant snapshot; M3 is zero until the Permission Broker lands. */
+  permission_revision: number;
   context_digest: string;
 }
 
@@ -382,5 +409,8 @@ export interface HomerailResolvedPluginDescriptorV1 {
   referenced_files: Array<{
     path: string;
     digest: string;
+    encoding: "base64";
+    /** Exact immutable package bytes, including declarative projectors/workflows. */
+    content: string;
   }>;
 }

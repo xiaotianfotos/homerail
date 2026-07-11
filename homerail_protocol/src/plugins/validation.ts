@@ -8,6 +8,9 @@ import {
   type HomerailPluginHandlerV1,
   type HomerailPluginManifestV1,
   type HomerailPluginPermission,
+  type HomerailPluginTurnContextV1,
+  type HomerailPluginUiProjectionV1,
+  type HomerailResolvedPluginDescriptorV1,
   type HomerailPluginValidationError,
   type HomerailPluginValidationResult,
 } from "./types.js";
@@ -64,6 +67,7 @@ function duplicateErrors<T>(
 
 export function isSafeHomerailPluginPackagePath(value: string): boolean {
   if (!value || value.length > 300 || value.startsWith("/") || value.includes("\\")) return false;
+  if (!/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(value)) return false;
   const segments = value.split("/");
   return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
@@ -78,7 +82,11 @@ function parseSemver(value: string): ParsedSemver | null {
   if (!match) return null;
   const core = [Number(match[1]), Number(match[2]), Number(match[3])] as [number, number, number];
   if (!core.every(Number.isSafeInteger)) return null;
-  return { core, prerelease: match[4]?.split(".") ?? [] };
+  const prerelease = match[4]?.split(".") ?? [];
+  if (prerelease.some((part) => /^\d+$/.test(part) && part.length > 1 && part.startsWith("0"))) {
+    return null;
+  }
+  return { core, prerelease };
 }
 
 function compareSemver(left: string, right: string): number | null {
@@ -100,7 +108,10 @@ function compareSemver(left: string, right: string): number | null {
     if (leftPart === rightPart) continue;
     const leftNumeric = /^\d+$/.test(leftPart);
     const rightNumeric = /^\d+$/.test(rightPart);
-    if (leftNumeric && rightNumeric) return Number(leftPart) < Number(rightPart) ? -1 : 1;
+    if (leftNumeric && rightNumeric) {
+      if (leftPart.length !== rightPart.length) return leftPart.length < rightPart.length ? -1 : 1;
+      return leftPart < rightPart ? -1 : 1;
+    }
     if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
     return leftPart < rightPart ? -1 : 1;
   }
@@ -165,6 +176,9 @@ function semanticErrors(manifest: HomerailPluginManifestV1): HomerailPluginValid
       "compatibilityRange",
     ));
   }
+  if (!parseSemver(manifest.version)) {
+    errors.push(error("/version", "must be a canonical semantic version", "semver"));
+  }
   if (!manifest.compatibility.plugin_api.includes(manifest.runtime.plugin_api)) {
     errors.push(error(
       "/runtime/plugin_api",
@@ -185,6 +199,22 @@ function semanticErrors(manifest: HomerailPluginManifestV1): HomerailPluginValid
     (value) => value.permission,
     "/permissions",
   ));
+  [...manifest.permissions.required, ...manifest.permissions.optional].forEach((grant, index) => {
+    if (grant.permission === "network.connect" && !grant.hosts?.length) {
+      errors.push(error(
+        `/permissions/${index}/hosts`,
+        "network.connect requires a non-empty host allowlist",
+        "networkAllowlist",
+      ));
+    }
+    if (grant.permission !== "network.connect" && grant.hosts !== undefined) {
+      errors.push(error(
+        `/permissions/${index}/hosts`,
+        "host allowlists are only valid for network.connect",
+        "permissionScope",
+      ));
+    }
+  });
 
   manifest.skills.forEach((skill, index) => {
     if (!isSafeHomerailPluginPackagePath(skill.path) || !skill.path.endsWith("/SKILL.md")) {
@@ -231,11 +261,18 @@ function semanticErrors(manifest: HomerailPluginManifestV1): HomerailPluginValid
       ...referencedPermissionErrors(tool.permissions, declaredPermissions, `/tools/${index}/permissions`),
       ...handlerErrors(tool.handler, manifest.runtime.trust, `/tools/${index}/handler`),
     );
+    if (tool.effect === "destructive" && tool.confirmation === "never") {
+      errors.push(error(`/tools/${index}/confirmation`, "destructive effects require confirmation", "effectConfirmation"));
+    }
   });
 
   manifest.workflows.forEach((workflow, index) => {
     if (!workflow.uri.startsWith(`plugin://${manifest.id}/`)) {
       errors.push(error(`/workflows/${index}/uri`, "URI must be owned by this plugin", "pluginNamespace"));
+    }
+    const uriPath = workflow.uri.slice(`plugin://${manifest.id}/`.length);
+    if (!isSafeHomerailPluginPackagePath(uriPath)) {
+      errors.push(error(`/workflows/${index}/uri`, "URI path must be canonical and package-relative", "pluginUri"));
     }
     if (!isSafeHomerailPluginPackagePath(workflow.file)) {
       errors.push(error(`/workflows/${index}/file`, "must be a package-relative POSIX path", "packagePath"));
@@ -245,6 +282,9 @@ function semanticErrors(manifest: HomerailPluginManifestV1): HomerailPluginValid
       declaredPermissions,
       `/workflows/${index}/permissions`,
     ));
+    if (workflow.effect === "destructive" && workflow.confirmation === "never") {
+      errors.push(error(`/workflows/${index}/confirmation`, "destructive effects require confirmation", "effectConfirmation"));
+    }
   });
 
   const kindVersions = new Map<string, Map<number, Set<string>>>();
@@ -372,6 +412,9 @@ function semanticErrors(manifest: HomerailPluginManifestV1): HomerailPluginValid
       ...referencedPermissionErrors(action.permissions, declaredPermissions, `/actions/${index}/permissions`),
       ...handlerErrors(action.handler, manifest.runtime.trust, `/actions/${index}/handler`),
     );
+    if (action.effect === "destructive" && action.confirmation === "never") {
+      errors.push(error(`/actions/${index}/confirmation`, "destructive effects require confirmation", "effectConfirmation"));
+    }
   });
 
   if (manifest.runtime.trust === HomerailPluginRuntimeTrust.SANDBOXED_RUNTIME) {
@@ -407,6 +450,9 @@ function semanticErrors(manifest: HomerailPluginManifestV1): HomerailPluginValid
       declaredPermissions,
       `/state/migrations/${index}/permissions`,
     ));
+    if (migration.effect === "destructive" && migration.confirmation === "never") {
+      errors.push(error(`/state/migrations/${index}/confirmation`, "destructive effects require confirmation", "effectConfirmation"));
+    }
   });
   return errors;
 }
@@ -517,4 +563,193 @@ export function collectHomerailPluginFileReferences(
   if (manifest.runtime.entrypoint) references.add(manifest.runtime.entrypoint.file);
   manifest.state.migrations.forEach((migration) => references.add(migration.file));
   return [...references].sort();
+}
+
+function validatePluginWireValue<T>(
+  schemaName: string,
+  value: unknown,
+): HomerailPluginValidationResult<T> {
+  const json = analyzeGenerativeUiJsonValue(value, {
+    limits: { max_bytes: 8 * 1024 * 1024, max_values: 1_000_000, max_depth: 64 },
+  });
+  if (!json.valid) {
+    return { valid: false, errors: [json.error ?? error("", "invalid JSON value", "jsonValue")] };
+  }
+  let stableValue: unknown;
+  try {
+    stableValue = structuredClone(value);
+  } catch {
+    return { valid: false, errors: [error("", "value could not be snapshotted safely", "jsonSnapshot")] };
+  }
+  validator ??= createValidator();
+  const validateFn: ValidateFunction | undefined = validator.getSchema(schemaName);
+  if (!validateFn) return { valid: false, errors: [error("", `schema unavailable: ${schemaName}`, "unknownSchema")] };
+  try {
+    if (!validateFn(stableValue)) return { valid: false, errors: normalizeErrors(validateFn.errors) };
+  } catch {
+    return { valid: false, errors: [error("", "wire schema validation failed safely", "schemaValidation")] };
+  }
+  return { valid: true, value: stableValue as T, errors: [] };
+}
+
+function orderingErrors<T>(
+  values: T[],
+  key: (value: T) => string,
+  path: string,
+): HomerailPluginValidationError[] {
+  const errors: HomerailPluginValidationError[] = [];
+  let previous: string | undefined;
+  values.forEach((value, index) => {
+    const current = key(value);
+    if (previous !== undefined && current <= previous) {
+      errors.push(error(
+        `${path}/${index}`,
+        "entries must have unique keys in ascending canonical order",
+        "canonicalOrder",
+      ));
+    }
+    previous = current;
+  });
+  return errors;
+}
+
+function qualifiedIdentityErrors(
+  value: { plugin_id: string; local_id: string; qualified_id: string },
+  path: string,
+): HomerailPluginValidationError[] {
+  return value.qualified_id === `${value.plugin_id}:${value.local_id}`
+    ? []
+    : [error(`${path}/qualified_id`, "qualified_id does not match plugin_id and local_id", "qualifiedIdentity")];
+}
+
+export function homerailPluginTurnContextDigestInput(
+  value: HomerailPluginTurnContextV1,
+): Omit<HomerailPluginTurnContextV1, "context_digest"> {
+  const { context_digest: _digest, ...input } = structuredClone(value);
+  return input;
+}
+
+export function validateHomerailPluginTurnContext(
+  value: unknown,
+): HomerailPluginValidationResult<HomerailPluginTurnContextV1> {
+  const validation = validatePluginWireValue<HomerailPluginTurnContextV1>(
+    "homerail-plugin-turn-context-v1",
+    value,
+  );
+  if (!validation.value) return validation;
+  const context = validation.value;
+  const errors: HomerailPluginValidationError[] = [
+    ...orderingErrors(context.enabled_plugins, (entry) => entry.id, "/enabled_plugins"),
+    ...orderingErrors(context.skills, (entry) => entry.qualified_id, "/skills"),
+    ...orderingErrors(context.tools, (entry) => entry.qualified_id, "/tools"),
+    ...orderingErrors(context.actions, (entry) => entry.qualified_id, "/actions"),
+    ...duplicateErrors(context.tools, (entry) => entry.wire_id, "/tools"),
+  ];
+  const enabled = new Set(context.enabled_plugins.map((entry) => `${entry.id}@${entry.version}`));
+  context.skills.forEach((entry, index) => {
+    errors.push(...qualifiedIdentityErrors(entry, `/skills/${index}`));
+    errors.push(...orderingErrors(entry.capability_ids, (id) => id, `/skills/${index}/capability_ids`));
+    if (!enabled.has(`${entry.plugin_id}@${entry.plugin_version}`)) {
+      errors.push(error(`/skills/${index}`, "Skill plugin is not enabled in this context", "enabledPluginReference"));
+    }
+  });
+  context.tools.forEach((entry, index) => {
+    errors.push(...qualifiedIdentityErrors(entry, `/tools/${index}`));
+    errors.push(...orderingErrors(entry.capability_ids, (id) => id, `/tools/${index}/capability_ids`));
+    if (!enabled.has(`${entry.plugin_id}@${entry.plugin_version}`)) {
+      errors.push(error(`/tools/${index}`, "Tool plugin is not enabled in this context", "enabledPluginReference"));
+    }
+  });
+  context.actions.forEach((entry, index) => {
+    errors.push(...qualifiedIdentityErrors(entry, `/actions/${index}`));
+    errors.push(...orderingErrors(entry.capability_ids, (id) => id, `/actions/${index}/capability_ids`));
+    if (!enabled.has(`${entry.plugin_id}@${entry.plugin_version}`)) {
+      errors.push(error(`/actions/${index}`, "Action plugin is not enabled in this context", "enabledPluginReference"));
+    }
+  });
+  return errors.length ? { valid: false, errors } : validation;
+}
+
+export function validateHomerailPluginUiProjection(
+  value: unknown,
+): HomerailPluginValidationResult<HomerailPluginUiProjectionV1> {
+  const validation = validatePluginWireValue<HomerailPluginUiProjectionV1>(
+    "homerail-plugin-ui-projection-v1",
+    value,
+  );
+  if (!validation.value) return validation;
+  const projection = validation.value;
+  const kindKey = (entry: HomerailPluginUiProjectionV1["kinds"][number]) => (
+    `${entry.plugin_id}\0${entry.kind}\0${String(entry.kind_version).padStart(2, "0")}`
+  );
+  const rendererKey = (entry: HomerailPluginUiProjectionV1["renderers"][number]) => (
+    `${entry.plugin_id}\0${entry.kind}\0${String(entry.kind_version).padStart(2, "0")}\0${entry.renderer_id}`
+  );
+  const errors: HomerailPluginValidationError[] = [
+    ...orderingErrors(projection.kinds, kindKey, "/kinds"),
+    ...orderingErrors(projection.renderers, rendererKey, "/renderers"),
+    ...orderingErrors(projection.actions, (entry) => entry.qualified_id, "/actions"),
+  ];
+  const kinds = new Map(projection.kinds.map((entry) => [
+    `${entry.plugin_id}\0${entry.plugin_version}\0${entry.kind}\0${entry.kind_version}`,
+    entry,
+  ]));
+  const resolutionKeys = new Set<string>();
+  projection.renderers.forEach((entry, index) => {
+    const kind = kinds.get(`${entry.plugin_id}\0${entry.plugin_version}\0${entry.kind}\0${entry.kind_version}`);
+    if (!kind || kind.enabled !== entry.enabled || kind.manifest_digest !== entry.manifest_digest) {
+      errors.push(error(`/renderers/${index}`, "Renderer does not match an exact projected kind", "kindReference"));
+    }
+    for (const surfaceValue of entry.surfaces) {
+      for (const device of entry.devices) {
+        const key = `${entry.kind}\0${entry.kind_version}\0${surfaceValue}\0${device}`;
+        if (resolutionKeys.has(key)) {
+          errors.push(error(`/renderers/${index}`, "duplicate Renderer resolution key", "uniqueRendererKey"));
+        }
+        resolutionKeys.add(key);
+      }
+    }
+  });
+  projection.actions.forEach((entry, index) => {
+    errors.push(...qualifiedIdentityErrors(entry, `/actions/${index}`));
+    errors.push(...orderingErrors(entry.capability_ids, (id) => id, `/actions/${index}/capability_ids`));
+  });
+  return errors.length ? { valid: false, errors } : validation;
+}
+
+export function validateHomerailResolvedPluginDescriptorWire(
+  value: unknown,
+): HomerailPluginValidationResult<HomerailResolvedPluginDescriptorV1> {
+  const validation = validatePluginWireValue<HomerailResolvedPluginDescriptorV1>(
+    "homerail-resolved-plugin-descriptor-v1",
+    value,
+  );
+  if (!validation.value) return validation;
+  const descriptor = validation.value;
+  const manifest = validateHomerailPluginManifest(descriptor.manifest);
+  if (!manifest.valid) return { valid: false, errors: manifest.errors.map((entry) => ({
+    ...entry,
+    path: `/manifest${entry.path}`,
+  })) };
+  const errors: HomerailPluginValidationError[] = [];
+  const expectedSchemas = descriptor.manifest.schemas;
+  const expectedSkills = descriptor.manifest.skills;
+  const expectedFiles = collectHomerailPluginFileReferences(descriptor.manifest);
+  if (
+    descriptor.schemas.length !== expectedSchemas.length
+    || descriptor.schemas.some((entry, index) => (
+      entry.id !== expectedSchemas[index]?.id || entry.file !== expectedSchemas[index]?.file
+    ))
+  ) errors.push(error("/schemas", "resolved schemas must exactly follow manifest order", "resolvedReference"));
+  if (
+    descriptor.skills.length !== expectedSkills.length
+    || descriptor.skills.some((entry, index) => (
+      entry.id !== expectedSkills[index]?.id || entry.path !== expectedSkills[index]?.path
+    ))
+  ) errors.push(error("/skills", "resolved Skills must exactly follow manifest order", "resolvedReference"));
+  if (
+    descriptor.referenced_files.length !== expectedFiles.length
+    || descriptor.referenced_files.some((entry, index) => entry.path !== expectedFiles[index])
+  ) errors.push(error("/referenced_files", "archived files must exactly cover references in canonical order", "resolvedReference"));
+  return errors.length ? { valid: false, errors } : validation;
 }

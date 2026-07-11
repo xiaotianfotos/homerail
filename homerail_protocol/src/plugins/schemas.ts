@@ -443,9 +443,15 @@ const permissionGrantSchema = {
     },
     hosts: {
       type: "array",
+      minItems: 1,
       maxItems: 64,
       uniqueItems: true,
-      items: { type: "string", minLength: 1, maxLength: 253 },
+      items: {
+        type: "string",
+        minLength: 1,
+        maxLength: 253,
+        pattern: "^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$",
+      },
     },
   },
   required: ["permission"],
@@ -562,6 +568,294 @@ export const homerailPluginManifestSchema = {
   additionalProperties: false,
 } as const;
 
+const sha256Digest = {
+  type: "string",
+  pattern: "^[a-f0-9]{64}$",
+} as const;
+const qualifiedId = {
+  type: "string",
+  minLength: 5,
+  maxLength: 260,
+  pattern: "^[a-z0-9]+(?:[.-][a-z0-9]+)+:[a-z][a-z0-9._-]*$",
+} as const;
+const capabilityIds = {
+  type: "array",
+  maxItems: 64,
+  uniqueItems: true,
+  items: qualifiedId,
+} as const;
+const safeInteger = {
+  type: "integer",
+  minimum: 0,
+  maximum: Number.MAX_SAFE_INTEGER,
+} as const;
+
+const resolvedHandlerSchema = {
+  oneOf: [
+    {
+      type: "object",
+      properties: {
+        type: { const: "projection" },
+        file: packagePath,
+        digest: sha256Digest,
+        document: { type: "object" },
+      },
+      required: ["type", "file", "digest", "document"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: { type: { const: "runtime" }, method: localId },
+      required: ["type", "method"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: { type: { const: "builtin" }, id: localId },
+      required: ["type", "id"],
+      additionalProperties: false,
+    },
+  ],
+} as const;
+
+const skillDescriptorSchema = {
+  type: "object",
+  properties: {
+    plugin_id: pluginId,
+    plugin_version: semver,
+    local_id: localId,
+    qualified_id: qualifiedId,
+    capability_ids: capabilityIds,
+    description: shortText,
+    digest: sha256Digest,
+  },
+  required: [
+    "plugin_id", "plugin_version", "local_id", "qualified_id",
+    "capability_ids", "description", "digest",
+  ],
+  additionalProperties: false,
+} as const;
+
+const toolDescriptorSchema = {
+  type: "object",
+  properties: {
+    plugin_id: pluginId,
+    plugin_version: semver,
+    local_id: toolId,
+    qualified_id: qualifiedId,
+    wire_id: {
+      type: "string",
+      minLength: 1,
+      maxLength: 64,
+      pattern: "^[A-Za-z][A-Za-z0-9_-]*$",
+    },
+    capability_ids: capabilityIds,
+    description: shortText,
+    input_schema: { type: "object" },
+    output_schema: { type: "object" },
+    effect,
+    permissions,
+    confirmation,
+    handler: resolvedHandlerSchema,
+  },
+  required: [
+    "plugin_id", "plugin_version", "local_id", "qualified_id", "wire_id",
+    "capability_ids", "description", "input_schema", "effect", "permissions",
+    "confirmation", "handler",
+  ],
+  additionalProperties: false,
+} as const;
+
+const actionDescriptorSchema = {
+  type: "object",
+  properties: {
+    plugin_id: pluginId,
+    plugin_version: semver,
+    local_id: localId,
+    qualified_id: qualifiedId,
+    capability_ids: capabilityIds,
+    intent: {
+      type: "string",
+      minLength: 3,
+      maxLength: 200,
+      pattern: "^[a-z0-9]+(?:[.-][a-z0-9]+)+[.:][a-z][a-z0-9._-]*$",
+    },
+  },
+  required: ["plugin_id", "plugin_version", "local_id", "qualified_id", "capability_ids", "intent"],
+  additionalProperties: false,
+} as const;
+
+const kindRegistrationSchema = {
+  type: "object",
+  properties: {
+    plugin_id: pluginId,
+    plugin_version: semver,
+    manifest_digest: sha256Digest,
+    enabled: { type: "boolean" },
+    schema_id: localId,
+    kind: semanticKind,
+    kind_version: { type: "integer", minimum: 1, maximum: 32 },
+    schema: { type: "object" },
+    allowed_surfaces: {
+      type: "array", minItems: 1, maxItems: 4, uniqueItems: true, items: surface,
+    },
+    max_payload_bytes: { type: "integer", minimum: 1, maximum: 131072 },
+    fallback_required: { const: true },
+    preferred_visuals: { type: "array", maxItems: 16, uniqueItems: true, items: localId },
+    action_ids: { type: "array", maxItems: 32, uniqueItems: true, items: localId },
+  },
+  required: [
+    "plugin_id", "plugin_version", "manifest_digest", "enabled", "schema_id",
+    "kind", "kind_version", "schema", "allowed_surfaces", "max_payload_bytes",
+    "fallback_required", "preferred_visuals", "action_ids",
+  ],
+  additionalProperties: false,
+} as const;
+
+const rendererRegistrationSchema = {
+  type: "object",
+  properties: {
+    plugin_id: pluginId,
+    plugin_version: semver,
+    manifest_digest: sha256Digest,
+    enabled: { type: "boolean" },
+    renderer_id: localId,
+    kind: semanticKind,
+    kind_version: { type: "integer", minimum: 1, maximum: 32 },
+    renderer_api: { type: "integer", minimum: 1, maximum: 64 },
+    mode: { type: "string", enum: Object.values(HomerailPluginRendererMode) },
+    surfaces: {
+      type: "array", minItems: 1, maxItems: 4, uniqueItems: true, items: surface,
+    },
+    devices: {
+      type: "array",
+      minItems: 1,
+      maxItems: 3,
+      uniqueItems: true,
+      items: { type: "string", enum: Object.values(GenerativeUiDevice) },
+    },
+    source: rendererSourceSchema,
+    fallback: rendererFallbackSchema,
+  },
+  required: [
+    "plugin_id", "plugin_version", "manifest_digest", "enabled", "renderer_id",
+    "kind", "kind_version", "renderer_api", "mode", "surfaces", "devices",
+    "source", "fallback",
+  ],
+  additionalProperties: false,
+} as const;
+
+export const homerailPluginTurnContextSchema = {
+  $id: "homerail-plugin-turn-context-v1",
+  type: "object",
+  properties: {
+    context_version: { const: 1 },
+    registry_revision: safeInteger,
+    enabled_plugins: {
+      type: "array",
+      maxItems: 256,
+      items: {
+        type: "object",
+        properties: { id: pluginId, version: semver, manifest_digest: sha256Digest },
+        required: ["id", "version", "manifest_digest"],
+        additionalProperties: false,
+      },
+    },
+    skills: { type: "array", maxItems: 1024, items: skillDescriptorSchema },
+    tools: { type: "array", maxItems: 1024, items: toolDescriptorSchema },
+    actions: { type: "array", maxItems: 2048, items: actionDescriptorSchema },
+    permission_revision: safeInteger,
+    context_digest: sha256Digest,
+  },
+  required: [
+    "context_version", "registry_revision", "enabled_plugins", "skills", "tools",
+    "actions", "permission_revision", "context_digest",
+  ],
+  additionalProperties: false,
+} as const;
+
+export const homerailPluginUiProjectionSchema = {
+  $id: "homerail-plugin-ui-projection-v1",
+  type: "object",
+  properties: {
+    registry_revision: safeInteger,
+    registry_fingerprint: sha256Digest,
+    kinds: { type: "array", maxItems: 2048, items: kindRegistrationSchema },
+    renderers: { type: "array", maxItems: 4096, items: rendererRegistrationSchema },
+    actions: { type: "array", maxItems: 2048, items: actionDescriptorSchema },
+  },
+  required: ["registry_revision", "registry_fingerprint", "kinds", "renderers", "actions"],
+  additionalProperties: false,
+} as const;
+
+export const homerailResolvedPluginDescriptorSchema = {
+  $id: "homerail-resolved-plugin-descriptor-v1",
+  type: "object",
+  properties: {
+    descriptor_version: { const: 1 },
+    manifest: { $ref: "homerail-plugin-manifest-v1" },
+    manifest_digest: sha256Digest,
+    package_digest: sha256Digest,
+    schemas: {
+      type: "array",
+      maxItems: 128,
+      items: {
+        type: "object",
+        properties: {
+          id: localId,
+          file: packagePath,
+          digest: sha256Digest,
+          schema: { type: "object" },
+        },
+        required: ["id", "file", "digest", "schema"],
+        additionalProperties: false,
+      },
+    },
+    skills: {
+      type: "array",
+      maxItems: 64,
+      items: {
+        type: "object",
+        properties: {
+          id: localId,
+          path: packagePath,
+          digest: sha256Digest,
+          content: { type: "string", maxLength: 262144 },
+        },
+        required: ["id", "path", "digest", "content"],
+        additionalProperties: false,
+      },
+    },
+    referenced_files: {
+      type: "array",
+      maxItems: 256,
+      items: {
+        type: "object",
+        properties: {
+          path: packagePath,
+          digest: sha256Digest,
+          encoding: { const: "base64" },
+          content: {
+            type: "string",
+            maxLength: 699052,
+            pattern: "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+          },
+        },
+        required: ["path", "digest", "encoding", "content"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: [
+    "descriptor_version", "manifest", "manifest_digest", "package_digest",
+    "schemas", "skills", "referenced_files",
+  ],
+  additionalProperties: false,
+} as const;
+
 export const homerailPluginSchemas: Record<string, Record<string, unknown>> = {
   "homerail-plugin-manifest-v1": homerailPluginManifestSchema as Record<string, unknown>,
+  "homerail-plugin-turn-context-v1": homerailPluginTurnContextSchema as Record<string, unknown>,
+  "homerail-plugin-ui-projection-v1": homerailPluginUiProjectionSchema as Record<string, unknown>,
+  "homerail-resolved-plugin-descriptor-v1": homerailResolvedPluginDescriptorSchema as Record<string, unknown>,
 };

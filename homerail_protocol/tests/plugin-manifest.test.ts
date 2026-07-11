@@ -4,10 +4,12 @@ import {
   HOMERAIL_PLUGIN_MANIFEST_VERSION,
   HOMERAIL_RENDERER_API_VERSION,
   collectHomerailPluginFileReferences,
+  isSafeHomerailPluginPackagePath,
   validateHomerailPluginCompatibility,
   validateHomerailPluginManifest,
   type HomerailPluginManifestV1,
 } from "../src/plugins/index.js";
+import { validateMessage } from "../src/validation.js";
 
 function manifest(): HomerailPluginManifestV1 {
   return {
@@ -104,11 +106,31 @@ describe("HomeRail Plugin Manifest V1", () => {
   it("rejects unknown fields and malformed semantic versions", () => {
     expect(validateHomerailPluginManifest({ ...manifest(), surprise: true }).valid).toBe(false);
     expect(validateHomerailPluginManifest({ ...manifest(), version: "v1" }).valid).toBe(false);
+    expect(validateHomerailPluginManifest({ ...manifest(), version: "1.0.0-01" }).valid).toBe(false);
 
     const invalidRange = manifest();
     invalidRange.compatibility.homerail.max_exclusive = "0.1.0";
     expect(validateHomerailPluginManifest(invalidRange).errors).toContainEqual(expect.objectContaining({
       keyword: "compatibilityRange",
+    }));
+  });
+
+  it("normalizes paths and enforces minimum side-effect policy", () => {
+    expect(isSafeHomerailPluginPackagePath("skills/valid/SKILL.md")).toBe(true);
+    expect(isSafeHomerailPluginPackagePath("skills/bad\nname/SKILL.md")).toBe(false);
+    expect(isSafeHomerailPluginPackagePath("skills/bad\0name/SKILL.md")).toBe(false);
+
+    const destructive = manifest();
+    destructive.tools[0].effect = "destructive";
+    expect(validateHomerailPluginManifest(destructive).errors).toContainEqual(expect.objectContaining({
+      keyword: "effectConfirmation",
+    }));
+
+    const network = manifest();
+    network.permissions.optional = [{ permission: "network.connect" }];
+    network.tools[0].permissions = ["network.connect"];
+    expect(validateHomerailPluginManifest(network).errors).toContainEqual(expect.objectContaining({
+      keyword: "networkAllowlist",
     }));
   });
 
@@ -195,6 +217,15 @@ describe("HomeRail Plugin Manifest V1", () => {
       "skills/topic-outline/SKILL.md",
       "ui/projectors/topic-outline.v1.json",
     ]);
+  });
+
+  it("does not let the generic schema entrypoint bypass manifest semantics", () => {
+    const unsafe = manifest();
+    unsafe.skills[0].path = "../outside/SKILL.md";
+    expect(validateMessage(unsafe, "homerail-plugin-manifest-v1")).toMatchObject({
+      valid: false,
+      errors: [expect.objectContaining({ keyword: "skillPath" })],
+    });
   });
 
   it("evaluates every compatibility axis independently", () => {
