@@ -5,6 +5,7 @@ import {
   HomerailPluginRendererMode,
   HomerailPluginRuntimeTrust,
   type HomerailPluginCompatibilityTargetV1,
+  type HomerailDirectUiProjectionV1,
   type HomerailPluginHandlerV1,
   type HomerailPluginManifestV1,
   type HomerailPluginPermission,
@@ -752,4 +753,13 @@ export function validateHomerailResolvedPluginDescriptorWire(
     || descriptor.referenced_files.some((entry, index) => entry.path !== expectedFiles[index])
   ) errors.push(error("/referenced_files", "archived files must exactly cover references in canonical order", "resolvedReference"));
   return errors.length ? { valid: false, errors } : validation;
+}
+
+export function validateHomerailDirectUiProjection(
+  value: unknown,
+): HomerailPluginValidationResult<HomerailDirectUiProjectionV1> {
+  return validatePluginWireValue<HomerailDirectUiProjectionV1>(
+    "homerail-direct-ui-projection-v1",
+    value,
+  );
 }

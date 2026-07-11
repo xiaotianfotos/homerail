@@ -10,6 +10,9 @@ import type {
   GenerativeUiDevice,
   GenerativeUiDensity,
   GenerativeUiSurface,
+  GenerativeUiNodeV1,
+  GenerativeUiImportance,
+  GenerativeUiPersistence,
 } from "../generative-ui/types.js";
 
 export const HOMERAIL_PLUGIN_MANIFEST_VERSION = 1 as const;
@@ -266,6 +269,40 @@ export interface HomerailPluginManifestV1 {
     optional: HomerailPluginPermissionGrantV1[];
   };
   state: HomerailPluginStateV1;
+}
+
+export interface HomerailDirectUiProjectionV1 {
+  projection_version: 1;
+  type: "direct_ui_node";
+  kind: string;
+  kind_version: number;
+  /** RFC 6901 JSON Pointer into Tool arguments. */
+  node_id_pointer: string;
+  /** RFC 6901 JSON Pointer to an object copied into semantic content. */
+  content_pointer: string;
+  omit_content_fields: string[];
+  fallback: {
+    title_pointer: string;
+    summary_pointer?: string;
+    items_pointer?: string;
+  };
+  defaults: {
+    surface: GenerativeUiSurface;
+    importance: GenerativeUiImportance;
+    density: GenerativeUiDensity;
+    persistence: GenerativeUiPersistence;
+  };
+  /** Explicit reversible bridge while the legacy Voice surface remains live. */
+  legacy_bridge?: {
+    widget_type: string;
+    visual: string;
+  };
+}
+
+export interface HomerailDirectUiProjectionResultV1 {
+  projection_version: 1;
+  node: GenerativeUiNodeV1;
+  legacy_widget?: Record<string, unknown>;
 }
 
 export interface HomerailPluginCompatibilityTargetV1 {

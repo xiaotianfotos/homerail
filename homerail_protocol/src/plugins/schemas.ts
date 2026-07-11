@@ -12,6 +12,8 @@ import {
 import {
   GenerativeUiDensity,
   GenerativeUiDevice,
+  GenerativeUiImportance,
+  GenerativeUiPersistence,
   GenerativeUiSurface,
 } from "../generative-ui/types.js";
 
@@ -853,9 +855,70 @@ export const homerailResolvedPluginDescriptorSchema = {
   additionalProperties: false,
 } as const;
 
+const jsonPointer = {
+  type: "string",
+  maxLength: 500,
+  pattern: "^(?:/(?:[^~/]|~[01])*)*$",
+} as const;
+
+export const homerailDirectUiProjectionSchema = {
+  $id: "homerail-direct-ui-projection-v1",
+  type: "object",
+  properties: {
+    projection_version: { const: 1 },
+    type: { const: "direct_ui_node" },
+    kind: semanticKind,
+    kind_version: { type: "integer", minimum: 1, maximum: 32 },
+    node_id_pointer: jsonPointer,
+    content_pointer: jsonPointer,
+    omit_content_fields: {
+      type: "array",
+      maxItems: 32,
+      uniqueItems: true,
+      items: { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z_][A-Za-z0-9_-]*$" },
+    },
+    fallback: {
+      type: "object",
+      properties: {
+        title_pointer: jsonPointer,
+        summary_pointer: jsonPointer,
+        items_pointer: jsonPointer,
+      },
+      required: ["title_pointer"],
+      additionalProperties: false,
+    },
+    defaults: {
+      type: "object",
+      properties: {
+        surface,
+        importance: { type: "string", enum: Object.values(GenerativeUiImportance) },
+        density: { type: "string", enum: Object.values(GenerativeUiDensity) },
+        persistence: { type: "string", enum: Object.values(GenerativeUiPersistence) },
+      },
+      required: ["surface", "importance", "density", "persistence"],
+      additionalProperties: false,
+    },
+    legacy_bridge: {
+      type: "object",
+      properties: {
+        widget_type: localId,
+        visual: localId,
+      },
+      required: ["widget_type", "visual"],
+      additionalProperties: false,
+    },
+  },
+  required: [
+    "projection_version", "type", "kind", "kind_version", "node_id_pointer",
+    "content_pointer", "omit_content_fields", "fallback", "defaults",
+  ],
+  additionalProperties: false,
+} as const;
+
 export const homerailPluginSchemas: Record<string, Record<string, unknown>> = {
   "homerail-plugin-manifest-v1": homerailPluginManifestSchema as Record<string, unknown>,
   "homerail-plugin-turn-context-v1": homerailPluginTurnContextSchema as Record<string, unknown>,
   "homerail-plugin-ui-projection-v1": homerailPluginUiProjectionSchema as Record<string, unknown>,
   "homerail-resolved-plugin-descriptor-v1": homerailResolvedPluginDescriptorSchema as Record<string, unknown>,
+  "homerail-direct-ui-projection-v1": homerailDirectUiProjectionSchema as Record<string, unknown>,
 };

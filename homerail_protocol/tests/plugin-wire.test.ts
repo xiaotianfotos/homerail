@@ -3,6 +3,9 @@ import {
   validateHomerailPluginTurnContext,
   validateHomerailPluginUiProjection,
   validateHomerailResolvedPluginDescriptorWire,
+  applyHomerailDirectUiProjection,
+  validateHomerailDirectUiProjection,
+  validateHomerailPluginToolInput,
   type HomerailPluginManifestV1,
   type HomerailPluginTurnContextV1,
   type HomerailResolvedPluginDescriptorV1,
@@ -133,5 +136,54 @@ describe("HomeRail plugin wire contracts", () => {
       registry_fingerprint: digest,
       kinds: [], renderers: [], actions: [], unknown: true,
     }).valid).toBe(false);
+  });
+
+  it("applies a bounded declarative Domain-to-UI projection without code", () => {
+    const projection = {
+      projection_version: 1,
+      type: "direct_ui_node",
+      kind: "com.example.notes/note",
+      kind_version: 1,
+      node_id_pointer: "/id",
+      content_pointer: "",
+      omit_content_fields: ["id"],
+      fallback: { title_pointer: "/title", summary_pointer: "/note", items_pointer: "/questions" },
+      defaults: { surface: "task", importance: "primary", density: "detail", persistence: "session" },
+      legacy_bridge: { widget_type: "note", visual: "note" },
+    } as const;
+    expect(validateHomerailDirectUiProjection(projection)).toMatchObject({ valid: true });
+    expect(validateHomerailPluginToolInput({
+      type: "object",
+      properties: { id: { type: "string" }, title: { type: "string" } },
+      required: ["id", "title"],
+      additionalProperties: false,
+    }, { id: "note-1", title: "One" })).toMatchObject({ valid: true });
+    expect(applyHomerailDirectUiProjection({
+      projection,
+      plugin: { id: "com.example.notes", version: "1.0.0" },
+      arguments: {
+        id: "note-1",
+        title: "Research notes",
+        note: "Keep the ABI semantic.",
+        questions: ["How is history replayed?"],
+      },
+    })).toMatchObject({
+      node: {
+        id: "note-1",
+        kind: "com.example.notes/note",
+        owner: { id: "com.example.notes", version: "1.0.0" },
+        content: {
+          title: "Research notes",
+          note: "Keep the ABI semantic.",
+          questions: ["How is history replayed?"],
+        },
+        fallback: {
+          title: "Research notes",
+          summary: "Keep the ABI semantic.",
+          items: ["How is history replayed?"],
+        },
+      },
+      legacy_widget: { id: "note-1", type: "note", data: { visual: "note" } },
+    });
   });
 });

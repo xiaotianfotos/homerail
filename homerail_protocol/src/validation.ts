@@ -11,6 +11,7 @@ import {
   validateHomerailPluginTurnContext,
   validateHomerailPluginUiProjection,
   validateHomerailResolvedPluginDescriptorWire,
+  validateHomerailDirectUiProjection,
 } from "./plugins/validation.js";
 
 // ajv ships CJS types that aren't directly constructable under NodeNext module resolution.
@@ -81,6 +82,10 @@ export function validateMessage(data: unknown, schemaName: string): ValidationRe
   }
   if (schemaName === "homerail-resolved-plugin-descriptor-v1") {
     const result = validateHomerailResolvedPluginDescriptorWire(data);
+    return { valid: result.valid, errors: result.errors };
+  }
+  if (schemaName === "homerail-direct-ui-projection-v1") {
+    const result = validateHomerailDirectUiProjection(data);
     return { valid: result.valid, errors: result.errors };
   }
   const ajv = getAjv();
