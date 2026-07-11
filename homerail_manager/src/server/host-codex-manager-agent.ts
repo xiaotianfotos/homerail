@@ -478,7 +478,7 @@ function emptyVoiceSurface(): VoiceSurfaceState {
   };
 }
 
-function createManagerTools(state: {
+export function createManagerTools(state: {
   restUrl: string;
   workspace: string;
   projectId?: string;

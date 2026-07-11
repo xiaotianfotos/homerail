@@ -1,0 +1,15 @@
+widget_id = "compat-timeline"
+widget_type = "timeline"
+schema_version = 1
+title = "迁移时间线"
+summary = "记录兼容基线建立过程。"
+
+[[event]]
+time = "10:00"
+text = "冻结旧协议输入"
+status = "done"
+
+[[event]]
+time = "10:30"
+text = "比对规范化输出"
+status = "running"

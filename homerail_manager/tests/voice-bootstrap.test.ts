@@ -537,6 +537,146 @@ describe("voice bootstrap routes", () => {
     expect(loadedBody.data.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
   });
 
+  it("keeps a persisted legacy VoiceWorkspace, widgets, and UI events readable", async () => {
+    const fixture = JSON.parse(fs.readFileSync(
+      new URL("./fixtures/voice/legacy-voice-workspace-v1.json", import.meta.url),
+      "utf8",
+    )) as {
+      session_id: string;
+      project_id: string;
+      session_title: string;
+      session_slate: string;
+      manager_run_ids: string[];
+      conversation: Array<{
+        id: string;
+        role: string;
+        text: string;
+        channel?: string;
+        created_at: string;
+      }>;
+      progress_brief: { status: string };
+      widgets: Array<Record<string, unknown>>;
+      ui_events: Array<{
+        id: string;
+        session_id: string;
+        voice_message_id: string | null;
+        sequence: number;
+        event_type: string;
+        widget_id: string | null;
+        widget_type: string | null;
+        payload: Record<string, unknown>;
+        created_at: string;
+      }>;
+      created_at: string;
+      updated_at: string;
+      ended_at: string | null;
+    };
+    const port = await listen(server);
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO voice_agent_sessions(session_id, project_id, updated_at, data)
+      VALUES (?, ?, ?, ?)
+    `).run(fixture.session_id, fixture.project_id, fixture.updated_at, JSON.stringify(fixture));
+
+    const loaded = await fetch(`http://127.0.0.1:${port}/api/voice-agent/sessions/${fixture.session_id}`);
+    const loadedBody = await loaded.json() as { success: boolean; data: typeof fixture };
+
+    expect(loaded.status).toBe(200);
+    expect(loadedBody.success).toBe(true);
+    expect(loadedBody.data).toEqual(fixture);
+
+    const listed = await fetch(
+      `http://127.0.0.1:${port}/api/voice-agent/sessions?project_id=${fixture.project_id}&limit=5`,
+    );
+    const listedBody = await listed.json() as { data: { sessions: Array<Record<string, unknown>> } };
+    expect(listedBody.data.sessions).toEqual([{
+      session_id: fixture.session_id,
+      project_id: fixture.project_id,
+      status: fixture.progress_brief.status,
+      title: fixture.session_title,
+      prompt: fixture.session_slate,
+      start_time: fixture.created_at,
+      end_time: fixture.ended_at,
+      message_count: fixture.conversation.length,
+      run_ids: fixture.manager_run_ids,
+      duration_seconds: null,
+    }]);
+
+    const refreshed = await fetch(
+      `http://127.0.0.1:${port}/api/voice-agent/sessions/${fixture.session_id}/manager-status`,
+      { method: "POST" },
+    );
+    expect(refreshed.status).toBe(200);
+
+    const canonicalRow = db.prepare("SELECT data FROM voice_agent_sessions WHERE session_id = ?")
+      .get(fixture.session_id) as { data: string };
+    const canonical = JSON.parse(canonicalRow.data) as typeof fixture;
+    expect(canonical).toEqual({
+      ...fixture,
+      updated_at: expect.any(String),
+    });
+    expect(canonical.updated_at).not.toBe(fixture.updated_at);
+    expect(canonical.widgets).toEqual(fixture.widgets);
+    expect(canonical.ui_events).toEqual(fixture.ui_events);
+
+    const sessionRow = db.prepare(`
+      SELECT session_id, session_type, project_id, status, prompt, start_time,
+             end_time, message_count, run_ids, data
+      FROM sessions
+      WHERE session_id = ?
+    `).get(fixture.session_id) as Record<string, unknown>;
+    expect(sessionRow).toEqual({
+      session_id: fixture.session_id,
+      session_type: "voice_agent",
+      project_id: fixture.project_id,
+      status: fixture.progress_brief.status,
+      prompt: fixture.session_title,
+      start_time: fixture.created_at,
+      end_time: fixture.ended_at,
+      message_count: fixture.conversation.length,
+      run_ids: JSON.stringify(fixture.manager_run_ids),
+      data: canonicalRow.data,
+    });
+
+    const messageRows = db.prepare(`
+      SELECT id, session_id, sequence, message_type, content,
+             metadata, timestamp, synced, data
+      FROM session_messages
+      WHERE session_id = ?
+      ORDER BY sequence
+    `).all(fixture.session_id) as Array<Record<string, unknown>>;
+    expect(messageRows).toEqual(fixture.conversation.map((message, index) => ({
+      id: `${fixture.session_id}:${message.id}`,
+      session_id: fixture.session_id,
+      sequence: index + 1,
+      message_type: message.role,
+      content: message.text,
+      metadata: JSON.stringify({ channel: message.channel ?? "final" }),
+      timestamp: message.created_at,
+      synced: 1,
+      data: JSON.stringify(message),
+    })));
+
+    const eventRows = db.prepare(`
+      SELECT id, session_id, voice_message_id, sequence, event_type,
+             widget_id, widget_type, payload, created_at
+      FROM voice_ui_events
+      WHERE session_id = ?
+      ORDER BY sequence
+    `).all(fixture.session_id) as Array<Record<string, unknown>>;
+    expect(eventRows).toEqual(fixture.ui_events.map((event) => ({
+      id: event.id,
+      session_id: event.session_id,
+      voice_message_id: event.voice_message_id,
+      sequence: event.sequence,
+      event_type: event.event_type,
+      widget_id: event.widget_id,
+      widget_type: event.widget_type,
+      payload: JSON.stringify(event.payload),
+      created_at: event.created_at,
+    })));
+  });
+
   it("snapshots editable voice UI rules when the voice session is created", async () => {
     const userRuleDir = path.join(tmpHome, "asset", "voice-agent");
     fs.mkdirSync(userRuleDir, { recursive: true });

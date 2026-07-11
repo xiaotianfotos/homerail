@@ -1,0 +1,8 @@
+widget_id = "compat-artifact"
+widget_type = "artifact_ref"
+schema_version = 1
+title = "兼容报告"
+status = "ready"
+summary = "当前旧协议输出的静态报告。"
+artifact_path = "artifacts/compat/report.html"
+preview_path = "artifacts/compat/preview.png"

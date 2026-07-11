@@ -1,0 +1,9 @@
+widget_id = "compat-task-draft"
+widget_type = "task_draft"
+schema_version = 1
+title = "生成式 UI 重构草稿"
+status = "needs_confirmation"
+request = "在不改变旧界面的前提下建立语义 UI 基线。"
+summary = "先冻结现有输入输出，再接入 Shadow 模式。"
+acceptance = ["六种 TOML Widget 均有 Golden", "旧会话仍可读取"]
+constraints = ["不修改产品行为", "失败不得影响旧路径"]

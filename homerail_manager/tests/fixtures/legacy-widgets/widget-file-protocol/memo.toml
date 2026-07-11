@@ -1,0 +1,25 @@
+widget_id = "voice-memo"
+widget_type = "memo"
+schema_version = 1
+title = "任务记录"
+status = "clarifying"
+summary = "用户希望冻结现有生成式 UI 行为。"
+next_action = "确认兼容基线"
+ready_to_execute = false
+
+known_facts = [
+  "范围包含六种 TOML Widget",
+  "迁移期间旧界面仍是权威输出",
+]
+
+open_questions = [
+  "何时切换到 Shadow 模式",
+]
+
+[[todo]]
+text = "记录当前输出"
+done = true
+
+[[todo]]
+text = "建立兼容报告"
+done = false

@@ -327,7 +327,7 @@ function createHttpWidgetFileToolAdapter(): ManagerAgentWidgetFileToolAdapter {
   };
 }
 
-function createManagerTools(state: {
+export function createManagerTools(state: {
   projectId?: string;
   sessionId?: string;
   createdRunIds: string[];
@@ -582,7 +582,7 @@ function createManagerTools(state: {
     },
     {
       name: "run_shell_command",
-      description: "Run a short shell command inside the mounted project workspace for trusted Manager Agent inspection tasks.",
+      description: "Run a short shell command inside the project workspace for trusted Manager Agent inspection tasks.",
       input_schema: {
         type: "object",
         properties: {
