@@ -21,26 +21,48 @@ export interface CreateGenerativeUiDocumentInput {
   documentId: string;
   scope: GenerativeUiDocumentScopeV1;
   createdAt: string;
+  purpose?: "canonical" | "legacy_widget_shadow";
+}
+
+export interface GenerativeUiDocumentStore {
+  createOrGet(input: CreateGenerativeUiDocumentInput): GenerativeUiDocumentV1;
+  get(documentId: string, expectedScope: GenerativeUiDocumentScopeV1): GenerativeUiDocumentV1 | undefined;
+  apply(
+    transaction: GenerativeUiTransactionV1,
+    expectedScope: GenerativeUiDocumentScopeV1,
+  ): GenerativeUiTransactionResultV1;
+  findActiveForScope(
+    scope: GenerativeUiDocumentScopeV1,
+    purpose: NonNullable<CreateGenerativeUiDocumentInput["purpose"]>,
+  ): GenerativeUiDocumentV1 | undefined;
+  delete(documentId: string, expectedScope: GenerativeUiDocumentScopeV1): boolean;
+  close(documentId: string, expectedScope: GenerativeUiDocumentScopeV1): boolean;
+  evictEphemeral(documentId: string, expectedScope: GenerativeUiDocumentScopeV1): boolean;
+  clear(): void;
 }
 
 const MAX_DOCUMENTS = 512;
 const MAX_TRANSACTIONS_PER_DOCUMENT = 2_048;
 
-function transactionFingerprint(value: unknown): string {
+export function generativeUiJsonFingerprint(value: unknown, maxBytes: number): string {
   const hash = crypto.createHash("sha256");
   const analysis = analyzeGenerativeUiJsonValue(value, {
-    limits: { max_bytes: GENERATIVE_UI_MAX_TRANSACTION_BYTES },
+    limits: { max_bytes: maxBytes },
     on_token: (value) => hash.update(value),
   });
-  if (!analysis.valid) throw new Error(analysis.error?.message || "invalid transaction JSON value");
+  if (!analysis.valid) throw new Error(analysis.error?.message || "invalid Generative UI JSON value");
   return hash.digest("hex");
 }
 
-function sameScope(left: GenerativeUiDocumentScopeV1, right: GenerativeUiDocumentScopeV1): boolean {
+export function transactionFingerprint(value: unknown): string {
+  return generativeUiJsonFingerprint(value, GENERATIVE_UI_MAX_TRANSACTION_BYTES);
+}
+
+export function sameScope(left: GenerativeUiDocumentScopeV1, right: GenerativeUiDocumentScopeV1): boolean {
   return left.type === right.type && left.id === right.id;
 }
 
-function rejected(
+export function rejected(
   document: GenerativeUiDocumentV1,
   error: GenerativeUiValidationError,
 ): GenerativeUiTransactionResultV1 {
@@ -59,10 +81,11 @@ function rejected(
  * service until the append-only transaction store lands in M2. All values are
  * cloned at the boundary so callers cannot mutate canonical state by reference.
  */
-export class InMemoryGenerativeUiDocumentService {
+export class InMemoryGenerativeUiDocumentService implements GenerativeUiDocumentStore {
   readonly #documents = new Map<string, GenerativeUiDocumentV1>();
   readonly #appliedTransactions = new Map<string, Map<string, AppliedTransactionRecord>>();
   readonly #deletedDocumentIds = new Set<string>();
+  readonly #purposes = new Map<string, NonNullable<CreateGenerativeUiDocumentInput["purpose"]>>();
   readonly #validateKind: GenerativeUiKindValidatorV1;
 
   constructor(validateKind: GenerativeUiKindValidatorV1) {
@@ -70,10 +93,14 @@ export class InMemoryGenerativeUiDocumentService {
   }
 
   createOrGet(input: CreateGenerativeUiDocumentInput): GenerativeUiDocumentV1 {
+    const purpose = input.purpose ?? "canonical";
     const existing = this.#documents.get(input.documentId);
     if (existing) {
       if (!sameScope(existing.scope, input.scope)) {
         throw new Error(`Generative UI document scope mismatch: ${input.documentId}`);
+      }
+      if (this.#purposes.get(input.documentId) !== purpose) {
+        throw new Error(`Generative UI document purpose mismatch: ${input.documentId}`);
       }
       return structuredClone(existing);
     }
@@ -82,6 +109,9 @@ export class InMemoryGenerativeUiDocumentService {
     }
     if (this.#documents.size >= MAX_DOCUMENTS) {
       throw new Error(`Generative UI in-memory document limit reached: ${MAX_DOCUMENTS}`);
+    }
+    if (this.findActiveForScope(input.scope, purpose)) {
+      throw new Error(`Generative UI active document already exists for ${input.scope.type}:${input.scope.id}:${purpose}`);
     }
 
     const document = createGenerativeUiDocument({
@@ -94,7 +124,20 @@ export class InMemoryGenerativeUiDocumentService {
       throw new Error(`Invalid Generative UI document: ${JSON.stringify(validation.errors)}`);
     }
     this.#documents.set(input.documentId, structuredClone(document));
+    this.#purposes.set(input.documentId, purpose);
     return structuredClone(document);
+  }
+
+  findActiveForScope(
+    scope: GenerativeUiDocumentScopeV1,
+    purpose: NonNullable<CreateGenerativeUiDocumentInput["purpose"]>,
+  ): GenerativeUiDocumentV1 | undefined {
+    for (const [documentId, document] of this.#documents) {
+      if (this.#purposes.get(documentId) === purpose && sameScope(document.scope, scope)) {
+        return structuredClone(document);
+      }
+    }
+    return undefined;
   }
 
   get(
@@ -173,6 +216,7 @@ export class InMemoryGenerativeUiDocumentService {
     }
     this.#documents.delete(documentId);
     this.#appliedTransactions.delete(documentId);
+    this.#purposes.delete(documentId);
     this.#deletedDocumentIds.add(documentId);
     return true;
   }
@@ -189,12 +233,18 @@ export class InMemoryGenerativeUiDocumentService {
     }
     this.#documents.delete(documentId);
     this.#appliedTransactions.delete(documentId);
+    this.#purposes.delete(documentId);
     return true;
+  }
+
+  close(documentId: string, expectedScope: GenerativeUiDocumentScopeV1): boolean {
+    return this.evictEphemeral(documentId, expectedScope);
   }
 
   clear(): void {
     this.#documents.clear();
     this.#appliedTransactions.clear();
     this.#deletedDocumentIds.clear();
+    this.#purposes.clear();
   }
 }

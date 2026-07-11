@@ -49,6 +49,8 @@ const CLEARABLE_TABLES = new Set([
   "manager_agent_config",
   "voice_agent_config",
   "voice_agent_sessions",
+  "generative_ui_transactions",
+  "generative_ui_documents",
   "experience_nodes",
   "experience_relationships",
   "storages",
@@ -349,6 +351,147 @@ function seedBuiltinProviderCatalog(db: SqliteDatabase): void {
     }
   })();
 }
+
+interface SchemaMigration {
+  version: number;
+  up: (db: SqliteDatabase) => void;
+  validate?: (db: SqliteDatabase) => void;
+}
+
+function runSchemaMigrations(db: SqliteDatabase, migrations: readonly SchemaMigration[]): void {
+  const ordered = [...migrations].sort((left, right) => left.version - right.version);
+  if (ordered.some((migration, index) => migration.version < 3 || (index > 0 && migration.version === ordered[index - 1].version))) {
+    throw new Error("Schema migrations must have unique versions >= 3");
+  }
+  const supportedVersion = ordered.at(-1)?.version ?? 2;
+  const currentVersion = (db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as {
+    version: number | null;
+  }).version ?? 0;
+  if (currentVersion > supportedVersion) {
+    throw new Error(`Database schema version ${currentVersion} is newer than supported version ${supportedVersion}`);
+  }
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = ?");
+  const record = db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)");
+  for (const migration of ordered) {
+    db.transaction(() => {
+      const alreadyApplied = Boolean(applied.get(migration.version));
+      if (!alreadyApplied) migration.up(db);
+      migration.validate?.(db);
+      if (!alreadyApplied) record.run(migration.version, nowIso());
+    }).immediate();
+  }
+}
+
+function validateGenerativeUiSchemaV3(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    generative_ui_documents: [
+      "document_id",
+      "purpose",
+      "scope_type",
+      "scope_id",
+      "ir_version",
+      "revision",
+      "snapshot_json",
+      "snapshot_hash",
+      "created_at",
+      "updated_at",
+      "deleted_at",
+    ],
+    generative_ui_transactions: [
+      "seq",
+      "document_id",
+      "transaction_id",
+      "fingerprint",
+      "base_revision",
+      "committed_revision",
+      "transaction_json",
+      "producer_created_at",
+      "committed_at",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const tableRow = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(table);
+    if (!tableRow) throw new Error(`Schema migration 3 is incomplete: missing table ${table}`);
+    const columns = new Set(
+      (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    const missing = required.filter((column) => !columns.has(column));
+    if (missing.length > 0) {
+      throw new Error(`Schema migration 3 is incomplete: ${table} is missing columns ${missing.join(", ")}`);
+    }
+  }
+
+  const documentIndexes = db.prepare("PRAGMA index_list(generative_ui_documents)").all() as Array<{
+    name: string;
+    unique: number;
+    partial: number;
+  }>;
+  const activeScope = documentIndexes.find((index) => index.name === "idx_generative_ui_documents_active_scope");
+  if (!activeScope || activeScope.unique !== 1 || activeScope.partial !== 1) {
+    throw new Error("Schema migration 3 is incomplete: active Generative UI scope index is not unique and partial");
+  }
+
+  const foreignKeys = db.prepare("PRAGMA foreign_key_list(generative_ui_transactions)").all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  const documentForeignKey = foreignKeys.find((foreignKey) => (
+    foreignKey.table === "generative_ui_documents"
+    && foreignKey.from === "document_id"
+    && foreignKey.to === "document_id"
+    && foreignKey.on_delete.toUpperCase() === "RESTRICT"
+  ));
+  if (!documentForeignKey) {
+    throw new Error("Schema migration 3 is incomplete: Generative UI transaction ownership constraint is missing");
+  }
+}
+
+const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [{
+  version: 3,
+  up: (db) => db.exec(`
+    CREATE TABLE generative_ui_documents (
+      document_id TEXT PRIMARY KEY,
+      purpose TEXT NOT NULL CHECK(purpose IN ('canonical', 'legacy_widget_shadow')),
+      scope_type TEXT NOT NULL CHECK(scope_type IN ('voice_session', 'project', 'run')),
+      scope_id TEXT NOT NULL,
+      ir_version INTEGER NOT NULL CHECK(ir_version = 1),
+      revision INTEGER NOT NULL CHECK(revision >= 0),
+      snapshot_json TEXT NOT NULL,
+      snapshot_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT
+    );
+    CREATE INDEX idx_generative_ui_documents_scope
+      ON generative_ui_documents(scope_type, scope_id, deleted_at, updated_at);
+    CREATE UNIQUE INDEX idx_generative_ui_documents_active_scope
+      ON generative_ui_documents(scope_type, scope_id, purpose)
+      WHERE deleted_at IS NULL;
+
+    CREATE TABLE generative_ui_transactions (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id TEXT NOT NULL,
+      transaction_id TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      base_revision INTEGER NOT NULL CHECK(base_revision >= 0),
+      committed_revision INTEGER NOT NULL CHECK(committed_revision >= 1),
+      transaction_json TEXT NOT NULL,
+      producer_created_at TEXT NOT NULL,
+      committed_at TEXT NOT NULL,
+      CHECK(committed_revision = base_revision + 1),
+      UNIQUE(document_id, transaction_id),
+      UNIQUE(document_id, committed_revision),
+      FOREIGN KEY(document_id) REFERENCES generative_ui_documents(document_id) ON DELETE RESTRICT
+    );
+    CREATE INDEX idx_generative_ui_transactions_document_seq
+      ON generative_ui_transactions(document_id, seq);
+  `),
+  validate: validateGenerativeUiSchemaV3,
+}];
 
 function initializeSchema(db: SqliteDatabase, filePath: string): void {
   db.pragma("journal_mode = WAL");
@@ -1010,6 +1153,7 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
   ensureExpandedColumns(db);
   seedBuiltinProviderCatalog(db);
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, nowIso());
+  runSchemaMigrations(db, SCHEMA_MIGRATIONS);
   chmodPrivate(filePath);
 }
 
@@ -1022,7 +1166,12 @@ export function getDb(): SqliteDatabase {
   }
   ensureDbDir(filePath);
   const db = new Database(filePath);
-  initializeSchema(db, filePath);
+  try {
+    initializeSchema(db, filePath);
+  } catch (cause) {
+    try { db.close(); } catch { /* Preserve the initialization failure. */ }
+    throw cause;
+  }
   currentDbPath = filePath;
   currentDb = db;
   return db;

@@ -21,7 +21,11 @@ import {
   type GenerativeUiTransactionV1,
   type GenerativeUiValidationError,
 } from "homerail-protocol";
-import { InMemoryGenerativeUiDocumentService } from "./document-service.js";
+import {
+  InMemoryGenerativeUiDocumentService,
+  type GenerativeUiDocumentStore,
+} from "./document-service.js";
+import { PersistentGenerativeUiDocumentService } from "./persistent-document-service.js";
 import {
   compileLegacyWidgetToGenerativeUiNode,
   type LegacyVoiceWidget,
@@ -94,7 +98,7 @@ function scopeFor(sessionId: string): GenerativeUiDocumentScopeV1 {
   return { type: "voice_session", id: sessionId };
 }
 
-export function legacyShadowDocumentId(sessionId: string, generation = 0): string {
+export function legacyShadowDocumentId(sessionId: string, generation: string | number = 0): string {
   const digest = crypto.createHash("sha256").update(`${sessionId}:${generation}`).digest("hex").slice(0, 24);
   return `legacy-shadow-${digest}`;
 }
@@ -218,7 +222,8 @@ function referenceDocument(
  * Widget snapshot and never invokes an Agent, Tool, Action, renderer, or file.
  */
 export class GenerativeUiShadowService {
-  readonly #documents = new InMemoryGenerativeUiDocumentService(validateLegacyShadowKind);
+  readonly #documents: GenerativeUiDocumentStore;
+  readonly #documentIdFactory: (sessionId: string, generation: number) => string;
   readonly #snapshots = new Map<string, GenerativeUiShadowSnapshotV1>();
   readonly #successfulFingerprints = new Map<string, string>();
   readonly #documentIds = new Map<string, string>();
@@ -227,11 +232,17 @@ export class GenerativeUiShadowService {
   #accessCounter = 0;
   #generationCounter = 0;
 
-  constructor(maxActiveDocuments = DEFAULT_MAX_ACTIVE_SHADOW_DOCUMENTS) {
+  constructor(
+    maxActiveDocuments = DEFAULT_MAX_ACTIVE_SHADOW_DOCUMENTS,
+    documents: GenerativeUiDocumentStore = new InMemoryGenerativeUiDocumentService(validateLegacyShadowKind),
+    documentIdFactory: (sessionId: string, generation: number) => string = legacyShadowDocumentId,
+  ) {
     if (!Number.isSafeInteger(maxActiveDocuments) || maxActiveDocuments < 1 || maxActiveDocuments > 512) {
       throw new Error("maxActiveDocuments must be an integer between 1 and 512");
     }
     this.#maxActiveDocuments = maxActiveDocuments;
+    this.#documents = documents;
+    this.#documentIdFactory = documentIdFactory;
   }
 
   #touch(sessionId: string): void {
@@ -272,14 +283,25 @@ export class GenerativeUiShadowService {
     if (existing) return existing;
     this.#evictLeastRecentlyUsed();
     this.#generationCounter += 1;
-    const documentId = legacyShadowDocumentId(sessionId, this.#generationCounter);
+    const documentId = this.#documentIdFactory(sessionId, this.#generationCounter);
     this.#documentIds.set(sessionId, documentId);
     return documentId;
   }
 
+  #restoreActiveDocumentId(sessionId: string): string | undefined {
+    const mapped = this.#documentIds.get(sessionId);
+    if (mapped) return mapped;
+    const active = this.#documents.findActiveForScope(scopeFor(sessionId), "legacy_widget_shadow");
+    if (!active) return undefined;
+    this.#evictLeastRecentlyUsed();
+    this.#documentIds.set(sessionId, active.document_id);
+    this.#touch(sessionId);
+    return active.document_id;
+  }
+
   reconcile(input: ReconcileLegacyWidgetShadowInput): GenerativeUiShadowSnapshotV1 | null {
     const scope = scopeFor(input.sessionId);
-    const allocatedDocumentId = this.#documentIds.get(input.sessionId);
+    const allocatedDocumentId = this.#restoreActiveDocumentId(input.sessionId);
     if (!allocatedDocumentId && input.widgets.length === 0) {
       this.#snapshots.delete(input.sessionId);
       this.#successfulFingerprints.delete(input.sessionId);
@@ -327,7 +349,12 @@ export class GenerativeUiShadowService {
     const documentId = this.#allocateDocumentId(input.sessionId);
     const existing = this.#documents.get(documentId, scope);
     if (!existing && input.widgets.length === 0) return null;
-    const current = existing ?? this.#documents.createOrGet({ documentId, scope, createdAt: input.checkedAt });
+    const current = existing ?? this.#documents.createOrGet({
+      documentId,
+      scope,
+      createdAt: input.checkedAt,
+      purpose: "legacy_widget_shadow",
+    });
     const expectedNodes = targetNodes(input.widgets);
     const expected = referenceDocument(current, expectedNodes, input.checkedAt);
     const repeated = referenceDocument(
@@ -412,7 +439,7 @@ export class GenerativeUiShadowService {
     this.#touch(input.sessionId);
     const message = cause instanceof Error ? `${cause.name}:${cause.message}` : String(cause);
     const documentId = this.#documentIds.get(input.sessionId)
-      ?? legacyShadowDocumentId(input.sessionId, this.#generationCounter + 1);
+      ?? this.#documentIdFactory(input.sessionId, this.#generationCounter + 1);
     const document = this.#documentIds.has(input.sessionId)
       ? this.#documents.get(documentId, scopeFor(input.sessionId))
       : undefined;
@@ -443,20 +470,19 @@ export class GenerativeUiShadowService {
   }
 
   getDocument(sessionId: string): GenerativeUiDocumentV1 | undefined {
-    const documentId = this.#documentIds.get(sessionId);
+    const documentId = this.#restoreActiveDocumentId(sessionId);
     return documentId ? this.#documents.get(documentId, scopeFor(sessionId)) : undefined;
   }
 
   deleteSession(sessionId: string): boolean {
+    const scope = scopeFor(sessionId);
+    const documentId = this.#documentIds.get(sessionId)
+      ?? this.#documents.findActiveForScope(scope, "legacy_widget_shadow")?.document_id;
     this.#snapshots.delete(sessionId);
     this.#successfulFingerprints.delete(sessionId);
     this.#lastAccess.delete(sessionId);
-    const documentId = this.#documentIds.get(sessionId);
     this.#documentIds.delete(sessionId);
-    // Shadow document ids are incarnation-scoped and the next activation gets
-    // a fresh generation. Ephemeral release avoids an unbounded durable
-    // tombstone per closed Voice session.
-    return documentId ? this.#documents.evictEphemeral(documentId, scopeFor(sessionId)) : false;
+    return documentId ? this.#documents.close(documentId, scope) : false;
   }
 
   clear(): void {
@@ -470,7 +496,14 @@ export class GenerativeUiShadowService {
   }
 }
 
-export const generativeUiShadowService = new GenerativeUiShadowService();
+export const persistentGenerativeUiDocumentService = new PersistentGenerativeUiDocumentService(
+  validateLegacyShadowKind,
+);
+export const generativeUiShadowService = new GenerativeUiShadowService(
+  DEFAULT_MAX_ACTIVE_SHADOW_DOCUMENTS,
+  persistentGenerativeUiDocumentService,
+  (sessionId) => legacyShadowDocumentId(sessionId, crypto.randomUUID()),
+);
 
 export function _clearGenerativeUiShadowForTest(): void {
   generativeUiShadowService.clear();
