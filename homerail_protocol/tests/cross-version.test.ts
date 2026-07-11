@@ -54,6 +54,7 @@ describe("Protocol version consistency", () => {
       "generative-ui-transaction", "generative-ui-user-override",
       "generative-ui-composition-context", "generative-ui-composition",
       "generative-ui-interaction-event",
+      "homerail-plugin-manifest-v1",
       "handoff-request", "handoff-response",
       "tool-call", "tool-result",
       "send-message", "receive-message",
