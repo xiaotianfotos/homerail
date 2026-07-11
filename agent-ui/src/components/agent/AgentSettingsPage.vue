@@ -23,6 +23,7 @@ import {
 } from 'lucide-vue-next'
 import ModelSettings from './settings/ModelSettings.vue'
 import GeneralSettings from './settings/GeneralSettings.vue'
+import PluginSettings from './settings/PluginSettings.vue'
 import {
   listProjects,
   listProjectStorages,
@@ -120,6 +121,7 @@ type SettingsTab =
   | 'voice'
   | 'device'
   | 'skills'
+  | 'plugins'
   | 'mcp'
   | 'memory'
 
@@ -296,6 +298,7 @@ const tabs = computed<Array<{ id: SettingsTab; label: string; icon: typeof Setti
   { id: 'voice', label: t('settings.tabs.voice'), icon: Volume2 },
   { id: 'device', label: t('settings.tabs.device'), icon: Network },
   { id: 'skills', label: t('settings.tabs.skills'), icon: Package },
+  { id: 'plugins', label: t('settings.tabs.plugins'), icon: Package },
   { id: 'mcp', label: t('settings.tabs.mcp'), icon: Network },
   { id: 'memory', label: t('settings.tabs.memory'), icon: Brain },
 ])
@@ -309,6 +312,7 @@ const activeTabDescription = computed(() => {
   if (activeTab.value === 'git') return t('settings.descriptions.git')
   if (activeTab.value === 'providers') return t('settings.descriptions.providers')
   if (activeTab.value === 'voice') return t('settings.descriptions.voice')
+  if (activeTab.value === 'plugins') return t('settings.descriptions.plugins')
   if (activeTab.value === 'device') return ''
   return t('settings.descriptions.default')
 })
@@ -1703,6 +1707,8 @@ onUnmounted(() => {
           @refresh="refreshAll"
           @set-notice="setNotice"
         />
+
+        <PluginSettings v-if="activeTab === 'plugins'" />
 
         <section
           v-if="activeTab === 'device' && androidTvLocalSettingsVisible"

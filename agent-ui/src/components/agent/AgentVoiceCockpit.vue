@@ -286,6 +286,8 @@ let lastSubmittedVoiceTranscriptKey = ''
 let lastSubmittedVoiceTranscriptAt = 0
 let managerStatusTimer = 0
 let voiceStatusUnsub: (() => void) | null = null
+let pluginRegistryUnsub: (() => void) | null = null
+let pluginRegistryStateUnsub: (() => void) | null = null
 let statusFocusApplied = false
 let fullscreenRetryHandler: (() => void) | null = null
 let widgetHighlightTimer = 0
@@ -1100,6 +1102,14 @@ onUnmounted(() => {
     voiceStatusUnsub()
     voiceStatusUnsub = null
   }
+  if (pluginRegistryUnsub) {
+    pluginRegistryUnsub()
+    pluginRegistryUnsub = null
+  }
+  if (pluginRegistryStateUnsub) {
+    pluginRegistryStateUnsub()
+    pluginRegistryStateUnsub = null
+  }
   voiceWs.disconnect()
   if (widgetHighlightTimer) window.clearTimeout(widgetHighlightTimer)
   window.removeEventListener('resize', updateViewportSize)
@@ -1359,6 +1369,16 @@ function setupVoiceStatusSubscription(): void {
     voiceWs.connect()
     voiceStatusUnsub = voiceWs.on<unknown>('voice:session_status', () => {
       void loadVoiceSessionShortcuts()
+    })
+    pluginRegistryUnsub = voiceWs.on<unknown>('plugin:registry_changed', () => {
+      if (generativeUiShadowPreviewActive.value) {
+        void generativeUiShadowPreviewRef.value?.refresh()
+      }
+    })
+    pluginRegistryStateUnsub = voiceWs.onStateChange((state) => {
+      if (state === 'connected' && generativeUiShadowPreviewActive.value) {
+        void generativeUiShadowPreviewRef.value?.refresh()
+      }
     })
   } catch {
     // WebSocket 不可用时降级到纯轮询，不影响功能。
