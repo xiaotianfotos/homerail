@@ -20,7 +20,12 @@ export type ManagerAgentResponseMode = "chat" | "voice";
 
 export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
   "list_projects",
+  "list_skills",
+  "read_skill",
   "list_orchestrations",
+  "list_dag_patterns",
+  "get_dag_pattern",
+  "instantiate_dag_pattern",
   "create_change",
   "create_and_run",
   "invoke_run",
@@ -193,10 +198,54 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
     description: "List projects known by the HomeRail Manager.",
     input_schema: emptyObjectSchema,
   },
+  list_skills: {
+    name: "list_skills",
+    description: "List all enabled HomeRail skills discovered from HOMERAIL_HOME/skills with built-in fallbacks.",
+    input_schema: emptyObjectSchema,
+  },
+  read_skill: {
+    name: "read_skill",
+    description: "Load the complete SKILL.md instructions for one HomeRail skill before applying it.",
+    input_schema: {
+      type: "object",
+      properties: { skill_id: { type: "string" } },
+      required: ["skill_id"],
+      additionalProperties: false,
+    },
+  },
   list_orchestrations: {
     name: "list_orchestrations",
     description: "List repo-local orchestration YAML templates available to create runs.",
     input_schema: emptyObjectSchema,
+  },
+  list_dag_patterns: {
+    name: "list_dag_patterns",
+    description: "List built-in abstract DAG design patterns, roles, intended uses, avoid conditions, primitives, and parameters.",
+    input_schema: emptyObjectSchema,
+  },
+  get_dag_pattern: {
+    name: "get_dag_pattern",
+    description: "Get one built-in DAG design pattern including its abstract workflow template.",
+    input_schema: {
+      type: "object",
+      properties: { pattern_id: { type: "string" } },
+      required: ["pattern_id"],
+      additionalProperties: false,
+    },
+  },
+  instantiate_dag_pattern: {
+    name: "instantiate_dag_pattern",
+    description: "Instantiate a built-in DAG pattern with typed parameters and sync the validated workflow to Manager by default.",
+    input_schema: {
+      type: "object",
+      properties: {
+        pattern_id: { type: "string" },
+        parameters: { type: "object", additionalProperties: true },
+        sync: { type: "boolean" },
+      },
+      required: ["pattern_id"],
+      additionalProperties: false,
+    },
   },
   create_change: {
     name: "create_change",

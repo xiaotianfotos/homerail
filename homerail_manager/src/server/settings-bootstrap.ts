@@ -5,6 +5,11 @@ import { runtimeStatusHandler } from "../runtime/status.js";
 import { getExperienceDir, listExperienceGraphFromDb } from "./experience.js";
 import { listPersistedRunIds, loadRunMetadata } from "../persistence/store.js";
 import { repoRoot, resolveAssetRoot } from "../assets/root.js";
+import {
+  ensureManagerSkillsInstalled,
+  listManagerSkills,
+  readManagerSkill,
+} from "./manager-skills.js";
 
 interface BaseResponse {
   success: boolean;
@@ -52,21 +57,9 @@ function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown
 }
 
 function readSkillsCatalog() {
-  const root = repoRoot();
-  const skillsDir = path.join(root, "skills");
-  const skills = fs.existsSync(skillsDir)
-    ? fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .filter((entry) => fs.existsSync(path.join(skillsDir, entry.name, "SKILL.md")))
-      .map((entry) => ({
-        id: entry.name,
-        name: entry.name,
-        relative_path: path.posix.join("skills", entry.name, "SKILL.md"),
-        source: "repo",
-      }))
-      .sort((a, b) => a.id.localeCompare(b.id))
-    : [];
-  return { skills, total: skills.length };
+  const install = ensureManagerSkillsInstalled();
+  const skills = listManagerSkills();
+  return { skills, total: skills.length, root: install.root, install };
 }
 
 function buildAssetDiagnostics() {
@@ -521,6 +514,24 @@ export function settingsBootstrapHandler(
 
   if (pathname === "/api/skills" && req.method === "GET") {
     _ok(res, "Skills retrieved", readSkillsCatalog());
+    return true;
+  }
+
+  const skillMatch = pathname.match(/^\/api\/skills\/([^/]+)$/);
+  if (skillMatch && req.method === "GET") {
+    let skillId = "";
+    try {
+      skillId = decodeURIComponent(skillMatch[1]);
+    } catch {
+      json(res, 400, { success: false, message: "Invalid skill id", error: "Invalid skill id" });
+      return true;
+    }
+    const skill = readManagerSkill(skillId);
+    if (!skill) {
+      json(res, 404, { success: false, message: "Skill not found", error: "Skill not found" });
+    } else {
+      _ok(res, "Skill retrieved", skill);
+    }
     return true;
   }
 

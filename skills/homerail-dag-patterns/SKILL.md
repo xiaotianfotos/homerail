@@ -14,6 +14,25 @@ Treat a pattern as an abstract control-flow invariant, not a finished task
 template. Read the live Manager catalog before choosing one; it is the source of
 truth for parameters and generated topology.
 
+## Manager Agent Native Path
+
+When running as the HomeRail Manager Agent, use Manager tools rather than shell,
+`curl`, or the `hr` binary:
+
+1. Call `list_dag_patterns` and compare `typical_uses`, `avoid_when`, required
+   primitives, and parameters.
+2. Call `get_dag_pattern` for the best candidate before changing Manager state.
+3. Call `instantiate_dag_pattern` with a stable `workflow_id`, task-specific
+   name, and typed parameters. Keep its default `sync=true` only after the
+   selection is justified.
+4. Call `create_and_run` with the returned `workflow_id`, an available runtime
+   profile when needed, and a prompt containing task inputs and boundaries.
+5. Use `get_run_status` for progress. Never claim the DAG started without the
+   real run id returned by `create_and_run`.
+
+For a simple one-step or linear task, do not force a pattern. Use an existing
+concrete orchestration or ask for the missing execution boundary.
+
 ## Select a Pattern
 
 ```bash

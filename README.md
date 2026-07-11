@@ -194,6 +194,13 @@ hr patterns show quorum
 hr patterns instantiate quorum --set workflow_id=release-quorum --set threshold=2
 ```
 
+Manager Agent discovers every `SKILL.md` directory under
+`${HOMERAIL_HOME:-$HOME/.homerail}/skills` on each turn and installs missing
+built-in `homerail-*` skills there as links. A pattern request can therefore be
+handled without shell commands: Manager Agent reads `homerail-dag-patterns`,
+selects and instantiates a catalog pattern, syncs it, and starts the returned
+workflow through Manager tools.
+
 ## Drive the CLI from a coding agent
 
 There is a second way to use HomeRail, beyond speaking to the Manager Agent or

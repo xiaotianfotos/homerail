@@ -100,6 +100,14 @@ The same operations are available to AI clients through:
 - `GET /api/dag/patterns/:id`
 - `POST /api/dag/patterns/:id/instantiate`
 
+The HomeRail Manager Agent receives all Skill metadata discovered under
+`${HOMERAIL_HOME}/skills` on every turn. For pattern work it loads
+`homerail-dag-patterns` through `read_skill`, then uses
+`list_dag_patterns`, `get_dag_pattern`, `instantiate_dag_pattern`, and
+`create_and_run`. This works identically for host Codex, host-shell, and
+container Manager Agent runtimes; it does not depend on the native Codex or
+Claude skill search path.
+
 Instantiation validates parameter types, rejects unknown parameters, preserves
 numeric and boolean values, substitutes all placeholders, parses the generated
 YAML, and validates the resulting graph before returning it.

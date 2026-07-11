@@ -75,19 +75,43 @@ describe("settings bootstrap routes", () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  it("returns the real repository skill catalog", async () => {
+  it("returns the merged HomeRail skill catalog and skill contents", async () => {
+    const customDir = path.join(tmpHome, "skills", "custom-runtime-skill");
+    fs.mkdirSync(customDir, { recursive: true });
+    fs.writeFileSync(path.join(customDir, "SKILL.md"), [
+      "---",
+      "name: custom-runtime-skill",
+      "description: Runtime custom skill",
+      "---",
+      "",
+      "# Runtime custom skill",
+    ].join("\n"));
     const port = await listen(server);
     const response = await fetch(`http://127.0.0.1:${port}/api/skills`);
     const body = await response.json() as {
       success: boolean;
-      data: { total: number; skills: Array<{ id: string; relative_path: string }> };
+      data: { total: number; root: string; skills: Array<{ id: string; relative_path: string; source: string }> };
     };
 
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data.total).toBeGreaterThan(0);
     expect(body.data.skills.map((skill) => skill.id)).toContain("homerail-dag-ops");
+    expect(body.data.skills).toContainEqual(expect.objectContaining({
+      id: "custom-runtime-skill",
+      source: "home",
+    }));
+    expect(body.data.root).toBe(path.join(tmpHome, "skills"));
     expect(body.data.skills.every((skill) => !path.isAbsolute(skill.relative_path))).toBe(true);
+
+    const detailResponse = await fetch(`http://127.0.0.1:${port}/api/skills/custom-runtime-skill`);
+    const detail = await detailResponse.json() as { data: { content: string; description: string } };
+    expect(detailResponse.status).toBe(200);
+    expect(detail.data.description).toBe("Runtime custom skill");
+    expect(detail.data.content).toContain("# Runtime custom skill");
+
+    const traversal = await fetch(`http://127.0.0.1:${port}/api/skills/%2E%2E%5Csecrets`);
+    expect(traversal.status).toBe(404);
   });
 
   it("returns asset diagnostics with concrete checks", async () => {

@@ -72,6 +72,16 @@ describe("built-in DAG patterns", () => {
     )?.retry_policy?.max_retries).toBe(5);
   });
 
+  it("makes the heartbeat verifier emit the top-level field consumed by its gateway", () => {
+    const heartbeat = instantiateDAGPattern("heartbeat");
+    const verifier = heartbeat.parsed.meta.agents.verifier;
+    const verdictGate = heartbeat.parsed.graph.nodes.find((node) => node.node_id === "verdict_gate");
+
+    expect(verifier?.system).toContain("top-level verdict");
+    expect(verifier?.system).toContain("Never nest verdict");
+    expect(verdictGate?.gateway_config?.field).toBe("verdict");
+  });
+
   it("rejects unknown, incorrectly typed, and out-of-range parameters", () => {
     expect(() => instantiateDAGPattern("missing")).toThrow("DAG pattern not found");
     expect(() => instantiateDAGPattern("quorum", { surprise: true })).toThrow("Unknown pattern parameter");

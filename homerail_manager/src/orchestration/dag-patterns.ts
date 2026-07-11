@@ -77,7 +77,7 @@ const terminalNode = (agent: string, after: string): Record<string, unknown> => 
 
 const heartbeat: DAGPatternDefinition = {
   id: "heartbeat",
-  version: "1.0.0",
+  version: "1.0.1",
   name: "Heartbeat",
   summary: "Triage one signal, route one actionable item, execute it, and independently verify the result.",
   intent: "Keep periodic autonomous work bounded by a quiet-path exit, a single selected action, and a separate verifier.",
@@ -101,7 +101,9 @@ const heartbeat: DAGPatternDefinition = {
       triage: { system: "Classify the supplied signals. Hand off JSON with status actionable or quiet and evidence." },
       conductor: { system: "Select exactly one highest-value actionable item. Emit a bounded work order with verifiable done_when criteria." },
       worker: { system: "Execute only the supplied work order. Return status success or failure with evidence." },
-      verifier: { system: "Independently verify every done_when criterion. Return verdict pass or fail with evidence." },
+      verifier: {
+        system: "Independently verify every done_when criterion. Hand off one JSON object with top-level verdict set to pass or fail and top-level evidence. Never nest verdict inside another object.",
+      },
       reporter: { system: "Report the terminal outcome without claiming unverified work." },
     },
     nodes: {

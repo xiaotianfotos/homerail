@@ -13,6 +13,12 @@ description: |
 Before acting, apply `homerail-shared` rules. This skill assumes the local runtime
 is already ready. If not, run `hr start` or use `homerail-install-ops`.
 
+When this skill is loaded inside the HomeRail Manager Agent, do not invoke the
+CLI through shell. Use `list_orchestrations`, `create_and_run`, `invoke_run`, and
+`get_run_status`. For abstract pattern selection, load `homerail-dag-patterns`
+and use `list_dag_patterns`, `get_dag_pattern`, and
+`instantiate_dag_pattern` before `create_and_run`.
+
 ## Quick Path (runtime already ready)
 
 When the install is already done and you only need to run a DAG, follow this
