@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import {
+  HOMERAIL_PLUGIN_DESCRIPTOR_MAX_BYTES,
+  HOMERAIL_PLUGIN_SCHEMA_MAX_BYTES,
+  HOMERAIL_PLUGIN_SKILL_MAX_BYTES,
+  analyzeHomerailPluginSchemaPolicy,
+  decodeHomerailPluginUtf8,
   analyzeGenerativeUiJsonValue,
   collectHomerailPluginFileReferences,
   validateHomerailPluginManifest,
@@ -7,12 +12,9 @@ import {
   type HomerailResolvedPluginDescriptorV1,
 } from "homerail-protocol";
 
-const MAX_DESCRIPTOR_BYTES = 4 * 1024 * 1024;
-const MAX_SCHEMA_BYTES = 256 * 1024;
-const MAX_SKILL_BYTES = 256 * 1024;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
-export function pluginJsonDigest(value: unknown, maxBytes = MAX_DESCRIPTOR_BYTES): string {
+export function pluginJsonDigest(value: unknown, maxBytes = HOMERAIL_PLUGIN_DESCRIPTOR_MAX_BYTES): string {
   const hash = createHash("sha256");
   const analysis = analyzeGenerativeUiJsonValue(value, {
     limits: { max_bytes: maxBytes, max_depth: 64, max_values: 500_000 },
@@ -38,29 +40,6 @@ export function pluginDescriptorPackageDigest(
       .map((entry) => ({ path: entry.path, digest: entry.digest }))
       .sort((left, right) => left.path.localeCompare(right.path)),
   });
-}
-
-export function findNonLocalPluginSchemaRefs(value: unknown, path = "", seen = new WeakSet<object>()): string[] {
-  if (!value || typeof value !== "object") return [];
-  if (seen.has(value as object)) return [path || "/"];
-  seen.add(value as object);
-  try {
-    if (Array.isArray(value)) {
-      return value.flatMap((entry, index) => findNonLocalPluginSchemaRefs(entry, `${path}/${index}`, seen));
-    }
-    const result: string[] = [];
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      const nextPath = `${path}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
-      if (key === "$ref" && (typeof entry !== "string" || !entry.startsWith("#"))) {
-        result.push(nextPath);
-      } else {
-        result.push(...findNonLocalPluginSchemaRefs(entry, nextPath, seen));
-      }
-    }
-    return result;
-  } finally {
-    seen.delete(value as object);
-  }
 }
 
 export function validateResolvedPluginDescriptor(
@@ -104,10 +83,10 @@ export function validateResolvedPluginDescriptor(
     if (schema.schema.type !== "object" || schema.schema.additionalProperties !== false) {
       errors.push(`resolved schema must be a closed object schema: ${schema.id}`);
     }
-    for (const path of findNonLocalPluginSchemaRefs(schema.schema)) {
-      errors.push(`resolved schema contains a non-local $ref at ${schema.id}${path}`);
+    for (const issue of analyzeHomerailPluginSchemaPolicy(schema.schema)) {
+      errors.push(`resolved schema violates policy at ${schema.id}${issue.path}: ${issue.message}`);
     }
-    try { pluginJsonDigest(schema.schema, MAX_SCHEMA_BYTES); } catch (cause) {
+    try { pluginJsonDigest(schema.schema, HOMERAIL_PLUGIN_SCHEMA_MAX_BYTES); } catch (cause) {
       errors.push(`invalid resolved schema ${schema.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }
@@ -122,8 +101,8 @@ export function validateResolvedPluginDescriptor(
       continue;
     }
     seenSkills.add(skill.id);
-    if (Buffer.byteLength(skill.content, "utf8") > MAX_SKILL_BYTES) {
-      errors.push(`resolved skill exceeds ${MAX_SKILL_BYTES} bytes: ${skill.id}`);
+    if (Buffer.byteLength(skill.content, "utf8") > HOMERAIL_PLUGIN_SKILL_MAX_BYTES) {
+      errors.push(`resolved skill exceeds ${HOMERAIL_PLUGIN_SKILL_MAX_BYTES} bytes: ${skill.id}`);
     }
     if (pluginTextDigest(skill.content) !== skill.digest) {
       errors.push(`resolved skill digest mismatch: ${skill.id}`);
@@ -156,7 +135,7 @@ export function validateResolvedPluginDescriptor(
       continue;
     }
     totalFileBytes += bytes.byteLength;
-    if (totalFileBytes > MAX_DESCRIPTOR_BYTES) errors.push("referenced files exceed descriptor byte budget");
+    if (totalFileBytes > HOMERAIL_PLUGIN_DESCRIPTOR_MAX_BYTES) errors.push("referenced files exceed descriptor byte budget");
     if (createHash("sha256").update(bytes).digest("hex") !== entry.digest) {
       errors.push(`referenced file digest mismatch: ${entry.path}`);
     }
@@ -168,8 +147,11 @@ export function validateResolvedPluginDescriptor(
     const bytes = fileBytes.get(schema.file);
     if (bytes) {
       try {
-        const parsed = JSON.parse(bytes.toString("utf8")) as unknown;
-        if (pluginJsonDigest(parsed, MAX_SCHEMA_BYTES) !== pluginJsonDigest(schema.schema, MAX_SCHEMA_BYTES)) {
+        const parsed = JSON.parse(decodeHomerailPluginUtf8(bytes, schema.file)) as unknown;
+        if (
+          pluginJsonDigest(parsed, HOMERAIL_PLUGIN_SCHEMA_MAX_BYTES)
+          !== pluginJsonDigest(schema.schema, HOMERAIL_PLUGIN_SCHEMA_MAX_BYTES)
+        ) {
           errors.push(`resolved schema content mismatch: ${schema.id}`);
         }
       } catch (cause) {
@@ -181,7 +163,7 @@ export function validateResolvedPluginDescriptor(
     const file = actualFiles.find((entry) => entry.path === skill.path);
     if (file && file.digest !== skill.digest) errors.push(`skill/file digest mismatch: ${skill.id}`);
     const bytes = fileBytes.get(skill.path);
-    if (bytes && bytes.toString("utf8") !== skill.content) {
+    if (bytes && decodeHomerailPluginUtf8(bytes, skill.path) !== skill.content) {
       errors.push(`resolved skill content mismatch: ${skill.id}`);
     }
   }

@@ -56,7 +56,7 @@ function writeMinimalPlugin(root: string, id = "com.example.notes", version = "1
     "---", "name: notes", "description: Keep concise notes.", "---", "", "# Notes", "", "Keep only useful notes.", "",
   ].join("\n"));
   fs.writeFileSync(path.join(packageRoot, "schemas", "notes.v1.schema.json"), JSON.stringify({
-    type: "object", properties: { note: { type: "string" } }, required: ["note"], additionalProperties: false,
+    type: "object", properties: { note: { type: "string", maxLength: 2000 } }, required: ["note"], additionalProperties: false,
   }, null, 2));
   return packageRoot;
 }
@@ -160,7 +160,7 @@ describe("HomeRail plugin archive and activation registry", () => {
       properties: { note: { $ref: "https://example.invalid/schema.json" } },
       additionalProperties: false,
     }));
-    expect(() => loadPluginPackage(minimal, { source: "development" })).toThrow(/non-local \$ref/i);
+    expect(() => loadPluginPackage(minimal, { source: "development" })).toThrow(/fragment \$ref/i);
   });
 
   it("allows legacy UI bridges only for explicitly approved builtin migrations", () => {
@@ -189,7 +189,7 @@ describe("HomeRail plugin archive and activation registry", () => {
     expect(() => registry.setEnabled(CORE_PLUGIN_ID, false)).toThrow(/locked/);
     expect(registry.snapshot()).toMatchObject({ revision: first.revision, fingerprint: first.fingerprint });
 
-    expect(setPluginEnabled("com.homerail.topic-outline", false, "2026-07-11T12:01:00.000Z"))
+    expect(setPluginEnabled("com.homerail.topic-outline", false, { timestamp: "2026-07-11T12:01:00.000Z" }))
       .toMatchObject({ enabled: false, revision: 2 });
     registry.syncBuiltins();
     expect(getPluginRegistryState().plugins.find((plugin) => plugin.plugin_id === "com.homerail.topic-outline")?.activation)

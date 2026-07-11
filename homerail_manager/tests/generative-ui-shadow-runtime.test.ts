@@ -218,7 +218,7 @@ describe("Voice Generative UI shadow runtime", () => {
     expect((await fetch(`${baseUrl}/api/plugins/com.homerail.topic-outline/enabled`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: false }),
+      body: JSON.stringify({ enabled: false, expected_revision: 1, expected_active_version: "1.0.0" }),
     })).status).toBe(200);
     const registryChanged = await fetch(`${baseUrl}/api/voice-agent/sessions/${sessionId}/generative-ui`, {
       headers: { "If-None-Match": etag! },
@@ -443,7 +443,7 @@ describe("Voice Generative UI shadow runtime", () => {
     expect((await fetch(`${baseUrl}/api/plugins/com.homerail.topic-outline/enabled`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: false }),
+      body: JSON.stringify({ enabled: false, expected_revision: 1, expected_active_version: "1.0.0" }),
     })).status).toBe(200);
     const disabledProjection = await (await fetch(
       `${baseUrl}/api/voice-agent/sessions/${sessionId}/generative-ui`,

@@ -101,7 +101,7 @@ describe("plugin Tool execution broker", () => {
     expect(() => executeHomerailPluginTool(descriptor, {
       id: "com.homerail.topic-outline:topic-blank-title",
       title: "   ",
-    })).toThrow(/input is invalid/);
+    })).toThrow(/input is invalid|fallback title did not resolve/i);
     expect(() => executeHomerailPluginTool(descriptor, {
       id: "com.homerail.topic-outline:topic-source-without-url",
       title: "Source policy",

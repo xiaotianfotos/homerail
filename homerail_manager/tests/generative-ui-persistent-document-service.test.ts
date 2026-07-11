@@ -187,7 +187,7 @@ describe("PersistentGenerativeUiDocumentService", () => {
     legacy.close();
 
     expect(getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all())
-      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
+      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }]);
     expect(getDb().prepare("SELECT data FROM voice_agent_sessions WHERE session_id = ?").get("legacy-v2"))
       .toEqual({ data: legacyPayload });
     expect(getDb().prepare(`
@@ -204,6 +204,10 @@ describe("PersistentGenerativeUiDocumentService", () => {
     expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 4").get())
       .toEqual({ count: 1 });
     expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 5").get())
+      .toEqual({ count: 1 });
+    expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 6").get())
+      .toEqual({ count: 1 });
+    expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 7").get())
       .toEqual({ count: 1 });
   });
 

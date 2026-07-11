@@ -4,6 +4,7 @@ import { initEventLogging } from "./persistence/store.js";
 import { recoverAllActiveRuns } from "./runtime/active-runs.js";
 import { recoverStaleVoiceSessions } from "./server/voice-session-registry.js";
 import { markRecoveryComplete } from "./health/index.js";
+import { cleanupPluginPackageStaging, recoverPluginPackageTrash } from "./plugins/package-lifecycle.js";
 
 initEventLogging();
 
@@ -17,6 +18,8 @@ const server = createServer(port);
 const recovery = recoverAllActiveRuns();
 // Reset voice sessions stuck in running/submitted (no live process after restart).
 const voiceRecovery = recoverStaleVoiceSessions();
+const pluginTrashRecovery = recoverPluginPackageTrash();
+const pluginStagingRecovered = cleanupPluginPackageStaging();
 markRecoveryComplete();
 
 server.listen(port, host, () => {
@@ -26,5 +29,9 @@ server.listen(port, host, () => {
   );
   if (voiceRecovery.recovered.length) {
     console.error(`voice recovery: reset ${voiceRecovery.recovered.length} stale session(s)`);
+  }
+  if (pluginStagingRecovered) console.error(`plugin recovery: removed ${pluginStagingRecovered} orphan staging package(s)`);
+  if (pluginTrashRecovery.restored || pluginTrashRecovery.removed || pluginTrashRecovery.quarantined) {
+    console.error(`plugin recovery: restored=${pluginTrashRecovery.restored} removed=${pluginTrashRecovery.removed} quarantined=${pluginTrashRecovery.quarantined} uninstall package(s)`);
   }
 });

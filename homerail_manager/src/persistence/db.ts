@@ -52,6 +52,9 @@ const CLEARABLE_TABLES = new Set([
   "generative_ui_user_overrides",
   "generative_ui_transactions",
   "generative_ui_documents",
+  "plugin_activation_events",
+  "plugin_permission_grants",
+  "plugin_installations",
   "plugin_activations",
   "plugin_packages",
   "experience_nodes",
@@ -564,6 +567,88 @@ function validatePluginRegistrySchemaV5(db: SqliteDatabase): void {
   }
 }
 
+function validatePluginLifecycleSchemaV6(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    plugin_installations: [
+      "plugin_id", "plugin_version", "archive_digest", "payload_digest", "channel",
+      "lifecycle_state", "health_state", "signature_state", "package_path",
+      "installed_at", "updated_at", "removed_at",
+    ],
+    plugin_permission_grants: [
+      "plugin_id", "plugin_version", "permission", "grant_json", "status", "revision", "updated_at",
+    ],
+    plugin_activation_events: [
+      "seq", "plugin_id", "event_type", "from_version", "to_version",
+      "activation_revision", "created_at", "data_json",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const tableRow = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(table) as { sql: string } | undefined;
+    if (!tableRow) throw new Error(`Schema migration 6 is incomplete: missing table ${table}`);
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string; pk: number }>;
+    const names = new Set(columns.map((column) => column.name));
+    const missing = required.filter((column) => !names.has(column));
+    if (missing.length) throw new Error(`Schema migration 6 is incomplete: ${table} is missing ${missing.join(", ")}`);
+  }
+  const installationPk = new Map((db.prepare("PRAGMA table_info(plugin_installations)").all() as Array<{
+    name: string; pk: number;
+  }>).map((column) => [column.name, column.pk]));
+  if (installationPk.get("plugin_id") !== 1 || installationPk.get("plugin_version") !== 2) {
+    throw new Error("Schema migration 6 is incomplete: plugin installation identity is not composite");
+  }
+  const grantPk = new Map((db.prepare("PRAGMA table_info(plugin_permission_grants)").all() as Array<{
+    name: string; pk: number;
+  }>).map((column) => [column.name, column.pk]));
+  if (grantPk.get("plugin_id") !== 1 || grantPk.get("plugin_version") !== 2 || grantPk.get("permission") !== 3) {
+    throw new Error("Schema migration 6 is incomplete: plugin grant identity is not composite");
+  }
+  for (const table of ["plugin_installations", "plugin_permission_grants", "plugin_activation_events"]) {
+    const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+      table: string; on_delete: string;
+    }>;
+    if (!foreignKeys.some((foreignKey) => (
+      foreignKey.table === "plugin_packages" && foreignKey.on_delete.toUpperCase() === "RESTRICT"
+    ))) throw new Error(`Schema migration 6 is incomplete: ${table} package retention constraint is missing`);
+  }
+}
+
+function validatePluginRegistryRevisionSchemaV7(db: SqliteDatabase): void {
+  const table = "plugin_registry_meta";
+  const tableRow = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+  ).get(table) as { sql: string } | undefined;
+  if (!tableRow) throw new Error(`Schema migration 7 is incomplete: missing table ${table}`);
+  const columns = new Map((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    pk: number;
+  }>).map((column) => [column.name, column]));
+  if (columns.get("singleton")?.pk !== 1 || !columns.has("revision")) {
+    throw new Error("Schema migration 7 is incomplete: plugin registry revision identity is invalid");
+  }
+  const row = db.prepare(`SELECT singleton, revision FROM ${table}`).get() as {
+    singleton: number;
+    revision: number;
+  } | undefined;
+  const count = (db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+  if (count !== 1 || row?.singleton !== 1 || !Number.isSafeInteger(row.revision) || row.revision < 0) {
+    throw new Error("Schema migration 7 is incomplete: plugin registry revision singleton is invalid");
+  }
+  const requiredTriggers = [
+    "plugin_registry_revision_after_activation_insert",
+    "plugin_registry_revision_after_activation_update",
+    "plugin_registry_revision_after_activation_delete",
+  ];
+  const triggers = new Set((db.prepare(`
+    SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?, ?)
+  `).all(...requiredTriggers) as Array<{ name: string }>).map((entry) => entry.name));
+  const missing = requiredTriggers.filter((name) => !triggers.has(name));
+  if (missing.length) {
+    throw new Error(`Schema migration 7 is incomplete: missing plugin registry triggers ${missing.join(", ")}`);
+  }
+}
+
 const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 3,
@@ -657,6 +742,104 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         ON plugin_packages(plugin_id, installed_at, plugin_version);
     `),
     validate: validatePluginRegistrySchemaV5,
+  },
+  {
+    version: 6,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_installations (
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        archive_digest TEXT NOT NULL CHECK(length(archive_digest) = 64),
+        payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),
+        channel TEXT NOT NULL CHECK(channel IN ('staging', 'local', 'registry')),
+        lifecycle_state TEXT NOT NULL CHECK(lifecycle_state IN ('staged', 'installed', 'removed', 'failed')),
+        health_state TEXT NOT NULL CHECK(health_state IN ('unchecked', 'healthy', 'unhealthy')),
+        signature_state TEXT NOT NULL CHECK(signature_state IN ('unsigned', 'verified', 'untrusted', 'revoked')),
+        package_path TEXT NOT NULL,
+        installed_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        removed_at TEXT,
+        PRIMARY KEY(plugin_id, plugin_version),
+        FOREIGN KEY(plugin_id, plugin_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_installations_state
+        ON plugin_installations(lifecycle_state, updated_at, plugin_id, plugin_version);
+
+      CREATE TABLE plugin_permission_grants (
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        permission TEXT NOT NULL,
+        grant_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'granted', 'denied')),
+        revision INTEGER NOT NULL CHECK(revision >= 1),
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(plugin_id, plugin_version, permission),
+        FOREIGN KEY(plugin_id, plugin_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_permission_grants_status
+        ON plugin_permission_grants(plugin_id, plugin_version, status, permission);
+
+      CREATE TABLE plugin_activation_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        plugin_id TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK(event_type IN ('install', 'activate', 'enable', 'disable', 'rollback', 'uninstall')),
+        from_version TEXT,
+        to_version TEXT,
+        activation_revision INTEGER NOT NULL CHECK(activation_revision >= 0),
+        created_at TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        FOREIGN KEY(plugin_id, to_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_activation_events_plugin
+        ON plugin_activation_events(plugin_id, seq);
+    `),
+    validate: validatePluginLifecycleSchemaV6,
+  },
+  {
+    version: 7,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_registry_meta (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        revision INTEGER NOT NULL CHECK(revision >= 0)
+      );
+
+      INSERT INTO plugin_registry_meta(singleton, revision)
+      SELECT 1, COALESCE(SUM(history.max_revision), 0)
+      FROM (
+        SELECT plugin_id, MAX(revision) AS max_revision
+        FROM (
+          SELECT plugin_id, revision FROM plugin_activations
+          UNION ALL
+          SELECT plugin_id, activation_revision AS revision FROM plugin_activation_events
+        ) revisions
+        GROUP BY plugin_id
+      ) history;
+
+      CREATE TRIGGER plugin_registry_revision_after_activation_insert
+      AFTER INSERT ON plugin_activations
+      BEGIN
+        UPDATE plugin_registry_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+
+      CREATE TRIGGER plugin_registry_revision_after_activation_update
+      AFTER UPDATE OF active_version, enabled, locked, revision ON plugin_activations
+      BEGIN
+        UPDATE plugin_registry_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+
+      CREATE TRIGGER plugin_registry_revision_after_activation_delete
+      AFTER DELETE ON plugin_activations
+      BEGIN
+        UPDATE plugin_registry_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+    `),
+    validate: validatePluginRegistryRevisionSchemaV7,
   },
 ];
 

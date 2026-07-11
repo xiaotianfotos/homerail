@@ -88,8 +88,12 @@ export class HomerailPluginRegistry {
     return getPluginRegistryState();
   }
 
-  setEnabled(pluginId: string, enabled: boolean): PluginActivationRecord {
+  setEnabled(
+    pluginId: string,
+    enabled: boolean,
+    options: { expected_revision?: number; expected_active_version?: string } = {},
+  ): PluginActivationRecord {
     ensureBuiltinPluginsSynced(this.#builtinRoot);
-    return setPluginEnabled(pluginId, enabled);
+    return setPluginEnabled(pluginId, enabled, options);
   }
 }

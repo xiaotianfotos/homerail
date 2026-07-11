@@ -3,8 +3,10 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildHrpArchive, scaffoldPluginProject, scanPluginSource, sourceFilesForPack } from "homerail-plugin-sdk";
 import { subscribe, type PluginRegistryChangedPayload } from "../src/events/bus.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { listPluginPackages } from "../src/persistence/plugins.js";
 import { HomerailPluginRegistry } from "../src/plugins/registry.js";
 import { createServer } from "../src/server/http.js";
 
@@ -17,6 +19,27 @@ async function listen(server: http.Server): Promise<number> {
 
 async function close(server: http.Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function chunkedRequest(urlValue: string, body: Buffer): Promise<number> {
+  const url = new URL(urlValue);
+  return new Promise<number>((resolve, reject) => {
+    const request = http.request({
+      host: url.hostname,
+      port: Number(url.port),
+      path: url.pathname,
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Transfer-Encoding": "chunked",
+      },
+    }, (response) => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode ?? 0));
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
 }
 
 describe("plugin registry routes", () => {
@@ -75,7 +98,7 @@ describe("plugin registry routes", () => {
     const disabled = await fetch(`${baseUrl}/api/plugins/com.homerail.topic-outline/enabled`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: false }),
+      body: JSON.stringify({ enabled: false, expected_revision: 1, expected_active_version: "1.0.0" }),
     });
     unsubscribe();
     expect(disabled.status).toBe(200);
@@ -144,7 +167,7 @@ describe("plugin registry routes", () => {
     const enabled = await fetch(`${baseUrl}/api/plugins/com.homerail.topic-outline/enabled`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: true }),
+      body: JSON.stringify({ enabled: true, expected_revision: 2, expected_active_version: "1.0.0" }),
     });
     expect(enabled.status).toBe(200);
   });
@@ -153,17 +176,17 @@ describe("plugin registry routes", () => {
     expect((await fetch(`${baseUrl}/api/plugins/com.homerail.core/enabled`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: false }),
+      body: JSON.stringify({ enabled: false, expected_revision: 1, expected_active_version: "0.1.0" }),
     })).status).toBe(409);
     expect((await fetch(`${baseUrl}/api/plugins/com.example.missing/enabled`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: false }),
+      body: JSON.stringify({ enabled: false, expected_revision: 1, expected_active_version: "1.0.0" }),
     })).status).toBe(404);
     expect((await fetch(`${baseUrl}/api/plugins/com.homerail.topic-outline/enabled`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: "no" }),
+      body: JSON.stringify({ enabled: "no", expected_revision: 1, expected_active_version: "1.0.0" }),
     })).status).toBe(400);
     expect((await fetch(`${baseUrl}/api/plugins/com.homerail.topic-outline/enabled`, {
       method: "POST",
@@ -183,7 +206,7 @@ describe("plugin registry routes", () => {
       const response = await fetch(`${baseUrl}/api/plugins/com.homerail.topic-outline/enabled`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: false }),
+        body: JSON.stringify({ enabled: false, expected_revision: 1, expected_active_version: "1.0.0" }),
       });
       expect(response.status).toBe(200);
       expect(delivered).toEqual([expect.objectContaining({
@@ -217,6 +240,166 @@ describe("plugin registry routes", () => {
       success: false,
       error: "Plugin registry is unavailable",
     });
+    expect((await fetch(`${baseUrl}/api/plugins/com.homerail.topic-outline/versions`)).status).toBe(500);
+    expect((await fetch(`${baseUrl}/api/plugins/com.homerail.topic-outline/doctor`)).status).toBe(500);
     expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
+  });
+
+  it("installs a binary HRP, keeps upgrades inactive, rolls back, and uninstalls with history retained", async () => {
+    const source = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-plugin-route-source-"));
+    try {
+      scaffoldPluginProject(source, "com.example.release-notes", { name: "Release Notes", version: "1.0.0" });
+      const pack = (): Buffer => buildHrpArchive(sourceFilesForPack(scanPluginSource(source))).archive;
+      const install = async (archive: Buffer) => fetch(`${baseUrl}/api/plugins/install?channel=staging`, {
+        method: "POST",
+        headers: { "Content-Type": "application/vnd.homerail.plugin+zip" },
+        body: archive,
+      });
+
+      const initialArchive = pack();
+      expect((await fetch(`${baseUrl}/api/plugins/install?channel=registry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/vnd.homerail.plugin+zip" },
+        body: initialArchive,
+      })).status).toBe(400);
+      expect(listPluginPackages().some((plugin) => plugin.plugin_id === "com.example.release-notes")).toBe(false);
+
+      const first = await install(initialArchive);
+      expect(first.status).toBe(201);
+      expect(await first.json()).toMatchObject({
+        data: {
+          plugin_id: "com.example.release-notes",
+          plugin_version: "1.0.0",
+          data_only_eligible: true,
+          activation: { active_version: "1.0.0", enabled: false, revision: 1 },
+          installation: { lifecycle_state: "installed", health_state: "healthy" },
+        },
+      });
+      const repeated = await install(pack());
+      expect(repeated.status).toBe(200);
+      expect(await repeated.json()).toMatchObject({
+        data: {
+          idempotent: true,
+          activation: { active_version: "1.0.0", enabled: false, revision: 1 },
+        },
+      });
+      const versions = await (await fetch(`${baseUrl}/api/plugins/com.example.release-notes/versions`)).json() as {
+        data: { version_set_digest: string; versions: Array<Record<string, unknown>> };
+      };
+      expect(versions.data.versions[0]).not.toHaveProperty("descriptor");
+      expect(versions.data.versions[0]).not.toHaveProperty("package_path");
+
+      expect((await fetch(`${baseUrl}/api/plugins/com.example.release-notes/enabled`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true, expected_revision: 1, expected_active_version: "1.0.0" }),
+      })).status).toBe(200);
+      const beforeUpgrade = await (await fetch(`${baseUrl}/api/plugins/com.example.release-notes/versions`)).json() as {
+        data: { version_set_digest: string };
+      };
+
+      const manifestFile = path.join(source, "homerail.plugin.json");
+      const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+      manifest.version = "1.1.0";
+      fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+      const second = await install(pack());
+      expect(second.status).toBe(201);
+      expect(await second.json()).toMatchObject({
+        data: { activation: { active_version: "1.0.0", enabled: true, revision: 2 } },
+      });
+      expect((await fetch(`${baseUrl}/api/plugins/com.example.release-notes`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_version_set_digest: beforeUpgrade.data.version_set_digest }),
+      })).status).toBe(409);
+      expect(fs.existsSync(path.join(tmpHome, "plugins", ".trash"))).toBe(false);
+
+      expect((await fetch(`${baseUrl}/api/plugins/com.example.release-notes/active-version`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: "1.1.0", expected_revision: 2 }),
+      })).status).toBe(200);
+      expect((await fetch(`${baseUrl}/api/plugins/com.example.release-notes/enabled`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true, expected_revision: 2, expected_active_version: "1.0.0" }),
+      })).status).toBe(409);
+      expect((await fetch(`${baseUrl}/api/plugins/com.example.release-notes/enabled`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true, expected_revision: 3, expected_active_version: "1.1.0" }),
+      })).status).toBe(200);
+      const rollback = await fetch(`${baseUrl}/api/plugins/com.example.release-notes/rollback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: "1.0.0", expected_revision: 4 }),
+      });
+      expect(rollback.status).toBe(200);
+      expect(await rollback.json()).toMatchObject({
+        data: { activation: { active_version: "1.0.0", enabled: true, revision: 5 } },
+      });
+      expect((await fetch(`${baseUrl}/api/plugins/com.example.release-notes/doctor`)).status).toBe(200);
+
+      const beforeRemove = await (await fetch(`${baseUrl}/api/plugins/com.example.release-notes/versions`)).json() as {
+        data: { version_set_digest: string };
+      };
+      const registryBeforeRemove = await (await fetch(`${baseUrl}/api/plugins`)).json() as {
+        data: { registry_revision: number };
+      };
+      const removed = await fetch(`${baseUrl}/api/plugins/com.example.release-notes`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_version_set_digest: beforeRemove.data.version_set_digest }),
+      });
+      expect(removed.status).toBe(200);
+      const removedBody = await removed.json() as {
+        data: { registry: { registry_revision: number; plugins: Array<{ id: string }> } };
+      };
+      expect(removedBody.data.registry.registry_revision).toBeGreaterThan(
+        registryBeforeRemove.data.registry_revision,
+      );
+      expect(removedBody.data.registry.plugins.some((plugin) => (
+        plugin.id === "com.example.release-notes"
+      ))).toBe(false);
+      expect(new HomerailPluginRegistry().snapshot().plugins.some((plugin) => (
+        plugin.plugin_id === "com.example.release-notes"
+      ))).toBe(false);
+      const historicalDoctor = await fetch(`${baseUrl}/api/plugins/com.example.release-notes/doctor`);
+      expect(historicalDoctor.status).toBe(200);
+      expect(await historicalDoctor.json()).toMatchObject({
+        success: false,
+        data: { installed: false, healthy: false },
+      });
+      expect(listPluginPackages()).toContainEqual(expect.objectContaining({
+        plugin_id: "com.example.release-notes",
+        plugin_version: "1.0.0",
+      }));
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed or non-binary plugin installs without persistent side effects", async () => {
+    expect(await chunkedRequest(
+      `${baseUrl}/api/plugins/com.homerail.topic-outline/enabled`,
+      Buffer.alloc(9 * 1024, 0x61),
+    )).toBe(413);
+    expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}/api/plugins/invalid%2Fescape`, { method: "DELETE" })).status).toBe(400);
+    expect(fs.existsSync(path.join(tmpHome, "plugins", ".trash"))).toBe(false);
+    expect((await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    })).status).toBe(415);
+    expect((await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.homerail.plugin+zip" },
+      body: Buffer.from("not-a-zip"),
+    })).status).toBe(400);
+    expect(listPluginPackages().some((plugin) => plugin.plugin_id.startsWith("com.example"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpHome, "plugins", ".staging"))
+      ? fs.readdirSync(path.join(tmpHome, "plugins", ".staging"))
+      : []).toEqual([]);
   });
 });

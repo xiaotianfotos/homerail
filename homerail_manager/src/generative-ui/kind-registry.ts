@@ -8,8 +8,11 @@ import {
   type GenerativeUiTransactionV1,
   type GenerativeUiValidationError,
   type HomerailPluginActionDescriptorV1,
+  type HomerailDeclarativeRendererV1,
   type HomerailPluginKindRegistrationV1,
   type HomerailPluginRendererRegistrationV1,
+  type HomerailPluginResolvedRendererSourceV1,
+  type HomerailPluginRendererV1,
   type HomerailPluginUiProjectionV1,
   validateHomerailPluginUiProjection,
 } from "homerail-protocol";
@@ -59,6 +62,27 @@ function validationErrors(errors: ErrorObject[] | null | undefined): GenerativeU
 
 function qualified(pluginId: string, localId: string): string {
   return `${pluginId}:${localId}`;
+}
+
+function resolvedRendererSource(
+  descriptor: ReturnType<typeof listPluginPackages>[number]["descriptor"],
+  source: HomerailPluginRendererV1["source"],
+): HomerailPluginResolvedRendererSourceV1 {
+  if (source.type !== "declarative") return structuredClone(source);
+  const archived = descriptor.referenced_files.find((entry) => entry.path === source.file);
+  if (!archived) throw new Error(`Missing archived declarative Renderer: ${source.file}`);
+  let document: unknown;
+  try {
+    document = JSON.parse(Buffer.from(archived.content, "base64").toString("utf8"));
+  } catch (cause) {
+    throw new Error(`Invalid archived declarative Renderer ${source.file}: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+  return {
+    type: "declarative",
+    file: source.file,
+    digest: archived.digest,
+    document: document as HomerailDeclarativeRendererV1,
+  };
 }
 
 /**
@@ -153,7 +177,7 @@ export class GenerativeUiKindRegistry {
             mode: renderer.mode,
             surfaces: [...renderer.surfaces],
             devices: [...renderer.devices],
-            source: structuredClone(renderer.source),
+            source: resolvedRendererSource(pluginPackage.descriptor, renderer.source),
             fallback: structuredClone(renderer.fallback),
           });
         }

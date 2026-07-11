@@ -2,14 +2,19 @@ import AjvModule from "ajv";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import YAML from "yaml";
+import { validatePluginSkill } from "homerail-plugin-sdk";
 import {
   GENERATIVE_UI_IR_VERSION,
+  HOMERAIL_PLUGIN_SCHEMA_MAX_BYTES,
+  HOMERAIL_PLUGIN_SKILL_MAX_BYTES,
   HOMERAIL_PLUGIN_API_VERSION,
   HOMERAIL_RENDERER_API_VERSION,
   HomerailPluginRendererMode,
   HomerailPluginRuntimeTrust,
+  analyzeHomerailPluginSchemaPolicy,
+  decodeHomerailPluginUtf8,
   collectHomerailPluginFileReferences,
+  validateHomerailDeclarativeRenderer,
   validateHomerailPluginCompatibility,
   validateHomerailDirectUiProjection,
   validateHomerailPluginManifest,
@@ -19,7 +24,6 @@ import {
 import { repoRoot } from "../assets/root.js";
 import {
   pluginDescriptorPackageDigest,
-  findNonLocalPluginSchemaRefs,
   pluginJsonDigest,
   pluginTextDigest,
   validateResolvedPluginDescriptor,
@@ -68,7 +72,7 @@ function resolvePackageFile(packageRoot: string, relativePath: string): string {
 function parseJsonObject(buffer: Buffer, label: string): Record<string, unknown> {
   let value: unknown;
   try {
-    value = JSON.parse(buffer.toString("utf8"));
+    value = JSON.parse(decodeHomerailPluginUtf8(buffer, label));
   } catch (cause) {
     throw new Error(`${label} is not valid JSON: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
@@ -78,38 +82,13 @@ function parseJsonObject(buffer: Buffer, label: string): Record<string, unknown>
   return value as Record<string, unknown>;
 }
 
-function validateSkill(skillId: string, content: string): void {
-  if (!content.startsWith("---")) throw new Error(`Plugin Skill ${skillId} is missing YAML frontmatter`);
-  const end = content.indexOf("\n---", 3);
-  if (end < 0) throw new Error(`Plugin Skill ${skillId} has unterminated YAML frontmatter`);
-  let frontmatter: unknown;
-  try {
-    frontmatter = YAML.parse(content.slice(3, end));
-  } catch (cause) {
-    throw new Error(`Plugin Skill ${skillId} has invalid YAML frontmatter: ${cause instanceof Error ? cause.message : String(cause)}`);
-  }
-  if (!frontmatter || typeof frontmatter !== "object" || Array.isArray(frontmatter)) {
-    throw new Error(`Plugin Skill ${skillId} frontmatter must be an object`);
-  }
-  const metadata = frontmatter as Record<string, unknown>;
-  const extra = Object.keys(metadata).filter((key) => key !== "name" && key !== "description");
-  if (extra.length) throw new Error(`Plugin Skill ${skillId} has unsupported frontmatter keys: ${extra.join(", ")}`);
-  if (metadata.name !== skillId) throw new Error(`Plugin Skill ${skillId} frontmatter name must match its manifest id`);
-  if (typeof metadata.description !== "string" || !metadata.description.trim()) {
-    throw new Error(`Plugin Skill ${skillId} needs a non-empty frontmatter description`);
-  }
-  if (!content.slice(end + 4).trim()) throw new Error(`Plugin Skill ${skillId} has no instructions`);
-}
-
 function validateCompiledSchema(schemaId: string, schema: Record<string, unknown>): void {
   if (schema.type !== "object" || schema.additionalProperties !== false) {
     throw new Error(`Plugin schema ${schemaId} must be a closed object schema`);
   }
-  const nonLocalRefs = findNonLocalPluginSchemaRefs(schema);
-  if (nonLocalRefs.length) {
-    throw new Error(`Plugin schema ${schemaId} contains a non-local $ref: ${nonLocalRefs.join(", ")}`);
-  }
-  const ajv = new AjvClass({ allErrors: true, strict: false, coerceTypes: false });
+  const policyIssues = analyzeHomerailPluginSchemaPolicy(schema);
+  if (policyIssues.length) throw new Error(`Plugin schema ${schemaId} violates schema policy: ${JSON.stringify(policyIssues)}`);
+  const ajv = new AjvClass({ allErrors: true, strict: true, coerceTypes: false });
   try {
     ajv.compile(schema);
   } catch (cause) {
@@ -190,7 +169,11 @@ export function loadPluginPackage(
   }
 
   const schemas = manifest.schemas.map((declaration) => {
-    const schema = parseJsonObject(buffers.get(declaration.file)!, declaration.file);
+    const buffer = buffers.get(declaration.file)!;
+    if (buffer.byteLength > HOMERAIL_PLUGIN_SCHEMA_MAX_BYTES) {
+      throw new Error(`Plugin schema ${declaration.id} exceeds ${HOMERAIL_PLUGIN_SCHEMA_MAX_BYTES} bytes`);
+    }
+    const schema = parseJsonObject(buffer, declaration.file);
     validateCompiledSchema(declaration.id, schema);
     return {
       id: declaration.id,
@@ -199,6 +182,14 @@ export function loadPluginPackage(
       schema,
     };
   });
+  for (const renderer of manifest.renderers) {
+    if (renderer.source.type !== "declarative") continue;
+    const document = parseJsonObject(buffers.get(renderer.source.file)!, renderer.source.file);
+    const rendererValidation = validateHomerailDeclarativeRenderer(document);
+    if (!rendererValidation.valid) {
+      throw new Error(`Invalid declarative Renderer ${renderer.id}: ${JSON.stringify(rendererValidation.errors)}`);
+    }
+  }
   for (const tool of manifest.tools) {
     if (tool.handler.type !== "projection") continue;
     const projection = parseJsonObject(buffers.get(tool.handler.file)!, tool.handler.file);
@@ -240,8 +231,12 @@ export function loadPluginPackage(
     }
   }
   const skills = manifest.skills.map((declaration) => {
-    const content = buffers.get(declaration.path)!.toString("utf8");
-    validateSkill(declaration.id, content);
+    const buffer = buffers.get(declaration.path)!;
+    if (buffer.byteLength > HOMERAIL_PLUGIN_SKILL_MAX_BYTES) {
+      throw new Error(`Plugin Skill ${declaration.id} exceeds ${HOMERAIL_PLUGIN_SKILL_MAX_BYTES} bytes`);
+    }
+    const content = decodeHomerailPluginUtf8(buffer, declaration.path);
+    validatePluginSkill(declaration.id, content);
     return {
       id: declaration.id,
       path: declaration.path,
