@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { clearAgentSession, loadAgentSession, saveAgentSession } from './persistence'
+import { clearAgentSession, loadAgentSession, loadOnboardingDismissed, saveAgentSession, saveOnboardingDismissed } from './persistence'
 
 afterEach(() => {
   localStorage.clear()
@@ -67,5 +67,37 @@ describe('Agent session persistence', () => {
     localStorage.setItem('omni-agent-session', '{}')
     clearAgentSession()
     expect(localStorage.getItem('omni-agent-session')).toBeNull()
+  })
+})
+
+describe('Onboarding dismissal persistence', () => {
+  it('persists dismissal across reloads', () => {
+    expect(loadOnboardingDismissed()).toBe(false)
+
+    saveOnboardingDismissed(true)
+
+    expect(localStorage.getItem('omni-agent-onboarding-dismissed')).toBe('1')
+    expect(loadOnboardingDismissed()).toBe(true)
+  })
+
+  it('clears the flag when dismissal is reset', () => {
+    saveOnboardingDismissed(true)
+
+    saveOnboardingDismissed(false)
+
+    expect(localStorage.getItem('omni-agent-onboarding-dismissed')).toBeNull()
+    expect(loadOnboardingDismissed()).toBe(false)
+  })
+
+  it('ignores storage failures', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError')
+    })
+    expect(() => saveOnboardingDismissed(true)).not.toThrow()
+
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('denied', 'SecurityError')
+    })
+    expect(loadOnboardingDismissed()).toBe(false)
   })
 })

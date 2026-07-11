@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import type { DAGTaskNode, DAGEdge, DAGExecution, DAGNodeStatus } from '@/api/types/dag.types'
 import { bindAgentDagEvents } from './agent/dag-events'
 import { mapManagerSessionMessages } from './agent/message-mapper'
-import { clearAgentSession, loadAgentSession, saveAgentSession } from './agent/persistence'
+import { clearAgentSession, loadAgentSession, loadOnboardingDismissed, saveAgentSession, saveOnboardingDismissed } from './agent/persistence'
 import type { AgentChatMessage, AgentInspectorTab, ManagerSessionItem } from './agent/types'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
 import {
@@ -15,14 +15,6 @@ import {
 } from '@/api/agent'
 
 export type { AgentChatMessage, AgentInspectorTab, ManagerSessionItem } from './agent/types'
-
-function loadOnboardingDismissed(): boolean {
-  return false
-}
-
-function saveOnboardingDismissed(value: boolean): void {
-  void value
-}
 
 function isDedicatedManagerAgentSetting(setting: LLMSetting): boolean {
   return Boolean(setting.supports_llm && !setting.supports_asr && !setting.supports_tts)
