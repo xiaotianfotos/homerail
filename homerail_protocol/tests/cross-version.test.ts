@@ -50,6 +50,9 @@ describe("Protocol version consistency", () => {
 
   it("allSchemas covers all fixture schemas", () => {
     const requiredSchemas = [
+      "generative-ui-node", "generative-ui-stored-node", "generative-ui-document",
+      "generative-ui-transaction", "generative-ui-user-override",
+      "generative-ui-interaction-event",
       "handoff-request", "handoff-response",
       "tool-call", "tool-result",
       "send-message", "receive-message",
