@@ -42,3 +42,23 @@ export function loadAgentSession(): PersistedAgentSession | null {
 export function clearAgentSession(): void {
   localStorage.removeItem(STORAGE_KEY)
 }
+
+const ONBOARDING_DISMISSED_KEY = 'omni-agent-onboarding-dismissed'
+
+export function saveOnboardingDismissed(value: boolean): void {
+  try {
+    if (value) {
+      localStorage.setItem(ONBOARDING_DISMISSED_KEY, '1')
+    } else {
+      localStorage.removeItem(ONBOARDING_DISMISSED_KEY)
+    }
+  } catch { /* ignore quota errors */ }
+}
+
+export function loadOnboardingDismissed(): boolean {
+  try {
+    return localStorage.getItem(ONBOARDING_DISMISSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
