@@ -60,7 +60,7 @@ function patternParameters(pattern) {
 
 const prompts = {
   heartbeat: "Treat this as one actionable signal. Execute one bounded action and verify it. Use structured object handoffs and declared ports.",
-  "orchestrator-workers": "Split validation into three independent checks. Every worker must return status success with evidence, then verify the aggregate.",
+  "orchestrator-workers": "Use only this synthetic record and do not inspect or modify the workspace: {\"id\":\"sample-1\",\"count\":2,\"status\":\"ready\"}. Split it into exactly three independent, self-contained checks: id equals sample-1, count equals 2, and status equals ready. The indexed plan must tell every worker not to use builtin tools. Every worker returns top-level status success with evidence, then verify the aggregate.",
   "budget-gate": "Projected usage is 1 unit against a budget limit of 100. Return status within_budget, execute one bounded check, and audit it.",
   "trust-ledger": "The validation skill has 20 runs and 20 passes. Assign tier auto, execute one check, verify it, and preserve the measured evidence.",
   "standing-goal-sentinel": "Load exactly this JSON array and do not add descriptions: [{\"id\":\"goal-a\",\"predicate\":true},{\"id\":\"goal-b\",\"predicate\":true}]. Treat each predicate as an already evaluated literal boolean. Do not inspect the workspace or use tools.",
