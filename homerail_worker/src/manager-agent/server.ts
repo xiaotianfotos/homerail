@@ -258,6 +258,16 @@ function nestedHead(value: unknown, depth = 0): string | undefined {
   return undefined;
 }
 
+function hasManagerValidationPass(value: unknown, depth = 0): boolean {
+  if (depth > 8 || value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.some((item) => hasManagerValidationPass(item, depth + 1));
+  if (typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.validation_status === "passed" || record.validation_status === "pass") return true;
+  if (record.status === "passed" || record.status === "pass") return true;
+  return Object.values(record).some((item) => hasManagerValidationPass(item, depth + 1));
+}
+
 async function managerRunCloseoutEvidence(runId: string, head: string): Promise<Record<string, unknown>> {
   const status = managerData(await requestManager(`/runs/${encodeURIComponent(runId)}/status`));
   const handoffData = managerData(await requestManager(`/runs/${encodeURIComponent(runId)}/handoffs`));
@@ -269,6 +279,7 @@ async function managerRunCloseoutEvidence(runId: string, head: string): Promise<
     .find((content) => content.report && typeof content.report === "object");
   const report = published?.report as Record<string, unknown> | undefined;
   const evidenceHead = nestedHead(handoffs) ?? "unknown";
+  const validated = Boolean(report) || hasManagerValidationPass(handoffs);
   return {
     source: "homerail_run",
     name: `HomeRail run ${runId}`,
@@ -276,6 +287,7 @@ async function managerRunCloseoutEvidence(runId: string, head: string): Promise<
     head: evidenceHead,
     status: String(status.status ?? "unknown"),
     fresh: evidenceHead === head,
+    validated,
     kind: report ? "pr_review" : "dag_validation",
     ...(report ? {
       report_status: String(report.status ?? "unknown"),
@@ -330,7 +342,7 @@ async function resolveGitHubCloseout(
   }
   const evidence = await Promise.all(validationRuns.map((runId) => managerRunCloseoutEvidence(runId, head)));
   const blockers: Array<{ code: string; message: string }> = [];
-  const freshPassed = evidence.some((item) => item.fresh === true && item.status === "completed");
+  const freshPassed = evidence.some((item) => item.fresh === true && item.status === "completed" && item.validated === true);
   if (!freshPassed) blockers.push({ code: "validation_evidence_missing", message: "No completed HomeRail validation run matches the current head." });
   const isDraft = pull.draft === true;
   const phase = requestedPhase ?? (isDraft ? "draft" : "merge");

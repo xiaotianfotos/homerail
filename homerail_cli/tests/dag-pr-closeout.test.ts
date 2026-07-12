@@ -118,6 +118,36 @@ describe("PR closeout input", () => {
     expect(result.blockers).toContainEqual(expect.objectContaining({ code: "validation_evidence_missing" }));
   });
 
+  it("does not treat another completed closeout run as validation evidence", async () => {
+    const client = {
+      async get(url: string) {
+        if (url.endsWith("/status")) return { data: { status: "completed" } };
+        if (url.endsWith("/handoffs")) {
+          return { data: { handoffs: [{
+            fromNode: "status_gate",
+            content: {
+              payload: {
+                head: "b".repeat(40),
+                closeout_status: "ready_for_review",
+                blockers: [],
+              },
+            },
+          }] } };
+        }
+        throw new Error(`unexpected Manager URL: ${url}`);
+      },
+    } as HomeRailClient;
+    const result = await resolvePrCloseoutInput({
+      repo: "xiaotianfotos/homerail",
+      pr: 26,
+      validation_runs: ["old-closeout-run"],
+    }, { client, fetchImpl: githubFetch({ draft: true }) as typeof fetch, env: {} });
+
+    expect(result.closeout_status).toBe("blocked");
+    expect(result.evidence).toContainEqual(expect.objectContaining({ validated: false }));
+    expect(result.blockers).toContainEqual(expect.objectContaining({ code: "validation_evidence_missing" }));
+  });
+
   it("requires successful remote gates and a zero-finding HomeRail review before human merge approval", async () => {
     const result = await resolvePrCloseoutInput({
       repo: "xiaotianfotos/homerail",

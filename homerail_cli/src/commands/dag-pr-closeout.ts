@@ -19,6 +19,7 @@ export interface PrCloseoutEvidence {
   kind?: string;
   report_status?: string;
   actionable_count?: number;
+  validated?: boolean;
 }
 
 export interface ResolvedPrCloseoutInput {
@@ -153,6 +154,16 @@ function findHead(value: unknown, depth = 0): string | undefined {
   return undefined;
 }
 
+function hasValidationPass(value: unknown, depth = 0): boolean {
+  if (depth > 8 || value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.some((item) => hasValidationPass(item, depth + 1));
+  if (typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.validation_status === "passed" || record.validation_status === "pass") return true;
+  if (record.status === "passed" || record.status === "pass") return true;
+  return Object.values(record).some((item) => hasValidationPass(item, depth + 1));
+}
+
 async function resolveRunEvidence(client: HomeRailClient, runId: string, currentHead: string): Promise<PrCloseoutEvidence> {
   const status = responseData(await client.get(`/api/runs/${encodeURIComponent(runId)}/status`));
   const handoffData = responseData(await client.get(`/api/runs/${encodeURIComponent(runId)}/handoffs`));
@@ -166,6 +177,7 @@ async function resolveRunEvidence(client: HomeRailClient, runId: string, current
     .map((handoff) => parseRecord(handoff.content))
     .find((content) => parseRecord(content?.report));
   const report = parseRecord(published?.report);
+  const validated = Boolean(report) || hasValidationPass(handoffs);
   return {
     source: "homerail_run",
     name: `HomeRail run ${runId}`,
@@ -173,6 +185,7 @@ async function resolveRunEvidence(client: HomeRailClient, runId: string, current
     head,
     status: String(status.status ?? "unknown"),
     fresh: head === currentHead,
+    validated,
     kind: report ? "pr_review" : "dag_validation",
     ...(report ? {
       report_status: String(report.status ?? "unknown"),
@@ -300,7 +313,9 @@ export async function resolvePrCloseoutInput(
   if (phase === "draft" && !isDraft) {
     blockers.push({ code: "phase_mismatch", message: "The PR is no longer a Draft; run merge closeout instead." });
   }
-  const freshPassed = evidence.filter((item) => item.fresh && (item.status === "completed" || item.status === "passed"));
+  const freshPassed = evidence.filter((item) =>
+    item.fresh && (item.source === "local" ? item.status === "passed" : item.status === "completed" && item.validated === true)
+  );
   if (freshPassed.length === 0) {
     blockers.push({ code: "validation_evidence_missing", message: "No passing validation evidence is bound to the current PR head." });
   }
