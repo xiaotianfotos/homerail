@@ -95,7 +95,13 @@ the shared token is not per-actor authentication.
 
 `kind: state` provides namespaced versioned records with history. Workflow
 `spec.triggers` supports persisted interval and idempotent event delivery with
-overlap and concurrency policies. Remote DAG writes require
+overlap and concurrency policies. Enabled trigger policies are enforced as one
+workflow-level admission boundary across interval, event, and manual starts:
+`skip` wins if any trigger declares it, and `max_concurrency` is the smallest
+declared limit. SQLite reservations close the gap before the new `dag_runs` row
+exists. Workflows without enabled triggers retain unrestricted legacy behavior.
+This release does not provide a durable queue or replace-running policy; a
+rejected start reports `overlap_policy` or `max_concurrency`. Remote DAG writes require
 `HOMERAIL_DAG_MUTATION_TOKEN`, including run lifecycle operations, workflow and
 profile sync, state changes, event delivery, injection, and dynamic graph
 changes; loopback remains the default local trust boundary. `budget_admit`

@@ -34,6 +34,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_chats",
   "dag_handoffs",
   "dag_events",
+  "dag_run_admissions",
   "dag_runs",
   "dag_workflow_revisions",
   "dag_runtime_profiles",
@@ -846,6 +847,15 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
       FOREIGN KEY(trigger_key) REFERENCES dag_triggers(trigger_key) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS dag_run_admissions (
+      run_id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dag_run_admissions_workflow
+      ON dag_run_admissions(workflow_id, created_at);
+
     CREATE TABLE IF NOT EXISTS experience_ingest_jobs (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL UNIQUE,
@@ -1116,6 +1126,7 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
   seedBuiltinProviderCatalog(db);
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, nowIso());
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(3, nowIso());
+  db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(5, nowIso());
   chmodPrivate(filePath);
 }
 

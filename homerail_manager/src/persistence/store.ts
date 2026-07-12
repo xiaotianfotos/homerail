@@ -302,7 +302,7 @@ export function listPersistedRunIds(): string[] {
 }
 
 export function _clearAllPersistence(): void {
-  clearTables(["dag_metrics", "dag_chats", "dag_handoffs", "dag_events", "dag_runs"]);
+  clearTables(["dag_metrics", "dag_chats", "dag_handoffs", "dag_events", "dag_run_admissions", "dag_runs"]);
 }
 
 export function initEventLogging(): void {
