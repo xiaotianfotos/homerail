@@ -106,4 +106,17 @@ describe("PR closeout scenario", () => {
       content: expect.objectContaining({ actor: "human:owner", decision: "approved" }),
     }));
   });
+
+  it("terminates stale evidence as cancelled instead of completed", () => {
+    const dispatcher = new FakeDAGDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    executor.createRun("stale-closeout", parseWorkflowSource(fs.readFileSync(file, "utf8")), JSON.stringify(envelope("stale_evidence")));
+    executor.tick("stale-closeout");
+
+    expect(getActiveRun("stale-closeout")?.status).toBe("cancelled");
+    expect(loadRunSnapshot("stale-closeout")?.handoffs).toContainEqual(expect.objectContaining({
+      fromNode: "status_gate",
+      port: "stale",
+    }));
+  });
 });
