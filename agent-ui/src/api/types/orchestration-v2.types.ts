@@ -196,17 +196,41 @@ export interface Provider {
   chat_completions_base_url?: string
   responses_base_url?: string
   anthropic_base_url?: string
+  voice_adapter?: ProviderEndpointPreset['voice_adapter']
+  tts_http_url?: string
+  tts_realtime_url?: string
+  asr_realtime_url?: string
+  asr_async_url?: string
   docs_url?: string
   source?: 'builtin' | 'custom'
   readonly?: boolean
+  supports_llm?: boolean
+  supports_asr?: boolean
+  supports_tts?: boolean
+  supports_audio_input?: boolean
+  supports_image_input?: boolean
+  supports_video_input?: boolean
   endpoints?: ProviderEndpointPreset[]
   is_active?: boolean
   created_at?: string
   updated_at?: string
 }
 
-export type ProviderPlanType = 'api_billing' | 'token_plan' | 'coding_plan' | 'agent_plan' | 'subscription' | 'custom'
-export type ProviderProtocol = 'openai_compatible' | 'anthropic_compatible' | 'dashscope_native' | 'volcengine_doubao_voice' | 'volcengine_ark_voice' | 'volcengine_openspeech' | 'custom'
+export type ProviderPlanType =
+  | 'api_billing'
+  | 'token_plan'
+  | 'coding_plan'
+  | 'agent_plan'
+  | 'subscription'
+  | 'custom'
+export type ProviderProtocol =
+  | 'openai_compatible'
+  | 'anthropic_compatible'
+  | 'dashscope_native'
+  | 'volcengine_doubao_voice'
+  | 'volcengine_ark_voice'
+  | 'volcengine_openspeech'
+  | 'custom'
 export type ProviderAuthType = 'bearer' | 'api-key' | 'x-api-key' | 'subscription-key' | 'custom'
 
 export interface ProviderModelPreset {
@@ -235,7 +259,13 @@ export interface ProviderEndpointPreset {
   responses_base_url?: string
   anthropic_base_url?: string
   resource_id?: string
-  voice_adapter?: 'openai_audio' | 'mimo_audio' | 'volcengine_doubao_voice' | 'volcengine_ark_voice' | 'volcengine_openspeech' | 'custom'
+  voice_adapter?:
+    | 'openai_audio'
+    | 'mimo_audio'
+    | 'volcengine_doubao_voice'
+    | 'volcengine_ark_voice'
+    | 'volcengine_openspeech'
+    | 'custom'
   tts_http_url?: string
   tts_realtime_url?: string
   tts_bidirectional_url?: string
@@ -270,6 +300,11 @@ export interface CreateProviderRequest {
   chat_completions_base_url?: string
   responses_base_url?: string
   anthropic_base_url?: string
+  voice_adapter?: ProviderEndpointPreset['voice_adapter']
+  tts_http_url?: string
+  tts_realtime_url?: string
+  asr_realtime_url?: string
+  asr_async_url?: string
   status?: 'active' | 'paused'
   supports_llm?: boolean
   supports_asr?: boolean
@@ -287,6 +322,11 @@ export interface UpdateProviderRequest {
   chat_completions_base_url?: string
   responses_base_url?: string
   anthropic_base_url?: string
+  voice_adapter?: ProviderEndpointPreset['voice_adapter']
+  tts_http_url?: string
+  tts_realtime_url?: string
+  asr_realtime_url?: string
+  asr_async_url?: string
   status?: 'active' | 'paused'
   supports_llm?: boolean
   supports_asr?: boolean

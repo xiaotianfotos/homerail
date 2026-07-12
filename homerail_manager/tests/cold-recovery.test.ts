@@ -91,6 +91,31 @@ nodes:
 `);
 }
 
+function blockedDownstreamDag() {
+  return parseDAGYaml(`
+name: cold-recovery-blocked
+workflow_id: cold-recovery-blocked
+workspace:
+  project_id: project-a
+agents:
+  worker:
+    agent_type: deterministic
+    system: "HANDOFF port=done content=ok"
+nodes:
+  root:
+    agent: worker
+    outputs:
+      done:
+        to: ""
+  observer:
+    agent: worker
+    after: [root]
+    outputs:
+      done:
+        to: ""
+`);
+}
+
 describe("manager cold recovery", () => {
   let tmpHome: string;
   let oldHome: string | undefined;
@@ -185,6 +210,37 @@ describe("manager cold recovery", () => {
     expect(run.dagRun.nodeStates.get("work")).toBe("FAILED");
     expect(getDagSessionIndex("run-running", "work")?.status).toBe("failed");
     expect(events.some((e) => e.nodeId === "work")).toBe(true);
+  });
+
+  it("fails recovery when orphan demotion leaves only blocked pending nodes", () => {
+    createActiveRun("run-blocked-after-restart", blockedDownstreamDag());
+    dispatchReadyNodes("run-blocked-after-restart", new CaptureDispatcher());
+
+    _clearActiveRuns();
+    const summary = recoverAllActiveRuns();
+
+    const run = getActiveRun("run-blocked-after-restart")!;
+    expect(summary.failed).toContain("run-blocked-after-restart");
+    expect(run.status).toBe("failed");
+    expect(run.dagRun.nodeStates.get("root")).toBe("FAILED");
+    expect(run.dagRun.nodeStates.get("observer")).toBe("SKIPPED");
+    expect(loadRunMetadata("run-blocked-after-restart")?.status).toBe("failed");
+  });
+
+  it("settles persisted failed and ready states left by an older recovery", () => {
+    createActiveRun("run-legacy-recovery-state", blockedDownstreamDag());
+    const run = getActiveRun("run-legacy-recovery-state")!;
+    run.dagRun.nodeStates.set("root", "FAILED");
+    run.dagRun.nodeStates.set("observer", "READY");
+    writeRunMetadata("run-legacy-recovery-state", serializeRunMetadata(run));
+
+    _clearActiveRuns();
+    const summary = recoverAllActiveRuns();
+
+    const recovered = getActiveRun("run-legacy-recovery-state")!;
+    expect(summary.failed).toContain("run-legacy-recovery-state");
+    expect(recovered.status).toBe("failed");
+    expect(recovered.dagRun.nodeStates.get("observer")).toBe("SKIPPED");
   });
 
   it("skips runs that are already terminal in persisted metadata", () => {

@@ -1016,6 +1016,85 @@ describe("voice bootstrap routes", () => {
     });
   });
 
+  it("uses explicit HTTP endpoints for custom OpenAI-compatible ASR and TTS settings", async () => {
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    upsertProvider({
+      id: "custom-audio-test",
+      name: "Custom Audio Test",
+      default_model: "local-audio",
+      base_url: "http://voice.test/v1",
+      supports_llm: false,
+      supports_asr: true,
+      supports_tts: true,
+    });
+    const setting = createSetting({
+      provider_id: "custom-audio-test",
+      model_name: "local-audio",
+      api_key: "local-no-key",
+      base_url: "http://voice.test/v1",
+      voice_adapter: "openai_audio",
+      tts_http_url: "http://voice.test/custom-speech",
+      asr_async_url: "http://voice.test/custom-transcriptions",
+      asr_realtime_url: "ws://voice.test/custom-realtime",
+      supports_llm: false,
+      supports_asr: true,
+      supports_tts: true,
+    });
+    await fetch(`${baseUrl}/api/voice`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        asr_llm_setting_id: setting.id,
+        tts_llm_setting_id: setting.id,
+      }),
+    });
+
+    const originalFetch = globalThis.fetch;
+    const upstreamUrls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      if (url.startsWith(baseUrl)) return originalFetch(input, init);
+      upstreamUrls.push(url);
+      if (url.endsWith("custom-transcriptions")) {
+        return new Response(JSON.stringify({ text: "custom transcript" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(Buffer.from("custom speech"), {
+        status: 200,
+        headers: { "Content-Type": "audio/wav" },
+      });
+    });
+
+    const speech = await fetch(`${baseUrl}/api/voice/speech`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "hello" }),
+    });
+    expect(speech.status).toBe(200);
+
+    const transcribe = await fetch(`${baseUrl}/api/voice/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        audio_data_url: `data:audio/wav;base64,${Buffer.from("audio").toString("base64")}`,
+      }),
+    });
+    const transcribeBody = await transcribe.json() as { data?: { text?: string } };
+    expect(transcribe.status).toBe(200);
+    expect(transcribeBody.data?.text).toBe("custom transcript");
+    expect(upstreamUrls).toEqual([
+      "http://voice.test/custom-speech",
+      "http://voice.test/custom-transcriptions",
+    ]);
+  });
+
   it("routes Doubao Speech TTS through the openspeech adapter instead of OpenAI audio speech", async () => {
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;

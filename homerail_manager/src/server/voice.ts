@@ -498,6 +498,7 @@ async function _transcribeOpenAiCompatibleAsr(body: VoiceTranscribeBody): Promis
     throw new Error("Missing required field: audio_data_url");
   }
   const runtime = _resolveAsrRuntime(body);
+  const configuredTranscriptionUrl = _stringField(runtime.setting?.asr_async_url);
   if (isArkVoiceSetting(runtime.setting)) {
     const result = await transcribeArkAsr(arkVoiceRuntimeFromSetting(runtime.setting, "asr"), audioDataUrl);
     return { text: result.text, raw: result.raw };
@@ -509,7 +510,10 @@ async function _transcribeOpenAiCompatibleAsr(body: VoiceTranscribeBody): Promis
   const form = new FormData();
   form.set("model", runtime.model);
   form.set("file", new Blob([new Uint8Array(audio.buffer)], { type: audio.contentType }), audio.filename);
-  const response = await fetch(_joinApiUrl(runtime.baseUrl, "/v1/audio/transcriptions"), {
+  const transcriptionUrl = configuredTranscriptionUrl?.match(/^https?:\/\//)
+    ? configuredTranscriptionUrl
+    : _joinApiUrl(runtime.baseUrl, "/v1/audio/transcriptions");
+  const response = await fetch(transcriptionUrl, {
     method: "POST",
     headers: _authHeaders(runtime.apiKey, runtime.baseUrl),
     body: form,
@@ -795,6 +799,7 @@ export function voiceRoutesHandler(
     _readJsonBody(req)
       .then(async (body) => {
         const runtime = _resolveTtsRuntime(_loadVoiceSettings());
+        const configuredSpeechUrl = _stringField(runtime.setting?.tts_http_url);
         if (!runtime.apiKey) throw new Error("Missing TTS API key");
         if (isArkVoiceSetting(runtime.setting)) {
           const text = _stringField((body as VoiceSpeechBody).text);
@@ -819,7 +824,10 @@ export function voiceRoutesHandler(
           res.end(wav);
           return;
         }
-        const upstream = await fetch(_joinApiUrl(runtime.baseUrl, "/v1/audio/speech"), {
+        const speechUrl = configuredSpeechUrl?.match(/^https?:\/\//)
+          ? configuredSpeechUrl
+          : _joinApiUrl(runtime.baseUrl, "/v1/audio/speech");
+        const upstream = await fetch(speechUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -945,7 +953,8 @@ function _resolveAsrRealtimeRuntime(): {
     MIMO_API_BASE_URL;
   const model = setting?.model_name ?? _stringField(settings.asr_model) ?? MIMO_API_ASR_MODEL;
   const apiKey = setting?.api_key ?? process.env.HOMERAIL_MIMO_API_KEY ?? "";
-  const explicitRealtimeUrl = _stringField(settings.asr_realtime_url);
+  const explicitRealtimeUrl = _stringField(setting?.asr_realtime_url) ??
+    _stringField(settings.asr_realtime_url);
   const strategy: AsrRealtimeStrategy = isArkVoiceSetting(setting)
     ? "ark_voice"
     : _isMimoApiAsr({ baseUrl, model })

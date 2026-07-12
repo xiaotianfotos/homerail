@@ -187,11 +187,34 @@ function _skipDependentNodes(run: DAGRun, unavailableNodeId: string, sourceWasSk
     if (edge.from_node !== unavailableNodeId) continue;
     if (!sourceWasSkipped && edge.condition !== "on_success") continue;
     if (!edge.to_node) continue;
-    if (run.nodeStates.get(edge.to_node) !== "PENDING") continue;
+    const state = run.nodeStates.get(edge.to_node);
+    if (state !== "PENDING" && state !== "READY") continue;
+    // An explicit on_failure/always route from the failed node is allowed to
+    // wake the same target; a plain after dependency is not.
+    if (!sourceWasSkipped) {
+      const hasFailureRoute = run.graph.edges.some((candidate) =>
+        candidate.from_node === unavailableNodeId &&
+        candidate.to_node === edge.to_node &&
+        candidate.label !== "after_dep" &&
+        (candidate.condition === "on_failure" || candidate.condition === "always")
+      );
+      if (hasFailureRoute || run.inputSatisfied.get(edge.to_node)?.has(unavailableNodeId)) continue;
+    }
     if (_hasAlternativePath(run, edge.to_node, unavailableNodeId)) continue;
     run.nodeStates.set(edge.to_node, "SKIPPED");
     _skipDependentNodes(run, edge.to_node, true);
   }
+}
+
+export function reconcileFailedDependencies(run: DAGRun): string[] {
+  const before = new Map(run.nodeStates);
+  for (const [nodeId, state] of before) {
+    if (state === "FAILED") _skipDependentNodes(run, nodeId);
+  }
+  return Array.from(run.nodeStates.entries())
+    .filter(([nodeId, state]) => state === "SKIPPED" && before.get(nodeId) !== "SKIPPED")
+    .map(([nodeId]) => nodeId)
+    .sort();
 }
 
 function _wakeLoopSource(run: DAGRun, nodeId: string): void {

@@ -44,6 +44,7 @@
     "verify": "验证",
     "enable": "启用",
     "disable": "停用",
+    "delete": "删除",
     "operationFailed": "操作失败"
   },
   "git": {
@@ -85,6 +86,11 @@
     "configuredTitle": "已配置模型",
     "summary": "{providers} 个供应商 · {models} 个模型配置",
     "addModel": "添加模型",
+    "purposes": {
+      "llm": "大语言模型",
+      "asr": "语音识别（ASR）",
+      "tts": "语音合成（TTS）"
+    },
     "loading": "加载中...",
     "empty": "暂无模型配置，点击右上角添加。",
     "default": "默认",
@@ -100,6 +106,31 @@
     "added": "已添加 {count} 个模型配置",
     "deleteConfirm": "删除模型配置 {name}？",
     "deleted": "模型配置已删除",
+    "edit": {
+      "provider": "供应商与凭证",
+      "format": "音频格式",
+      "sampleRate": "采样率"
+    },
+    "providers": {
+      "title": "自定义供应商",
+      "subtitle": "先定义供应商，再按用途获取并添加模型。",
+      "add": "添加供应商",
+      "empty": "暂无自定义供应商",
+      "defaultModel": "默认模型",
+      "protocolUrls": "各协议接入地址",
+      "voiceEndpoints": "语音服务端点",
+      "ttsHttp": "TTS 语音合成 HTTP",
+      "ttsStreamingHttp": "TTS 流式合成 HTTP",
+      "asrHttp": "ASR 转写 HTTP",
+      "asrRealtimeWs": "ASR 实时 WebSocket",
+      "references": "有 {count} 个模型配置使用此供应商",
+      "saved": "自定义供应商已保存",
+      "deleted": "自定义供应商已删除",
+      "deleteConfirm": "删除自定义供应商 {name}？",
+      "deleteCascade": "删除供应商及 {count} 个模型",
+      "deleteCascadeConfirm": "确定删除自定义供应商 {name} 及以下 {count} 个模型配置吗：{models}？此操作无法撤销。",
+      "createFirst": "请先创建供应商，再添加模型"
+    },
     "form": {
       "credentialType": "选择凭证类型",
       "search": "搜索供应商/计费...",
@@ -128,8 +159,16 @@
       "modelName": "模型名称",
       "modelId": "模型 ID",
       "keepKey": "留空则保留原 Key",
+      "reuseCredential": "复用该供应商已保存的凭据",
+      "useDifferentKey": "使用其他 Key",
+      "useSavedKey": "使用已保存的 Key",
       "capabilities": "模型能力",
-      "probeFailedFallback": "探测失败"
+      "probeFailedFallback": "探测失败",
+      "serviceUrl": "服务地址",
+      "voice": "音色",
+      "voicePlaceholder": "可选音色 ID",
+      "discoverModels": "先获取供应商模型列表，再选择要添加的模型",
+      "fetchModels": "获取模型"
     },
     "plans": {
       "apiBilling": "API 计费",

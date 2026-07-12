@@ -3,7 +3,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 export function getHomerailHome(): string {
-  return process.env.HOMERAIL_HOME || path.join(os.homedir(), ".homerail");
+  const configured = process.env.HOMERAIL_HOME || path.join(os.homedir(), ".homerail");
+  if (process.env.VITEST && process.env.HOMERAIL_ALLOW_UNSAFE_TEST_HOME !== "1") {
+    const relative = path.relative(path.resolve(os.tmpdir()), path.resolve(configured));
+    const isTemporary = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    if (!isTemporary) {
+      throw new Error(`Vitest refused non-temporary HOMERAIL_HOME: ${configured}`);
+    }
+  }
+  return configured;
 }
 
 export const DEFAULT_MANAGER_PORT = 19191;

@@ -3,6 +3,7 @@ import {
   getDefaultProviders,
   getProvider,
   upsertProvider,
+  updateProvider,
   deleteProvider,
   listSettings,
   getSetting,
@@ -14,6 +15,7 @@ import {
   type LLMPlanType,
   type LLMProtocol,
   type LLMAuthType,
+  type ProviderInput,
 } from "../persistence/llm-settings.js";
 
 interface BaseResponse {
@@ -34,6 +36,10 @@ function _badRequest(res: http.ServerResponse, message: string) {
 
 function _notFound(res: http.ServerResponse, message: string) {
   json(res, 404, { success: false, message, error: message });
+}
+
+function _conflict(res: http.ServerResponse, message: string) {
+  json(res, 409, { success: false, message, error: message });
 }
 
 function _ok(res: http.ServerResponse, message: string, data?: unknown) {
@@ -157,7 +163,15 @@ function _authType(value: unknown): LLMAuthType | undefined {
     : undefined;
 }
 
-function _providerBody(body: Record<string, unknown>, idOverride?: string) {
+function _voiceAdapter(value: unknown): ProviderInput["voice_adapter"] {
+  return value === "openai_audio" || value === "mimo_audio" ||
+      value === "volcengine_doubao_voice" || value === "volcengine_ark_voice" ||
+      value === "volcengine_openspeech" || value === "custom"
+    ? value
+    : undefined;
+}
+
+function _providerBody(body: Record<string, unknown>, idOverride?: string): ProviderInput {
   return {
     id: idOverride ?? _requiredString(body, "id") ?? "",
     name: typeof body.name === "string" ? body.name : undefined,
@@ -170,6 +184,11 @@ function _providerBody(body: Record<string, unknown>, idOverride?: string) {
       : undefined,
     responses_base_url: typeof body.responses_base_url === "string" ? body.responses_base_url : undefined,
     anthropic_base_url: typeof body.anthropic_base_url === "string" ? body.anthropic_base_url : undefined,
+    voice_adapter: _voiceAdapter(body.voice_adapter),
+    tts_http_url: typeof body.tts_http_url === "string" ? body.tts_http_url : undefined,
+    tts_realtime_url: typeof body.tts_realtime_url === "string" ? body.tts_realtime_url : undefined,
+    asr_realtime_url: typeof body.asr_realtime_url === "string" ? body.asr_realtime_url : undefined,
+    asr_async_url: typeof body.asr_async_url === "string" ? body.asr_async_url : undefined,
     supports_llm: typeof body.supports_llm === "boolean" ? body.supports_llm : undefined,
     supports_asr: typeof body.supports_asr === "boolean" ? body.supports_asr : undefined,
     supports_tts: typeof body.supports_tts === "boolean" ? body.supports_tts : undefined,
@@ -188,6 +207,7 @@ function _settingCreateBody(b: Record<string, unknown>) {
       ? b.models as string[]
       : undefined,
     api_key: _requiredString(b, "api_key"),
+    reuse_existing_api_key: b.reuse_existing_api_key === true,
     display_name: _requiredString(b, "display_name") ?? _requiredString(b, "alias"),
     alias: _requiredString(b, "alias"),
     endpoint_id: _requiredString(b, "endpoint_id"),
@@ -225,7 +245,8 @@ export function llmSettingsRoutesHandler(
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): boolean {
-  const pathname = new URL(req.url || "/", "http://localhost").pathname;
+  const requestUrl = new URL(req.url || "/", "http://localhost");
+  const pathname = requestUrl.pathname;
 
   // GET /api/providers or frontend-compatible GET /api/llm/providers
   if ((pathname === "/api/providers" || pathname === "/api/llm/providers") && req.method === "GET") {
@@ -356,10 +377,12 @@ export function llmSettingsRoutesHandler(
     _readJsonBody(req)
       .then((body) => {
         try {
-          const provider = upsertProvider(_providerBody(body as Record<string, unknown>, id));
-          _ok(res, "Provider upserted", provider);
+          const provider = updateProvider(id, _providerBody(body as Record<string, unknown>, id));
+          _ok(res, "Provider updated", provider);
         } catch (err) {
-          _badRequest(res, err instanceof Error ? err.message : String(err));
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.includes("not found")) _notFound(res, message);
+          else _badRequest(res, message);
         }
       })
       .catch((err) => {
@@ -370,15 +393,18 @@ export function llmSettingsRoutesHandler(
 
   if (providerMatch && req.method === "DELETE") {
     const id = decodeURIComponent(providerMatch[1]);
+    const cascade = requestUrl.searchParams.get("cascade") === "true";
     try {
-      const removed = deleteProvider(id);
+      const removed = deleteProvider(id, { cascade });
       if (!removed) {
         _notFound(res, `Provider not found: ${id}`);
         return true;
       }
-      _ok(res, "Provider deleted", { id });
+      _ok(res, "Provider deleted", { id, cascade });
     } catch (err) {
-      _badRequest(res, err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("is referenced by")) _conflict(res, message);
+      else _badRequest(res, message);
     }
     return true;
   }
@@ -409,7 +435,15 @@ export function llmSettingsRoutesHandler(
           _badRequest(res, "Missing required field: model_name");
           return;
         }
-        if (!parsed.api_key) {
+        if (parsed.api_key === "__reuse_existing__") {
+          _badRequest(res, "Reserved API key value: __reuse_existing__; use reuse_existing_api_key instead");
+          return;
+        }
+        if (parsed.api_key && parsed.reuse_existing_api_key) {
+          _badRequest(res, "api_key and reuse_existing_api_key are mutually exclusive");
+          return;
+        }
+        if (!parsed.api_key && !parsed.reuse_existing_api_key) {
           _badRequest(res, "Missing required field: api_key");
           return;
         }
@@ -419,7 +453,7 @@ export function llmSettingsRoutesHandler(
             ...parsed,
             provider_id: parsed.provider_id,
             model_name: parsed.model_name,
-            api_key: parsed.api_key,
+            api_key: parsed.api_key ?? "",
           });
           _created(res, "Setting created", _maskSetting(setting));
         } catch (err) {

@@ -6,6 +6,7 @@ import {
   createDAGRun,
   edgeMatchesHandoff,
   failNode,
+  reconcileFailedDependencies,
   getNodeState,
   getReadyNodes,
   handoff,
@@ -569,14 +570,35 @@ function _applyOrphanedNodeDemotion(run: ActiveRun): string[] {
     });
   }
 
+  const skippedBlockedNodes = reconcileFailedDependencies(run.dagRun);
+  for (const nodeId of skippedBlockedNodes) {
+    _markNodeSessionStatus(run, nodeId, "cancelled");
+  }
+
+  // A failed prerequisite can leave downstream nodes permanently PENDING. If
+  // recovery has no READY/RUNNING work left, those nodes cannot make progress.
+  const hasFailedNodes = Array.from(run.dagRun.nodeStates.values()).some((state) => state === "FAILED");
+  const hasRunnableWork = Array.from(run.dagRun.nodeStates.values())
+    .some((state) => state === "READY" || state === "RUNNING");
+  if (hasFailedNodes && !hasRunnableWork) {
+    for (const [nodeId, state] of run.dagRun.nodeStates.entries()) {
+      if (state === "PENDING") {
+        run.dagRun.nodeStates.set(nodeId, "SKIPPED");
+        _markNodeSessionStatus(run, nodeId, "cancelled");
+      }
+    }
+  }
+
   // If demoting orphaned nodes made the run terminal, mark it failed.
-  if (demotedFromRunning.length > 0 && isRunTerminal(run.dagRun)) {
+  if (hasFailedNodes && isRunTerminal(run.dagRun)) {
     run.status = "failed";
     run.completedAt = Date.now();
     emit("dag:run_failed", {
       runId: run.runId,
       nodeId: demotedFromRunning[0],
-      reason: "run failed during cold recovery (orphaned running nodes)",
+      reason: demotedFromRunning.length > 0
+        ? "run failed during cold recovery (orphaned running nodes)"
+        : "run failed during cold recovery (blocked by failed dependency)",
     });
     deprovisionProvisionedForRun(run.runId);
   }

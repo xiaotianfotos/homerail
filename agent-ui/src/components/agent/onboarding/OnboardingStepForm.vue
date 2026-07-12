@@ -215,9 +215,7 @@ function selectCredential(key: string): void {
 }
 
 // ── 自定义 / 本地部署表单状态 ─────────────────────────────────
-// 本地部署（如 vLLM）后端统一用 base_url 拼接 /v1/audio/transcriptions（ASR）
-// 和 /v1/audio/speech（TTS），所以三个能力都填 base_url + model，
-// 不需要分别填 realtime/http URL。
+// 本地 OpenAI Audio 服务从 /v1 Base URL 派生标准 HTTP/WS 端点并持久化。
 interface CustomFields {
   baseUrl: string  // vLLM OpenAI 兼容接入地址（不含 /v1）
   model: string
@@ -229,6 +227,16 @@ const customFields = ref<CustomFields>({
   model: '',
   voice: '',
 })
+
+function voiceApiBase(value: string): string {
+  const normalized = value.trim().replace(/\/+$/, '')
+  if (!normalized) return ''
+  return normalized.endsWith('/v1') ? normalized : `${normalized}/v1`
+}
+
+function voiceEndpoint(baseUrl: string, path: string): string {
+  return `${baseUrl}/${path.replace(/^\/+/, '')}`
+}
 
 // 自定义凭证的元信息
 const customProviderId = computed(() => `local-${props.capability.replace('supports_', '')}`)
@@ -376,10 +384,10 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
   const pname = customProviderName.value
   const model = f.model.trim()
   const displayName = `${pname} · ${model}`
-  const baseUrl = f.baseUrl.trim()
+  const rawBaseUrl = f.baseUrl.trim()
+  const baseUrl = props.capability === 'supports_llm' ? rawBaseUrl : voiceApiBase(rawBaseUrl)
 
-  // 本地 vLLM 部署：后端用 base_url 拼接 /v1/audio/transcriptions（ASR）
-  // 和 /v1/audio/speech（TTS），protocol 对 ASR/TTS 无实质影响，统一用 openai_compatible。
+  // 本地语音服务使用 OpenAI Audio 兼容协议，并保存可覆盖的标准 HTTP/WS 端点。
   const protocol: ProviderProtocol = 'openai_compatible'
 
   const caps = {
@@ -404,7 +412,21 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
     base_url: baseUrl,
     // LLM 同时填 chat_completions_base_url；ASR/TTS 后端只用 base_url
     chat_completions_base_url: props.capability === 'supports_llm' ? baseUrl : undefined,
-    voice_adapter: 'custom',
+    voice_adapter: props.capability === 'supports_llm' ? 'custom' : 'openai_audio',
+    ...(props.capability === 'supports_tts'
+      ? {
+          tts_http_url: voiceEndpoint(baseUrl, 'audio/speech'),
+          tts_realtime_url: voiceEndpoint(baseUrl, 'audio/speech/stream'),
+        }
+      : {}),
+    ...(props.capability === 'supports_asr'
+      ? {
+          asr_async_url: voiceEndpoint(baseUrl, 'audio/transcriptions'),
+          asr_realtime_url: voiceEndpoint(baseUrl, 'realtime')
+            .replace(/^http:/, 'ws:')
+            .replace(/^https:/, 'wss:'),
+        }
+      : {}),
     // TTS 音色（后端 TTS payload 会带上）
     ...(props.capability === 'supports_tts' && f.voice.trim() ? { tts_voice: f.voice.trim() } : {}),
     // 本地服务通常无需 Key，留空则传占位（api_key 字段后端必填）

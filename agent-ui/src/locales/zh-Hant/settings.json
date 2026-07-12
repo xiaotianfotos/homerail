@@ -44,6 +44,7 @@
     "verify": "驗證",
     "enable": "啓用",
     "disable": "停用",
+    "delete": "刪除",
     "operationFailed": "操作失敗"
   },
   "git": {
@@ -85,6 +86,11 @@
     "configuredTitle": "已配置模型",
     "summary": "{providers} 個供應商 · {models} 個模型配置",
     "addModel": "添加模型",
+    "purposes": {
+      "llm": "大語言模型",
+      "asr": "語音識別（ASR）",
+      "tts": "語音合成（TTS）"
+    },
     "loading": "加載中...",
     "empty": "暫無模型配置，點擊右上角添加。",
     "default": "默認",
@@ -100,6 +106,31 @@
     "added": "已添加 {count} 個模型配置",
     "deleteConfirm": "刪除模型配置 {name}？",
     "deleted": "模型配置已刪除",
+    "edit": {
+      "provider": "供應商與憑證",
+      "format": "音訊格式",
+      "sampleRate": "採樣率"
+    },
+    "providers": {
+      "title": "自定義供應商",
+      "subtitle": "先定義供應商，再按用途獲取並添加模型。",
+      "add": "添加供應商",
+      "empty": "暫無自定義供應商",
+      "defaultModel": "默認模型",
+      "protocolUrls": "各協議接入地址",
+      "voiceEndpoints": "語音服務端點",
+      "ttsHttp": "TTS 語音合成 HTTP",
+      "ttsStreamingHttp": "TTS 串流合成 HTTP",
+      "asrHttp": "ASR 轉寫 HTTP",
+      "asrRealtimeWs": "ASR 即時 WebSocket",
+      "references": "有 {count} 個模型配置使用此供應商",
+      "saved": "自定義供應商已保存",
+      "deleted": "自定義供應商已刪除",
+      "deleteConfirm": "刪除自定義供應商 {name}？",
+      "deleteCascade": "刪除供應商及 {count} 個模型",
+      "deleteCascadeConfirm": "確定刪除自定義供應商 {name} 及以下 {count} 個模型配置嗎：{models}？此操作無法撤銷。",
+      "createFirst": "請先創建供應商，再添加模型"
+    },
     "form": {
       "credentialType": "選擇憑證類型",
       "search": "搜索供應商/計費...",
@@ -128,8 +159,16 @@
       "modelName": "模型名稱",
       "modelId": "模型 ID",
       "keepKey": "留空則保留原 Key",
+      "reuseCredential": "重用該供應商已儲存的憑證",
+      "useDifferentKey": "使用其他 Key",
+      "useSavedKey": "使用已儲存的 Key",
       "capabilities": "模型能力",
-      "probeFailedFallback": "探測失敗"
+      "probeFailedFallback": "探測失敗",
+      "serviceUrl": "服務地址",
+      "voice": "音色",
+      "voicePlaceholder": "可選音色 ID",
+      "discoverModels": "先獲取供應商模型列表，再選擇要添加的模型",
+      "fetchModels": "獲取模型"
     },
     "plans": {
       "apiBilling": "API 計費",

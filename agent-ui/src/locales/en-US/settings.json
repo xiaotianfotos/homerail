@@ -44,6 +44,7 @@
     "verify": "Verify",
     "enable": "Enable",
     "disable": "Disable",
+    "delete": "Delete",
     "operationFailed": "Operation failed"
   },
   "git": {
@@ -85,6 +86,11 @@
     "configuredTitle": "Configured models",
     "summary": "{providers} providers · {models} model settings",
     "addModel": "Add model",
+    "purposes": {
+      "llm": "Language model",
+      "asr": "Speech recognition (ASR)",
+      "tts": "Speech synthesis (TTS)"
+    },
     "loading": "Loading...",
     "empty": "No model settings yet. Use Add model to create one.",
     "default": "Default",
@@ -100,6 +106,31 @@
     "added": "Added {count} model settings",
     "deleteConfirm": "Delete model setting {name}?",
     "deleted": "Model setting deleted",
+    "edit": {
+      "provider": "Provider and credential",
+      "format": "Audio format",
+      "sampleRate": "Sample rate"
+    },
+    "providers": {
+      "title": "Custom providers",
+      "subtitle": "Define a provider first, then fetch and add models for a specific purpose.",
+      "add": "Add provider",
+      "empty": "No custom providers",
+      "defaultModel": "Default model",
+      "protocolUrls": "Protocol-specific URLs",
+      "voiceEndpoints": "Voice endpoints",
+      "ttsHttp": "TTS speech HTTP",
+      "ttsStreamingHttp": "TTS streaming HTTP",
+      "asrHttp": "ASR transcription HTTP",
+      "asrRealtimeWs": "ASR realtime WebSocket",
+      "references": "{count} model settings use this provider",
+      "saved": "Custom provider saved",
+      "deleted": "Custom provider deleted",
+      "deleteConfirm": "Delete custom provider {name}?",
+      "deleteCascade": "Delete provider and {count} model | Delete provider and {count} models",
+      "deleteCascadeConfirm": "Delete custom provider {name} and this {count} model setting: {models}? This cannot be undone. | Delete custom provider {name} and these {count} model settings: {models}? This cannot be undone.",
+      "createFirst": "Create the provider before adding models"
+    },
     "form": {
       "credentialType": "Select credential type",
       "search": "Search providers or plans...",
@@ -128,8 +159,16 @@
       "modelName": "Model name",
       "modelId": "Model ID",
       "keepKey": "Leave blank to keep the existing key",
+      "reuseCredential": "Reuse the saved credential for this provider",
+      "useDifferentKey": "Use another key",
+      "useSavedKey": "Use saved key",
       "capabilities": "Model capabilities",
-      "probeFailedFallback": "Discovery failed"
+      "probeFailedFallback": "Discovery failed",
+      "serviceUrl": "Service URL",
+      "voice": "Voice",
+      "voicePlaceholder": "Optional voice ID",
+      "discoverModels": "Fetch the provider model list, then select a model",
+      "fetchModels": "Fetch models"
     },
     "plans": {
       "apiBilling": "API billing",
