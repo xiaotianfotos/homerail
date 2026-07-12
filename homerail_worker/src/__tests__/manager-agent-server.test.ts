@@ -187,6 +187,7 @@ function writeOrchestrationFiles(workspace: string): void {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "local-review-template.yaml"), "nodes: []\n", "utf8");
   fs.writeFileSync(path.join(dir, "example-review-template.yaml"), "nodes: []\n", "utf8");
+  fs.writeFileSync(path.join(dir, "pr-closeout.yaml.template"), "api_version: homerail.ai/v1\n", "utf8");
 }
 
 class ObjectiveSuccessAgent implements AgentClient {
@@ -240,7 +241,7 @@ class PrReviewToolAgent implements AgentClient {
   ): AsyncIterable<AgentEvent> {
     const tool = tools.find((item) => item.name === "run_pr_review");
     if (!tool) throw new Error("run_pr_review tool missing");
-    const input = { repo: "xiaotianfotos/homerail", pr: 25 };
+    const input = { repo: "xiaotianfotos/homerail", pr: 25, expected_usage: 0 };
     yield { type: "tool_use", id: "tool-pr-review", name: "run_pr_review", input };
     const result = await tool.handler(input);
     yield {
@@ -746,7 +747,7 @@ describe("manager-agent server", () => {
         pr: 25,
         base: "a".repeat(40),
         head: "b".repeat(40),
-        expected_usage: 8,
+        expected_usage: 0,
       });
     } finally {
       await close(server);
@@ -945,6 +946,10 @@ describe("manager-agent server", () => {
       expect(response.status).toBe(200);
       expect(agent.observed).toContain("local-review-template.yaml");
       expect(agent.observed).toContain("example-review-template.yaml");
+      expect(agent.observed).toContain("pr-closeout.yaml.template");
+      expect(JSON.parse(agent.observed)).toMatchObject({
+        root: path.join(workspace, "assets", "orchestrations"),
+      });
       expect(agent.observed).not.toContain("recommended_for");
       expect(body.tool_results?.[0]?.content).not.toContain("recommended_for");
     } finally {

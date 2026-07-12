@@ -662,13 +662,18 @@ function createManagerTools(state: {
       async handler() {
         const dir = path.join(projectWorkspace(), "assets", "orchestrations");
         const files = fs.existsSync(dir)
-          ? fs.readdirSync(dir).filter((name) => name.endsWith(".yaml") || name.endsWith(".yml")).sort()
+          ? fs.readdirSync(dir).filter((name) =>
+            name.endsWith(".yaml") ||
+            name.endsWith(".yml") ||
+            name.endsWith(".yaml.template") ||
+            name.endsWith(".yml.template")
+          ).sort()
           : [];
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              root: "assets/orchestrations",
+              root: dir,
               files,
             }),
           }],
@@ -841,7 +846,7 @@ function createManagerTools(state: {
         properties: {
           repo: { type: "string", description: "GitHub repository in owner/name form" },
           pr: { type: "integer", minimum: 1 },
-          expected_usage: { type: "integer", minimum: 1, maximum: 100 },
+          expected_usage: { type: "integer", minimum: 0, maximum: 100 },
         },
         required: ["repo", "pr"],
         additionalProperties: false,
@@ -852,7 +857,7 @@ function createManagerTools(state: {
         try {
           const metadata = await resolveGitHubPullRequest(repo, pr);
           const requestedUsage = Number(args.expected_usage);
-          const expectedUsage = Number.isInteger(requestedUsage) && requestedUsage >= 1 && requestedUsage <= 100
+          const expectedUsage = Number.isInteger(requestedUsage) && requestedUsage >= 0 && requestedUsage <= 100
             ? requestedUsage
             : 8;
           const envelope = {
