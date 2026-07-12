@@ -468,11 +468,30 @@ export function validatePluginFiles(inputFiles: ReadonlyMap<string, Buffer>, roo
         throw new Error(`${entry.owner} output schema must match the projected Kind content schema`);
       }
       if (projection.value.legacy_bridge) throw new Error("External data-only projectors cannot declare a legacy bridge");
-      if (entry.actions.length) {
-        const actionInputSchema = schemas.get(entry.tool.input_schema);
-        if (!actionInputSchema) {
-          throw new Error(`${entry.owner} input schema did not pass strict validation`);
+      const projectionInputSchema = schemas.get(entry.tool.input_schema);
+      // Schema validation already reports the root cause. Avoid a second,
+      // misleading projector error when the referenced schema was rejected.
+      if (!projectionInputSchema) continue;
+      if (projection.value.view_pointer) {
+        const viewSchema = schemaAtProjectionPointer(projectionInputSchema, projection.value.view_pointer);
+        if (!viewSchema || viewSchema.type !== "object") {
+          throw new Error(`${entry.owner} view_pointer must resolve to an object in its input schema`);
         }
+      }
+      for (const [label, pointerValue] of [
+        ["surface_pointer", projection.value.surface_pointer],
+        ["importance_pointer", projection.value.importance_pointer],
+        ["density_pointer", projection.value.density_pointer],
+        ["persistence_pointer", projection.value.persistence_pointer],
+      ] as const) {
+        if (!pointerValue) continue;
+        const projectedSchema = schemaAtProjectionPointer(projectionInputSchema, pointerValue);
+        if (!projectedSchema || projectedSchema.type !== "string") {
+          throw new Error(`${entry.owner} ${label} must resolve to a string in its input schema`);
+        }
+      }
+      if (entry.actions.length) {
+        const actionInputSchema = projectionInputSchema;
         const projectedNodeIdSchema = schemaAtProjectionPointer(
           actionInputSchema,
           projection.value.node_id_pointer,

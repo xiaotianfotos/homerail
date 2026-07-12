@@ -1,0 +1,24 @@
+{
+  "projection_version": 1,
+  "type": "direct_ui_node",
+  "kind": "com.homerail.core/generated_view",
+  "kind_version": 1,
+  "node_id_pointer": "/id",
+  "content_pointer": "/content",
+  "view_pointer": "/view",
+  "surface_pointer": "/surface",
+  "importance_pointer": "/importance",
+  "density_pointer": "/density",
+  "persistence_pointer": "/persistence",
+  "omit_content_fields": [],
+  "fallback": {
+    "title_pointer": "/title",
+    "summary_pointer": "/summary"
+  },
+  "defaults": {
+    "surface": "result",
+    "importance": "primary",
+    "density": "detail",
+    "persistence": "session"
+  }
+}

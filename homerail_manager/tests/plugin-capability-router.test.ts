@@ -259,6 +259,7 @@ describe("Plugin Capability Index and deterministic Top-K Router", () => {
   it("enforces Top-K and prompt byte budgets without partial Skill/Tool exposure", () => {
     const coreState = clonedState();
     const core = coreState.plugins.find((plugin) => plugin.plugin_id === "com.homerail.core")!;
+    core.descriptor.manifest.capabilities[0].tools = [];
     const original = core.descriptor.manifest.capabilities[0];
     core.descriptor.manifest.capabilities.push({ ...structuredClone(original), id: "voice-generative-ui-alt" });
     const topK = routePluginCapabilities({

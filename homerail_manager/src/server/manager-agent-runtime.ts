@@ -19,7 +19,7 @@ import {
   routePluginCapabilities,
   type PluginCapabilityRouteResult,
 } from "../plugins/capability-router.js";
-import { assertCurrentPluginTurnContextSubset } from "../plugins/context-assembler.js";
+import { assemblePluginTurnContext, assertCurrentPluginTurnContextSubset } from "../plugins/context-assembler.js";
 import { getPluginToolTurnAuthority } from "../plugins/action-bus.js";
 import {
   managerAgentRuntimePlacementForHarness,
@@ -178,16 +178,23 @@ export function resolveManagerAgentTurnAssets(
     };
   }
   const hints = input.plugin_routing;
+  const modality = input.response_mode === "voice" ? "voice" : "text";
+  const toolsBound = input.response_mode === "voice"
+    && (input.generative_ui_mode === "prefer" || input.generative_ui_mode === "shadow");
+  const sourceContext = hints?.source_context ?? assemblePluginTurnContext(undefined, {
+    modality,
+    include_agent_tools: toolsBound,
+  });
   const route = routePluginCapabilities({
     utterance: input.message,
-    modality: input.response_mode === "voice" ? "voice" : "text",
+    modality,
     ...(hints?.inputs ? { inputs: hints.inputs } : {}),
     ...(hints?.explicit_plugin_id ? { explicit_plugin_id: hints.explicit_plugin_id } : {}),
     ...(hints?.explicit_capability_id ? { explicit_capability_id: hints.explicit_capability_id } : {}),
     ...(hints?.top_k !== undefined ? { top_k: hints.top_k } : {}),
     ...(hints?.prompt_byte_budget !== undefined ? { prompt_byte_budget: hints.prompt_byte_budget } : {}),
   }, undefined, {
-    ...(hints?.source_context ? { source_context: hints.source_context } : {}),
+    source_context: sourceContext,
   });
   assertAgentPromptTrust(route.selected_context, placement);
   return {

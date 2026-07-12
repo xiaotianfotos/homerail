@@ -23,13 +23,15 @@
       "summary": "Maintain truthful, compact structured state on the voice surface.",
       "intents": [
         "remember evolving task requirements",
-        "show confirmed task or execution state"
+        "show confirmed task or execution state",
+        "compose a dynamic structured interface",
+        "动态生成界面"
       ],
       "tags": ["voice", "ui", "core"],
       "modalities": ["voice", "text", "touch", "gamepad"],
       "required_inputs": [],
       "skill": "voice-generative-ui",
-      "tools": [],
+      "tools": ["upsert_generated_view"],
       "workflows": [],
       "actions": []
     }
@@ -45,6 +47,14 @@
     {
       "id": "legacy-widget-content-v1",
       "file": "schemas/legacy-widget-content.v1.schema.json"
+    },
+    {
+      "id": "generated-view-input-v1",
+      "file": "schemas/generated-view-input.v1.schema.json"
+    },
+    {
+      "id": "generated-view-content-v1",
+      "file": "schemas/generated-view-content.v1.schema.json"
     }
   ],
   "kinds": [
@@ -191,9 +201,40 @@
         "actions": []
       }],
       "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/generated_view",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "generated-view-content-v1",
+        "allowed_surfaces": ["task", "execution", "result", "ambient"],
+        "default_surface": "result",
+        "default_variant": "detail",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["view_spec", "dashboard", "table", "timeline", "chart", "dag"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
     }
   ],
-  "tools": [],
+  "tools": [
+    {
+      "id": "upsert_generated_view",
+      "description": "Create or replace a bounded ViewSpec V1 interface from semantic data. Reuse a stable id for later revisions.",
+      "exposure": ["agent"],
+      "input_schema": "generated-view-input-v1",
+      "output_schema": "generated-view-content-v1",
+      "effect": "write",
+      "permissions": [],
+      "confirmation": "never",
+      "handler": {
+        "type": "projection",
+        "file": "ui/projectors/generated-view.v1.json"
+      }
+    }
+  ],
   "workflows": [],
   "renderers": [
     {
@@ -293,6 +334,17 @@
       "surfaces": ["task"],
       "devices": ["phone", "desktop", "tv"],
       "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-generated-view",
+      "kind": "com.homerail.core/generated_view",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["task", "execution", "result", "ambient"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "view-spec" },
       "fallback": { "type": "portable" }
     }
   ],

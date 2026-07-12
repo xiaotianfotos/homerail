@@ -244,6 +244,25 @@ export function loadPluginPackage(
       throw new Error(`Tool projection ${tool.id} output_schema must match its target kind content schema`);
     }
     const inputSchema = schemas.find((schema) => schema.id === tool.input_schema)?.schema;
+    if (!inputSchema) throw new Error(`Tool projection ${tool.id} input_schema is unavailable`);
+    if (projectionValidation.value.view_pointer) {
+      const projectedView = schemaAtPointer(inputSchema, projectionValidation.value.view_pointer);
+      if (!projectedView || projectedView.type !== "object") {
+        throw new Error(`Tool projection ${tool.id} view_pointer must resolve to an object in input_schema`);
+      }
+    }
+    for (const [label, pointerValue] of [
+      ["surface_pointer", projectionValidation.value.surface_pointer],
+      ["importance_pointer", projectionValidation.value.importance_pointer],
+      ["density_pointer", projectionValidation.value.density_pointer],
+      ["persistence_pointer", projectionValidation.value.persistence_pointer],
+    ] as const) {
+      if (!pointerValue) continue;
+      const projectedValue = schemaAtPointer(inputSchema, pointerValue);
+      if (!projectedValue || projectedValue.type !== "string") {
+        throw new Error(`Tool projection ${tool.id} ${label} must resolve to a string in input_schema`);
+      }
+    }
     for (const projectedAction of projectionValidation.value.actions ?? []) {
       const action = manifest.actions.find((entry) => entry.id === projectedAction.id);
       if (!action || !targetVersion.actions.includes(action.id)) {

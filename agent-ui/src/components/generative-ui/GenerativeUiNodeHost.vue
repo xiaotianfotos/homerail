@@ -6,6 +6,7 @@ import type {
   GenerativeUiDocumentScopeV1,
   GenerativeUiStoredNodeV1,
   GenerativeUiSurfaceContextV1,
+  HomerailViewNodeV1,
 } from 'homerail-protocol'
 import {
   confirmPluginAction,
@@ -78,6 +79,17 @@ const { t } = useI18n()
 const registry = computed(() => props.registry ?? emptyGenerativeUiRendererRegistry)
 const actionRegistry = computed(() => props.actionRegistry ?? emptyGenerativeUiActionRegistry)
 const availableActions = computed(() => actionRegistry.value.availableFor(props.node))
+const inlineViewActionIds = computed(() => {
+  const ids = new Set<string>()
+  const visit = (node: HomerailViewNodeV1): void => {
+    if (node.type === 'action') ids.add(node.action_id)
+    if (node.type === 'repeat') visit(node.item)
+    else if ('children' in node) node.children.forEach(visit)
+  }
+  if (props.node.view) visit(props.node.view.root)
+  return ids
+})
+const supplementaryActions = computed(() => availableActions.value.filter(action => !inlineViewActionIds.value.has(action.id)))
 const resolution = computed(() => registry.value.resolve(
   props.node,
   props.placement.surface,
@@ -389,6 +401,7 @@ function requestCustomRendererAction(actionId: string): void {
         :placement="placement"
         :context="context"
         @open-preview="emit('open-preview', $event)"
+        @request-action="requestCustomRendererAction"
       />
       <template #fallback="{ error }">
         <GenerativeUiFallbackRenderer :node="node" unavailable :reason="error" />
@@ -423,12 +436,12 @@ function requestCustomRendererAction(actionId: string): void {
     />
 
     <nav
-      v-if="interactive !== false && actionMode !== 'disabled' && availableActions.length"
+      v-if="interactive !== false && actionMode !== 'disabled' && supplementaryActions.length"
       class="generative-ui-node-host__actions"
       aria-label="Actions"
     >
       <button
-        v-for="action in availableActions"
+        v-for="action in supplementaryActions"
         :key="action.id"
         type="button"
         :data-style="action.style || 'secondary'"

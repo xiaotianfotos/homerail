@@ -331,6 +331,8 @@ describe("Manager Agent per-turn capability routing", () => {
     for await (const event of runManagerAgentTurnStream({
       message: "remember evolving task requirements",
       response_mode: "voice",
+      generative_ui_mode: "prefer",
+      voice_session_id: "voice-session-stream",
       agent_config: runtimeConfig("host"),
     })) events.push(event);
 
@@ -340,11 +342,25 @@ describe("Manager Agent per-turn capability routing", () => {
     expect(context.skills.map((skill) => skill.qualified_id)).toEqual([
       "com.homerail.core:voice-generative-ui",
     ]);
-    expect(context.tools).toEqual([]);
+    expect(context.tools.map((tool) => tool.qualified_id)).toEqual([
+      "com.homerail.core:upsert_generated_view",
+    ]);
     expect(events.at(-1)).toMatchObject({
       type: "result",
       result: { plugin_context: context },
     });
+  });
+
+  it("keeps runtime ViewSpec instructions but withholds its Tool when Generative UI is unbound", () => {
+    const assets = resolveManagerAgentTurnAssets({
+      message: "remember evolving task requirements",
+      response_mode: "voice",
+      agent_config: runtimeConfig("host"),
+    });
+    expect(assets.plugin_context.skills.map((skill) => skill.qualified_id)).toEqual([
+      "com.homerail.core:voice-generative-ui",
+    ]);
+    expect(assets.plugin_context.tools).toEqual([]);
   });
 
   it("keeps installed Plugin instructions out of every same-UID Agent prompt path", async () => {

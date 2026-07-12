@@ -100,7 +100,11 @@ function enabledPlugins(state: PluginRegistryState): ActivePluginRecord[] {
 
 export function assemblePluginTurnContext(
   state?: PluginRegistryState,
-  options: { modality?: HomerailPluginModality; legacy_compatibility_mode?: boolean } = {},
+  options: {
+    modality?: HomerailPluginModality;
+    legacy_compatibility_mode?: boolean;
+    include_agent_tools?: boolean;
+  } = {},
 ): HomerailPluginTurnContextV1 {
   if (!state) ensureBuiltinPluginsSynced();
   const registry = state ?? getPluginRegistryState();
@@ -134,6 +138,7 @@ export function assemblePluginTurnContext(
       });
     }
     for (const tool of manifest.tools) {
+      if (options.include_agent_tools === false) continue;
       if (!tool.exposure.includes("agent")) continue;
       const toolCapabilities = capabilities.filter((capability) => capability.tools.includes(tool.id));
       if (!toolCapabilities.length) continue;

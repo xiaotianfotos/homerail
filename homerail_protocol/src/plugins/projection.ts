@@ -117,6 +117,21 @@ function boundedText(value: unknown, limit: number): string {
   return String(value).replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
+function projectedEnum<T extends string>(
+  argumentsValue: Record<string, unknown>,
+  pointerValue: string | undefined,
+  fallback: T,
+  allowed: readonly T[],
+  label: string,
+): T {
+  if (!pointerValue) return fallback;
+  const value = pointer(argumentsValue, pointerValue);
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw new Error(`Projection ${label} pointer did not resolve to a supported value: ${pointerValue}`);
+  }
+  return value as T;
+}
+
 function fallbackItems(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map((entry) => boundedText(entry, 500)).filter(Boolean).slice(0, 16);
@@ -190,6 +205,10 @@ export function applyHomerailDirectUiProjection(input: {
   }
   const content = structuredClone(rawContent) as Record<string, unknown>;
   projection.omit_content_fields.forEach((field) => delete content[field]);
+  const rawView = projection.view_pointer ? pointer(input.arguments, projection.view_pointer) : undefined;
+  if (projection.view_pointer && (!rawView || typeof rawView !== "object" || Array.isArray(rawView))) {
+    throw new Error(`Projection view pointer must resolve to an object: ${projection.view_pointer}`);
+  }
   const title = boundedText(pointer(input.arguments, projection.fallback.title_pointer), 200);
   if (!title) throw new Error(`Projection fallback title did not resolve: ${projection.fallback.title_pointer}`);
   const summary = projection.fallback.summary_pointer
@@ -202,17 +221,22 @@ export function applyHomerailDirectUiProjection(input: {
     input.arguments,
     projection.fallback.item_projections,
   )].filter((entry, index, values) => values.indexOf(entry) === index).slice(0, 16);
+  const surface = projectedEnum(input.arguments, projection.surface_pointer, projection.defaults.surface, ["task", "execution", "result", "ambient"], "surface");
+  const importance = projectedEnum(input.arguments, projection.importance_pointer, projection.defaults.importance, ["critical", "primary", "secondary", "ambient"], "importance");
+  const density = projectedEnum(input.arguments, projection.density_pointer, projection.defaults.density, ["glance", "summary", "detail"], "density");
+  const persistence = projectedEnum(input.arguments, projection.persistence_pointer, projection.defaults.persistence, ["turn", "session", "project"], "persistence");
   const node = {
     ir_version: GENERATIVE_UI_IR_VERSION,
     id: nodeId,
     kind: projection.kind,
     kind_version: projection.kind_version,
     owner: structuredClone(input.plugin),
-    surface: projection.defaults.surface,
-    importance: projection.defaults.importance,
+    surface,
+    importance,
     content,
-    presentation: { density: projection.defaults.density },
-    lifecycle: { persistence: projection.defaults.persistence },
+    ...(rawView ? { view: structuredClone(rawView) } : {}),
+    presentation: { density },
+    lifecycle: { persistence },
     fallback: {
       title,
       ...(summary ? { summary } : {}),

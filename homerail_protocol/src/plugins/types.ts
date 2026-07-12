@@ -373,6 +373,13 @@ export interface HomerailDirectUiProjectionV1 {
   node_id_pointer: string;
   /** RFC 6901 JSON Pointer to an object copied into semantic content. */
   content_pointer: string;
+  /** Optional RFC 6901 pointer to a ViewSpec copied outside semantic content. */
+  view_pointer?: string;
+  /** Optional bounded presentation bindings; defaults remain authoritative when absent. */
+  surface_pointer?: string;
+  importance_pointer?: string;
+  density_pointer?: string;
+  persistence_pointer?: string;
   omit_content_fields: string[];
   fallback: {
     title_pointer: string;

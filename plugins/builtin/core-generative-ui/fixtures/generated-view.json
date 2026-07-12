@@ -1,0 +1,51 @@
+{
+  "tool": "upsert_generated_view",
+  "arguments": {
+    "id": "com.homerail.core:generated-ci-overview",
+    "title": "CI overview",
+    "summary": "Three checks passed; Windows validation is pending.",
+    "surface": "result",
+    "importance": "primary",
+    "density": "detail",
+    "persistence": "session",
+    "content": {
+      "data": {
+        "title": "Release readiness",
+        "passed": 3,
+        "blocked": 1,
+        "checks": [
+          { "label": "Manager", "status": "passed", "detail": "583 passed" },
+          { "label": "Windows", "status": "pending", "detail": "Real-machine run required" }
+        ]
+      }
+    },
+    "view": {
+      "view_version": 1,
+      "root": {
+        "id": "root",
+        "type": "stack",
+        "gap": "md",
+        "children": [
+          { "id": "title", "type": "heading", "text": { "path": "/data/title" }, "level": 2 },
+          {
+            "id": "metrics",
+            "type": "grid",
+            "columns": { "default": 2, "compact": 1 },
+            "gap": "sm",
+            "children": [
+              { "id": "passed", "type": "metric", "label": { "literal": "Passed" }, "value": { "path": "/data/passed", "format": "number" }, "tone": "positive" },
+              { "id": "blocked", "type": "metric", "label": { "literal": "Blocked" }, "value": { "path": "/data/blocked", "format": "number" }, "tone": "warning" }
+            ]
+          },
+          { "id": "checks", "type": "list", "source": "/data/checks", "item_title_path": "/label", "item_detail_path": "/detail", "item_status_path": "/status" }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "data": {
+      "title": "Release readiness",
+      "passed": 3
+    }
+  }
+}

@@ -73,7 +73,11 @@ describe("Plugin Context and Kind Registry", () => {
       "com.homerail.pr-closeout:pr-closeout",
       "com.homerail.topic-outline:topic-outline",
     ]);
-    expect(first.tools).toHaveLength(2);
+    expect(first.tools).toHaveLength(3);
+    expect(first.tools.find((tool) => tool.plugin_id === "com.homerail.core")).toMatchObject({
+      qualified_id: "com.homerail.core:upsert_generated_view",
+      handler: { type: "projection" },
+    });
     expect(first.tools.find((tool) => tool.plugin_id === "com.homerail.topic-outline")).toMatchObject({
       plugin_id: "com.homerail.topic-outline",
       qualified_id: "com.homerail.topic-outline:upsert_topic_outline",
@@ -92,13 +96,18 @@ describe("Plugin Context and Kind Registry", () => {
       "com.homerail.core:voice-generative-ui",
       "com.homerail.pr-closeout:pr-closeout",
     ]);
-    expect(text.tools.map((tool) => tool.qualified_id)).toEqual(["com.homerail.pr-closeout:upsert_pr_closeout"]);
+    expect(text.tools.map((tool) => tool.qualified_id)).toEqual([
+      "com.homerail.core:upsert_generated_view",
+      "com.homerail.pr-closeout:upsert_pr_closeout",
+    ]);
     const legacyCompatibility = assemblePluginTurnContext(undefined, {
       modality: "voice",
       legacy_compatibility_mode: true,
     });
     expect(legacyCompatibility.skills.some((skill) => skill.plugin_id === "com.homerail.topic-outline")).toBe(false);
-    expect(legacyCompatibility.tools).toEqual([]);
+    expect(legacyCompatibility.tools.map((tool) => tool.qualified_id)).toEqual([
+      "com.homerail.core:upsert_generated_view",
+    ]);
   });
 
   it("reads a Skill only through the enabled exact plugin snapshot", () => {
@@ -160,7 +169,10 @@ describe("Plugin Context and Kind Registry", () => {
       enabled: false,
     }));
     expect(assemblePluginTurnContext().tools.map((tool) => tool.qualified_id))
-      .toEqual(["com.homerail.pr-closeout:upsert_pr_closeout"]);
+      .toEqual([
+        "com.homerail.core:upsert_generated_view",
+        "com.homerail.pr-closeout:upsert_pr_closeout",
+      ]);
     expect(readArchivedPluginSkill("com.homerail.topic-outline:topic-outline")).toBeUndefined();
   });
 });

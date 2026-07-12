@@ -3,6 +3,8 @@
  * @version 0.1.0
  */
 
+import type { HomerailViewSpecV1 } from "./view-spec.js";
+
 export const GENERATIVE_UI_IR_VERSION = 1 as const;
 export type GenerativeUiIrVersion = typeof GENERATIVE_UI_IR_VERSION;
 
@@ -123,6 +125,7 @@ export const GenerativeUiPatchUnsetField = {
   LIFECYCLE: "lifecycle",
   ACTIONS: "actions",
   PROVENANCE: "provenance",
+  VIEW: "view",
 } as const;
 export type GenerativeUiPatchUnsetField =
   (typeof GenerativeUiPatchUnsetField)[keyof typeof GenerativeUiPatchUnsetField];
@@ -203,6 +206,8 @@ export interface GenerativeUiNodeV1<
   importance: GenerativeUiImportance;
   status?: GenerativeUiStatusV1;
   content: TContent;
+  /** Optional runtime-authored, host-rendered UI tree kept separate from semantic content. */
+  view?: HomerailViewSpecV1;
   presentation?: GenerativeUiPresentationHintV1;
   lifecycle?: GenerativeUiLifecycleV1;
   actions?: GenerativeUiActionV1[];
@@ -236,6 +241,7 @@ export interface GenerativeUiNodePatchV1 {
   importance?: GenerativeUiImportance;
   status?: GenerativeUiStatusV1;
   content?: Record<string, unknown>;
+  view?: HomerailViewSpecV1;
   presentation?: GenerativeUiPresentationHintV1;
   lifecycle?: GenerativeUiLifecycleV1;
   actions?: GenerativeUiActionV1[];

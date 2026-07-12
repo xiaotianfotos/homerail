@@ -128,6 +128,37 @@ describe('GenerativeUiRendererRegistry', () => {
     expect(runtime.renderers.resolve(report, 'result', device).mode).toBe('specialized')
   })
 
+  it.each(['phone', 'desktop', 'tv'] as const)('projects runtime ViewSpec through the trusted primitive catalog for %s', device => {
+    const projection = topicProjection(true)
+    projection.kinds[0] = {
+      ...projection.kinds[0],
+      plugin_id: 'com.homerail.core',
+      plugin_version: '0.1.0',
+      kind: 'com.homerail.core/generated_view',
+      schema_id: 'generated-view-content-v1',
+      allowed_surfaces: ['task', 'execution', 'result', 'ambient'],
+      preferred_visuals: ['view_spec', 'dashboard', 'table', 'timeline', 'chart', 'dag'],
+    }
+    projection.renderers[0] = {
+      ...projection.renderers[0],
+      plugin_id: 'com.homerail.core',
+      plugin_version: '0.1.0',
+      renderer_id: 'core-generated-view',
+      kind: 'com.homerail.core/generated_view',
+      surfaces: ['task', 'execution', 'result', 'ambient'],
+      source: { type: 'builtin', id: 'view-spec' },
+    }
+    const runtime = buildProjectedGenerativeUiRegistry(projection)
+    const generated = node({
+      kind: 'com.homerail.core/generated_view',
+      owner: { id: 'com.homerail.core', version: '0.1.0' },
+      surface: 'result',
+      content: { data: { title: 'Runtime view' } },
+      view: { view_version: 1, root: { id: 'title', type: 'heading', text: { path: '/data/title' } } },
+    })
+    expect(runtime.renderers.resolve(generated, 'result', device).mode).toBe('specialized')
+  })
+
   it('removes disabled and unknown built-in renderers without dynamic loading', () => {
     const topic = node({
       kind: 'com.homerail.topic-outline/outline',

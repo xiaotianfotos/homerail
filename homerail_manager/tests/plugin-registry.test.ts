@@ -145,9 +145,18 @@ describe("HomeRail plugin archive and activation registry", () => {
     expect(first).toMatchObject({
       descriptor_version: 1,
       manifest: { id: CORE_PLUGIN_ID, version: "0.1.0" },
-      schemas: [{ id: "legacy-widget-content-v1" }],
       skills: [{ id: "voice-generative-ui" }],
     });
+    expect(first.schemas.map((schema) => schema.id)).toEqual([
+      "legacy-widget-content-v1",
+      "generated-view-input-v1",
+      "generated-view-content-v1",
+    ]);
+    expect(first.manifest.tools).toEqual([expect.objectContaining({ id: "upsert_generated_view" })]);
+    expect(first.manifest.renderers).toContainEqual(expect.objectContaining({
+      id: "core-generated-view",
+      source: { type: "builtin", id: "view-spec" },
+    }));
     expect(first.package_digest).toMatch(/^[a-f0-9]{64}$/);
   });
 

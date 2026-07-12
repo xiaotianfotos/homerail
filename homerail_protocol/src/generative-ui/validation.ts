@@ -28,6 +28,11 @@ import type {
   GenerativeUiUserOverrideV1,
   GenerativeUiValidationError,
 } from "./types.js";
+import {
+  HOMERAIL_VIEW_SPEC_MAX_BYTES,
+  analyzeHomerailViewSpecSemantics,
+  type HomerailViewSpecV1,
+} from "./view-spec.js";
 
 // Ajv publishes CommonJS-compatible types under NodeNext. Resolve its runtime
 // constructor without changing validation semantics.
@@ -206,6 +211,24 @@ function nodeSemanticErrors(
     });
   }
   errors.push(...actionSemanticErrors(node.actions, `${path}/actions`));
+  if (node.view) {
+    const viewAnalysis = analyzeGenerativeUiJsonValue(node.view, {
+      path: `${path}/view`,
+      limits: { max_bytes: HOMERAIL_VIEW_SPEC_MAX_BYTES },
+    });
+    if (!viewAnalysis.valid) {
+      errors.push({
+        path: viewAnalysis.error?.path || `${path}/view`,
+        message: viewAnalysis.error?.message || `view exceeds ${HOMERAIL_VIEW_SPEC_MAX_BYTES} bytes`,
+        keyword: viewAnalysis.error?.keyword || "maxPayloadBytes",
+      });
+    } else {
+      errors.push(...analyzeHomerailViewSpecSemantics(node.view, {
+        action_ids: new Set((node.actions ?? []).map((action) => action.id)),
+        path: `${path}/view`,
+      }));
+    }
+  }
   return errors;
 }
 
@@ -236,6 +259,21 @@ function timestampError(path: string, value: string): GenerativeUiValidationErro
 
 export function resetGenerativeUiValidator(): void {
   validator = undefined;
+}
+
+export function validateHomerailViewSpec(
+  value: unknown,
+  options: { action_ids?: ReadonlySet<string> } = {},
+): GenerativeUiValidationResult<HomerailViewSpecV1> {
+  const validation = validate<HomerailViewSpecV1>("homerail-view-spec-v1", value);
+  if (!validation.value) return validation;
+  const analysis = analyzeGenerativeUiJsonValue(validation.value, {
+    limits: { max_bytes: HOMERAIL_VIEW_SPEC_MAX_BYTES },
+  });
+  if (!analysis.valid) {
+    return { valid: false, errors: [analysis.error ?? { path: "", message: "ViewSpec exceeds its budget", keyword: "maxPayloadBytes" }] };
+  }
+  return withSemanticErrors(validation, analyzeHomerailViewSpecSemantics(validation.value, options));
 }
 
 export function validateGenerativeUiNode(
@@ -302,6 +340,21 @@ export function validateGenerativeUiTransaction(
       const changesPath = `/operations/${index}/changes`;
       if (operation.changes.content) {
         errors.push(...contentSemanticErrors(operation.changes.content, `${changesPath}/content`));
+      }
+      if (operation.changes.view) {
+        const viewAnalysis = analyzeGenerativeUiJsonValue(operation.changes.view, {
+          path: `${changesPath}/view`,
+          limits: { max_bytes: HOMERAIL_VIEW_SPEC_MAX_BYTES },
+        });
+        if (!viewAnalysis.valid) {
+          errors.push({
+            path: viewAnalysis.error?.path || `${changesPath}/view`,
+            message: viewAnalysis.error?.message || `view exceeds ${HOMERAIL_VIEW_SPEC_MAX_BYTES} bytes`,
+            keyword: viewAnalysis.error?.keyword || "maxPayloadBytes",
+          });
+        } else {
+          errors.push(...analyzeHomerailViewSpecSemantics(operation.changes.view, { path: `${changesPath}/view` }));
+        }
       }
       if (operation.changes.fallback) {
         errors.push(...fallbackSemanticErrors(operation.changes.fallback, `${changesPath}/fallback`));

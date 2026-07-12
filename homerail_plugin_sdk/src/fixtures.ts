@@ -3,10 +3,12 @@ import * as path from "node:path";
 import {
   applyHomerailDirectUiProjection,
   buildHomerailDeclarativeRendererModel,
+  buildHomerailViewModel,
   validateHomerailDirectUiProjection,
   validateHomerailPluginToolInput,
   type HomerailDeclarativeRendererModelV1,
   type HomerailDeclarativeRendererV1,
+  type HomerailViewModelV1,
 } from "homerail-protocol";
 import { scanPluginSource } from "./project.js";
 
@@ -17,6 +19,7 @@ export interface PluginFixtureResult {
   message?: string;
   content?: Record<string, unknown>;
   renderer_models?: Array<{ renderer: string; model: HomerailDeclarativeRendererModelV1 }>;
+  view_model?: HomerailViewModelV1;
 }
 
 export interface PluginFixtureMatrixReport {
@@ -101,6 +104,9 @@ export function runPluginFixtureMatrix(
         passed: true,
         content: structuredClone(result.node.content),
         renderer_models: rendererModels,
+        ...(result.node.view ? {
+          view_model: buildHomerailViewModel(result.node.view, result.node.content, options),
+        } : {}),
       };
     } catch (cause) {
       return {

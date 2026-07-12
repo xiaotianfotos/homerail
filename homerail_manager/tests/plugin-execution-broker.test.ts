@@ -139,6 +139,69 @@ describe("plugin Tool execution broker", () => {
     });
   });
 
+  it("accepts a runtime-authored ViewSpec with dynamic surface and density outside semantic content", () => {
+    const context = assemblePluginTurnContext(undefined, { modality: "text" });
+    const descriptor = context.tools.find((tool) => tool.plugin_id === "com.homerail.core")!;
+    const envelope = executeHomerailPluginTool(descriptor, {
+      id: "com.homerail.core:ci-overview",
+      title: "CI overview",
+      summary: "One platform remains pending.",
+      surface: "result",
+      importance: "primary",
+      density: "detail",
+      persistence: "session",
+      content: { data: { title: "Release readiness", passed: 3 } },
+      view: {
+        view_version: 1,
+        root: {
+          id: "root",
+          type: "stack",
+          children: [
+            { id: "title", type: "heading", text: { path: "/data/title" }, level: 2 },
+            { id: "passed", type: "metric", label: { literal: "Passed" }, value: { path: "/data/passed", format: "number" }, tone: "positive" },
+          ],
+        },
+      },
+    });
+    const accepted = acceptPluginToolExecution(envelope, context);
+    expect(accepted.node).toMatchObject({
+      kind: "com.homerail.core/generated_view",
+      surface: "result",
+      presentation: { density: "detail" },
+      content: { data: { title: "Release readiness", passed: 3 } },
+      view: { view_version: 1, root: { type: "stack" } },
+    });
+    expect((accepted.node.content as Record<string, unknown>).view).toBeUndefined();
+  });
+
+  it("rejects executable or unregistered behavior in a runtime-authored ViewSpec", () => {
+    const context = assemblePluginTurnContext(undefined, { modality: "text" });
+    const descriptor = context.tools.find((tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view")!;
+    const base = {
+      id: "com.homerail.core:unsafe-view",
+      title: "Unsafe view",
+      surface: "result",
+      importance: "primary",
+      density: "detail",
+      persistence: "session",
+      content: { data: {} },
+    };
+    expect(() => executeHomerailPluginTool(descriptor, {
+      ...base,
+      view: {
+        view_version: 1,
+        root: { id: "root", type: "text", text: { literal: "Hello" }, css: "position: fixed" },
+      },
+    })).toThrow(/invalid/i);
+    expect(() => executeHomerailPluginTool(descriptor, {
+      ...base,
+      view: {
+        view_version: 1,
+        root: { id: "root", type: "action", action_id: "run_shell", label: { literal: "Run" } },
+      },
+    })).toThrow(/unavailable action|invalid/i);
+  });
+
   it("rejects a projection that no longer matches its validated Tool arguments", () => {
     const context = assemblePluginTurnContext(undefined, { modality: "voice" });
     const descriptor = context.tools.find((tool) => tool.plugin_id === "com.homerail.topic-outline")!;

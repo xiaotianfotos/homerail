@@ -1470,6 +1470,7 @@ async function submitVoiceWorkspaceToManagerAgent(
     const generativeUiMode = effectiveGenerativeUiMode(workspace);
     const pluginRoutingSource = assemblePluginTurnContext(undefined, {
       modality: "voice",
+      include_agent_tools: generativeUiMode === "prefer" || generativeUiMode === "shadow",
       legacy_compatibility_mode: !(
         effectiveGenerativeUiShadowEnabled(workspace)
         || effectiveGenerativeUiPreferEnabled(workspace)

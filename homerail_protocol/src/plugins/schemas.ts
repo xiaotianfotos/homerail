@@ -1027,6 +1027,11 @@ export const homerailDirectUiProjectionSchema = {
     kind_version: { type: "integer", minimum: 1, maximum: 32 },
     node_id_pointer: jsonPointer,
     content_pointer: jsonPointer,
+    view_pointer: jsonPointer,
+    surface_pointer: jsonPointer,
+    importance_pointer: jsonPointer,
+    density_pointer: jsonPointer,
+    persistence_pointer: jsonPointer,
     omit_content_fields: {
       type: "array",
       maxItems: 32,
