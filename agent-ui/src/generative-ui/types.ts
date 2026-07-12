@@ -38,18 +38,30 @@ export type GenerativeUiProjectionV1 =
   | GenerativeUiShadowProjectionV1
   | GenerativeUiCanonicalProjectionV1
 
-export interface GenerativeUiSnapshotStreamEventV1 {
+interface GenerativeUiSnapshotStreamEventBaseV1 {
   type: 'generative_ui'
   event: 'snapshot'
   stream_version: 1
-  authoritative: false
-  purpose: 'legacy_widget_shadow'
   document: GenerativeUiDocumentV1
   cursor: number
   overrides: GenerativeUiUserOverrideV1[]
   composition: GenerativeUiCompositionV1
   ui_registry: HomerailPluginUiProjectionV1
 }
+
+export type GenerativeUiSnapshotStreamEventV1 = GenerativeUiSnapshotStreamEventBaseV1 & (
+  | {
+      mode: 'shadow'
+      authoritative: false
+      purpose: 'legacy_widget_shadow'
+    }
+  | {
+      mode: 'prefer'
+      authoritative: true
+      purpose: 'canonical'
+      pending_tool_confirmations: PendingAgentToolConfirmationV1[]
+    }
+)
 
 export interface GenerativeUiTransactionStreamEventV1 {
   type: 'generative_ui'

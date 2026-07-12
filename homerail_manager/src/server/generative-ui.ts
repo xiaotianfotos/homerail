@@ -309,6 +309,7 @@ export function generativeUiRoutesHandler(
         type: "generative_ui",
         event: "snapshot",
         stream_version: STREAM_VERSION,
+        mode: current.mode,
         authoritative: current.authoritative,
         purpose: current.purpose,
         cursor: current.cursor,
@@ -316,6 +317,9 @@ export function generativeUiRoutesHandler(
         overrides: current.overrides,
         composition: current.composition,
         ui_registry: current.uiRegistry,
+        ...(current.mode === "prefer"
+          ? { pending_tool_confirmations: current.pendingToolConfirmations }
+          : {}),
       })}\n`);
       for (const committed of page) {
         res.write(`${JSON.stringify({

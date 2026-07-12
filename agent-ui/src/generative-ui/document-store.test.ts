@@ -7,6 +7,7 @@ import type {
 } from 'homerail-protocol'
 import { GenerativeUiProjectionCache } from './document-store'
 import type {
+  PendingAgentToolConfirmationV1,
   GenerativeUiProjectionV1,
   GenerativeUiSnapshotStreamEventV1,
   GenerativeUiTransactionStreamEventV1,
@@ -123,6 +124,35 @@ function transactionEvent(seq: number, baseRevision: number): GenerativeUiTransa
   }
 }
 
+function pendingToolConfirmation(): PendingAgentToolConfirmationV1 {
+  const requestId = 'agent:request-12345678'
+  const requestDigest = 'a'.repeat(64)
+  return {
+    request_id: requestId,
+    request_digest: requestDigest,
+    status: 'awaiting_confirmation',
+    idempotent: true,
+    source: 'agent',
+    tool: {
+      local_id: 'publish_card',
+      qualified_id: 'com.example.plugin:publish_card',
+      wire_id: 'publish_card',
+    },
+    challenge: {
+      confirmation_version: 1,
+      challenge_id: 'confirm:challenge-12345678',
+      request_id: requestId,
+      request_digest: requestDigest,
+      effect: 'external',
+      permissions: ['network.connect'],
+      effective_grants: [{ permission: 'network.connect', hosts: ['api.example.com'] }],
+      message: 'Allow the Agent Tool to publish this card?',
+      issued_at: '2026-07-12T01:00:00.000Z',
+      expires_at: '2026-07-12T01:04:00.000Z',
+    },
+  }
+}
+
 describe('GenerativeUiProjectionCache', () => {
   it('accepts an atomic projection and never exposes mutable canonical references', () => {
     const cache = new GenerativeUiProjectionCache()
@@ -174,6 +204,7 @@ describe('GenerativeUiProjectionCache', () => {
       type: 'generative_ui',
       event: 'snapshot',
       stream_version: 1,
+      mode: 'shadow',
       authoritative: false,
       purpose: 'legacy_widget_shadow',
       document: current.document,
@@ -185,6 +216,46 @@ describe('GenerativeUiProjectionCache', () => {
     expect(cache.acceptStreamEvent(snapshot)).toBe('applied_snapshot')
     expect(cache.acceptStreamEvent(transactionEvent(1, 0))).toBe('ignored_replay')
     expect(cache.stale).toBe(false)
+  })
+
+  it('preserves the authoritative canonical contract from stream snapshots', () => {
+    const current = projection()
+    const pending = pendingToolConfirmation()
+    const canonicalSnapshot = {
+      type: 'generative_ui',
+      event: 'snapshot',
+      stream_version: 1,
+      mode: 'prefer',
+      authoritative: true,
+      purpose: 'canonical',
+      document: current.document,
+      cursor: current.cursor,
+      overrides: current.overrides,
+      composition: current.composition,
+      ui_registry: current.ui_registry,
+      pending_tool_confirmations: [pending],
+    }
+
+    const cache = new GenerativeUiProjectionCache()
+    expect(cache.acceptStreamEvent(canonicalSnapshot)).toBe('applied_snapshot')
+    const accepted = cache.current()
+    expect(accepted).toMatchObject({
+      mode: 'prefer',
+      authoritative: true,
+      purpose: 'canonical',
+    })
+    expect(accepted?.mode === 'prefer' && accepted.pending_tool_confirmations).toEqual([pending])
+
+    expect(() => new GenerativeUiProjectionCache().acceptStreamEvent({
+      ...canonicalSnapshot,
+      mode: 'shadow',
+    } as unknown as GenerativeUiSnapshotStreamEventV1)).toThrow('projection envelope')
+
+    const { pending_tool_confirmations: _pending, ...missingCanonicalFields } = canonicalSnapshot
+    void _pending
+    expect(() => new GenerativeUiProjectionCache().acceptStreamEvent(
+      missingCanonicalFields as unknown as GenerativeUiSnapshotStreamEventV1,
+    )).toThrow('pending_tool_confirmations must be an array')
   })
 
   it('invalidates instead of locally composing when a new transaction arrives', () => {

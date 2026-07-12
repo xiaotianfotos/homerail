@@ -497,7 +497,21 @@ export class PluginRuntimeService {
       },
       now_ms: this.#now().getTime(),
     });
-    if (!result.valid || !result.value) throw new Error(`Runtime returned invalid execute result: ${JSON.stringify(result.errors)}`);
+    if (!result.valid || !result.value) {
+      const cause = new Error(`Runtime returned invalid execute result: ${JSON.stringify(result.errors)}`);
+      this.#writeLedger(record.runtime_instance_id, {
+        ledger_version: 1,
+        request_id: invocation.request_id,
+        request_digest: invocation.request_digest,
+        status: "failed",
+        updated_at: this.#now().toISOString(),
+        error: {
+          code: "runtime_process_failed",
+          message: boundedErrorMessage(cause),
+        },
+      });
+      throw cause;
+    }
     if (result.value.message_type === "result" && result.value.method === "execute") {
       this.#writeLedger(record.runtime_instance_id, {
         ledger_version: 1,

@@ -309,6 +309,48 @@ describe("PluginRuntimeService persistence and idempotency", () => {
     expect(refreshed.attestation.claims.attestation_id).not.toBe(launched.attestation.claims.attestation_id);
   });
 
+  it("records an invalid execute response as a terminal failed ledger", async () => {
+    class InvalidResponseProvider extends ScriptedProvider {
+      override async execInput(id: string, cmd: string[], input: string): Promise<ExecResult> {
+        const execution = await super.execInput(id, cmd, input);
+        const response = JSON.parse(execution.stdout) as { request_digest: string };
+        response.request_digest = "0".repeat(64);
+        return { ...execution, stdout: JSON.stringify(response) };
+      }
+    }
+
+    const root = temporary("runtime-invalid-response");
+    const pkg = packageFixture(root);
+    const provider = new InvalidResponseProvider();
+    const imageDigest = `sha256:${"3".repeat(64)}`;
+    const runtime = service(root, provider, root, imageDigest);
+    const launched = await runtime.launch(launchSpec(pkg, imageDigest));
+    const auth = authorization({ request_id: "request_runtime_invalid_response_0001" });
+
+    await expect(runtime.rpc(launched.runtime_instance_id, request("execute", auth)))
+      .rejects.toThrow(/Runtime returned invalid execute result/);
+    expect(provider.calls).toBe(1);
+
+    await expect(runtime.rpc(launched.runtime_instance_id, {
+      runtime_rpc_version: 1,
+      message_type: "request",
+      method: "reconcile",
+      rpc_id: "rpc_reconcile_invalid_response_0001",
+      sent_at: new Date().toISOString(),
+      params: {
+        request_id: auth.invocation.request_id,
+        request_digest: auth.invocation.request_digest,
+      },
+    })).resolves.toMatchObject({
+      method: "reconcile",
+      status: "failed",
+      error: {
+        code: "runtime_process_failed",
+        message: expect.stringContaining("Runtime returned invalid execute result"),
+      },
+    });
+  });
+
   it("converges a previous-boot running ledger to a terminal interrupted failure", async () => {
     const root = temporary("runtime-interrupted");
     const pkg = packageFixture(root);

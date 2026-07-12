@@ -192,6 +192,18 @@ describe("Generative UI mode Manager and Voice config wiring", () => {
         document: { revision: 1, nodes: [{ id: "prefer-topic" }] },
       },
     });
+    const streamResponse = await fetch(`${projectionUrl}/stream`);
+    expect(streamResponse.status).toBe(200);
+    const [snapshot] = (await streamResponse.text()).trim().split("\n").map((line) => JSON.parse(line));
+    expect(snapshot).toMatchObject({
+      event: "snapshot",
+      stream_version: 1,
+      mode: "prefer",
+      authoritative: true,
+      purpose: "canonical",
+      pending_tool_confirmations: [],
+      document: { revision: 1, nodes: [{ id: "prefer-topic" }] },
+    });
 
     const workspace = await (await fetch(
       `${baseUrl}/api/voice-agent/sessions/${session.data.session_id}`,

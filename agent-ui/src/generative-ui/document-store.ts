@@ -106,17 +106,28 @@ function assertProjection(projection: GenerativeUiProjectionV1): GenerativeUiPro
 }
 
 function projectionFromSnapshot(event: GenerativeUiSnapshotStreamEventV1): GenerativeUiProjectionV1 {
-  return {
+  const base = {
     stream_version: event.stream_version,
-    mode: 'shadow',
-    authoritative: event.authoritative,
-    purpose: event.purpose,
     document: event.document,
     cursor: event.cursor,
     overrides: event.overrides,
     composition: event.composition,
     ui_registry: event.ui_registry,
   }
+  return event.mode === 'prefer'
+    ? {
+        ...base,
+        mode: event.mode,
+        authoritative: event.authoritative,
+        purpose: event.purpose,
+        pending_tool_confirmations: event.pending_tool_confirmations,
+      }
+    : {
+        ...base,
+        mode: event.mode,
+        authoritative: event.authoritative,
+        purpose: event.purpose,
+      }
 }
 
 /** Read-only projection cache. Manager remains the only document reducer and Composer. */
