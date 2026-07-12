@@ -68,7 +68,7 @@ function makePrReviewApiServer(createAndRunBodies: Record<string, unknown>[]): h
   });
 }
 
-function makePrCloseoutApiServer(createAndRunBodies: Record<string, unknown>[]): http.Server {
+function makePrCloseoutApiServer(createAndRunBodies: Record<string, unknown>[], draft = true): http.Server {
   return http.createServer((req, res) => {
     const url = new URL(req.url || "/", "http://localhost");
     const pathname = url.pathname;
@@ -82,7 +82,7 @@ function makePrCloseoutApiServer(createAndRunBodies: Record<string, unknown>[]):
     }
     if (req.method === "GET" && pathname === "/github/repos/xiaotianfotos/homerail/pulls/26") {
       send({
-        draft: true,
+        draft,
         mergeable: true,
         mergeable_state: "clean",
         base: { sha: "a".repeat(40), ref: "main" },
@@ -799,6 +799,44 @@ describe("manager-agent server", () => {
         phase: "draft",
         closeout_status: "ready_for_review",
         blockers: [],
+      });
+    } finally {
+      await close(server);
+      await close(managerApi);
+    }
+  });
+
+  it("blocks a draft closeout request after the PR leaves draft", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    registerAgentBackend("manager-agent-pr-closeout-phase-test", () => new PrCloseoutToolAgent());
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const createAndRunBodies: Record<string, unknown>[] = [];
+    const managerApi = makePrCloseoutApiServer(createAndRunBodies, false);
+    const managerPort = await listen(managerApi);
+    vi.stubEnv("MANAGER_REST_URL", `http://127.0.0.1:${managerPort}/api`);
+    vi.stubEnv("HOMERAIL_GITHUB_API_BASE_URL", `http://127.0.0.1:${managerPort}/github`);
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "收口 xiaotianfotos/homerail PR #26",
+          agent_config: { agent_type: "manager-agent-pr-closeout-phase-test", model: "test-model" },
+        }),
+      });
+      expect(response.status).toBe(200);
+      const envelope = JSON.parse(String(createAndRunBodies[0].prompt)) as { payload: Record<string, unknown> };
+      expect(envelope.payload).toMatchObject({
+        phase: "draft",
+        closeout_status: "blocked",
+        blockers: expect.arrayContaining([expect.objectContaining({ code: "phase_mismatch" })]),
       });
     } finally {
       await close(server);

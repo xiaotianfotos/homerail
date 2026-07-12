@@ -295,6 +295,38 @@ describe("PR Review run-template", () => {
       .rejects.toThrow("published quorum mismatch");
   });
 
+  it("requires an inconclusive report when verifier quorum fails", async () => {
+    const report = {
+      repo: "xiaotianfotos/homerail", pr: 25, base: "a".repeat(40), head: "b".repeat(40),
+      status: "pass", findings: [],
+    };
+    const vote = (voter: string, decision: string) => ({
+      voter, vote: decision, confidence: "high", evidence: "checked", finding_verdicts: [],
+    });
+    const quorum = { passed: false, successes: 1, total: 3, threshold: 2 };
+    const client = {
+      async get(url: string) {
+        if (url.endsWith("/status")) return { data: { status: "cancelled" } };
+        if (url.endsWith("/handoffs")) return { data: { handoffs: [
+          { fromNode: "budget", content: { admitted: true, input: { payload: {
+            repo: report.repo, pr: report.pr, base: report.base, head: report.head,
+          } } } },
+          { fromNode: "synthesize", content: report },
+          { fromNode: "evidence_vote", content: vote("evidence", "reject") },
+          { fromNode: "false_positive_vote", content: vote("false_positive", "reject") },
+          { fromNode: "coverage_vote", content: vote("coverage", "accept") },
+          { fromNode: "verification_quorum", content: quorum },
+          { fromNode: "publish", content: { report, markdown: "report", quorum } },
+        ] } };
+        if (url.endsWith("/metrics")) return { data: {} };
+        throw new Error(`unexpected URL: ${url}`);
+      },
+    } as HomeRailClient;
+
+    await expect(writePrReviewEvidence(client, "review-run-not-inconclusive", tmpDir))
+      .rejects.toThrow("rejected quorum must publish an inconclusive report");
+  });
+
   it("rejects a published finding that a verifier disproved", async () => {
     const report = {
       repo: "xiaotianfotos/homerail", pr: 25, base: "a".repeat(40), head: "b".repeat(40),

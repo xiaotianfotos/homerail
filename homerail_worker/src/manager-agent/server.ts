@@ -346,6 +346,9 @@ async function resolveGitHubCloseout(
   if (!freshPassed) blockers.push({ code: "validation_evidence_missing", message: "No completed HomeRail validation run matches the current head." });
   const isDraft = pull.draft === true;
   const phase = requestedPhase ?? (isDraft ? "draft" : "merge");
+  if (phase === "draft" && !isDraft) {
+    blockers.push({ code: "phase_mismatch", message: "The PR is no longer a Draft; run merge closeout instead." });
+  }
   const relevantChecks = checks.filter((check) => !/PR Closeout/i.test(String(check.name ?? "")));
   const pendingChecks = relevantChecks.filter((check) => check.status !== "completed");
   const failedChecks = relevantChecks.filter((check) =>
