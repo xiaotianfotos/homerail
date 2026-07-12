@@ -294,6 +294,7 @@ describe("Manager Agent per-turn capability routing", () => {
     expect(legacy.plugin_context).not.toBe(full);
     expect(legacy.manager_skills.filter((skill) => skill.source === "plugin").map((skill) => skill.id)).toEqual([
       "com.homerail.core:voice-generative-ui",
+      "com.homerail.pr-closeout:pr-closeout",
       "com.homerail.topic-outline:topic-outline",
     ]);
 

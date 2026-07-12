@@ -100,6 +100,34 @@ describe('GenerativeUiRendererRegistry', () => {
       .toBe('fallback')
   })
 
+  it.each(['phone', 'desktop', 'tv'] as const)('projects the PR closeout renderer for %s', device => {
+    const projection = topicProjection(true)
+    projection.kinds[0] = {
+      ...projection.kinds[0],
+      plugin_id: 'com.homerail.pr-closeout',
+      kind: 'com.homerail.pr-closeout/report',
+      schema_id: 'pr-closeout-content-v1',
+      allowed_surfaces: ['task', 'result'],
+      preferred_visuals: ['dashboard', 'graph', 'timeline', 'matrix'],
+    }
+    projection.renderers[0] = {
+      ...projection.renderers[0],
+      plugin_id: 'com.homerail.pr-closeout',
+      renderer_id: 'pr-closeout-main',
+      kind: 'com.homerail.pr-closeout/report',
+      surfaces: ['task', 'result'],
+      source: { type: 'builtin', id: 'pr-closeout' },
+    }
+    const runtime = buildProjectedGenerativeUiRegistry(projection)
+    const report = node({
+      kind: 'com.homerail.pr-closeout/report',
+      owner: { id: 'com.homerail.pr-closeout', version: '1.0.0' },
+      surface: 'result',
+      content: { title: 'PR closeout', repository: 'owner/repo', pr_number: 21 },
+    })
+    expect(runtime.renderers.resolve(report, 'result', device).mode).toBe('specialized')
+  })
+
   it('removes disabled and unknown built-in renderers without dynamic loading', () => {
     const topic = node({
       kind: 'com.homerail.topic-outline/outline',

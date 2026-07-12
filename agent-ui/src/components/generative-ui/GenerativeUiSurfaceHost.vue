@@ -130,20 +130,37 @@ defineExpose({ focus, focusNode })
 <style scoped>
 .generative-ui-surface-host {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  height: 100%;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - 28px) / 3);
+  grid-template-columns: none;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
   gap: 14px;
   min-width: 0;
   min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
 }
 
 .generative-ui-surface-host[data-device='phone'],
 .generative-ui-surface-host[data-viewport='compact'] {
-  grid-template-columns: minmax(0, 1fr);
+  grid-auto-columns: 100%;
+  grid-template-columns: none;
 }
 
 .generative-ui-surface-host[data-device='tv'] {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-columns: calc((100% - 20px) / 2);
+  grid-template-columns: none;
   gap: 20px;
+}
+
+.generative-ui-surface-host :deep(.generative-ui-node-host) {
+  height: 100%;
+  overflow: auto;
+  scroll-snap-align: start;
 }
 
 .generative-ui-surface-host :deep([data-placement='overflow']) {
@@ -159,13 +176,14 @@ defineExpose({ focus, focusNode })
 }
 
 .generative-ui-surface-host :deep(.generative-ui-node-host--detail) {
+  grid-row: 1 / -1;
   grid-column: span 2;
-  min-height: 360px;
+  min-height: 0;
 }
 
 .generative-ui-surface-host[data-device='phone'] :deep(.generative-ui-node-host--detail),
 .generative-ui-surface-host[data-viewport='compact'] :deep(.generative-ui-node-host--detail) {
   grid-column: span 1;
-  min-height: 320px;
+  min-height: 0;
 }
 </style>

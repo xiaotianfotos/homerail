@@ -1,6 +1,7 @@
 import type { Component } from 'vue'
 import VoiceDynamicWidget from '@/components/agent/VoiceDynamicWidget.vue'
 import TopicOutlineRenderer from './builtin/topic-outline/TopicOutlineRenderer.vue'
+import PrCloseoutRenderer from './builtin/pr-closeout/PrCloseoutRenderer.vue'
 import { adaptLegacyWidgetRenderer } from '@/generative-ui/legacy-widget-adapter'
 import type { GenerativeUiRendererMode } from '@/generative-ui/renderer-registry'
 
@@ -16,6 +17,10 @@ const catalog = new Map<string, HomerailBuiltinRendererComponentV1>([
   }],
   ['topic-outline', {
     component: TopicOutlineRenderer,
+    mode: 'specialized',
+  }],
+  ['pr-closeout', {
+    component: PrCloseoutRenderer,
     mode: 'specialized',
   }],
 ])

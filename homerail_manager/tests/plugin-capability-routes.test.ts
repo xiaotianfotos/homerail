@@ -57,6 +57,7 @@ describe("plugin capability read routes", () => {
     expect(response.status).toBe(200);
     expect(body.data.entries.map((entry) => entry.qualified_id)).toEqual([
       "com.homerail.core:voice-generative-ui",
+      "com.homerail.pr-closeout:summarize-pr-closeout",
       "com.homerail.topic-outline:compose-outline",
     ]);
     expect(JSON.stringify(body.data.entries)).not.toContain("# Topic Outline");

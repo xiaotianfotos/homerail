@@ -95,9 +95,53 @@ describe("plugin Tool execution broker", () => {
     }));
   });
 
+  it("accepts an evidence-grounded PR closeout projection without a legacy widget bridge", () => {
+    const context = assemblePluginTurnContext(undefined, { modality: "text" });
+    const descriptor = context.tools.find((tool) => tool.plugin_id === "com.homerail.pr-closeout")!;
+    const envelope = executeHomerailPluginTool(descriptor, {
+      id: "com.homerail.pr-closeout:xiaotianfotos-homerail-21",
+      title: "PR #21 closeout",
+      repository: "xiaotianfotos/homerail",
+      pr_number: 21,
+      status: "draft",
+      recommendation: "blocked",
+      risk: "medium",
+      summary: "Windows Electron validation remains required.",
+      checks: [{ id: "manager", label: "Manager tests", status: "passed", detail: "316 passed" }],
+      flow: [
+        { id: "tests", label: "Tests", status: "passed", progress: 100, depends_on: [] },
+        { id: "windows", label: "Windows", status: "blocked", progress: 0, depends_on: ["tests"] },
+      ],
+      blockers: [{ id: "windows", title: "Windows evidence missing", severity: "blocking" }],
+      platforms: [{ id: "windows", label: "Windows", status: "pending" }],
+      evidence: [{ id: "manager", label: "Manager suite", status: "verified", detail: "316 passed" }],
+    });
+    expect(envelope.projection.legacy_widget).toBeUndefined();
+    const accepted = acceptPluginToolExecution(envelope, context);
+    expect(accepted.node).toMatchObject({
+      id: "com.homerail.pr-closeout:xiaotianfotos-homerail-21",
+      kind: "com.homerail.pr-closeout/report",
+      owner: { id: "com.homerail.pr-closeout", version: "1.0.0" },
+      content: {
+        recommendation: "blocked",
+        blockers: [{ id: "windows", severity: "blocking" }],
+      },
+      fallback: {
+        title: "PR #21 closeout",
+        summary: "Windows Electron validation remains required.",
+        items: expect.arrayContaining([
+          "Blocker: Windows evidence missing",
+          "Check: Manager tests: 316 passed",
+          "Platform: Windows",
+          "Evidence: Manager suite: 316 passed",
+        ]),
+      },
+    });
+  });
+
   it("rejects a projection that no longer matches its validated Tool arguments", () => {
     const context = assemblePluginTurnContext(undefined, { modality: "voice" });
-    const descriptor = context.tools[0];
+    const descriptor = context.tools.find((tool) => tool.plugin_id === "com.homerail.topic-outline")!;
     expect(() => executeHomerailPluginTool(descriptor, {
       id: "com.homerail.topic-outline:topic-blank-title",
       title: "   ",

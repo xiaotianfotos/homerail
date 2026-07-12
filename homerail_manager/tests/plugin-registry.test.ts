@@ -22,6 +22,7 @@ import {
 } from "../src/plugins/registry.js";
 
 const corePackage = () => path.join(repoRoot(), "plugins", "builtin", "core-generative-ui");
+const prCloseoutPackage = () => path.join(repoRoot(), "plugins", "builtin", "pr-closeout");
 const topicPackage = () => path.join(repoRoot(), "plugins", "builtin", "topic-outline");
 
 function writeMinimalPlugin(root: string, id = "com.example.notes", version = "1.0.0"): string {
@@ -182,11 +183,28 @@ describe("HomeRail plugin archive and activation registry", () => {
     }).manifest.id).toBe("com.homerail.topic-outline");
   });
 
+  it("loads the PR closeout capability as a data-only builtin with a trusted renderer id", () => {
+    const descriptor = loadPluginPackage(prCloseoutPackage(), {
+      source: "builtin",
+      builtin_renderer_ids: M3_BUILTIN_RENDERER_IDS,
+    });
+    expect(descriptor).toMatchObject({
+      manifest: {
+        id: "com.homerail.pr-closeout",
+        runtime: { trust: "data_only" },
+        tools: [{ id: "upsert_pr_closeout", handler: { type: "projection" } }],
+        renderers: [{ id: "pr-closeout-main", source: { type: "builtin", id: "pr-closeout" } }],
+      },
+      skills: [{ id: "pr-closeout" }],
+    });
+  });
+
   it("keeps Core locked and preserves an optional plugin disable across resync", () => {
     const registry = new HomerailPluginRegistry();
     const first = registry.snapshot();
     expect(first.plugins.map((plugin) => plugin.plugin_id)).toEqual([
       CORE_PLUGIN_ID,
+      "com.homerail.pr-closeout",
       "com.homerail.topic-outline",
     ]);
     expect(first.plugins.find((plugin) => plugin.plugin_id === CORE_PLUGIN_ID)?.activation)

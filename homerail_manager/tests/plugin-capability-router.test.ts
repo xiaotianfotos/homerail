@@ -70,9 +70,10 @@ describe("Plugin Capability Index and deterministic Top-K Router", () => {
     expect(second).toEqual(first);
     expect(first.entries.map((entry) => entry.qualified_id)).toEqual([
       "com.homerail.core:voice-generative-ui",
+      "com.homerail.pr-closeout:summarize-pr-closeout",
       TOPIC_CAPABILITY,
     ]);
-    expect(first.entries[1]).toMatchObject({
+    expect(first.entries[2]).toMatchObject({
       plugin_version: "1.0.0",
       required_inputs: ["title"],
       skill: {
@@ -144,6 +145,27 @@ describe("Plugin Capability Index and deterministic Top-K Router", () => {
     });
     expect(missing.selected_context.skills).toEqual([]);
     expect(missing.selected_context.tools).toEqual([]);
+  });
+
+  it("routes PR readiness requests to the closeout Skill and projection Tool", () => {
+    const routed = routePluginCapabilities({
+      utterance: "判断这个 PR 是否可以合并并整理验证证据",
+      modality: "text",
+      inputs: {
+        repository: "xiaotianfotos/homerail",
+        pr_number: 21,
+        recommendation: "blocked",
+      },
+    });
+    expect(routed.selected.map((entry) => entry.capability_id))
+      .toEqual(["com.homerail.pr-closeout:summarize-pr-closeout"]);
+    expect(routed.selected_context.enabled_plugins.map((plugin) => plugin.id))
+      .toEqual(["com.homerail.pr-closeout"]);
+    expect(routed.selected_context.skills.map((skill) => skill.qualified_id))
+      .toEqual(["com.homerail.pr-closeout:pr-closeout"]);
+    expect(routed.selected_context.tools.map((tool) => tool.qualified_id))
+      .toEqual(["com.homerail.pr-closeout:upsert_pr_closeout"]);
+    expect(routed.prompt_context.skills[0].content).toContain("# PR Closeout");
   });
 
   it("honors explicit plugin/capability and modality while reporting unavailable disabled targets", () => {

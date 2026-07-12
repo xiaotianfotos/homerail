@@ -22,6 +22,7 @@ export const CORE_PLUGIN_ID = "com.homerail.core" as const;
 /** Precompiled components are a finite host catalog, never manifest imports. */
 export const M3_BUILTIN_RENDERER_IDS: ReadonlySet<string> = new Set([
   "core-legacy-widget",
+  "pr-closeout",
   "topic-outline",
 ]);
 

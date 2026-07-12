@@ -1,0 +1,54 @@
+{
+  "tool": "upsert_pr_closeout",
+  "arguments": {
+    "id": "com.homerail.pr-closeout:xiaotianfotos-homerail-21",
+    "title": "PR #21 runtime-backed DAG patterns",
+    "repository": "xiaotianfotos/homerail",
+    "pr_number": 21,
+    "pr_url": "https://github.com/xiaotianfotos/homerail/pull/21",
+    "status": "draft",
+    "recommendation": "blocked",
+    "risk": "medium",
+    "summary": "Core runtime guarantees are verified on macOS and Linux. Windows Electron validation remains required before merge.",
+    "head_sha": "8f280337",
+    "updated_at": "2026-07-12T12:00:00+08:00",
+    "checks": [
+      { "id": "manager", "label": "Manager tests", "status": "passed", "detail": "316 passed" },
+      { "id": "worker", "label": "Worker tests", "status": "passed", "detail": "175 passed" },
+      { "id": "windows", "label": "Windows Electron", "status": "pending", "detail": "Real-machine run required" }
+    ],
+    "flow": [
+      { "id": "review", "label": "Review", "status": "passed", "detail": "Blocking findings addressed", "progress": 100, "depends_on": [] },
+      { "id": "tests", "label": "Automated tests", "status": "passed", "detail": "491 passed", "progress": 100, "depends_on": ["review"] },
+      { "id": "mac", "label": "macOS Electron", "status": "passed", "detail": "Local package verified", "progress": 100, "depends_on": ["tests"] },
+      { "id": "windows", "label": "Windows Electron", "status": "blocked", "detail": "Awaiting real machine", "progress": 0, "depends_on": ["tests"] },
+      { "id": "gate", "label": "Merge gate", "status": "blocked", "detail": "Blocked by Windows", "progress": 75, "depends_on": ["mac", "windows"] }
+    ],
+    "blockers": [
+      { "id": "windows-real", "title": "Windows real-machine validation is missing", "severity": "blocking", "detail": "Run the packaged Electron application and confirm the canonical PR closeout surface.", "owner": "Windows runner" }
+    ],
+    "reviews": [
+      { "id": "r1", "title": "Approval self-decision boundary", "status": "resolved", "author": "reviewer", "detail": "Fixed by recording proposer_actor and rejecting self-approval." },
+      { "id": "r2", "title": "Workspace containment wording", "status": "outdated", "author": "reviewer" }
+    ],
+    "platforms": [
+      { "id": "macos", "label": "macOS", "status": "passed", "detail": "Electron and browser E2E" },
+      { "id": "linux", "label": "Linux", "status": "passed", "detail": "CI runner and Docker runtime" },
+      { "id": "windows", "label": "Windows", "status": "pending", "detail": "Real machine required" }
+    ],
+    "evidence": [
+      { "id": "e1", "label": "Manager and Worker suites", "status": "verified", "detail": "491 tests passed", "at": "12:00" },
+      { "id": "e2", "label": "macOS Electron smoke", "status": "verified", "detail": "Canonical surface rendered", "at": "12:12" },
+      { "id": "e3", "label": "Windows Electron smoke", "status": "pending", "detail": "No result yet", "at": "pending" }
+    ],
+    "actions": [
+      { "id": "open-pr", "label": "Open PR", "style": "primary", "url": "https://github.com/xiaotianfotos/homerail/pull/21" },
+      { "id": "open-ci", "label": "View checks", "style": "secondary", "url": "https://github.com/xiaotianfotos/homerail/actions" }
+    ]
+  },
+  "expect": {
+    "recommendation": "blocked",
+    "risk": "medium",
+    "status": "draft"
+  }
+}
