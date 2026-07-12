@@ -150,6 +150,36 @@ export function resolveManagerAgentRuntimeEnv(): Record<string, string> | undefi
   return Object.keys(env).length > 0 ? env : undefined;
 }
 
+export function mergeProvisionerOptions(
+  defaults: WsDispatchAdapterOptions,
+  overrides: WsDispatchAdapterOptions | false | undefined,
+  workerToken: string,
+): WsDispatchAdapterOptions {
+  if (overrides === undefined) return defaults;
+  if (overrides === false) return { provisioner: false };
+  if (overrides.provisioner === false) {
+    return { ...defaults, ...overrides, provisioner: false };
+  }
+
+  const defaultProvisioner = defaults.provisioner === false
+    ? undefined
+    : defaults.provisioner;
+  const overrideProvisioner = overrides.provisioner;
+  return {
+    ...defaults,
+    ...overrides,
+    provisioner: {
+      ...defaultProvisioner,
+      ...overrideProvisioner,
+      env: {
+        ...(defaultProvisioner?.env ?? {}),
+        ...(overrideProvisioner?.env ?? {}),
+        HOMERAIL_WORKER_TOKEN: workerToken,
+      },
+    },
+  };
+}
+
 export function createServer(
   port: number,
   wsOptions?: WorkerWebSocketOptions & NodeWebSocketOptions,
@@ -188,12 +218,11 @@ export function createServer(
     },
     projectId: process.env.HOMERAIL_PROJECT_ID ?? "p1",
   };
-  const adapterOptions =
-    provisionerOptions === undefined
-      ? defaultProvisionerOptions
-      : provisionerOptions === false
-        ? { provisioner: false as false }
-        : provisionerOptions;
+  const adapterOptions = mergeProvisionerOptions(
+    defaultProvisionerOptions,
+    provisionerOptions,
+    effectiveWorkerToken,
+  );
   const managerAgentContainerOptions =
     provisionerOptions === false
       ? undefined
