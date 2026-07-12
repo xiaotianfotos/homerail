@@ -584,6 +584,13 @@ export function createManagerTools(state: {
       },
     },
     {
+      ...managerAgentToolSpec("get_dag_schema"),
+      async handler() {
+        const body = await requestManager("/dag/schema");
+        return { content: [{ type: "text", text: short(body, 50000) }] };
+      },
+    },
+    {
       ...managerAgentToolSpec("list_dag_approvals"),
       async handler() {
         return { content: [{ type: "text", text: short(await requestManager("/dag/approvals"), 20000) }] };
@@ -636,6 +643,34 @@ export function createManagerTools(state: {
           }),
         });
         return { content: [{ type: "text", text: short(body, 20000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("validate_dag_workflow"),
+      async handler(args) {
+        const source = typeof args.source === "string" ? args.source : "";
+        if (!source.trim()) throw new Error("validate_dag_workflow requires source");
+        const body = await requestManager("/dag/validate", {
+          method: "POST",
+          body: JSON.stringify({ source }),
+        });
+        return { content: [{ type: "text", text: short(body, 50000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("sync_dag_workflow"),
+      async handler(args) {
+        const source = typeof args.source === "string" ? args.source : "";
+        if (!source.trim()) throw new Error("sync_dag_workflow requires source");
+        const body = await requestManager("/dag/workflows/sync", {
+          method: "POST",
+          body: JSON.stringify({
+            yaml_text: source,
+            source_path: typeof args.source_path === "string" ? args.source_path : "manager-agent",
+          }),
+        });
+        state.objectiveToolCalls.push({ name: "sync_dag_workflow", success: true });
+        return { content: [{ type: "text", text: short(body, 30000) }] };
       },
     },
     {
