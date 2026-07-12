@@ -1,0 +1,107 @@
+name: HomeRail PR Closeout
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        type: number
+        required: true
+      phase:
+        description: Closeout phase
+        type: choice
+        options: [draft, merge]
+        required: true
+      validation_run:
+        description: Matching HomeRail validation or PR Review run id
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homerail-pr-closeout-${{ inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  closeout:
+    name: HomeRail PR Closeout
+    runs-on: [self-hosted, Linux, X64, homerail-live]
+    timeout-minutes: 15
+    env:
+      HOMERAIL_HOME: ${{ runner.temp }}/homerail-pr-closeout-cli-${{ github.run_id }}
+      HOMERAIL_ASSET_DIR: ""
+      HOMERAIL_MANAGER_URL: ${{ secrets.HOMERAIL_PR_REVIEW_MANAGER_URL }}
+      HOMERAIL_DAG_MUTATION_TOKEN: ${{ secrets.HOMERAIL_DAG_MUTATION_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out HomeRail CLI and closeout asset
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Build HomeRail CLI
+        run: |
+          npm --prefix homerail_protocol ci
+          npm --prefix homerail_cli ci
+          npm --prefix homerail_protocol run build
+          npm --prefix homerail_cli run build
+
+      - name: Start deterministic closeout
+        env:
+          CLOSEOUT_PR: ${{ inputs.pr }}
+          CLOSEOUT_PHASE: ${{ inputs.phase }}
+          VALIDATION_RUN: ${{ inputs.validation_run }}
+        run: |
+          mkdir -p artifacts/pr-closeout
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          const input = {
+            repo: process.env.GITHUB_REPOSITORY,
+            pr: Number(process.env.CLOSEOUT_PR),
+            phase: process.env.CLOSEOUT_PHASE,
+          }
+          if (process.env.VALIDATION_RUN) input.validation_runs = [process.env.VALIDATION_RUN]
+          fs.writeFileSync('artifacts/pr-closeout/input.json', JSON.stringify(input))
+          NODE
+          node homerail_cli/dist/cli.js --json dag run-template pr-closeout \
+            --input "$(cat artifacts/pr-closeout/input.json)" \
+            > artifacts/pr-closeout/command.json
+
+      - name: Publish closeout summary
+        if: always()
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          const file = 'artifacts/pr-closeout/command.json'
+          const command = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {}
+          const snapshot = command.input?.payload ?? {}
+          const lines = [
+            '# HomeRail PR Closeout',
+            '',
+            `Result: **${snapshot.closeout_status ?? 'infrastructure_error'}**`,
+            `Run: \`${command.run_id ?? 'not started'}\``,
+            `Head: \`${snapshot.head ?? 'unknown'}\``,
+            '',
+            'This workflow never merges the pull request.',
+          ]
+          if (Array.isArray(snapshot.blockers) && snapshot.blockers.length) {
+            lines.push('', '## Blockers', '', ...snapshot.blockers.map(item => `- \`${item.code}\`: ${item.message}`))
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`)
+          NODE
+
+      - name: Upload closeout evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-closeout-${{ inputs.pr }}-${{ github.run_id }}
+          path: artifacts/pr-closeout/
+          if-no-files-found: error
+          retention-days: 14

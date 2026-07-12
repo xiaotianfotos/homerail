@@ -118,8 +118,20 @@ describe("PR Review scenario assets", () => {
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(workflow).toContain("continue-on-error: true");
     expect(workflow.match(/continue-on-error: true/g)).toHaveLength(2);
+    expect(workflow.match(/^    env:$/gm)).toHaveLength(1);
     expect(workflow).toContain("dag run-template pr-review");
     expect(workflow).toContain("$GITHUB_STEP_SUMMARY");
+  });
+
+  it("keeps PR closeout manual, thin, isolated, and unable to merge", () => {
+    const workflow = fs.readFileSync(path.resolve(process.cwd(), "..", ".github", "workflows", "pr-closeout.yml"), "utf8");
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).not.toContain("pull_request_target:");
+    expect(workflow).toContain("dag run-template pr-closeout");
+    expect(workflow).toContain("HOMERAIL_HOME: ${{ runner.temp }}/homerail-pr-closeout-cli-${{ github.run_id }}");
+    expect(workflow.match(/^    env:$/gm)).toHaveLength(1);
+    expect(workflow).not.toContain("gh pr merge");
+    expect(workflow).toContain("This workflow never merges the pull request.");
   });
 
   it("executes budget, four reviews, synthesis, 2-of-3 quorum, and publication", () => {

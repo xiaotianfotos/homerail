@@ -184,6 +184,236 @@ async function resolveGitHubPullRequest(repo: string, pr: number): Promise<{
   };
 }
 
+async function githubRequest(pathname: string): Promise<unknown> {
+  const token = process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim();
+  const response = await fetch(`${githubApiBaseUrl()}${pathname}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "HomeRail-Manager-Agent",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) throw new Error(`GitHub closeout lookup failed for ${pathname}: HTTP ${response.status}`);
+  return await response.json() as unknown;
+}
+
+async function githubReviewThreadStatus(repo: string, pr: number): Promise<{ verified: boolean; unresolved: number | null }> {
+  const token = process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim();
+  if (!token) return { verified: false, unresolved: null };
+  const [owner, name] = repo.split("/");
+  const response = await fetch(`${githubApiBaseUrl()}/graphql`, {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "HomeRail-Manager-Agent",
+    },
+    body: JSON.stringify({
+      query: "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}",
+      variables: { owner, name, number: pr },
+    }),
+  });
+  if (!response.ok) return { verified: false, unresolved: null };
+  const body = await response.json() as Record<string, unknown>;
+  if (Array.isArray(body.errors) && body.errors.length > 0) return { verified: false, unresolved: null };
+  const data = body.data as Record<string, unknown> | undefined;
+  const repository = data?.repository as Record<string, unknown> | undefined;
+  const pullRequest = repository?.pullRequest as Record<string, unknown> | undefined;
+  const threads = pullRequest?.reviewThreads as Record<string, unknown> | undefined;
+  const nodes = Array.isArray(threads?.nodes) ? threads.nodes as Record<string, unknown>[] : undefined;
+  return nodes
+    ? { verified: true, unresolved: nodes.filter((node) => node.isResolved !== true).length }
+    : { verified: false, unresolved: null };
+}
+
+function closeoutPlatforms(files: string[]): string[] {
+  const required = new Set<string>(["linux"]);
+  for (const file of files.map((value) => value.toLowerCase())) {
+    if (/(^|\/)(electron|desktop|windows|win32)(\/|\.|$)/.test(file)) required.add("windows");
+    if (/(^|\/)(electron|desktop|macos|darwin)(\/|\.|$)/.test(file)) required.add("macos");
+    if (/(dockerfile|docker-compose|^docker\/|\/docker\/)/.test(file)) required.add("docker");
+  }
+  return [...required].sort();
+}
+
+function nestedHead(value: unknown, depth = 0): string | undefined {
+  if (depth > 8 || value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = nestedHead(item, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const direct = typeof record.head === "string" ? record.head : "";
+  if (/^[0-9a-f]{40}$/i.test(direct)) return direct;
+  for (const item of Object.values(record)) {
+    const found = nestedHead(item, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+async function managerRunCloseoutEvidence(runId: string, head: string): Promise<Record<string, unknown>> {
+  const status = managerData(await requestManager(`/runs/${encodeURIComponent(runId)}/status`));
+  const handoffData = managerData(await requestManager(`/runs/${encodeURIComponent(runId)}/handoffs`));
+  const handoffs = Array.isArray(handoffData.handoffs) ? handoffData.handoffs as Record<string, unknown>[] : [];
+  const published = handoffs
+    .slice()
+    .reverse()
+    .map((handoff) => dataRecord(handoff.content))
+    .find((content) => content.report && typeof content.report === "object");
+  const report = published?.report as Record<string, unknown> | undefined;
+  const evidenceHead = nestedHead(handoffs) ?? "unknown";
+  return {
+    source: "homerail_run",
+    name: `HomeRail run ${runId}`,
+    run_id: runId,
+    head: evidenceHead,
+    status: String(status.status ?? "unknown"),
+    fresh: evidenceHead === head,
+    kind: report ? "pr_review" : "dag_validation",
+    ...(report ? {
+      report_status: String(report.status ?? "unknown"),
+      actionable_count: Number(report.actionable_count ?? 0),
+    } : {}),
+  };
+}
+
+async function resolveGitHubCloseout(
+  repo: string,
+  pr: number,
+  requestedPhase: string | undefined,
+  validationRuns: string[],
+): Promise<Record<string, unknown>> {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must use the owner/name form");
+  if (!Number.isInteger(pr) || pr < 1) throw new Error("pr must be a positive integer");
+  if (requestedPhase && requestedPhase !== "draft" && requestedPhase !== "merge") {
+    throw new Error("phase must be draft or merge");
+  }
+  const [owner] = repo.split("/");
+  const repository = await githubRequest(`/repos/${repo}`) as Record<string, unknown>;
+  const pull = await githubRequest(`/repos/${repo}/pulls/${pr}`) as Record<string, unknown>;
+  const baseRecord = pull.base as Record<string, unknown> | undefined;
+  const headRecord = pull.head as Record<string, unknown> | undefined;
+  const base = String(baseRecord?.sha ?? "");
+  const head = String(headRecord?.sha ?? "");
+  const baseRef = String(baseRecord?.ref ?? "");
+  if (!/^[0-9a-f]{40}$/i.test(base) || !/^[0-9a-f]{40}$/i.test(head)) {
+    throw new Error("GitHub PR response did not contain immutable base/head SHAs");
+  }
+  const checksBody = await githubRequest(`/repos/${repo}/commits/${head}/check-runs?per_page=100`) as Record<string, unknown>;
+  const statusesBody = await githubRequest(`/repos/${repo}/commits/${head}/status`) as Record<string, unknown>;
+  const reviewsBody = await githubRequest(`/repos/${repo}/pulls/${pr}/reviews?per_page=100`);
+  const filesBody = await githubRequest(`/repos/${repo}/pulls/${pr}/files?per_page=100`);
+  const reviewThreads = await githubReviewThreadStatus(repo, pr);
+  const checks = Array.isArray(checksBody.check_runs) ? checksBody.check_runs as Record<string, unknown>[] : [];
+  const statuses = Array.isArray(statusesBody.statuses) ? statusesBody.statuses as Record<string, unknown>[] : [];
+  const reviews = Array.isArray(reviewsBody) ? reviewsBody as Record<string, unknown>[] : [];
+  const changedFiles = Array.isArray(filesBody)
+    ? filesBody.map((item) => String((item as Record<string, unknown>).filename ?? "")).filter(Boolean)
+    : [];
+  const requiredPlatforms = closeoutPlatforms(changedFiles);
+  const defaultBranch = String(repository.default_branch ?? "main");
+  let dependency: Record<string, unknown> | undefined;
+  if (baseRef && baseRef !== defaultBranch) {
+    const candidates = await githubRequest(
+      `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${baseRef}`)}&per_page=100`,
+    );
+    dependency = Array.isArray(candidates)
+      ? candidates.find((item) => Number((item as Record<string, unknown>).number) !== pr) as Record<string, unknown> | undefined
+      : undefined;
+  }
+  const evidence = await Promise.all(validationRuns.map((runId) => managerRunCloseoutEvidence(runId, head)));
+  const blockers: Array<{ code: string; message: string }> = [];
+  const freshPassed = evidence.some((item) => item.fresh === true && item.status === "completed");
+  if (!freshPassed) blockers.push({ code: "validation_evidence_missing", message: "No completed HomeRail validation run matches the current head." });
+  const isDraft = pull.draft === true;
+  const phase = requestedPhase ?? (isDraft ? "draft" : "merge");
+  const relevantChecks = checks.filter((check) => !/PR Closeout/i.test(String(check.name ?? "")));
+  const pendingChecks = relevantChecks.filter((check) => check.status !== "completed");
+  const failedChecks = relevantChecks.filter((check) =>
+    check.status === "completed" && check.conclusion !== "success" && check.conclusion !== "neutral"
+  );
+  const latestReviews = new Map<string, string>();
+  for (const review of reviews) {
+    const login = String((review.user as Record<string, unknown> | undefined)?.login ?? "");
+    const state = String(review.state ?? "").toUpperCase();
+    if (login && state !== "COMMENTED" && state !== "PENDING") latestReviews.set(login, state);
+  }
+  if (phase === "merge") {
+    if (isDraft) blockers.push({ code: "pr_is_draft", message: "The PR must leave draft before merge closeout." });
+    if (dependency) blockers.push({ code: "dependency_open", message: `Stacked dependency PR #${String(dependency.number)} is still open.` });
+    const mergeState = String(pull.mergeable_state ?? "unknown");
+    if (pull.mergeable !== true || ["dirty", "blocked", "unknown"].includes(mergeState)) {
+      blockers.push({ code: "not_mergeable", message: `GitHub reports mergeable=${String(pull.mergeable)} and state=${mergeState}.` });
+    }
+    if (relevantChecks.length === 0) blockers.push({ code: "checks_missing", message: "No GitHub checks exist for the current head." });
+    if (pendingChecks.length > 0) blockers.push({ code: "checks_pending", message: `${pendingChecks.length} GitHub checks are pending.` });
+    if (failedChecks.length > 0 || statuses.some((status) => status.state !== "success")) {
+      blockers.push({ code: "checks_failed", message: "At least one GitHub check or commit status is not successful." });
+    }
+    const changesRequested = [...latestReviews.entries()].filter(([, state]) => state === "CHANGES_REQUESTED").map(([login]) => login);
+    if (changesRequested.length > 0) blockers.push({ code: "changes_requested", message: `Changes are requested by: ${changesRequested.join(", ")}.` });
+    if (!reviewThreads.verified) {
+      blockers.push({ code: "review_threads_unverified", message: "Unresolved review threads could not be verified with the GitHub GraphQL API." });
+    } else if ((reviewThreads.unresolved ?? 0) > 0) {
+      blockers.push({ code: "review_threads_open", message: `${reviewThreads.unresolved} review threads remain unresolved.` });
+    }
+    const observedPlatforms = new Set<string>();
+    for (const check of relevantChecks) {
+      const name = String(check.name ?? "").toLowerCase();
+      if (name.includes("linux")) observedPlatforms.add("linux");
+      if (name.includes("windows")) observedPlatforms.add("windows");
+      if (name.includes("macos") || name.includes("mac os")) observedPlatforms.add("macos");
+      if (name.includes("docker")) observedPlatforms.add("docker");
+    }
+    const missingPlatforms = requiredPlatforms.filter((platform) => !observedPlatforms.has(platform));
+    if (missingPlatforms.length > 0) blockers.push({ code: "platform_evidence_missing", message: `Missing required platform evidence: ${missingPlatforms.join(", ")}.` });
+    const reviewEvidence = evidence.some((item) =>
+      item.fresh === true && item.status === "completed" && item.kind === "pr_review" &&
+      item.report_status === "pass" && item.actionable_count === 0
+    );
+    if (!reviewEvidence) blockers.push({ code: "pr_review_missing", message: "No conclusive zero-finding PR Review matches the current head." });
+  }
+  const staleOnly = evidence.length > 0 && evidence.every((item) => item.fresh !== true);
+  const closeoutStatus = staleOnly
+    ? "stale_evidence"
+    : blockers.length > 0
+      ? "blocked"
+      : phase === "draft"
+        ? "ready_for_review"
+        : "ready_for_human_merge_candidate";
+  return {
+    repo,
+    pr,
+    base,
+    head,
+    phase,
+    closeout_status: closeoutStatus,
+    blockers,
+    evidence,
+    github: {
+      draft: isDraft,
+      mergeable: pull.mergeable ?? null,
+      mergeable_state: pull.mergeable_state ?? "unknown",
+      base_ref: baseRef,
+      default_branch: defaultBranch,
+      dependency: dependency ? { number: dependency.number, title: dependency.title, state: dependency.state } : null,
+      checks: relevantChecks.map((check) => ({ name: check.name, status: check.status, conclusion: check.conclusion })),
+      statuses: statuses.map((status) => ({ context: status.context, state: status.state })),
+      review_states: Object.fromEntries(latestReviews),
+      review_threads: reviewThreads,
+      changed_files: changedFiles,
+      required_platforms: requiredPlatforms,
+    },
+  };
+}
+
 function managerAgentTurnTimeoutMs(): number {
   const raw = Number(process.env.MANAGER_AGENT_TURN_TIMEOUT_MS ?? "0");
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
@@ -650,6 +880,78 @@ function createManagerTools(state: {
         } catch (err) {
           state.objectiveToolCalls.push({
             name: "run_pr_review",
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          throw err;
+        }
+      },
+    },
+    {
+      name: "run_pr_closeout",
+      description: "Resolve GitHub and persisted HomeRail evidence in code, then start the deterministic pr-closeout DAG. This tool never merges a PR and does not accept model-asserted local test evidence.",
+      input_schema: {
+        type: "object",
+        properties: {
+          repo: { type: "string", description: "GitHub repository in owner/name form" },
+          pr: { type: "integer", minimum: 1 },
+          phase: { type: "string", enum: ["draft", "merge"] },
+          validation_runs: {
+            type: "array",
+            items: { type: "string", minLength: 1 },
+            maxItems: 20,
+          },
+        },
+        required: ["repo", "pr"],
+        additionalProperties: false,
+      },
+      async handler(args) {
+        const repo = String(args.repo || "").trim();
+        const pr = Number(args.pr);
+        const phase = typeof args.phase === "string" ? args.phase : undefined;
+        const validationRuns = Array.isArray(args.validation_runs)
+          ? args.validation_runs.map((value) => String(value).trim()).filter(Boolean)
+          : [];
+        try {
+          const snapshot = await resolveGitHubCloseout(repo, pr, phase, validationRuns);
+          const envelope = {
+            trigger_id: "manager-agent",
+            trigger_type: "manual",
+            fire_key: `pr-closeout:${repo}#${pr}:${String(snapshot.head)}:${String(snapshot.phase)}`,
+            payload: snapshot,
+          };
+          const body = await requestManager("/runs/create-and-run", {
+            method: "POST",
+            body: JSON.stringify({
+              yamlPath: "assets/orchestrations/pr-closeout.yaml.template",
+              prompt: JSON.stringify(envelope),
+            }),
+          }) as Record<string, unknown>;
+          const data = body.data as Record<string, unknown> | undefined;
+          const runId = String(data?.runId ?? data?.run_id ?? "");
+          if (!runId) throw new Error("Manager did not return a PR closeout run id");
+          state.createdRunIds.push(runId);
+          state.objectiveToolCalls.push({ name: "run_pr_closeout", success: true });
+          state.objectiveToolCalls.push({ name: "create_and_run", success: true, inferred: true });
+          return {
+            content: [{
+              type: "text",
+              text: short({
+                run_id: runId,
+                workflow_id: "pr-closeout",
+                repo,
+                pr,
+                head: snapshot.head,
+                phase: snapshot.phase,
+                closeout_status: snapshot.closeout_status,
+                blockers: snapshot.blockers,
+                merge_performed: false,
+              }, 12000),
+            }],
+          };
+        } catch (err) {
+          state.objectiveToolCalls.push({
+            name: "run_pr_closeout",
             success: false,
             error: err instanceof Error ? err.message : String(err),
           });

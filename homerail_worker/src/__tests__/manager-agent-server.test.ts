@@ -68,6 +68,65 @@ function makePrReviewApiServer(createAndRunBodies: Record<string, unknown>[]): h
   });
 }
 
+function makePrCloseoutApiServer(createAndRunBodies: Record<string, unknown>[]): http.Server {
+  return http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://localhost");
+    const pathname = url.pathname;
+    const send = (body: unknown, status = 200) => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(body));
+    };
+    if (req.method === "GET" && pathname === "/github/repos/xiaotianfotos/homerail") {
+      send({ default_branch: "main" });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/github/repos/xiaotianfotos/homerail/pulls/26") {
+      send({
+        draft: true,
+        mergeable: true,
+        mergeable_state: "clean",
+        base: { sha: "a".repeat(40), ref: "main" },
+        head: { sha: "b".repeat(40), ref: "feat/pr-closeout" },
+      });
+      return;
+    }
+    if (req.method === "GET" && pathname.endsWith(`/commits/${"b".repeat(40)}/check-runs`)) {
+      send({ check_runs: [] });
+      return;
+    }
+    if (req.method === "GET" && pathname.endsWith(`/commits/${"b".repeat(40)}/status`)) {
+      send({ statuses: [] });
+      return;
+    }
+    if (req.method === "GET" && pathname.endsWith("/pulls/26/reviews")) {
+      send([]);
+      return;
+    }
+    if (req.method === "GET" && pathname.endsWith("/pulls/26/files")) {
+      send([{ filename: "src/index.ts" }]);
+      return;
+    }
+    if (req.method === "GET" && pathname === "/api/runs/validation-run-26/status") {
+      send({ success: true, data: { status: "completed" } });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/api/runs/validation-run-26/handoffs") {
+      send({ success: true, data: { handoffs: [{ fromNode: "result", content: { head: "b".repeat(40), status: "pass" } }] } });
+      return;
+    }
+    if (req.method === "POST" && pathname === "/api/runs/create-and-run") {
+      let raw = "";
+      req.on("data", (chunk) => { raw += chunk; });
+      req.on("end", () => {
+        createAndRunBodies.push(JSON.parse(raw) as Record<string, unknown>);
+        send({ success: true, data: { runId: "run-pr-closeout-26" } }, 201);
+      });
+      return;
+    }
+    send({ success: false, error: "not found" }, 404);
+  });
+}
+
 function makePatternManagerApiServer(observed: Array<{ method: string; path: string; body?: Record<string, unknown> }>): http.Server {
   return http.createServer((req, res) => {
     const pathname = new URL(req.url || "/", "http://localhost").pathname;
@@ -191,6 +250,28 @@ class PrReviewToolAgent implements AgentClient {
       is_error: result.is_error,
     };
     yield { type: "text", text: "PR review started" };
+    yield { type: "done" };
+  }
+}
+
+class PrCloseoutToolAgent implements AgentClient {
+  async *run(
+    _prompt: string,
+    tools: DagToolDefinition[],
+    _context: AgentRunContext,
+  ): AsyncIterable<AgentEvent> {
+    const tool = tools.find((item) => item.name === "run_pr_closeout");
+    if (!tool) throw new Error("run_pr_closeout tool missing");
+    const input = { repo: "xiaotianfotos/homerail", pr: 26, phase: "draft", validation_runs: ["validation-run-26"] };
+    yield { type: "tool_use", id: "tool-pr-closeout", name: "run_pr_closeout", input };
+    const result = await tool.handler(input);
+    yield {
+      type: "tool_result",
+      tool_use_id: "tool-pr-closeout",
+      content: result.content.map((item) => item.text).join(""),
+      is_error: result.is_error,
+    };
+    yield { type: "text", text: "PR closeout started" };
     yield { type: "done" };
   }
 }
@@ -673,6 +754,57 @@ describe("manager-agent server", () => {
     }
   });
 
+  it("starts deterministic PR closeout from GitHub and persisted run evidence", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    registerAgentBackend("manager-agent-pr-closeout-tool-test", () => new PrCloseoutToolAgent());
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const createAndRunBodies: Record<string, unknown>[] = [];
+    const managerApi = makePrCloseoutApiServer(createAndRunBodies);
+    const managerPort = await listen(managerApi);
+    vi.stubEnv("MANAGER_REST_URL", `http://127.0.0.1:${managerPort}/api`);
+    vi.stubEnv("HOMERAIL_GITHUB_API_BASE_URL", `http://127.0.0.1:${managerPort}/github`);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "收口 xiaotianfotos/homerail PR #26",
+          required_tool_calls: ["create_and_run"],
+          agent_config: { agent_type: "manager-agent-pr-closeout-tool-test", model: "test-model" },
+        }),
+      });
+      const body = await response.json() as { run_id?: string; objective?: { satisfied?: boolean } };
+      expect(response.status).toBe(200);
+      expect(body.run_id).toBe("run-pr-closeout-26");
+      expect(body.objective?.satisfied).toBe(true);
+      expect(createAndRunBodies).toHaveLength(1);
+      expect(createAndRunBodies[0]).toMatchObject({
+        yamlPath: "assets/orchestrations/pr-closeout.yaml.template",
+      });
+      const envelope = JSON.parse(String(createAndRunBodies[0].prompt)) as { payload: Record<string, unknown> };
+      expect(envelope.payload).toMatchObject({
+        repo: "xiaotianfotos/homerail",
+        pr: 26,
+        base: "a".repeat(40),
+        head: "b".repeat(40),
+        phase: "draft",
+        closeout_status: "ready_for_review",
+        blockers: [],
+      });
+    } finally {
+      await close(server);
+      await close(managerApi);
+    }
+  });
+
   it("uses a truthful run fallback when the agent only emits a tool call", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
     tmpDirs.push(workspace);
@@ -851,6 +983,7 @@ describe("manager-agent server", () => {
       });
       expect(response.status).toBe(200);
       expect(agent.toolNames).toEqual(expect.arrayContaining([
+        "run_pr_closeout",
         "run_pr_review",
         "update_voice_memo",
         "validate_widget_file",

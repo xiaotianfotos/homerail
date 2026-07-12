@@ -4,6 +4,11 @@ import * as path from "node:path";
 
 import type { BaseResponse, HomeRailClient } from "../client.js";
 import { getClient } from "../index.js";
+import {
+  manualCloseoutEnvelope,
+  resolvePrCloseoutInput,
+  writePrCloseoutEvidence,
+} from "./dag-pr-closeout.js";
 import { orchestrationsDir, resolveTemplatePath } from "./templates.js";
 
 interface GlobalOpts {
@@ -443,10 +448,12 @@ export function registerDagRunTemplateCommands(dag: Command, program: Command): 
       try {
         const logicalInput = parseObject(opts.input, "--input");
         const normalizedTemplate = path.basename(template).replace(/\.(yaml|yml)(\.template)?$/, "");
+        const client = getClient(global);
         const input = normalizedTemplate === "pr-review"
           ? manualRunEnvelope(await resolvePrReviewInput(logicalInput))
-          : logicalInput;
-        const client = getClient(global);
+          : normalizedTemplate === "pr-closeout"
+            ? manualCloseoutEnvelope(await resolvePrCloseoutInput(logicalInput, { client }))
+            : logicalInput;
         const started = await startTemplateRun(client, template, input, opts);
         if (!opts.wait) {
           const output = { run_id: started.runId, workflow_id: started.workflowId, input };
@@ -459,6 +466,16 @@ export function registerDagRunTemplateCommands(dag: Command, program: Command): 
           positiveNumber(opts.timeout, "--timeout"),
           positiveNumber(opts.interval, "--interval"),
         );
+        if (normalizedTemplate === "pr-closeout") {
+          const evidence = await writePrCloseoutEvidence(
+            client,
+            started.runId,
+            opts.outputDir ?? path.join("artifacts", "pr-closeout"),
+            status,
+          );
+          console.log(global.json ? JSON.stringify(evidence) : fs.readFileSync((evidence.artifacts as { markdown: string }).markdown, "utf8"));
+          return;
+        }
         if (normalizedTemplate !== "pr-review") {
           console.log(global.json ? JSON.stringify(status) : `Run ${started.runId}: ${String(status.status ?? "unknown")}`);
           return;
@@ -485,6 +502,22 @@ export function registerDagRunTemplateCommands(dag: Command, program: Command): 
       try {
         const evidence = await writePrReviewEvidence(getClient(global), runId, opts.outputDir);
         console.log(global.json ? JSON.stringify(evidence) : fs.readFileSync(evidence.artifacts.markdown, "utf8"));
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  dag
+    .command("closeout-report <runId>")
+    .description("Materialize Markdown and JSON evidence for a terminal PR Closeout run")
+    .option("--output-dir <path>", "Evidence output directory", path.join("artifacts", "pr-closeout"))
+    .action(async (runId: string, opts: ReviewReportOptions) => {
+      const global = program.opts<GlobalOpts>();
+      try {
+        const evidence = await writePrCloseoutEvidence(getClient(global), runId, opts.outputDir);
+        const artifacts = evidence.artifacts as { markdown: string };
+        console.log(global.json ? JSON.stringify(evidence) : fs.readFileSync(artifacts.markdown, "utf8"));
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;

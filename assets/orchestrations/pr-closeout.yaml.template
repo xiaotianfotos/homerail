@@ -1,0 +1,115 @@
+api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: pr-closeout
+  name: PR Closeout
+
+spec:
+  description: Deterministically decide whether a PR can leave draft or wait for its owner to merge.
+
+  agents:
+    documentation_only:
+      system: This workflow is deterministic and never dispatches this agent.
+
+  contracts:
+    CloseoutEnvelope:
+      type: object
+      additionalProperties: false
+      required: [trigger_id, trigger_type, fire_key, payload]
+      properties:
+        trigger_id: { type: string, minLength: 1, maxLength: 200 }
+        trigger_type: { type: string, minLength: 1, maxLength: 100 }
+        fire_key: { type: string, minLength: 1, maxLength: 500 }
+        payload:
+          type: object
+          additionalProperties: true
+          required: [repo, pr, base, head, phase, closeout_status, blockers, evidence]
+          properties:
+            repo: { type: string, minLength: 3, maxLength: 200 }
+            pr: { type: integer, minimum: 1 }
+            base: { type: string, minLength: 7, maxLength: 64 }
+            head: { type: string, minLength: 7, maxLength: 64 }
+            phase: { type: string, enum: [draft, merge] }
+            closeout_status:
+              type: string
+              enum: [ready_for_review, ready_for_human_merge_candidate, blocked, stale_evidence]
+            blockers:
+              type: array
+              maxItems: 100
+              items: { type: object, additionalProperties: true }
+            evidence:
+              type: array
+              maxItems: 100
+              items: { type: object, additionalProperties: true }
+
+  nodes:
+    status_gate:
+      kind: condition
+      inputs:
+        snapshot: { contract: CloseoutEnvelope }
+      outputs:
+        ready_for_review: { contract: CloseoutEnvelope }
+        merge_candidate: { contract: CloseoutEnvelope }
+        blocked: { contract: CloseoutEnvelope }
+        stale: { contract: CloseoutEnvelope }
+      config:
+        field: payload.closeout_status
+        routes:
+          ready_for_review: ready_for_review
+          ready_for_human_merge_candidate: merge_candidate
+          blocked: blocked
+          stale_evidence: stale
+        default: blocked
+
+    ready_for_review:
+      kind: terminal
+      outcome: success
+      inputs:
+        snapshot: { contract: CloseoutEnvelope }
+
+    merge_approval:
+      kind: approval
+      inputs:
+        proposal: { contract: CloseoutEnvelope }
+      outputs:
+        approved: {}
+        rejected: {}
+      config:
+        approval_id: pr-closeout-merge
+        proposer_actor: system:pr-closeout
+        authorized_actors: [human:owner]
+        approved_port: approved
+        rejected_port: rejected
+        expires_after_ms: 604800000
+
+    ready_for_human_merge:
+      kind: terminal
+      outcome: success
+      inputs: { snapshot: {} }
+
+    approval_rejected:
+      kind: terminal
+      outcome: cancelled
+      inputs: { snapshot: {} }
+
+    blocked:
+      kind: terminal
+      outcome: cancelled
+      inputs:
+        snapshot: { contract: CloseoutEnvelope }
+
+    stale_evidence:
+      kind: terminal
+      outcome: cancelled
+      inputs:
+        snapshot: { contract: CloseoutEnvelope }
+
+  edges:
+    - { from: $run.input, to: status_gate.snapshot }
+    - { from: status_gate.ready_for_review, to: ready_for_review.snapshot }
+    - { from: status_gate.merge_candidate, to: merge_approval.proposal }
+    - { from: merge_approval.approved, to: ready_for_human_merge.snapshot }
+    - { from: merge_approval.rejected, to: approval_rejected.snapshot, condition: on_failure }
+    - { from: status_gate.blocked, to: blocked.snapshot, condition: on_failure }
+    - { from: status_gate.stale, to: stale_evidence.snapshot, condition: on_failure }

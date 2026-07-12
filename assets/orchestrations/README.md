@@ -25,6 +25,10 @@ node homerail_cli/dist/cli.js dag sync \
 
 WorkflowSpec v1 uses named contracts, top-level edges, and explicit terminal
 outcomes. Bind its logical agents through a separate database runtime profile.
+`pr-review.yaml.template` performs evidence-backed advisory review, while
+`pr-closeout.yaml.template` deterministically routes immutable GitHub and
+validation evidence to `ready_for_review`, a blocked result, or a durable
+owner-only merge approval. Closeout never performs a GitHub merge mutation.
 Additional strict v1 examples cover reusable graph primitives:
 
 - `workflow-spec-v1-fanout.yaml.template`: fan-out plus explicit join;

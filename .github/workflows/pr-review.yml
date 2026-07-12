@@ -43,7 +43,6 @@ jobs:
     env:
       HOMERAIL_HOME: ${{ runner.temp }}/homerail-pr-review-cli-${{ github.run_id }}
       HOMERAIL_ASSET_DIR: ""
-    env:
       HOMERAIL_MANAGER_URL: ${{ secrets.HOMERAIL_PR_REVIEW_MANAGER_URL }}
       HOMERAIL_DAG_MUTATION_TOKEN: ${{ secrets.HOMERAIL_DAG_MUTATION_TOKEN }}
       GH_TOKEN: ${{ github.token }}

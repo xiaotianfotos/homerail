@@ -48,6 +48,7 @@ describe("Manager Agent skill discovery", () => {
     expect(result.root).toBe(path.join(tmpHome, "skills"));
     expect(result.errors).toEqual([]);
     expect(result.installed).toContain("homerail-dag-patterns");
+    expect(result.installed).toContain("homerail-pr-closeout");
     expect(result.installed).toContain("homerail-pr-review");
     expect(fs.realpathSync(path.join(getManagerSkillsRoot(), "homerail-dag-patterns")))
       .toBe(fs.realpathSync(path.resolve(process.cwd(), "..", "skills", "homerail-dag-patterns")));
