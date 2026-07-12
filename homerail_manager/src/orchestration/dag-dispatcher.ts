@@ -1,4 +1,5 @@
 import type { DAGAgentConfig, DAGEdge } from "./graph.js";
+import type { DagAdvisorConfig, DagWorkspaceAccess } from "homerail-protocol";
 
 export interface DispatchEnvelope {
   runId: string;
@@ -20,6 +21,8 @@ export interface DispatchEnvelope {
   image?: string;
   container_group?: string;
   requiredCapabilities?: string[];
+  advisors?: DagAdvisorConfig[];
+  workspaceAccess?: DagWorkspaceAccess;
 }
 
 export type DispatchResult =

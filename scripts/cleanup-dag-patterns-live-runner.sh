@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUNNER_BASE="${HOMERAIL_RUNNER_BASE:-/vol1/1000/homerail_runners}"
+RUNNER_BASE="${HOMERAIL_RUNNER_BASE:-$HOME/.homerail-runners}"
 HOME_BASE="${HOMERAIL_LIVE_HOME_BASE:-$RUNNER_BASE/homerail_home}"
 LOCK_FILE="$RUNNER_BASE/dag-patterns-live.lock"
 

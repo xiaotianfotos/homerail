@@ -7,6 +7,7 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs"
 import { join } from "node:path";
 import type { Writable } from "node:stream";
 import { homerailPath } from "../platform/paths.js";
+import { redactTelemetry } from "homerail-protocol";
 
 export type ToolEventRecord = Record<string, unknown>;
 
@@ -49,7 +50,7 @@ export function createToolEventWriter(runId: string, baseDir?: string): ToolEven
 
   return {
     write(event: ToolEventRecord) {
-      const line = JSON.stringify({ ...event, run_id: safeRunId, ts: Date.now() }) + "\n";
+      const line = JSON.stringify(redactTelemetry({ ...event, run_id: safeRunId, ts: Date.now() })) + "\n";
       stream.write(line);
     },
     flush() {

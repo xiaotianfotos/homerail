@@ -21,6 +21,7 @@ import {
   autoHandoffAfterCorrectionExhausted,
   failActiveRun,
   getCurrentNodeSession,
+  recordAdvisorCall,
   requestNodeCorrection,
 } from "../runtime/active-runs.js";
 
@@ -371,6 +372,9 @@ export function setupWorkerWebSocket(
           const runId = streamRunId(msg.data);
           const nodeId = streamNodeId(msg.data);
           if (runId && nodeId) {
+            if (msg.data.event === "advisor_call_started" && typeof msg.data.advisor_id === "string") {
+              recordAdvisorCall(runId, nodeId, msg.data.advisor_id);
+            }
             const sessionId = dataSessionId(msg.data);
             appendChatEntry(runId, nodeId, {
               role: "worker",

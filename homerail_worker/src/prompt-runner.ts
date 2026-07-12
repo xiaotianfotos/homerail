@@ -4,7 +4,7 @@
  * @version 0.1.0
  */
 
-import { normalizeManagerAgentRuntimeAgentType, type DagNodeConfig } from "homerail-protocol";
+import { normalizeManagerAgentRuntimeAgentType, type DagAdvisorConfig, type DagNodeConfig } from "homerail-protocol";
 import { createAgentClient } from "./agent/factory.js";
 import type { AgentEvent, AgentRunContext, AgentUsage } from "./agent/types.js";
 import { createDagTools, createDagToolsState, deliverInbox } from "./dag-tools/index.js";
@@ -12,6 +12,8 @@ import type { DagToolsState } from "./dag-tools/index.js";
 import { createAuditWriters } from "./audit/index.js";
 import type { AuditWriters } from "./audit/index.js";
 import { appendTranscriptEntry, redactAgentContext, saveSession } from "./session/session-store.js";
+import { redactTelemetry } from "./telemetry-redaction.js";
+import { snapshotWorkspace, verifyWorkspacePolicy, type WorkspaceSnapshot } from "./workspace-policy.js";
 
 export interface PromptJob {
   task: string;
@@ -33,46 +35,11 @@ export interface PromptJob {
 
 export interface PromptRunnerDeps {
   wsSend: (data: string) => void;
+  onTerminalMessage?: (data: string) => void;
   agentBackend?: string;
   auditDir?: string;
   abortSignal?: AbortSignal;
   registerInboxHandler?: (handler: (content: unknown) => void) => () => void;
-}
-
-const REDACTED = "***REDACTED***";
-const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password|credential|authorization|auth)/i;
-const SECRET_TEXT_PATTERNS: Array<[RegExp, string]> = [
-  [/(api[_-]?key|token|secret|password)=([^&\s'"]+)/gi, "$1=***REDACTED***"],
-  [/(Authorization:\s*(?:Bearer|token)\s+)[^\s'"]+/gi, "$1***REDACTED***"],
-  [/(Bearer\s+)[A-Za-z0-9._~+/-]{8,}/gi, "$1***REDACTED***"],
-  [/([A-Za-z][A-Za-z0-9+.-]*:\/\/[^:\s/@]+:)([^@\s/]+)(@)/g, "$1***REDACTED***$3"],
-  [/\b(sk-[A-Za-z0-9_-]{12,})\b/g, REDACTED],
-];
-
-function redactToolTelemetry(value: unknown, depth = 0): unknown {
-  if (depth > 8) return "[truncated]";
-  if (value === null || value === undefined) return value;
-  if (typeof value === "string") {
-    let redacted = value;
-    for (const [pattern, replacement] of SECRET_TEXT_PATTERNS) {
-      redacted = redacted.replace(pattern, replacement);
-    }
-    return redacted.length > 4000 ? `${redacted.slice(0, 4000)}...` : redacted;
-  }
-  if (typeof value === "number" || typeof value === "boolean") return value;
-  if (Array.isArray(value)) {
-    return value.slice(0, 100).map((item) => redactToolTelemetry(item, depth + 1));
-  }
-  if (typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, nested] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
-      out[key] = SECRET_KEY_PATTERN.test(key)
-        ? REDACTED
-        : redactToolTelemetry(nested, depth + 1);
-    }
-    return out;
-  }
-  return String(value);
 }
 
 function resolveLlmBaseUrl(job: PromptJob): string {
@@ -100,6 +67,56 @@ function assertAgentRuntimeProtocol(agentBackend: string | undefined, protocol: 
   }
 }
 
+async function runAdvisorCall(
+  advisor: DagAdvisorConfig,
+  question: string,
+  workspace: string,
+  parentSignal?: AbortSignal,
+): Promise<{ text: string; usage: AgentUsage }> {
+  assertAgentRuntimeProtocol(advisor.agent_type, advisor.protocol);
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort(parentSignal?.reason);
+  parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+  const timeout = setTimeout(() => controller.abort(new Error(`advisor timeout after ${advisor.timeout_ms}ms`)), advisor.timeout_ms);
+  const usage: AgentUsage = {};
+  const text: string[] = [];
+  try {
+    const client = createAgentClient(advisor.agent_type);
+    const context: AgentRunContext = {
+      systemPrompt: advisor.system_prompt,
+      provider: advisor.provider,
+      protocol: advisor.protocol,
+      model: advisor.model,
+      apiKey: advisor.api_key ?? "",
+      baseUrl: advisor.base_url ?? "",
+      workspace,
+      sessionId: `advisor-${advisor.id}-${Date.now()}`,
+      abortSignal: controller.signal,
+    };
+    for await (const event of client.run(question, [], context)) {
+      if (event.type === "text") text.push(event.text);
+      if (event.type === "usage") {
+        for (const [key, value] of Object.entries(event.usage) as Array<[keyof AgentUsage, number | undefined]>) {
+          if (typeof value === "number") usage[key] = value;
+        }
+        const totalTokens = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
+        if (totalTokens > advisor.max_tokens) {
+          controller.abort(new Error(`advisor token limit exceeded: ${totalTokens} > ${advisor.max_tokens}`));
+          throw controller.signal.reason;
+        }
+      }
+      if (event.type === "error") throw new Error(event.message);
+    }
+    if (controller.signal.aborted) {
+      throw controller.signal.reason instanceof Error ? controller.signal.reason : new Error("advisor call aborted");
+    }
+    return { text: text.join("\n").trim(), usage };
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", onParentAbort);
+  }
+}
+
 export async function runPrompt(
   job: PromptJob,
   deps: PromptRunnerDeps,
@@ -115,8 +132,8 @@ export async function runPrompt(
         nodeId: job.dagConfig.node_id,
         sessionId,
         timestamp: Date.now(),
-        content,
-        metadata,
+        content: redactTelemetry(content),
+        metadata: redactTelemetry(metadata) as Record<string, unknown> | undefined,
       });
     } catch {
       // Session transcript persistence is best-effort. The manager DB run
@@ -166,7 +183,10 @@ export async function runPrompt(
 
   // Create DAG tools state
   const dagState = createDagToolsState(job.dagConfig, job.runId, wsSend);
-  const dagTools = createDagTools(dagState);
+  const workspace = process.env.WORKSPACE ?? process.cwd();
+  const dagTools = createDagTools(dagState, {
+    advisorRunner: (advisor, question) => runAdvisorCall(advisor, question, workspace, deps.abortSignal),
+  });
   const unregisterInboxHandler = deps.registerInboxHandler?.((content) => {
     deliverInbox(dagState, content);
   });
@@ -191,11 +211,12 @@ export async function runPrompt(
 
   // Stream content via WS
   function sendContent(text: string) {
+    const redactedText = String(redactTelemetry(text));
     wsSend(
       JSON.stringify({
         type: "content",
         data: {
-          text,
+          text: redactedText,
           run_id: job.runId,
           node_id: job.dagConfig.node_id,
           session_id: job.dagConfig.session_id ?? job.runId,
@@ -205,12 +226,13 @@ export async function runPrompt(
   }
 
   function sendStream(data: Record<string, unknown>) {
+    const redactedData = redactTelemetry(data) as Record<string, unknown>;
     wsSend(
       JSON.stringify({
         type: "stream",
         data: {
-          type: typeof data.event === "string" ? data.event : "stream",
-          ...data,
+          type: typeof redactedData.event === "string" ? redactedData.event : "stream",
+          ...redactedData,
           run_id: job.runId,
           node_id: job.dagConfig.node_id,
           session_id: job.dagConfig.session_id ?? job.runId,
@@ -224,8 +246,18 @@ export async function runPrompt(
   const nodeUsage: AgentUsage = {};
   let nodeDurationMs: number | undefined;
   let nodeNumTurns: number | undefined;
+  let workspaceBefore: WorkspaceSnapshot | undefined;
 
   try {
+    if (dagState.workspaceAccess) {
+      workspaceBefore = snapshotWorkspace(workspace, dagState.workspaceAccess);
+      sendStream({
+        event: "workspace_policy_snapshot",
+        before_file_count: Object.keys(workspaceBefore.files).length,
+        readonly_paths: dagState.workspaceAccess.readonly_paths ?? [],
+        writable_paths: dagState.workspaceAccess.writable_paths,
+      });
+    }
     assertAgentRuntimeProtocol(agentBackend, job.llmProtocol);
     const agent = createAgentClient(agentBackend);
     const context: AgentRunContext = {
@@ -235,7 +267,7 @@ export async function runPrompt(
       model: job.dagConfig.model,
       apiKey: job.llmApiKey ?? process.env.LLM_API_KEY ?? "",
       baseUrl: resolveAgentBaseUrl(job, agentBackend),
-      workspace: process.env.WORKSPACE ?? process.cwd(),
+      workspace,
       sessionId: job.dagConfig.session_id ?? job.runId,
       abortSignal: deps.abortSignal,
     };
@@ -260,51 +292,54 @@ export async function runPrompt(
           audit?.transcript.write({ event: "text", text: event.text });
           appendSessionTranscript("text", event.text);
           break;
-        case "debug":
+        case "debug": {
+          const debugMessage = String(redactTelemetry(event.message));
+          const debugData = redactTelemetry(event.data ?? {}) as Record<string, unknown>;
           sendStream({
             event: "agent_debug",
             source: event.source,
-            message: event.message,
-            data: event.data ?? {},
+            message: debugMessage,
+            data: debugData,
           });
           console.log(
             `[homerail_worker] HOMERAIL_AGENT_DEBUG ${JSON.stringify({
               run_id: job.runId,
               node_id: job.dagConfig.node_id,
               source: event.source,
-              message: event.message,
-              data: event.data ?? {},
+              message: debugMessage,
+              data: debugData,
             })}`,
           );
           audit?.transcript.write({
             event: "agent_debug",
             source: event.source,
-            message: event.message,
-            data: event.data ?? {},
+            message: debugMessage,
+            data: debugData,
           });
           appendSessionTranscript("agent_debug", undefined, {
             source: event.source,
-            message: event.message,
-            data: redactToolTelemetry(event.data ?? {}) as Record<string, unknown>,
+            message: debugMessage,
+            data: debugData,
           });
           break;
+        }
         case "tool_use":
           appendSessionTranscript("tool_use", undefined, {
             tool_name: event.name,
             tool_id: event.id,
-            tool_input: redactToolTelemetry(event.input),
+            tool_input: redactTelemetry(event.input),
           });
           sendStream({
             event: "tool_use",
             tool_name: event.name,
             tool_id: event.id,
-            tool_input: redactToolTelemetry(event.input),
+            tool_input: redactTelemetry(event.input),
           });
           audit?.toolEvents.write({
             event: "tool_use",
             tool_name: event.name,
             tool_id: event.id,
-            input: event.input,
+            input: redactTelemetry(event.input),
             node_id: job.dagConfig.node_id,
             run_id: job.runId,
           });
@@ -313,13 +348,13 @@ export async function runPrompt(
           appendSessionTranscript("tool_result", undefined, {
             tool_use_id: event.tool_use_id,
             is_error: event.is_error,
-            result_preview: redactToolTelemetry(event.content),
+            result_preview: redactTelemetry(event.content),
           });
           sendStream({
             event: "tool_result",
             tool_use_id: event.tool_use_id,
             is_error: event.is_error,
-            result_preview: redactToolTelemetry(event.content),
+            result_preview: redactTelemetry(event.content),
           });
           audit?.toolEvents.write({
             event: "tool_result",
@@ -330,10 +365,10 @@ export async function runPrompt(
           });
           break;
         case "error":
-          errorMessage = event.message;
-          sendContent(`[ERROR] ${event.message}`);
-          audit?.transcript.write({ event: "error", message: event.message });
-          appendSessionTranscript("error", event.message);
+          errorMessage = String(redactTelemetry(event.message));
+          sendContent(`[ERROR] ${errorMessage}`);
+          audit?.transcript.write({ event: "error", message: errorMessage });
+          appendSessionTranscript("error", errorMessage);
           break;
         case "usage":
           // The claude-sdk adapter emits running-total snapshots (one per
@@ -362,15 +397,36 @@ export async function runPrompt(
     if (!dagState.yielded) {
       emitUsage();
       sendNodeError(errorMessage ?? "agent ended without DAG handoff");
+    } else {
+      let workspaceValid = true;
+      if (dagState.workspaceAccess && workspaceBefore) {
+        const workspaceAfter = snapshotWorkspace(workspace, dagState.workspaceAccess);
+        const policyResult = verifyWorkspacePolicy(workspaceBefore, workspaceAfter, dagState.workspaceAccess);
+        sendStream({ event: "workspace_policy_verified", ...policyResult });
+        workspaceValid = policyResult.valid;
+        if (!workspaceValid) {
+          dagState.yielded = false;
+          sendNodeError(`DAG_WORKSPACE_POLICY_VIOLATION ${JSON.stringify(policyResult)}`);
+        }
+      }
+      if (workspaceValid && dagState.handoffData) {
+        // This is the authoritative runtime payload, not telemetry. The
+        // Manager applies it before writing redacted evidence copies.
+        sendTerminalMessage(JSON.stringify({
+          type: "response",
+          session_id: dagState.sessionId,
+          data: dagState.handoffData,
+        }));
+      }
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = String(redactTelemetry(err instanceof Error ? err.message : String(err)));
     sendContent(`[FATAL] ${msg}`);
     audit?.transcript.write({ event: "fatal", message: msg });
     appendSessionTranscript("fatal", msg);
     // Best-effort: emit whatever usage was accumulated before the crash.
     emitUsage();
-    if (!dagState.yielded) {
+    if (!dagState.yielded || dagState.workspaceAccess) {
       sendNodeError(msg);
     }
   }
@@ -411,17 +467,19 @@ export async function runPrompt(
   }
 
   function sendNodeError(message: string) {
-    wsSend(
-      JSON.stringify({
-        type: "node_error",
-        data: {
-          runId: job.runId,
-          nodeId: job.dagConfig.node_id,
-          message,
-          session_id: job.dagConfig.session_id ?? job.runId,
-        },
-      }),
-    );
+    const redactedMessage = String(redactTelemetry(message));
+    const data = {
+      runId: job.runId,
+      nodeId: job.dagConfig.node_id,
+      message: redactedMessage,
+      session_id: job.dagConfig.session_id ?? job.runId,
+    };
+    sendTerminalMessage(JSON.stringify({ type: "node_error", data }));
+  }
+
+  function sendTerminalMessage(data: string) {
+    if (deps.onTerminalMessage) deps.onTerminalMessage(data);
+    else wsSend(data);
   }
 
   function emitUsage(): void {

@@ -21,8 +21,10 @@ import { loadRunMetadata } from "../src/persistence/store.js";
 import {
   _clearActiveRuns,
   buildCurrentDispatchEnvelope,
+  dispatchReadyNodes,
   getActiveRun,
   handoffActiveRun,
+  requestNodeCorrection,
   recoverAllActiveRuns,
 } from "../src/runtime/active-runs.js";
 
@@ -124,7 +126,7 @@ describe("WorkflowSpec v1 runtime projection", () => {
     });
   });
 
-  it("fails the node when a handoff violates its named contract", () => {
+  it("keeps a contract-invalid handoff recoverable for bounded correction", () => {
     upsertDagWorkflowFromYaml({ yaml_text: workflowSource() });
     syncDeterministicProfile("v1-runtime-success");
     const orchestrator = new ChangeOrchestrator(new GraphExecutor(new FakeDAGDispatcher()));
@@ -137,8 +139,10 @@ describe("WorkflowSpec v1 runtime projection", () => {
 
     expect(() => handoffActiveRun(created.runId, "execute", "result", { invalid: true }))
       .toThrow("DAG_HANDOFF_CONTRACT_VIOLATION execute.result (Text)");
-    expect(getActiveRun(created.runId)?.status).toBe("failed");
-    expect(loadRunMetadata(created.runId)?.nodeStates.execute).toBe("FAILED");
+    expect(getActiveRun(created.runId)?.status).toBe("active");
+    expect(loadRunMetadata(created.runId)?.nodeStates.execute).toBe("RUNNING");
+    expect(requestNodeCorrection(created.runId, "execute", "invalid result contract").status).toBe("scheduled");
+    expect(handoffActiveRun(created.runId, "execute", "result", "verified")?.status).toBe("completed");
   });
 
   it.each([
@@ -154,6 +158,33 @@ describe("WorkflowSpec v1 runtime projection", () => {
       prompt: "hello",
       profile: "deterministic",
     });
+
+    handoffActiveRun(created.runId, "execute", "result", "finished");
+    expect(getActiveRun(created.runId)?.status).toBe(expected);
+  });
+
+  it.each([
+    ["failure", "failed"],
+    ["cancelled", "cancelled"],
+  ] as const)("preserves explicit %s terminal outcome across cold recovery", (outcome, expected) => {
+    upsertDagWorkflowFromYaml({ yaml_text: workflowSource(outcome) });
+    syncDeterministicProfile(`v1-runtime-${outcome}`);
+    const orchestrator = new ChangeOrchestrator(new GraphExecutor(new FakeDAGDispatcher()));
+    const created = orchestrator.createRun({
+      workflowId: `v1-runtime-${outcome}`,
+      runId: `v1-recovered-terminal-${outcome}`,
+      prompt: "hello",
+      profile: "deterministic",
+    });
+
+    expect(loadRunMetadata(created.runId)?.graph?.edges).toContainEqual(expect.objectContaining({
+      from_node: "execute",
+      from_port: "result",
+      terminal_outcome: outcome,
+    }));
+    _clearActiveRuns();
+    expect(recoverAllActiveRuns().recovered).toContain(created.runId);
+    expect(dispatchReadyNodes(created.runId, new FakeDAGDispatcher())).toBe(1);
 
     handoffActiveRun(created.runId, "execute", "result", "finished");
     expect(getActiveRun(created.runId)?.status).toBe(expected);

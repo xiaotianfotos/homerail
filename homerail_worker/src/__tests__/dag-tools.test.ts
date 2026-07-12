@@ -56,7 +56,7 @@ describe("DAG tools", () => {
   });
 
   describe("handoff", () => {
-    it("sends wire event on valid port", async () => {
+    it("stages an authoritative handoff on a valid port", async () => {
       const tools = createDagTools(state);
       const handoffTool = tools.find((t) => t.name === "handoff")!;
 
@@ -67,17 +67,17 @@ describe("DAG tools", () => {
       });
 
       expect(result.is_error).toBeFalsy();
-      expect(wsSend).toHaveBeenCalledTimes(1);
-      const sent = JSON.parse(wsSend.mock.calls[0][0]);
-      expect(sent.type).toBe("response");
-      expect(sent.session_id).toBe("run-1");
-      expect(sent.data.type).toBe("node_handoff");
-      expect(sent.data.runId).toBe("run-1");
-      expect(sent.data.nodeId).toBe("coder");
-      expect(sent.data.port).toBe("done");
-      expect(sent.data.from_node).toBe("coder");
-      expect(sent.data.from_port).toBe("done");
-      expect(sent.data.content).toBe("test content");
+      expect(wsSend).not.toHaveBeenCalled();
+      expect(state.handoffData).toMatchObject({
+        type: "node_handoff",
+        runId: "run-1",
+        nodeId: "coder",
+        port: "done",
+        from_node: "coder",
+        from_port: "done",
+        session_id: "run-1",
+        content: "test content",
+      });
       expect(state.yielded).toBe(true);
     });
 
@@ -91,9 +91,28 @@ describe("DAG tools", () => {
         content: "test content",
       });
 
-      const sent = JSON.parse(wsSend.mock.calls[0][0]);
-      expect(sent.session_id).toBe("node-session-2");
-      expect(sent.data.session_id).toBe("node-session-2");
+      expect(state.handoffData).toMatchObject({ session_id: "node-session-2" });
+    });
+
+    it("normalizes a complete JSON object string before contract validation", async () => {
+      const tools = createDagTools(state);
+      const handoffTool = tools.find((t) => t.name === "handoff")!;
+
+      await handoffTool.handler({
+        port: "done",
+        content: '{"work_items":[{"id":"one"}]}',
+      });
+
+      expect(state.handoffData).toMatchObject({ content: { work_items: [{ id: "one" }] } });
+    });
+
+    it("preserves ordinary and malformed JSON-like text", async () => {
+      const tools = createDagTools(state);
+      const handoffTool = tools.find((t) => t.name === "handoff")!;
+
+      await handoffTool.handler({ port: "done", content: "{not-json}" });
+
+      expect(state.handoffData).toMatchObject({ content: "{not-json}" });
     });
 
     it("rejects invalid port", async () => {

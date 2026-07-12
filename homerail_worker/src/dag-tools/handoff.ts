@@ -6,6 +6,18 @@
 import type { DagToolDefinition } from "../agent/types.js";
 import type { DagToolsState } from "./index.js";
 
+function normalizeHandoffContent(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if ((!trimmed.startsWith("{") || !trimmed.endsWith("}")) &&
+      (!trimmed.startsWith("[") || !trimmed.endsWith("]"))) return value;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return value;
+  }
+}
+
 export function createHandoffTool(state: DagToolsState): DagToolDefinition {
   return {
     name: "handoff",
@@ -31,7 +43,7 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
     },
     handler: async (args: Record<string, unknown>) => {
       const port = String(args.port ?? "");
-      const content = args.content ?? "";
+      const content = normalizeHandoffContent(args.content ?? "");
       const summary = String(args.summary ?? "");
 
       if (state.yielded) {
@@ -73,20 +85,10 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
         summary,
       };
 
-      try {
-        state.wsSend(JSON.stringify({
-          type: "response",
-          session_id: state.sessionId,
-          data: payload,
-        }));
-        state.yielded = true;
-        state.handoffData = payload;
-      } catch (err) {
-        return {
-          content: [{ type: "text" as const, text: `交接消息发送失败: ${err}` }],
-          is_error: true,
-        };
-      }
+      // PromptRunner owns terminal transport so Manager contract correction
+      // cannot race the still-active prompt lifecycle.
+      state.yielded = true;
+      state.handoffData = payload;
 
       // Build downstream info
       const edge = state.outgoingEdges.find((e) => e.from_port === port);

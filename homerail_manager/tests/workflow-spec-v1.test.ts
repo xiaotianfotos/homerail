@@ -184,6 +184,78 @@ describe("WorkflowSpec v1", () => {
     ]));
   });
 
+  it("rejects an unknown dynamic fan-out result contract", () => {
+    const result = compileWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: fanout-contract, name: Fanout Contract }
+spec:
+  contracts: { Items: { type: array } }
+  agents: { worker: { system: Work. } }
+  nodes:
+    fan:
+      kind: fanout
+      inputs: { items: { contract: Items } }
+      outputs: { passed: {}, failed: {} }
+      config:
+        input: items
+        worker_agent: worker
+        max_items: 2
+        max_parallelism: 1
+        completion: all
+        result_contract: MissingResult
+        result_port: passed
+        failed_port: failed
+    done: { kind: terminal, outcome: success, inputs: { result: {} } }
+    failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+  edges:
+    - { from: $run.input, to: fan.items }
+    - { from: fan.passed, to: done.result }
+    - { from: fan.failed, to: failed.result, condition: on_failure }
+`);
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "DAG_SEMANTIC_UNKNOWN_CONTRACT",
+        path: "/spec/nodes/fan/config/result_contract",
+      }),
+    ]));
+  });
+
+  it("rejects an approval workflow that authorizes its proposer", () => {
+    const result = compileWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: self-approval, name: Self Approval }
+spec:
+  agents: {}
+  nodes:
+    approve:
+      kind: approval
+      outputs: { approved: {}, rejected: {} }
+      config:
+        approval_id: release
+        proposer_actor: agent:proposer
+        authorized_actors: [agent:proposer]
+        approved_port: approved
+        rejected_port: rejected
+    done: { kind: terminal, outcome: success, inputs: { result: {} } }
+    rejected: { kind: terminal, outcome: failure, inputs: { result: {} } }
+  edges:
+    - { from: approve.approved, to: done.result }
+    - { from: approve.rejected, to: rejected.result, condition: on_failure }
+`);
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "DAG_SEMANTIC_SELF_APPROVAL",
+        path: "/spec/nodes/approve/config/authorized_actors",
+      }),
+    ]));
+  });
+
   it("requires explicit terminals and rejects normal cycles", () => {
     const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
     delete workflow.spec.nodes.done;

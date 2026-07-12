@@ -162,8 +162,11 @@ terminal outcomes, contracts, and feedback bounds explicit.
 
 ## Not Part of v1
 
-WorkflowSpec describes a static workflow revision. Dynamic graph changes will
-use a separate audited Graph Patch protocol against a run graph revision. Human
-approval nodes, executable deterministic predicates, rollback compensation,
-durable schedules, and dynamic fan-out remain separate runtime capabilities;
-they must not be emulated through unvalidated YAML fields.
+WorkflowSpec describes an immutable static workflow revision. Bounded runtime
+fan-out creates run-local children and does not change that revision. Arbitrary
+graph mutation still requires a future audited Graph Patch protocol.
+
+Approval, deterministic commands and compensation, transactional state,
+persisted triggers, advisor bindings, and workspace policies are supported only
+through their validated v1 fields. Do not emulate them through annotations or
+prompt conventions.

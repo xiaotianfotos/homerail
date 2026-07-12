@@ -2,23 +2,40 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUNNER_BASE="${HOMERAIL_RUNNER_BASE:-/vol1/1000/homerail_runners}"
+RUNNER_BASE="${HOMERAIL_RUNNER_BASE:-$HOME/.homerail-runners}"
 HOME_BASE="${HOMERAIL_LIVE_HOME_BASE:-$RUNNER_BASE/homerail_home}"
 ARTIFACT_BASE="${HOMERAIL_LIVE_ARTIFACTS:-$RUNNER_BASE/artifacts}"
-MANAGER_PORT="${HOMERAIL_MANAGER_PORT:-29191}"
-MODEL_BASE_URL="${HOMERAIL_PATTERN_MODEL_BASE_URL:-http://192.168.100.10:5000}"
+PREFERRED_MANAGER_PORT="${HOMERAIL_MANAGER_PORT:-}"
+MODEL_BASE_URL="${HOMERAIL_PATTERN_MODEL_BASE_URL:-}"
 MODEL_NAME="${HOMERAIL_PATTERN_MODEL:-qwen3.6}"
 MODEL_MAC="${HOMERAIL_PATTERN_MODEL_MAC:-}"
 WAKE_MODEL="${HOMERAIL_WAKE_MODEL:-1}"
+MODEL_PROTOCOL="${HOMERAIL_PATTERN_MODEL_PROTOCOL:-anthropic_compatible}"
+AGENT_TYPE="${HOMERAIL_PATTERN_AGENT_TYPE:-claude-sdk}"
 RUN_KEY="${HOMERAIL_LIVE_RUN_KEY:-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}}"
 RUN_KEY="$(printf '%s' "$RUN_KEY" | tr -c 'A-Za-z0-9_.-' '-')"
 
+if [ -z "$MODEL_BASE_URL" ]; then
+  echo "HOMERAIL_PATTERN_MODEL_BASE_URL is required for live DAG validation." >&2
+  exit 1
+fi
+
 export HOMERAIL_HOME="$HOME_BASE/run-$RUN_KEY"
-export HOMERAIL_MANAGER_PORT="$MANAGER_PORT"
-export HOMERAIL_MANAGER_URL="http://127.0.0.1:$MANAGER_PORT"
+export HOMERAIL_PATTERN_MODEL="$MODEL_NAME"
+export HOMERAIL_PATTERN_MODEL_PROTOCOL="$MODEL_PROTOCOL"
+export HOMERAIL_PATTERN_AGENT_TYPE="$AGENT_TYPE"
 export HOMERAIL_WORKER_IMAGE="${HOMERAIL_LIVE_WORKER_IMAGE_PREFIX:-homerail-worker:dag-live}-$RUN_KEY"
 export HOMERAIL_MANAGER_AGENT_IMAGE="$HOMERAIL_WORKER_IMAGE"
-
+export HOMERAIL_DAG_COMMAND_ALLOWLIST="${HOMERAIL_DAG_COMMAND_ALLOWLIST:-node}"
+export HOMERAIL_DAG_ALLOW_DYNAMIC_COMMANDS="${HOMERAIL_DAG_ALLOW_DYNAMIC_COMMANDS:-true}"
+if [ -z "${HOMERAIL_DAG_APPROVAL_TOKEN:-}" ]; then
+  HOMERAIL_DAG_APPROVAL_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  export HOMERAIL_DAG_APPROVAL_TOKEN
+fi
+if [ -z "${HOMERAIL_DAG_MUTATION_TOKEN:-}" ]; then
+  HOMERAIL_DAG_MUTATION_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  export HOMERAIL_DAG_MUTATION_TOKEN
+fi
 PERSISTENT_ARTIFACT_DIR="$ARTIFACT_BASE/$RUN_KEY"
 REPORT_PATH="$PERSISTENT_ARTIFACT_DIR/dag-patterns-live.json"
 UPLOAD_REPORT_PATH="${HOMERAIL_LIVE_REPORT_PATH:-$REPO_ROOT/artifacts/dag-patterns-live.json}"
@@ -65,7 +82,56 @@ trap 'exit 143' TERM
 
 model_ready() {
   curl -fsS --connect-timeout 3 --max-time 10 "$MODEL_BASE_URL/v1/models" 2>/dev/null \
-    | MODEL_NAME="$MODEL_NAME" python3 -c 'import json, os, sys; data=json.load(sys.stdin); raise SystemExit(0 if any(item.get("id") == os.environ["MODEL_NAME"] for item in data.get("data", [])) else 1)'
+    | MODEL_NAME="$MODEL_NAME" python3 -c '
+import json, os, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if any(item.get("id") == os.environ["MODEL_NAME"] for item in data.get("data", [])) else 1)
+'
+}
+
+wait_for_model() {
+  local attempts="$1"
+  local delay_seconds="$2"
+  local attempt
+  for attempt in $(seq 1 "$attempts"); do
+    if model_ready; then
+      return 0
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      sleep "$delay_seconds"
+    fi
+  done
+  return 1
+}
+
+port_is_available() {
+  local port="$1"
+  ! ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .
+}
+
+select_manager_port() {
+  local preferred="$1"
+  local start offset candidate
+  if [[ "$preferred" =~ ^[0-9]+$ ]] \
+    && [ "$preferred" -ge 20000 ] \
+    && [ "$preferred" -le 29999 ] \
+    && port_is_available "$preferred"; then
+    printf '%s\n' "$preferred"
+    return 0
+  fi
+
+  start=$((20000 + $(printf '%s' "$RUN_KEY" | cksum | awk '{print $1}') % 10000))
+  for offset in $(seq 0 9999); do
+    candidate=$((20000 + (start - 20000 + offset) % 10000))
+    if port_is_available "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
 
 wake_model() {
@@ -76,42 +142,30 @@ wake_model() {
   python3 - "$MODEL_MAC" <<'PY'
 import socket
 import sys
+import os
 
 mac = bytes.fromhex(sys.argv[1].replace(":", "").replace("-", ""))
 packet = b"\xff" * 6 + mac * 16
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-for address in ("255.255.255.255", "192.168.100.255"):
+addresses = os.environ.get("HOMERAIL_PATTERN_MODEL_BROADCASTS", "255.255.255.255")
+for address in filter(None, (item.strip() for item in addresses.split(","))):
     sock.sendto(packet, (address, 9))
 sock.close()
 PY
 }
 
-if ! model_ready; then
+if ! wait_for_model 6 5; then
   if [ "$WAKE_MODEL" != "1" ]; then
     echo "Model $MODEL_NAME is unavailable at $MODEL_BASE_URL and wake_model is disabled." >&2
     exit 1
   fi
   echo "Waking model host for $MODEL_NAME..."
   wake_model
-  ready=0
-  for _ in $(seq 1 60); do
-    if model_ready; then
-      ready=1
-      break
-    fi
-    sleep 10
-  done
-  if [ "$ready" -ne 1 ]; then
+  if ! wait_for_model 60 10; then
     echo "Model $MODEL_NAME did not become ready within 10 minutes." >&2
     exit 1
   fi
-fi
-
-if curl -fsS --max-time 3 "$HOMERAIL_MANAGER_URL/health" >/dev/null 2>&1 \
-  || ss -H -ltn "sport = :$MANAGER_PORT" | grep -q .; then
-  echo "Runner Manager port $MANAGER_PORT is already serving another process; refusing to interfere." >&2
-  exit 1
 fi
 
 echo "Building isolated worker image $HOMERAIL_WORKER_IMAGE"
@@ -121,6 +175,18 @@ docker build \
   -f "$REPO_ROOT/homerail_worker/Dockerfile" \
   "$REPO_ROOT"
 
+if ! MANAGER_PORT="$(select_manager_port "$PREFERRED_MANAGER_PORT")"; then
+  echo "No free Runner Manager port is available in the 20000-29999 range." >&2
+  exit 1
+fi
+export HOMERAIL_MANAGER_PORT="$MANAGER_PORT"
+export HOMERAIL_MANAGER_URL="http://127.0.0.1:$MANAGER_PORT"
+if [ -n "$PREFERRED_MANAGER_PORT" ] && [ "$MANAGER_PORT" != "$PREFERRED_MANAGER_PORT" ]; then
+  echo "Preferred Runner Manager port $PREFERRED_MANAGER_PORT is busy; using isolated port $MANAGER_PORT."
+else
+  echo "Using isolated Runner Manager port $MANAGER_PORT."
+fi
+
 node "$REPO_ROOT/homerail_cli/dist/cli.js" start --host 0.0.0.0 --no-build-worker-image
 SETTING_ID="$(node "$REPO_ROOT/scripts/configure-live-pattern-model.mjs")"
 
@@ -128,6 +194,7 @@ validation_args=(
   --base-url "$HOMERAIL_MANAGER_URL"
   --setting-id "$SETTING_ID"
   --expected-model "$MODEL_NAME"
+  --workflow-suffix "$RUN_KEY"
   --timeout-ms 360000
   --output "$REPORT_PATH"
 )

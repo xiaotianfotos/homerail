@@ -164,6 +164,16 @@ nodes:
           agent_type: "claude-sdk",
           llm: { api_key: "pk-should-not-persist", model: "test-model" },
         },
+        advisors: [{
+          id: "expert",
+          agent_id: "advisor",
+          agent_type: "claude-sdk",
+          model: "advisor-model",
+          api_key: "pk-advisor-should-not-persist",
+          max_calls: 1,
+          timeout_ms: 1000,
+          max_tokens: 100,
+        }],
       }),
     );
 
@@ -177,6 +187,10 @@ nodes:
       sessionId: "dispatch-session-1",
     });
     expect(JSON.stringify(transcript)).not.toContain("pk-should-not-persist");
+    expect(JSON.stringify(transcript)).not.toContain("pk-advisor-should-not-persist");
+    expect(transcript[0].content).toMatchObject({
+      advisors: [{ id: "expert", api_key: "***REDACTED***" }],
+    });
   });
 
   it("does not fall back to a node when required worker capabilities are missing", () => {

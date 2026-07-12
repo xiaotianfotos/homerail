@@ -152,6 +152,134 @@ export function registerDagCommands(program: Command): void {
     });
 
   dagCmd
+    .command("approvals")
+    .description("List DAG nodes waiting for an authorized human decision")
+    .action(async () => {
+      const globalOpts = program.opts<GlobalOpts>();
+      try {
+        const response = await getClient(globalOpts).get("/api/dag/approvals") as {
+          data?: { approvals?: Array<Record<string, unknown>> };
+        };
+        const approvals = response.data?.approvals ?? [];
+        if (globalOpts.json) console.log(JSON.stringify(approvals));
+        else if (approvals.length === 0) console.log("No pending DAG approvals.");
+        else for (const approval of approvals) {
+          console.log(`${String(approval.run_id)} ${String(approval.node_id)} ${String(approval.approval_id)} ${String(approval.proposal_hash)}`);
+        }
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  dagCmd
+    .command("decide <runId> <nodeId>")
+    .description("Approve or reject a durable DAG approval node")
+    .requiredOption("--decision <approved|rejected>")
+    .requiredOption("--actor <actor>")
+    .requiredOption("--proposal-hash <hash>")
+    .action(async (runId: string, nodeId: string, opts: { decision: string; actor: string; proposalHash: string }) => {
+      const globalOpts = program.opts<GlobalOpts>();
+      if (opts.decision !== "approved" && opts.decision !== "rejected") {
+        console.error("Error: --decision must be approved or rejected");
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        const response = await getClient(globalOpts).post(
+          `/api/runs/${encodeURIComponent(runId)}/node/${encodeURIComponent(nodeId)}/approval`,
+          {
+            decision: opts.decision,
+            actor: opts.actor,
+            proposal_hash: opts.proposalHash,
+            ...(process.env.HOMERAIL_DAG_APPROVAL_TOKEN
+              ? { authorization_token: process.env.HOMERAIL_DAG_APPROVAL_TOKEN }
+              : {}),
+          },
+        );
+        console.log(globalOpts.json ? JSON.stringify(response) : `Approval ${opts.decision}: ${runId}/${nodeId}`);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  dagCmd
+    .command("triggers")
+    .description("List Manager-owned DAG interval and event triggers")
+    .action(async () => {
+      const globalOpts = program.opts<GlobalOpts>();
+      try {
+        const response = await getClient(globalOpts).get("/api/dag/triggers") as { data?: { triggers?: Array<Record<string, unknown>> } };
+        const triggers = response.data?.triggers ?? [];
+        if (globalOpts.json) console.log(JSON.stringify(triggers));
+        else if (triggers.length === 0) console.log("No DAG triggers configured.");
+        else for (const trigger of triggers) console.log(`${String(trigger.trigger_key)} ${String((trigger.config as Record<string, unknown> | undefined)?.type ?? "")}`);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  dagCmd
+    .command("trigger-event <event>")
+    .description("Deliver an idempotent event to matching DAG triggers")
+    .requiredOption("--idempotency-key <key>")
+    .option("--payload <json>", "JSON event payload", "{}")
+    .action(async (event: string, opts: { idempotencyKey: string; payload: string }) => {
+      const globalOpts = program.opts<GlobalOpts>();
+      try {
+        const payload = JSON.parse(opts.payload) as unknown;
+        const response = await getClient(globalOpts).post(`/api/dag/triggers/events/${encodeURIComponent(event)}`, {
+          idempotency_key: opts.idempotencyKey,
+          payload,
+          ...((process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? process.env.HOMERAIL_DAG_APPROVAL_TOKEN)
+            ? { authorization_token: process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? process.env.HOMERAIL_DAG_APPROVAL_TOKEN }
+            : {}),
+        });
+        console.log(JSON.stringify(response));
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  dagCmd
+    .command("state-get <namespace> <key>")
+    .description("Read a namespaced Manager-owned DAG state record")
+    .action(async (namespace: string, key: string) => {
+      const globalOpts = program.opts<GlobalOpts>();
+      try {
+        const response = await getClient(globalOpts).get(`/api/dag/state/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`);
+        console.log(JSON.stringify(response, null, globalOpts.json ? 0 : 2));
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  dagCmd
+    .command("state-set <namespace> <key> <value>")
+    .description("Atomically write JSON to a namespaced Manager-owned DAG state record")
+    .option("--expected-version <n>", "Compare-and-set against this version")
+    .action(async (namespace: string, key: string, value: string, opts: { expectedVersion?: string }) => {
+      const globalOpts = program.opts<GlobalOpts>();
+      try {
+        const response = await getClient(globalOpts).post(`/api/dag/state/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`, {
+          value: JSON.parse(value) as unknown,
+          ...(opts.expectedVersion === undefined ? {} : { expected_version: Number(opts.expectedVersion) }),
+          ...((process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? process.env.HOMERAIL_DAG_APPROVAL_TOKEN)
+            ? { authorization_token: process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? process.env.HOMERAIL_DAG_APPROVAL_TOKEN }
+            : {}),
+        });
+        console.log(JSON.stringify(response, null, globalOpts.json ? 0 : 2));
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  dagCmd
     .command("quick <runId>")
     .description("Show compact DAG status snapshot")
     .option("--events <n>", "Recent event count", "10")

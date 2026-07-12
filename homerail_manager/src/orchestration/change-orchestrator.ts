@@ -13,7 +13,8 @@ import {
   parseStoredDagWorkflow,
   resolveDagRuntimeProfile,
 } from "../persistence/dag-workflows.js";
-import { appendRunNode, cancelActiveRun, cancelAllActiveRuns, checkpointResumeActiveRun, injectActiveRun } from "../runtime/active-runs.js";
+import { appendRunNode, cancelActiveRun, cancelAllActiveRuns, checkpointResumeActiveRun, decideActiveRunApproval, injectActiveRun } from "../runtime/active-runs.js";
+import type { DagApprovalRecord } from "../persistence/dag-runtime-primitives.js";
 import type { InjectResult, CancelAllResult, CheckpointResumeRequest } from "../runtime/active-runs.js";
 import { emit } from "../events/bus.js";
 
@@ -389,6 +390,15 @@ export class ChangeOrchestrator {
       dispatch_state: dispatched > 0 ? "dispatched" : "pending",
       dispatch_count: dispatched,
     };
+  }
+
+  decideApproval(runId: string, nodeId: string, request: {
+    decision: "approved" | "rejected";
+    actor: string;
+    proposalHash: string;
+  }): { approval: DagApprovalRecord; dispatched: number } {
+    const approval = decideActiveRunApproval({ runId, nodeId, ...request });
+    return { approval, dispatched: this.graphExecutor.tick(runId) };
   }
 
   appendNode(runId: string, request: AppendNodeRequest): AppendNodeResponse {

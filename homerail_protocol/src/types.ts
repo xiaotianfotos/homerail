@@ -446,6 +446,30 @@ export interface DagNodeConfig {
   incoming_edges: Edge[];
   graph_nodes: string[];
   session_id?: string;
+  advisors?: DagAdvisorConfig[];
+  workspace_access?: DagWorkspaceAccess;
+}
+
+export interface DagAdvisorConfig {
+  id: string;
+  agent_id: string;
+  agent_type: string;
+  provider?: string;
+  protocol?: string;
+  model: string;
+  api_key?: string;
+  base_url?: string;
+  system_prompt?: string;
+  max_calls: number;
+  calls_used?: number;
+  timeout_ms: number;
+  max_tokens: number;
+}
+
+export interface DagWorkspaceAccess {
+  writable_paths: string[];
+  readonly_paths?: string[];
+  max_snapshot_files?: number;
 }
 
 // ── Event Emitter Wire Types ─────────────────────────────────────

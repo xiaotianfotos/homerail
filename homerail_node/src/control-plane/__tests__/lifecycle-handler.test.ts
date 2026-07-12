@@ -418,6 +418,36 @@ describe("handleLifecycleRequest", () => {
       );
     });
 
+    it("create worker accepts shared workspace mode", async () => {
+      const previousHome = process.env.HOMERAIL_HOME;
+      const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-node-shared-"));
+      process.env["HOMERAIL_HOME"] = tempHome;
+      const provider = new MockProvider();
+      const responses: LifecycleResponse[] = [];
+
+      try {
+        await handleLifecycleRequest(
+          makeRequest({
+            resource_type: "worker",
+            operation: "create",
+            spec: { workspace_id: "run-shared", workspace: { mode: "shared" } },
+          }),
+          provider,
+          (message) => responses.push(message),
+        );
+      } finally {
+        if (previousHome === undefined) delete process.env.HOMERAIL_HOME;
+        else process.env.HOMERAIL_HOME = previousHome;
+        fs.rmSync(tempHome, { recursive: true, force: true });
+      }
+
+      expect(responses[0]!.status).toBe("success");
+      const container = provider.containers.get(String(responses[0]!.resource_data!.id));
+      expect(container!.config.mounts![0]!.host).toBe(
+        normalizePath(path.join(tempHome, "workspace", "run-shared")),
+      );
+    });
+
     it("create worker rejects unsupported workspace preparation modes", async () => {
       process.env["HOMERAIL_HOME"] = "/home/user/.homerail";
       const provider = new MockProvider();

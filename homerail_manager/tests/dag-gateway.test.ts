@@ -94,6 +94,86 @@ nodes:
 `;
 }
 
+function loopGatewayWithDoneDescendantYaml(): string {
+  return `
+name: loop-gateway-done-descendant
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  loop:
+    type: loop_gateway
+    gateway_config:
+      items: [alpha, beta]
+      item_port: next_item
+      result_port: worker_done
+      done_port: done
+    outputs:
+      next_item:
+        to: worker.in:task
+      done:
+        to: summary.in:result
+  worker:
+    agent: worker
+    after: [loop]
+    outputs:
+      done:
+        to: loop.in:worker_done
+  summary:
+    agent: worker
+    after: [loop]
+    outputs:
+      done:
+        to: recorded.in:result
+  recorded:
+    agent: worker
+    after: [summary]
+    outputs:
+      done:
+        to: ""
+`;
+}
+
+function multiNodeLoopBodyYaml(): string {
+  return `
+name: multi-node-loop-body
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  loop:
+    type: loop_gateway
+    gateway_config:
+      items: [alpha, beta]
+      item_port: next_item
+      result_port: body_done
+      done_port: done
+    outputs:
+      next_item:
+        to: worker.in:task
+      done:
+        to: summary.in:result
+  worker:
+    agent: worker
+    after: [loop]
+    outputs:
+      done:
+        to: measure.in:result
+  measure:
+    agent: worker
+    after: [loop, worker]
+    outputs:
+      done:
+        to: loop.in:body_done
+  summary:
+    agent: worker
+    after: [loop]
+    outputs:
+      done:
+        to: ""
+`;
+}
+
 function joinGatewayYaml(mode = "n_of_m", threshold = 2): string {
   return `
 name: join-gateway
@@ -397,6 +477,49 @@ nodes:
       completed: true,
       results: expectedResults,
     });
+  });
+
+  it("does not skip a future loop output or its descendants during iteration", () => {
+    const parsed = parseDAGYaml(loopGatewayWithDoneDescendantYaml());
+    createActiveRun("run-loop-future-branch", parsed);
+    const dispatcher = new CollectingDispatcher();
+
+    expect(dispatchReadyNodes("run-loop-future-branch", dispatcher)).toBe(1);
+    expect(getActiveRun("run-loop-future-branch")?.dagRun.nodeStates.get("summary")).toBe("PENDING");
+    expect(getActiveRun("run-loop-future-branch")?.dagRun.nodeStates.get("recorded")).toBe("PENDING");
+    expect(dispatchReadyNodes("run-loop-future-branch", dispatcher)).toBe(1);
+    handoffActiveRun("run-loop-future-branch", "worker", "done", { item: "alpha", result: "pass" });
+
+    expect(dispatchReadyNodes("run-loop-future-branch", dispatcher)).toBe(1);
+    expect(dispatchReadyNodes("run-loop-future-branch", dispatcher)).toBe(1);
+    handoffActiveRun("run-loop-future-branch", "worker", "done", { item: "beta", result: "pass" });
+
+    expect(dispatchReadyNodes("run-loop-future-branch", dispatcher)).toBe(1);
+    expect(getActiveRun("run-loop-future-branch")?.dagRun.nodeStates.get("summary")).toBe("READY");
+    expect(getActiveRun("run-loop-future-branch")?.dagRun.nodeStates.get("recorded")).toBe("PENDING");
+    expect(dispatchReadyNodes("run-loop-future-branch", dispatcher)).toBe(1);
+    handoffActiveRun("run-loop-future-branch", "summary", "done", { persisted: true });
+    expect(getActiveRun("run-loop-future-branch")?.dagRun.nodeStates.get("recorded")).toBe("READY");
+  });
+
+  it("resets every node in a multi-node loop body for the next iteration", () => {
+    const parsed = parseDAGYaml(multiNodeLoopBodyYaml());
+    createActiveRun("run-multi-node-loop", parsed);
+    const dispatcher = new CollectingDispatcher();
+
+    expect(dispatchReadyNodes("run-multi-node-loop", dispatcher)).toBe(1);
+    expect(dispatchReadyNodes("run-multi-node-loop", dispatcher)).toBe(1);
+    handoffActiveRun("run-multi-node-loop", "worker", "done", { item: "alpha" });
+    expect(getActiveRun("run-multi-node-loop")?.dagRun.nodeStates.get("measure")).toBe("READY");
+    expect(dispatchReadyNodes("run-multi-node-loop", dispatcher)).toBe(1);
+    handoffActiveRun("run-multi-node-loop", "measure", "done", { item: "alpha", result: "pass" });
+
+    expect(dispatchReadyNodes("run-multi-node-loop", dispatcher)).toBe(1);
+    expect(getActiveRun("run-multi-node-loop")?.dagRun.nodeStates.get("worker")).toBe("READY");
+    expect(getActiveRun("run-multi-node-loop")?.dagRun.nodeStates.get("measure")).toBe("PENDING");
+    expect(dispatchReadyNodes("run-multi-node-loop", dispatcher)).toBe(1);
+    handoffActiveRun("run-multi-node-loop", "worker", "done", { item: "beta" });
+    expect(getActiveRun("run-multi-node-loop")?.dagRun.nodeStates.get("measure")).toBe("READY");
   });
 
   it("aggregates n-of-m join inputs and opens the passing branch", () => {

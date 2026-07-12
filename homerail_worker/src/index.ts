@@ -7,7 +7,7 @@
 import { WsClient } from "./ws-client.js";
 import { runPrompt } from "./prompt-runner.js";
 import type { PromptJob } from "./prompt-runner.js";
-import type { DagNodeConfig } from "homerail-protocol";
+import type { DagAdvisorConfig, DagNodeConfig, DagWorkspaceAccess } from "homerail-protocol";
 import { startManagerAgentServer } from "./manager-agent/server.js";
 import { resolveWorkerAgentBackend } from "./agent/backend-selection.js";
 import { envelopeInputsToTaskText } from "./envelope-task.js";
@@ -134,6 +134,10 @@ client.on("task", async (msg) => {
         incoming_edges: [],
         graph_nodes: [nodeId],
         session_id: sessionId,
+        advisors: Array.isArray(envelope.advisors) ? envelope.advisors as DagAdvisorConfig[] : undefined,
+        workspace_access: envelope.workspaceAccess && typeof envelope.workspaceAccess === "object"
+          ? envelope.workspaceAccess as unknown as DagWorkspaceAccess
+          : undefined,
       }
     : (data.dag_config ?? data.dagConfig ?? {}) as DagNodeConfig;
   const systemPrompt = envelope
@@ -164,10 +168,12 @@ client.on("task", async (msg) => {
 
   const abortController = new AbortController();
   activePrompt = { runId, nodeId: dagConfig.node_id, abortController };
+  const deferredTerminalMessages: string[] = [];
 
   try {
     await runPrompt(job, {
       wsSend: (d) => client.send(d),
+      onTerminalMessage: (data) => deferredTerminalMessages.push(data),
       agentBackend: backend,
       abortSignal: abortController.signal,
       registerInboxHandler: (handler) => {
@@ -187,6 +193,11 @@ client.on("task", async (msg) => {
     if (activePrompt?.abortController === abortController) {
       activePrompt = null;
     }
+  }
+  // Manager validation or correction may target this same worker. Send
+  // terminal handoffs/errors only after the prompt releases active state.
+  for (const data of deferredTerminalMessages) {
+    client.send(data);
   }
 });
 

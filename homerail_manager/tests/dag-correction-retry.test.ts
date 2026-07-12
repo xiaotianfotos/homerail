@@ -14,7 +14,9 @@ import {
   autoHandoffAfterCorrectionExhausted,
   createActiveRun,
   dispatchReadyNodes,
+  failActiveRun,
   getActiveRun,
+  handoffActiveRun,
   requestNodeCorrection,
 } from "../src/runtime/active-runs.js";
 
@@ -28,6 +30,34 @@ agents:
     agent_type: deterministic
 nodes:
   start:
+    agent: worker
+    outputs:
+      done:
+        to: ""
+`;
+}
+
+function correctionWithDownstreamYaml(): string {
+  return `
+name: correction-downstream
+limits:
+  max_corrections_per_node: 1
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  start:
+    agent: worker
+    outputs:
+      done:
+        to: downstream.in:result
+  downstream:
+    agent: worker
+    after: [start]
+    outputs:
+      done:
+        to: ""
+  hold:
     agent: worker
     outputs:
       done:
@@ -89,6 +119,27 @@ describe("DAG correction and dispatch retry", () => {
     expect(dispatchReadyNodes("run-correction", dispatcher)).toBe(1);
     expect(dispatcher.calls).toHaveLength(2);
     expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("agent ended without DAG handoff");
+    expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Declared output ports for this node: done.");
+    expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Your next and only action must call the handoff tool");
+  });
+
+  it("restores success descendants skipped by the failed attempt", () => {
+    const parsed = parseDAGYaml(correctionWithDownstreamYaml());
+    createActiveRun("run-correction-descendants", parsed);
+    const dispatcher = new FlakyDispatcher({ status: "dispatched", targetType: "fake", targetId: "first" });
+    expect(dispatchReadyNodes("run-correction-descendants", dispatcher)).toBe(2);
+
+    failActiveRun("run-correction-descendants", "start", "invalid handoff contract");
+    expect(getActiveRun("run-correction-descendants")?.dagRun.nodeStates.get("downstream")).toBe("SKIPPED");
+    expect(requestNodeCorrection(
+      "run-correction-descendants",
+      "start",
+      "invalid handoff contract",
+    ).status).toBe("scheduled");
+    expect(getActiveRun("run-correction-descendants")?.dagRun.nodeStates.get("downstream")).toBe("PENDING");
+
+    handoffActiveRun("run-correction-descendants", "start", "done", { corrected: true });
+    expect(getActiveRun("run-correction-descendants")?.dagRun.nodeStates.get("downstream")).toBe("READY");
   });
 
   it("auto-handoffs on a success port after correction attempts are exhausted", () => {

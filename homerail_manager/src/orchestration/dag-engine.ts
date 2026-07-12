@@ -4,6 +4,7 @@ export type NodeState =
   | "PENDING"
   | "READY"
   | "RUNNING"
+  | "WAITING_FOR_APPROVAL"
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED"
@@ -134,6 +135,12 @@ function _skipUntakenSatisfiedBranches(run: DAGRun, nodeId: string): void {
   if (!allDepsSatisfied) return;
 
   const routedInputs = run.inputSatisfied.get(nodeId);
+  const awaitsFutureLoopPort = deps.some((dep) => {
+    if (!run.loopSources.has(dep.from_node) || run.nodeStates.get(dep.from_node) !== "RUNNING") return false;
+    const explicitFromDep = _incomingExplicitEdgesFrom(run.graph.edges, nodeId, dep.from_node);
+    return explicitFromDep.length > 0 && !routedInputs?.has(dep.from_node);
+  });
+  if (awaitsFutureLoopPort) return;
   const hasUntakenRequiredInput = deps.some((dep) => {
     const explicitFromDep = _incomingExplicitEdgesFrom(
       run.graph.edges,
@@ -206,6 +213,27 @@ function _skipDependentNodes(run: DAGRun, unavailableNodeId: string, sourceWasSk
   }
 }
 
+export function resetSkippedSuccessDescendants(run: DAGRun, retriedNodeId: string): void {
+  const pending = run.graph.edges
+    .filter((edge) => edge.from_node === retriedNodeId && edge.condition === "on_success")
+    .map((edge) => edge.to_node)
+    .filter(Boolean);
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const nodeId = pending.pop()!;
+    if (visited.has(nodeId)) continue;
+    visited.add(nodeId);
+    if (run.nodeStates.get(nodeId) !== "SKIPPED") continue;
+    run.nodeStates.set(nodeId, "PENDING");
+    run.handoffedNodes.delete(nodeId);
+    run.inputSatisfied.set(nodeId, new Set<string>());
+    run.mailboxes.set(nodeId, new Map<string, unknown[]>());
+    for (const edge of run.graph.edges) {
+      if (edge.from_node === nodeId && edge.to_node) pending.push(edge.to_node);
+    }
+  }
+}
+
 export function reconcileFailedDependencies(run: DAGRun): string[] {
   const before = new Map(run.nodeStates);
   for (const [nodeId, state] of before) {
@@ -238,6 +266,39 @@ function _isLoopGateway(run: DAGRun, nodeId: string): boolean {
   return nodeType === "loop_gateway" || nodeType === "while_gateway";
 }
 
+function _resetLoopBodyDescendants(run: DAGRun, loopNodeId: string, entryNodeId: string): void {
+  const pending = run.graph.edges
+    .filter((edge) => edge.from_node === entryNodeId && edge.label !== "after_dep" && edge.to_node !== loopNodeId)
+    .map((edge) => edge.to_node)
+    .filter(Boolean);
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const nodeId = pending.pop()!;
+    if (nodeId === loopNodeId || visited.has(nodeId)) continue;
+    visited.add(nodeId);
+    run.nodeStates.set(nodeId, "PENDING");
+    run.handoffedNodes.delete(nodeId);
+    const previousAfter = run.afterSatisfied.get(nodeId) ?? new Set<string>();
+    run.afterSatisfied.set(nodeId, new Set(previousAfter.has(loopNodeId) ? [loopNodeId] : []));
+    const directLoopEdges = run.graph.edges.filter((edge) =>
+      edge.from_node === loopNodeId && edge.to_node === nodeId && edge.label !== "after_dep"
+    );
+    const previousMailbox = run.mailboxes.get(nodeId);
+    const preservedMailbox = new Map<string, unknown[]>();
+    for (const edge of directLoopEdges) {
+      const values = previousMailbox?.get(edge.to_port) ?? [];
+      if (values.length > 0) preservedMailbox.set(edge.to_port, [values[values.length - 1]]);
+    }
+    run.inputSatisfied.set(nodeId, new Set(preservedMailbox.size > 0 ? [loopNodeId] : []));
+    run.mailboxes.set(nodeId, preservedMailbox);
+    for (const edge of run.graph.edges) {
+      if (edge.from_node === nodeId && edge.label !== "after_dep" && edge.to_node && edge.to_node !== loopNodeId) {
+        pending.push(edge.to_node);
+      }
+    }
+  }
+}
+
 function _wakeLoopGatewayReceiver(run: DAGRun, fromNode: string, nodeId: string): void {
   if (!_isLoopGateway(run, fromNode)) return;
   const state = run.nodeStates.get(nodeId);
@@ -246,6 +307,7 @@ function _wakeLoopGatewayReceiver(run: DAGRun, fromNode: string, nodeId: string)
   if (!mailbox) return;
   const hasData = Array.from(mailbox.values()).some((v) => v.length > 0);
   if (hasData) {
+    if (state !== "READY") _resetLoopBodyDescendants(run, fromNode, nodeId);
     for (const [port, values] of mailbox.entries()) {
       if (values.length > 1) {
         mailbox.set(port, [values[values.length - 1]]);

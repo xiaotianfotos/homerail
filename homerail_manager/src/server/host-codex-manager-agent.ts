@@ -20,6 +20,7 @@ import {
   buildManagerAgentSystemPrompt,
   createManagerAgentWidgetFileTools,
   managerAgentToolSpec,
+  redactTelemetry,
   type ManagerAgentWidgetFileToolAdapter,
   type ManagerAgentWidgetFileToolResult,
   type ManagerAgentToolName,
@@ -218,7 +219,8 @@ const SECRET_KEYS = [
 ];
 
 function short(value: unknown, max = 4000): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
+  const redacted = redactTelemetry(value);
+  const text = typeof redacted === "string" ? redacted : JSON.stringify(redacted);
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
@@ -426,10 +428,14 @@ function safeCwd(root: string, raw?: unknown): string {
 
 async function requestManager(restUrl: string, pathname: string, init?: RequestInit): Promise<unknown> {
   const url = `${restUrl}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
+  const mutationToken = process.env.HOMERAIL_DAG_MUTATION_TOKEN;
   const res = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(mutationToken && init?.method && init.method !== "GET"
+        ? { "X-Homerail-Dag-Token": mutationToken }
+        : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -605,6 +611,61 @@ function createManagerTools(state: {
       async handler() {
         const body = await requestManager(state.restUrl, "/dag/schema");
         return { content: [{ type: "text", text: short(body, 50000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("list_dag_approvals"),
+      async handler() {
+        return { content: [{ type: "text", text: short(await requestManager(state.restUrl, "/dag/approvals"), 20000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("list_dag_triggers"),
+      async handler() {
+        return { content: [{ type: "text", text: short(await requestManager(state.restUrl, "/dag/triggers"), 20000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("fire_dag_event"),
+      async handler(args) {
+        const event = String(args.event ?? "").trim();
+        if (!event) throw new Error("fire_dag_event requires event");
+        const body = await requestManager(state.restUrl, `/dag/triggers/events/${encodeURIComponent(event)}`, {
+          method: "POST",
+          body: JSON.stringify({
+            idempotency_key: args.idempotency_key,
+            payload: args.payload,
+            authorization_token: process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? process.env.HOMERAIL_DAG_APPROVAL_TOKEN,
+          }),
+        });
+        return { content: [{ type: "text", text: short(body, 20000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("get_dag_state"),
+      async handler(args) {
+        const namespace = String(args.namespace ?? "").trim();
+        const key = String(args.key ?? "").trim();
+        if (!namespace || !key) throw new Error("get_dag_state requires namespace and key");
+        const body = await requestManager(state.restUrl, `/dag/state/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`);
+        return { content: [{ type: "text", text: short(body, 20000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("set_dag_state"),
+      async handler(args) {
+        const namespace = String(args.namespace ?? "").trim();
+        const key = String(args.key ?? "").trim();
+        if (!namespace || !key) throw new Error("set_dag_state requires namespace and key");
+        const body = await requestManager(state.restUrl, `/dag/state/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`, {
+          method: "POST",
+          body: JSON.stringify({
+            value: args.value,
+            expected_version: args.expected_version,
+            authorization_token: process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? process.env.HOMERAIL_DAG_APPROVAL_TOKEN,
+          }),
+        });
+        return { content: [{ type: "text", text: short(body, 20000) }] };
       },
     },
     {
@@ -1161,6 +1222,13 @@ function toolCallCommentary(name: string): string | undefined {
       return "正在选择合适的 DAG 模式。";
     case "instantiate_dag_pattern":
       return "正在生成并同步 DAG 模式。";
+    case "list_dag_approvals":
+    case "list_dag_triggers":
+    case "get_dag_state":
+      return "正在读取 DAG 运行时状态。";
+    case "fire_dag_event":
+    case "set_dag_state":
+      return "正在更新 DAG 运行时状态。";
     case "get_dag_schema":
       return "正在读取 DAG 规范。";
     case "validate_dag_workflow":

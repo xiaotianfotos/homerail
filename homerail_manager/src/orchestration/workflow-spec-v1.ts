@@ -43,7 +43,7 @@ export interface CanonicalPort {
 
 export interface CanonicalNode {
   id: string;
-  kind: "agent" | "condition" | "join" | "foreach" | "while" | "terminal";
+  kind: "agent" | "command" | "approval" | "state" | "fanout" | "condition" | "join" | "foreach" | "while" | "terminal";
   description?: string;
   agent?: string;
   depends_on: string[];
@@ -75,6 +75,14 @@ export interface CanonicalWorkflowIR {
   annotations: Record<string, string>;
   workspace: { mode: "isolated" | "shared" };
   contracts: Record<string, unknown>;
+  triggers: Record<string, {
+    type: "interval" | "event";
+    every_ms?: number;
+    event?: string;
+    overlap: "skip" | "allow";
+    max_concurrency: number;
+    enabled: boolean;
+  }>;
   agents: Record<string, {
     description?: string;
     system?: string;
@@ -290,6 +298,19 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
     if (node.kind === "agent" && !agents[node.agent]) {
       add(`${nodePath}/agent`, "DAG_SEMANTIC_UNKNOWN_AGENT", `unknown agent '${node.agent}'`);
     }
+    if (node.kind === "agent") {
+      const advisorIds = new Set<string>();
+      for (let index = 0; index < (node.advisors ?? []).length; index++) {
+        const advisor = node.advisors![index];
+        if (!agents[advisor.agent]) {
+          add(`${nodePath}/advisors/${index}/agent`, "DAG_SEMANTIC_UNKNOWN_AGENT", `unknown advisor agent '${advisor.agent}'`);
+        }
+        if (advisorIds.has(advisor.id)) {
+          add(`${nodePath}/advisors/${index}/id`, "DAG_SEMANTIC_DUPLICATE_ADVISOR", `duplicate advisor id '${advisor.id}'`);
+        }
+        advisorIds.add(advisor.id);
+      }
+    }
     for (const dependency of node.depends_on ?? []) {
       if (!nodes[dependency]) {
         add(`${nodePath}/depends_on`, "DAG_SEMANTIC_UNKNOWN_NODE", `unknown dependency '${dependency}'`);
@@ -325,6 +346,81 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
       }
       if (node.config.mode !== "n_of_m" && node.config.threshold !== undefined) {
         add(`${nodePath}/config/threshold`, "DAG_SEMANTIC_INVALID_THRESHOLD", "threshold is only valid for n_of_m join");
+      }
+    }
+    if (node.kind === "command") {
+      if (!node.config.command && !node.config.command_field) {
+        add(`${nodePath}/config`, "DAG_SEMANTIC_REQUIRED_COMMAND", "command requires command or command_field");
+      }
+      if (node.config.command && node.config.command_field) {
+        add(`${nodePath}/config`, "DAG_SEMANTIC_AMBIGUOUS_COMMAND", "command and command_field are mutually exclusive");
+      }
+      const outputs = nodePorts(node, "outputs");
+      for (const key of ["success_port", "failure_port"] as const) {
+        const port = node.config[key];
+        if (!outputs[port]) add(`${nodePath}/config/${key}`, "DAG_SEMANTIC_UNKNOWN_PORT", `unknown output port '${port}'`);
+      }
+    }
+    if (node.kind === "approval") {
+      const outputs = nodePorts(node, "outputs");
+      if (node.config.authorized_actors.includes(node.config.proposer_actor)) {
+        add(
+          `${nodePath}/config/authorized_actors`,
+          "DAG_SEMANTIC_SELF_APPROVAL",
+          `proposer actor '${node.config.proposer_actor}' cannot be an authorized approver`,
+        );
+      }
+      for (const key of ["approved_port", "rejected_port"] as const) {
+        const port = node.config[key];
+        if (!outputs[port]) add(`${nodePath}/config/${key}`, "DAG_SEMANTIC_UNKNOWN_PORT", `unknown output port '${port}'`);
+      }
+    }
+    if (node.kind === "state") {
+      const outputs = nodePorts(node, "outputs");
+      if (!outputs[node.config.success_port]) {
+        add(`${nodePath}/config/success_port`, "DAG_SEMANTIC_UNKNOWN_PORT", `unknown output port '${node.config.success_port}'`);
+      }
+      if (node.config.conflict_port && !outputs[node.config.conflict_port]) {
+        add(`${nodePath}/config/conflict_port`, "DAG_SEMANTIC_UNKNOWN_PORT", `unknown output port '${node.config.conflict_port}'`);
+      }
+      if (node.config.operation === "compare_and_set" && node.config.expected_version === undefined) {
+        add(`${nodePath}/config/expected_version`, "DAG_SEMANTIC_REQUIRED_VERSION", "compare_and_set requires expected_version");
+      }
+      if (node.config.operation === "budget_admit" && node.config.budget_limit === undefined) {
+        add(`${nodePath}/config/budget_limit`, "DAG_SEMANTIC_REQUIRED_BUDGET", "budget_admit requires budget_limit");
+      }
+      if (node.config.operation === "budget_admit" && !node.config.value_field) {
+        add(`${nodePath}/config/value_field`, "DAG_SEMANTIC_REQUIRED_BUDGET_AMOUNT", "budget_admit requires value_field for the requested reservation amount");
+      }
+    }
+    if (node.kind === "fanout") {
+      const inputs = nodePorts(node, "inputs");
+      const outputs = nodePorts(node, "outputs");
+      if (!inputs[node.config.input]) {
+        add(`${nodePath}/config/input`, "DAG_SEMANTIC_UNKNOWN_PORT", `unknown input port '${node.config.input}'`);
+      }
+      if (!agents[node.config.worker_agent]) {
+        add(`${nodePath}/config/worker_agent`, "DAG_SEMANTIC_UNKNOWN_AGENT", `unknown worker agent '${node.config.worker_agent}'`);
+      }
+      if (node.config.result_contract && !contracts[node.config.result_contract]) {
+        add(
+          `${nodePath}/config/result_contract`,
+          "DAG_SEMANTIC_UNKNOWN_CONTRACT",
+          `unknown contract '${node.config.result_contract}'`,
+        );
+      }
+      for (const key of ["result_port", "failed_port"] as const) {
+        const port = node.config[key];
+        if (!outputs[port]) add(`${nodePath}/config/${key}`, "DAG_SEMANTIC_UNKNOWN_PORT", `unknown output port '${port}'`);
+      }
+      if (node.config.completion === "n_of_m" && node.config.threshold === undefined) {
+        add(`${nodePath}/config/threshold`, "DAG_SEMANTIC_REQUIRED_THRESHOLD", "n_of_m fanout requires threshold");
+      }
+      if (node.config.threshold !== undefined && node.config.threshold > node.config.max_items) {
+        add(`${nodePath}/config/threshold`, "DAG_SEMANTIC_INVALID_THRESHOLD", "fanout threshold cannot exceed max_items");
+      }
+      if (node.config.max_parallelism > node.config.max_items) {
+        add(`${nodePath}/config/max_parallelism`, "DAG_SEMANTIC_INVALID_PARALLELISM", "max_parallelism cannot exceed max_items");
       }
     }
     if (node.kind === "foreach") {
@@ -510,7 +606,17 @@ function canonicalNode(id: string, node: WorkflowSpecV1Node): CanonicalNode {
     inputs: portEntries(node.inputs),
     outputs: node.kind === "terminal" ? [] : portEntries(node.outputs),
   };
-  if (node.kind === "agent") return { ...base, agent: node.agent };
+  if (node.kind === "agent") {
+    const config = {
+      ...(node.advisors ? { advisors: node.advisors } : {}),
+      ...(node.workspace_access ? { workspace_access: node.workspace_access } : {}),
+    };
+    return {
+      ...base,
+      agent: node.agent,
+      ...(Object.keys(config).length > 0 ? { config: deepSort(config) as Record<string, unknown> } : {}),
+    };
+  }
   if (node.kind === "terminal") {
     return {
       ...base,
@@ -592,6 +698,10 @@ function compileV1(workflow: WorkflowSpecV1): CanonicalWorkflowIR {
     annotations: deepSort(workflow.metadata.annotations ?? {}) as Record<string, string>,
     workspace: { mode: workflow.spec.workspace?.mode ?? "isolated" },
     contracts: deepSort(workflow.spec.contracts ?? {}) as Record<string, unknown>,
+    triggers: deepSort(Object.fromEntries(Object.entries(workflow.spec.triggers ?? {}).map(([id, trigger]) => [id, {
+      ...trigger,
+      enabled: trigger.enabled !== false,
+    }]))) as CanonicalWorkflowIR["triggers"],
     agents: Object.fromEntries(Object.entries(workflow.spec.agents)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([id, agent]) => [id, {
@@ -711,6 +821,7 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
     annotations: {},
     workspace: { mode: "isolated" },
     contracts: {},
+    triggers: {},
     agents: Object.fromEntries(Object.entries(metaAgents)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([id, agent]) => [id, {
@@ -887,6 +998,10 @@ export function workflowSchemaResponse(): {
 }
 
 function runtimeNodeType(kind: CanonicalNode["kind"]): string {
+  if (kind === "command") return "command_gateway";
+  if (kind === "approval") return "approval_gateway";
+  if (kind === "state") return "state_gateway";
+  if (kind === "fanout") return "fanout_gateway";
   if (kind === "condition") return "condition_gateway";
   if (kind === "join") return "join_gateway";
   if (kind === "foreach") return "loop_gateway";
@@ -908,6 +1023,9 @@ function runtimeGatewayConfig(node: CanonicalNode): Record<string, unknown> | un
   if (node.kind === "join") return { type: "join", ...node.config };
   if (node.kind === "foreach") return { type: "loop", ...node.config };
   if (node.kind === "while") return { type: "while", ...node.config };
+  if (node.kind === "command" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout") {
+    return { type: node.kind, ...node.config };
+  }
   return undefined;
 }
 
@@ -1020,6 +1138,7 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
           input_contracts: inputContracts,
           output_contracts: outputContracts,
         },
+        ...(node.kind === "agent" && node.config ? { agent_runtime: node.config } : {}),
       },
     };
   });
@@ -1037,6 +1156,7 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
       description: canonical.description,
       workspace: canonical.workspace,
       limits: {
+        max_nodes: canonical.policies.max_nodes,
         max_dispatches: canonical.policies.max_dispatches,
         max_handoffs: canonical.policies.max_handoffs,
         max_corrections_per_node: canonical.policies.max_corrections_per_node,
@@ -1046,6 +1166,7 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
       agents,
       pattern: canonical.pattern,
       contracts: canonical.contracts,
+      triggers: canonical.triggers,
       run_input_targets: runInputTargets,
       source_api_version: canonical.source_api_version,
       compiler_version: canonical.compiler_version,
@@ -1085,7 +1206,14 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
     ...(authoringPorts(node.inputs) ? { inputs: authoringPorts(node.inputs) } : {}),
     ...(node.kind !== "terminal" && authoringPorts(node.outputs) ? { outputs: authoringPorts(node.outputs) } : {}),
   };
-  if (node.kind === "agent") return { ...base, agent: node.agent };
+  if (node.kind === "agent") {
+    return {
+      ...base,
+      agent: node.agent,
+      ...(Array.isArray(node.config?.advisors) ? { advisors: node.config.advisors } : {}),
+      ...(node.config?.workspace_access ? { workspace_access: node.config.workspace_access } : {}),
+    };
+  }
   if (node.kind === "terminal") {
     return { ...base, outcome: node.outcome ?? "success", ...(node.reason ? { reason: node.reason } : {}) };
   }
@@ -1113,6 +1241,9 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
       },
     };
   }
+  if (node.kind === "command" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout") {
+    return { ...base, config };
+  }
   if (node.kind === "foreach") {
     const inputs = { ...(base.inputs as Record<string, unknown> | undefined ?? {}) };
     const outputs = { ...(base.outputs as Record<string, unknown> | undefined ?? {}) };
@@ -1130,6 +1261,7 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
       outputs,
       config: {
         input,
+        ...(config.field ? { field: config.field } : {}),
         item_port: itemPort,
         result_port: resultPort,
         done_port: donePort,
@@ -1192,6 +1324,7 @@ export function canonicalWorkflowToV1Document(canonical: CanonicalWorkflowIR): R
       ...(canonical.description ? { description: canonical.description } : {}),
       workspace: canonical.workspace,
       ...(Object.keys(canonical.contracts).length > 0 ? { contracts: canonical.contracts } : {}),
+      ...(Object.keys(canonical.triggers).length > 0 ? { triggers: canonical.triggers } : {}),
       agents: Object.fromEntries(Object.entries(canonical.agents).map(([id, agent]) => [id, {
         ...(agent.description ? { description: agent.description } : {}),
         ...(agent.system ? { system: agent.system } : {}),

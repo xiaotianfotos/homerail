@@ -14,12 +14,13 @@ import { _clearDagMessageRouter } from "../src/orchestration/dag-message-router.
 import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { closeDb } from "../src/persistence/db.js";
 import { appendSessionTranscriptForTest, loadSessionTranscript } from "../src/persistence/dag-session-files.js";
-import { _clearAllPersistence } from "../src/persistence/store.js";
+import { _clearAllPersistence, loadRunSnapshot } from "../src/persistence/store.js";
 import {
   _clearActiveRuns,
   checkpointResumeActiveRun,
   createActiveRun,
   dispatchReadyNodes,
+  getActiveRun,
   getCurrentNodeSession,
 } from "../src/runtime/active-runs.js";
 
@@ -43,6 +44,28 @@ agents:
 nodes:
   work:
     agent: worker
+    outputs:
+      done:
+        to: ""
+`);
+}
+
+function exactHandoffDag() {
+  return parseDAGYaml(`
+name: ws-exact-handoff
+workflow_id: ws-exact-handoff
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  source:
+    agent: worker
+    outputs:
+      done:
+        to: sink.in:payload
+  sink:
+    agent: worker
+    after: [source]
     outputs:
       done:
         to: ""
@@ -160,6 +183,53 @@ describe("worker websocket node session filtering", () => {
     expect(currentTranscript.length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(currentTranscript)).toContain("new content");
     expect(JSON.stringify(loadSessionTranscript(parentSessionId))).not.toContain("new content");
+    ws.close();
+  });
+
+  it("keeps authoritative handoffs exact while redacting evidence copies", async () => {
+    createActiveRun("run-ws-exact", exactHandoffDag());
+    const dispatcher = new CaptureDispatcher();
+    expect(dispatchReadyNodes("run-ws-exact", dispatcher)).toBe(1);
+    const sessionId = dispatcher.dispatched[0].sessionId!;
+    const exact = {
+      api_key: "sk-authoritative-secret-123456",
+      long: "x".repeat(5000),
+      many: Array.from({ length: 120 }, (_, index) => ({ index })),
+      deep: { a: { b: { c: { d: { e: { f: { g: { h: { i: "kept" } } } } } } } } },
+    };
+
+    server = http.createServer();
+    setupWorkerWebSocket(server, { registrationTimeoutMs: 500, pingIntervalMs: 5_000 });
+    const port = await listen(server);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/projects/default/workers/worker-a`);
+    await new Promise<void>((resolve) => ws.once("open", () => resolve()));
+    ws.send(JSON.stringify({ type: "register", worker_id: "worker-a" }));
+    await delay(20);
+    ws.send(JSON.stringify({
+      type: "response",
+      session_id: sessionId,
+      data: {
+        type: "node_handoff",
+        runId: "run-ws-exact",
+        nodeId: "source",
+        from_node: "source",
+        from_port: "done",
+        port: "done",
+        content: exact,
+        session_id: sessionId,
+      },
+    }));
+    await delay(20);
+
+    expect(getActiveRun("run-ws-exact")?.dagRun.mailboxes.get("sink")?.get("payload")).toEqual([exact]);
+    const persisted = JSON.stringify({
+      chats: loadRunSnapshot("run-ws-exact")?.chats,
+      transcript: loadSessionTranscript(sessionId),
+    });
+    expect(persisted).not.toContain("sk-authoritative-secret-123456");
+    expect(persisted).toContain("***REDACTED***");
+    expect(persisted).toContain("...");
+    expect(persisted).toContain("[truncated]");
     ws.close();
   });
 

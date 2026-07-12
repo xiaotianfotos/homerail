@@ -167,7 +167,7 @@ async function prepareWorkerWorkspaceInternal(
   const root = homerailWorkerWorkspacePath(workspaceId);
   if (!spec) return { root, prepared: false };
 
-  if (spec.mode === "isolated") {
+  if (spec.mode === "isolated" || spec.mode === "shared") {
     await fs.mkdir(root, { recursive: true });
     return { root, prepared: true };
   }

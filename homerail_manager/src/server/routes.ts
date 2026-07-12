@@ -19,6 +19,8 @@ import {
   markExperienceIngestJob,
 } from "../persistence/experience-ingest-jobs.js";
 import { listActiveRuns } from "../runtime/active-runs.js";
+import { getDagState, listPendingApprovals } from "../persistence/dag-runtime-primitives.js";
+import { listDagTriggers } from "../persistence/dag-triggers.js";
 
 interface BaseResponse {
   success: boolean;
@@ -381,6 +383,28 @@ export function inspectionRoutesHandler(
     return true;
   }
 
+  if (pathname === "/api/dag/approvals" && req.method === "GET") {
+    const approvals = listPendingApprovals();
+    _ok(res, `Found ${approvals.length} pending approval(s)`, { approvals, total: approvals.length });
+    return true;
+  }
+
+  if (pathname === "/api/dag/triggers" && req.method === "GET") {
+    const triggers = listDagTriggers();
+    _ok(res, `Found ${triggers.length} DAG trigger(s)`, { triggers, total: triggers.length });
+    return true;
+  }
+
+  const stateMatch = pathname.match(/^\/api\/dag\/state\/([^/]+)\/([^/]+)$/);
+  if (stateMatch && req.method === "GET") {
+    const namespace = decodeURIComponent(stateMatch[1]);
+    const key = decodeURIComponent(stateMatch[2]);
+    const record = getDagState(namespace, key);
+    if (!record) _notFound(res, `DAG state not found: ${namespace}/${key}`);
+    else _ok(res, "DAG state retrieved", { record });
+    return true;
+  }
+
   // GET /api/runs/active/list
   if (pathname === "/api/runs/active/list" && req.method === "GET") {
     const runs = listActiveRuns()
@@ -491,6 +515,7 @@ export function inspectionRoutesHandler(
       created_at: new Date(metadata.createdAt).toISOString(),
       completed_at: metadata.completedAt ? new Date(metadata.completedAt).toISOString() : null,
       node_states: metadata.nodeStates,
+      counters: metadata.counters,
     });
     return true;
   }

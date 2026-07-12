@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AgentRunContext } from "../agent/types.js";
 import { homerailPath } from "../platform/paths.js";
+import { redactTelemetry } from "homerail-protocol";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -106,7 +107,7 @@ export function loadSession(sessionId: string, baseDir?: string): SessionState |
 export function appendTranscriptEntry(entry: TranscriptEntry, baseDir?: string): void {
   const dir = sessionRoot(entry.sessionId, baseDir);
   mkdirSync(dir, { recursive: true });
-  const normalized = { ...entry, uuid: entry.uuid ?? randomUUID() };
+  const normalized = redactTelemetry({ ...entry, uuid: entry.uuid ?? randomUUID() });
   appendFileSync(transcriptPath(entry.sessionId, baseDir), `${JSON.stringify(normalized)}\n`, "utf-8");
 }
 

@@ -5,7 +5,11 @@ import { runtimeStatusHandler } from "../runtime/status.js";
 import { setupWorkerWebSocket, type WorkerWebSocketOptions } from "../worker/websocket.js";
 import { setupNodeWebSocket, type NodeWebSocketOptions } from "../node/websocket.js";
 import { inspectionRoutesHandler } from "./routes.js";
-import { mutationRoutesHandler } from "./mutations.js";
+import {
+  isDagMutationRequestAuthorized,
+  mutationRoutesHandler,
+  requiresDagMutationAuthorization,
+} from "./mutations.js";
 import { agentSessionRoutesHandler } from "./agent-sessions.js";
 import { llmSettingsRoutesHandler } from "./llm-settings.js";
 import { setupVoiceRealtimeWebSocket, voiceRoutesHandler } from "./voice.js";
@@ -29,6 +33,7 @@ import { WsDispatchAdapter, type WsDispatchAdapterOptions } from "../orchestrati
 import type { DAGDispatcher } from "../orchestration/dag-dispatcher.js";
 import { emit } from "../events/bus.js";
 import { dispatchRecoveredRuns } from "../runtime/active-runs.js";
+import { startDagTriggerScheduler } from "../runtime/dag-triggers.js";
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -38,7 +43,7 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Homerail-Approval-Token, X-Homerail-Dag-Token");
 }
 
 export function resolveManagerWorkerWsBaseUrl(actualPort: number): string {
@@ -84,6 +89,7 @@ const MANAGER_AGENT_ENV_PASSTHROUGH = [
   "HOMERAIL_MANAGER_AGENT_SMOKE_PROFILE",
   "HOMERAIL_MANAGER_AGENT_SMOKE_PROMPT",
   "MANAGER_AGENT_TURN_TIMEOUT_MS",
+  "HOMERAIL_DAG_MUTATION_TOKEN",
 ] as const;
 
 export function resolveWorkerRuntimeEnv(): Record<string, string> | undefined {
@@ -162,6 +168,7 @@ export function createServer(
     dispatcher ?? new WsDispatchAdapter(adapterOptions);
   const graphExecutor = new GraphExecutor(actualDispatcher);
   const changeOrchestrator = new ChangeOrchestrator(graphExecutor);
+  const stopTriggerScheduler = startDagTriggerScheduler(changeOrchestrator);
 
   server = http.createServer((req, res) => {
     setCorsHeaders(res);
@@ -170,6 +177,24 @@ export function createServer(
       res.writeHead(204);
       res.end();
       return;
+    }
+
+    const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    if (requiresDagMutationAuthorization(pathname, req.method)) {
+      const rawHeader = req.headers["x-homerail-dag-token"];
+      const headerToken = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+      if (!isDagMutationRequestAuthorized({
+        remoteAddress: req.socket.remoteAddress,
+        headerToken,
+        configuredToken: process.env.HOMERAIL_DAG_MUTATION_TOKEN,
+      })) {
+        json(res, 403, {
+          success: false,
+          message: "DAG mutations require a local request or valid HOMERAIL_DAG_MUTATION_TOKEN",
+          error: "DAG mutations require a local request or valid HOMERAIL_DAG_MUTATION_TOKEN",
+        });
+        return;
+      }
     }
 
     if (inspectionRoutesHandler(req, res)) {
@@ -249,6 +274,7 @@ export function createServer(
         json(res, 404, { error: "not found" });
     }
   });
+  server.once("close", stopTriggerScheduler);
 
   const websocketOptions = {
     ...wsOptions,

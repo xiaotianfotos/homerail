@@ -3,13 +3,23 @@
  * @version 0.1.0
  */
 
-import type { DagNodeConfig, Edge } from "homerail-protocol";
+import type { AgentUsage, DagAdvisorConfig, DagNodeConfig, DagWorkspaceAccess, Edge } from "homerail-protocol";
 import type { DagToolDefinition } from "../agent/types.js";
 import { createHandoffTool } from "./handoff.js";
 import { createSendMessageTool } from "./send-message.js";
 import { createReceiveMessageTool } from "./receive-message.js";
 import { createGraphContextTool } from "./graph-context.js";
 import { createManagerCommandTool } from "./manager-command.js";
+import { createConsultAdvisorTool } from "./advisor.js";
+
+export interface AdvisorCallResult {
+  text: string;
+  usage: Partial<AgentUsage>;
+}
+
+export interface DagToolsOptions {
+  advisorRunner?: (advisor: DagAdvisorConfig, question: string) => Promise<AdvisorCallResult>;
+}
 
 /** Mutable state shared across all DAG tools for a single prompt run. */
 export interface DagToolsState {
@@ -29,6 +39,9 @@ export interface DagToolsState {
   waiters: Map<string, () => void>;
   /** Send raw data over the WebSocket. */
   wsSend: (data: string) => void;
+  advisors: DagAdvisorConfig[];
+  advisorCalls: Map<string, number>;
+  workspaceAccess?: DagWorkspaceAccess;
 }
 
 interface RoutedNodeMessage {
@@ -75,18 +88,25 @@ export function createDagToolsState(
     inbox: [],
     waiters: new Map(),
     wsSend,
+    advisors: config.advisors ?? [],
+    advisorCalls: new Map((config.advisors ?? []).map((advisor) => [advisor.id, advisor.calls_used ?? 0])),
+    workspaceAccess: config.workspace_access,
   };
 }
 
 /** Create the full set of DAG tools for a prompt run. */
-export function createDagTools(state: DagToolsState): DagToolDefinition[] {
-  return [
+export function createDagTools(state: DagToolsState, options: DagToolsOptions = {}): DagToolDefinition[] {
+  const tools = [
     createHandoffTool(state),
     createSendMessageTool(state),
     createReceiveMessageTool(state),
     createGraphContextTool(state),
     createManagerCommandTool(state),
   ];
+  if (state.advisors.length > 0 && options.advisorRunner) {
+    tools.push(createConsultAdvisorTool(state, options.advisorRunner));
+  }
+  return tools;
 }
 
 /**

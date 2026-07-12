@@ -29,6 +29,7 @@ export interface PersistedGraphEdge {
   to_node: string;
   to_port: string;
   condition: string;
+  terminal_outcome?: "success" | "failure" | "cancelled";
   label?: string;
   retry_policy?: { max_retries?: number };
 }

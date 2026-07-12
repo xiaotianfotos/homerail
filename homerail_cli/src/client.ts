@@ -11,15 +11,18 @@ export interface BaseResponse {
 export interface HomeRailClientOptions {
   baseUrl?: string;
   timeoutMs?: number;
+  mutationToken?: string;
 }
 
 export class HomeRailClient {
   readonly baseUrl: string;
   readonly timeoutMs: number;
+  readonly mutationToken?: string;
 
   constructor(opts: HomeRailClientOptions = {}) {
     this.baseUrl = HomeRailClient.resolveBaseUrl(opts.baseUrl);
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.mutationToken = opts.mutationToken ?? process.env.HOMERAIL_DAG_MUTATION_TOKEN;
   }
 
   static resolveBaseUrl(override?: string): string {
@@ -151,7 +154,12 @@ export class HomeRailClient {
     try {
       const init: RequestInit = {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(method !== "GET" && this.mutationToken
+            ? { "X-Homerail-Dag-Token": this.mutationToken }
+            : {}),
+        },
         signal: controller.signal,
       };
       if (body !== undefined) {
