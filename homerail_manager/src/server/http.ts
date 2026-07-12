@@ -35,6 +35,7 @@ import { emit } from "../events/bus.js";
 import { dispatchRecoveredRuns } from "../runtime/active-runs.js";
 import { startDagTriggerScheduler } from "../runtime/dag-triggers.js";
 import { readOrCreateControlPlaneToken } from "../persistence/control-plane-secret.js";
+import { startWorkspaceCleanupScheduler } from "../runtime/workspace-retention.js";
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -241,6 +242,7 @@ export function createServer(
   const graphExecutor = new GraphExecutor(actualDispatcher);
   const changeOrchestrator = new ChangeOrchestrator(graphExecutor);
   const stopTriggerScheduler = startDagTriggerScheduler(changeOrchestrator);
+  const stopWorkspaceCleanupScheduler = startWorkspaceCleanupScheduler();
 
   server = http.createServer((req, res) => {
     setCorsHeaders(res);
@@ -347,6 +349,7 @@ export function createServer(
     }
   });
   server.once("close", stopTriggerScheduler);
+  server.once("close", stopWorkspaceCleanupScheduler);
 
   const workerWebsocketOptions: WorkerWebSocketOptions = {
     ...wsOptions,

@@ -38,6 +38,10 @@ export type DAGEventType =
   | "dag:cleanup_requested"
   | "dag:cleanup_completed"
   | "dag:cleanup_failed"
+  | "dag:workspace_retention_updated"
+  | "dag:workspace_cleanup_requested"
+  | "dag:workspace_cleanup_completed"
+  | "dag:workspace_cleanup_failed"
   | "dag:run_recovered"
   | "dag:deterministic_command"
   | "dag:state_updated"
@@ -91,6 +95,10 @@ export const DAG_EVENT_TYPES: DAGEventType[] = [
   "dag:cleanup_requested",
   "dag:cleanup_completed",
   "dag:cleanup_failed",
+  "dag:workspace_retention_updated",
+  "dag:workspace_cleanup_requested",
+  "dag:workspace_cleanup_completed",
+  "dag:workspace_cleanup_failed",
   "dag:run_recovered",
   "dag:deterministic_command",
   "dag:state_updated",

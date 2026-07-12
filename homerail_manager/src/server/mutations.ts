@@ -21,6 +21,10 @@ import { dagResourcesUnavailableForRun } from "./dag-resource-status.js";
 import { fireDagEventTrigger } from "../runtime/dag-triggers.js";
 import { updateDagState } from "../persistence/dag-runtime-primitives.js";
 import { WorkflowRunAdmissionError } from "../persistence/dag-run-admission.js";
+import {
+  cleanupRunWorkspaces,
+  setRunWorkspacePinned,
+} from "../runtime/workspace-retention.js";
 
 interface BaseResponse {
   success: boolean;
@@ -111,7 +115,9 @@ export function requiresDagMutationAuthorization(pathname: string, method?: stri
   return pathname === "/api/runs"
     || pathname.startsWith("/api/runs/")
     || pathname === "/api/dag/workflows/sync"
-    || pathname === "/api/dag/profiles/sync";
+    || pathname === "/api/dag/profiles/sync"
+    || pathname === "/api/dag/workspaces/cleanup"
+    || pathname === "/api/settings/workspace-retention";
 }
 
 async function _readJsonBody(req: http.IncomingMessage): Promise<unknown> {
@@ -446,6 +452,34 @@ export function mutationRoutesHandler(
         _badRequest(res, message);
       }
     }
+    return true;
+  }
+
+  const workspaceRetentionMatch = pathname.match(/^\/api\/runs\/([^/]+)\/workspace-retention$/);
+  if (workspaceRetentionMatch && req.method === "POST") {
+    const runId = decodeURIComponent(workspaceRetentionMatch[1]);
+    void _readJsonBody(req).then((raw) => {
+      const body = raw as Record<string, unknown>;
+      if (typeof body.pinned !== "boolean") throw new Error("pinned must be a boolean");
+      const retention = setRunWorkspacePinned(runId, body.pinned);
+      _ok(res, body.pinned ? "Run workspace pinned" : "Run workspace unpinned", retention);
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("not found")) _notFound(res, message);
+      else _badRequest(res, message);
+    });
+    return true;
+  }
+
+  if (pathname === "/api/dag/workspaces/cleanup" && req.method === "POST") {
+    void _readJsonBody(req).then((raw) => {
+      const body = raw as Record<string, unknown>;
+      if (body.dry_run !== undefined && typeof body.dry_run !== "boolean") {
+        throw new Error("dry_run must be a boolean");
+      }
+      const report = cleanupRunWorkspaces({ dryRun: body.dry_run !== false });
+      _ok(res, report.dry_run ? "Workspace cleanup preview completed" : "Workspace cleanup completed", report);
+    }).catch((error) => _badRequest(res, error instanceof Error ? error.message : String(error)));
     return true;
   }
 
