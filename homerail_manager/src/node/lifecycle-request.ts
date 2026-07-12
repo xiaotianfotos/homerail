@@ -89,6 +89,7 @@ export interface WorkerCreateOptions {
   image?: string;
   extraHosts?: string[];
   workspace?: Record<string, unknown>;
+  workspaceReadOnly?: boolean;
   timeoutMs?: number;
 }
 
@@ -108,6 +109,7 @@ export function sendWorkerCreateRequest(
       image: options.image,
       extra_hosts: options.extraHosts,
       workspace: options.workspace,
+      workspace_read_only: options.workspaceReadOnly === true,
     },
     { timeoutMs: options.timeoutMs },
   );

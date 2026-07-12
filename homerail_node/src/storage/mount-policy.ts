@@ -74,12 +74,12 @@ export function allowedMounts(volumeId: string): MountEntry[] {
   ];
 }
 
-export function workerAllowedMounts(workspaceId: string): MountEntry[] {
+export function workerAllowedMounts(workspaceId: string, readOnly = false): MountEntry[] {
   return [
     {
       host: homerailWorkerWorkspacePath(workspaceId),
       container: "/workspace",
-      mode: "rw",
+      mode: readOnly ? "ro" : "rw",
     },
   ];
 }

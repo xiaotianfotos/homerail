@@ -365,6 +365,26 @@ describe("handleLifecycleRequest", () => {
       expect(container!.config.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
     });
 
+    it("create worker enforces a read-only workspace mount", async () => {
+      process.env["HOMERAIL_HOME"] = "/home/user/.homerail";
+      const provider = new MockProvider();
+      const responses: LifecycleResponse[] = [];
+
+      await handleLifecycleRequest(
+        makeRequest({
+          resource_type: "worker",
+          operation: "create",
+          spec: { workspace_id: "ws-readonly", workspace_read_only: true },
+        }),
+        provider,
+        (message) => responses.push(message),
+      );
+
+      expect(responses[0]!.status).toBe("success");
+      const container = provider.containers.get(String(responses[0]!.resource_data!.id));
+      expect(container!.config.mounts![0]!.mode).toBe("ro");
+    });
+
     it("create worker without workspace_id -> error", async () => {
       const provider = new MockProvider();
       const responses: LifecycleResponse[] = [];

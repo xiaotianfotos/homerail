@@ -224,6 +224,21 @@ describe("lifecycle (with MockProvider)", () => {
       expect(container!.config.workdir).toBe("/workspace");
     });
 
+    it("mounts the worker workspace read-only when requested", async () => {
+      process.env["HOMERAIL_HOME"] = "/home/user/.homerail";
+      const info = await createWorkerContainer({
+        config: { image: "homerail-worker:latest" },
+        provider,
+        workspaceId: "ws-readonly",
+        workspaceReadOnly: true,
+      });
+      expect(provider.containers.get(info.id)!.config.mounts).toEqual([{
+        host: "/home/user/.homerail/workspace/ws-readonly",
+        container: "/workspace",
+        mode: "ro",
+      }]);
+    });
+
     it("supports run/node workspace IDs", async () => {
       process.env["HOMERAIL_HOME"] = "/home/user/.homerail";
       const info = await createWorkerContainer({

@@ -109,6 +109,47 @@ describe("prompt runner", () => {
     expect(parsed.map((msg) => msg.type)).toContain("SESSION_END");
   });
 
+  it("restricts correction turns to the handoff tool and correction system prompt", async () => {
+    let observedTools: string[] = [];
+    let observedContext: AgentRunContext | undefined;
+    const mockAgent: AgentClient = {
+      run(_prompt, tools, context) {
+        observedTools = tools.map((tool) => tool.name);
+        observedContext = context;
+        return (async function* () {
+          await tools[0].handler({ port: "done", content: "corrected" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-correction-only", () => mockAgent);
+
+    const terminalMessages: string[] = [];
+    await runPrompt(
+      {
+        task: "## input:context\n{}\n\n## input:correction\nUse the exact contract",
+        sender: "test",
+        runId: "run-correction-only",
+        dagConfig: makeConfig(),
+        systemPrompt: "Original reviewer instructions",
+      },
+      {
+        wsSend: () => {},
+        onTerminalMessage: (data) => terminalMessages.push(data),
+        agentBackend: "test-correction-only",
+      },
+    );
+
+    expect(observedTools).toEqual(["handoff"]);
+    expect(observedContext?.handoffOnly).toBe(true);
+    expect(observedContext?.systemPrompt).toContain("DAG CONTRACT CORRECTION MODE");
+    expect(observedContext?.systemPrompt).toContain("Original reviewer instructions");
+    expect(terminalMessages.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+      type: "response",
+      data: expect.objectContaining({ port: "done", content: "corrected" }),
+    }));
+  });
+
   it("defers node_error delivery to the worker lifecycle when requested", async () => {
     const mockAgent: AgentClient = {
       run() {

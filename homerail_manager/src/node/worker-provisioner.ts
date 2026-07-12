@@ -20,6 +20,7 @@ import {
 export interface ProvisionerOptions {
   image?: string;
   workspace?: Record<string, unknown>;
+  workspaceReadOnly?: boolean;
   env?: Record<string, string>;
   labels?: Record<string, string>;
   extraHosts?: string[];
@@ -36,6 +37,7 @@ export interface ProvisionerOptions {
     opts: {
       image?: string;
       workspace?: Record<string, unknown>;
+      workspaceReadOnly?: boolean;
       env?: Record<string, string>;
       labels?: Record<string, string>;
       extraHosts?: string[];
@@ -130,6 +132,7 @@ export async function provisionWorkerContainer(
   const createResult = await createFn(nodeId, workspaceId, {
     image: options?.image,
     workspace: options?.workspace,
+    workspaceReadOnly: options?.workspaceReadOnly,
     env: options?.env,
     labels: options?.labels,
     extraHosts: options?.extraHosts,

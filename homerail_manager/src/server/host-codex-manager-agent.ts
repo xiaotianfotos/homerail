@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { ensureDefaultWorkspacePath, getHomerailHome } from "../config/env.js";
+import { resolveAssetRoot } from "../assets/root.js";
 import { codexBinaryNotFoundMessage, resolveCodexBinary } from "./codex-binary.js";
 import {
   readWidgetFile,
@@ -544,17 +545,23 @@ function createManagerTools(state: {
     },
     {
       name: "list_orchestrations",
-      description: "List repo-local orchestration YAML templates available to create runs.",
+      description: "List installed HomeRail orchestration YAML templates available to create runs.",
       input_schema: { type: "object", properties: {}, additionalProperties: false },
       async handler() {
-        const dir = path.join(state.workspace, "assets", "orchestrations");
+        const resolution = resolveAssetRoot();
+        const dir = path.join(resolution.assetRoot, "orchestrations");
         const files = fs.existsSync(dir)
-          ? fs.readdirSync(dir).filter((name) => name.endsWith(".yaml") || name.endsWith(".yml")).sort()
+          ? fs.readdirSync(dir).filter((name) =>
+            name.endsWith(".yaml") ||
+            name.endsWith(".yml") ||
+            name.endsWith(".yaml.template") ||
+            name.endsWith(".yml.template")
+          ).sort()
           : [];
         return {
           content: [{
             type: "text",
-            text: JSON.stringify({ root: "assets/orchestrations", files }),
+            text: JSON.stringify({ root: dir, files }),
           }],
         };
       },

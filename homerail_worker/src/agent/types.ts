@@ -65,4 +65,6 @@ export interface AgentRunContext {
   workspace?: string;
   sessionId?: string;
   abortSignal?: AbortSignal;
+  /** Contract-correction turns may only submit a DAG handoff. */
+  handoffOnly?: boolean;
 }

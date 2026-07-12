@@ -180,11 +180,12 @@ export class ClaudeSdkAdapter implements AgentClient {
     try {
       const effectiveModel = context.model || this.model;
       const authEnv = this.buildClaudeEnv(context, effectiveModel);
+      const builtinTools = context.handoffOnly ? [] : [...BUILTIN_TOOLS];
       const options: Record<string, unknown> = {
         model: effectiveModel,
         maxThinkingTokens: this.thinkingBudget,
-        tools: [...BUILTIN_TOOLS],
-        allowedTools: [...BUILTIN_TOOLS],
+        tools: builtinTools,
+        allowedTools: builtinTools,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         cwd: context.workspace ?? process.cwd(),
@@ -257,7 +258,8 @@ export class ClaudeSdkAdapter implements AgentClient {
           base_url_source: authEnv.baseUrlSource,
           timeout_ms: this.queryTimeoutMs > 0 ? this.queryTimeoutMs : null,
           external_abort_signal: Boolean(context.abortSignal),
-          builtin_tools: [...BUILTIN_TOOLS],
+          builtin_tools: builtinTools,
+          handoff_only: context.handoffOnly === true,
         },
       };
 

@@ -311,6 +311,8 @@ export class WsDispatchAdapter implements DAGDispatcher {
       ...this.provisionerOpts,
       image: envelope.image ?? this.provisionerOpts?.image,
       workspace: this.provisionerOpts?.workspace ?? envelope.workspace,
+      workspaceReadOnly: Array.isArray(envelope.workspaceAccess?.writable_paths) &&
+        envelope.workspaceAccess.writable_paths.length === 0,
       env: {
         ...(this.provisionerOpts?.env ?? {}),
         ...(agentBackend ? { AGENT_BACKEND: agentBackend } : {}),

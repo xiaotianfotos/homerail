@@ -500,6 +500,36 @@ describe("ClaudeSdkAdapter", () => {
     });
   });
 
+  it("disables all built-in tools during handoff-only correction turns", async () => {
+    const captured: Record<string, unknown>[] = [];
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: Record<string, unknown> }) {
+        captured.push(params.options ?? {});
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(_opts: { name: string }) {
+        return { type: "sdk", name: _opts.name };
+      },
+      tool(name: string) {
+        return { name };
+      },
+    }));
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    const events: AgentEvent[] = [];
+    for await (const event of adapter.run("correct", [], { ...ctx, handoffOnly: true })) {
+      events.push(event);
+    }
+
+    expect(captured[0].tools).toEqual([]);
+    expect(captured[0].allowedTools).toEqual([]);
+    expect(events.find((event) => event.type === "debug" && event.message === "query_start")).toMatchObject({
+      type: "debug",
+      data: expect.objectContaining({ builtin_tools: [], handoff_only: true }),
+    });
+  });
+
   it("fails explicitly when transcript resume is requested", async () => {
     const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
     const adapter = new ClaudeSdkAdapter();

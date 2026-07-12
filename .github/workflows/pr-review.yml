@@ -1,0 +1,136 @@
+name: HomeRail PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: GitHub owner/repository (defaults to this repository)
+        type: string
+        required: false
+      pr:
+        description: Pull request number
+        type: number
+        required: true
+      base:
+        description: Optional immutable base commit SHA
+        type: string
+        required: false
+      head:
+        description: Optional immutable head commit SHA
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homerail-pr-review-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: HomeRail PR Review
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.draft == false &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == 'xiaotianfotos')
+    runs-on: [self-hosted, Linux, X64, homerail-live]
+    timeout-minutes: 60
+    continue-on-error: true
+    env:
+      HOMERAIL_HOME: ${{ runner.temp }}/homerail-pr-review-cli-${{ github.run_id }}
+      HOMERAIL_ASSET_DIR: ""
+    env:
+      HOMERAIL_MANAGER_URL: ${{ secrets.HOMERAIL_PR_REVIEW_MANAGER_URL }}
+      HOMERAIL_DAG_MUTATION_TOKEN: ${{ secrets.HOMERAIL_DAG_MUTATION_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out HomeRail CLI and tracked scenario
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Build HomeRail CLI
+        run: |
+          npm --prefix homerail_protocol ci
+          npm --prefix homerail_cli ci
+          npm --prefix homerail_protocol run build
+          npm --prefix homerail_cli run build
+
+      - name: Resolve immutable review input
+        id: input
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REPO: ${{ github.repository }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EVENT_TITLE: ${{ github.event.pull_request.title }}
+          EVENT_AUTHOR: ${{ github.event.pull_request.user.login }}
+          MANUAL_REPO: ${{ inputs.repo }}
+          MANUAL_PR: ${{ inputs.pr }}
+          MANUAL_BASE: ${{ inputs.base }}
+          MANUAL_HEAD: ${{ inputs.head }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          const manual = process.env.EVENT_NAME === 'workflow_dispatch'
+          const input = {
+            repo: (manual && process.env.MANUAL_REPO) || process.env.EVENT_REPO,
+            pr: Number((manual && process.env.MANUAL_PR) || process.env.EVENT_PR),
+          }
+          const base = (manual && process.env.MANUAL_BASE) || process.env.EVENT_BASE
+          const head = (manual && process.env.MANUAL_HEAD) || process.env.EVENT_HEAD
+          if (base) input.base = base
+          if (head) input.head = head
+          if (!manual && process.env.EVENT_TITLE) input.title = process.env.EVENT_TITLE
+          if (!manual && process.env.EVENT_AUTHOR) input.author = process.env.EVENT_AUTHOR
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `json=${JSON.stringify(input)}\n`)
+          NODE
+
+      - name: Run HomeRail PR Review DAG
+        id: review
+        continue-on-error: true
+        env:
+          REVIEW_INPUT: ${{ steps.input.outputs.json }}
+          REVIEW_PROFILE: ${{ secrets.HOMERAIL_PR_REVIEW_PROFILE }}
+        run: |
+          mkdir -p artifacts/pr-review
+          args=(dag run-template pr-review --input "$REVIEW_INPUT" --wait --timeout 3300 --output-dir artifacts/pr-review)
+          if [ -n "$REVIEW_PROFILE" ]; then args+=(--profile "$REVIEW_PROFILE"); fi
+          node homerail_cli/dist/cli.js --json "${args[@]}" > artifacts/pr-review/command.json
+
+      - name: Publish non-blocking Check summary
+        if: always()
+        env:
+          STEP_OUTCOME: ${{ steps.review.outcome }}
+        run: |
+          if [ -s artifacts/pr-review/report.md ]; then
+            cat artifacts/pr-review/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo '# HomeRail PR Review'
+              echo
+              echo "Result: infrastructure error"
+              echo "Command outcome: $STEP_OUTCOME"
+              echo
+              echo 'No review conclusion was produced. This advisory check does not block merging.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload review evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-review-${{ github.event.pull_request.number || inputs.pr }}-${{ github.run_id }}
+          path: artifacts/pr-review/
+          if-no-files-found: warn
+          retention-days: 14

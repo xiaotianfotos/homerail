@@ -150,6 +150,40 @@ function managerRestUrl(): string {
   return (process.env.MANAGER_REST_URL || "http://host.docker.internal:19191/api").replace(/\/+$/, "");
 }
 
+function githubApiBaseUrl(): string {
+  return (process.env.HOMERAIL_GITHUB_API_BASE_URL || "https://api.github.com").replace(/\/+$/, "");
+}
+
+async function resolveGitHubPullRequest(repo: string, pr: number): Promise<{
+  base: string;
+  head: string;
+  title: string;
+  author: string;
+}> {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    throw new Error("repo must use the owner/name form");
+  }
+  if (!Number.isInteger(pr) || pr < 1) throw new Error("pr must be a positive integer");
+  const [owner, name] = repo.split("/");
+  const response = await fetch(
+    `${githubApiBaseUrl()}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${pr}`,
+    { headers: { Accept: "application/vnd.github+json", "User-Agent": "HomeRail-Manager-Agent" } },
+  );
+  if (!response.ok) throw new Error(`GitHub PR lookup failed with HTTP ${response.status}`);
+  const body = await response.json() as Record<string, unknown>;
+  const base = String((body.base as Record<string, unknown> | undefined)?.sha ?? "");
+  const head = String((body.head as Record<string, unknown> | undefined)?.sha ?? "");
+  if (!/^[0-9a-f]{40}$/i.test(base) || !/^[0-9a-f]{40}$/i.test(head)) {
+    throw new Error("GitHub PR response did not contain immutable base/head SHAs");
+  }
+  return {
+    base,
+    head,
+    title: typeof body.title === "string" ? body.title : "",
+    author: String((body.user as Record<string, unknown> | undefined)?.login ?? ""),
+  };
+}
+
 function managerAgentTurnTimeoutMs(): number {
   const raw = Number(process.env.MANAGER_AGENT_TURN_TIMEOUT_MS ?? "0");
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
@@ -550,6 +584,72 @@ function createManagerTools(state: {
         } catch (err) {
           state.objectiveToolCalls.push({
             name: "create_change",
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          throw err;
+        }
+      },
+    },
+    {
+      name: "run_pr_review",
+      description: "Resolve immutable GitHub PR metadata in code and start HomeRail's built-in read-only pr-review DAG. Prefer this over manually calling gh, curl, or create_and_run for PR reviews.",
+      input_schema: {
+        type: "object",
+        properties: {
+          repo: { type: "string", description: "GitHub repository in owner/name form" },
+          pr: { type: "integer", minimum: 1 },
+          expected_usage: { type: "integer", minimum: 1, maximum: 100 },
+        },
+        required: ["repo", "pr"],
+        additionalProperties: false,
+      },
+      async handler(args) {
+        const repo = String(args.repo || "").trim();
+        const pr = Number(args.pr);
+        try {
+          const metadata = await resolveGitHubPullRequest(repo, pr);
+          const requestedUsage = Number(args.expected_usage);
+          const expectedUsage = Number.isInteger(requestedUsage) && requestedUsage >= 1 && requestedUsage <= 100
+            ? requestedUsage
+            : 8;
+          const envelope = {
+            trigger_id: "manager-agent",
+            trigger_type: "manual",
+            fire_key: `manager-agent:${repo}#${pr}:${metadata.head}`,
+            payload: {
+              repo,
+              pr,
+              base: metadata.base,
+              head: metadata.head,
+              title: metadata.title,
+              author: metadata.author,
+              expected_usage: expectedUsage,
+              budget_key: `pr-review:${repo}:${metadata.head}`,
+            },
+          };
+          const body = await requestManager("/runs/create-and-run", {
+            method: "POST",
+            body: JSON.stringify({
+              yamlPath: "assets/orchestrations/pr-review.yaml.template",
+              prompt: JSON.stringify(envelope),
+            }),
+          }) as Record<string, unknown>;
+          const data = body.data as Record<string, unknown> | undefined;
+          const runId = String(data?.runId ?? data?.run_id ?? "");
+          if (!runId) throw new Error("Manager did not return a PR review run id");
+          state.createdRunIds.push(runId);
+          state.objectiveToolCalls.push({ name: "run_pr_review", success: true });
+          state.objectiveToolCalls.push({ name: "create_and_run", success: true, inferred: true });
+          return {
+            content: [{
+              type: "text",
+              text: short({ run_id: runId, workflow_id: "pr-review", repo, pr, base: metadata.base, head: metadata.head }),
+            }],
+          };
+        } catch (err) {
+          state.objectiveToolCalls.push({
+            name: "run_pr_review",
             success: false,
             error: err instanceof Error ? err.message : String(err),
           });

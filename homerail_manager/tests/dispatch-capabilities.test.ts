@@ -225,6 +225,7 @@ nodes:
       workspaceId: string;
       image?: string;
       workspace?: Record<string, unknown>;
+      workspaceReadOnly?: boolean;
     }> = [];
     registerWorker({
       worker_id: "generic-worker",
@@ -255,6 +256,7 @@ nodes:
             workspaceId,
             image: opts.image,
             workspace: opts.workspace,
+            workspaceReadOnly: opts.workspaceReadOnly,
           });
           return { status: "success", resource_data: { id: "container-1" } };
         },
@@ -267,6 +269,7 @@ nodes:
       makeEnvelope({
         image: "custom-worker:v2",
         workspace: { mode: "isolated" },
+        workspaceAccess: { writable_paths: [], readonly_paths: ["repository"] },
       }),
     );
 
@@ -282,6 +285,7 @@ nodes:
           workspaceId: "run-capabilities",
           image: "custom-worker:v2",
           workspace: { mode: "isolated" },
+          workspaceReadOnly: true,
         },
       ]);
     });

@@ -118,6 +118,20 @@ the cloned CLI. The run must execute as a normal Node-provisioned Worker with a
 run-scoped workspace; fixed host Workers, Docker socket mounts, and
 Docker-in-Docker are outside this test boundary.
 
+Use `pr-review.yaml.template` for a read-only, evidence-backed pull request
+review with runtime, security, tests, and frontend specialists plus independent
+2-of-3 verification quorum:
+
+```bash
+hr dag run-template pr-review \
+  --input '{"repo":"xiaotianfotos/homerail","pr":25}' \
+  --wait --output-dir artifacts/pr-review
+```
+
+The CLI resolves immutable base/head SHAs, syncs the tracked WorkflowSpec, and
+writes `report.json` and `report.md`. The workflow never commits, approves, or
+merges a pull request.
+
 ## Scorecard Policy
 
 DAG-specific scorecard rules are declared in the template instead of being

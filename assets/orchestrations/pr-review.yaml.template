@@ -1,0 +1,737 @@
+api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: pr-review
+  name: HomeRail PR Review
+  labels:
+    scenario: pull-request-review
+    safety: read-only
+
+spec:
+  description: |
+    Read-only pull request review with four specialist reviewers, structured
+    deduplication, three independent validation votes, and a deterministic
+    two-of-three quorum. The workflow never commits, approves, or merges code.
+
+  workspace:
+    mode: shared
+
+  pattern:
+    id: pr-review-scenario
+    version: 1.0.0
+    source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
+    parameters:
+      reviewer_count: 4
+      verification_votes: 3
+      quorum_threshold: 2
+
+  triggers:
+    github_pull_request:
+      type: event
+      event: github.pull_request
+      overlap: skip
+      max_concurrency: 1
+
+  contracts:
+    PRReviewInput:
+      type: object
+      additionalProperties: false
+      required: [repo, pr, base, head, expected_usage, budget_key]
+      properties:
+        repo: { type: string, pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }
+        pr: { type: integer, minimum: 1 }
+        base: { type: string, minLength: 7, maxLength: 64 }
+        head: { type: string, minLength: 7, maxLength: 64 }
+        expected_usage: { type: number, minimum: 0, maximum: 100 }
+        budget_key: { type: string, minLength: 1, maxLength: 200 }
+        title: { type: string, maxLength: 500 }
+        author: { type: string, maxLength: 200 }
+
+    RunEnvelope:
+      type: object
+      additionalProperties: false
+      required: [trigger_id, trigger_type, fire_key, payload]
+      properties:
+        trigger_id: { type: string, minLength: 1 }
+        trigger_type: { type: string, enum: [manual, event] }
+        fire_key: { type: string, minLength: 1 }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [repo, pr, base, head, expected_usage, budget_key]
+          properties:
+            repo: { type: string, pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }
+            pr: { type: integer, minimum: 1 }
+            base: { type: string, minLength: 7, maxLength: 64 }
+            head: { type: string, minLength: 7, maxLength: 64 }
+            expected_usage: { type: number, minimum: 0, maximum: 100 }
+            budget_key: { type: string, minLength: 1, maxLength: 200 }
+            title: { type: string, maxLength: 500 }
+            author: { type: string, maxLength: 200 }
+
+    ReviewContext:
+      type: object
+      additionalProperties: false
+      required: [repo, pr, base, head, repository_path, changed_files, diff_stat]
+      properties:
+        repo: { type: string }
+        pr: { type: integer }
+        base: { type: string }
+        head: { type: string }
+        repository_path: { type: string }
+        changed_files:
+          type: array
+          maxItems: 5000
+          items: { type: string }
+        diff_stat: { type: string, maxLength: 20000 }
+        title: { type: string }
+        author: { type: string }
+
+    Finding:
+      type: object
+      additionalProperties: false
+      required: [category, severity, title, file, line, evidence, recommendation, confidence]
+      properties:
+        category: { type: string, enum: [runtime, security, tests, frontend] }
+        severity: { type: string, enum: [critical, high, medium, low] }
+        title: { type: string, minLength: 1, maxLength: 300 }
+        file: { type: string, minLength: 1, maxLength: 1000 }
+        line: { type: integer, minimum: 1 }
+        evidence: { type: string, minLength: 1, maxLength: 12000 }
+        recommendation: { type: string, minLength: 1, maxLength: 8000 }
+        confidence: { type: string, enum: [high, medium, low] }
+
+    ReviewerResult:
+      type: object
+      additionalProperties: false
+      required: [reviewer, status, summary, findings]
+      properties:
+        reviewer: { type: string, enum: [runtime, security, tests, frontend] }
+        status: { type: string, enum: [complete, failed] }
+        summary: { type: string, minLength: 1, maxLength: 12000 }
+        findings:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, severity, title, file, line, evidence, recommendation, confidence]
+            properties:
+              category: { type: string, enum: [runtime, security, tests, frontend] }
+              severity: { type: string, enum: [critical, high, medium, low] }
+              title: { type: string, minLength: 1, maxLength: 300 }
+              file: { type: string, minLength: 1, maxLength: 1000 }
+              line: { type: integer, minimum: 1 }
+              evidence: { type: string, minLength: 1, maxLength: 12000 }
+              recommendation: { type: string, minLength: 1, maxLength: 8000 }
+              confidence: { type: string, enum: [high, medium, low] }
+
+    DraftReviewReport:
+      type: object
+      additionalProperties: false
+      required: [repo, pr, base, head, status, confidence, summary, actionable_count, findings, reviewer_results]
+      properties:
+        repo: { type: string }
+        pr: { type: integer }
+        base: { type: string }
+        head: { type: string }
+        status: { type: string, enum: [pass, findings, inconclusive] }
+        confidence: { type: string, enum: [high, medium, low] }
+        summary: { type: string, minLength: 1, maxLength: 12000 }
+        actionable_count: { type: integer, minimum: 0 }
+        findings:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, severity, title, file, line, evidence, recommendation, confidence]
+            properties:
+              category: { type: string, enum: [runtime, security, tests, frontend] }
+              severity: { type: string, enum: [critical, high, medium, low] }
+              title: { type: string, minLength: 1, maxLength: 300 }
+              file: { type: string, minLength: 1, maxLength: 1000 }
+              line: { type: integer, minimum: 1 }
+              evidence: { type: string, minLength: 1, maxLength: 12000 }
+              recommendation: { type: string, minLength: 1, maxLength: 8000 }
+              confidence: { type: string, enum: [high, medium, low] }
+        reviewer_results:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [reviewer, status, summary, findings]
+            properties:
+              reviewer: { type: string, enum: [runtime, security, tests, frontend] }
+              status: { type: string, enum: [complete, failed] }
+              summary: { type: string, minLength: 1, maxLength: 12000 }
+              findings:
+                type: array
+                maxItems: 50
+                items: { type: object }
+
+    VerificationVote:
+      type: object
+      additionalProperties: false
+      required: [voter, vote, confidence, evidence, finding_verdicts]
+      properties:
+        voter: { type: string, enum: [evidence, false_positive, coverage] }
+        vote: { type: string, enum: [accept, reject] }
+        confidence: { type: string, enum: [high, medium, low] }
+        evidence: { type: string, minLength: 1, maxLength: 12000 }
+        finding_verdicts:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [title, file, line, verdict, reason]
+            properties:
+              title: { type: string, minLength: 1, maxLength: 300 }
+              file: { type: string, minLength: 1, maxLength: 1000 }
+              line: { type: integer, minimum: 1 }
+              verdict: { type: string, enum: [confirmed, rejected] }
+              reason: { type: string, minLength: 1, maxLength: 4000 }
+
+    PublishedReview:
+      type: object
+      additionalProperties: false
+      required: [report, markdown, json_path, markdown_path, quorum]
+      properties:
+        report: { type: object }
+        markdown: { type: string, minLength: 1, maxLength: 100000 }
+        json_path: { type: string, const: "artifacts/pr-review/report.json" }
+        markdown_path: { type: string, const: "artifacts/pr-review/report.md" }
+        quorum:
+          type: object
+          required: [passed, successes, total, threshold]
+          properties:
+            passed: { type: boolean }
+            successes: { type: integer }
+            total: { type: integer }
+            threshold: { type: integer }
+
+  agents:
+    preparer:
+      system: |
+        You prepare a read-only pull request checkout. The input is the output
+        of a Manager budget gate; the RunEnvelope is at input.input and the
+        original PRReviewInput is at input.input.payload.
+        Validate repo, PR, base, and head. Derive the clone URL exactly as
+        https://github.com/<repo>.git; never accept a URL from input. Clone it
+        into /workspace/repository without credentials, fetch both
+        exact commits, and checkout head in detached mode. Never modify tracked
+        files. Collect changed_files from git diff --name-only base...head and
+        diff_stat from git diff --stat base...head. Do not end with prose.
+        Your final action MUST call the handoff tool on port ready with exactly
+        this object and no extra keys:
+        {"repo":"owner/name","pr":1,"base":"sha","head":"sha","repository_path":"/workspace/repository","changed_files":["path"],"diff_stat":"text","title":"text","author":"login"}
+        Preserve the actual input values; title and author may be omitted only
+        when absent. If input:correction exists, reuse the existing checkout,
+        finish only missing validation, and call handoff. On any mismatch or
+        fetch failure, call handoff on failed with grounded evidence.
+
+    runtime_reviewer:
+      system: |
+        Review only runtime behavior, persistence, concurrency, recovery,
+        protocol boundaries, and backward compatibility in the exact
+        base...head diff under /workspace/repository. Read surrounding code and
+        run narrow read-only checks when useful. Never install dependencies,
+        build, format, or run a command that can write inside
+        /workspace/repository. Report only concrete defects
+        introduced by the PR. Do not report pre-existing behavior, optional
+        hardening, style preferences, or speculative improvements. In Node.js,
+        a synchronous function with no await/yield cannot interleave with a
+        second request in the same process; do not claim a race without an
+        actual async yield, worker/thread, child process, or external writer.
+        Every finding
+        needs file, precise line when known, evidence, recommendation,
+        severity, and confidence. Do not end with prose. Your final action MUST
+        call handoff on reviewed with exactly this shape and no extra keys:
+        {"reviewer":"runtime","status":"complete","summary":"text","findings":[{"category":"runtime","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
+        line must identify the precise changed or directly affected source line;
+        if no precise line exists, do not report the finding. Empty findings are valid.
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing result in the exact shape.
+
+    security_reviewer:
+      system: |
+        Review only authentication, authorization, secrets, injection,
+        filesystem containment, transport, unsafe defaults, and privilege
+        boundaries in the exact base...head diff under /workspace/repository.
+        Never install dependencies or run commands that write to the checkout.
+        Trace real data flow before claiming a vulnerability. Report only a
+        security defect introduced or materially worsened by this PR; exclude
+        pre-existing CORS, body-size, and generic defense-in-depth advice unless
+        the diff changes that boundary. Never expose a
+        secret value in evidence. Do not end with prose. Your final action MUST
+        call handoff on reviewed with exactly this shape and no extra keys:
+        {"reviewer":"security","status":"complete","summary":"text","findings":[{"category":"security","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
+        line must be a precise changed or directly affected source line. Empty findings are valid.
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing result in the exact shape.
+
+    test_reviewer:
+      system: |
+        Review tests and verification for the exact base...head diff under
+        /workspace/repository. Find behavior changes that lack regression
+        coverage, assertions that cannot catch the claimed bug, platform gaps,
+        and deterministic checks that can silently pass. Missing coverage is a
+        finding only for a destructive, authorization, data-integrity, or
+        recovery boundary where a concrete changed branch has no direct or
+        equivalent regression check. Report at most three missing-coverage
+        findings, ordered by production impact. Do not report scheduler timing,
+        configuration spelling variants, loading/toast state, ordinary UI
+        cancellation details, or a platform-specific assertion that is
+        intentionally inapplicable on that platform. Do not list every untested
+        boundary or optional test improvement. Cite
+        the changed production line that creates the risk, not line 1 of a test
+        file. Missing-test findings must use medium or low severity unless an
+        existing test suite falsely passes a demonstrated critical defect.
+        Never install
+        dependencies, build, format, or write inside /workspace/repository.
+        If a bounded test genuinely needs writes, copy only the needed files
+        to /tmp/pr-review-tests and run it there. Do not end with prose. Your final action MUST call
+        handoff on reviewed with exactly this shape and no extra keys:
+        {"reviewer":"tests","status":"complete","summary":"text","findings":[{"category":"tests","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
+        Every finding needs a precise changed or directly affected line. Empty findings are valid.
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing result in the exact shape.
+
+    frontend_reviewer:
+      system: |
+        Review user-facing behavior in the exact base...head diff under
+        /workspace/repository. Check state transitions, API contracts,
+        accessibility, responsive layout, text containment, and interaction
+        regressions. Report only user-visible defects with reproducible steps,
+        deterministic layout constraints, or a failing focused test. Silent
+        normalization to a valid persisted value is not a defect without a
+        wrong saved value or misleading displayed result. Do not report that a
+        layout merely may overflow without measured dimensions or a screenshot.
+        Report user-visible defects, not visual preferences or optional polish.
+        Never install dependencies, build, format, or run commands
+        that write to the checkout. Do not demand frontend changes when the diff has no user
+        surface. Do not end with prose. Your final action MUST call handoff on
+        reviewed with exactly this shape and no extra keys:
+        {"reviewer":"frontend","status":"complete","summary":"text","findings":[{"category":"frontend","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
+        Every finding needs a precise changed or directly affected line. Empty findings are valid.
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing result in the exact shape.
+
+    synthesizer:
+      system: |
+        input.context contains the authoritative ReviewContext and input.reviews
+        contains the join payload with all four ReviewerResult values. Copy
+        repo, pr, base, and head exactly from input.context; never use example
+        values or empty strings. Preserve all
+        reviewer_results. Deduplicate findings only when they identify the same
+        root cause at the same code location; keep the strongest evidence and
+        severity. Reject vague, pre-existing, stylistic, speculative, or
+        ungrounded findings. A required field added to an API response type is
+        not a breaking change without a concrete producer or consumer that now
+        fails. A capability flag is not a UI defect unless the false state is
+        reachable. A missing test is actionable only when it leaves a concrete
+        destructive, authorization, data-integrity, or recovery failure mode
+        unprotected; retain at most three test-coverage findings and do not
+        retain general coverage wish lists. Do not treat undocumented
+        configuration aliases, deliberate platform skips, or consistency with
+        existing UI interaction patterns as defects. Reject a same-process Node
+        concurrency claim when the alleged critical section is fully synchronous
+        and contains no yield. Reject frontend claims based only on hypothetical
+        narrow viewports or valid value normalization without a reproduced wrong
+        result. Every retained finding
+        must have a precise line.
+        Set status=findings when
+        actionable_count is positive, pass when it is zero, and inconclusive
+        if any reviewer failed. Never edit the repository or end with prose.
+        Your final action MUST call handoff on drafted with exactly these
+        top-level keys and no others:
+        {"repo":"owner/name","pr":1,"base":"sha","head":"sha","status":"pass|findings|inconclusive","confidence":"high|medium|low","summary":"text","actionable_count":0,"findings":[],"reviewer_results":[]}
+        Copy each retained finding and all four ReviewerResult objects using
+        their exact input shapes.
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing result in the exact shape.
+
+    refiner:
+      system: |
+        input.report is the synthesized DraftReviewReport and input.verification
+        is a merge wrapper whose input.verification.values[0] is the original
+        deterministic 2-of-3 quorum payload containing all three verifier values.
+        Produce the final accepted report. Preserve repo, pr, base, and head
+        exactly. Apply concrete verifier corrections: when a verifier identifies
+        a specific retained finding as disproven, pre-existing, stylistic, or
+        unsupported, remove that finding. For evidence and false_positive,
+        finding_verdicts is authoritative: remove every matching finding whose
+        verdict is rejected, matching title, file, and line exactly. Do not
+        remove findings merely because a voter gives a general reject without a
+        matching finding verdict. Recompute
+        actionable_count, status, confidence, and summary. Preserve all four
+        reviewer_results as independent raw evidence. Never add new findings,
+        edit files, or end with prose. Your final action MUST call handoff on
+        refined with exactly these top-level keys and no others:
+        {"repo":"owner/name","pr":1,"base":"sha","head":"sha","status":"pass|findings|inconclusive","confidence":"high|medium|low","summary":"text","actionable_count":0,"findings":[],"reviewer_results":[]}
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing result in the exact shape.
+
+    evidence_voter:
+      system: |
+        Independently verify that every finding cites changed code or a directly
+        affected boundary and contains enough evidence to reproduce the issue.
+        Inspect /workspace/repository but do not edit it. Produce one
+        finding_verdicts entry for every retained finding, copying title, file,
+        and line exactly. Reject claims that lack a concrete affected caller,
+        reachable state, or observable failure. Reject missing-test claims
+        unless they protect a destructive, authorization, data-integrity, or
+        recovery boundary. Reject undocumented configuration aliases,
+        deliberate platform skips, and tests for state with no user-visible or
+        persisted consequence. Reject same-process races whose entire critical
+        section is synchronous with no yield, and frontend claims that provide
+        no reproducible viewport, dimensions, failing test, or wrong persisted
+        value. Vote reject if any finding is
+        rejected; otherwise accept. An empty report is acceptable only when the
+        reviewer evidence supports it. Do not end with prose. Your final action MUST
+        call handoff on voted with exactly:
+        {"voter":"evidence","vote":"accept|reject","confidence":"high|medium|low","evidence":"text","finding_verdicts":[{"title":"exact title","file":"exact path","line":1,"verdict":"confirmed|rejected","reason":"text"}]}
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing vote in the exact shape.
+
+    false_positive_voter:
+      system: |
+        Act as a fresh false-positive challenger. Try to disprove each finding
+        using surrounding code, tests, and exact base...head behavior. Do not
+        invent new findings. A response type becoming more precise is not a
+        breaking change without a concrete failing constructor or caller. A UI
+        capability check is not missing when the backend cannot return the
+        disabled state. Treat test gaps as findings only when they expose a
+        destructive, authorization, data-integrity, or recovery boundary, not
+        because more tests could exist. A platform-specific assertion is not a
+        gap when the asserted property does not exist on that platform. An
+        undocumented environment spelling is not a compatibility promise.
+        Consistency with established UI interaction patterns is not a
+        regression. A synchronous same-process Node critical section does not
+        interleave with another request unless it yields. A frontend concern
+        stated only as "may overflow" or "may confuse" is speculative without
+        reproduction evidence. Produce one finding_verdicts entry for every retained
+        finding, copying title, file, and line exactly. Vote reject if any
+        finding is materially contradicted. Do not end with prose. Your final action MUST
+        call handoff on voted with exactly:
+        {"voter":"false_positive","vote":"accept|reject","confidence":"high|medium|low","evidence":"text","finding_verdicts":[{"title":"exact title","file":"exact path","line":1,"verdict":"confirmed|rejected","reason":"text"}]}
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing vote in the exact shape.
+
+    coverage_voter:
+      system: |
+        Verify that runtime, security, tests, and frontend scopes all produced
+        explicit ReviewerResult records and that the synthesis did not silently
+        discard stronger evidence. Vote accept only when coverage is complete.
+        Do not end with prose. Your final action MUST call handoff on voted with
+        exactly:
+        {"voter":"coverage","vote":"accept|reject","confidence":"high|medium|low","evidence":"text","finding_verdicts":[]}
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing vote in the exact shape.
+
+    publisher:
+      system: |
+        Publish the supplied DraftReviewReport. input.quorum is a merge wrapper;
+        the authoritative verifier quorum is exactly input.quorum.values[0].
+        Copy passed, successes, total, and threshold from that inner object, not
+        from the outer merge wrapper. Publish without
+        changing findings. The persisted handoff is the authoritative artifact;
+        the CLI materializes it as JSON and Markdown. Do not call Bash, Write,
+        Edit, or MultiEdit. Markdown must include
+        result, confidence, actionable finding count, repo, PR, base, head,
+        findings with file and line, reviewer summaries, quorum result, and the
+        HomeRail run id available in runtime context. When the inner quorum
+        passed is false, set report.status to inconclusive. Never create commits,
+        comments, approvals, or merges. If the quorum failed, change
+        report.status to inconclusive and explain that verification did not
+        reach consensus. Do not end with prose. Your final action MUST call
+        handoff on published with exactly this shape and no extra keys:
+        {"report":{},"markdown":"text","json_path":"artifacts/pr-review/report.json","markdown_path":"artifacts/pr-review/report.md","quorum":{"passed":true,"successes":2,"total":3,"threshold":2}}
+        If input:correction exists, do not re-analyze or call any tool except
+        handoff; immediately resubmit the existing publication in the exact shape.
+
+  nodes:
+    budget:
+      kind: state
+      inputs: { request: { contract: RunEnvelope } }
+      outputs: { admitted: {}, blocked: {} }
+      config:
+        namespace: pr-review-budget
+        key: default
+        key_field: payload.budget_key
+        operation: budget_admit
+        value_field: payload.expected_usage
+        budget_limit: 100
+        success_port: admitted
+        conflict_port: blocked
+
+    prepare:
+      kind: agent
+      agent: preparer
+      workspace_access:
+        writable_paths: [repository]
+        readonly_paths: []
+      inputs: { request: {} }
+      outputs: { ready: { contract: ReviewContext }, failed: {} }
+
+    runtime_review:
+      kind: agent
+      agent: runtime_reviewer
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs: { context: { contract: ReviewContext } }
+      outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+
+    security_review:
+      kind: agent
+      agent: security_reviewer
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs: { context: { contract: ReviewContext } }
+      outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+
+    test_review:
+      kind: agent
+      agent: test_reviewer
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs: { context: { contract: ReviewContext } }
+      outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+
+    frontend_review:
+      kind: agent
+      agent: frontend_reviewer
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs: { context: { contract: ReviewContext } }
+      outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+
+    collect_reviews:
+      kind: join
+      inputs:
+        runtime: { contract: ReviewerResult }
+        security: { contract: ReviewerResult }
+        tests: { contract: ReviewerResult }
+        frontend: { contract: ReviewerResult }
+      outputs: { complete: {}, failed: {} }
+      config:
+        mode: all
+        field: status
+        success_values: [complete]
+        passed_port: complete
+        failed_port: failed
+
+    synthesize:
+      kind: agent
+      agent: synthesizer
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs:
+        context: { contract: ReviewContext }
+        reviews: {}
+      outputs: { drafted: { contract: DraftReviewReport }, failed: {} }
+
+    evidence_vote:
+      kind: agent
+      agent: evidence_voter
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs: { report: { contract: DraftReviewReport } }
+      outputs: { voted: { contract: VerificationVote }, failed: {} }
+
+    false_positive_vote:
+      kind: agent
+      agent: false_positive_voter
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs: { report: { contract: DraftReviewReport } }
+      outputs: { voted: { contract: VerificationVote }, failed: {} }
+
+    coverage_vote:
+      kind: agent
+      agent: coverage_voter
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs: { report: { contract: DraftReviewReport } }
+      outputs: { voted: { contract: VerificationVote }, failed: {} }
+
+    verification_quorum:
+      kind: join
+      inputs:
+        evidence: { contract: VerificationVote }
+        false_positive: { contract: VerificationVote }
+        coverage: { contract: VerificationVote }
+      outputs: { accepted: {}, rejected: {} }
+      config:
+        mode: n_of_m
+        threshold: 2
+        field: vote
+        success_values: [accept]
+        passed_port: accepted
+        failed_port: rejected
+
+    quorum_result:
+      kind: join
+      inputs:
+        accepted: {}
+        rejected: {}
+      outputs: { decided: {} }
+      config:
+        mode: any
+        field: passed
+        success_values: [true, false]
+        passed_port: decided
+        failed_port: decided
+
+    refine:
+      kind: agent
+      agent: refiner
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs:
+        report: { contract: DraftReviewReport }
+        verification: {}
+      outputs: { refined: { contract: DraftReviewReport }, failed: {} }
+
+    publish:
+      kind: agent
+      agent: publisher
+      workspace_access: { writable_paths: [], readonly_paths: [repository] }
+      inputs:
+        report: { contract: DraftReviewReport }
+        quorum: {}
+      outputs: { published: { contract: PublishedReview }, failed: {} }
+
+    publication_outcome:
+      kind: condition
+      inputs: { result: { contract: PublishedReview } }
+      outputs:
+        accepted: { contract: PublishedReview }
+        rejected: { contract: PublishedReview }
+      config:
+        field: quorum.passed
+        routes:
+          "true": accepted
+          "false": rejected
+        default: rejected
+
+    done:
+      kind: terminal
+      outcome: success
+      inputs: { result: { contract: PublishedReview } }
+
+    inconclusive:
+      kind: terminal
+      outcome: cancelled
+      inputs: { result: { contract: PublishedReview } }
+
+    budget_blocked:
+      kind: terminal
+      outcome: cancelled
+      inputs: { result: {} }
+
+    preparation_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    runtime_review_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    security_review_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    test_review_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    frontend_review_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    review_collection_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    synthesis_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    refinement_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    evidence_vote_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    false_positive_vote_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    coverage_vote_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    publication_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+  edges:
+    - { from: $run.input, to: budget.request }
+    - { from: budget.admitted, to: prepare.request }
+    - { from: budget.blocked, to: budget_blocked.result }
+    - { from: prepare.ready, to: runtime_review.context }
+    - { from: prepare.ready, to: security_review.context }
+    - { from: prepare.ready, to: test_review.context }
+    - { from: prepare.ready, to: frontend_review.context }
+    - { from: prepare.failed, to: preparation_failed.result, condition: on_failure }
+    - { from: runtime_review.reviewed, to: collect_reviews.runtime }
+    - { from: security_review.reviewed, to: collect_reviews.security }
+    - { from: test_review.reviewed, to: collect_reviews.tests }
+    - { from: frontend_review.reviewed, to: collect_reviews.frontend }
+    - { from: runtime_review.failed, to: runtime_review_failed.result, condition: on_failure }
+    - { from: security_review.failed, to: security_review_failed.result, condition: on_failure }
+    - { from: test_review.failed, to: test_review_failed.result, condition: on_failure }
+    - { from: frontend_review.failed, to: frontend_review_failed.result, condition: on_failure }
+    - { from: collect_reviews.complete, to: synthesize.reviews }
+    - { from: prepare.ready, to: synthesize.context }
+    - { from: collect_reviews.failed, to: review_collection_failed.result, condition: on_failure }
+    - { from: synthesize.drafted, to: evidence_vote.report }
+    - { from: synthesize.drafted, to: false_positive_vote.report }
+    - { from: synthesize.drafted, to: coverage_vote.report }
+    - { from: synthesize.drafted, to: refine.report }
+    - { from: synthesize.failed, to: synthesis_failed.result, condition: on_failure }
+    - { from: evidence_vote.voted, to: verification_quorum.evidence }
+    - { from: false_positive_vote.voted, to: verification_quorum.false_positive }
+    - { from: coverage_vote.voted, to: verification_quorum.coverage }
+    - { from: evidence_vote.failed, to: evidence_vote_failed.result, condition: on_failure }
+    - { from: false_positive_vote.failed, to: false_positive_vote_failed.result, condition: on_failure }
+    - { from: coverage_vote.failed, to: coverage_vote_failed.result, condition: on_failure }
+    - { from: verification_quorum.accepted, to: quorum_result.accepted }
+    - { from: verification_quorum.rejected, to: quorum_result.rejected }
+    - { from: quorum_result.decided, to: refine.verification }
+    - { from: quorum_result.decided, to: publish.quorum }
+    - { from: refine.refined, to: publish.report }
+    - { from: refine.failed, to: refinement_failed.result, condition: on_failure }
+    - { from: publish.published, to: publication_outcome.result }
+    - { from: publication_outcome.accepted, to: done.result }
+    - { from: publication_outcome.rejected, to: inconclusive.result }
+    - { from: publish.failed, to: publication_failed.result, condition: on_failure }
+
+  policies:
+    max_nodes: 32
+    max_edges: 64
+    max_parallelism: 4
+    max_dispatches: 32
+    max_handoffs: 64
+    max_corrections_per_node: 3
+    max_tool_calls_per_node: 40

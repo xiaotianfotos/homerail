@@ -85,7 +85,12 @@ async function dispatchOperation(
           name: (spec.name as string) || undefined,
         };
         await prepareWorkerWorkspace(workspaceId, spec.workspace);
-        const info = await createWorkerContainer({ config, provider, workspaceId });
+        const info = await createWorkerContainer({
+          config,
+          provider,
+          workspaceId,
+          workspaceReadOnly: spec.workspace_read_only === true,
+        });
         return info as unknown as Record<string, unknown>;
       }
       const config = spec as unknown as ContainerConfig;

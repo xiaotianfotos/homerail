@@ -135,7 +135,6 @@ function localTemplateItems(all: boolean): Array<Record<string, unknown>> {
 
     try {
       const content = fs.readFileSync(filePath, "utf-8");
-      // Simple extraction without YAML parser
       const nameMatch = content.match(/^name:\s*(.+)$/m);
       if (nameMatch) name = nameMatch[1].trim();
       const descMatch = content.match(/^description:\s*"?([^"]*)"?$/m);
