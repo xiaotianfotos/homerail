@@ -222,7 +222,7 @@
   "tools": [
     {
       "id": "upsert_generated_view",
-      "description": "Create or replace one bounded ViewSpec Block. Reuse its stable id. Choose canvas_size 1x1, 1x2, 2x2, or 3x3. Grid max: 3 columns. Table columns are id/label/path. DAG dependencies use item_depends_on_path.",
+      "description": "Create or replace one bounded ViewSpec Block. Reuse its stable id. Choose canvas_size 1x1, 1x2, 2x2, or 3x3. Repeats multiply their item tree toward the 128-node limit; use table/list for long collections. Grid max: 3 columns.",
       "exposure": ["agent"],
       "input_schema": "generated-view-input-v1",
       "output_schema": "generated-view-content-v1",

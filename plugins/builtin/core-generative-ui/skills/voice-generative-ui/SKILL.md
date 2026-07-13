@@ -54,7 +54,7 @@ Available V1 types:
 - Visual: `timeline`, `bar_chart`, `dag`.
 - Interaction: `action`, but only when the Block's Kind exposes that exact registered Action ID. The generic Core Tool exposes no Actions.
 
-Collection Components use JSON Pointer strings, not binding objects. Common valid shapes are:
+Collection Components use JSON Pointer strings, not binding objects. Their default display limit is 16 items. When a Block claims to show an entire collection, set `max_items` high enough to cover the submitted source array, up to 50, and make the claimed count equal the source array length. Otherwise label the Block as a preview and state the visible limit. Common valid shapes are:
 
 ```json
 { "id": "steps", "type": "timeline", "source": "/data/steps", "item_title_path": "/title", "item_detail_path": "/detail", "item_status_path": "/status" }
@@ -117,7 +117,7 @@ Choose `density` by information detail, and choose the required `canvas_size` se
 
 Never request horizontal `2x1` or `3x1` strips. They consume scarce columns without using the second row. The host owns placement, horizontal scrolling, latest-Block focus, and the expand-to-fullscreen control; never emulate those behaviors inside ViewSpec. The host may downgrade a footprint on compact devices. Use `detail` for dashboards that combine metrics with a timeline, table, chart, DAG, risks, or next actions. Keep `summary` to a compact overview that does not need an internal scrollbar. Never encode coordinates or assume a viewport size.
 
-Limits are depth 8, 128 materialized Components, 24 direct children, 50 repeat/source items, and 64KB ViewSpec. Keep source arrays smaller than the maximum. Every Component id must be stable and unique in the template. Never include executable markup, arbitrary style values, direct network requests, or invented Action IDs.
+Limits are depth 8, 128 materialized Components, 24 direct children, 50 repeat/source items, and 64KB ViewSpec. A `repeat` multiplies every Component in its item template by the number of source items; the 128 limit applies after that expansion. Use `table`, `list`, `timeline`, or a chart for long collections instead of repeating a multi-Component card. Keep visually rich repeats to a small featured subset. Every Component id must be stable and unique in the template. Never include executable markup, arbitrary style values, direct network requests, or invented Action IDs.
 
 Treat a Tool result as successful only when its returned status is `committed`. If validation fails, correct the exact reported field and retry the same Tool. Do not fall back to a legacy widget in `prefer` mode, and never tell the user that UI was created when no Tool result proves it.
 

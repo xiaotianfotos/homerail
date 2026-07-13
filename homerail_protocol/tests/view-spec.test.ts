@@ -162,6 +162,80 @@ describe("ViewSpec V1", () => {
     }, { data: { items: Array.from({ length: 60 }, (_, index) => `item-${index}`) } });
     expect(repeated.root.children).toHaveLength(50);
     expect(repeated.node_count).toBe(51);
+
+    const oversizedMaterialization = node({
+      view_version: 1,
+      root: {
+        id: "repeat",
+        type: "repeat",
+        source: "/data/items",
+        max_items: 50,
+        item: {
+          id: "entry",
+          type: "stack",
+          children: [
+            { id: "entry-title", type: "text", text: { item_path: "/title" } },
+            { id: "entry-detail", type: "text", text: { item_path: "/detail" } },
+          ],
+        },
+      },
+    });
+    oversizedMaterialization.content = {
+      data: {
+        items: Array.from({ length: 50 }, (_, index) => ({
+          title: `Item ${index}`,
+          detail: `Detail ${index}`,
+        })),
+      },
+    };
+    // Keep existing stored documents readable across upgrades. The dynamic
+    // budget is enforced when a new direct projection is written.
+    expect(validateGenerativeUiNode(oversizedMaterialization).valid).toBe(true);
+    expect(() => applyHomerailDirectUiProjection({
+      plugin: { id: "com.example.views", version: "1.0.0" },
+      arguments: {
+        id: "com.example.views:oversized",
+        title: "Oversized",
+        content: oversizedMaterialization.content,
+        view: oversizedMaterialization.view,
+      },
+      projection: {
+        projection_version: 1,
+        type: "direct_ui_node",
+        kind: "com.example.views/generated",
+        kind_version: 1,
+        node_id_pointer: "/id",
+        content_pointer: "/content",
+        view_pointer: "/view",
+        omit_content_fields: [],
+        fallback: { title_pointer: "/title" },
+        defaults: {
+          surface: "result",
+          importance: "primary",
+          density: "detail",
+          persistence: "session",
+        },
+      },
+    })).toThrow("Projected UI node view is not materializable: Materialized view exceeds 128 nodes");
+
+    const compactTable = node({
+      view_version: 1,
+      root: {
+        id: "results",
+        type: "table",
+        source: "/data/items",
+        max_items: 50,
+        columns: [
+          { id: "title", label: "Title", path: "/title" },
+          { id: "detail", label: "Detail", path: "/detail" },
+        ],
+      },
+    });
+    compactTable.content = structuredClone(oversizedMaterialization.content);
+    expect(validateGenerativeUiNode(compactTable).valid).toBe(true);
+    const compactModel = buildHomerailViewModel(compactTable.view!, compactTable.content);
+    expect(compactModel.node_count).toBe(1);
+    expect(compactModel.root.items).toHaveLength(50);
   });
 
   it("projects ViewSpec and host-owned presentation separately from content", () => {

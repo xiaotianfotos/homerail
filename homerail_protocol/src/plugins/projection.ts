@@ -5,6 +5,7 @@ import {
   GenerativeUiCanvasSize,
   GenerativeUiMotionProfile,
   analyzeGenerativeUiJsonValue,
+  buildHomerailViewModel,
   validateGenerativeUiNode,
 } from "../generative-ui/index.js";
 import {
@@ -279,6 +280,14 @@ export function applyHomerailDirectUiProjection(input: {
   const validation = validateGenerativeUiNode(node);
   if (!validation.valid || !validation.value) {
     throw new Error(`Projected UI node is invalid: ${JSON.stringify(validation.errors)}`);
+  }
+  if (validation.value.view) {
+    try {
+      buildHomerailViewModel(validation.value.view, validation.value.content);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "view could not be materialized";
+      throw new Error(`Projected UI node view is not materializable: ${message}`);
+    }
   }
   const bridge = projection.legacy_bridge;
   return {
