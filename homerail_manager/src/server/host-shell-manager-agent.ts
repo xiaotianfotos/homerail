@@ -43,6 +43,7 @@ interface RunningHostShellProcess {
   processId: number;
   fingerprint: string;
   projectId?: string;
+  stateFile: string;
   url: string;
 }
 
@@ -83,9 +84,9 @@ function runtimeStatePath(projectId?: string): string {
   return path.join(dir, "runtime.json");
 }
 
-function readRuntimeState(projectId?: string): PersistedHostShellProcess | undefined {
+function readRuntimeStateFile(file: string): PersistedHostShellProcess | undefined {
   try {
-    const raw = JSON.parse(fs.readFileSync(runtimeStatePath(projectId), "utf-8")) as Partial<PersistedHostShellProcess>;
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<PersistedHostShellProcess>;
     if (
       raw.version !== 1 ||
       !Number.isSafeInteger(raw.pid) || Number(raw.pid) <= 0 ||
@@ -103,17 +104,15 @@ function readRuntimeState(projectId?: string): PersistedHostShellProcess | undef
   }
 }
 
-function writeRuntimeState(projectId: string | undefined, state: PersistedHostShellProcess): void {
-  const file = runtimeStatePath(projectId);
+function writeRuntimeState(file: string, state: PersistedHostShellProcess): void {
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(temp, file);
 }
 
-function removeRuntimeState(projectId: string | undefined, expected?: Pick<PersistedHostShellProcess, "pid" | "fingerprint">): void {
-  const file = runtimeStatePath(projectId);
+function removeRuntimeState(file: string, expected?: Pick<PersistedHostShellProcess, "pid" | "fingerprint">): void {
   if (expected) {
-    const current = readRuntimeState(projectId);
+    const current = readRuntimeStateFile(file);
     if (!current || current.pid !== expected.pid || current.fingerprint !== expected.fingerprint) return;
   }
   try {
@@ -365,17 +364,18 @@ function healthMatchesProject(observed: HostShellHealth, projectId: string | und
 async function stopPersistedProcess(
   projectId: string | undefined,
   url: string,
+  stateFile: string,
   state: PersistedHostShellProcess,
   observed: HostShellHealth,
 ): Promise<boolean> {
   if (!stateMatchesHealth(state, observed, projectId)) return false;
-  stopProcess({ processId: state.pid, fingerprint: state.fingerprint, projectId, url });
+  stopProcess({ processId: state.pid, fingerprint: state.fingerprint, projectId, stateFile, url });
   const [healthStopped, processStopped] = await Promise.all([
     waitForFingerprintToStop(url, state.fingerprint),
     waitForProcessToStop(state.pid),
   ]);
   const stopped = healthStopped && processStopped;
-  if (stopped) removeRuntimeState(projectId, state);
+  if (stopped) removeRuntimeState(stateFile, state);
   return stopped;
 }
 
@@ -393,6 +393,7 @@ async function ensureHostShellManagerAgentInternal(
   const processCwd = projectWorkspace ?? prepareHostWorkspace(projectId);
   const resolvedManagerRestUrl = managerRestUrl(options);
   const url = baseUrl(projectId);
+  const stateFile = runtimeStatePath(projectId);
   const env: Record<string, string> = {
     MANAGER_AGENT_MODE: "1",
     MANAGER_AGENT_PORT: String(hostPort(projectId)),
@@ -426,7 +427,7 @@ async function ensureHostShellManagerAgentInternal(
     return { processId: existing.processId, baseUrl: url, workerId: workerId(projectId), processName: name };
   }
   const observed = await healthDetails(url);
-  const persisted = readRuntimeState(projectId);
+  const persisted = readRuntimeStateFile(stateFile);
   if (!existing && observed?.fingerprint === fingerprint && healthMatchesProject(observed, projectId)) {
     const processId = persisted && stateMatchesHealth(persisted, observed, projectId) ? persisted.pid : observed.processId;
     if (processId) {
@@ -439,8 +440,8 @@ async function ensureHostShellManagerAgentInternal(
         workerId: workerId(projectId),
         projectId: projectId ?? null,
       };
-      writeRuntimeState(projectId, adoptedState);
-      running.set(name, { processId, fingerprint, projectId, url });
+      writeRuntimeState(stateFile, adoptedState);
+      running.set(name, { processId, fingerprint, projectId, stateFile, url });
     }
     return { processId: processId ?? null, baseUrl: url, workerId: workerId(projectId), processName: name };
   }
@@ -454,9 +455,9 @@ async function ensureHostShellManagerAgentInternal(
     if (!healthStopped || !processStopped) {
       throw new Error(`Host-shell Manager Agent process ${existing.processId} did not stop`);
     }
-    removeRuntimeState(projectId, { pid: existing.processId, fingerprint: existing.fingerprint });
+    removeRuntimeState(stateFile, { pid: existing.processId, fingerprint: existing.fingerprint });
   } else if (observed) {
-    if (!persisted || !await stopPersistedProcess(projectId, url, persisted, observed)) {
+    if (!persisted || !await stopPersistedProcess(projectId, url, stateFile, persisted, observed)) {
       throw new Error(
         `Host-shell Manager Agent port ${hostPort(projectId)} is occupied by an unmanaged or stale process`,
       );
@@ -499,9 +500,9 @@ async function ensureHostShellManagerAgentInternal(
     workerId: workerId(projectId),
     projectId: projectId ?? null,
   };
-  running.set(name, { process: child, processId: child.pid, fingerprint, projectId, url });
+  running.set(name, { process: child, processId: child.pid, fingerprint, projectId, stateFile, url });
   try {
-    writeRuntimeState(projectId, state);
+    writeRuntimeState(stateFile, state);
   } catch (err) {
     stopProcess(running.get(name));
     running.delete(name);
@@ -509,14 +510,14 @@ async function ensureHostShellManagerAgentInternal(
   }
   child.once("exit", () => {
     if (running.get(name)?.process === child) running.delete(name);
-    removeRuntimeState(projectId, state);
+    removeRuntimeState(stateFile, state);
   });
 
   const healthy = await waitForHealth(url, fingerprint, options.healthTimeoutMs ?? options.startTimeoutMs ?? 15_000);
   if (!healthy) {
-    stopProcess({ process: child, processId: child.pid, fingerprint, projectId, url });
+    stopProcess({ process: child, processId: child.pid, fingerprint, projectId, stateFile, url });
     running.delete(name);
-    removeRuntimeState(projectId, state);
+    removeRuntimeState(stateFile, state);
     throw new Error("Host-shell Manager Agent did not become healthy");
   }
 
@@ -549,7 +550,7 @@ export async function shutdownHostShellManagerAgents(): Promise<void> {
       waitForProcessToStop(record.processId, 2_000),
     ]);
     if (healthStopped && processStopped) {
-      removeRuntimeState(record.projectId, { pid: record.processId, fingerprint: record.fingerprint });
+      removeRuntimeState(record.stateFile, { pid: record.processId, fingerprint: record.fingerprint });
     }
   }));
 }
