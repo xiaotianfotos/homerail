@@ -120,6 +120,28 @@ describe("doctor readiness helpers", () => {
     });
   });
 
+  it("accepts a Kimi CN setting for the Kimi Code manager agent", () => {
+    const resp = settings([
+      {
+        id: "kimi-cn-coding",
+        provider_id: "kimi_cn",
+        model_name: "kimi-for-coding",
+        is_active: true,
+        is_default: true,
+        supports_llm: true,
+        protocol: "openai_compatible",
+        base_url: "https://api.kimi.com/coding/v1",
+      },
+    ]);
+
+    const check = managerAgentReadiness({ harness: "kimi_code" }, resp);
+    expect(check).toMatchObject({
+      name: "manager-agent",
+      ok: true,
+      detail: "kimi_cn/kimi-for-coding via kimi_code",
+    });
+  });
+
   it("reports Docker CLI absence for Docker-backed DAG readiness", () => {
     const checks = dockerReadiness(runnerFor([
       { status: null, error: Object.assign(new Error("spawn docker ENOENT"), { code: "ENOENT" }) },

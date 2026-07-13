@@ -614,6 +614,8 @@ describe("/api/manager/chat", () => {
     expect(config.agent_type).toBe("kimi_code");
     expect(config.runtime_placement).toBe("container");
     expect(config.base_url).toBe("https://api.kimi.com/coding/v1");
+    expect(config.provider_name).toBe("kimi_cn");
+    expect(config.model).toBe("kimi-for-coding");
   });
 
   it("resolves explicit kimi_code harness against the active Kimi setting", () => {
@@ -631,8 +633,8 @@ describe("/api/manager/chat", () => {
     const config = resolveManagerAgentConfig(undefined, undefined, undefined, undefined, "kimi_code");
 
     expect(config).toMatchObject({
-      provider_name: "kimi",
-      model: "kimi-k2.7-code",
+      provider_name: "kimi_cn",
+      model: "kimi-for-coding",
       agent_type: "kimi_code",
       runtime_placement: "container",
       base_url: "https://api.kimi.com/coding/v1",
@@ -948,8 +950,8 @@ describe("/api/manager/chat", () => {
     expect(body.data).toMatchObject({
       harness: "kimi_code",
       llm_setting_id: setting.id,
-      provider_name: "kimi",
-      model_name: "kimi-k2.7-code",
+      provider_name: "kimi_cn",
+      model_name: "kimi-for-coding",
     });
   });
 
@@ -979,7 +981,7 @@ describe("/api/manager/chat", () => {
     expect(saved.status).toBe(200);
     expect(body.data).toMatchObject({
       harness: "claude_agent_sdk",
-      provider_name: "kimi",
+      provider_name: "kimi_cn",
     });
   });
 

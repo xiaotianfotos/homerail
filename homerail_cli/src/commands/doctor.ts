@@ -74,10 +74,12 @@ const CLAUDE_SDK_COMPATIBLE_PROVIDER_IDS = new Set([
   "xiaomi",
   "deepseek",
   "kimi",
+  "kimi_cn",
   "minimax",
   "minimax_cn",
   "aliyun",
 ]);
+const KIMI_PROVIDER_IDS = new Set(["kimi", "kimi_cn"]);
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -244,7 +246,7 @@ export function managerAgentReadiness(
       (!configModel || modelName(setting) === configModel),
     );
   } else if (harness === "kimi_code") {
-    const compatible = settings.filter((setting) => providerId(setting) === "kimi");
+    const compatible = settings.filter((setting) => KIMI_PROVIDER_IDS.has(providerId(setting)));
     selected = compatible.find(isDefaultSetting) ?? compatible[0];
   } else {
     const compatible = settings.filter((setting) => Boolean(anthropicCompatibleBaseUrl(setting)));
@@ -261,7 +263,7 @@ export function managerAgentReadiness(
     };
   }
   if (harness === "kimi_code") {
-    if (providerId(selected) !== "kimi") {
+    if (!KIMI_PROVIDER_IDS.has(providerId(selected))) {
       return {
         name: "manager-agent",
         ok: false,

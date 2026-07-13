@@ -71,6 +71,7 @@ import {
   type VoiceKeyboardButtonBinding
 } from '@/utils/voice-hid-control'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
+import { isKimiProviderId } from '@/lib/model-runtime'
 import {
   cleanVoiceTranscript,
   isRecentDuplicateVoiceTranscript,
@@ -954,7 +955,7 @@ function isCustomModelSetting(setting: LLMSetting): boolean {
 }
 
 function isKimiCodeCompatibleSetting(setting: LLMSetting): boolean {
-  return setting.provider_id === 'kimi' || isCustomModelSetting(setting)
+  return isKimiProviderId(setting.provider_id) || isCustomModelSetting(setting)
 }
 
 function toggleModelMenu(): void {

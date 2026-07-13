@@ -9,6 +9,12 @@ import {
   type LLMSetting,
 } from "../persistence/llm-settings.js";
 import {
+  canonicalModelNameForEndpoint,
+  isKimiProviderId,
+  KIMI_CN_PROVIDER_ID,
+  KIMI_PROVIDER_ID,
+} from "../persistence/provider-catalog.js";
+import {
   DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
   ManagerAgentRuntimePlacement,
   isDisabledDirectLlmAgentType,
@@ -88,18 +94,29 @@ function isCustomModelSetting(setting: LLMSetting): boolean {
 }
 
 function isKimiCodeCompatibleSetting(setting: LLMSetting): boolean {
-  return setting.provider_id === "kimi" || isCustomModelSetting(setting);
+  return isKimiProviderId(setting.provider_id) || isCustomModelSetting(setting);
+}
+
+function findActiveKimiSetting(modelName?: string): LLMSetting | undefined {
+  return findActiveSetting(KIMI_CN_PROVIDER_ID, modelName) ??
+    findActiveSetting(KIMI_PROVIDER_ID, modelName) ??
+    (modelName === "kimi-k2.7-code"
+      ? findActiveSetting(KIMI_CN_PROVIDER_ID, "kimi-for-coding")
+      : undefined);
 }
 
 function settingForInput(input: AgentRuntimeResolutionInput): LLMSetting {
   const label = input.surface === "manager_agent" ? "Manager" : "DAG";
   const requested = requestedAgentType(input);
+  const directlyRequestedSetting = input.providerName
+    ? findActiveSetting(input.providerName, input.modelName)
+    : undefined;
   const setting = input.settingId
     ? getSetting(input.settingId)
     : input.providerName
-    ? findActiveSetting(input.providerName, input.modelName)
+    ? directlyRequestedSetting ?? (isKimiProviderId(input.providerName) ? findActiveKimiSetting(input.modelName) : undefined)
     : requested === "kimi_code"
-    ? findActiveSetting("kimi", input.modelName)
+    ? findActiveKimiSetting(input.modelName)
     : input.surface === "manager_agent" || requested === "claude-sdk"
     ? findActiveClaudeSdkCompatibleSetting()
     : input.surface === "dag"
@@ -124,7 +141,7 @@ function settingForInput(input: AgentRuntimeResolutionInput): LLMSetting {
 function agentTypeForSetting(setting: LLMSetting, input: AgentRuntimeResolutionInput): string {
   const explicit = requestedAgentType(input);
   const requested = explicit ?? DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE;
-  if (setting.provider_id === "kimi" && explicit !== managerAgentHarnessDefinition("claude_agent_sdk").agent_type) {
+  if (isKimiProviderId(setting.provider_id) && explicit !== managerAgentHarnessDefinition("claude_agent_sdk").agent_type) {
     return managerAgentHarnessDefinition("kimi_code").agent_type;
   }
   if (requested === "kimi_code") {
@@ -161,6 +178,9 @@ export function resolveAgentRuntimeConfig(input: AgentRuntimeResolutionInput): A
   const setting = settingForInput(input);
   const agentType = agentTypeForSetting(setting, input);
   const baseUrl = baseUrlForSetting(setting, agentType);
+  const requestedModel = input.modelName
+    ? canonicalModelNameForEndpoint(setting.provider_id, setting.endpoint_id, input.modelName)
+    : undefined;
   if (!baseUrl) {
     if (agentType === "claude-sdk") {
       throw new Error(`Claude SDK requires an Anthropic-compatible endpoint for ${setting.provider_id}/${setting.model_name}; Chat Completions endpoints are not supported for harness execution. Configure an Anthropic base URL or use the Kimi Code harness for Kimi.`);
@@ -169,7 +189,7 @@ export function resolveAgentRuntimeConfig(input: AgentRuntimeResolutionInput): A
   }
   return {
     provider_name: setting.provider_id,
-    model: input.settingId ? setting.model_name : input.modelName || setting.model_name,
+    model: input.settingId ? setting.model_name : requestedModel || setting.model_name,
     api_key: setting.api_key,
     base_url: baseUrl,
     protocol: agentType === "claude-sdk" ? "anthropic_compatible" : setting.protocol,

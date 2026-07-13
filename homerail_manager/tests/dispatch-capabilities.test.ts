@@ -616,8 +616,8 @@ nodes:
     expect(envelope.agentConfig).toMatchObject({
       agent_type: "kimi_code",
       llm: {
-        provider: "kimi",
-        model: "kimi-k2.7-code",
+        provider: "kimi_cn",
+        model: "kimi-for-coding",
         api_key: "test-kimi-key",
         base_url: "https://api.kimi.com/coding/v1",
         protocol: "openai_compatible",

@@ -19,6 +19,7 @@ import { useOnboardingStatus } from '@/composables/useOnboardingStatus'
 import { listProviders, agentSettingsApi } from '@/api/agent'
 import { probeDockerWorkspaceMount, type DockerWorkspaceProbeResult } from '@/api/services/voice-agent-api'
 import { cn } from '@/lib/utils'
+import { isKimiProviderId } from '@/lib/model-runtime'
 import type { Provider } from '@/api/types/orchestration-v2.types'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
 import OnboardingStepForm from './OnboardingStepForm.vue'
@@ -210,7 +211,7 @@ function isDedicatedManagerAgentSetting(setting: LLMSetting | undefined): settin
 const existingManagerAgentSettings = computed(() => existingSettings.value.filter(isDedicatedManagerAgentSetting))
 
 function harnessForManagerAgentSetting(setting: LLMSetting): 'kimi_code' | 'claude_agent_sdk' {
-  return setting.provider_id === 'kimi' ? 'kimi_code' : 'claude_agent_sdk'
+  return isKimiProviderId(setting.provider_id) ? 'kimi_code' : 'claude_agent_sdk'
 }
 
 async function applyCreatedManagerAgentSetting(setting: LLMSetting | undefined): Promise<void> {

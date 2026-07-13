@@ -67,6 +67,13 @@ const VOLCENGINE_PROVIDER_ID = "volcengine";
 const LEGACY_DOUBAO_SPEECH_PROVIDER_ID = "doubao-speech";
 export const DOUBAO_SPEECH_PROVIDER_ID = VOLCENGINE_PROVIDER_ID;
 export const DOUBAO_SPEECH_ENDPOINT_ID = "volcengine_openspeech_api";
+export const KIMI_PROVIDER_ID = "kimi";
+export const KIMI_CN_PROVIDER_ID = "kimi_cn";
+export const KIMI_CODING_PLAN_ENDPOINT_ID = "kimi_coding_plan";
+
+export function isKimiProviderId(providerId?: string): boolean {
+  return providerId === KIMI_PROVIDER_ID || providerId === KIMI_CN_PROVIDER_ID;
+}
 
 const LEGACY_DOUBAO_SPEECH_ENDPOINT_IDS = new Set([
   "volcengine_ark_agent_plan_voice",
@@ -98,6 +105,17 @@ export function canonicalProviderIdForEndpoint(
   baseUrl?: string,
   modelName?: string,
 ): string {
+  if (
+    providerId === KIMI_PROVIDER_ID &&
+    (
+      endpointId === KIMI_CODING_PLAN_ENDPOINT_ID ||
+      normalizeBaseUrl(baseUrl).startsWith("https://api.kimi.com/coding") ||
+      modelName === "kimi-for-coding" ||
+      modelName === "kimi-for-coding-highspeed"
+    )
+  ) {
+    return KIMI_CN_PROVIDER_ID;
+  }
   if (providerId === LEGACY_DOUBAO_SPEECH_PROVIDER_ID) {
     return VOLCENGINE_PROVIDER_ID;
   }
@@ -112,6 +130,22 @@ export function canonicalProviderIdForEndpoint(
     return VOLCENGINE_PROVIDER_ID;
   }
   return providerId;
+}
+
+export function canonicalModelNameForEndpoint(
+  providerId: string,
+  endpointId: string | undefined,
+  modelName: string,
+): string {
+  const canonicalProviderId = canonicalProviderIdForEndpoint(providerId, endpointId, undefined, modelName);
+  if (
+    canonicalProviderId === KIMI_CN_PROVIDER_ID &&
+    endpointId === KIMI_CODING_PLAN_ENDPOINT_ID &&
+    modelName === "kimi-k2.7-code"
+  ) {
+    return "kimi-for-coding";
+  }
+  return modelName;
 }
 
 function model(id: string, capabilities: ModelCapabilities = {}, extra: Partial<ProviderModelPreset> = {}): ProviderModelPreset {
@@ -167,7 +201,53 @@ function endpointBaseUrls(endpoint: ProviderEndpointPreset): string[] {
 
 export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
   {
-    id: "kimi",
+    id: KIMI_CN_PROVIDER_ID,
+    name: "Kimi / Moonshot CN",
+    status: "active",
+    default_model: "kimi-k2.7-code",
+    base_url: "https://api.moonshot.cn/v1",
+    docs_url: "https://platform.moonshot.cn/docs/api/overview",
+    endpoints: [
+      endpoint({
+        id: "kimi_cn_api",
+        provider_id: KIMI_CN_PROVIDER_ID,
+        name: "Kimi CN API 计费",
+        plan_type: "api_billing",
+        protocol: "openai_compatible",
+        base_url: "https://api.moonshot.cn/v1",
+        chat_completions_base_url: "https://api.moonshot.cn/v1",
+        anthropic_base_url: "https://api.moonshot.cn/anthropic",
+        auth_type: "bearer",
+        key_hint: "Moonshot CN API Key (sk-*)",
+        default_model: "kimi-k2.7-code",
+        docs_url: "https://platform.moonshot.cn/docs/api/overview",
+        models: [
+          model("kimi-k2.7-code", {}, { recommended: true }),
+          model("kimi-k2.6", { supports_image_input: true, supports_video_input: true }),
+        ],
+      }),
+      endpoint({
+        id: KIMI_CODING_PLAN_ENDPOINT_ID,
+        provider_id: KIMI_CN_PROVIDER_ID,
+        name: "Kimi Coding Plan",
+        plan_type: "coding_plan",
+        protocol: "openai_compatible",
+        base_url: "https://api.kimi.com/coding/v1",
+        chat_completions_base_url: "https://api.kimi.com/coding/v1",
+        anthropic_base_url: "https://api.kimi.com/coding",
+        auth_type: "bearer",
+        key_hint: "Kimi Coding Plan Key",
+        default_model: "kimi-for-coding",
+        docs_url: "https://www.kimi.com/code/docs/",
+        models: [
+          model("kimi-for-coding", {}, { recommended: true }),
+          model("kimi-for-coding-highspeed"),
+        ],
+      }),
+    ],
+  },
+  {
+    id: KIMI_PROVIDER_ID,
     name: "Kimi / Moonshot",
     status: "active",
     default_model: "kimi-k2.7-code",
@@ -176,7 +256,7 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
     endpoints: [
       endpoint({
         id: "kimi_api",
-        provider_id: "kimi",
+        provider_id: KIMI_PROVIDER_ID,
         name: "Kimi API 计费",
         plan_type: "api_billing",
         protocol: "openai_compatible",
@@ -191,21 +271,6 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
           model("kimi-k2.7-code", {}, { recommended: true }),
           model("kimi-k2.6", { supports_image_input: true, supports_video_input: true }),
         ],
-      }),
-      endpoint({
-        id: "kimi_coding_plan",
-        provider_id: "kimi",
-        name: "Kimi Coding Plan",
-        plan_type: "coding_plan",
-        protocol: "openai_compatible",
-        base_url: "https://api.kimi.com/coding/v1",
-        chat_completions_base_url: "https://api.kimi.com/coding/v1",
-        anthropic_base_url: "https://api.kimi.com/coding",
-        auth_type: "bearer",
-        key_hint: "Kimi Coding Plan Key",
-        default_model: "kimi-k2.7-code",
-        docs_url: "https://platform.kimi.ai/docs/guide/agent-support",
-        models: [model("kimi-k2.7-code", {}, { recommended: true })],
       }),
     ],
   },

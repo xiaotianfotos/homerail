@@ -6,6 +6,7 @@ import { mapManagerSessionMessages } from './agent/message-mapper'
 import { clearAgentSession, loadAgentSession, saveAgentSession } from './agent/persistence'
 import type { AgentChatMessage, AgentInspectorTab, ManagerSessionItem } from './agent/types'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
+import { isKimiProviderId } from '@/lib/model-runtime'
 import {
   deleteManagerSession,
   getManagerAgentConfig,
@@ -183,10 +184,12 @@ export const useAgentStore = defineStore('agent', () => {
     const current = active.find(
       setting => setting.provider_id === managerProviderName.value && setting.model_name === managerModelName.value,
     )
-    const legacyDefault = managerProviderName.value === 'kimi' && managerModelName.value === 'K2.6'
+    const legacyDefault = isKimiProviderId(managerProviderName.value) && managerModelName.value === 'K2.6'
     if (current && !legacyDefault) return
     const preferred = active.find(setting => setting.is_default)
+      ?? active.find(setting => setting.provider_id === 'kimi_cn' && setting.model_name === 'kimi-k2.7-code')
       ?? active.find(setting => setting.provider_id === 'kimi' && setting.model_name === 'kimi-k2.7-code')
+      ?? active.find(setting => setting.provider_id === 'kimi_cn' && setting.model_name === 'K2.6')
       ?? active.find(setting => setting.provider_id === 'kimi' && setting.model_name === 'K2.6')
       ?? active[0]
     managerProviderName.value = preferred.provider_id

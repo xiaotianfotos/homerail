@@ -10,6 +10,7 @@ import { normalizeStatus, type ProviderStatus } from "./status.js";
 import { nowIso } from "./time.js";
 import {
   baseUrlForProtocol,
+  canonicalModelNameForEndpoint,
   canonicalProviderIdForEndpoint,
   findCatalogProvider,
   findCatalogEndpoint,
@@ -148,6 +149,7 @@ const LEGACY_CLAUDE_SDK_COMPATIBLE_PROVIDER_IDS = [
   "xiaomi",
   "deepseek",
   "kimi",
+  "kimi_cn",
   "minimax",
   "minimax_cn",
   "aliyun",
@@ -672,7 +674,8 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
     storedEndpointId,
     storedBaseUrl ?? provider?.base_url,
   );
-  const modelPreset = findEndpointModel(endpoint, rec.model_name);
+  const modelName = canonicalModelNameForEndpoint(providerId, storedEndpointId, rec.model_name);
+  const modelPreset = findEndpointModel(endpoint, modelName);
   const lockedEndpoint = _isLockedCatalogEndpoint(providerId, endpoint);
   const endpointId = lockedEndpoint
     ? endpoint?.id ?? storedEndpointId ?? "custom"
@@ -696,7 +699,7 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
   const inferredAnthropicBaseUrl = lockedEndpoint
     ? endpoint?.anthropic_base_url ?? storedAnthropicBaseUrl ?? provider?.anthropic_base_url
     : storedAnthropicBaseUrl ?? endpoint?.anthropic_base_url ?? provider?.anthropic_base_url;
-  needsMigration = needsMigration || rec.provider_id !== providerId || rec.endpoint_id !== endpointId || typeof rec.plan_type !== "string" ||
+  needsMigration = needsMigration || rec.provider_id !== providerId || rec.endpoint_id !== endpointId || rec.model_name !== modelName || typeof rec.plan_type !== "string" ||
     typeof rec.protocol !== "string" || typeof rec.display_name !== "string" ||
     (typeof rec.base_url === "string" && officialBaseUrl !== undefined && rec.base_url !== officialBaseUrl) ||
     (lockedEndpoint && endpoint?.plan_type !== undefined && rec.plan_type !== endpoint.plan_type) ||
@@ -704,13 +707,13 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
 
   // models 向后兼容：旧 setting 无 models 字段时，从 model_name 派生 [model_name]
   const models = Array.isArray(rec.models) && rec.models.every((m) => typeof m === "string")
-    ? rec.models as string[]
-    : [rec.model_name];
+    ? (rec.models as string[]).map((item) => canonicalModelNameForEndpoint(providerId, storedEndpointId, item))
+    : [modelName];
 
   const setting: LLMSetting = {
     id: rec.id,
     provider_id: providerId,
-    model_name: rec.model_name,
+    model_name: modelName,
     models,
     api_key: apiKey,
     display_name: _stringField(rec, "display_name") ?? _stringField(rec, "alias") ?? rec.model_name,
@@ -1390,9 +1393,11 @@ function _buildSetting(
 }
 
 export function createSetting(input: LLMSettingInput): LLMSetting {
+  const providerId = _canonicalProviderId(input.provider_id, input.endpoint_id, input.base_url, input.model_name);
   input = {
     ...input,
-    provider_id: _canonicalProviderId(input.provider_id, input.endpoint_id, input.base_url, input.model_name),
+    provider_id: providerId,
+    model_name: canonicalModelNameForEndpoint(providerId, input.endpoint_id, input.model_name),
   };
   const provider = getProvider(input.provider_id);
   if (!provider) {
@@ -1481,7 +1486,11 @@ export function updateSetting(id: string, patch: Partial<Omit<LLMSetting, "id" |
     throw new Error(`Unknown provider_id: ${providerId}`);
   }
 
-  const modelName = patch.model_name ?? existing.model_name;
+  const modelName = canonicalModelNameForEndpoint(
+    providerId,
+    patch.endpoint_id ?? existing.endpoint_id,
+    patch.model_name ?? existing.model_name,
+  );
   const modelChanged = modelName !== existing.model_name;
   const mergedInput: LLMSettingInput = {
     ...existing,
