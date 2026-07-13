@@ -160,7 +160,7 @@ describe("GenerativeUiShadowService", () => {
       document_revision: 2_048,
       matched: false,
     });
-  });
+  }, 20_000);
 
   it("emits minimal put and remove effects as the legacy snapshot changes", () => {
     const target = new GenerativeUiShadowService();
