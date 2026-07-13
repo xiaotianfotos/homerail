@@ -18,9 +18,10 @@ When the user says `审查 PR #25`, `review PR 25`, or equivalent:
 1. Resolve the repository from the current project or ask only when no
    repository is available.
 2. Call `run_pr_review` with only `repo` in `owner/name` form and integer `pr`.
-   This tool resolves immutable `.base.sha` and `.head.sha` in code. Never copy,
-   infer, reverse, or manually substitute those SHAs. Do not use `gh`, `curl`,
-   `instantiate_dag_pattern`, or generic `create_and_run` when this tool exists.
+   This tool resolves immutable `.base.sha` and `.head.sha` plus trusted base and
+   head clone URLs in code. Never copy, infer, reverse, or manually substitute
+   those fields. Do not use `gh`, `curl`, `instantiate_dag_pattern`, or generic
+   `create_and_run` when this tool exists.
 3. Return the real run id immediately and use `get_run_status` for progress.
 4. On completion, report the final published handoff and artifact paths. Never
    claim findings that are not present in the DAG evidence.
@@ -36,9 +37,10 @@ hr dag run-template pr-review \
   --input '{"repo":"xiaotianfotos/homerail","pr":25}'
 ```
 
-The CLI resolves omitted base/head metadata from GitHub, validates the final
-input contract, syncs the tracked Asset, and starts the run. Add `--wait` for CI
-or unattended operation, then retrieve fixed outputs with:
+The CLI resolves trusted GitHub metadata, preserves explicitly pinned SHAs,
+validates the final input contract, syncs the tracked Asset, and starts the run.
+Clone URLs always come from GitHub metadata, never logical input. Add `--wait`
+for CI or unattended operation, then retrieve fixed outputs with:
 
 ```bash
 hr dag artifacts <run-id>

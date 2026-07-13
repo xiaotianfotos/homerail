@@ -42,6 +42,7 @@ jobs:
     continue-on-error: true
     env:
       HOMERAIL_ASSET_DIR: ""
+      HOMERAIL_GITHUB_API_BASE_URL: ${{ github.api_url }}
       HOMERAIL_MANAGER_URL: ${{ secrets.HOMERAIL_PR_REVIEW_MANAGER_URL }}
       HOMERAIL_DAG_MUTATION_TOKEN: ${{ secrets.HOMERAIL_DAG_MUTATION_TOKEN }}
       GH_TOKEN: ${{ github.token }}

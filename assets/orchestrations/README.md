@@ -132,8 +132,9 @@ hr dag run-template pr-review \
   --wait
 ```
 
-The CLI resolves immutable base/head SHAs, syncs the tracked WorkflowSpec, and
-waits for its declared `pr-review.json` and `pr-review.md` artifacts. Retrieve
+The CLI resolves immutable base/head SHAs and trusted credential-free clone
+URLs, syncs the tracked WorkflowSpec, and waits for its declared
+`pr-review.json` and `pr-review.md` artifacts. Retrieve
 either output with `hr dag artifact <run-id> <name> --output <path>`. The
 workflow never commits, approves, or merges a pull request.
 

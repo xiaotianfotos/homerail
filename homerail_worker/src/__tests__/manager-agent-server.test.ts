@@ -48,8 +48,20 @@ function makePrReviewApiServer(createAndRunBodies: Record<string, unknown>[]): h
       res.end(JSON.stringify({
         title: "WIP: add configurable workspace retention",
         user: { login: "xiaotianfotos" },
-        base: { sha: "a".repeat(40) },
-        head: { sha: "b".repeat(40) },
+        base: {
+          sha: "a".repeat(40),
+          repo: {
+            full_name: "xiaotianfotos/homerail",
+            clone_url: "https://github.example/xiaotianfotos/homerail.git",
+          },
+        },
+        head: {
+          sha: "b".repeat(40),
+          repo: {
+            full_name: "contributor/homerail",
+            clone_url: "https://github.example/contributor/homerail.git",
+          },
+        },
       }));
       return;
     }
@@ -747,6 +759,8 @@ describe("manager-agent server", () => {
         pr: 25,
         base: "a".repeat(40),
         head: "b".repeat(40),
+        base_clone_url: "https://github.example/xiaotianfotos/homerail.git",
+        head_clone_url: "https://github.example/contributor/homerail.git",
         expected_usage: 0,
       });
     } finally {

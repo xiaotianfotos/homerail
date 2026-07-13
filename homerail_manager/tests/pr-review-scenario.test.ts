@@ -111,6 +111,9 @@ describe("PR Review scenario assets", () => {
       expect(agents[agentId]?.system).toMatch(/final action MUST\s+call\s+(?:the\s+)?handoff/);
     }
     expect(agents.preparer?.system).toContain('"repository_path":"/workspace/repository"');
+    expect(agents.preparer?.system).toContain("base_clone_url");
+    expect(agents.preparer?.system).toContain("head_clone_url");
+    expect(agents.preparer?.system).not.toContain("https://github.com/<repo>.git");
     expect(agents.preparer?.system).not.toContain('"status":"ready"');
     expect(nodes.find((node) => node.id === "synthesize")?.inputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "context" }),
@@ -140,6 +143,27 @@ describe("PR Review scenario assets", () => {
       report: { status: "inconclusive" },
       quorum: { passed: false, successes: 1, total: 3, threshold: 2 },
     })).toMatchObject({ valid: true });
+
+    const inputContract = parseWorkflowSource(source).meta.contracts?.PRReviewInput;
+    const reviewInput = {
+      repo: "enterprise/homerail",
+      pr: 8,
+      base: "a".repeat(40),
+      head: "b".repeat(40),
+      base_clone_url: "https://github.example/enterprise/homerail.git",
+      head_clone_url: "https://github.example/contributor/homerail.git",
+      expected_usage: 8,
+      budget_key: "pr-review:enterprise/homerail:2026-07-13",
+    };
+    expect(validateJsonContract(inputContract, reviewInput)).toMatchObject({ valid: true });
+    expect(validateJsonContract(inputContract, {
+      ...reviewInput,
+      base_clone_url: "https://token@github.example/enterprise/homerail.git",
+    })).toMatchObject({ valid: false });
+    expect(validateJsonContract(inputContract, {
+      ...reviewInput,
+      head_clone_url: "https://github.example/contributor/homerail.git?token=secret",
+    })).toMatchObject({ valid: false });
   });
 
   it("installs Manager guidance and lists tracked template assets", async () => {
@@ -166,6 +190,7 @@ describe("PR Review scenario assets", () => {
     expect(workflow).toContain('dag artifact "$RUN_ID" pr-review.md');
     expect(workflow).not.toContain("--output-dir");
     expect(workflow).toContain("$GITHUB_STEP_SUMMARY");
+    expect(parsed.jobs.review.env.HOMERAIL_GITHUB_API_BASE_URL).toBe("${{ github.api_url }}");
     expect(parsed.jobs.review.env).not.toHaveProperty("HOMERAIL_HOME");
     expect(parsed.jobs.review.steps.find((step) => step.name === "Run HomeRail PR Review DAG")?.env?.HOMERAIL_HOME)
       .toBe("${{ runner.temp }}/homerail-pr-review-cli-${{ github.run_id }}");
@@ -206,6 +231,8 @@ describe("PR Review scenario assets", () => {
         pr: 25,
         base: "a".repeat(40),
         head: "b".repeat(40),
+        base_clone_url: "https://github.com/xiaotianfotos/homerail.git",
+        head_clone_url: "https://github.com/xiaotianfotos/homerail.git",
         expected_usage: 8,
         budget_key: "pr-review:xiaotianfotos/homerail:2026-07-12",
       },

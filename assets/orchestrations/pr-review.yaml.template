@@ -19,7 +19,7 @@ spec:
 
   pattern:
     id: pr-review-scenario
-    version: 1.0.0
+    version: 1.1.0
     source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
     parameters:
       reviewer_count: 4
@@ -37,12 +37,14 @@ spec:
     PRReviewInput:
       type: object
       additionalProperties: false
-      required: [repo, pr, base, head, expected_usage, budget_key]
+      required: [repo, pr, base, head, base_clone_url, head_clone_url, expected_usage, budget_key]
       properties:
         repo: { type: string, pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }
         pr: { type: integer, minimum: 1 }
         base: { type: string, minLength: 7, maxLength: 64 }
         head: { type: string, minLength: 7, maxLength: 64 }
+        base_clone_url: { type: string, pattern: '^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$' }
+        head_clone_url: { type: string, pattern: '^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$' }
         expected_usage: { type: number, minimum: 0, maximum: 100 }
         budget_key: { type: string, minLength: 1, maxLength: 200 }
         title: { type: string, maxLength: 500 }
@@ -59,12 +61,14 @@ spec:
         payload:
           type: object
           additionalProperties: false
-          required: [repo, pr, base, head, expected_usage, budget_key]
+          required: [repo, pr, base, head, base_clone_url, head_clone_url, expected_usage, budget_key]
           properties:
             repo: { type: string, pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }
             pr: { type: integer, minimum: 1 }
             base: { type: string, minLength: 7, maxLength: 64 }
             head: { type: string, minLength: 7, maxLength: 64 }
+            base_clone_url: { type: string, pattern: '^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$' }
+            head_clone_url: { type: string, pattern: '^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$' }
             expected_usage: { type: number, minimum: 0, maximum: 100 }
             budget_key: { type: string, minLength: 1, maxLength: 200 }
             title: { type: string, maxLength: 500 }
@@ -279,10 +283,15 @@ spec:
         You prepare a read-only pull request checkout. The input is the output
         of a Manager budget gate; the RunEnvelope is at input.input and the
         original PRReviewInput is at input.input.payload.
-        Validate repo, PR, base, and head. Derive the clone URL exactly as
-        https://github.com/<repo>.git; never accept a URL from input. Clone it
-        into /workspace/repository without credentials, fetch both
-        exact commits, and checkout head in detached mode. Never modify tracked
+        Validate repo, PR, base, head, base_clone_url, and head_clone_url. The
+        two clone URLs were resolved in code from trusted GitHub PR metadata and
+        are constrained to credential-free HTTPS URLs by the input contract.
+        Treat only those two fields as repository locations; never derive a URL
+        from repo, substitute another host, or add credentials. Clone the exact
+        base_clone_url into /workspace/repository, fetch the exact base commit
+        from that origin, then fetch the exact head commit from head_clone_url
+        (using a separate read-only remote when the URLs differ). Checkout head
+        in detached mode. Never modify tracked
         files. Collect changed_files from git diff --name-only base...head and
         diff_stat from git diff --stat base...head. Do not end with prose.
         Your final action MUST call the handoff tool on port ready with exactly

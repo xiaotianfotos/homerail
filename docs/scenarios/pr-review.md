@@ -12,20 +12,19 @@ Callers provide one logical PR input object:
 ```json
 {
   "repo": "xiaotianfotos/homerail",
-  "pr": 25,
-  "base": "<base commit SHA>",
-  "head": "<head commit SHA>",
-  "expected_usage": 8,
-  "budget_key": "pr-review:xiaotianfotos/homerail:2026-07-12"
+  "pr": 25
 }
 ```
 
-The CLI and Manager Skill resolve base/head metadata when the caller supplies
-only `repo` and `pr`, then wrap the resolved object in the same internal trigger
-envelope used by Manager event triggers. The workflow itself requires immutable
-commit identities so a review cannot silently drift while it is running.
-The clone URL is derived from the validated `owner/repository` value and cannot
-be supplied by an event payload.
+The CLI and Manager Skill resolve immutable base/head SHAs plus credential-free
+HTTPS clone URLs from trusted GitHub PR metadata, then wrap the resolved object
+in the same internal trigger envelope used by Manager event triggers. Optional
+caller-supplied SHAs remain pinned, but clone URLs are always taken from the API
+response and cannot be overridden by logical input. The workflow carries
+separate base/head clone URLs so an explicitly reviewed fork can fetch each
+commit from the repository that owns it. URL validation rejects credentials,
+query strings, fragments, repository mismatches, and cross-origin base/head
+metadata.
 
 ## Execution
 
@@ -85,3 +84,8 @@ Required repository configuration:
   self-hosted runner;
 - `HOMERAIL_DAG_MUTATION_TOKEN`: the Manager mutation token;
 - `HOMERAIL_PR_REVIEW_PROFILE`: optional DB runtime profile id.
+
+The GitHub Actions adapter supplies `github.api_url` as
+`HOMERAIL_GITHUB_API_BASE_URL`, so credential-free-accessible GitHub Enterprise
+repositories use the correct metadata and checkout host instead of deriving a
+`github.com` URL.

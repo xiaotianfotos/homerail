@@ -154,13 +154,55 @@ function githubApiBaseUrl(): string {
   return (process.env.HOMERAIL_GITHUB_API_BASE_URL || "https://api.github.com").replace(/\/+$/, "");
 }
 
+const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+function githubRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function githubCloneUrl(
+  repository: Record<string, unknown> | undefined,
+  expectedRepo: string | undefined,
+  label: "base" | "head",
+): { cloneUrl: string; origin: string } {
+  const fullName = typeof repository?.full_name === "string" ? repository.full_name.trim() : "";
+  if (!GITHUB_REPO_PATTERN.test(fullName)) {
+    throw new Error(`GitHub PR ${label} repository did not contain a valid full_name`);
+  }
+  if (expectedRepo && fullName.toLowerCase() !== expectedRepo.toLowerCase()) {
+    throw new Error(`GitHub PR ${label} repository does not match ${expectedRepo}`);
+  }
+  const raw = typeof repository?.clone_url === "string" ? repository.clone_url.trim() : "";
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`GitHub PR ${label} repository did not contain a valid clone_url`);
+  }
+  if (
+    parsed.protocol !== "https:"
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash
+    || parsed.pathname !== `/${fullName}.git`
+  ) {
+    throw new Error(`GitHub PR ${label} clone_url must be credential-free HTTPS for ${fullName}`);
+  }
+  return { cloneUrl: parsed.toString(), origin: parsed.origin };
+}
+
 async function resolveGitHubPullRequest(repo: string, pr: number): Promise<{
   base: string;
   head: string;
+  baseCloneUrl: string;
+  headCloneUrl: string;
   title: string;
   author: string;
 }> {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+  if (!GITHUB_REPO_PATTERN.test(repo)) {
     throw new Error("repo must use the owner/name form");
   }
   if (!Number.isInteger(pr) || pr < 1) throw new Error("pr must be a positive integer");
@@ -171,14 +213,23 @@ async function resolveGitHubPullRequest(repo: string, pr: number): Promise<{
   );
   if (!response.ok) throw new Error(`GitHub PR lookup failed with HTTP ${response.status}`);
   const body = await response.json() as Record<string, unknown>;
-  const base = String((body.base as Record<string, unknown> | undefined)?.sha ?? "");
-  const head = String((body.head as Record<string, unknown> | undefined)?.sha ?? "");
+  const baseRecord = githubRecord(body.base);
+  const headRecord = githubRecord(body.head);
+  const base = String(baseRecord?.sha ?? "");
+  const head = String(headRecord?.sha ?? "");
   if (!/^[0-9a-f]{40}$/i.test(base) || !/^[0-9a-f]{40}$/i.test(head)) {
     throw new Error("GitHub PR response did not contain immutable base/head SHAs");
+  }
+  const baseRepository = githubCloneUrl(githubRecord(baseRecord?.repo), repo, "base");
+  const headRepository = githubCloneUrl(githubRecord(headRecord?.repo), undefined, "head");
+  if (headRepository.origin !== baseRepository.origin) {
+    throw new Error("GitHub PR base/head clone URLs must use the same origin");
   }
   return {
     base,
     head,
+    baseCloneUrl: baseRepository.cloneUrl,
+    headCloneUrl: headRepository.cloneUrl,
     title: typeof body.title === "string" ? body.title : "",
     author: String((body.user as Record<string, unknown> | undefined)?.login ?? ""),
   };
@@ -872,6 +923,8 @@ function createManagerTools(state: {
               pr,
               base: metadata.base,
               head: metadata.head,
+              base_clone_url: metadata.baseCloneUrl,
+              head_clone_url: metadata.headCloneUrl,
               title: metadata.title,
               author: metadata.author,
               expected_usage: expectedUsage,

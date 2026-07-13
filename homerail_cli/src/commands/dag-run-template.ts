@@ -31,6 +31,8 @@ export interface ResolvedPrReviewInput {
   pr: number;
   base: string;
   head: string;
+  base_clone_url: string;
+  head_clone_url: string;
   expected_usage: number;
   budget_key: string;
   title?: string;
@@ -74,6 +76,44 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function optionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function trustedCloneUrl(
+  repository: Record<string, unknown> | undefined,
+  expectedRepo: string | undefined,
+  label: "base" | "head",
+): { cloneUrl: string; origin: string } {
+  const fullName = optionalString(repository?.full_name);
+  if (!fullName || !REPO_PATTERN.test(fullName)) {
+    throw new Error(`GitHub PR ${label} repository did not contain a valid full_name`);
+  }
+  if (expectedRepo && fullName.toLowerCase() !== expectedRepo.toLowerCase()) {
+    throw new Error(`GitHub PR ${label} repository does not match ${expectedRepo}`);
+  }
+  const raw = optionalString(repository?.clone_url);
+  let parsed: URL;
+  try {
+    parsed = new URL(raw ?? "");
+  } catch {
+    throw new Error(`GitHub PR ${label} repository did not contain a valid clone_url`);
+  }
+  if (
+    parsed.protocol !== "https:"
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash
+    || parsed.pathname !== `/${fullName}.git`
+  ) {
+    throw new Error(`GitHub PR ${label} clone_url must be credential-free HTTPS for ${fullName}`);
+  }
+  return { cloneUrl: parsed.toString(), origin: parsed.origin };
+}
+
 function githubHeaders(env: NodeJS.ProcessEnv): Record<string, string> {
   const token = env.GH_TOKEN?.trim() || env.GITHUB_TOKEN?.trim();
   return {
@@ -98,27 +138,27 @@ export async function resolvePrReviewInput(
   if (!repo || !REPO_PATTERN.test(repo)) throw new Error("pr-review input.repo must be owner/name");
   if (!Number.isInteger(pr) || pr < 1) throw new Error("pr-review input.pr must be a positive integer");
 
-  let base = optionalString(input.base);
-  let head = optionalString(input.head);
-  let title = optionalString(input.title);
-  let author = optionalString(input.author);
-  if (!base || !head) {
-    const fetchImpl = options.fetchImpl ?? fetch;
-    const env = options.env ?? process.env;
-    const apiBaseUrl = (options.apiBaseUrl ?? env.HOMERAIL_GITHUB_API_BASE_URL ?? "https://api.github.com").replace(/\/+$/, "");
-    const response = await fetchImpl(`${apiBaseUrl}/repos/${repo}/pulls/${pr}`, {
-      headers: githubHeaders(env),
-    });
-    if (!response.ok) throw new Error(`GitHub PR lookup failed: HTTP ${response.status}`);
-    const data = await response.json() as Record<string, unknown>;
-    const baseRecord = data.base as Record<string, unknown> | undefined;
-    const headRecord = data.head as Record<string, unknown> | undefined;
-    const userRecord = data.user as Record<string, unknown> | undefined;
-    base ??= optionalString(baseRecord?.sha);
-    head ??= optionalString(headRecord?.sha);
-    title ??= optionalString(data.title);
-    author ??= optionalString(userRecord?.login);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const env = options.env ?? process.env;
+  const apiBaseUrl = (options.apiBaseUrl ?? env.HOMERAIL_GITHUB_API_BASE_URL ?? "https://api.github.com").replace(/\/+$/, "");
+  const response = await fetchImpl(`${apiBaseUrl}/repos/${repo}/pulls/${pr}`, {
+    headers: githubHeaders(env),
+  });
+  if (!response.ok) throw new Error(`GitHub PR lookup failed: HTTP ${response.status}`);
+  const data = await response.json() as Record<string, unknown>;
+  const baseRecord = optionalRecord(data.base);
+  const headRecord = optionalRecord(data.head);
+  const userRecord = optionalRecord(data.user);
+  const baseRepository = trustedCloneUrl(optionalRecord(baseRecord?.repo), repo, "base");
+  const headRepository = trustedCloneUrl(optionalRecord(headRecord?.repo), undefined, "head");
+  if (headRepository.origin !== baseRepository.origin) {
+    throw new Error("GitHub PR base/head clone URLs must use the same origin");
   }
+
+  const base = optionalString(input.base) ?? optionalString(baseRecord?.sha);
+  const head = optionalString(input.head) ?? optionalString(headRecord?.sha);
+  const title = optionalString(input.title) ?? optionalString(data.title);
+  const author = optionalString(input.author) ?? optionalString(userRecord?.login);
   if (!base || !SHA_PATTERN.test(base)) throw new Error("pr-review base must be a commit SHA");
   if (!head || !SHA_PATTERN.test(head)) throw new Error("pr-review head must be a commit SHA");
 
@@ -132,6 +172,8 @@ export async function resolvePrReviewInput(
     pr,
     base,
     head,
+    base_clone_url: baseRepository.cloneUrl,
+    head_clone_url: headRepository.cloneUrl,
     expected_usage: expectedUsage,
     budget_key: optionalString(input.budget_key) ?? `pr-review:${repo}:${date}`,
     ...(title ? { title } : {}),
