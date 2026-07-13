@@ -152,14 +152,26 @@ function lstatIfPresent(filePath: string): fs.Stats | undefined {
   }
 }
 
-function assertDirectoryIsSafe(directory: string): void {
+function trustedDarwinDirectoryAlias(directory: string): string | undefined {
+  if (process.platform !== "darwin" || directory !== "/var") return undefined;
+  const resolved = fs.realpathSync.native(directory);
+  return resolved === "/private/var" ? resolved : undefined;
+}
+
+function assertDirectoryIsSafe(directory: string): string {
   const stat = fs.lstatSync(directory);
   if (stat.isSymbolicLink()) {
+    const trustedAlias = trustedDarwinDirectoryAlias(directory);
+    if (trustedAlias) {
+      const target = fs.lstatSync(trustedAlias);
+      if (target.isDirectory() && !target.isSymbolicLink()) return trustedAlias;
+    }
     throw new Error(`Plugin archive output parent must not contain a symlink: ${directory}`);
   }
   if (!stat.isDirectory()) {
     throw new Error(`Plugin archive output parent must contain only directories: ${directory}`);
   }
+  return directory;
 }
 
 /**
@@ -171,7 +183,7 @@ function ensureSafeOutputParent(output: string): string {
   const directory = path.dirname(output);
   const parsed = path.parse(directory);
   let current = parsed.root;
-  assertDirectoryIsSafe(current);
+  current = assertDirectoryIsSafe(current);
 
   const relative = directory.slice(parsed.root.length);
   for (const component of relative.split(path.sep).filter(Boolean)) {
@@ -184,9 +196,9 @@ function ensureSafeOutputParent(output: string): string {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       }
     }
-    assertDirectoryIsSafe(current);
+    current = assertDirectoryIsSafe(current);
   }
-  return directory;
+  return current;
 }
 
 function assertSafeOutputTarget(output: string, force: boolean): void {
@@ -237,7 +249,10 @@ function writeArchiveAtomically(output: string, archive: Buffer, force: boolean)
     // Recheck every component and the destination immediately before publish.
     // rename replaces a symlink itself rather than following it, but rejecting
     // it here keeps the output contract explicit and catches directory swaps.
-    ensureSafeOutputParent(output);
+    const recheckedDirectory = ensureSafeOutputParent(output);
+    if (recheckedDirectory !== directory) {
+      throw new Error(`Plugin archive output parent changed during write: ${output}`);
+    }
     assertSafeOutputTarget(output, force);
 
     if (force) {
