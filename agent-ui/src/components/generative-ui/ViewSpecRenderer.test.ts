@@ -136,16 +136,20 @@ describe('ViewSpecRenderer', () => {
     expect(mounted.querySelector<HTMLAnchorElement>('.hr-view__link')?.href).toBe('https://example.com/evidence')
   })
 
-  it('marks compact context so responsive grids collapse without changing semantic data', () => {
+  it('marks compact grids so the renderer can balance odd two-column content', () => {
     const mounted = mount({
       view_version: 1,
-      root: { id: 'root', type: 'grid', columns: { default: 3, compact: 1 }, children: [
+      root: { id: 'root', type: 'grid', columns: { default: 3, compact: 2 }, children: [
         { id: 'one', type: 'text', text: { literal: 'One' } },
+        { id: 'two', type: 'text', text: { literal: 'Two' } },
+        { id: 'three', type: 'text', text: { literal: 'Three' } },
       ] },
     }, { ...context, device: 'phone', viewport: 'compact', input: 'touch' })
     expect(mounted.querySelector('.homerail-view-spec')?.getAttribute('data-viewport')).toBe('compact')
     expect(mounted.querySelector<HTMLElement>('.hr-view__grid')?.style.getPropertyValue('--columns')).toBe('3')
-    expect(mounted.querySelector<HTMLElement>('.hr-view__grid')?.style.getPropertyValue('--compact-columns')).toBe('1')
+    expect(mounted.querySelector<HTMLElement>('.hr-view__grid')?.style.getPropertyValue('--compact-columns')).toBe('2')
+    expect(mounted.querySelector('.hr-view__grid')?.getAttribute('data-compact-columns')).toBe('2')
+    expect(mounted.querySelectorAll('.hr-view__grid > .hr-view__node')).toHaveLength(3)
   })
 
   it('opens secondary disclosure content when the host expands the Block', () => {

@@ -58,11 +58,13 @@ function renderNode(
     return h('div', { ...attrs, 'data-gap': node.gap ?? 'md', 'data-align': node.align ?? 'stretch' }, children(node, emitAction, emitPreview, compact, expanded))
   }
   if (node.type === 'grid') {
+    const compactColumns = node.columns?.compact ?? 1
     return h('div', {
       ...attrs,
       'data-gap': node.gap ?? 'md',
       'data-align': node.align ?? 'stretch',
-      style: { ...spanStyle(node), '--columns': node.columns?.default ?? 1, '--compact-columns': node.columns?.compact ?? 1 },
+      'data-compact-columns': compactColumns,
+      style: { ...spanStyle(node), '--columns': node.columns?.default ?? 1, '--compact-columns': compactColumns },
     }, children(node, emitAction, emitPreview, compact, expanded))
   }
   if (node.type === 'section') {
