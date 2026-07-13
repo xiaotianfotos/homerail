@@ -10,6 +10,7 @@ import {
   releaseTriggerDelivery,
   type DagTriggerRecord,
 } from "../persistence/dag-triggers.js";
+import { WorkflowRunAdmissionError } from "../persistence/dag-run-admission.js";
 
 let orchestrator: ChangeOrchestrator | undefined;
 
@@ -25,12 +26,17 @@ function dispatch(record: DagTriggerRecord, fireKey: string, payload: unknown): 
     const result = orchestrator.createAndRun({
       workflowId: record.workflow_id,
       prompt: JSON.stringify({ trigger_id: record.trigger_id, trigger_type: record.config.type, fire_key: fireKey, payload }),
+      admissionSource: `trigger:${record.trigger_key}`,
     });
     completeTriggerDelivery(record, fireKey, result.runId);
     emit("dag:trigger_dispatched", { triggerKey: record.trigger_key, workflowId: record.workflow_id, fireKey, runId: result.runId });
     return { dispatched: true, runId: result.runId };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = error instanceof WorkflowRunAdmissionError
+      ? error.reason
+      : error instanceof Error
+        ? error.message
+        : String(error);
     releaseTriggerDelivery(record, fireKey, reason);
     if (record.config.type === "interval") deferIntervalTrigger(record);
     emit("dag:trigger_failed", { triggerKey: record.trigger_key, workflowId: record.workflow_id, fireKey, reason });

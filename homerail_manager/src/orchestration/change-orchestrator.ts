@@ -17,6 +17,11 @@ import { appendRunNode, cancelActiveRun, cancelAllActiveRuns, checkpointResumeAc
 import type { DagApprovalRecord } from "../persistence/dag-runtime-primitives.js";
 import type { InjectResult, CancelAllResult, CheckpointResumeRequest } from "../runtime/active-runs.js";
 import { emit } from "../events/bus.js";
+import {
+  deriveWorkflowConcurrencyPolicy,
+  releaseWorkflowRunReservation,
+  reserveWorkflowRun,
+} from "../persistence/dag-run-admission.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = process.env.HOMERAIL_REPO_ROOT
@@ -30,6 +35,7 @@ export interface CreateRunRequest {
   runId?: string;
   prompt?: string;
   llmSettingId?: string;
+  admissionSource?: string;
 }
 
 export interface CreateRunResponse {
@@ -110,14 +116,7 @@ export interface ManagerRunCommandResponse {
   result: AppendNodeResponse;
 }
 
-export interface CreateAndRunRequest {
-  yamlPath?: string;
-  workflowId?: string;
-  profile?: string;
-  runId?: string;
-  prompt?: string;
-  llmSettingId?: string;
-}
+export interface CreateAndRunRequest extends CreateRunRequest {}
 
 export interface CreateAndRunResponse {
   run_id: string;
@@ -261,7 +260,28 @@ export class ChangeOrchestrator {
     assertProviderPolicy(dagWithRuntime);
 
     const runId = request.runId ?? _generateRunId();
-    const run = this.graphExecutor.createRun(runId, dagWithRuntime, request.prompt);
+    const workflowId = dagWithRuntime.meta.workflow_id?.trim();
+    const reservation = workflowId
+      ? reserveWorkflowRun({
+          runId,
+          workflowId,
+          source: request.admissionSource?.trim() || "manual",
+          policy: deriveWorkflowConcurrencyPolicy(dagWithRuntime.meta.triggers),
+        })
+      : { reserved: false };
+    const run = (() => {
+      try {
+        return this.graphExecutor.createRun(runId, dagWithRuntime, request.prompt);
+      } finally {
+        if (reservation.reserved) {
+          try {
+            releaseWorkflowRunReservation(runId);
+          } catch {
+            // Persisted runs supersede this row; failed creations leave only a TTL-bounded orphan.
+          }
+        }
+      }
+    })();
 
     return {
       runId: run.runId,

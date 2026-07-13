@@ -27,33 +27,17 @@ import {
   recordAdvisorCall,
   requestNodeCorrection,
 } from "../runtime/active-runs.js";
+import {
+  isControlPlaneUpgradeAuthorized,
+  isLoopbackRemoteAddress,
+  rejectWebSocketUpgrade,
+} from "../server/control-plane-auth.js";
 
 const WS_URL_PATTERN = /^\/ws\/projects\/([^\/]+)\/nodes\/([^\/]+)$/;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
 const DEFAULT_PING_INTERVAL_MS = 30_000;
 
-export function isLoopbackNodeRemoteAddress(address: string | null | undefined): boolean {
-  if (!address) return false;
-  const normalized = address.trim().toLowerCase();
-  if (normalized === "::1" || normalized === "localhost") return true;
-  if (normalized.startsWith("127.")) return true;
-  if (normalized.startsWith("::ffff:")) {
-    return isLoopbackNodeRemoteAddress(normalized.slice("::ffff:".length));
-  }
-  return normalized === "0:0:0:0:0:ffff:7f00:1";
-}
-
-function rejectUpgrade(
-  socket: { write(chunk: string): unknown; destroy(): void },
-  statusCode: number,
-  reason: string,
-): void {
-  try {
-    socket.write(`HTTP/1.1 ${statusCode} ${reason}\r\nConnection: close\r\n\r\n`);
-  } finally {
-    socket.destroy();
-  }
-}
+export const isLoopbackNodeRemoteAddress = isLoopbackRemoteAddress;
 
 function hasRegisteredNode(): boolean {
   return getAllNodes().some((node) => node.socket.readyState === WebSocket.OPEN);
@@ -145,6 +129,8 @@ function mirrorSessionTranscript(
 export interface NodeWebSocketOptions {
   registrationTimeoutMs?: number;
   pingIntervalMs?: number;
+  authToken?: string;
+  allowLoopbackWithoutToken?: boolean;
   onHandoffApplied?: (runId: string) => void;
 }
 
@@ -155,6 +141,11 @@ export function setupNodeWebSocket(
   const registrationTimeoutMs =
     options.registrationTimeoutMs ?? DEFAULT_REGISTRATION_TIMEOUT_MS;
   const pingIntervalMs = options.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
+  const authToken = options.authToken
+    ?? process.env.HOMERAIL_NODE_TOKEN
+    ?? process.env.HOMERAIL_CONTROL_PLANE_TOKEN;
+  const allowLoopbackWithoutToken = options.allowLoopbackWithoutToken
+    ?? !authToken?.trim();
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -167,8 +158,13 @@ export function setupNodeWebSocket(
     const project_id = match[1];
     const node_id = match[2];
 
-    if (!isLoopbackNodeRemoteAddress(req.socket.remoteAddress)) {
-      rejectUpgrade(socket, 403, "Forbidden");
+    if (!isControlPlaneUpgradeAuthorized({
+      remoteAddress: req.socket.remoteAddress,
+      authorization: req.headers.authorization,
+      configuredToken: authToken,
+      allowLoopbackWithoutToken,
+    })) {
+      rejectWebSocketUpgrade(socket, 401, "Unauthorized");
       return;
     }
 

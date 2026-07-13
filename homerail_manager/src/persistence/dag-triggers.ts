@@ -73,9 +73,6 @@ export function eventTriggers(eventName: string): DagTriggerRecord[] {
 
 export function claimTriggerDelivery(record: DagTriggerRecord, fireKey: string, payload: unknown): { claimed: boolean; reason?: string } {
   return getDb().transaction(() => {
-    const activeCount = (getDb().prepare("SELECT COUNT(*) AS count FROM dag_runs WHERE workflow_id = ? AND status = 'active'").get(record.workflow_id) as { count: number }).count;
-    if (record.config.overlap === "skip" && activeCount > 0) return { claimed: false, reason: "overlap_policy" };
-    if (activeCount >= record.config.max_concurrency) return { claimed: false, reason: "max_concurrency" };
     const deliveryKey = createHash("sha256").update(`${record.trigger_key}\0${fireKey}`).digest("hex");
     const now = Date.now();
     const inserted = getDb().prepare(`

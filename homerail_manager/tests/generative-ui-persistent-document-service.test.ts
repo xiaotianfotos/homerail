@@ -187,7 +187,7 @@ describe("PersistentGenerativeUiDocumentService", () => {
     legacy.close();
 
     expect(getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all())
-      .toEqual(Array.from({ length: 16 }, (_, index) => ({ version: index + 1 })));
+      .toEqual(Array.from({ length: 17 }, (_, index) => ({ version: index + 1 })));
     expect(getDb().prepare("SELECT data FROM voice_agent_sessions WHERE session_id = ?").get("legacy-v2"))
       .toEqual({ data: legacyPayload });
     expect(getDb().prepare(`
@@ -222,7 +222,7 @@ describe("PersistentGenerativeUiDocumentService", () => {
     mainDb.exec(`
       CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
       INSERT INTO schema_migrations(version, applied_at)
-      VALUES (1, '${time0}'), (2, '${time0}'), (3, '${time0}'), (4, '${time0}');
+      VALUES (1, '${time0}'), (2, '${time0}'), (3, '${time0}'), (4, '${time0}'), (5, '${time0}');
       CREATE TABLE dag_workflows (
         workflow_id TEXT PRIMARY KEY,
         head_revision INTEGER NOT NULL DEFAULT 0,
@@ -247,11 +247,17 @@ describe("PersistentGenerativeUiDocumentService", () => {
         updated_at INTEGER NOT NULL,
         PRIMARY KEY(run_id, node_id)
       );
+      CREATE TABLE dag_run_admissions (
+        run_id TEXT PRIMARY KEY,
+        workflow_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
     `);
     mainDb.close();
 
     expect(getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all())
-      .toEqual(Array.from({ length: 16 }, (_, index) => ({ version: index + 1 })));
+      .toEqual(Array.from({ length: 17 }, (_, index) => ({ version: index + 1 })));
     expect(getDb().prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name IN ('generative_ui_documents', 'generative_ui_user_overrides')

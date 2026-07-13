@@ -95,7 +95,15 @@ the shared token is not per-actor authentication.
 
 `kind: state` provides namespaced versioned records with history. Workflow
 `spec.triggers` supports persisted interval and idempotent event delivery with
-overlap and concurrency policies. Remote DAG writes require
+overlap and concurrency policies. Enabled trigger policies are enforced as one
+workflow-level admission boundary across interval, event, and manual starts:
+`skip` wins if any trigger declares it, and `max_concurrency` is the smallest
+declared limit. SQLite reservations close the gap before the new `dag_runs` row
+exists. Workflows without enabled triggers retain unrestricted legacy behavior.
+This release does not provide a durable queue or replace-running policy; a
+rejected manual HTTP start returns `409 Conflict` with structured
+`data.reason`, while trigger delivery results report `overlap_policy` or
+`max_concurrency` on the skipped delivery. Remote DAG writes require
 `HOMERAIL_DAG_MUTATION_TOKEN`, including run lifecycle operations, workflow and
 profile sync, state changes, event delivery, injection, and dynamic graph
 changes; loopback remains the default local trust boundary. `budget_admit`
@@ -132,10 +140,12 @@ root or a protected file changed and restored before the final snapshot;
 OS-level containment remains the responsibility of the selected agent backend
 or container sandbox.
 
-Manager-to-Node and Manager-to-Worker WebSocket transport is trusted-network
-transport in this release. Multi-host deployments must provide network-layer
-isolation or a TLS-authenticated reverse proxy until native `wss` authentication
-is implemented.
+Manager-to-Node and Manager-to-Worker WebSocket upgrades are authenticated
+before registration. Connections without configured credentials are restricted
+to loopback; remote clients require a Bearer token and reject plaintext `ws://`
+unless the isolated-network compatibility override is explicit. Multi-host TLS
+termination and certificate renewal remain the reverse proxy's responsibility;
+see [Control-Plane WebSocket Security](control-plane-security.md).
 
 The self-hosted catalog validation uses an operator-configured Qwen 3.6 service
 through its Anthropic-compatible endpoint and the HomeRail `claude-sdk`

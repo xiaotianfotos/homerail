@@ -34,6 +34,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_chats",
   "dag_handoffs",
   "dag_events",
+  "dag_run_admissions",
   "dag_runs",
   "dag_workflow_revisions",
   "dag_runtime_profiles",
@@ -413,10 +414,11 @@ function hasTable(db: SqliteDatabase, table: string): boolean {
 }
 
 /**
- * main used migration ids 3/4 for DAG schema work while PR #19 independently
- * used the same ids for Generative UI. Detect only databases that already have
- * main's physical DAG schema and no Generative UI schema, then free those ids
- * so the merged 3-14 chain can run. The DAG changes receive durable ids 15/16.
+ * main used migration ids 3/4/5 for DAG schema work while PR #19 independently
+ * used the same ids for Generative UI and plugins. Detect only databases that
+ * already have main's physical DAG schema and no Generative UI schema, then
+ * free those ids so the merged 3-14 chain can run. The DAG changes receive
+ * durable ids 15/16/17.
  */
 function legacyMainMigrationVersions(db: SqliteDatabase): number[] {
   if (!hasTable(db, "schema_migrations") || hasTable(db, "generative_ui_documents")) return [];
@@ -435,6 +437,11 @@ function legacyMainMigrationVersions(db: SqliteDatabase): number[] {
     && hasTable(db, "dag_approvals")
     && hasColumn(db, "dag_approvals", "proposer_actor")
   ) versions.push(4);
+  if (
+    hasVersion(5)
+    && hasTable(db, "dag_run_admissions")
+    && !hasTable(db, "plugin_packages")
+  ) versions.push(5);
   return versions;
 }
 
@@ -452,6 +459,17 @@ function validateDagWorkflowSchemaV15(db: SqliteDatabase): void {
 function validateDagApprovalIdentityV16(db: SqliteDatabase): void {
   if (!hasTable(db, "dag_approvals") || !hasColumn(db, "dag_approvals", "proposer_actor")) {
     throw new Error("Schema migration 16 is incomplete: dag_approvals proposer identity is missing");
+  }
+}
+
+function validateDagRunAdmissionSchemaV17(db: SqliteDatabase): void {
+  if (!hasTable(db, "dag_run_admissions")) {
+    throw new Error("Schema migration 17 is incomplete: missing table dag_run_admissions");
+  }
+  for (const column of ["run_id", "workflow_id", "source", "created_at"]) {
+    if (!hasColumn(db, "dag_run_admissions", column)) {
+      throw new Error(`Schema migration 17 is incomplete: dag_run_admissions is missing column ${column}`);
+    }
   }
 }
 
@@ -1704,6 +1722,20 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     },
     validate: validateDagApprovalIdentityV16,
   },
+  {
+    version: 17,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_run_admissions (
+        run_id TEXT PRIMARY KEY,
+        workflow_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_run_admissions_workflow
+        ON dag_run_admissions(workflow_id, created_at);
+    `),
+    validate: validateDagRunAdmissionSchemaV17,
+  },
 ];
 
 function initializeSchema(db: SqliteDatabase, filePath: string): void {
@@ -2201,6 +2233,15 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
       UNIQUE(trigger_key, fire_key),
       FOREIGN KEY(trigger_key) REFERENCES dag_triggers(trigger_key) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS dag_run_admissions (
+      run_id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dag_run_admissions_workflow
+      ON dag_run_admissions(workflow_id, created_at);
 
     CREATE TABLE IF NOT EXISTS experience_ingest_jobs (
       id TEXT PRIMARY KEY,

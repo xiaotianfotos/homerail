@@ -19,6 +19,8 @@ export interface CliArgs {
   nodeId: string;
   provider: string;
   capabilities: string[];
+  token: string;
+  allowInsecureRemoteWs: boolean;
 }
 
 type CliEnv = Partial<Record<
@@ -27,7 +29,10 @@ type CliEnv = Partial<Record<
   | "HOMERAIL_PROJECT_ID"
   | "HOMERAIL_NODE_ID"
   | "HOMERAIL_NODE_PROVIDER"
-  | "HOMERAIL_NODE_CAPABILITIES",
+  | "HOMERAIL_NODE_CAPABILITIES"
+  | "HOMERAIL_NODE_TOKEN"
+  | "HOMERAIL_CONTROL_PLANE_TOKEN"
+  | "HOMERAIL_ALLOW_INSECURE_REMOTE_WS",
   string
 >>;
 
@@ -66,6 +71,8 @@ export function parseArgs(argv: string[], env: CliEnv = process.env): CliArgs {
   let projectId = env.HOMERAIL_PROJECT_ID ?? "";
   let nodeId = env.HOMERAIL_NODE_ID ?? "";
   let provider = env.HOMERAIL_NODE_PROVIDER ?? "docker-cli";
+  const token = (env.HOMERAIL_NODE_TOKEN ?? env.HOMERAIL_CONTROL_PLANE_TOKEN ?? "").trim();
+  const allowInsecureRemoteWs = env.HOMERAIL_ALLOW_INSECURE_REMOTE_WS === "1";
   const caps: string[] = [];
 
   const envCaps = env.HOMERAIL_NODE_CAPABILITIES;
@@ -97,7 +104,15 @@ export function parseArgs(argv: string[], env: CliEnv = process.env): CliArgs {
 
   appendProviderCapabilities(caps, provider);
 
-  return { managerUrl, projectId, nodeId, provider, capabilities: caps };
+  return {
+    managerUrl,
+    projectId,
+    nodeId,
+    provider,
+    capabilities: caps,
+    token,
+    allowInsecureRemoteWs,
+  };
 }
 
 export function resolveProvider(name: string): ExecutionProvider {
@@ -183,6 +198,8 @@ async function main(): Promise<void> {
     provider,
     capabilities: args.capabilities,
     pluginRuntime,
+    token: args.token,
+    allowInsecureRemote: args.allowInsecureRemoteWs,
   });
 
   await client.connect();

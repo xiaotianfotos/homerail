@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import type { ExecutionProvider } from "../providers/types.js";
 import { handleLifecycleRequest, type LifecycleRequest, type LifecycleResponse } from "./lifecycle-handler.js";
 import type { PluginRuntimeService } from "../runtime/plugin-runtime-service.js";
+import { assertSecureControlPlaneUrl } from "./security.js";
 
 export interface NodeClientOptions {
   managerUrl: string;
@@ -9,6 +10,8 @@ export interface NodeClientOptions {
   nodeId: string;
   provider: ExecutionProvider;
   capabilities?: string[];
+  token?: string;
+  allowInsecureRemote?: boolean;
   reconnectInitialDelayMs?: number;
   reconnectMaxDelayMs?: number;
   pluginRuntime?: PluginRuntimeService;
@@ -30,6 +33,8 @@ export function createNodeClient(options: NodeClientOptions): NodeClient {
   let reconnectAttempt = 0;
 
   const url = `${managerUrl}/ws/projects/${projectId}/nodes/${nodeId}`;
+  assertSecureControlPlaneUrl(url, options.allowInsecureRemote ?? false);
+  const token = options.token?.trim();
   const initialDelay = Math.max(50, options.reconnectInitialDelayMs ?? 1_000);
   const maxDelay = Math.max(initialDelay, options.reconnectMaxDelayMs ?? 30_000);
 
@@ -59,7 +64,10 @@ export function createNodeClient(options: NodeClientOptions): NodeClient {
   function openSocket(initial: boolean): Promise<void> {
     if (ws?.readyState === WebSocket.OPEN && registered) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const socket = new WebSocket(url);
+      const headers = token
+        ? { Authorization: `Bearer ${token}` }
+        : undefined;
+      const socket = new WebSocket(url, { headers });
       let settled = false;
 
       const settleError = (err: Error) => {

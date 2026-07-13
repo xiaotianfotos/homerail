@@ -6,12 +6,14 @@
 
 import WebSocket from "ws";
 import { EventEmitter } from "node:events";
+import { assertSecureControlPlaneUrl } from "./control-plane-security.js";
 
 export interface WsClientOptions {
   url: string;
   workerId: string;
   capabilities?: string[];
   token?: string;
+  allowInsecureRemote?: boolean;
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
   reconnectBaseMs?: number;
@@ -39,12 +41,14 @@ export class WsClient extends EventEmitter {
       url: opts.url,
       workerId: opts.workerId,
       capabilities: opts.capabilities ?? [],
-      token: opts.token ?? "",
+      token: opts.token?.trim() ?? "",
+      allowInsecureRemote: opts.allowInsecureRemote ?? false,
       heartbeatIntervalMs: opts.heartbeatIntervalMs ?? 30_000,
       heartbeatTimeoutMs: opts.heartbeatTimeoutMs ?? 10_000,
       reconnectBaseMs: opts.reconnectBaseMs ?? 1_000,
       reconnectMaxMs: opts.reconnectMaxMs ?? 60_000,
     };
+    assertSecureControlPlaneUrl(this.opts.url, this.opts.allowInsecureRemote);
     this.reconnectDelay = this.opts.reconnectBaseMs;
   }
 

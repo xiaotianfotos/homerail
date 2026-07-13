@@ -20,6 +20,7 @@ import { ManagerAgentRuntimeError, runManagerAgentTurn } from "./manager-agent-r
 import { dagResourcesUnavailableForRun } from "./dag-resource-status.js";
 import { fireDagEventTrigger } from "../runtime/dag-triggers.js";
 import { updateDagState } from "../persistence/dag-runtime-primitives.js";
+import { WorkflowRunAdmissionError } from "../persistence/dag-run-admission.js";
 
 interface BaseResponse {
   success: boolean;
@@ -59,6 +60,25 @@ function _unavailable(res: http.ServerResponse, message: string, data?: unknown)
 
 function _created(res: http.ServerResponse, message: string, data: unknown) {
   json(res, 201, { success: true, message, data });
+}
+
+function _runCreationError(res: http.ServerResponse, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof WorkflowRunAdmissionError) {
+    json(res, 409, {
+      success: false,
+      message,
+      error: message,
+      data: {
+        reason: error.reason,
+        workflow_id: error.workflowId,
+        active_count: error.activeCount,
+        policy: error.policy,
+      },
+    });
+    return;
+  }
+  _badRequest(res, message);
 }
 
 export function isDagApprovalRequestAuthorized(input: {
@@ -324,8 +344,7 @@ export function mutationRoutesHandler(
           const result = changeOrchestrator.createRun({ yamlPath, workflowId, profile, runId, prompt, llmSettingId });
           _created(res, "Run created", result);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          _badRequest(res, message);
+          _runCreationError(res, err);
         }
       })
       .catch((err) => {
@@ -365,8 +384,7 @@ export function mutationRoutesHandler(
           const result = changeOrchestrator.createAndRun({ yamlPath, workflowId, profile, runId, prompt, llmSettingId });
           _created(res, "Run created and invoked", result);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          _badRequest(res, message);
+          _runCreationError(res, err);
         }
       })
       .catch((err) => {

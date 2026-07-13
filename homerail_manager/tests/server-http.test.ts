@@ -6,6 +6,7 @@ const ENV_KEYS = [
   "CLAUDE_MAX_TURNS",
   "CLAUDE_SDK_QUERY_TIMEOUT_MS",
   "CLAUDE_THINKING_BUDGET",
+  "HOMERAIL_ALLOW_INSECURE_REMOTE_WS",
   "GITEA_TOKEN",
   "ANTHROPIC_API_KEY",
   "HOMERAIL_MANAGER_ADMIN_TOKEN",
@@ -32,11 +33,12 @@ describe("manager HTTP server worker runtime env", () => {
     restoreEnv();
   });
 
-  it("passes only explicit Claude SDK runtime controls to provisioned workers", () => {
+  it("passes only explicit safe runtime controls to provisioned workers", () => {
     saveEnv();
     process.env.CLAUDE_MAX_TURNS = "8";
     process.env.CLAUDE_SDK_QUERY_TIMEOUT_MS = "120000";
     process.env.CLAUDE_THINKING_BUDGET = "2048";
+    process.env.HOMERAIL_ALLOW_INSECURE_REMOTE_WS = "1";
     process.env.GITEA_TOKEN = "<redacted-gitea-token>";
     process.env.ANTHROPIC_API_KEY = "should-not-propagate";
 
@@ -44,6 +46,7 @@ describe("manager HTTP server worker runtime env", () => {
       CLAUDE_MAX_TURNS: "8",
       CLAUDE_SDK_QUERY_TIMEOUT_MS: "120000",
       CLAUDE_THINKING_BUDGET: "2048",
+      HOMERAIL_ALLOW_INSECURE_REMOTE_WS: "1",
     });
   });
 
@@ -52,6 +55,7 @@ describe("manager HTTP server worker runtime env", () => {
     delete process.env.CLAUDE_MAX_TURNS;
     process.env.CLAUDE_SDK_QUERY_TIMEOUT_MS = " ";
     delete process.env.CLAUDE_THINKING_BUDGET;
+    delete process.env.HOMERAIL_ALLOW_INSECURE_REMOTE_WS;
 
     expect(resolveWorkerRuntimeEnv()).toBeUndefined();
   });

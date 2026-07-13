@@ -24,6 +24,10 @@ import {
   recordAdvisorCall,
   requestNodeCorrection,
 } from "../runtime/active-runs.js";
+import {
+  isControlPlaneUpgradeAuthorized,
+  rejectWebSocketUpgrade,
+} from "../server/control-plane-auth.js";
 
 const WS_URL_PATTERN = /^\/ws\/projects\/([^\/]+)\/workers\/([^\/]+)$/;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
@@ -115,6 +119,8 @@ function mirrorSessionTranscript(
 export interface WorkerWebSocketOptions {
   registrationTimeoutMs?: number;
   pingIntervalMs?: number;
+  authToken?: string;
+  allowLoopbackWithoutToken?: boolean;
   onHandoffApplied?: (runId: string) => void;
   onManagerCommand?: (
     workerId: string,
@@ -133,6 +139,11 @@ export function setupWorkerWebSocket(
   const registrationTimeoutMs =
     options.registrationTimeoutMs ?? DEFAULT_REGISTRATION_TIMEOUT_MS;
   const pingIntervalMs = options.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
+  const authToken = options.authToken
+    ?? process.env.HOMERAIL_WORKER_TOKEN
+    ?? process.env.HOMERAIL_CONTROL_PLANE_TOKEN;
+  const allowLoopbackWithoutToken = options.allowLoopbackWithoutToken
+    ?? !authToken?.trim();
 
   let firstWorkerFired = false;
 
@@ -146,6 +157,16 @@ export function setupWorkerWebSocket(
 
     const project_id = match[1];
     const worker_id = match[2];
+
+    if (!isControlPlaneUpgradeAuthorized({
+      remoteAddress: req.socket.remoteAddress,
+      authorization: req.headers.authorization,
+      configuredToken: authToken,
+      allowLoopbackWithoutToken,
+    })) {
+      rejectWebSocketUpgrade(socket, 401, "Unauthorized");
+      return;
+    }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req, project_id, worker_id);
