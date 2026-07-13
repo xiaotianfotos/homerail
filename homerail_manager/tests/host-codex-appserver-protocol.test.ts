@@ -5,7 +5,6 @@ import {
   _buildCodexThreadStartParamsForTest,
   _buildCodexTurnStartParamsForTest,
   _mapCodexAppServerNotificationForTest,
-  _toolCallCommentaryForTest,
 } from "../src/server/host-codex-manager-agent.js";
 
 describe("Host Codex app-server protocol params", () => {
@@ -52,7 +51,7 @@ describe("Host Codex app-server protocol params", () => {
     expect(_buildCodexAppServerArgsForTest()).toEqual(["app-server"]);
   });
 
-  it("maps built-in web search activity to bounded user-facing progress", () => {
+  it("maps built-in web search activity to tool events without synthetic chat commentary", () => {
     expect(_mapCodexAppServerNotificationForTest("item/started", {
       item: {
         type: "webSearch",
@@ -76,15 +75,5 @@ describe("Host Codex app-server protocol params", () => {
       tool_use_id: "search-1",
       content: "Web search completed.",
     }]);
-    expect(_toolCallCommentaryForTest("web_search")).toBe("正在搜索和核对资料。");
-  });
-
-  it("announces generated-view updates for both catalog and selected-node tools", () => {
-    expect(_toolCallCommentaryForTest("p_deadbeef_upsert_generated_view"))
-      .toBe("正在更新主画布。");
-    expect(_toolCallCommentaryForTest("update_selected_generated_view"))
-      .toBe("正在更新主画布。");
-    expect(_toolCallCommentaryForTest("remove_generated_view"))
-      .toBe("正在移出主画布内容。");
   });
 });

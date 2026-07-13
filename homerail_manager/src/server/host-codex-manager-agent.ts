@@ -1432,62 +1432,6 @@ export function _buildManagerAgentPromptForTest(input: {
   );
 }
 
-function toolCallCommentary(name: string): string | undefined {
-  if (
-    name === "upsert_generated_view"
-    || name === "update_selected_generated_view"
-    || name.endsWith("_upsert_generated_view")
-  ) {
-    return "正在更新主画布。";
-  }
-  if (name === "remove_generated_view") return "正在移出主画布内容。";
-  switch (name) {
-    case "web_search":
-      return "正在搜索和核对资料。";
-    case "bash":
-      return "正在做只读检查。";
-    case "list_orchestrations":
-      return "正在查看可用的 DAG 编排。";
-    case "list_skills":
-    case "read_skill":
-      return "正在加载 HomeRail Skill。";
-    case "list_dag_patterns":
-    case "get_dag_pattern":
-      return "正在选择合适的 DAG 模式。";
-    case "instantiate_dag_pattern":
-      return "正在生成并同步 DAG 模式。";
-    case "list_dag_approvals":
-    case "list_dag_triggers":
-    case "get_dag_state":
-      return "正在读取 DAG 运行时状态。";
-    case "fire_dag_event":
-    case "set_dag_state":
-      return "正在更新 DAG 运行时状态。";
-    case "get_dag_schema":
-      return "正在读取 DAG 规范。";
-    case "validate_dag_workflow":
-      return "正在验证 DAG 定义。";
-    case "sync_dag_workflow":
-      return "正在保存 DAG 定义。";
-    case "create_and_run":
-      return "正在启动 DAG。";
-    case "invoke_run":
-      return "正在推进 DAG。";
-    case "get_run_status":
-      return "正在查询 DAG 状态。";
-    case "create_change":
-      return "正在创建变更记录。";
-    case "run_shell_command":
-      return "正在做只读检查。";
-    default:
-      return undefined;
-  }
-}
-
-export function _toolCallCommentaryForTest(name: string): string | undefined {
-  return toolCallCommentary(name);
-}
-
 function compactDeltas(parts: string[]): string {
   return parts.join("").trim();
 }
@@ -1510,14 +1454,12 @@ function buildHostCodexManagerAgentResult(
   voiceSystemContract: { prompt: string; source: string } | undefined,
   texts: string[],
   commentaryTexts: string[],
-  toolCommentaryTexts: string[],
   toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }>,
   toolResults: Array<{ tool_use_id: string; content: string; is_error?: boolean }>,
 ): Record<string, unknown> {
   const config = input.agent_config;
   const finalText = state.finalNotes.at(-1) || compactDeltas(texts) || "Manager Agent turn completed.";
   const commentary = [
-    ...toolCommentaryTexts,
     ...state.voiceSurface.commentaryTexts,
     ...(compactDeltas(commentaryTexts) ? [compactDeltas(commentaryTexts)] : []),
   ];
@@ -1596,7 +1538,6 @@ async function* runHostCodexManagerAgentTurnEvents(
   const toolResults: Array<{ tool_use_id: string; content: string; is_error?: boolean }> = [];
   const texts: string[] = [];
   const commentaryTexts: string[] = [];
-  const toolCommentaryTexts: string[] = [];
   let emittedVoiceSurfaceCommentaryCount = 0;
   const abortController = new AbortController();
   const turnTimeoutMs = managerAgentTurnTimeoutMs();
@@ -1631,11 +1572,6 @@ async function* runHostCodexManagerAgentTurnEvents(
         commentaryTexts.push(event.text);
       } else if (event.type === "tool_use") {
         toolCalls.push({ id: event.id, name: event.name, input: event.input });
-        const commentary = toolCallCommentary(event.name);
-        if (commentary && !toolCommentaryTexts.includes(commentary)) {
-          toolCommentaryTexts.push(commentary);
-          yield { type: "commentary", text: commentary, source: "tool" };
-        }
       } else if (event.type === "tool_result") {
         toolResults.push({ tool_use_id: event.tool_use_id, content: event.content, is_error: event.is_error });
         const newSurfaceCommentary = state.voiceSurface.commentaryTexts.slice(emittedVoiceSurfaceCommentaryCount);
@@ -1664,7 +1600,6 @@ async function* runHostCodexManagerAgentTurnEvents(
       voiceSystemContract,
       texts,
       commentaryTexts,
-      toolCommentaryTexts,
       toolCalls,
       toolResults,
     ),
