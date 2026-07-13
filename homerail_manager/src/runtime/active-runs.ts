@@ -2388,7 +2388,12 @@ export function dispatchReadyNodes(
     const node = run.dagRun.graph.nodes.find((n) => n.node_id === nodeId);
     if (!node) continue;
     if (_isGatewayNode(node)) {
-      if (_executeGatewayNode(runId, run, node)) count++;
+      try {
+        if (_executeGatewayNode(runId, run, node)) count++;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failActiveRun(runId, nodeId, `gateway execution failed: ${message}`);
+      }
       continue;
     }
 

@@ -232,8 +232,8 @@ const reviewNormalizerCommand = (
     "const last=(i,k)=>Array.isArray(i[k])?i[k].at(-1):undefined;",
     "const text=v=>{if(typeof v==='string')return v;try{return JSON.stringify(v)}catch{return String(v)}};",
     "process.stdin.on('data',d=>s+=d).on('end',()=>{",
-    "const i=JSON.parse(s),candidate=last(i,'success')??last(i,'failure');",
-    "if(candidate&&typeof candidate==='object'&&candidate.reviewer_id===reviewer){process.stdout.write(JSON.stringify(candidate));return}",
+    "const i=JSON.parse(s),success=last(i,'success'),candidate=success??last(i,'failure');",
+    "if(success&&typeof success==='object'&&success.reviewer_id===reviewer){process.stdout.write(JSON.stringify(success));return}",
     "const request=last(i,'request'),revisionCheck=last(i,'revision_check'),expected=request?.target?.revision;",
     "const checked=String(revisionCheck?.value??revisionCheck?.stdout??'').trim();",
     "const tested=typeof expected==='string'&&expected.length>0?expected:'unavailable';",
@@ -263,7 +263,7 @@ export function createIssueDiagnosisPattern(
 
   return {
     id: "issue-diagnosis",
-    version: "2.21.0",
+    version: "2.22.0",
     name: "Issue Diagnosis",
     summary: "Diagnose one issue through three independent investigations, explicit arbitration, and unanimous verification.",
     intent: "Produce a revision-pinned diagnostic artifact whose scenario match, evidence, and alternatives survive independent consensus before any platform write-back.",

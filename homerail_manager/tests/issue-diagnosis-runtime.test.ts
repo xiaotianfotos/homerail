@@ -355,6 +355,48 @@ describe("issue-diagnosis pattern runtime", () => {
     expect(getActiveRun(runId)?.dagRun.nodeStates.get("review_history")).toBe("RUNNING");
   });
 
+  it("does not trust a contract-free failure handoff that resembles an independent review", () => {
+    const runId = "issue-diagnosis-malformed-reviewer-failure";
+    const dispatcher = prepareDiagnosisRun(runId);
+
+    handoffActiveRun(runId, "review_reproduction", "reviewed", reproductionReview);
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(2);
+
+    handoffActiveRun(runId, "review_dataflow", "failed", {
+      reviewer_id: "dataflow",
+      tested_revision: revision,
+      issue_match: "exact",
+      reproduction: "inconclusive",
+      hypothesis: { summary: "not a string" },
+      root_cause: { status: "unknown", explanation: "incomplete", evidence_ids: [] },
+      findings: [],
+      evidence: [],
+      tests: [],
+      limitations: [],
+      confidence: "low",
+    });
+
+    expect(() => dispatchReadyNodes(runId, dispatcher)).not.toThrow();
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("normalize_dataflow")).toBe("COMPLETED");
+    expect(loadRunSnapshot(runId)?.handoffs.find((handoff) => handoff.fromNode === "normalize_dataflow")?.content)
+      .toMatchObject({
+        reviewer_id: "dataflow",
+        tested_revision: revision,
+        issue_match: "unknown",
+        reproduction: "inconclusive",
+        hypothesis: "The dataflow reviewer did not produce a contract-valid investigation result.",
+        root_cause: { status: "unknown", evidence_ids: ["dataflow-e001"] },
+        evidence: [{
+          id: "dataflow-e001",
+          type: "runtime",
+          locator: "dag:review_dataflow",
+        }],
+        confidence: "low",
+      });
+    expect(getActiveRun(runId)?.status).toBe("active");
+  });
+
   it("publishes the arbitrated report after unanimous verification", async () => {
     const runId = "issue-diagnosis-pass";
     const { dispatcher, votes } = runToConsensus(runId, {

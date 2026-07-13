@@ -7,6 +7,7 @@ import type { DAGDispatcher, DispatchEnvelope, DispatchResult } from "../src/orc
 import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
+import { parseWorkflowSource } from "../src/orchestration/workflow-spec-v1.js";
 import { _clearListeners } from "../src/events/bus.js";
 import { closeDb } from "../src/persistence/db.js";
 import { _clearAllPersistence } from "../src/persistence/store.js";
@@ -331,6 +332,48 @@ describe("DAG gateway nodes", () => {
     const run = getActiveRun("run-condition-json-string");
     expect(run?.dagRun.nodeStates.get("good")).toBe("READY");
     expect(run?.dagRun.nodeStates.get("bad")).toBe("SKIPPED");
+  });
+
+  it("contains gateway output contract violations to the affected run", () => {
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: gateway-contract-containment, name: Gateway contract containment }
+spec:
+  contracts:
+    Text: { type: string }
+  agents:
+    worker: { system: Produce one result. }
+  nodes:
+    start:
+      kind: agent
+      agent: worker
+      outputs: { done: {} }
+    gate:
+      kind: condition
+      inputs: { decision: {} }
+      outputs: { approved: { contract: Text } }
+      config:
+        field: status
+        routes: { pass: approved }
+        default: approved
+    accepted:
+      kind: terminal
+      outcome: success
+      inputs: { result: { contract: Text } }
+  edges:
+    - { from: start.done, to: gate.decision }
+    - { from: gate.approved, to: accepted.result }
+`);
+    createActiveRun("run-gateway-contract-containment", parsed);
+    handoffActiveRun("run-gateway-contract-containment", "start", "done", { status: "pass" });
+
+    expect(() => dispatchReadyNodes(
+      "run-gateway-contract-containment",
+      new FakeDAGDispatcher(),
+    )).not.toThrow();
+    expect(getActiveRun("run-gateway-contract-containment")).toMatchObject({ status: "failed" });
+    expect(getActiveRun("run-gateway-contract-containment")?.dagRun.nodeStates.get("gate")).toBe("FAILED");
   });
 
   it("iterates a JSON-string item array emitted by a model-backed loader", () => {
