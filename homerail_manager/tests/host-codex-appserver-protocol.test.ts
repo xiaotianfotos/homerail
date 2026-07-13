@@ -84,5 +84,7 @@ describe("Host Codex app-server protocol params", () => {
       .toBe("正在更新主画布。");
     expect(_toolCallCommentaryForTest("update_selected_generated_view"))
       .toBe("正在更新主画布。");
+    expect(_toolCallCommentaryForTest("remove_generated_view"))
+      .toBe("正在移出主画布内容。");
   });
 });

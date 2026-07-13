@@ -309,8 +309,16 @@ describe("Manager Agent deterministic result envelope parity", () => {
       expect(selectedTool.input_schema.required).not.toContain("id");
       expect(selectedTool.input_schema.required).not.toContain("view");
       await selectedTool.handler(input);
+      const removed = await requireTool(tools, "remove_generated_view").handler({
+        id: "com.homerail.core:news-summary",
+      });
+      expect(removed).toEqual({ content: [{ type: "text", text: "generated view queued for removal" }] });
+      await expect(requireTool(tools, "remove_generated_view").handler({
+        id: "com.homerail.core:not-in-context",
+      })).rejects.toThrow(/not removable in the current canvas context/);
     }
     expect(hostState.voiceSurface).toEqual(workerState.voiceSurface);
+    expect(hostState.voiceSurface.removeWidgetIds).toEqual(["com.homerail.core:news-summary"]);
     expect(hostState.voiceSurface.pluginProjections[0]).toMatchObject({
       projection: {
         node: {

@@ -25,6 +25,7 @@ import { _clearNodes } from "../src/node/registry.js";
 import { managerAgentHostPort, registerFakeDockerNode } from "./helpers/fake-manager-agent-node.js";
 import type { CodexModelCatalog } from "../src/server/codex-models.js";
 import { applyVoiceCanonicalProjectionPatch } from "../src/generative-ui/canonical-voice-service.js";
+import { persistentGenerativeUiDocumentService } from "../src/generative-ui/shadow-service.js";
 
 const TEST_CODEX_MODEL_CATALOG: CodexModelCatalog = {
   binary: "codex",
@@ -1130,6 +1131,87 @@ describe("voice bootstrap routes", () => {
         selected: true,
         content: { data: { items: [{ title: "News one" }, { title: "News two" }] } },
       }],
+    });
+  });
+
+  it("removes a canonical generated-view Block returned by the Manager Agent", async () => {
+    _setHostCodexManagerAgentRunnerForTest(async (input) => ({
+      text: "临时卡已移除",
+      spoken_text: "临时卡已移除",
+      session_id: input.session_id || "host-session-remove-generated-view",
+      run_id: null,
+      run_ids: [],
+      objective: { required: false, satisfied: true, tool_calls: [] },
+      tool_calls: [{
+        id: "remove-1",
+        name: "remove_generated_view",
+        input: { id: "com.homerail.core:motion-check" },
+      }],
+      tool_results: [{ tool_use_id: "remove-1", content: "generated view queued for removal" }],
+      commentary_texts: [],
+      voice_surface: {
+        progress: null,
+        task_draft: null,
+        widgets: [],
+        remove_widget_ids: ["com.homerail.core:motion-check"],
+      },
+      worker_id: "host-codex",
+      container_name: null,
+    }));
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.5",
+        reasoning_effort: "low",
+        generative_ui_mode: "prefer",
+      }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    const scope = { type: "voice_session", id: createdBody.data.session_id } as const;
+    applyVoiceCanonicalProjectionPatch({
+      session_id: createdBody.data.session_id,
+      patch: {
+        base_revision: 0,
+        upsert: [{
+          ir_version: 1,
+          id: "com.homerail.core:motion-check",
+          kind: "com.homerail.core/generated_view",
+          kind_version: 1,
+          owner: { id: "com.homerail.core", version: "0.1.7" },
+          surface: "result",
+          importance: "secondary",
+          content: { data: { title: "Animation check" } },
+          presentation: { density: "glance", canvas_size: "1x1" },
+          lifecycle: { persistence: "session" },
+          fallback: { title: "Animation check", summary: "Temporary" },
+        }],
+        remove_ids: [],
+      },
+      created_at: "2026-07-13T00:00:00.000Z",
+    });
+
+    const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: "移除临时卡",
+        selected_node_id: "com.homerail.core:motion-check",
+      }),
+    });
+
+    expect(turn.status).toBe(200);
+    expect(persistentGenerativeUiDocumentService.findActiveForScope(scope, "canonical")).toMatchObject({
+      revision: 2,
+      nodes: [],
     });
   });
 

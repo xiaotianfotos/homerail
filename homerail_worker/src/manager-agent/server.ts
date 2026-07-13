@@ -842,9 +842,12 @@ export function createManagerTools(state: {
     },
   ];
   if (responseMode === "voice") {
+    const canonicalGeneratedViewToolAvailable = Boolean(
+      pluginContext?.tools.some((tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view"),
+    );
     const canonicalGeneratedViewAvailable = Boolean(
       pluginToolTurnToken
-      && pluginContext?.tools.some((tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view"),
+      && canonicalGeneratedViewToolAvailable,
     );
     const addWidgetTool = (name: ManagerAgentToolName, widgetType: string): void => {
       tools.push({
@@ -888,6 +891,33 @@ export function createManagerTools(state: {
         return { content: [{ type: "text", text: short(body, 4000) }] };
       },
     });
+    if (canonicalGeneratedViewToolAvailable && canvasContext) {
+      const removableNodeIds = new Set(
+        canvasContext.nodes
+          .filter((node) => node.kind === "com.homerail.core/generated_view")
+          .map((node) => node.id),
+      );
+      if (removableNodeIds.size) {
+        tools.push({
+          name: "remove_generated_view",
+          description: "Remove one existing generated-view Block from the current authoritative HomeRail canvas. The id must be present in Current HomeRail canvas state. This does not delete referenced Artifacts.",
+          input_schema: {
+            type: "object",
+            properties: { id: { type: "string" } },
+            required: ["id"],
+            additionalProperties: false,
+          },
+          async handler(args) {
+            const id = String(args.id || "").trim();
+            if (!removableNodeIds.has(id)) {
+              throw new Error(`Generated-view Block is not removable in the current canvas context: ${id || "<empty>"}`);
+            }
+            if (!state.voiceSurface.removeWidgetIds.includes(id)) state.voiceSurface.removeWidgetIds.push(id);
+            return { content: [{ type: "text", text: "generated view queued for removal" }] };
+          },
+        });
+      }
+    }
     if (!canonicalGeneratedViewAvailable) {
       tools.push(...createManagerAgentWidgetFileTools({
         adapter: createHttpWidgetFileToolAdapter(),

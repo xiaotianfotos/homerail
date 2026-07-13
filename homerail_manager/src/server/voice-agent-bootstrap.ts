@@ -1186,9 +1186,20 @@ function applyVoiceSurfaceFromResult(
     ...(Array.isArray(surface?.remove_widget_ids) ? surface.remove_widget_ids : []),
     ...(Array.isArray(result.remove_widget_ids) ? result.remove_widget_ids : []),
   ].map((item) => String(item || "").trim()).filter(Boolean);
+  const canonicalDocument = effectiveGenerativeUiPreferEnabled(workspace)
+    ? persistentGenerativeUiDocumentService.findActiveForScope(
+      { type: "voice_session", id: workspace.session_id },
+      "canonical",
+    )
+    : undefined;
   for (const id of removeIds) {
     removeWidget(workspace, id);
-    const removedPluginNode = Boolean(workspace.plugin_nodes?.some((node) => node.id === id));
+    const removedPluginNode = Boolean(
+      workspace.plugin_nodes?.some((node) => node.id === id)
+      || canonicalDocument?.nodes.some((node) => (
+        node.id === id && node.kind === "com.homerail.core/generated_view"
+      )),
+    );
     if (workspace.plugin_nodes) {
       workspace.plugin_nodes = workspace.plugin_nodes.filter((node) => node.id !== id);
     }

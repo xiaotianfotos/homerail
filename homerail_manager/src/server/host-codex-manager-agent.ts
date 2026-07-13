@@ -977,9 +977,12 @@ export function createManagerTools(state: {
     },
   ];
   if (responseMode === "voice") {
+    const canonicalGeneratedViewToolAvailable = Boolean(
+      pluginContext?.tools.some((tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view"),
+    );
     const canonicalGeneratedViewAvailable = Boolean(
       pluginToolTurnToken
-      && pluginContext?.tools.some((tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view"),
+      && canonicalGeneratedViewToolAvailable,
     );
     const addWidgetTool = (name: ManagerAgentToolName, widgetType: string): void => {
       tools.push({
@@ -1024,6 +1027,33 @@ export function createManagerTools(state: {
         return { content: [{ type: "text", text: short(body, 4000) }] };
       },
     });
+    if (canonicalGeneratedViewToolAvailable && canvasContext) {
+      const removableNodeIds = new Set(
+        canvasContext.nodes
+          .filter((node) => node.kind === "com.homerail.core/generated_view")
+          .map((node) => node.id),
+      );
+      if (removableNodeIds.size) {
+        tools.push({
+          name: "remove_generated_view",
+          description: "Remove one existing generated-view Block from the current authoritative HomeRail canvas. The id must be present in Current HomeRail canvas state. This does not delete referenced Artifacts.",
+          input_schema: {
+            type: "object",
+            properties: { id: { type: "string" } },
+            required: ["id"],
+            additionalProperties: false,
+          },
+          async handler(args) {
+            const id = String(args.id || "").trim();
+            if (!removableNodeIds.has(id)) {
+              throw new Error(`Generated-view Block is not removable in the current canvas context: ${id || "<empty>"}`);
+            }
+            if (!state.voiceSurface.removeWidgetIds.includes(id)) state.voiceSurface.removeWidgetIds.push(id);
+            return { content: [{ type: "text", text: "generated view queued for removal" }] };
+          },
+        });
+      }
+    }
     if (!canonicalGeneratedViewAvailable) {
       tools.push(...createManagerAgentWidgetFileTools({
         adapter: createLocalWidgetFileToolAdapter(),
@@ -1232,6 +1262,7 @@ const BUILTIN_VOICE_SYSTEM_CONTRACT = [
   "- Use real Manager tools for state-changing work. Never claim that a DAG, run, file change, generated UI update, or external action happened unless a tool result proves it.",
   "- A generated UI projection is successful only when the Tool result reports status committed. Correct failed Tool input instead of claiming success or routing around the available Tool.",
   "- When Current HomeRail canvas state contains selected_node_id and update_selected_generated_view is available, the selected generated-view Block's authoritative id, content, and reusable view are already supplied. For requests that modify that Block, call update_selected_generated_view and do not ask the user to reselect it.",
+  "- When remove_generated_view is available, use it to remove an obsolete generated-view Block by its exact id from Current HomeRail canvas state. Never route canonical Block removal through legacy Widget tools.",
   "- Before asking the user for a Block id, selected item content, or Artifact URL, inspect Current HomeRail canvas state. Its listed nodes are authoritative application context; when the needed value is present there, use it and proceed instead of asking for it again.",
   "- Use commentary for short execution progress. Persist final answers and commentary as separate channels.",
   "- Keep final spoken text short, conversational, and in Chinese unless the user asks otherwise.",
@@ -1409,6 +1440,7 @@ function toolCallCommentary(name: string): string | undefined {
   ) {
     return "正在更新主画布。";
   }
+  if (name === "remove_generated_view") return "正在移出主画布内容。";
   switch (name) {
     case "web_search":
       return "正在搜索和核对资料。";
