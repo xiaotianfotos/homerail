@@ -21,6 +21,19 @@ async function close(server: http.Server): Promise<void> {
 function makeManagerApiServer(createAndRunBodies: Record<string, unknown>[] = []): http.Server {
   return http.createServer((req, res) => {
     const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    if (req.method === "GET" && pathname === "/api/manage/orchestrations") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          orchestrations: [
+            { id: "public-two-node", path: "assets/orchestrations/public-two-node.yaml.template" },
+            { id: "public-dev-5node", path: "assets/orchestrations/public-dev-5node.yaml.template" },
+          ],
+        },
+      }));
+      return;
+    }
     if (req.method === "POST" && pathname === "/api/runs/create-and-run") {
       let body = "";
       req.on("data", (chunk) => { body += chunk; });
@@ -447,6 +460,42 @@ describe("manager-agent server", () => {
       expect(body.run_id).toBe("run-test-123");
       expect(body.tool_calls).toContainEqual(expect.objectContaining({ name: "create_and_run" }));
       expect(body.tool_calls).toContainEqual(expect.objectContaining({ name: "finish" }));
+    } finally {
+      await close(server);
+      await close(managerApi);
+    }
+  });
+
+  it("falls back to the Manager template catalog when the workspace has no orchestrations", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    // No writeOrchestrationFiles: the workspace is empty, as in container placement
+    // where the repo assets are not mounted.
+    const agent = new ListOrchestrationsAgent();
+    registerAgentBackend("manager-agent-list-orchestrations-fallback-test", () => agent);
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const managerApi = makeManagerApiServer();
+    const managerPort = await listen(managerApi);
+    vi.stubEnv("MANAGER_REST_URL", `http://127.0.0.1:${managerPort}/api`);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "列出可用 DAG 编排模板",
+          agent_config: { agent_type: "manager-agent-list-orchestrations-fallback-test", model: "test-model" },
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(agent.observed).toContain("assets/orchestrations/public-two-node.yaml.template");
+      expect(agent.observed).toContain("assets/orchestrations/public-dev-5node.yaml.template");
     } finally {
       await close(server);
       await close(managerApi);

@@ -345,19 +345,52 @@ function createManagerTools(state: {
     },
     {
       name: "list_orchestrations",
-      description: "List repo-local orchestration YAML templates available to create runs.",
+      description: "List orchestration YAML templates available to create runs (paths are valid create_and_run yamlPath values).",
       input_schema: { type: "object", properties: {}, additionalProperties: false },
       async handler() {
         const dir = path.join(projectWorkspace(), "assets", "orchestrations");
         const files = fs.existsSync(dir)
-          ? fs.readdirSync(dir).filter((name) => name.endsWith(".yaml") || name.endsWith(".yml")).sort()
+          ? fs.readdirSync(dir)
+            .filter((name) => name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".yaml.template"))
+            .sort()
+            .map((name) => path.join("assets", "orchestrations", name))
           : [];
+        if (files.length > 0) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ root: "assets/orchestrations", files }),
+            }],
+          };
+        }
+        // Container placement: the repo assets are not mounted into the
+        // Manager Agent workspace, so fall back to the Manager's template
+        // catalog. Returned paths are valid create_and_run yamlPath values.
+        const body = await requestManager("/manage/orchestrations") as Record<string, unknown>;
+        const data = body.data as Record<string, unknown> | undefined;
+        const orchestrations = Array.isArray(data?.orchestrations) ? data.orchestrations : [];
+        const entries = orchestrations
+          .map((item) => {
+            if (!item || typeof item !== "object") return null;
+            const record = item as { path?: unknown; name?: unknown; description?: unknown; node_count?: unknown };
+            const yamlPath = String(record.path ?? "");
+            if (!yamlPath) return null;
+            return {
+              path: yamlPath,
+              name: String(record.name ?? ""),
+              description: String(record.description ?? ""),
+              node_count: typeof record.node_count === "number" ? record.node_count : undefined,
+            };
+          })
+          .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+          .sort((a, b) => a.path.localeCompare(b.path));
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
               root: "assets/orchestrations",
-              files,
+              files: entries.map((entry) => entry.path),
+              templates: entries,
             }),
           }],
         };

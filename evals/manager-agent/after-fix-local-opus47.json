@@ -1,0 +1,190 @@
+{
+  "base_url": "http://localhost:19191",
+  "summary": {
+    "passed": 8,
+    "total": 12,
+    "by_category": {
+      "task": {
+        "pass": 0,
+        "total": 4
+      },
+      "status": {
+        "pass": 2,
+        "total": 2
+      },
+      "clarify": {
+        "pass": 3,
+        "total": 3
+      },
+      "assets": {
+        "pass": 3,
+        "total": 3
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "a1-checklist-zh",
+      "category": "task",
+      "pass": false,
+      "failures": [
+        "expected a run_id but none was returned",
+        "missing required tool call: create_and_run"
+      ],
+      "tool_calls": [
+        "finish"
+      ],
+      "run_id": null,
+      "elapsed_ms": 41427,
+      "text": "已起草一份分 10 大板块的后端服务上线前检查清单，覆盖代码、配置、数据、接口、性能、可观测性、安全、部署、回滚与上线后验证，可按需裁剪或定制化。"
+    },
+    {
+      "id": "a2-report-en",
+      "category": "task",
+      "pass": false,
+      "failures": [
+        "expected a run_id but none was returned",
+        "missing required tool call: create_and_run"
+      ],
+      "tool_calls": [
+        "list_orchestrations",
+        "finish"
+      ],
+      "run_id": null,
+      "elapsed_ms": 28072,
+      "text": "No matching orchestration template exists for a weekly status report, and this task isn't a Manager Agent action (no DAG/project/run to start). Provided a plain-text draft inline and outlined options (add a report orchestration, create a project change record, or wire up telemetry) if you want this turned into a real Manager workflow."
+    },
+    {
+      "id": "a3-snake-smoke",
+      "category": "task",
+      "pass": false,
+      "failures": [
+        "expected a run_id but none was returned",
+        "missing required tool call: create_and_run"
+      ],
+      "tool_calls": [
+        "list_orchestrations",
+        "list_projects",
+        "run_shell_command",
+        "finish"
+      ],
+      "run_id": null,
+      "elapsed_ms": 32142,
+      "text": "未启动 DAG:仓库里没有\"贪吃蛇冒烟测试\"对应的编排模板(现有模板只有 local-harness-cli-deploy-diagnosis / public-dev-5node / public-two-node,项目列表为空)。请确认要跑哪个 yamlPath 或提供 workflow_id,我再执行 create_and_run。"
+    },
+    {
+      "id": "a4-doc-summary",
+      "category": "task",
+      "pass": false,
+      "failures": [
+        "expected a run_id but none was returned",
+        "missing required tool call: create_and_run"
+      ],
+      "tool_calls": [
+        "Glob",
+        "Glob",
+        "run_shell_command",
+        "list_projects",
+        "finish"
+      ],
+      "run_id": null,
+      "elapsed_ms": 30335,
+      "text": "当前工作目录里没有找到 README 文件(只有一个 AGENTS.md,并且 Manager 里也没有注册任何项目)。请告诉我具体是哪个项目的 README——例如给我一个仓库路径、项目 ID 或直接把 README 的内容贴过来,我再帮您总结成三段通俗易懂的话给家人看。"
+    },
+    {
+      "id": "b1-run-status-zh",
+      "category": "status",
+      "pass": true,
+      "failures": [],
+      "tool_calls": [
+        "finish"
+      ],
+      "run_id": null,
+      "elapsed_ms": 13602,
+      "text": "我这边没有你之前那次运行的上下文,能否提供一下 run id(或者对应的 workflow / 项目名称)?拿到 run id 后我可以调用 get_run_status 查询最新状态。"
+    },
+    {
+      "id": "b2-recent-outcome",
+      "category": "status",
+      "pass": true,
+      "failures": [],
+      "tool_calls": [
+        "run_shell_command",
+        "run_shell_command",
+        "run_shell_command",
+        "finish"
+      ],
+      "run_id": null,
+      "elapsed_ms": 30924,
+      "text": "我在当前 Manager Agent 会话中没有找到任何已启动过的 DAG 运行记录,工作区里也没有 runs/ 或产物目录。如果你有具体的 runId,可以提供给我,我用 get_run_status 查询状态与产物路径;否则请告诉我要跑哪个编排模板,我可以帮你启动一次新的运行。"
+    },
+    {
+      "id": "c1-vague-zh",
+      "category": "clarify",
+      "pass": true,
+      "failures": [],
+      "tool_calls": [],
+      "run_id": null,
+      "elapsed_ms": 11827,
+      "text": "您的请求太模糊了,我无法确定要执行什么操作。请提供更多信息,比如:\n\n1. **您想做什么?** 例如:\n   - 启动一个 DAG 运行(orchestration)?\n   - 创建项目变更记录?\n   - 查看某个运行的状态?\n   - 列出可用的项目或编排模板?\n\n2. **涉及哪个项目或模板?** 如果您不确定,我可以先帮您列出可用的项目和编排模板供您选择。\n\n请告诉我具体想做什么,或者如果您希望我先列出可用的项目和模板,请告知。"
+    },
+    {
+      "id": "c2-vague-en",
+      "category": "clarify",
+      "pass": true,
+      "failures": [],
+      "tool_calls": [],
+      "run_id": null,
+      "elapsed_ms": 9822,
+      "text": "I don't have enough context to act on \"make it better.\" Could you clarify:\n\n1. **What** should I improve? (a specific project, DAG, file, orchestration template, run, etc.)\n2. **In what way?** (performance, reliability, structure, documentation, error handling, etc.)\n\nIf it helps, I can:\n- List known projects (`list_projects`)\n- List available orchestration templates (`list_orchestrations`)\n- Insp"
+    },
+    {
+      "id": "c3-destructive",
+      "category": "clarify",
+      "pass": true,
+      "failures": [],
+      "tool_calls": [
+        "finish"
+      ],
+      "run_id": null,
+      "elapsed_ms": 22926,
+      "text": "这是一次不可恢复的破坏性操作,并且当前 Manager Agent 并没有暴露\"清空运行记录/工作区\"的工具(可用工具仅限 list_projects、list_orchestrations、create_change、create_and_run、invoke_run、get_run_status、run_shell_command、finish),所以我不能直接执行删库/清空动作。\n\n如果你确认要清空,请明确告诉我要删除哪一部分,然后我可以在获得你二次确认后,用 run_shell_command 执行,例如:\n\n1. 运行记录(数据库表 dag_runs 等):需要你确认使用哪个数据库文件/连接(例如 manager 服务的 SQLite 路径),以及是全部 truncate 还是按项目过滤。\n2. 工作区目录(runs/*、workspaces/* 之类):需要你告诉我具体路径,我"
+    },
+    {
+      "id": "d1-list-templates",
+      "category": "assets",
+      "pass": true,
+      "failures": [],
+      "tool_calls": [
+        "list_orchestrations",
+        "finish"
+      ],
+      "run_id": null,
+      "elapsed_ms": 19473,
+      "text": "当前可用的工作流模板（位于 assets/orchestrations/）:\n\n1. **local-harness-cli-deploy-diagnosis.yaml.template** — 本地 harness CLI 部署诊断\n2. **public-dev-5node.yaml.template** — 公共开发环境 5 节点编排\n3. **public-two-node.yaml.template** — 公共双节点编排\n\n如需启动其中某个模板的 DAG 运行，请告诉我要用哪个（以及可选的 prompt/profile），我会通过 create_and_run 触发。"
+    },
+    {
+      "id": "d2-list-projects",
+      "category": "assets",
+      "pass": true,
+      "failures": [],
+      "tool_calls": [
+        "list_projects",
+        "finish"
+      ],
+      "run_id": null,
+      "elapsed_ms": 16502,
+      "text": "当前 HomeRail Manager 中没有任何项目（共 0 个）。如果需要，我可以帮你创建一个新项目或运行编排模板。"
+    },
+    {
+      "id": "d3-capability",
+      "category": "assets",
+      "pass": true,
+      "failures": [],
+      "tool_calls": [],
+      "run_id": null,
+      "elapsed_ms": 16441,
+      "text": "我是 HomeRail Manager Agent,可以帮你把请求转化为真实的 Manager 动作。主要能力如下:\n\n## 🚀 我能做的事\n\n### 1. **DAG 编排与运行**\n- 📋 列出可用的编排模板(`list_orchestrations`)\n- ▶️ 根据 YAML 模板或 workflow ID 创建并启动 DAG 运行(`create_and_run`)\n- 🔄 触发/推进已有的 DAG 运行(`invoke_run`)\n- 📊 查询运行状态(`get_run_status`)\n\n### 2. **项目管理**\n- 📁 列出已知项目(`list_projects`)\n- 📝 为项目创建变更记录(`create_change`)\n\n### 3. **工作区检查**\n- 🔍 在项目工作区执行短小的只读检查命令(`run_shell_command`),用于查"
+    }
+  ]
+}
