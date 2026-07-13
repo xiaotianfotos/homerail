@@ -122,6 +122,73 @@ edges:
     unsubscribe();
   });
 
+  it("can hand off only a successfully parsed command value", () => {
+    const parsed = parseWorkflowSource(yaml("command-value-payload", `
+contracts:
+  Result:
+    type: object
+    additionalProperties: false
+    required: [verdict]
+    properties: { verdict: { const: pass } }
+agents: {}
+nodes:
+  check:
+    kind: command
+    outputs: { passed: { contract: Result } }
+    config:
+      command: [node, -e, "process.stdout.write(JSON.stringify({verdict:'pass'}))"]
+      timeout_ms: 5000
+      success_port: passed
+      failure_port: passed
+      parse_stdout: json
+      result_payload: value
+  done: { kind: terminal, outcome: success, inputs: { result: { contract: Result } } }
+edges:
+  - { from: check.passed, to: done.result }
+`));
+    const executor = new GraphExecutor(new FakeDAGDispatcher());
+    executor.createRun("command-value-payload-run", parsed);
+
+    expect(executor.tick("command-value-payload-run")).toBe(1);
+    expect(getActiveRun("command-value-payload-run")?.status).toBe("completed");
+    expect(loadRunSnapshot("command-value-payload-run")?.handoffs.find((handoff) => handoff.fromNode === "check")?.content)
+      .toEqual({ verdict: "pass" });
+  });
+
+  it("preserves the command evidence envelope when value projection fails", () => {
+    const parsed = parseWorkflowSource(yaml("command-value-failure", `
+agents: {}
+nodes:
+  check:
+    kind: command
+    outputs: { passed: {}, failed: {} }
+    config:
+      command: [node, -e, "process.stdout.write(JSON.stringify({verdict:'unknown'}));process.exit(7)"]
+      timeout_ms: 5000
+      success_port: passed
+      failure_port: failed
+      parse_stdout: json
+      result_payload: value
+  done: { kind: terminal, outcome: success, inputs: { result: {} } }
+  failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+edges:
+  - { from: check.passed, to: done.result }
+  - { from: check.failed, to: failed.result, condition: on_failure }
+`));
+    const executor = new GraphExecutor(new FakeDAGDispatcher());
+    executor.createRun("command-value-failure-run", parsed);
+
+    expect(executor.tick("command-value-failure-run")).toBe(1);
+    expect(getActiveRun("command-value-failure-run")?.status).toBe("failed");
+    expect(loadRunSnapshot("command-value-failure-run")?.handoffs.find((handoff) => handoff.fromNode === "check")?.content)
+      .toMatchObject({
+        ok: false,
+        exit_code: 7,
+        value: { verdict: "unknown" },
+        parse_failed: false,
+      });
+  });
+
   it("selects an authoritative command input while other ports gate readiness", () => {
     const parsed = parseWorkflowSource(yaml("command-selected-input", `
 agents:

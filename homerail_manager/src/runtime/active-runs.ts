@@ -1732,7 +1732,7 @@ function _commandGatewayCwd(
   }
 }
 
-function _commandGatewayResult(run: ActiveRun, node: DAGGraphNode): { port: string; payload: Record<string, unknown> } {
+function _commandGatewayResult(run: ActiveRun, node: DAGGraphNode): { port: string; payload: unknown } {
   const config = node.gateway_config;
   const inputs = _nodeInputs(run.dagRun, node.node_id);
   const selectedInputs = config?.input ? inputs[config.input] : undefined;
@@ -1814,7 +1814,11 @@ function _commandGatewayResult(run: ActiveRun, node: DAGGraphNode): { port: stri
   };
   const telemetry = redactTelemetry(payload) as Record<string, unknown>;
   emit("dag:deterministic_command", { runId: run.runId, nodeId: node.node_id, ...telemetry });
-  return { port: payload.ok ? config?.success_port || "passed" : config?.failure_port || "failed", payload };
+  const handoffPayload = payload.ok && config?.result_payload === "value" ? value : payload;
+  return {
+    port: payload.ok ? config?.success_port || "passed" : config?.failure_port || "failed",
+    payload: handoffPayload,
+  };
 }
 
 function _stateInputValue(run: ActiveRun, node: DAGGraphNode): unknown {

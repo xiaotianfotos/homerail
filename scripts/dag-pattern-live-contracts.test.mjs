@@ -125,6 +125,9 @@ test("requires a complete independently verified issue diagnosis", () => {
     { from_node: "verify_adversarial", port: "voted", content: votes[2] },
     { from_node: "consensus", port: "checked", content: verification },
     { from_node: "consensus_gate", port: "accepted", content: verification },
+    { from_node: "normalize_reproduction", port: "reviewed", content: { reviewer_id: "reproduction" } },
+    { from_node: "normalize_dataflow", port: "reviewed", content: { reviewer_id: "dataflow" } },
+    { from_node: "normalize_history", port: "reviewed", content: { reviewer_id: "history" } },
   ];
   assert.deepEqual(semanticFailures("issue-diagnosis", handoffs), []);
   const conservativeHandoffs = handoffs.map((handoff) => handoff.from_node === "arbitrate"
@@ -139,7 +142,7 @@ test("requires a complete independently verified issue diagnosis", () => {
       }
     : handoff);
   conservativeHandoffs.push({
-    from_node: "review_reproduction",
+    from_node: "normalize_reproduction",
     port: "reviewed",
     content: {
       reviewer_id: "reproduction",

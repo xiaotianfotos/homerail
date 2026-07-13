@@ -124,6 +124,9 @@ export const semanticRequirements = {
   "issue-diagnosis": [
     { node: "checkout_repository", port: "checked" },
     { node: "match_repository_revision", port: "checked" },
+    { node: "normalize_reproduction", port: "reviewed" },
+    { node: "normalize_dataflow", port: "reviewed" },
+    { node: "normalize_history", port: "reviewed" },
     { node: "arbitrate", port: "reported" },
     { node: "verify_scenario", port: "voted" },
     { node: "verify_evidence", port: "voted" },
@@ -237,7 +240,7 @@ export function semanticFailures(patternId, handoffs, context = {}) {
       if (!Array.isArray(report?.[field])) failures.push(`issue diagnosis report is missing ${field}`);
     }
     if (report?.outcome === "insufficient_evidence") {
-      const reviews = ["review_reproduction", "review_dataflow", "review_history"]
+      const reviews = ["normalize_reproduction", "normalize_dataflow", "normalize_history"]
         .map((node) => objectValue(parseContent(matchingHandoffs(handoffs, node, "reviewed").at(-1)?.content)));
       const exactNegativeReview = reviews.some((review) =>
         review?.issue_match === "exact" &&

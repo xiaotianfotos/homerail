@@ -70,6 +70,9 @@ exit codes, optional stdin, and JSON/number parsing are explicit. Use command
 nodes for checks, metric measurement, and compensation. The default allowlist
 is empty because commands run in the Manager host trust boundary. A dynamic
 `command_field` additionally requires `HOMERAIL_DAG_ALLOW_DYNAMIC_COMMANDS=true`.
+By default the handoff contains the complete command evidence envelope. Set
+`result_payload: value` to hand off only the successfully parsed stdout value;
+command failures still preserve and route the full diagnostic envelope.
 When a command node has multiple input ports, `config.input` selects the
 authoritative port used by `command_field` and `stdin_field`; other inputs can
 act as deterministic readiness gates without being able to replace the command.
@@ -198,7 +201,12 @@ path for focused tests. After that sole writer finishes, the caller-to-server
 data-flow and regression-history reviewers run in parallel against read-only
 `source`. They receive only completion dependencies, never the reproduction
 conclusion, so the reviews remain independent without cross-reviewer snapshot
-races; no node writes back to the remote repository.
+races; no node writes back to the remote repository. Each reviewer result then
+passes through a deterministic normalizer. A valid review is preserved exactly;
+if one model exhausts correction attempts or fails its output contract, the
+normalizer emits a bounded `inconclusive` review with runtime failure evidence.
+The other reviewers can therefore continue into arbitration without hiding the
+failed role or leaving the run permanently active.
 An arbiter may report
 unanimous agreement, a non-contradictory majority, a dispute, or insufficient
 evidence, but cannot add evidence. Scenario-match, evidence-integrity, and

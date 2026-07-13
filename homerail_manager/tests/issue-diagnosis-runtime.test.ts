@@ -12,6 +12,7 @@ import {
   _clearActiveRuns,
   createActiveRun,
   dispatchReadyNodes,
+  failActiveRun,
   getActiveRun,
   handoffActiveRun,
 } from "../src/runtime/active-runs.js";
@@ -231,10 +232,7 @@ function vote(reviewerId: "scenario" | "evidence" | "adversarial", verdict: "pas
   };
 }
 
-function runToConsensus(runId: string, repositoryPreparation = preparation): {
-  dispatcher: FakeDAGDispatcher;
-  votes: ReturnType<typeof vote>[];
-} {
+function prepareDiagnosisRun(runId: string, repositoryPreparation = preparation): FakeDAGDispatcher {
   const dispatcher = new FakeDAGDispatcher();
   const parsed = instantiateDAGPattern("issue-diagnosis").parsed;
   const checkout = parsed.graph.nodes.find((node) => node.node_id === "checkout_repository");
@@ -266,12 +264,22 @@ function runToConsensus(runId: string, repositoryPreparation = preparation): {
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+  return dispatcher;
+}
+
+function runToConsensus(runId: string, repositoryPreparation = preparation): {
+  dispatcher: FakeDAGDispatcher;
+  votes: ReturnType<typeof vote>[];
+} {
+  const dispatcher = prepareDiagnosisRun(runId, repositoryPreparation);
   handoffActiveRun(runId, "review_reproduction", "reviewed", reproductionReview);
 
+  expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(2);
   handoffActiveRun(runId, "review_dataflow", "reviewed", dataflowReview);
   handoffActiveRun(runId, "review_history", "reviewed", historyReview);
 
+  expect(dispatchReadyNodes(runId, dispatcher)).toBe(2);
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   handoffActiveRun(runId, "arbitrate", "reported", report);
 
@@ -314,6 +322,37 @@ describe("issue-diagnosis pattern runtime", () => {
     if (oldAllowlist === undefined) delete process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
     else process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST = oldAllowlist;
     fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it("normalizes a failed independent reviewer into bounded inconclusive evidence", () => {
+    const runId = "issue-diagnosis-reviewer-fallback";
+    const dispatcher = prepareDiagnosisRun(runId);
+
+    failActiveRun(runId, "review_reproduction", "agent ended without DAG handoff");
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("review_reproduction")).toBe("FAILED");
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("normalize_reproduction")).toBe("COMPLETED");
+    expect(loadRunSnapshot(runId)?.handoffs.find((handoff) => handoff.fromNode === "normalize_reproduction")?.content)
+      .toMatchObject({
+        reviewer_id: "reproduction",
+        tested_revision: revision,
+        issue_match: "unknown",
+        reproduction: "inconclusive",
+        root_cause: { status: "unknown", evidence_ids: ["repro-e001"] },
+        evidence: [{
+          id: "repro-e001",
+          type: "runtime",
+          locator: "dag:review_reproduction",
+          observation: expect.stringContaining("agent ended without DAG handoff"),
+        }],
+        tests: [],
+        confidence: "low",
+      });
+
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(2);
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("review_dataflow")).toBe("RUNNING");
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("review_history")).toBe("RUNNING");
   });
 
   it("publishes the arbitrated report after unanimous verification", async () => {

@@ -56,6 +56,7 @@ export interface DAGGatewayConfig {
   failure_port?: string;
   capture_limit?: number;
   parse_stdout?: "text" | "json" | "number";
+  result_payload?: "envelope" | "value";
   approval_id?: string;
   proposal_field?: string;
   proposer_actor?: string;

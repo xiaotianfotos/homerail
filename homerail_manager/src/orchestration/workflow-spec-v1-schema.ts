@@ -153,6 +153,7 @@ const CommandNode = Type.Object({
     failure_port: Identifier,
     capture_limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1_000_000 })),
     parse_stdout: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("json"), Type.Literal("number")])),
+    result_payload: Type.Optional(Type.Union([Type.Literal("envelope"), Type.Literal("value")])),
   }, { additionalProperties: false }),
 }, { additionalProperties: false });
 

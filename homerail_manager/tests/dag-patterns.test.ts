@@ -82,8 +82,11 @@ describe("built-in DAG patterns", () => {
       "command",
       "command",
       "agent",
+      "command",
       "agent",
+      "command",
       "agent",
+      "command",
       "agent",
       "agent",
       "agent",
@@ -120,8 +123,21 @@ describe("built-in DAG patterns", () => {
       readonly_paths: ["source"],
     });
     expect(nodes.review_reproduction?.inputs).toHaveProperty("revision_check");
-    expect(nodes.review_dataflow?.depends_on).toEqual(["review_reproduction"]);
-    expect(nodes.review_history?.depends_on).toEqual(["review_reproduction"]);
+    expect(nodes.review_dataflow?.depends_on).toEqual(["normalize_reproduction"]);
+    expect(nodes.review_history?.depends_on).toEqual(["normalize_reproduction"]);
+    for (const nodeId of ["normalize_reproduction", "normalize_dataflow", "normalize_history"]) {
+      expect(nodes[nodeId]?.inputs).toMatchObject({ success: {}, failure: {} });
+      expect(nodes[nodeId]?.config).toMatchObject({
+        stdin_field: "$inputs",
+        parse_stdout: "json",
+        result_payload: "value",
+        success_port: "reviewed",
+        failure_port: "reviewed",
+      });
+    }
+    expect(nodes.normalize_reproduction?.depends_on).toEqual(["review_reproduction"]);
+    expect(nodes.normalize_dataflow?.depends_on).toEqual(["review_dataflow"]);
+    expect(nodes.normalize_history?.depends_on).toEqual(["review_history"]);
     for (const nodeId of ["review_dataflow", "review_history", "verify_scenario", "verify_evidence", "verify_adversarial"]) {
       expect(nodes[nodeId]?.workspace_access).toMatchObject({ writable_paths: [], readonly_paths: ["source"] });
     }
