@@ -161,6 +161,13 @@ class DeltaTextAgent implements AgentClient {
   }
 }
 
+class ErrorAgent implements AgentClient {
+  async *run(): AsyncIterable<AgentEvent> {
+    yield { type: "error", message: "provider rejected the configured credential" };
+    yield { type: "done" };
+  }
+}
+
 class ListOrchestrationsAgent implements AgentClient {
   observed = "";
 
@@ -391,6 +398,42 @@ describe("manager-agent server", () => {
     } finally {
       await close(server);
       await close(managerApi);
+    }
+  });
+
+  it("returns harness failures as structured errors instead of assistant text", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    registerAgentBackend("manager-agent-error-test", () => new ErrorAgent());
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "hello",
+          agent_config: { agent_type: "manager-agent-error-test", model: "test-model" },
+        }),
+      });
+      const body = await response.json() as { error?: string; data?: Record<string, unknown> };
+
+      expect(response.status).toBe(502);
+      expect(body.error).toBe("provider rejected the configured credential");
+      expect(body.data).toMatchObject({
+        code: "agent_execution_failed",
+        errors: ["provider rejected the configured credential"],
+        observed_tool_calls: [],
+        run_ids: [],
+      });
+      expect(JSON.stringify(body)).not.toContain("[ERROR]");
+    } finally {
+      await close(server);
     }
   });
 

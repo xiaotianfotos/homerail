@@ -438,19 +438,27 @@ describe("voice bootstrap routes", () => {
           progress_brief: { status: string };
           debug_events: Array<{ code: string }>;
           widgets: Array<{ id: string }>;
+          conversation: Array<{ role: string; text: string; kind?: string }>;
         };
+        voice_events: Array<{ channel: string; text: string }>;
       };
     };
 
     expect(turn.status).toBe(200);
     expect(turnBody.success).toBe(true);
     expect(turnBody.data.suggested_action).toBeNull();
-    expect(turnBody.data.spoken_text).toContain("主 Agent 执行入口不可用");
+    expect(turnBody.data.spoken_text).toBe("");
+    expect(turnBody.data.voice_events).toEqual([]);
     expect(turnBody.data.workspace.pending_confirmations).toHaveLength(0);
     expect(turnBody.data.workspace.progress_brief.status).toBe("error");
     expect(turnBody.data.workspace.debug_events).toContainEqual(expect.objectContaining({ code: "manager_agent_unavailable" }));
     expect(turnBody.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-agent-blocker" }));
     expect(turnBody.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
+    expect(turnBody.data.workspace.conversation).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      kind: "error",
+      text: expect.stringContaining("主 Agent 执行入口不可用"),
+    }));
 
     const titledList = await fetch(`http://127.0.0.1:${port}/api/voice-agent/sessions?project_id=p1&limit=5`);
     const titledListBody = await titledList.json() as { data: { sessions: Array<{ session_id: string; title?: string | null }> } };
@@ -477,7 +485,7 @@ describe("voice bootstrap routes", () => {
     const confirmBody = await confirm.json() as { success: boolean; data: { spoken_text: string; manager: { code?: string } } };
     expect(confirm.status).toBe(200);
     expect(confirmBody.success).toBe(true);
-    expect(confirmBody.data.spoken_text).toContain("主 Agent 执行入口不可用");
+    expect(confirmBody.data.spoken_text).toBe("");
     expect(confirmBody.data.manager.code).toBe("manager_agent_unavailable");
   });
 
@@ -920,12 +928,23 @@ describe("voice bootstrap routes", () => {
       body: JSON.stringify({ text: "请回复收到，别执行任何操作。" }),
     });
     const streamText = await stream.text();
+    const streamEvents = streamText.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
     const row = getDb()
       .prepare("SELECT status, message_count FROM sessions WHERE session_id = ?")
       .get(createdBody.data.session_id) as { status: string; message_count: number };
 
     expect(stream.status).toBe(200);
     expect(streamText).toContain("主 Agent 执行失败");
+    expect(streamEvents).not.toContainEqual(expect.objectContaining({ type: "speech" }));
+    expect(streamEvents).toContainEqual(expect.objectContaining({ type: "done", spoken_text: "" }));
+    expect(streamEvents).toContainEqual(expect.objectContaining({
+      type: "workspace",
+      workspace: expect.objectContaining({
+        conversation: expect.arrayContaining([
+          expect.objectContaining({ kind: "error", text: expect.stringContaining("主 Agent 执行失败") }),
+        ]),
+      }),
+    }));
     expect(streamText).not.toContain("Invalid session status: error");
     expect(row.status).toBe("failed");
     expect(row.message_count).toBe(2);

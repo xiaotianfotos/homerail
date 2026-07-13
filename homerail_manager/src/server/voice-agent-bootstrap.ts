@@ -113,7 +113,14 @@ interface VoiceWorkspace {
   } | null;
   pending_confirmations: Array<{ id: string; kind: "submit_task" | "memory_write"; summary: string }>;
   memory_refs: Array<{ id: string; title: string; summary: string; source: string }>;
-  conversation: Array<{ id: string; role: "user" | "assistant" | "system"; text: string; created_at: string; channel?: "final" | "commentary" }>;
+  conversation: Array<{
+    id: string;
+    role: "user" | "assistant" | "system";
+    text: string;
+    created_at: string;
+    channel?: "final" | "commentary";
+    kind?: "message" | "error";
+  }>;
   debug_events: Array<{ id: string; level: "debug" | "info" | "warning" | "error"; code: string; message: string; created_at: string }>;
   progress_brief: { status: string; short_text: string; updated_at: string };
   widgets: VoiceWidget[];
@@ -729,8 +736,14 @@ function sessionItem(workspace: VoiceWorkspace): Record<string, unknown> {
   };
 }
 
-function appendConversation(workspace: VoiceWorkspace, role: "user" | "assistant" | "system", text: string, channel: "final" | "commentary" = "final") {
-  workspace.conversation.push({ id: generateId("msg-"), role, text, channel, created_at: now() });
+function appendConversation(
+  workspace: VoiceWorkspace,
+  role: "user" | "assistant" | "system",
+  text: string,
+  channel: "final" | "commentary" = "final",
+  kind: "message" | "error" = "message",
+) {
+  workspace.conversation.push({ id: generateId("msg-"), role, text, channel, kind, created_at: now() });
   workspace.conversation = workspace.conversation.slice(-80);
 }
 
@@ -979,14 +992,14 @@ function managerAgentHistory(workspace: VoiceWorkspace): Array<{ role: string; c
 
 function markManagerAgentBlocker(workspace: VoiceWorkspace, code: string, message: string): ManagerAgentHandoffResult {
   appendDebugEvent(workspace, code, message, "error");
-  const spoken = code === "manager_agent_unavailable"
+  const displayText = code === "manager_agent_unavailable"
     ? `主 Agent 执行入口不可用：${message}`
     : `主 Agent 执行失败：${message}`;
-  workspace.progress_brief = { status: "error", short_text: shortText(spoken, 80), updated_at: now() };
+  workspace.progress_brief = { status: "error", short_text: shortText(displayText, 80), updated_at: now() };
   removeWidget(workspace, "manager-agent-blocker");
   removeWidget(workspace, "manager-run");
-  appendConversation(workspace, "assistant", spoken);
-  return { spoken_text: spoken, suggested_action: null, manager: { error: message, code }, manager_status: managerStatus(workspace) };
+  appendConversation(workspace, "assistant", displayText, "final", "error");
+  return { spoken_text: "", suggested_action: null, manager: { error: message, code }, manager_status: managerStatus(workspace) };
 }
 
 async function submitVoiceWorkspaceToManagerAgent(

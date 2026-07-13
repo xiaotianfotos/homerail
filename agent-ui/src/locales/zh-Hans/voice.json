@@ -142,7 +142,8 @@
     "newSession": "新会话",
     "records": "记录",
     "hideDetails": "隐藏详情",
-    "emptyRecords": "暂无记录。"
+    "emptyRecords": "暂无记录。",
+    "executionError": "执行失败"
   },
   "project": {
     "configuration": "目录配置",

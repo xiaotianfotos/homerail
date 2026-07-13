@@ -142,7 +142,8 @@
     "newSession": "新會話",
     "records": "記錄",
     "hideDetails": "隱藏詳情",
-    "emptyRecords": "暫無記錄。"
+    "emptyRecords": "暫無記錄。",
+    "executionError": "執行失敗"
   },
   "project": {
     "configuration": "目錄配置",

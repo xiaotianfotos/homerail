@@ -71,7 +71,8 @@ import {
   type VoiceKeyboardButtonBinding
 } from '@/utils/voice-hid-control'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
-import { isKimiProviderId } from '@/lib/model-runtime'
+import { formatRuntimeModelSettingLabel, isKimiProviderId } from '@/lib/model-runtime'
+import { createProtocolLabels } from '@/lib/protocol-labels'
 import {
   cleanVoiceTranscript,
   isRecentDuplicateVoiceTranscript,
@@ -80,6 +81,7 @@ import {
 import {
   createVoiceSpeechEventKey,
   hasRecentVoiceSpeechEvent,
+  isVoiceConversationMessageSpeakable,
   rememberVoiceSpeechEvent
 } from '@/utils/voice-speech-queue'
 import {
@@ -125,6 +127,7 @@ import {
 
 const store = useAgentStore()
 const { t, te } = useI18n()
+const { planLabel } = createProtocolLabels(t)
 // 新手引导配置状态检测（用于"模型配置"按钮的缺配提示）
 const { status: onboardingStatus, refresh: refreshOnboarding } = useOnboardingStatus()
 const needsOnboardingHint = computed(() => onboardingStatus.value.needsOnboarding)
@@ -532,11 +535,11 @@ const voiceModelFallback = computed(() =>
 )
 const asrModelLabel = computed(() => {
   const setting = asrModelOptions.value.find(item => item.id === selectedAsrModelId.value)
-  return modelSettingLabel(setting) || voiceSettings.value?.asr_model || t('voice.model.asrUnconfigured')
+  return modelSettingLabel(setting, asrModelOptions.value) || voiceSettings.value?.asr_model || t('voice.model.asrUnconfigured')
 })
 const ttsModelLabel = computed(() => {
   const setting = ttsModelOptions.value.find(item => item.id === selectedTtsModelId.value)
-  return modelSettingLabel(setting) || voiceSettings.value?.tts_model || t('voice.model.ttsUnconfigured')
+  return modelSettingLabel(setting, ttsModelOptions.value) || voiceSettings.value?.tts_model || t('voice.model.ttsUnconfigured')
 })
 const selectedTtsSetting = computed(
   () => ttsModelOptions.value.find(item => item.id === selectedTtsModelId.value) ?? null
@@ -935,12 +938,8 @@ const fullscreenGateAction = computed(() =>
   canRequestElementFullscreen.value ? t('voice.fullscreen.enter') : t('voice.fullscreen.continue')
 )
 
-function modelSettingLabel(
-  setting?: { provider_name?: string; display_name?: string | null; model_name?: string } | null
-): string {
-  if (!setting) return ''
-  const model = setting.display_name || setting.model_name || ''
-  return setting.provider_name ? `${setting.provider_name} / ${model}` : model
+function modelSettingLabel(setting: LLMSetting | null | undefined, siblings: LLMSetting[]): string {
+  return formatRuntimeModelSettingLabel(setting, siblings, planLabel)
 }
 
 function isCustomModelSetting(setting: LLMSetting): boolean {
@@ -3075,7 +3074,9 @@ function rememberSpeechEvents(events: VoiceSpeechEvent[]): void {
 function queueNewAssistantSpeech(nextWorkspace: VoiceWorkspace | null | undefined): void {
   const candidates = (nextWorkspace?.conversation ?? []).filter(
     item =>
-      item.role === 'assistant' && !spokenAssistantMessageIds.value.has(item.id) && item.text.trim()
+      isVoiceConversationMessageSpeakable(item) &&
+      !spokenAssistantMessageIds.value.has(item.id) &&
+      item.text.trim()
   )
   if (!candidates.length) return
   const next = new Set(spokenAssistantMessageIds.value)
@@ -4527,7 +4528,7 @@ function summarizeTask(value: string): string {
                     :value="setting.id"
                     class="bg-[#111315] text-white"
                   >
-                    {{ modelSettingLabel(setting) }}
+                    {{ modelSettingLabel(setting, managerAgentModelOptions) }}
                   </option>
                 </select>
               </div>
@@ -4605,7 +4606,7 @@ function summarizeTask(value: string): string {
                   :value="setting.id"
                   class="bg-[#111315] text-white"
                 >
-                  {{ modelSettingLabel(setting) }}
+                  {{ modelSettingLabel(setting, asrModelOptions) }}
                 </option>
               </select>
             </label>
@@ -4630,7 +4631,7 @@ function summarizeTask(value: string): string {
                   :value="setting.id"
                   class="bg-[#111315] text-white"
                 >
-                  {{ modelSettingLabel(setting) }}
+                  {{ modelSettingLabel(setting, ttsModelOptions) }}
                 </option>
               </select>
             </label>
@@ -5201,10 +5202,15 @@ function summarizeTask(value: string): string {
                 class="voice-thread-item"
                 :class="[
                   item.role === 'user' ? 'voice-thread-item--user' : 'voice-thread-item--assistant',
-                  item.channel === 'commentary' ? 'voice-thread-item--commentary' : ''
+                  item.channel === 'commentary' ? 'voice-thread-item--commentary' : '',
+                  item.kind === 'error' ? 'voice-thread-item--error' : ''
                 ]"
                 :title="item.text"
               >
+                <span v-if="item.kind === 'error'" class="voice-thread-item__error-label">
+                  <AlertTriangle class="h-3.5 w-3.5" />
+                  {{ t('voice.sidebar.executionError') }}
+                </span>
                 <span v-if="item.channel === 'commentary'" class="voice-thread-item__channel"
                   >commentary</span
                 >
@@ -7828,6 +7834,23 @@ function summarizeTask(value: string): string {
   align-self: flex-start;
   background: rgba(20, 184, 166, 0.16);
   color: rgba(236, 253, 245, 0.86);
+}
+
+.voice-thread-item--error {
+  max-width: 100%;
+  border: 1px solid rgba(248, 113, 113, 0.34);
+  background: rgba(127, 29, 29, 0.22);
+  color: rgba(254, 226, 226, 0.92);
+}
+
+.voice-thread-item__error-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: rgba(252, 165, 165, 0.95);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .voice-thread-item--commentary {

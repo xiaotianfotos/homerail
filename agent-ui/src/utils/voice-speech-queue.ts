@@ -5,10 +5,22 @@ export interface VoiceSpeechFingerprintInput {
   text?: string | null
 }
 
+export interface VoiceConversationSpeechCandidate {
+  role?: string | null
+  kind?: string | null
+  text?: string | null
+}
+
 export const VOICE_SPEECH_EVENT_KEY_TTL_MS = 60_000
 
 export function normalizeVoiceSpeechTextForKey(text: string | null | undefined): string {
   return (text || '').replace(/\s+/g, ' ').trim()
+}
+
+export function isVoiceConversationMessageSpeakable(
+  message: VoiceConversationSpeechCandidate,
+): boolean {
+  return message.role === 'assistant' && message.kind !== 'error' && Boolean(message.text?.trim())
 }
 
 export function createVoiceSpeechEventKey(event: VoiceSpeechFingerprintInput): string {

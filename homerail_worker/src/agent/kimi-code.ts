@@ -182,6 +182,11 @@ function resolveKimiAgentTransport(options?: KimiCodeAdapterOptions): KimiAgentT
   return "cli";
 }
 
+function requiresAlwaysThinking(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return normalized === "kimi-k2.7-code" || normalized.startsWith("kimi-for-coding");
+}
+
 /** Parsed line from kimi CLI stream-json output. */
 interface StreamJsonLine {
   type?: string;
@@ -760,9 +765,11 @@ export class KimiCodeAdapter implements AgentClient {
     const safeMaxContextSize = Number.isFinite(maxContextSize) && maxContextSize > 0
       ? maxContextSize
       : 128000;
+    const alwaysThinking = requiresAlwaysThinking(model);
 
     return [
       `default_model = ${tomlString(model)}`,
+      ...(alwaysThinking ? ["default_thinking = true"] : []),
       `default_provider = ${tomlString(providerId)}`,
       "",
       `[providers.${tomlString(providerId)}]`,
@@ -775,6 +782,9 @@ export class KimiCodeAdapter implements AgentClient {
       `provider = ${tomlString(providerId)}`,
       `model = ${tomlString(model)}`,
       `max_context_size = ${safeMaxContextSize}`,
+      ...(alwaysThinking
+        ? ['capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]']
+        : []),
       "",
     ].join("\n");
   }

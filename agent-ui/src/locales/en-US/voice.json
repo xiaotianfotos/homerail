@@ -142,7 +142,8 @@
     "newSession": "New session",
     "records": "History",
     "hideDetails": "Hide details",
-    "emptyRecords": "No history yet."
+    "emptyRecords": "No history yet.",
+    "executionError": "Execution failed"
   },
   "project": {
     "configuration": "Directory settings",
