@@ -195,8 +195,16 @@ result, after which Manager runs `git rev-parse HEAD` and requires the real
 HEAD, the preparation handoff, and the requested commit to match before
 reviewers can trust the source. This ordering prevents a model from claiming a
 checkout that did not happen and prevents the shared-workspace clone from being
-attributed to the triage node's policy snapshot. The reproduction
-reviewer then copies the tree into its private `scratch/reproduction/source`
+attributed to the triage node's policy snapshot. When the caller supplies
+`constraints.focus_paths`, a fixed Manager command also captures line-numbered
+content for up to eight regular, non-symlink files at that verified revision.
+It rejects absolute paths, traversal, backslashes, NULs, and resolved escapes;
+each file is capped at 96,000 bytes and the snapshot at 256,000 bytes. Reviewers
+and verifiers consume this deterministic evidence before asking a model to use
+workspace tools, so bounded static catalog and file-presence checks remain
+auditable even when a compatible model cannot reliably invoke a read tool. The
+reproduction reviewer then copies the tree into its private
+`scratch/reproduction/source`
 path for focused tests. After that sole writer finishes, the caller-to-server
 data-flow and regression-history reviewers run in parallel against read-only
 `source`. They receive only completion dependencies, never the reproduction

@@ -10,6 +10,7 @@ import type { AgentClient, AgentEvent, AgentRunContext, AgentUsage, DagToolDefin
 import { jsonSchemaObjectToZodRawShape } from "./json-schema-zod.js";
 
 const BUILTIN_TOOLS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "LS"] as const;
+const HANDOFF_ONLY_THINKING_BUDGET = 2048;
 
 interface SdkModule {
   query(params: {
@@ -181,9 +182,12 @@ export class ClaudeSdkAdapter implements AgentClient {
       const effectiveModel = context.model || this.model;
       const authEnv = this.buildClaudeEnv(context, effectiveModel);
       const builtinTools = context.handoffOnly ? [] : [...BUILTIN_TOOLS];
+      const effectiveThinkingBudget = context.handoffOnly
+        ? Math.min(this.thinkingBudget, HANDOFF_ONLY_THINKING_BUDGET)
+        : this.thinkingBudget;
       const options: Record<string, unknown> = {
         model: effectiveModel,
-        maxThinkingTokens: this.thinkingBudget,
+        maxThinkingTokens: effectiveThinkingBudget,
         tools: builtinTools,
         allowedTools: builtinTools,
         permissionMode: "bypassPermissions",
@@ -248,7 +252,7 @@ export class ClaudeSdkAdapter implements AgentClient {
           model: effectiveModel,
           max_turns: this.maxTurns,
           max_turns_source: this.maxTurnsSource,
-          thinking_budget: this.thinkingBudget,
+          thinking_budget: effectiveThinkingBudget,
           cwd: options.cwd,
           has_system_prompt: Boolean(context.systemPrompt),
           tool_count: tools.length,

@@ -81,6 +81,7 @@ describe("built-in DAG patterns", () => {
       "agent",
       "command",
       "command",
+      "command",
       "agent",
       "command",
       "agent",
@@ -118,11 +119,34 @@ describe("built-in DAG patterns", () => {
       success_port: "checked",
       failure_port: "checked",
     });
+    expect(nodes.snapshot_focus_paths?.config).toMatchObject({
+      stdin_field: "$inputs",
+      cwd: "$run_workspace",
+      parse_stdout: "json",
+      result_payload: "value",
+      success_port: "snapshotted",
+      failure_port: "snapshotted",
+    });
+    expect(nodes.snapshot_focus_paths?.config?.command).toEqual([
+      "node",
+      "-e",
+      expect.stringMatching(/(?=.*realpathSync\('source'\))(?=.*isSymbolicLink)(?=.*O_NOFOLLOW)(?=.*256000)/),
+    ]);
     expect(nodes.review_reproduction?.workspace_access).toMatchObject({
       writable_paths: ["scratch/reproduction"],
       readonly_paths: ["source"],
     });
     expect(nodes.review_reproduction?.inputs).toHaveProperty("revision_check");
+    for (const nodeId of [
+      "review_reproduction",
+      "review_dataflow",
+      "review_history",
+      "verify_scenario",
+      "verify_evidence",
+      "verify_adversarial",
+    ]) {
+      expect(nodes[nodeId]?.inputs).toHaveProperty("focus_snapshot");
+    }
     expect(nodes.review_dataflow?.depends_on).toEqual(["normalize_reproduction"]);
     expect(nodes.review_history?.depends_on).toEqual(["normalize_reproduction"]);
     for (const nodeId of ["normalize_reproduction", "normalize_dataflow", "normalize_history"]) {
@@ -156,6 +180,8 @@ describe("built-in DAG patterns", () => {
     expect(pattern.parsed.meta.agents.reproduction_reviewer?.system).toContain("claim proved true");
     expect(pattern.parsed.meta.agents.reproduction_reviewer?.system).toContain("revision_check.ok=true");
     expect(pattern.parsed.meta.agents.reproduction_reviewer?.system).toContain("reproduction=not_reproduced");
+    expect(pattern.parsed.meta.agents.reproduction_reviewer?.system).toContain("focus_snapshot");
+    expect(pattern.parsed.meta.agents.reproduction_reviewer?.system).toContain("do not call or simulate Read, Grep, or Bash");
     expect(pattern.parsed.meta.agents.triage?.system).toContain("exactly five top-level keys");
     expect(pattern.parsed.meta.agents.triage?.system).toContain("stated_facts");
     expect(pattern.parsed.meta.agents.reproduction_reviewer?.system).toContain("at least two materially different state variants");
@@ -178,6 +204,7 @@ describe("built-in DAG patterns", () => {
     expect(pattern.parsed.meta.agents.history_reviewer?.system).toContain("Never clone another checkout");
     expect(pattern.parsed.meta.agents.arbiter?.system).toContain("different scenarios");
     expect(pattern.parsed.meta.agents.arbiter?.system).toContain("consensus.issue_match=exact");
+    expect(pattern.parsed.meta.agents.arbiter?.system).toContain("exact, plausible, or unknown");
     expect(pattern.parsed.meta.agents.arbiter?.system).toContain("purely static catalog");
     expect(pattern.parsed.meta.agents.scenario_verifier?.system).toContain("user's exact scenario");
     expect(pattern.parsed.meta.agents.scenario_verifier?.system).toContain("not_reproduced report");

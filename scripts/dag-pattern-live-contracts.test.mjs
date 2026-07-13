@@ -128,8 +128,25 @@ test("requires a complete independently verified issue diagnosis", () => {
     { from_node: "normalize_reproduction", port: "reviewed", content: { reviewer_id: "reproduction" } },
     { from_node: "normalize_dataflow", port: "reviewed", content: { reviewer_id: "dataflow" } },
     { from_node: "normalize_history", port: "reviewed", content: { reviewer_id: "history" } },
+    {
+      from_node: "snapshot_focus_paths",
+      port: "snapshotted",
+      content: {
+        revision_verified: true,
+        tested_revision: report.tested_revision,
+        files: [
+          { path: "homerail_manager/src/orchestration/dag-patterns.ts" },
+          { path: "homerail_manager/tests/dag-patterns.test.ts" },
+        ],
+        limitations: [],
+      },
+    },
   ];
   assert.deepEqual(semanticFailures("issue-diagnosis", handoffs), []);
+  const focusedSnapshot = handoffs.at(-1).content;
+  handoffs.at(-1).content = { ...focusedSnapshot, revision_verified: false };
+  assert.match(semanticFailures("issue-diagnosis", handoffs).join(";"), /focused source files/);
+  handoffs.at(-1).content = focusedSnapshot;
   const conservativeHandoffs = handoffs.map((handoff) => handoff.from_node === "arbitrate"
     ? {
         ...handoff,

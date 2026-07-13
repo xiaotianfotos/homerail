@@ -34,6 +34,13 @@ const request = {
     repository_url: "https://example.test/owner/repository",
     revision,
   },
+  constraints: {
+    max_test_seconds: 300,
+    focus_paths: [
+      "homerail_manager/src/orchestration/dag-patterns.ts",
+      "../outside-secret",
+    ],
+  },
 };
 
 const plan = {
@@ -232,7 +239,11 @@ function vote(reviewerId: "scenario" | "evidence" | "adversarial", verdict: "pas
   };
 }
 
-function prepareDiagnosisRun(runId: string, repositoryPreparation = preparation): FakeDAGDispatcher {
+function prepareDiagnosisRun(
+  runId: string,
+  repositoryPreparation = preparation,
+  focusedFiles: Record<string, string> = {},
+): FakeDAGDispatcher {
   const dispatcher = new FakeDAGDispatcher();
   const parsed = instantiateDAGPattern("issue-diagnosis").parsed;
   const checkout = parsed.graph.nodes.find((node) => node.node_id === "checkout_repository");
@@ -254,6 +265,14 @@ function prepareDiagnosisRun(runId: string, repositoryPreparation = preparation)
     { ...agent, agent_type: "deterministic" },
   ]));
   createActiveRun(runId, parsed, { initialPrompt: JSON.stringify(request) });
+  const runWorkspace = path.join(process.env.HOMERAIL_HOME!, "workspace", ...runId.split("/"));
+  for (const [relativePath, content] of Object.entries(focusedFiles)) {
+    const target = path.join(runWorkspace, "source", relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content);
+  }
+  fs.mkdirSync(runWorkspace, { recursive: true });
+  fs.writeFileSync(path.join(runWorkspace, "outside-secret"), "must-not-be-captured");
 
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   handoffActiveRun(runId, "triage", "planned", plan);
@@ -261,6 +280,7 @@ function prepareDiagnosisRun(runId: string, repositoryPreparation = preparation)
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   handoffActiveRun(runId, "prepare_repository", "prepared", repositoryPreparation);
 
+  expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
@@ -353,6 +373,36 @@ describe("issue-diagnosis pattern runtime", () => {
     expect(dispatchReadyNodes(runId, dispatcher)).toBe(2);
     expect(getActiveRun(runId)?.dagRun.nodeStates.get("review_dataflow")).toBe("RUNNING");
     expect(getActiveRun(runId)?.dagRun.nodeStates.get("review_history")).toBe("RUNNING");
+  });
+
+  it("captures bounded line-numbered focus evidence without reading traversal paths", () => {
+    const runId = "issue-diagnosis-focused-source-snapshot";
+    prepareDiagnosisRun(runId, preparation, {
+      "homerail_manager/src/orchestration/dag-patterns.ts": [
+        "const heartbeat = { id: 'heartbeat' };",
+        "export const patterns = [heartbeat];",
+      ].join("\n"),
+    });
+
+    const snapshot = loadRunSnapshot(runId)?.handoffs.find(
+      (handoff) => handoff.fromNode === "snapshot_focus_paths",
+    )?.content as {
+      revision_verified?: boolean;
+      tested_revision?: string;
+      files?: Array<{ path?: string; content?: string; content_sha256?: string }>;
+      limitations?: string[];
+    };
+    expect(snapshot).toMatchObject({
+      revision_verified: true,
+      tested_revision: revision,
+      files: [{
+        path: "homerail_manager/src/orchestration/dag-patterns.ts",
+        content: "1:const heartbeat = { id: 'heartbeat' };\n2:export const patterns = [heartbeat];",
+        content_sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      }],
+    });
+    expect(snapshot.limitations).toContain("../outside-secret: unsafe relative path");
+    expect(JSON.stringify(snapshot)).not.toContain("must-not-be-captured");
   });
 
   it("does not trust a contract-free failure handoff that resembles an independent review", () => {

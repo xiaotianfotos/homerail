@@ -524,9 +524,10 @@ describe("ClaudeSdkAdapter", () => {
 
     expect(captured[0].tools).toEqual([]);
     expect(captured[0].allowedTools).toEqual([]);
+    expect(captured[0].maxThinkingTokens).toBe(2048);
     expect(events.find((event) => event.type === "debug" && event.message === "query_start")).toMatchObject({
       type: "debug",
-      data: expect.objectContaining({ builtin_tools: [], handoff_only: true }),
+      data: expect.objectContaining({ builtin_tools: [], handoff_only: true, thinking_budget: 2048 }),
     });
   });
 

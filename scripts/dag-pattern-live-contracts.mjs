@@ -124,6 +124,7 @@ export const semanticRequirements = {
   "issue-diagnosis": [
     { node: "checkout_repository", port: "checked" },
     { node: "match_repository_revision", port: "checked" },
+    { node: "snapshot_focus_paths", port: "snapshotted" },
     { node: "normalize_reproduction", port: "reviewed" },
     { node: "normalize_dataflow", port: "reviewed" },
     { node: "normalize_history", port: "reviewed" },
@@ -225,6 +226,19 @@ export function semanticFailures(patternId, handoffs, context = {}) {
     ));
     if (revisionCheck?.ok !== true || String(revisionCheck?.value ?? "").trim() !== LIVE_ISSUE_REVISION) {
       failures.push("issue diagnosis did not deterministically verify repository HEAD against the requested revision");
+    }
+    const focusedSnapshot = objectValue(parseContent(
+      matchingHandoffs(handoffs, "snapshot_focus_paths", "snapshotted").at(-1)?.content,
+    ));
+    const focusedFiles = Array.isArray(focusedSnapshot?.files) ? focusedSnapshot.files : [];
+    const focusedPaths = new Set(focusedFiles.map((file) => objectValue(file)?.path));
+    if (
+      focusedSnapshot?.revision_verified !== true ||
+      focusedSnapshot?.tested_revision !== LIVE_ISSUE_REVISION ||
+      !focusedPaths.has("homerail_manager/src/orchestration/dag-patterns.ts") ||
+      !focusedPaths.has("homerail_manager/tests/dag-patterns.test.ts")
+    ) {
+      failures.push("issue diagnosis did not capture both exact-revision focused source files");
     }
     const report = objectValue(parseContent(matchingHandoffs(handoffs, "arbitrate", "reported").at(-1)?.content));
     if (report?.schema_version !== "2.0" || report?.issue_id !== "live-synthetic") {
