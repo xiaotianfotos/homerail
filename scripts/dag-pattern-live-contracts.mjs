@@ -49,9 +49,9 @@ export function patternParameters(pattern, runSuffix = "") {
 
 const passCommand = ["node", "-e", "process.exit(0)"];
 const sparringTestCommand = [
-  "bash",
-  "-c",
-  "test \"$(cat tests/sparring/live.txt)\" = '1+1 must equal 2' && test \"$(cat src/live-fix.txt)\" = '2'",
+  "node",
+  "-e",
+  "const fs=require('node:fs');const challenge=fs.readFileSync('tests/sparring/live.txt','utf8');const repair=fs.readFileSync('src/live-fix.txt','utf8');process.exit(challenge==='1+1 must equal 2'&&repair==='2'?0:1)",
 ];
 
 export const LIVE_ISSUE_REVISION = process.env.HOMERAIL_LIVE_ISSUE_REVISION
@@ -96,7 +96,7 @@ export const prompts = {
   }),
   "standing-goal-sentinel": "Run the two Manager-owned standing goal commands exactly as stored. No model node is required.",
   quorum: "Preserve this evidence: health_check=passed, regression_count=0, risk=low. Each voter independently hands off top-level vote=act with evidence. Do not inspect other votes.",
-  sparring: `SMOKE CONTRACT. The exact test_command is ${JSON.stringify(sparringTestCommand)}. Breaker: use exactly one Write call to create tests/sparring/live.txt containing exactly '1+1 must equal 2', then immediately hand off challenge with artifact_path, that exact test_command array, and evidence; no Bash, Read, scaffolding, package files, or extra writes. Builder: use exactly one Write call to create src/live-fix.txt containing exactly '2', never modify tests/sparring/live.txt, then immediately hand off repaired with that exact test_command array and evidence. Verifier: read only those two files and immediately hand off verdict with top-level verdict=pass and evidence. Do nothing else.`,
+  sparring: `SMOKE CONTRACT. The exact test_command is ${JSON.stringify(sparringTestCommand)}. Breaker: use exactly one Write call to create tests/sparring/live.txt containing exactly '1+1 must equal 2', then immediately hand off challenge with artifact_path, that exact test_command array, and evidence; no Bash, Read, scaffolding, package files, or extra writes. Builder: use exactly one Write call to create src/live-fix.txt containing exactly '2', never modify tests/sparring/live.txt, then immediately hand off repaired with that exact test_command array and evidence. The Manager runs test_command and supplies its result to the fresh verifier. Do nothing else.`,
   ratchet: JSON.stringify({
     objective: "Reduce a deterministic synthetic metric from 2 to 0.",
     measure_command: [
@@ -155,7 +155,10 @@ export const semanticRequirements = {
     { node: "record_pass", port: "recorded" },
   ],
   quorum: [{ node: "quorum", port: "act" }],
-  sparring: [{ node: "verdict_gate", port: "passed" }],
+  sparring: [
+    { node: "deterministic_check", port: "passed" },
+    { node: "verdict_gate", port: "passed" },
+  ],
   ratchet: [
     { node: "target_gate", port: "improve", minimum: 2 },
     { node: "compare_measurements", port: "ready", minimum: 2 },

@@ -30,7 +30,13 @@ test("uses current runtime-backed topology contracts", () => {
   ]);
   assert.deepEqual(semanticRequirements.compost.at(-1), { node: "human_review", port: "approved" });
   assert.deepEqual(semanticRequirements["executor-advisor"], [{ node: "execute", port: "done" }]);
+  assert.deepEqual(semanticRequirements.sparring, [
+    { node: "deterministic_check", port: "passed" },
+    { node: "verdict_gate", port: "passed" },
+  ]);
   assert.match(prompts.sparring, /test_command/);
+  assert.match(prompts.sparring, /Manager runs test_command/);
+  assert.match(prompts.sparring, /\[\"node\",\"-e\"/);
   assert.match(prompts.sparring, /src\/live-fix\.txt/);
 });
 

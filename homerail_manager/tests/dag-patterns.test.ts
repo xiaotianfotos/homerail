@@ -562,6 +562,8 @@ describe("built-in DAG patterns", () => {
 
   it("requires sparring challenge and repair evidence before downstream work", () => {
     const pattern = instantiateDAGPattern("sparring");
+    const deterministicCheck = pattern.parsed.graph.nodes.find((node) => node.node_id === "deterministic_check");
+    const verifier = pattern.parsed.graph.nodes.find((node) => node.node_id === "verify");
 
     expect(pattern.parsed.meta.contracts?.Challenge).toMatchObject({
       additionalProperties: false,
@@ -574,6 +576,21 @@ describe("built-in DAG patterns", () => {
     expect(pattern.parsed.meta.agents.builder?.system).toContain("input:challenge.test_command");
     expect(pattern.parsed.meta.agents.builder?.system).toContain("input:correction");
     expect(pattern.parsed.meta.agents.builder?.system).toContain("fix_applied");
+    expect(pattern.parsed.meta.agents.verifier?.system).toContain("Manager-owned input:check");
+    expect(pattern.parsed.meta.agents.verifier?.system).toContain("check.ok is true");
+    expect(deterministicCheck?.node_type).toBe("command_gateway");
+    expect(deterministicCheck?.gateway_config).toMatchObject({
+      input: "challenge",
+      command_field: "test_command",
+      success_port: "passed",
+      failure_port: "failed",
+    });
+    expect(deterministicCheck?.extra?.workflow_spec_v1).toMatchObject({
+      input_contracts: { challenge: "Challenge", repair: "Repair" },
+    });
+    expect(verifier?.extra?.workflow_spec_v1).toMatchObject({
+      input_contracts: { challenge: "Challenge", repair: "Repair" },
+    });
     expect(pattern.parsed.meta.limits?.max_corrections_per_node).toBe(3);
     expect(pattern.parsed.graph.nodes.find((node) => node.node_id === "break")?.extra?.workflow_spec_v1)
       .toMatchObject({ output_contracts: { challenge: "Challenge" } });

@@ -175,7 +175,7 @@ hashes still apply.
 | `trust-ledger` | Autonomy is granted per recurring skill from measured history. |
 | `standing-goal-sentinel` | Completed goals become repeatedly checked invariants. |
 | `quorum` | Independent n-of-m agreement before action. |
-| `sparring` | Breaker, builder, and verifier remain separate. |
+| `sparring` | Breaker, builder, Manager-owned deterministic check, and fresh verifier remain separate. |
 | `ratchet` | Bounded measured attempts until a target or exhaustion. |
 | `compost` | Repeated failures become bounded proposals behind human review. |
 
