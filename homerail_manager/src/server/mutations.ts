@@ -472,12 +472,12 @@ export function mutationRoutesHandler(
   }
 
   if (pathname === "/api/dag/workspaces/cleanup" && req.method === "POST") {
-    void _readJsonBody(req).then((raw) => {
+    void _readJsonBody(req).then(async (raw) => {
       const body = raw as Record<string, unknown>;
       if (body.dry_run !== undefined && typeof body.dry_run !== "boolean") {
         throw new Error("dry_run must be a boolean");
       }
-      const report = cleanupRunWorkspaces({ dryRun: body.dry_run !== false });
+      const report = await cleanupRunWorkspaces({ dryRun: body.dry_run !== false });
       _ok(res, report.dry_run ? "Workspace cleanup preview completed" : "Workspace cleanup completed", report);
     }).catch((error) => _badRequest(res, error instanceof Error ? error.message : String(error)));
     return true;

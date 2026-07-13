@@ -34,6 +34,28 @@
       }
     }
   },
+  "storage": {
+    "title": "存储与保留",
+    "description": "配置已结束运行的工作区保留期限。",
+    "connected": "已连接",
+    "loading": "加载中...",
+    "unavailable": "不可用",
+    "dataRoot": "数据目录",
+    "runs": "运行数",
+    "sessionsDir": "会话目录",
+    "autoCleanup": "运行工作区自动清理",
+    "autoCleanupDescription": "只自动清理已结束、未固定且超过保留期限的工作区。关闭后仍可手动预览和清理。",
+    "successDays": "成功运行保留天数",
+    "failureDays": "失败或取消运行保留天数",
+    "preview": "预览清理",
+    "cleanupNow": "立即清理",
+    "savePolicy": "保存策略",
+    "saved": "工作区保留策略已保存",
+    "cleanupConfirm": "立即删除已超过保留期限且未固定的运行工作区？运行记录和证据不会删除。",
+    "previewAction": "预览",
+    "cleanupAction": "清理",
+    "result": "{action}完成：符合条件 {eligible}，已删除 {removed}，失败 {failed}"
+  },
   "actions": {
     "refresh": "刷新",
     "close": "关闭",

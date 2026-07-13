@@ -34,6 +34,28 @@
       }
     }
   },
+  "storage": {
+    "title": "儲存與保留",
+    "description": "設定已結束執行的工作區保留期限。",
+    "connected": "已連線",
+    "loading": "載入中...",
+    "unavailable": "無法使用",
+    "dataRoot": "資料目錄",
+    "runs": "執行數",
+    "sessionsDir": "工作階段目錄",
+    "autoCleanup": "執行工作區自動清理",
+    "autoCleanupDescription": "只自動清理已結束、未固定且超過保留期限的工作區。關閉後仍可手動預覽和清理。",
+    "successDays": "成功執行保留天數",
+    "failureDays": "失敗或取消執行保留天數",
+    "preview": "預覽清理",
+    "cleanupNow": "立即清理",
+    "savePolicy": "儲存策略",
+    "saved": "工作區保留策略已儲存",
+    "cleanupConfirm": "立即刪除已超過保留期限且未固定的執行工作區？執行記錄與證據不會刪除。",
+    "previewAction": "預覽",
+    "cleanupAction": "清理",
+    "result": "{action}完成：符合條件 {eligible}，已刪除 {removed}，失敗 {failed}"
+  },
   "actions": {
     "refresh": "刷新",
     "close": "關閉",

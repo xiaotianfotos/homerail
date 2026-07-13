@@ -1,4 +1,4 @@
-import * as fs from "node:fs";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
 
 import { getDefaultWorkspacePath, getHomerailHome } from "../config/env.js";
@@ -19,6 +19,7 @@ import { loadWorkspaceRetentionSettings } from "../persistence/workspace-retenti
 import { getActiveRun } from "./active-runs.js";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const workspaceCleanupInflight = new Set<string>();
 
 export interface WorkspaceRetentionPolicy {
   enabled: boolean;
@@ -78,6 +79,9 @@ export function runWorkspacePath(runId: string): string {
 }
 
 export function setRunWorkspacePinned(runId: string, pinned: boolean): RunWorkspaceRetention {
+  if (workspaceCleanupInflight.has(runId)) {
+    throw new Error(`Run workspace cleanup is in progress: ${runId}`);
+  }
   const metadata = loadRunMetadata(runId);
   if (!metadata) throw new Error(`Run not found: ${runId}`);
   const retention: RunWorkspaceRetention = {
@@ -102,36 +106,69 @@ function retentionForStatus(status: DagRunStatus, policy: WorkspaceRetentionPoli
   return undefined;
 }
 
-function removeWorkspace(target: string): void {
-  const stat = fs.lstatSync(target);
-  fs.rmSync(target, {
-    recursive: stat.isDirectory() && !stat.isSymbolicLink(),
-    force: true,
-  });
+function isRunActiveInMemory(runId: string): boolean {
+  return getActiveRun(runId)?.status === "active";
 }
 
-function workspaceExists(target: string): boolean {
+interface WorkspaceEntry {
+  resolvedPath: string;
+  isSymbolicLink: boolean;
+  isDirectory: boolean;
+}
+
+function isInsideRoot(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function realpathOrResolve(target: string): Promise<string> {
   try {
-    fs.lstatSync(target);
-    return true;
+    return await fs.realpath(target);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return path.resolve(target);
     throw error;
   }
 }
 
-export function cleanupRunWorkspaces(options: {
+async function inspectWorkspace(target: string): Promise<WorkspaceEntry | undefined> {
+  let stat;
+  try {
+    stat = await fs.lstat(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (stat.isSymbolicLink()) {
+    return { resolvedPath: target, isSymbolicLink: true, isDirectory: false };
+  }
+  const root = await fs.realpath(path.resolve(getHomerailHome(), "workspace"));
+  const resolvedPath = await fs.realpath(target);
+  if (!isInsideRoot(root, resolvedPath)) {
+    throw new Error(`Unsafe resolved run workspace path '${resolvedPath}'`);
+  }
+  return { resolvedPath, isSymbolicLink: false, isDirectory: stat.isDirectory() };
+}
+
+async function removeWorkspace(target: string, entry: WorkspaceEntry): Promise<void> {
+  await fs.rm(target, {
+    recursive: entry.isDirectory && !entry.isSymbolicLink,
+    force: true,
+  });
+}
+
+export async function cleanupRunWorkspaces(options: {
   dryRun?: boolean;
   now?: number;
   policy?: WorkspaceRetentionPolicy;
-} = {}): WorkspaceCleanupReport {
+  /** Test-only hook for holding the deletion boundary open. */
+  _removeWorkspace?: (target: string) => Promise<void>;
+} = {}): Promise<WorkspaceCleanupReport> {
   const dryRun = options.dryRun ?? true;
   const now = options.now ?? Date.now();
   const policy = options.policy ?? resolveWorkspaceRetentionPolicy();
   const items: WorkspaceCleanupItem[] = [];
-  if (!policy.enabled) {
-    return { dry_run: dryRun, scanned: 0, eligible: 0, removed: 0, skipped: 0, failed: 0, items };
-  }
+  const defaultWorkspace = path.resolve(getDefaultWorkspacePath());
+  const resolvedDefaultWorkspace = await realpathOrResolve(defaultWorkspace);
 
   for (const runId of listPersistedRunIds()) {
     const metadata = loadRunMetadata(runId);
@@ -158,11 +195,11 @@ export function cleanupRunWorkspaces(options: {
       removed: false,
     };
     items.push(item);
-    if (workspacePath === path.resolve(getDefaultWorkspacePath())) {
+    if (workspacePath === defaultWorkspace) {
       item.reason = "reserved_default_workspace";
       continue;
     }
-    if (getActiveRun(runId)) {
+    if (isRunActiveInMemory(runId)) {
       item.reason = "run_active_in_memory";
       continue;
     }
@@ -187,18 +224,66 @@ export function cleanupRunWorkspaces(options: {
       item.reason = "worker_cleanup_pending";
       continue;
     }
-    if (!workspaceExists(workspacePath)) {
-      item.reason = "workspace_missing";
-      continue;
-    }
-    item.eligible = true;
     if (dryRun) {
+      let entry: WorkspaceEntry | undefined;
+      try {
+        entry = await inspectWorkspace(workspacePath);
+      } catch (error) {
+        item.reason = error instanceof Error ? error.message : String(error);
+        continue;
+      }
+      if (!entry) {
+        item.reason = "workspace_missing";
+        continue;
+      }
+      if (!entry.isSymbolicLink && entry.resolvedPath === resolvedDefaultWorkspace) {
+        item.reason = "reserved_default_workspace";
+        continue;
+      }
+      item.eligible = true;
       item.reason = "dry_run";
       continue;
     }
-    emit("dag:workspace_cleanup_requested", { runId, workspacePath });
+    if (workspaceCleanupInflight.has(runId)) {
+      item.reason = "workspace_cleanup_inflight";
+      continue;
+    }
+    workspaceCleanupInflight.add(runId);
     try {
-      removeWorkspace(workspacePath);
+      const currentBeforeDelete = loadRunMetadata(runId);
+      if (!currentBeforeDelete) {
+        item.reason = "run_missing";
+        continue;
+      }
+      if (currentBeforeDelete.workspaceRetention?.pinned) {
+        item.reason = "pinned";
+        continue;
+      }
+      if (isRunActiveInMemory(runId)) {
+        item.reason = "run_active_in_memory";
+        continue;
+      }
+      if (_isCleanupInflight(runId) || listProvisionedForRun(runId).length > 0) {
+        item.reason = "worker_cleanup_pending";
+        continue;
+      }
+      const entry = await inspectWorkspace(workspacePath);
+      if (!entry) {
+        item.reason = "workspace_missing";
+        continue;
+      }
+      if (!entry.isSymbolicLink && entry.resolvedPath === resolvedDefaultWorkspace) {
+        item.reason = "reserved_default_workspace";
+        continue;
+      }
+      if (_isCleanupInflight(runId) || listProvisionedForRun(runId).length > 0) {
+        item.reason = "worker_cleanup_pending";
+        continue;
+      }
+      item.eligible = true;
+      emit("dag:workspace_cleanup_requested", { runId, workspacePath });
+      if (options._removeWorkspace) await options._removeWorkspace(workspacePath);
+      else await removeWorkspace(workspacePath, entry);
       item.removed = true;
       const cleanedAt = Date.now();
       const current = loadRunMetadata(runId);
@@ -215,6 +300,8 @@ export function cleanupRunWorkspaces(options: {
     } catch (error) {
       item.reason = error instanceof Error ? error.message : String(error);
       emit("dag:workspace_cleanup_failed", { runId, workspacePath, reason: item.reason });
+    } finally {
+      workspaceCleanupInflight.delete(runId);
     }
   }
 
@@ -232,14 +319,20 @@ export function cleanupRunWorkspaces(options: {
 export function startWorkspaceCleanupScheduler(
   intervalMs = resolveWorkspaceRetentionPolicy().intervalMs,
 ): () => void {
+  let cleanupRunning = false;
   const timer = setInterval(() => {
-    try {
-      cleanupRunWorkspaces({ dryRun: false });
-    } catch (error) {
-      console.error(
-        `[workspace-retention] Scheduled cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const policy = resolveWorkspaceRetentionPolicy();
+    if (!policy.enabled || cleanupRunning) return;
+    cleanupRunning = true;
+    void cleanupRunWorkspaces({ dryRun: false, policy })
+      .catch((error) => {
+        console.error(
+          `[workspace-retention] Scheduled cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      })
+      .finally(() => {
+        cleanupRunning = false;
+      });
   }, intervalMs);
   timer.unref();
   return () => clearInterval(timer);

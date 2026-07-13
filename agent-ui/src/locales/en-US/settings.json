@@ -34,6 +34,28 @@
       }
     }
   },
+  "storage": {
+    "title": "Storage & Retention",
+    "description": "Configure how long completed run workspaces are retained.",
+    "connected": "Connected",
+    "loading": "Loading...",
+    "unavailable": "Unavailable",
+    "dataRoot": "Data root",
+    "runs": "Runs",
+    "sessionsDir": "Sessions directory",
+    "autoCleanup": "Automatic run workspace cleanup",
+    "autoCleanupDescription": "Automatically removes only terminal, unpinned workspaces past their retention period. Manual preview and cleanup remain available when disabled.",
+    "successDays": "Successful run retention (days)",
+    "failureDays": "Failed or cancelled run retention (days)",
+    "preview": "Preview cleanup",
+    "cleanupNow": "Clean up now",
+    "savePolicy": "Save policy",
+    "saved": "Workspace retention policy saved",
+    "cleanupConfirm": "Delete unpinned run workspaces past their retention period now? Run records and evidence will not be deleted.",
+    "previewAction": "Preview",
+    "cleanupAction": "Cleanup",
+    "result": "{action} complete: {eligible} eligible, {removed} removed, {failed} failed"
+  },
   "actions": {
     "refresh": "Refresh",
     "close": "Close",

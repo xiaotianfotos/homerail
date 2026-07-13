@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 
+import { i18n } from '@/plugins/i18n'
 import StorageRetentionSettings from './StorageRetentionSettings.vue'
 
 const {
@@ -37,6 +38,7 @@ function mount() {
   const root = document.createElement('div')
   document.body.appendChild(root)
   const app = createApp(StorageRetentionSettings)
+  app.use(i18n)
   app.mount(root)
   return { app, root }
 }
@@ -44,6 +46,7 @@ function mount() {
 describe('StorageRetentionSettings', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    i18n.global.locale.value = 'zh-Hans'
     vi.clearAllMocks()
     getStorageInfo.mockResolvedValue({
       data_root: '/tmp/homerail/manager',
@@ -95,7 +98,7 @@ describe('StorageRetentionSettings', () => {
   })
 
   it('previews safely and requires confirmation before destructive cleanup', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const nativeConfirm = vi.spyOn(window, 'confirm')
     const { app, root } = mount()
     await flush()
 
@@ -108,9 +111,11 @@ describe('StorageRetentionSettings', () => {
       .dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
     expect(cleanupRunWorkspaces).not.toHaveBeenCalledWith(false)
+    expect(nativeConfirm).not.toHaveBeenCalled()
+    expect(root.querySelector('[data-testid="agent-settings-workspace-cleanup-confirm"]'))
+      .not.toBeNull()
 
-    confirm.mockReturnValue(true)
-    root.querySelector<HTMLButtonElement>('[data-testid="agent-settings-workspace-cleanup-run"]')!
+    root.querySelector<HTMLButtonElement>('[data-testid="agent-settings-workspace-cleanup-confirm-confirm"]')!
       .dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
     expect(cleanupRunWorkspaces).toHaveBeenCalledWith(false)

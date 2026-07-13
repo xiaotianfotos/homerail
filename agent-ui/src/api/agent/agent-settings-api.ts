@@ -661,9 +661,11 @@ export const agentSettingsApi = {
   },
 
   async cleanupRunWorkspaces(dryRun = true): Promise<WorkspaceCleanupReport> {
-    const res = await http.post<WorkspaceCleanupReport>('/api/dag/workspaces/cleanup', {
-      dry_run: dryRun,
-    })
+    const res = await http.post<WorkspaceCleanupReport>(
+      '/api/dag/workspaces/cleanup',
+      { dry_run: dryRun },
+      { timeout: 0 },
+    )
     return res.data
   },
 
