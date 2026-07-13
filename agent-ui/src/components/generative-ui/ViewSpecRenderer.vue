@@ -73,6 +73,10 @@ div.hr-view__artifact { display:grid; min-height:220px; grid-template-rows:minma
 .hr-view__artifact > p { margin:0; padding:0 12px 12px; background:rgba(13,35,38,.94); }
 a.hr-view__artifact { display:flex; min-height:92px; align-items:center; gap:12px; padding:16px; text-decoration:none; }
 a.hr-view__artifact span { position:static; padding:0; background:none; }
+.homerail-view-spec[data-variant="summary"][data-expanded="false"] button.hr-view__artifact { min-height:88px; place-items:center; }
+.homerail-view-spec[data-variant="summary"][data-expanded="false"] button.hr-view__artifact img { width:auto; height:88px; min-height:0; max-width:100%; max-height:88px; object-fit:contain; }
+.homerail-view-spec[data-variant="summary"][data-expanded="false"] .hr-view__artifact > span { padding:20px 10px 8px; }
+.homerail-view-spec[data-variant="summary"][data-expanded="false"] .hr-view__artifact strong { font-size:13px; }
 .homerail-view-spec[data-expanded="true"] { height:100%; }
 .homerail-view-spec[data-expanded="true"] > .hr-view__stack { min-height:100%; }
 .homerail-view-spec[data-expanded="true"] div.hr-view__artifact { min-height:max(520px,calc(100dvh - 190px)); }
