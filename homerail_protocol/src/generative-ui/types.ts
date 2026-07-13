@@ -46,6 +46,21 @@ export const GenerativeUiDensity = {
 } as const;
 export type GenerativeUiDensity = (typeof GenerativeUiDensity)[keyof typeof GenerativeUiDensity];
 
+export const GenerativeUiCanvasSize = {
+  ONE_BY_ONE: "1x1",
+  ONE_BY_TWO: "1x2",
+  TWO_BY_TWO: "2x2",
+  THREE_BY_THREE: "3x3",
+} as const;
+export type GenerativeUiCanvasSize =
+  (typeof GenerativeUiCanvasSize)[keyof typeof GenerativeUiCanvasSize];
+
+export const GenerativeUiMotionProfile = {
+  STANDARD: "standard",
+} as const;
+export type GenerativeUiMotionProfile =
+  (typeof GenerativeUiMotionProfile)[keyof typeof GenerativeUiMotionProfile];
+
 export const GenerativeUiVisibility = {
   VISIBLE: "visible",
   MINIMIZED: "minimized",
@@ -145,6 +160,10 @@ export interface GenerativeUiStatusV1 {
 export interface GenerativeUiPresentationHintV1 {
   /** Soft hints only. The host remains responsible for composition and layout. */
   density?: GenerativeUiDensity;
+  /** Bounded canvas footprint. The host may downgrade it for compact devices. */
+  canvas_size?: GenerativeUiCanvasSize;
+  /** Host-owned motion vocabulary. Unknown animation names are never accepted. */
+  motion_profile?: GenerativeUiMotionProfile;
   preferred_visual?: string;
 }
 

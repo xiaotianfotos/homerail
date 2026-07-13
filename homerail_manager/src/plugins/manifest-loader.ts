@@ -255,6 +255,8 @@ export function loadPluginPackage(
       ["surface_pointer", projectionValidation.value.surface_pointer],
       ["importance_pointer", projectionValidation.value.importance_pointer],
       ["density_pointer", projectionValidation.value.density_pointer],
+      ["canvas_size_pointer", projectionValidation.value.canvas_size_pointer],
+      ["motion_profile_pointer", projectionValidation.value.motion_profile_pointer],
       ["persistence_pointer", projectionValidation.value.persistence_pointer],
     ] as const) {
       if (!pointerValue) continue;

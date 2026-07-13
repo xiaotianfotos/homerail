@@ -355,10 +355,16 @@ export async function updateVoiceAgentConfig(request: UpdateVoiceAgentConfigRequ
   return http.put<BaseResponse<VoiceAgentConfig>>('/api/manager-agent/config', request) as unknown as Promise<BaseResponse<VoiceAgentConfig>>
 }
 
-export async function sendVoiceTurn(sessionId: string, text: string, projectId?: string | null): Promise<BaseResponse<VoiceTurnResponse>> {
+export async function sendVoiceTurn(
+  sessionId: string,
+  text: string,
+  projectId?: string | null,
+  selectedNodeId?: string | null,
+): Promise<BaseResponse<VoiceTurnResponse>> {
   return http.post<BaseResponse<VoiceTurnResponse>>(`/api/voice-agent/sessions/${sessionId}/turn`, {
     text,
     project_id: projectId || null,
+    selected_node_id: selectedNodeId || null,
   }, { timeout: NO_HTTP_TIMEOUT }) as unknown as Promise<BaseResponse<VoiceTurnResponse>>
 }
 
@@ -425,13 +431,18 @@ export async function streamVoiceTurn(
   projectId: string | null | undefined,
   onEvent: (event: VoiceStreamEvent) => void | Promise<void>,
   signal?: AbortSignal,
+  selectedNodeId?: string | null,
 ): Promise<void> {
   let response: Response
   try {
     response = await fetch(voiceStreamUrl(`/api/voice-agent/sessions/${encodeURIComponent(sessionId)}/turn/stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, project_id: projectId || null }),
+      body: JSON.stringify({
+        text,
+        project_id: projectId || null,
+        selected_node_id: selectedNodeId || null,
+      }),
       signal,
     })
   } catch (err: any) {

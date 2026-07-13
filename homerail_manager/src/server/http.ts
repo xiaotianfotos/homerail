@@ -37,6 +37,7 @@ import type { DAGDispatcher } from "../orchestration/dag-dispatcher.js";
 import { emit } from "../events/bus.js";
 import { dispatchRecoveredRuns } from "../runtime/active-runs.js";
 import {
+  HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
   createPluginHttpTrustPolicy,
   pluginHttpTrustHandler,
 } from "./plugin-http-trust.js";
@@ -142,6 +143,8 @@ export function createServer(
     publicUrl: process.env.HOMERAIL_MANAGER_PUBLIC_URL,
     adminToken: process.env.HOMERAIL_MANAGER_ADMIN_TOKEN,
     allowedOrigins: process.env.HOMERAIL_MANAGER_ADMIN_ORIGINS,
+    unsafeAllowUnauthenticatedPublic:
+      process.env[HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH] === "1",
     turnAuthorizer: (credential, method, pathname) => (
       getManagerAgentTurnEnvelopeAuthority().authorizeApiRequest({ credential, method, pathname })
     ),

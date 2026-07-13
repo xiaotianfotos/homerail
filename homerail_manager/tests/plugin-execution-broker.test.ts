@@ -149,6 +149,7 @@ describe("plugin Tool execution broker", () => {
       surface: "result",
       importance: "primary",
       density: "detail",
+      canvas_size: "2x2",
       persistence: "session",
       content: { data: { title: "Release readiness", passed: 3 } },
       view: {
@@ -167,7 +168,7 @@ describe("plugin Tool execution broker", () => {
     expect(accepted.node).toMatchObject({
       kind: "com.homerail.core/generated_view",
       surface: "result",
-      presentation: { density: "detail" },
+      presentation: { density: "detail", canvas_size: "2x2" },
       content: { data: { title: "Release readiness", passed: 3 } },
       view: { view_version: 1, root: { type: "stack" } },
     });
@@ -183,6 +184,7 @@ describe("plugin Tool execution broker", () => {
       surface: "result",
       importance: "primary",
       density: "detail",
+      canvas_size: "2x2",
       persistence: "session",
       content: { data: {} },
     };

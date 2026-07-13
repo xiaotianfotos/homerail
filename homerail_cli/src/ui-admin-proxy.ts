@@ -1,5 +1,6 @@
 export const HOMERAIL_UI_ADMIN_PROXY_ENABLED = "HOMERAIL_UI_ADMIN_PROXY_ENABLED";
 export const HOMERAIL_UI_ORIGIN = "HOMERAIL_UI_ORIGIN";
+export const HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH = "HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH";
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -9,12 +10,14 @@ export interface UiAdminProxyPolicyOptions {
   uiBindHost: string;
   managerUrl: string;
   adminToken?: string;
+  unsafeAllowPublicNoAuth?: boolean;
 }
 
 export interface UiAdminProxyPolicy {
   readonly enabled: boolean;
   readonly uiOrigin?: string;
   readonly adminToken?: string;
+  readonly unsafeAllowPublicNoAuth?: boolean;
   readonly disabledReason?: string;
 }
 
@@ -28,7 +31,11 @@ export function createUiAdminProxyPolicy(options: UiAdminProxyPolicyOptions): Ui
 
   const uiOrigin = parseExactOrigin(options.uiOrigin);
   if (!uiOrigin) return disabled("UI Origin is not an exact http(s) Origin");
-  if (!isLoopbackHost(options.uiBindHost) || !isLoopbackHost(new URL(uiOrigin).hostname)) {
+  const unsafeAllowPublicNoAuth = Boolean(options.unsafeAllowPublicNoAuth && !options.adminToken);
+  if (
+    (!isLoopbackHost(options.uiBindHost) || !isLoopbackHost(new URL(uiOrigin).hostname))
+    && !unsafeAllowPublicNoAuth
+  ) {
     return disabled("UI is reachable beyond loopback");
   }
 
@@ -51,6 +58,7 @@ export function createUiAdminProxyPolicy(options: UiAdminProxyPolicyOptions): Ui
     enabled: true,
     uiOrigin,
     adminToken: options.adminToken || undefined,
+    unsafeAllowPublicNoAuth,
   });
 }
 

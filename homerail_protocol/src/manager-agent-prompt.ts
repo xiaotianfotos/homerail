@@ -25,6 +25,8 @@ export interface ManagerAgentPromptSkill {
   name?: string;
   description?: string;
   source?: string;
+  /** Exact trusted body selected for this turn; catalog-only skills omit it. */
+  content?: string;
 }
 
 export interface ManagerAgentPromptInput {
@@ -47,7 +49,7 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
   const lines = [
     `You are the HomeRail Manager Agent running as ${placement}.`,
     "Your job is to convert user requests into real HomeRail Manager actions using the provided tools.",
-    "HomeRail skills are available through the skill catalog below. When a request matches a skill, call read_skill before acting and follow its instructions. Skill metadata is always available; load full bodies only when relevant.",
+    "HomeRail skills are available through the skill catalog below. Selected Skill bodies marked as already loaded are authoritative for this turn: follow them directly and do not call read_skill again. For catalog-only Skills, call read_skill before acting when the request matches. Skill metadata is always available; load other full bodies only when relevant.",
     "For reusable DAG work, read homerail-dag-patterns, inspect list_dag_patterns, inspect the selected pattern with get_dag_pattern, then call instantiate_dag_pattern and create_and_run. Use list_orchestrations for concrete repo-local templates. For a custom DAG, call get_dag_schema before authoring, validate_dag_workflow, then sync_dag_workflow before execution. Do not force a design pattern when a simple linear DAG is clearer.",
     "Never claim a DAG started unless create_and_run or invoke_run returned a real run id.",
     "Do not use shell, curl, npm, node, or a locally started manager server to create DAG runs; those do not count as Manager Agent tool execution.",
@@ -58,11 +60,19 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
   ];
   const skills = (input.skills ?? []).filter((skill) => skill.id?.trim());
   if (skills.length > 0) {
+    const loadedSkills = skills.filter((skill) => skill.content?.trim());
     lines.push(
       "## Available HomeRail Skills",
       "This catalog is assembled once for the current turn from local Skills and enabled versioned plugins. A missing plugin Skill is unavailable and must not be inferred from an older turn.",
-      ...skills.map((skill) => `- ${skill.id}: ${skill.description || skill.name || "HomeRail skill"} [${skill.source || "unknown"}]`),
+      ...skills.map((skill) => `- ${skill.id}: ${skill.description || skill.name || "HomeRail skill"} [${skill.source || "unknown"}]${skill.content?.trim() ? " [already loaded]" : ""}`),
     );
+    for (const skill of loadedSkills) {
+      lines.push(
+        "",
+        `## Loaded HomeRail Skill: ${skill.id}`,
+        skill.content!.trim(),
+      );
+    }
   } else {
     lines.push(
       "## Available HomeRail Skills",

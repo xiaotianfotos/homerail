@@ -7,6 +7,7 @@ import ViewSpecRenderer from './ViewSpecRenderer.vue'
 let app: App<Element> | null = null
 let root: HTMLElement | null = null
 let requestedActions: string[] = []
+let requestedPreviews: Array<{ title?: string; url: string; kind?: string; layout?: string }> = []
 
 const placement: GenerativeUiCompositionItemV1 = {
   node_id: 'com.homerail.core:view-one', node_revision: 1, surface: 'result', variant: 'detail', rank: 1,
@@ -38,12 +39,13 @@ function node(view: HomerailViewSpecV1): GenerativeUiStoredNodeV1 {
   }
 }
 
-function mount(view: HomerailViewSpecV1, inputContext = context): HTMLElement {
+function mount(view: HomerailViewSpecV1, inputContext = context, expanded = false): HTMLElement {
   root = document.createElement('div')
   document.body.appendChild(root)
   app = createApp(ViewSpecRenderer, {
-    node: node(view), placement, context: inputContext,
+    node: node(view), placement, context: inputContext, expanded,
     onRequestAction: (actionId: string) => requestedActions.push(actionId),
+    onOpenPreview: (preview: { title?: string; url: string; kind?: string; layout?: string }) => requestedPreviews.push(preview),
   })
   app.use(i18n)
   app.mount(root)
@@ -56,6 +58,7 @@ afterEach(() => {
   app = null
   root = null
   requestedActions = []
+  requestedPreviews = []
 })
 
 describe('ViewSpecRenderer', () => {
@@ -143,5 +146,51 @@ describe('ViewSpecRenderer', () => {
     expect(mounted.querySelector('.homerail-view-spec')?.getAttribute('data-viewport')).toBe('compact')
     expect(mounted.querySelector<HTMLElement>('.hr-view__grid')?.style.getPropertyValue('--columns')).toBe('3')
     expect(mounted.querySelector<HTMLElement>('.hr-view__grid')?.style.getPropertyValue('--compact-columns')).toBe('1')
+  })
+
+  it('opens secondary disclosure content when the host expands the Block', () => {
+    const mounted = mount({
+      view_version: 1,
+      root: { id: 'root', type: 'stack', children: [
+        { id: 'summary', type: 'text', text: { literal: 'Minimum summary' } },
+        { id: 'details', type: 'disclosure', title: { literal: 'Detailed evidence' }, children: [
+          { id: 'evidence', type: 'text', text: { literal: 'Full evidence' } },
+        ] },
+      ] },
+    }, context, true)
+
+    expect(mounted.querySelector('.homerail-view-spec')?.getAttribute('data-expanded')).toBe('true')
+    expect(mounted.querySelector<HTMLDetailsElement>('.hr-view__disclosure')?.open).toBe(true)
+  })
+
+  it('previews image and HTML artifacts through the generic ViewSpec node', async () => {
+    const mounted = mount({
+      view_version: 1,
+      root: { id: 'root', type: 'grid', columns: { default: 2 }, children: [
+        {
+          id: 'cover', type: 'artifact', kind: 'image',
+          uri: { literal: '/api/voice-agent/sessions/session-one/artifacts/cover.png' },
+          title: { literal: 'AI cover' }, alt: { literal: 'AI cover preview' }, layout: 'portrait',
+        },
+        {
+          id: 'page', type: 'artifact', kind: 'html',
+          uri: { literal: '/api/voice-agent/sessions/session-one/artifacts/story.html' },
+          title: { literal: 'Story page' }, description: { literal: 'Interactive draft' },
+        },
+      ] },
+    })
+    const image = mounted.querySelector<HTMLButtonElement>('button.hr-view__artifact')!
+    const frame = mounted.querySelector<HTMLIFrameElement>('iframe')!
+    const htmlButton = mounted.querySelector<HTMLButtonElement>('div.hr-view__artifact > button')!
+
+    expect(image.querySelector('img')?.getAttribute('alt')).toBe('AI cover preview')
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-pointer-lock allow-popups')
+    image.click()
+    htmlButton.click()
+    await nextTick()
+    expect(requestedPreviews).toEqual([
+      expect.objectContaining({ title: 'AI cover', kind: 'image', layout: 'portrait' }),
+      expect.objectContaining({ title: 'Story page', kind: 'html', layout: 'fluid' }),
+    ])
   })
 })

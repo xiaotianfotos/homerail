@@ -39,7 +39,7 @@ function taskNode(id = "current-task"): GenerativeUiNodeV1 {
       title: "Generated UI foundation",
       summary: "The task is still being clarified.",
     },
-    presentation: { density: "summary" },
+    presentation: { density: "summary", canvas_size: "1x2", motion_profile: "standard" },
     lifecycle: { persistence: "session" },
     actions: [
       {
@@ -102,6 +102,14 @@ describe("Generative UI semantic protocol", () => {
     expect(validateGenerativeUiNode(withoutFallback).valid).toBe(false);
 
     expect(validateGenerativeUiNode({ ...taskNode(), gridColumn: "span 2" }).valid).toBe(false);
+    expect(validateGenerativeUiNode({
+      ...taskNode(),
+      presentation: { density: "summary", canvas_size: "2x1" as never },
+    }).valid).toBe(false);
+    expect(validateGenerativeUiNode({
+      ...taskNode(),
+      presentation: { density: "summary", motion_profile: "cinematic" as never },
+    }).valid).toBe(false);
 
     const unsafe = structuredClone(taskNode()) as unknown as Record<string, unknown>;
     unsafe.actions = [{

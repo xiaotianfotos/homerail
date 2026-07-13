@@ -21,7 +21,7 @@ function coreNode(): GenerativeUiStoredNodeV1 {
     id: "memo",
     kind: "com.homerail.core/task_summary",
     kind_version: 1,
-    owner: { id: "com.homerail.core", version: "0.1.0" },
+    owner: { id: "com.homerail.core", version: "0.1.7" },
     surface: "task",
     importance: "primary",
     content: {
@@ -61,7 +61,7 @@ describe("Plugin Context and Kind Registry", () => {
       context_version: 1,
       registry_revision: 3,
       enabled_plugins: [
-        { id: "com.homerail.core", version: "0.1.0" },
+        { id: "com.homerail.core", version: "0.1.7" },
         { id: "com.homerail.pr-closeout", version: "1.0.0" },
         { id: "com.homerail.topic-outline", version: "1.0.0" },
       ],
@@ -115,7 +115,7 @@ describe("Plugin Context and Kind Registry", () => {
     expect(skill).toMatchObject({
       descriptor: {
         plugin_id: "com.homerail.core",
-        plugin_version: "0.1.0",
+        plugin_version: "0.1.7",
         local_id: "voice-generative-ui",
       },
     });

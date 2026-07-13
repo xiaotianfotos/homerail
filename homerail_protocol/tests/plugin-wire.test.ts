@@ -412,7 +412,7 @@ describe("HomeRail plugin wire contracts", () => {
       },
     })).toMatchObject({
       node: {
-        id: "note-1",
+        id: "com.example.notes:note-1",
         kind: "com.example.notes/note",
         owner: { id: "com.example.notes", version: "1.0.0" },
         content: {
@@ -427,8 +427,34 @@ describe("HomeRail plugin wire contracts", () => {
           items: ["How is history replayed?", "Thesis: The ABI is semantic."],
         },
       },
-      legacy_widget: { id: "note-1", type: "note", data: { visual: "note" } },
+      legacy_widget: { id: "com.example.notes:note-1", type: "note", data: { visual: "note" } },
     });
+
+    const motionProjection = {
+      ...projection,
+      motion_profile_pointer: "/motion_profile",
+      defaults: { ...projection.defaults, motion_profile: "standard" },
+    } as const;
+    expect(applyHomerailDirectUiProjection({
+      projection: motionProjection,
+      plugin: { id: "com.example.notes", version: "1.0.0" },
+      arguments: {
+        id: "note-motion",
+        title: "Motion note",
+        note: "Host-owned motion only.",
+        motion_profile: "standard",
+      },
+    }).node.presentation).toMatchObject({ motion_profile: "standard" });
+    expect(() => applyHomerailDirectUiProjection({
+      projection: motionProjection,
+      plugin: { id: "com.example.notes", version: "1.0.0" },
+      arguments: {
+        id: "note-motion",
+        title: "Motion note",
+        note: "Unknown motion must fail closed.",
+        motion_profile: "cinematic",
+      },
+    })).toThrow(/motion profile pointer did not resolve/i);
 
     const descriptor = {
       plugin_id: "com.example.notes",
@@ -472,12 +498,14 @@ describe("HomeRail plugin wire contracts", () => {
       projection: { node: { kind: "com.example.notes/note" } },
     });
     expect(validateHomerailPluginToolExecutionEnvelope(envelope)).toMatchObject({ valid: true });
-    expect(() => executeHomerailPluginTool(descriptor, {
+    expect(executeHomerailPluginTool(descriptor, {
       id: "task-draft",
-      title: "Attempted Core collision",
-      note: "Must be rejected by the execution envelope.",
+      title: "Plugin-local identity",
+      note: "The projector must apply the active plugin owner namespace.",
       questions: [],
-    })).toThrow(/execution envelope is invalid/);
+    })).toMatchObject({
+      projection: { node: { id: "com.example.notes:task-draft" } },
+    });
     expect(validateHomerailPluginToolExecutionEnvelope({ ...envelope, unknown: true }).valid).toBe(false);
     const wrongQualified = structuredClone(envelope);
     wrongQualified.tool.qualified_id = "com.example.notes:other";

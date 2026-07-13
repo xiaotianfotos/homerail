@@ -10,6 +10,7 @@ import {
   scanPluginSource,
   sourceFilesForPack,
 } from "homerail-plugin-sdk";
+import type { GenerativeUiCanvasContextV1 } from "homerail-protocol";
 
 const captured = vi.hoisted(() => ({
   host: [] as Array<Record<string, unknown>>,
@@ -168,14 +169,27 @@ describe("Manager Agent per-turn capability routing", () => {
     expect(host.plugin_context).toEqual(hostContext);
     expect(hostShell.plugin_context).toEqual(hostContext);
     expect(container.plugin_context).toEqual(hostContext);
-    expect(hostContext.enabled_plugins.map((plugin) => plugin.id)).toEqual(["com.homerail.topic-outline"]);
+    expect(hostContext.enabled_plugins.map((plugin) => plugin.id)).toEqual([
+      "com.homerail.core",
+      "com.homerail.topic-outline",
+    ]);
     expect(hostContext.skills.map((skill) => skill.qualified_id)).toEqual([
+      "com.homerail.core:voice-generative-ui",
       "com.homerail.topic-outline:topic-outline",
     ]);
     expect(hostContext.tools.map((tool) => tool.qualified_id)).toEqual([
+      "com.homerail.core:upsert_generated_view",
       "com.homerail.topic-outline:upsert_topic_outline",
     ]);
-    expect(pluginSkillIds(captured.host[0])).toEqual(["com.homerail.topic-outline:topic-outline"]);
+    expect(pluginSkillIds(captured.host[0])).toEqual([
+      "com.homerail.core:voice-generative-ui",
+      "com.homerail.topic-outline:topic-outline",
+    ]);
+    const deliveredSkills = captured.host[0].manager_skills as Array<{ id: string; content?: string }>;
+    expect(deliveredSkills.find((skill) => skill.id === "com.homerail.core:voice-generative-ui")?.content)
+      .toContain("# Voice Generative UI");
+    expect(captured.host_shell[0].manager_skills).toEqual(captured.host[0].manager_skills);
+    expect(captured.container[0].manager_skills).toEqual(captured.host[0].manager_skills);
     expect(pluginSkillIds(captured.host_shell[0])).toEqual(pluginSkillIds(captured.host[0]));
     expect(pluginSkillIds(captured.container[0])).toEqual(pluginSkillIds(captured.host[0]));
     expect(captured.container[0]).not.toHaveProperty("plugin_routing");
@@ -327,16 +341,33 @@ describe("Manager Agent per-turn capability routing", () => {
   });
 
   it("uses the same selected context for the host streaming path", async () => {
+    const canvasContext: GenerativeUiCanvasContextV1 = {
+      canvas_context_version: 1,
+      document_id: "voice-canvas-stream",
+      document_revision: 3,
+      selected_node_id: "com.homerail.core:selected-card",
+      nodes: [{
+        id: "com.homerail.core:selected-card",
+        revision: 2,
+        kind: "com.homerail.core/generated_view",
+        surface: "result",
+        title: "Selected card",
+        selected: true,
+        content: { data: { status: "ready" } },
+      }],
+    };
     const events = [];
     for await (const event of runManagerAgentTurnStream({
       message: "remember evolving task requirements",
       response_mode: "voice",
       generative_ui_mode: "prefer",
       voice_session_id: "voice-session-stream",
+      canvas_context: canvasContext,
       agent_config: runtimeConfig("host"),
     })) events.push(event);
 
     expect(captured.host_stream).toHaveLength(1);
+    expect(captured.host_stream[0]?.canvas_context).toEqual(canvasContext);
     const context = pluginContext(captured.host_stream[0]);
     expect(context.enabled_plugins.map((plugin) => plugin.id)).toEqual(["com.homerail.core"]);
     expect(context.skills.map((skill) => skill.qualified_id)).toEqual([
@@ -349,6 +380,22 @@ describe("Manager Agent per-turn capability routing", () => {
       type: "result",
       result: { plugin_context: context },
     });
+  });
+
+  it("always binds Core Generative UI in a prefer voice turn without relying on keyword routing", () => {
+    const assets = resolveManagerAgentTurnAssets({
+      message: "把这些发布数据整理得便于快速浏览",
+      response_mode: "voice",
+      generative_ui_mode: "prefer",
+      voice_session_id: "voice-natural-dashboard",
+      agent_config: runtimeConfig("host"),
+    });
+    expect(assets.plugin_context.skills.map((skill) => skill.qualified_id)).toContain(
+      "com.homerail.core:voice-generative-ui",
+    );
+    expect(assets.plugin_context.tools.map((tool) => tool.qualified_id)).toContain(
+      "com.homerail.core:upsert_generated_view",
+    );
   });
 
   it("keeps runtime ViewSpec instructions but withholds its Tool when Generative UI is unbound", () => {

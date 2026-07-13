@@ -43,4 +43,19 @@ describe('Vite Manager mutation proxy trust', () => {
       managerUrl: 'http://192.168.1.9:19191',
     }).enabled).toBe(false)
   })
+
+  it('allows an explicitly unsafe public test proxy only for its exact self Origin', () => {
+    const unsafe = resolveAdminProxyTrust({
+      enabled: true,
+      uiOrigin: 'http://192.168.1.9:19193',
+      uiBindHost: '192.168.1.9',
+      managerUrl: 'http://127.0.0.1:19191',
+      unsafeAllowPublicNoAuth: true,
+    })
+    expect(unsafe).toMatchObject({ enabled: true, unsafeAllowPublicNoAuth: true })
+    expect(authorizeAdminProxyRequest(unsafe, 'http://192.168.1.9:19193', 'same-origin'))
+      .toEqual({ allowed: true })
+    expect(authorizeAdminProxyRequest(unsafe, 'https://evil.example', 'cross-site'))
+      .toMatchObject({ allowed: false })
+  })
 })

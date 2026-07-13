@@ -46,6 +46,7 @@ const adminProxyTrust = resolveAdminProxyTrust({
   uiOrigin: process.env.HOMERAIL_UI_ORIGIN || '',
   uiBindHost: process.env.HOMERAIL_UI_HOST || '',
   managerUrl: managerHttpTarget,
+  unsafeAllowPublicNoAuth: process.env.HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH === '1',
 })
 
 function adminProxyGuardPlugin(): Plugin {

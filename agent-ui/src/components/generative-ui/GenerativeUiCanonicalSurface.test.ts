@@ -142,6 +142,7 @@ describe('GenerativeUiCanonicalSurface', () => {
     const onAvailability = vi.fn()
     const mounted = mount({ onAvailability })
     await vi.waitFor(() => expect(onAvailability).toHaveBeenCalledWith({ available: false, node_ids: [] }))
+    expect(onAvailability).toHaveBeenCalledWith({ available: false, node_ids: [], loading: true })
     expect(mounted.querySelector('[data-generative-ui-mode="prefer"]')).toBeNull()
   })
 

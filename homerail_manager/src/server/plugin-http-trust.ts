@@ -4,6 +4,7 @@ import { HOMERAIL_MANAGER_TURN_HEADER } from "homerail-protocol";
 
 export const HOMERAIL_MANAGER_ADMIN_TOKEN = "HOMERAIL_MANAGER_ADMIN_TOKEN";
 export const HOMERAIL_MANAGER_ADMIN_ORIGINS = "HOMERAIL_MANAGER_ADMIN_ORIGINS";
+export const HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH = "HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH";
 export const MIN_ADMIN_TOKEN_BYTES = 32;
 
 const MAX_ADMIN_TOKEN_BYTES = 4 * 1024;
@@ -16,6 +17,7 @@ export interface PluginHttpTrustPolicyOptions {
   publicUrl?: string;
   adminToken?: string;
   allowedOrigins?: string;
+  unsafeAllowUnauthenticatedPublic?: boolean;
   turnAuthorizer?: (credential: string, method: string, pathname: string) => boolean;
 }
 
@@ -24,6 +26,7 @@ export interface PluginHttpTrustPolicy {
   readonly publiclyReachable: boolean;
   readonly adminToken?: string;
   readonly allowedOrigins: readonly string[];
+  readonly unsafeAllowUnauthenticatedPublic: boolean;
   readonly turnAuthorizer?: (credential: string, method: string, pathname: string) => boolean;
 }
 
@@ -38,7 +41,10 @@ export function createPluginHttpTrustPolicy(
   const bindHost = (options.bindHost ?? "127.0.0.1").trim() || "127.0.0.1";
   const adminToken = validateAdminToken(options.adminToken);
   const publiclyReachable = !isLoopbackHost(bindHost) || Boolean(options.publicUrl?.trim());
-  if (publiclyReachable && !adminToken) {
+  const unsafeAllowUnauthenticatedPublic = Boolean(
+    publiclyReachable && !adminToken && options.unsafeAllowUnauthenticatedPublic,
+  );
+  if (publiclyReachable && !adminToken && !unsafeAllowUnauthenticatedPublic) {
     throw new Error(
       `${HOMERAIL_MANAGER_ADMIN_TOKEN} must contain at least ${MIN_ADMIN_TOKEN_BYTES} bytes `
       + "before Manager can bind beyond loopback or advertise a public URL",
@@ -49,6 +55,7 @@ export function createPluginHttpTrustPolicy(
     publiclyReachable,
     adminToken,
     allowedOrigins: Object.freeze(parseAllowedOrigins(options.allowedOrigins)),
+    unsafeAllowUnauthenticatedPublic,
     turnAuthorizer: options.turnAuthorizer,
   });
 }
@@ -94,7 +101,11 @@ export function pluginHttpTrustHandler(
 
   const socketAddress = req.socket.localAddress;
   const reachedBeyondLoopback = Boolean(socketAddress && !isLoopbackHost(socketAddress));
-  if ((policy.publiclyReachable || reachedBeyondLoopback) && !policy.adminToken) {
+  if (
+    (policy.publiclyReachable || reachedBeyondLoopback)
+    && !policy.adminToken
+    && !policy.unsafeAllowUnauthenticatedPublic
+  ) {
     req.resume();
     deny(res, 503, "Manager mutation authentication is not configured");
     return true;

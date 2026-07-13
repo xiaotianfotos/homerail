@@ -6,6 +6,7 @@ import {
 } from 'lucide-vue-next'
 import { isSafeGenerativeUiArtifactUri, type HomerailViewModelNodeV1 } from 'homerail-protocol'
 import ViewSpecDag from './ViewSpecDag.vue'
+import type { GenerativeUiPreviewRequestV1 } from '@/generative-ui/types'
 
 const icons = {
   activity: Activity, alert: AlertTriangle, check: Check, clock: Clock3, database: Database,
@@ -27,20 +28,34 @@ function spanStyle(node: HomerailViewModelNodeV1): CSSProperties {
   return { gridColumn: `span ${node.span}` }
 }
 
-function children(node: HomerailViewModelNodeV1, emit: (actionId: string) => void, compact: boolean): VNode[] {
+function children(
+  node: HomerailViewModelNodeV1,
+  emitAction: (actionId: string) => void,
+  emitPreview: (preview: GenerativeUiPreviewRequestV1) => void,
+  compact: boolean,
+  expanded: boolean,
+): VNode[] {
   return (node.children ?? []).map(child => h(ViewSpecNode, {
     key: child.id,
     model: child,
     compact,
-    onRequestAction: emit,
+    expanded,
+    onRequestAction: emitAction,
+    onOpenPreview: emitPreview,
   }))
 }
 
-function renderNode(node: HomerailViewModelNodeV1, emit: (actionId: string) => void, compact: boolean): VNode {
+function renderNode(
+  node: HomerailViewModelNodeV1,
+  emitAction: (actionId: string) => void,
+  emitPreview: (preview: GenerativeUiPreviewRequestV1) => void,
+  compact: boolean,
+  expanded: boolean,
+): VNode {
   const base = [`hr-view__node`, `hr-view__${node.type}`]
   const attrs = { class: base, 'data-tone': node.tone ?? 'neutral', style: spanStyle(node) }
   if (node.type === 'stack' || node.type === 'repeat') {
-    return h('div', { ...attrs, 'data-gap': node.gap ?? 'md', 'data-align': node.align ?? 'stretch' }, children(node, emit, compact))
+    return h('div', { ...attrs, 'data-gap': node.gap ?? 'md', 'data-align': node.align ?? 'stretch' }, children(node, emitAction, emitPreview, compact, expanded))
   }
   if (node.type === 'grid') {
     return h('div', {
@@ -48,10 +63,10 @@ function renderNode(node: HomerailViewModelNodeV1, emit: (actionId: string) => v
       'data-gap': node.gap ?? 'md',
       'data-align': node.align ?? 'stretch',
       style: { ...spanStyle(node), '--columns': node.columns?.default ?? 1, '--compact-columns': node.columns?.compact ?? 1 },
-    }, children(node, emit, compact))
+    }, children(node, emitAction, emitPreview, compact, expanded))
   }
   if (node.type === 'section') {
-    return h('section', attrs, [node.title ? h('header', node.title) : null, ...children(node, emit, compact)])
+    return h('section', attrs, [node.title ? h('header', node.title) : null, ...children(node, emitAction, emitPreview, compact, expanded)])
   }
   if (node.type === 'heading') {
     return h((`h${node.level ?? 2}`) as 'h1', attrs, node.text)
@@ -107,13 +122,42 @@ function renderNode(node: HomerailViewModelNodeV1, emit: (actionId: string) => v
   }
   if (node.type === 'dag') return h(ViewSpecDag, { ...attrs, items: node.items ?? [] })
   if (node.type === 'action') {
-    return h('button', { ...attrs, type: 'button', 'data-style': node.style, onClick: () => node.action_id && emit(node.action_id) }, node.label)
+    return h('button', { ...attrs, type: 'button', 'data-style': node.style, onClick: () => node.action_id && emitAction(node.action_id) }, node.label)
   }
   if (node.type === 'disclosure') {
-    return h('details', { ...attrs, open: node.open }, [h('summary', node.title), h('div', children(node, emit, compact))])
+    return h('details', { ...attrs, open: expanded || node.open }, [h('summary', node.title), h('div', children(node, emitAction, emitPreview, compact, expanded))])
   }
   if (node.type === 'link') {
     return h('a', { ...attrs, href: node.uri, target: '_blank', rel: 'noopener noreferrer' }, [node.label, h(ExternalLink, { size: 13 })])
+  }
+  if (node.type === 'artifact' && node.uri) {
+    const preview = () => emitPreview({
+      title: node.title,
+      url: node.uri!,
+      kind: node.artifact_kind === 'image' ? 'image' : 'html',
+      layout: node.layout,
+    })
+    if (node.artifact_kind === 'image') {
+      return h('button', { ...attrs, type: 'button', onClick: preview }, [
+        h('img', { src: node.uri, alt: node.alt || node.title || '' }),
+        h('span', [h('strong', node.title), node.description ? h('small', node.description) : null]),
+      ])
+    }
+    if (node.artifact_kind === 'html') {
+      return h('div', attrs, [
+        h('iframe', {
+          src: node.uri,
+          sandbox: 'allow-scripts allow-forms allow-pointer-lock allow-popups',
+          tabindex: '-1',
+          title: node.title || 'HTML artifact preview',
+        }),
+        h('button', { type: 'button', onClick: preview }, [h(Monitor, { size: 16 }), node.title || 'Open preview']),
+        node.description ? h('p', node.description) : null,
+      ])
+    }
+    return h('a', { ...attrs, href: node.uri, target: '_blank', rel: 'noopener noreferrer' }, [
+      h(File, { size: 18 }), h('span', [h('strong', node.title || 'Artifact'), node.description ? h('small', node.description) : null]),
+    ])
   }
   return h('div', attrs)
 }
@@ -123,10 +167,20 @@ const ViewSpecNode = defineComponent({
   props: {
     model: { type: Object as PropType<HomerailViewModelNodeV1>, required: true },
     compact: { type: Boolean, default: false },
+    expanded: { type: Boolean, default: false },
   },
-  emits: { 'request-action': (actionId: string) => Boolean(actionId) },
+  emits: {
+    'request-action': (actionId: string) => Boolean(actionId),
+    'open-preview': (preview: GenerativeUiPreviewRequestV1) => Boolean(preview.url),
+  },
   setup(props, { emit }) {
-    return () => renderNode(props.model, actionId => emit('request-action', actionId), props.compact)
+    return () => renderNode(
+      props.model,
+      actionId => emit('request-action', actionId),
+      preview => emit('open-preview', preview),
+      props.compact,
+      props.expanded,
+    )
   },
 })
 

@@ -108,6 +108,7 @@ afterEach(() => {
   root?.remove()
   app = null
   root = null
+  vi.useRealTimers()
 })
 
 describe('GenerativeUiNodeHost', () => {
@@ -165,7 +166,7 @@ describe('GenerativeUiNodeHost', () => {
       actionRegistry: actionRegistry(),
       onAction,
     })
-    mounted.querySelector<HTMLButtonElement>('button')!.click()
+    mounted.querySelector<HTMLButtonElement>('.generative-ui-node-host__actions button')!.click()
     expect(onAction).toHaveBeenCalledWith({
       document_id: 'document-one',
       node_id: 'node-one',
@@ -201,6 +202,26 @@ describe('GenerativeUiNodeHost', () => {
       actionRegistry: new GenerativeUiActionRegistry([]),
     })
     expect(mounted.querySelector('.generative-ui-node-host__actions')).toBeNull()
+  })
+
+  it('marks and emits the selected Block without changing its renderer', () => {
+    const onSelect = vi.fn()
+    const mounted = mount(GenerativeUiNodeHost, {
+      documentId: 'document-one',
+      node: node(),
+      placement: placement(),
+      context,
+      registry: registry(),
+      selected: true,
+      onSelect,
+    })
+    const host = mounted.querySelector<HTMLElement>('[data-generative-ui-node]')!
+
+    expect(host.classList.contains('generative-ui-node-host--selected')).toBe(true)
+    expect(host.getAttribute('aria-selected')).toBe('true')
+    host.click()
+    expect(onSelect).toHaveBeenCalledWith({ node_id: 'node-one' })
+    expect(mounted.querySelector('.exact-renderer')?.textContent).toBe('Fallback node-one')
   })
 
   it('renders canonical topic content without a legacy_widget envelope', () => {
@@ -273,5 +294,107 @@ describe('GenerativeUiSurfaceHost', () => {
     expect(document.activeElement).toBe(hosts[1])
     hosts[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
     expect(document.activeElement).toBe(hosts[0])
+  })
+
+  it('lays out independent Blocks on the 3-column canvas using only supported footprints', async () => {
+    const nodes = [
+      node('status', { presentation: { density: 'glance', canvas_size: '1x1' } }),
+      node('checks', { presentation: { density: 'summary', canvas_size: '1x2' } }),
+      node('graph', {
+        presentation: { density: 'detail', canvas_size: '3x3' },
+        updated_at: '2026-07-11T19:01:00.000Z',
+      }),
+    ]
+    const documentValue: GenerativeUiDocumentV1 = {
+      ir_version: 1,
+      document_id: 'document-layout',
+      scope: { type: 'voice_session', id: 'session-layout' },
+      revision: 3,
+      nodes,
+      updated_at: '2026-07-11T19:01:00.000Z',
+    }
+    const compositionValue: GenerativeUiCompositionV1 = {
+      composition_version: 1,
+      document_id: 'document-layout',
+      document_revision: 3,
+      context,
+      items: nodes.map((candidate, index) => placement(candidate.id, index + 1)),
+      hidden_node_ids: [],
+    }
+
+    const mounted = mount(GenerativeUiSurfaceHost, {
+      document: documentValue,
+      composition: compositionValue,
+      registry: new GenerativeUiRendererRegistry([]),
+    })
+    await nextTick()
+
+    expect(mounted.querySelector('.generative-ui-surface-host')?.getAttribute('data-canvas-rows')).toBe('3')
+    expect(mounted.querySelector('.generative-ui-surface-host')?.getAttribute('data-canvas-columns')).toBe('3')
+    expect(mounted.querySelector('.generative-ui-surface-host')?.getAttribute('data-content-layout')).toBe('flow')
+    expect([...mounted.querySelectorAll('[data-canvas-size]')].map(element => element.getAttribute('data-canvas-size')))
+      .toEqual(['1x1', '1x2', '3x3'])
+    expect(document.activeElement?.getAttribute('data-generative-ui-node')).toBe('graph')
+  })
+
+  it('applies the bounded motion profile and clears Manager attention after its deadline', async () => {
+    vi.useFakeTimers()
+    const nodes = [node('motion-card', {
+      presentation: { density: 'summary', canvas_size: '1x2', motion_profile: 'standard' },
+    })]
+    const mounted = mount(GenerativeUiSurfaceHost, {
+      document: {
+        ir_version: 1,
+        document_id: 'document-motion',
+        scope: { type: 'voice_session', id: 'session-motion' },
+        revision: 1,
+        nodes,
+        updated_at: '2026-07-11T19:00:00.000Z',
+      } satisfies GenerativeUiDocumentV1,
+      composition: {
+        composition_version: 1,
+        document_id: 'document-motion',
+        document_revision: 1,
+        context,
+        items: [placement('motion-card', 1)],
+        hidden_node_ids: [],
+      } satisfies GenerativeUiCompositionV1,
+      registry: new GenerativeUiRendererRegistry([]),
+    })
+    await nextTick()
+
+    const host = mounted.querySelector<HTMLElement>('[data-generative-ui-node="motion-card"]')!
+    expect(mounted.querySelector('.generative-ui-surface-host')?.getAttribute('data-content-layout')).toBe('single')
+    expect(host.dataset.motionProfile).toBe('standard')
+    expect(host.dataset.attention).toBe('true')
+    expect(host.classList.contains('generative-ui-node-host--attention')).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(2400)
+    await nextTick()
+    expect(host.dataset.attention).toBe('false')
+    expect(host.classList.contains('generative-ui-node-host--attention')).toBe(false)
+  })
+
+  it('expands one selected Block and restores it with Escape', async () => {
+    const mounted = mount(GenerativeUiNodeHost, {
+      documentId: 'document-one',
+      node: node(),
+      placement: placement(),
+      canvasSize: '2x2',
+      context,
+      registry: registry(),
+    })
+    const host = mounted.querySelector<HTMLElement>('[data-generative-ui-node]')!
+    const toggle = mounted.querySelector<HTMLButtonElement>('.generative-ui-node-host__expand')!
+
+    toggle.click()
+    await nextTick()
+    expect(host.dataset.expanded).toBe('true')
+    expect(document.body.classList.contains('generative-ui-node-expanded')).toBe(true)
+
+    host.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(host.dataset.expanded).toBe('false')
+    expect(document.body.classList.contains('generative-ui-node-expanded')).toBe(false)
   })
 })

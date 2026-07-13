@@ -144,7 +144,7 @@ describe("HomeRail plugin archive and activation registry", () => {
     expect(second).toEqual(first);
     expect(first).toMatchObject({
       descriptor_version: 1,
-      manifest: { id: CORE_PLUGIN_ID, version: "0.1.0" },
+      manifest: { id: CORE_PLUGIN_ID, version: "0.1.7" },
       skills: [{ id: "voice-generative-ui" }],
     });
     expect(first.schemas.map((schema) => schema.id)).toEqual([
@@ -252,6 +252,36 @@ describe("HomeRail plugin archive and activation registry", () => {
     expect(() => getDb().prepare(`
       DELETE FROM plugin_packages WHERE plugin_id = ? AND plugin_version = ?
     `).run("com.example.notes", "1.1.0")).toThrow(/foreign key/i);
+  });
+
+  it("refreshes only application-bundled same-version packages", () => {
+    const firstRoot = writeMinimalPlugin(tmpHome, "com.example.builtin", "0.1.0");
+    const first = loadPluginPackage(firstRoot, { source: "builtin" });
+    syncPluginPackage({ descriptor: first, source: "builtin", default_enabled: true });
+
+    const driftRoot = path.join(tmpHome, "builtin-drift");
+    fs.cpSync(firstRoot, driftRoot, { recursive: true });
+    fs.appendFileSync(path.join(driftRoot, "skills", "notes", "SKILL.md"), "\nUse the current host contract.\n");
+    const drift = loadPluginPackage(driftRoot, { source: "builtin" });
+    expect(drift.package_digest).not.toBe(first.package_digest);
+    expect(() => syncPluginPackage({ descriptor: drift, source: "builtin" })).toThrow(/digest collision/);
+
+    const refreshed = syncPluginPackage({
+      descriptor: drift,
+      source: "builtin",
+      refresh_builtin: true,
+    });
+    expect(refreshed).toMatchObject({
+      package_digest: drift.package_digest,
+      source: "builtin",
+      activation: { active_version: "0.1.0", enabled: true, revision: 2 },
+    });
+    expect(listPluginPackages()).toHaveLength(1);
+    expect(() => syncPluginPackage({
+      descriptor: drift,
+      source: "development",
+      refresh_builtin: true,
+    })).toThrow(/Only builtin plugins/);
   });
 
   it("qualifies Action capability identities in the UI registry projection", () => {

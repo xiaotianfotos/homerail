@@ -1102,6 +1102,9 @@ describe("/api/manager/chat", () => {
     expect(contract.prompt).toContain("Voice Surface Contract");
     expect(contract.prompt).toContain("same Main Agent");
     expect(contract.prompt).toContain("Generated UI must come from voice tools");
+    expect(contract.prompt).toContain("projection is successful only when the Tool result reports status committed");
+    expect(contract.prompt).toContain("call update_selected_generated_view and do not ask the user to reselect it");
+    expect(contract.prompt).toContain("when the needed value is present there, use it and proceed");
 
     const prompt = _systemPromptForTest({
       agent_type: "codex_appserver",

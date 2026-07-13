@@ -1723,6 +1723,7 @@ describe("runtime command", () => {
     expect(startCommand?.options.map((option) => option.long)).toContain("--rebuild-worker-image");
     expect(startCommand?.options.map((option) => option.long)).toContain("--host");
     expect(startCommand?.options.map((option) => option.long)).toContain("--public");
+    expect(startCommand?.options.map((option) => option.long)).toContain("--unsafe-no-admin-token");
     expect(startCommand?.options.map((option) => option.long)).toContain("--public-url");
     expect(startCommand?.options.map((option) => option.long)).toContain("--ui");
     expect(startCommand?.options.map((option) => option.long)).toContain("--ui-public-url");
@@ -1741,6 +1742,7 @@ describe("runtime command", () => {
       "logs",
     ]);
     expect(uiStartCommand?.options.map((option) => option.long)).toContain("--public");
+    expect(uiStartCommand?.options.map((option) => option.long)).toContain("--unsafe-no-admin-token");
     expect(uiStartCommand?.options.map((option) => option.long)).toContain("--enable-text-mode");
   });
 

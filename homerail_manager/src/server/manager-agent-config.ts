@@ -117,13 +117,16 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
     ? current.service_tier
     : normalizedServiceTier(serviceTier);
   if (harness === "codex_appserver") {
+    const staleRuntimeSelection = Boolean(settingId || providerName);
     return {
       ...current,
       harness,
       llm_setting_id: null,
       provider_name: null,
-      model_name: settingId || providerName
-        ? "gpt-5.5"
+      model_name: staleRuntimeSelection
+        ? current.harness === "codex_appserver"
+          ? current.model_name ?? "gpt-5.5"
+          : "gpt-5.5"
         : modelName ?? (mergedSettingId || mergedProviderName ? "gpt-5.5" : mergedModelName ?? "gpt-5.5"),
       reasoning_effort: mergedReasoningEffort,
       service_tier: mergedServiceTier,

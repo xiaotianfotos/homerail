@@ -126,7 +126,7 @@ describe("legacy Widget to semantic transaction compiler", () => {
     expect(nodes.map((node) => semanticProjection(node))).toEqual(mappingGolden);
     nodes.forEach((node, index) => {
       expect(node.id).toBe(legacyWidgets[index].id);
-      expect(node.owner.version).toBe("0.1.0");
+      expect(node.owner.version).toBe(node.owner.id === "com.homerail.core" ? "0.1.7" : "0.1.0");
       expect(node.content.legacy_widget).toEqual(materializedLegacyWidget(legacyWidgets[index]));
       const baseFallback = expectedFallback(legacyWidgets[index]);
       expect(node.fallback).toMatchObject({

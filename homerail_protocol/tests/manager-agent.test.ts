@@ -242,6 +242,22 @@ describe("Manager Agent harness contract", () => {
     expect(prompt).toContain("instantiate_dag_pattern and create_and_run");
   });
 
+  it("embeds already-selected Skill bodies without asking the Agent to reload them", () => {
+    const prompt = buildManagerAgentSystemPrompt({
+      skills: [{
+        id: "com.homerail.core:voice-generative-ui",
+        description: "Build structured voice UI.",
+        source: "plugin",
+        content: "Use the bound Core Tool once and require a committed result.",
+      }],
+    });
+
+    expect(prompt).toContain("com.homerail.core:voice-generative-ui: Build structured voice UI. [plugin] [already loaded]");
+    expect(prompt).toContain("## Loaded HomeRail Skill: com.homerail.core:voice-generative-ui");
+    expect(prompt).toContain("Use the bound Core Tool once and require a committed result.");
+    expect(prompt).toContain("do not call read_skill again");
+  });
+
   it("describes host-shell manager agents separately from containers", () => {
     const prompt = buildManagerAgentSystemPrompt({
       runtime: { placement: "host_shell", provider: "kimi", model: "kimi-k2.7" },

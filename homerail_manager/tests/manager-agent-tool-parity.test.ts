@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   managerAgentCommonToolCatalog,
   type AgentToolDefinition,
+  type GenerativeUiCanvasContextV1,
   type ManagerAgentResponseMode,
   type HomerailPluginToolExecutionEnvelopeV1,
   type HomerailPluginTurnContextV1,
@@ -43,6 +44,8 @@ function createVoiceSurface(): VoiceSurfaceState {
 function createHarnessTools(
   responseMode: ManagerAgentResponseMode,
   pluginContext?: HomerailPluginTurnContextV1,
+  pluginToolTurnToken?: string,
+  canvasContext?: GenerativeUiCanvasContextV1,
 ) {
   const hostState = {
     restUrl: "http://127.0.0.1:1/api",
@@ -71,8 +74,20 @@ function createHarnessTools(
   return {
     hostState,
     workerState,
-    hostTools: createHostCodexManagerTools(hostState, responseMode, pluginContext) as ComparableTool[],
-    workerTools: createWorkerManagerTools(workerState, responseMode, pluginContext) as ComparableTool[],
+    hostTools: createHostCodexManagerTools(
+      hostState,
+      responseMode,
+      pluginContext,
+      pluginToolTurnToken,
+      canvasContext,
+    ) as ComparableTool[],
+    workerTools: createWorkerManagerTools(
+      workerState,
+      responseMode,
+      pluginContext,
+      pluginToolTurnToken,
+      canvasContext,
+    ) as ComparableTool[],
   };
 }
 
@@ -131,6 +146,30 @@ describe.each<ManagerAgentResponseMode>(["chat", "voice"])(
 );
 
 describe("Manager Agent deterministic result envelope parity", () => {
+  it("removes legacy Widget writers when the canonical Core Tool is bound", () => {
+    const context = assemblePluginTurnContext(undefined, { modality: "voice" });
+    const { hostTools, workerTools } = createHarnessTools("voice", context, "bound-turn-token");
+    const forbidden = [
+      "show_status_card",
+      "show_list_card",
+      "show_progress_card",
+      "show_note_card",
+      "show_artifact_card",
+      "show_dynamic_widget",
+      "update_voice_surface",
+      "remove_widget",
+    ];
+    for (const tools of [hostTools, workerTools]) {
+      const names = tools.map((tool) => tool.name);
+      expect(names).toContain("update_task_draft");
+      expect(names).toContain(context.tools.find(
+        (tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view",
+      )!.wire_id);
+      for (const name of forbidden) expect(names).not.toContain(name);
+    }
+    expect(catalogProjection(hostTools)).toEqual(catalogProjection(workerTools));
+  });
+
   it("keeps side-effect-free Host Codex and Worker handlers compatible", async () => {
     const { hostState, workerState, hostTools, workerTools } = createHarnessTools("voice");
     const fixtures = [
@@ -224,6 +263,61 @@ describe("Manager Agent deterministic result envelope parity", () => {
     expect(hostState.voiceSurface.pluginProjections[0].projection.legacy_widget).toMatchObject({
       id: "com.homerail.topic-outline:topic-parity",
       type: "topic_outline",
+    });
+  });
+
+  it("binds selected generated-view updates to the authoritative canvas id in both harnesses", async () => {
+    const context = assemblePluginTurnContext(undefined, { modality: "voice" });
+    const canvasContext: GenerativeUiCanvasContextV1 = {
+      canvas_context_version: 1,
+      document_id: "document-parity",
+      document_revision: 4,
+      selected_node_id: "com.homerail.core:news-summary",
+      nodes: [{
+        id: "com.homerail.core:news-summary",
+        revision: 4,
+        kind: "com.homerail.core/generated_view",
+        surface: "result",
+        title: "News summary",
+        selected: true,
+        content: { data: { title: "News summary" } },
+        view: {
+          view_version: 1,
+          root: { id: "root", type: "heading", text: { path: "/data/title" }, level: 2 },
+        },
+      }],
+    };
+    const { hostState, workerState, hostTools, workerTools } = createHarnessTools(
+      "voice",
+      context,
+      undefined,
+      canvasContext,
+    );
+    const input = {
+      title: "Updated news summary",
+      summary: "The selected Block was updated in place.",
+      surface: "result",
+      importance: "primary",
+      density: "summary",
+      canvas_size: "1x2",
+      persistence: "session",
+      content: { data: { title: "Updated news summary" } },
+    };
+    for (const tools of [hostTools, workerTools]) {
+      const selectedTool = requireTool(tools, "update_selected_generated_view");
+      expect((selectedTool.input_schema.properties as Record<string, unknown>).id).toBeUndefined();
+      expect(selectedTool.input_schema.required).not.toContain("id");
+      expect(selectedTool.input_schema.required).not.toContain("view");
+      await selectedTool.handler(input);
+    }
+    expect(hostState.voiceSurface).toEqual(workerState.voiceSurface);
+    expect(hostState.voiceSurface.pluginProjections[0]).toMatchObject({
+      projection: {
+        node: {
+          id: "com.homerail.core:news-summary",
+          view: { root: { id: "root", type: "heading" } },
+        },
+      },
     });
   });
 

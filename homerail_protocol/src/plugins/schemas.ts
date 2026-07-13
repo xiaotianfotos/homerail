@@ -14,10 +14,12 @@ import {
   HomerailPluginRuntimeTrust,
 } from "./types.js";
 import {
+  GenerativeUiCanvasSize,
   GenerativeUiDensity,
   GenerativeUiDevice,
   GenerativeUiActionStyle,
   GenerativeUiImportance,
+  GenerativeUiMotionProfile,
   GenerativeUiPersistence,
   GenerativeUiSurface,
 } from "../generative-ui/types.js";
@@ -1031,6 +1033,8 @@ export const homerailDirectUiProjectionSchema = {
     surface_pointer: jsonPointer,
     importance_pointer: jsonPointer,
     density_pointer: jsonPointer,
+    canvas_size_pointer: jsonPointer,
+    motion_profile_pointer: jsonPointer,
     persistence_pointer: jsonPointer,
     omit_content_fields: {
       type: "array",
@@ -1059,6 +1063,8 @@ export const homerailDirectUiProjectionSchema = {
         surface,
         importance: { type: "string", enum: Object.values(GenerativeUiImportance) },
         density: { type: "string", enum: Object.values(GenerativeUiDensity) },
+        canvas_size: { type: "string", enum: Object.values(GenerativeUiCanvasSize) },
+        motion_profile: { type: "string", enum: Object.values(GenerativeUiMotionProfile) },
         persistence: { type: "string", enum: Object.values(GenerativeUiPersistence) },
       },
       required: ["surface", "importance", "density", "persistence"],

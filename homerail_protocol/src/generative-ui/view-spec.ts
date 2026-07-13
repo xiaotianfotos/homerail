@@ -1,4 +1,7 @@
-import { isSafeGenerativeUiArtifactUri } from "./artifact-uri.js";
+import {
+  isSafeGenerativeUiArtifactUri,
+  isSafeGenerativeUiPreviewUri,
+} from "./artifact-uri.js";
 
 export const HOMERAIL_VIEW_SPEC_VERSION = 1 as const;
 export const HOMERAIL_VIEW_SPEC_MAX_BYTES = 64 * 1024;
@@ -18,6 +21,8 @@ export type HomerailViewValueV1 =
   | { item_path: string; format?: HomerailViewFormatV1 };
 
 export type HomerailViewToneValueV1 = HomerailViewToneV1 | HomerailViewValueV1;
+export type HomerailViewArtifactKindV1 = "image" | "html" | "file";
+export type HomerailViewArtifactLayoutV1 = "fluid" | "portrait";
 
 export interface HomerailViewPredicateV1 {
   path?: string;
@@ -114,6 +119,15 @@ export type HomerailViewNodeV1 =
     })
   | (HomerailViewContainerBaseV1 & { type: "disclosure"; title: HomerailViewValueV1; open?: boolean })
   | (HomerailViewNodeBaseV1 & { type: "link"; label: HomerailViewValueV1; uri: HomerailViewValueV1 })
+  | (HomerailViewNodeBaseV1 & {
+      type: "artifact";
+      kind: HomerailViewArtifactKindV1;
+      uri: HomerailViewValueV1;
+      title?: HomerailViewValueV1;
+      description?: HomerailViewValueV1;
+      alt?: HomerailViewValueV1;
+      layout?: HomerailViewArtifactLayoutV1;
+    })
   | (HomerailViewNodeBaseV1 & { type: "repeat"; source: string; max_items?: number; item: HomerailViewNodeV1 });
 
 export type HomerailViewIconV1 =
@@ -168,6 +182,10 @@ export interface HomerailViewModelNodeV1 {
   style?: "primary" | "secondary" | "danger";
   open?: boolean;
   uri?: string;
+  artifact_kind?: HomerailViewArtifactKindV1;
+  description?: string;
+  alt?: string;
+  layout?: HomerailViewArtifactLayoutV1;
   children?: HomerailViewModelNodeV1[];
 }
 
@@ -198,6 +216,7 @@ const NODE_KEYS: Record<HomerailViewNodeV1["type"], readonly string[]> = {
   action: ["action_id", "label", "style"],
   disclosure: ["title", "children", "open"],
   link: ["label", "uri"],
+  artifact: ["kind", "uri", "title", "description", "alt", "layout"],
   repeat: ["source", "max_items", "item"],
 };
 const NODE_REQUIRED_KEYS: Record<HomerailViewNodeV1["type"], readonly string[]> = {
@@ -208,6 +227,7 @@ const NODE_REQUIRED_KEYS: Record<HomerailViewNodeV1["type"], readonly string[]> 
   bar_chart: ["source", "item_label_path", "item_value_path"],
   dag: ["source", "item_id_path", "item_label_path", "item_depends_on_path"],
   action: ["action_id", "label"], disclosure: ["title", "children"], link: ["label", "uri"],
+  artifact: ["kind", "uri"],
   repeat: ["source", "item"],
 };
 
@@ -249,6 +269,8 @@ function bindingFields(node: HomerailViewNodeV1): unknown[] {
     "unit" in node ? node.unit : undefined,
     "tone" in node ? node.tone : undefined,
     "uri" in node ? node.uri : undefined,
+    "description" in node ? node.description : undefined,
+    "alt" in node ? node.alt : undefined,
   ];
 }
 
@@ -490,6 +512,16 @@ export function buildHomerailViewModel(
       const uri = binding(node.uri, content, item, options.locale).text;
       model.uri = uri && isSafeGenerativeUiArtifactUri(uri) ? uri : undefined;
       return model.label && model.uri ? model : undefined;
+    }
+    if (node.type === "artifact") {
+      model.artifact_kind = node.kind;
+      model.title = binding(node.title, content, item, options.locale).text;
+      model.description = binding(node.description, content, item, options.locale).text;
+      model.alt = binding(node.alt, content, item, options.locale).text || model.title;
+      model.layout = node.layout ?? "fluid";
+      const uri = binding(node.uri, content, item, options.locale).text;
+      model.uri = uri && isSafeGenerativeUiPreviewUri(uri) ? uri : undefined;
+      return model.uri ? model : undefined;
     }
     return model;
   };

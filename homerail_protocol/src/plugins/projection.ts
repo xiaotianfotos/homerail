@@ -2,6 +2,8 @@ import AjvModule, { type ErrorObject, type ValidateFunction } from "ajv";
 import {
   GENERATIVE_UI_IR_VERSION,
   GenerativeUiActorType,
+  GenerativeUiCanvasSize,
+  GenerativeUiMotionProfile,
   analyzeGenerativeUiJsonValue,
   validateGenerativeUiNode,
 } from "../generative-ui/index.js";
@@ -197,8 +199,13 @@ export function applyHomerailDirectUiProjection(input: {
   if (!projection.kind.startsWith(`${input.plugin.id}/`)) {
     throw new Error(`Projection kind is not owned by ${input.plugin.id}: ${projection.kind}`);
   }
-  const nodeId = boundedText(pointer(input.arguments, projection.node_id_pointer), 256);
-  if (!nodeId) throw new Error(`Projection node id pointer did not resolve: ${projection.node_id_pointer}`);
+  const requestedNodeId = boundedText(pointer(input.arguments, projection.node_id_pointer), 256);
+  if (!requestedNodeId) throw new Error(`Projection node id pointer did not resolve: ${projection.node_id_pointer}`);
+  const ownerPrefix = `${input.plugin.id}:`;
+  const nodeId = requestedNodeId.startsWith(ownerPrefix)
+    ? requestedNodeId
+    : `${ownerPrefix}${requestedNodeId}`;
+  if (nodeId.length > 256) throw new Error("Projection node id exceeds 256 characters after owner namespacing");
   const rawContent = pointer(input.arguments, projection.content_pointer);
   if (!rawContent || typeof rawContent !== "object" || Array.isArray(rawContent)) {
     throw new Error(`Projection content pointer must resolve to an object: ${projection.content_pointer}`);
@@ -224,6 +231,24 @@ export function applyHomerailDirectUiProjection(input: {
   const surface = projectedEnum(input.arguments, projection.surface_pointer, projection.defaults.surface, ["task", "execution", "result", "ambient"], "surface");
   const importance = projectedEnum(input.arguments, projection.importance_pointer, projection.defaults.importance, ["critical", "primary", "secondary", "ambient"], "importance");
   const density = projectedEnum(input.arguments, projection.density_pointer, projection.defaults.density, ["glance", "summary", "detail"], "density");
+  const canvasSize = projection.canvas_size_pointer || projection.defaults.canvas_size
+    ? projectedEnum(
+      input.arguments,
+      projection.canvas_size_pointer,
+      projection.defaults.canvas_size ?? GenerativeUiCanvasSize.TWO_BY_TWO,
+      Object.values(GenerativeUiCanvasSize),
+      "canvas size",
+    )
+    : undefined;
+  const motionProfile = projection.motion_profile_pointer || projection.defaults.motion_profile
+    ? projectedEnum(
+      input.arguments,
+      projection.motion_profile_pointer,
+      projection.defaults.motion_profile ?? GenerativeUiMotionProfile.STANDARD,
+      Object.values(GenerativeUiMotionProfile),
+      "motion profile",
+    )
+    : undefined;
   const persistence = projectedEnum(input.arguments, projection.persistence_pointer, projection.defaults.persistence, ["turn", "session", "project"], "persistence");
   const node = {
     ir_version: GENERATIVE_UI_IR_VERSION,
@@ -235,7 +260,11 @@ export function applyHomerailDirectUiProjection(input: {
     importance,
     content,
     ...(rawView ? { view: structuredClone(rawView) } : {}),
-    presentation: { density },
+    presentation: {
+      density,
+      ...(canvasSize ? { canvas_size: canvasSize } : {}),
+      ...(motionProfile ? { motion_profile: motionProfile } : {}),
+    },
     lifecycle: { persistence },
     fallback: {
       title,

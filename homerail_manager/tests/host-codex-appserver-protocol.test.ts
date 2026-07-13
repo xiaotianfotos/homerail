@@ -4,6 +4,8 @@ import {
   _buildCodexAppServerArgsForTest,
   _buildCodexThreadStartParamsForTest,
   _buildCodexTurnStartParamsForTest,
+  _mapCodexAppServerNotificationForTest,
+  _toolCallCommentaryForTest,
 } from "../src/server/host-codex-manager-agent.js";
 
 describe("Host Codex app-server protocol params", () => {
@@ -21,6 +23,7 @@ describe("Host Codex app-server protocol params", () => {
       model: "gpt-5.5",
       config: { model_reasoning_effort: "ultra" },
       serviceTier: null,
+      tools: { web_search: { context_size: "medium" } },
     });
     expect(params).not.toHaveProperty("modelReasoningEffort");
   });
@@ -47,5 +50,39 @@ describe("Host Codex app-server protocol params", () => {
 
   it("starts app-server without a hidden Fast service-tier override", () => {
     expect(_buildCodexAppServerArgsForTest()).toEqual(["app-server"]);
+  });
+
+  it("maps built-in web search activity to bounded user-facing progress", () => {
+    expect(_mapCodexAppServerNotificationForTest("item/started", {
+      item: {
+        type: "webSearch",
+        id: "search-1",
+        query: "latest product release notes",
+      },
+    })).toEqual([{
+      type: "tool_use",
+      id: "search-1",
+      name: "web_search",
+      input: {},
+    }]);
+    expect(_mapCodexAppServerNotificationForTest("item/completed", {
+      item: {
+        type: "webSearch",
+        id: "search-1",
+        query: "latest product release notes",
+      },
+    })).toEqual([{
+      type: "tool_result",
+      tool_use_id: "search-1",
+      content: "Web search completed.",
+    }]);
+    expect(_toolCallCommentaryForTest("web_search")).toBe("正在搜索和核对资料。");
+  });
+
+  it("announces generated-view updates for both catalog and selected-node tools", () => {
+    expect(_toolCallCommentaryForTest("p_deadbeef_upsert_generated_view"))
+      .toBe("正在更新主画布。");
+    expect(_toolCallCommentaryForTest("update_selected_generated_view"))
+      .toBe("正在更新主画布。");
   });
 });

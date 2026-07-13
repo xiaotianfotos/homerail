@@ -23,6 +23,7 @@ import path from "node:path";
 import net from "node:net";
 import { URL } from "node:url";
 import {
+  HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
   authorizeUiAdminProxyMutation,
   createUiAdminProxyPolicy,
   isProtectedApiMutation,
@@ -42,6 +43,8 @@ const UI_ADMIN_PROXY = createUiAdminProxyPolicy({
   uiBindHost: HOST,
   managerUrl: MANAGER_HTTP,
   adminToken: MANAGER_ADMIN_TOKEN,
+  unsafeAllowPublicNoAuth:
+    process.env[HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH] === "1",
 });
 
 const MIME: Record<string, string> = {

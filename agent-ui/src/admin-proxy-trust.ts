@@ -5,11 +5,13 @@ export interface AdminProxyTrustOptions {
   uiOrigin: string
   uiBindHost: string
   managerUrl: string
+  unsafeAllowPublicNoAuth?: boolean
 }
 
 export interface AdminProxyTrust {
   enabled: boolean
   uiOrigin?: string
+  unsafeAllowPublicNoAuth?: boolean
   disabledReason?: string
 }
 
@@ -17,7 +19,11 @@ export function resolveAdminProxyTrust(options: AdminProxyTrustOptions): AdminPr
   if (!options.enabled) return disabled('loopback-safe admin proxy switch is disabled')
   const uiOrigin = exactOrigin(options.uiOrigin)
   if (!uiOrigin) return disabled('UI Origin is invalid')
-  if (!isLoopbackHost(options.uiBindHost) || !isLoopbackHost(new URL(uiOrigin).hostname)) {
+  const unsafeAllowPublicNoAuth = Boolean(options.unsafeAllowPublicNoAuth)
+  if (
+    (!isLoopbackHost(options.uiBindHost) || !isLoopbackHost(new URL(uiOrigin).hostname))
+    && !unsafeAllowPublicNoAuth
+  ) {
     return disabled('UI is reachable beyond loopback')
   }
   let manager: URL
@@ -32,7 +38,7 @@ export function resolveAdminProxyTrust(options: AdminProxyTrustOptions): AdminPr
     || Boolean(manager.username)
     || Boolean(manager.password)
   ) return disabled('Manager is reachable beyond loopback')
-  return { enabled: true, uiOrigin }
+  return { enabled: true, uiOrigin, unsafeAllowPublicNoAuth }
 }
 
 export function isProtectedApiMutation(methodValue?: string, urlValue?: string): boolean {

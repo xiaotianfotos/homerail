@@ -32,6 +32,7 @@ import {
 import {
   HOMERAIL_UI_ADMIN_PROXY_ENABLED,
   HOMERAIL_UI_ORIGIN,
+  HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
   createUiAdminProxyPolicy,
 } from "../ui-admin-proxy.js";
 import { applyStoredModelConfig } from "./config.js";
@@ -65,6 +66,7 @@ interface StartOpts {
   uiPort?: string;
   uiPublicUrl?: string;
   enableTextMode?: boolean;
+  unsafeNoAdminToken?: boolean;
 }
 
 interface UiStartOpts {
@@ -74,6 +76,7 @@ interface UiStartOpts {
   publicUrl?: string;
   managerUrl?: string;
   enableTextMode?: boolean;
+  unsafeNoAdminToken?: boolean;
 }
 
 interface RuntimeStatus {
@@ -214,6 +217,7 @@ export interface UiAdminProxyProcessEnvOptions {
   uiPublicUrl: string;
   managerUrl: string;
   adminToken?: string;
+  unsafeNoAdminToken?: boolean;
 }
 
 /** Compute, rather than inherit, the only mode in which a UI may proxy writes. */
@@ -226,13 +230,17 @@ export function resolveUiAdminProxyProcessEnv(
     uiOrigin,
     uiBindHost: options.uiBindHost,
     managerUrl: options.managerUrl,
-    adminToken: options.adminToken,
+    adminToken: options.unsafeNoAdminToken ? undefined : options.adminToken,
+    unsafeAllowPublicNoAuth: options.unsafeNoAdminToken,
   });
   return {
     [HOMERAIL_UI_ORIGIN]: uiOrigin,
     [HOMERAIL_UI_ADMIN_PROXY_ENABLED]: policy.enabled ? "1" : "0",
     // Explicitly erase an inherited credential outside the loopback boundary.
-    HOMERAIL_MANAGER_ADMIN_TOKEN: policy.enabled ? options.adminToken || "" : "",
+    HOMERAIL_MANAGER_ADMIN_TOKEN: policy.enabled && !options.unsafeNoAdminToken ? options.adminToken || "" : "",
+    ...(options.unsafeNoAdminToken
+      ? { [HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH]: "1" }
+      : {}),
   };
 }
 
@@ -266,6 +274,7 @@ export function registerRuntimeCommands(program: Command): void {
     .option("--rebuild-worker-image", "Force rebuilding homerail-worker:latest before DAG provisioning")
     .option("--host <host>", "Manager bind host")
     .option("--public", "Bind Manager publicly and bind Agent UI to the machine access IP")
+    .option("--unsafe-no-admin-token", "UNSAFE: allow unauthenticated public Manager/UI access for trusted test networks")
     .option("--public-url <url>", "Public Manager access URL advertised to Agent UI")
     .option("--ui", "Also start the Agent UI server")
     .option("--ui-host <host>", "Agent UI bind host")
@@ -314,6 +323,7 @@ export function registerRuntimeCommands(program: Command): void {
     .option("--rebuild-worker-image", "Force rebuilding homerail-worker:latest before DAG provisioning")
     .option("--host <host>", "Manager bind host")
     .option("--public", "Bind Manager publicly and bind Agent UI to the machine access IP")
+    .option("--unsafe-no-admin-token", "UNSAFE: allow unauthenticated public Manager/UI access for trusted test networks")
     .option("--public-url <url>", "Public Manager access URL advertised to Agent UI")
     .option("--ui", "Also start the Agent UI server")
     .option("--ui-host <host>", "Agent UI bind host")
@@ -418,6 +428,7 @@ export function registerRuntimeCommands(program: Command): void {
     .option("--host <host>", "Agent UI bind host")
     .option("--port <port>", "Agent UI HTTPS port")
     .option("--public", "Bind Agent UI to the machine access IP")
+    .option("--unsafe-no-admin-token", "UNSAFE: allow public UI mutations without a Manager admin token")
     .option("--public-url <url>", "Public Agent UI access URL shown in status")
     .option("--enable-text-mode", "Enable the temporary Agent UI text mode")
     .action(async (opts: UiStartOpts) => {
@@ -468,6 +479,12 @@ export function registerRuntimeCommands(program: Command): void {
 
 async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<number> {
   ensureHomerailHome();
+  if (opts.unsafeNoAdminToken && !opts.public) {
+    throw new Error("--unsafe-no-admin-token requires --public");
+  }
+  if (opts.unsafeNoAdminToken) {
+    console.warn("WARNING: public Manager and Agent UI authentication is disabled for this test runtime.");
+  }
   const cfg = loadLocalConfig();
   const assetRoot = configuredAssetRoot(cfg);
   const assetEnv: Record<string, string> = assetRoot ? { HOMERAIL_ASSET_DIR: assetRoot } : {};
@@ -499,6 +516,12 @@ async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<nu
       HOMERAIL_MANAGER_PORT: String(managerPort),
       HOMERAIL_MANAGER_HOST: managerHost,
       HOMERAIL_MANAGER_ADMIN_ORIGINS: managerAdminOrigins,
+      ...(opts.unsafeNoAdminToken
+        ? {
+          HOMERAIL_MANAGER_ADMIN_TOKEN: "",
+          [HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH]: "1",
+        }
+        : {}),
       ...(hasExplicitManagerPublicUrl ? { HOMERAIL_MANAGER_PUBLIC_URL: managerPublicUrl } : {}),
       HOMERAIL_PROJECT_ID: cfg.node?.projectId || "p1",
       ...assetEnv,
@@ -545,6 +568,7 @@ async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<nu
       publicUrl: opts.uiPublicUrl,
       managerUrl: opts.public && !hasExplicitManagerPublicUrl ? undefined : managerPublicUrl,
       enableTextMode: opts.enableTextMode,
+      unsafeNoAdminToken: opts.unsafeNoAdminToken,
     });
     console.log(`Agent UI: ${uiStatus.uiPidRunning ? "PASS" : "FAIL"} ${uiStatus.uiUrl}`);
   }
@@ -709,6 +733,9 @@ function startService(name: RuntimeServiceName, relativeScript: string, env: Rec
 
 async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Promise<UiStatus> {
   ensureHomerailHome();
+  if (opts.unsafeNoAdminToken && !opts.public) {
+    throw new Error("--unsafe-no-admin-token requires --public");
+  }
   const cfg = loadLocalConfig();
 
   const host = opts.public && !opts.host ? detectedMachineHost() : configuredUiHost(cfg, opts.host);
@@ -747,6 +774,7 @@ async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Pr
         managerPort,
         publicUrl: httpsPublicUrl,
         textModeEnabled,
+        unsafeNoAdminToken: opts.unsafeNoAdminToken,
         certificate,
       });
       await waitForHttp(uiProbeUrl(host, httpsPort, "https"));
@@ -768,6 +796,7 @@ async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Pr
         managerPort,
         publicUrl: httpPublicUrl,
         textModeEnabled,
+        unsafeNoAdminToken: opts.unsafeNoAdminToken,
       });
       await waitForHttp(uiProbeUrl(host, httpPort, "http"));
     } catch (err) {
@@ -796,6 +825,7 @@ interface StartUiProcessOpts {
   managerPort: string;
   publicUrl: string;
   textModeEnabled: boolean;
+  unsafeNoAdminToken?: boolean;
   certificate?: UiCertificate;
 }
 
@@ -827,6 +857,7 @@ function startUiProcess(opts: StartUiProcessOpts): number {
     uiPublicUrl: opts.publicUrl,
     managerUrl: managerHttp,
     adminToken: resolveConfiguredManagerAdminToken(),
+    unsafeNoAdminToken: opts.unsafeNoAdminToken,
   });
 
   let child: import("child_process").ChildProcess;

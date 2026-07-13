@@ -447,6 +447,7 @@ export function syncPluginPackage(input: {
   source: PluginPackageSource;
   locked?: boolean;
   default_enabled?: boolean;
+  refresh_builtin?: boolean;
   timestamp?: string;
 }): ActivePluginRecord {
   const errors = validateResolvedPluginDescriptor(input.descriptor);
@@ -455,9 +456,13 @@ export function syncPluginPackage(input: {
   const locked = input.locked ?? false;
   const defaultEnabled = locked || (input.default_enabled ?? false);
   if (locked && input.source !== "builtin") throw new Error("Only builtin plugins may be locked");
+  if (input.refresh_builtin && input.source !== "builtin") {
+    throw new Error("Only builtin plugins may refresh a same-version package");
+  }
   const timestamp = input.timestamp ?? nowIso();
 
   return getDb().transaction(() => {
+    let refreshedBuiltinPackage = false;
     const existingPackage = getDb().prepare(`
       SELECT plugin_id, plugin_version, manifest_version, package_digest,
              manifest_json, resolved_descriptor_json, source, installed_at
@@ -467,7 +472,30 @@ export function syncPluginPackage(input: {
     if (existingPackage) {
       const decoded = decodePackage(existingPackage);
       if (decoded.package_digest !== input.descriptor.package_digest) {
-        throw new Error(`Plugin package digest collision: ${manifest.id}@${manifest.version}`);
+        if (
+          input.refresh_builtin !== true
+          || input.source !== "builtin"
+          || decoded.source !== "builtin"
+        ) {
+          throw new Error(`Plugin package digest collision: ${manifest.id}@${manifest.version}`);
+        }
+        const refreshed = getDb().prepare(`
+          UPDATE plugin_packages
+          SET manifest_version = ?, package_digest = ?, manifest_json = ?,
+              resolved_descriptor_json = ?
+          WHERE plugin_id = ? AND plugin_version = ? AND source = 'builtin'
+        `).run(
+          manifest.manifest_version,
+          input.descriptor.package_digest,
+          encodeJson(manifest),
+          encodeJson(input.descriptor),
+          manifest.id,
+          manifest.version,
+        );
+        if (refreshed.changes !== 1) {
+          throw new Error(`Builtin plugin refresh conflict: ${manifest.id}@${manifest.version}`);
+        }
+        refreshedBuiltinPackage = true;
       }
     } else {
       getDb().prepare(`
@@ -507,6 +535,7 @@ export function syncPluginPackage(input: {
         current.active_version !== manifest.version
         || current.locked !== nextLocked
         || current.enabled !== nextEnabled
+        || refreshedBuiltinPackage
       ) {
         getDb().prepare(`
           UPDATE plugin_activations

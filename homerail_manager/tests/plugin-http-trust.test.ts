@@ -9,6 +9,7 @@ import { _requestManagerForTest } from "../src/server/host-codex-manager-agent.j
 import {
   HOMERAIL_MANAGER_ADMIN_ORIGINS,
   HOMERAIL_MANAGER_ADMIN_TOKEN,
+  HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
   createPluginHttpTrustPolicy,
   isLoopbackHost,
 } from "../src/server/plugin-http-trust.js";
@@ -44,6 +45,7 @@ describe("Manager HTTP mutation trust gate", () => {
     delete process.env.HOMERAIL_MANAGER_PUBLIC_URL;
     delete process.env[HOMERAIL_MANAGER_ADMIN_TOKEN];
     delete process.env[HOMERAIL_MANAGER_ADMIN_ORIGINS];
+    delete process.env[HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH];
   });
 
   afterEach(async () => {
@@ -164,6 +166,33 @@ describe("Manager HTTP mutation trust gate", () => {
       headers: { Authorization: `Bearer ${VALID_TOKEN}` },
     })).status).toBe(415);
     expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
+  });
+
+  it("allows an explicit unsafe public test runtime without a token while retaining Origin checks", async () => {
+    process.env.HOMERAIL_MANAGER_HOST = "0.0.0.0";
+    process.env[HOMERAIL_MANAGER_ADMIN_ORIGINS] = TRUSTED_ORIGIN;
+    process.env[HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH] = "1";
+    await start();
+
+    const trustedBrowser = await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "POST",
+      headers: { Origin: TRUSTED_ORIGIN },
+    });
+    expect(trustedBrowser.status).toBe(415);
+    expect(trustedBrowser.headers.get("access-control-allow-origin")).toBe(TRUSTED_ORIGIN);
+
+    const crossSite = await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "POST",
+      headers: { Origin: "https://evil.example" },
+    });
+    expect(crossSite.status).toBe(403);
+
+    const testCli = await fetch(`${baseUrl}/api/not-yet-registered`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(testCli.status).toBe(404);
   });
 
   it("supports exact trusted UI origins and secure mutation preflights", async () => {

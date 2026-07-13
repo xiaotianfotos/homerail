@@ -11,3 +11,4 @@ export * from "./shadow-comparator.js";
 export * from "./json-value.js";
 export * from "./artifact-uri.js";
 export * from "./view-spec.js";
+export * from "./canvas-context.js";

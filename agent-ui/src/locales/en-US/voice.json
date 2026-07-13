@@ -300,6 +300,8 @@
     "nonInteractive": "Read-only / non-authoritative",
     "loading": "Loading Generative UI…",
     "previewUnavailable": "Generative UI preview unavailable",
+    "expand": "Expand content",
+    "collapse": "Exit expanded view",
     "actions": {
       "submitting": "Submitting action…",
       "statusUnknown": "Action status needs refresh",

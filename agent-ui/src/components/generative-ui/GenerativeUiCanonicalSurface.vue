@@ -19,16 +19,18 @@ const props = defineProps<{
   sessionId: string
   refreshToken?: string | number | null
   activeRunId?: string | null
+  selectedNodeId?: string | null
 }>()
 
 const emit = defineEmits<{
-  (event: 'availability', payload: { available: boolean; node_ids: string[] }): void
+  (event: 'availability', payload: { available: boolean; node_ids: string[]; loading?: boolean }): void
   (event: 'action-status', payload: {
     node_id: string
     action_id: string
     response: PluginActionResponse
   }): void
   (event: 'open-preview', payload: GenerativeUiPreviewRequestV1): void
+  (event: 'select-node', payload: { node_id: string }): void
 }>()
 
 const cache = new GenerativeUiProjectionCache()
@@ -200,7 +202,7 @@ function resetAndRefresh(): void {
   cache.clear()
   projection.value = null
   toolDecisionStates.value = {}
-  emit('availability', { available: false, node_ids: [] })
+  emit('availability', { available: false, node_ids: [], loading: true })
   void refresh()
 }
 
@@ -217,6 +219,7 @@ watch(
 onMounted(() => {
   disposed = false
   window.addEventListener('resize', onResize)
+  emit('availability', { available: false, node_ids: [], loading: true })
   void refresh()
 })
 
@@ -331,9 +334,11 @@ defineExpose({ refresh })
       :registry="runtimeRegistry?.renderers"
       :action-registry="runtimeRegistry?.actions"
       :interactive="true"
+      :selected-node-id="selectedNodeId"
       action-mode="manager"
       @action-status="onActionStatus"
       @open-preview="emit('open-preview', $event)"
+      @select-node="emit('select-node', $event)"
     />
   </section>
 </template>
@@ -344,7 +349,7 @@ defineExpose({ refresh })
   min-height: 0;
   min-width: 0;
   grid-row: 1 / -1;
-  overflow: auto;
+  overflow: hidden;
   scroll-snap-align: start;
 }
 

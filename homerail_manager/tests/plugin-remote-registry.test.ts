@@ -35,6 +35,8 @@ import {
 } from "../src/plugins/remote-registry.js";
 import { getActivePlugin, listPluginVersions } from "../src/persistence/plugins.js";
 
+const CATALOG_TEST_NOW = "2026-07-12T00:00:00.000Z";
+
 describe("signed remote plugin registry", () => {
   let previousHome: string | undefined;
   let home: string;
@@ -177,6 +179,7 @@ describe("signed remote plugin registry", () => {
       plugin_id: "com.example.registry-plugin",
       plugin_version: "1.0.0",
       archive: executable.archive,
+      now: CATALOG_TEST_NOW,
     });
     expect(result.installed.installation).toMatchObject({
       lifecycle_state: "staged",
@@ -271,6 +274,7 @@ describe("signed remote plugin registry", () => {
         plugin_id: "com.example.registry-plugin",
         plugin_version: "1.0.0",
         archive: first.archive,
+        now: CATALOG_TEST_NOW,
       })).toThrow(/identity or publisher digest mismatch/);
       expect(listPluginVersions("com.example.registry-plugin")).toEqual([]);
     }
@@ -399,6 +403,7 @@ describe("signed remote plugin registry", () => {
       plugin_id: "com.example.registry-plugin",
       plugin_version: "1.0.0",
       archive: first.archive,
+      now: CATALOG_TEST_NOW,
     });
     expect(installed).toMatchObject({
       staged: true,
@@ -421,6 +426,7 @@ describe("signed remote plugin registry", () => {
       plugin_version: "1.1.0",
       archive: first.archive,
       operation: "update",
+      now: CATALOG_TEST_NOW,
     })).toThrow(/archive digest mismatch/);
     expect(getActivePlugin("com.example.registry-plugin")?.activation).toMatchObject({
       active_version: "1.0.0",
@@ -440,6 +446,7 @@ describe("signed remote plugin registry", () => {
       plugin_version: "1.1.0",
       archive: second.archive,
       operation: "update",
+      now: CATALOG_TEST_NOW,
     });
     expect(update).toMatchObject({
       staged: true,
@@ -455,6 +462,7 @@ describe("signed remote plugin registry", () => {
       plugin_id: "com.example.registry-plugin",
       plugin_version: "1.1.0",
       expected_revision: enabledFirst.activation.revision,
+      now: CATALOG_TEST_NOW,
     });
     expect(activated.activation).toMatchObject({
       active_version: "1.1.0",
@@ -471,6 +479,7 @@ describe("signed remote plugin registry", () => {
       registry_id: "stable.example",
       plugin_id: "com.example.registry-plugin",
       expected_revision: enabledSecond.activation.revision,
+      now: CATALOG_TEST_NOW,
     });
     expect(rolledBack.activation).toMatchObject({
       active_version: "1.0.0",

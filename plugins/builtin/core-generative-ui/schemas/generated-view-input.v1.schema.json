@@ -2,12 +2,22 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Stable canvas Block id. For a new Block use a local id and HomeRail will namespace it. When Current HomeRail canvas state supplies an existing full id, reuse that exact id to update the selected Block."
+    },
     "title": { "type": "string", "minLength": 1, "maxLength": 200 },
     "summary": { "type": "string", "maxLength": 4000 },
     "surface": { "type": "string", "enum": ["task", "execution", "result", "ambient"] },
     "importance": { "type": "string", "enum": ["critical", "primary", "secondary", "ambient"] },
     "density": { "type": "string", "enum": ["glance", "summary", "detail"] },
+    "canvas_size": {
+      "type": "string",
+      "enum": ["1x1", "1x2", "2x2", "3x3"],
+      "description": "Canvas Block footprint. Only 1x1, 1x2, 2x2, and 3x3 are supported; horizontal 2x1 and 3x1 strips are forbidden."
+    },
     "persistence": { "type": "string", "enum": ["turn", "session", "project"] },
     "content": { "$ref": "#/definitions/content" },
     "view": {
@@ -24,7 +34,7 @@
       "additionalProperties": false
     }
   },
-  "required": ["id", "title", "surface", "importance", "density", "persistence", "content", "view"],
+  "required": ["id", "title", "surface", "importance", "density", "canvas_size", "persistence", "content", "view"],
   "additionalProperties": false,
   "definitions": {
     "content": {

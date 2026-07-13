@@ -38,6 +38,7 @@ export const DEFAULT_MANAGER_AGENT_API_SCOPES = Object.freeze([
   "POST:/api/runs/*/invoke",
   "POST:/api/runs/create-and-run",
   "POST:/api/voice-agent/widget-files/*",
+  "POST:/api/voice-agent/sessions/*/artifacts/publish",
 ] as const);
 
 export class ManagerAgentTurnEnvelopeAuthority {

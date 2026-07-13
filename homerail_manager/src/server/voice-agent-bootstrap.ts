@@ -72,7 +72,12 @@ import {
   VoiceCanonicalProjectionConflictError,
   type VoiceCanonicalProjectionPatch,
 } from "../generative-ui/canonical-voice-service.js";
+import { buildGenerativeUiCanvasContext } from "../generative-ui/canvas-context.js";
 import { acceptPluginToolExecution } from "../plugins/execution-broker.js";
+import {
+  publishVoiceArtifact,
+  resolveVoiceArtifact,
+} from "./voice-artifacts.js";
 import {
   assembleLegacyWidgetReservations,
   assemblePluginTurnContext,
@@ -280,10 +285,6 @@ function now(): string {
 
 function generateId(prefix = ""): string {
   return `${prefix}${crypto.randomBytes(10).toString("hex")}`;
-}
-
-function artifactRoot(sessionId: string): string {
-  return path.join(getDataRoot(), "voice-agent-sdk", safeId(sessionId));
 }
 
 function safeId(value: string): string {
@@ -1440,6 +1441,7 @@ async function submitVoiceWorkspaceToManagerAgent(
   config: Record<string, unknown>,
   options?: ManagerAgentContainerOptions,
   realtimeHooks?: ManagerAgentRealtimeHooks,
+  selectedNodeId?: string,
 ): Promise<ManagerAgentHandoffResult> {
   if (workspace.task_draft) workspace.task_draft.status = "submitted";
   workspace.pending_confirmations = [];
@@ -1468,6 +1470,18 @@ async function submitVoiceWorkspaceToManagerAgent(
   try {
     const voiceUiRules = ensureWorkspaceVoiceUiRules(workspace);
     const generativeUiMode = effectiveGenerativeUiMode(workspace);
+    const canonicalDocument = generativeUiMode === "prefer"
+      ? persistentGenerativeUiDocumentService.findActiveForScope(
+        { type: "voice_session", id: workspace.session_id },
+        "canonical",
+      )
+      : undefined;
+    const canvasContext = generativeUiMode === "prefer"
+      ? buildGenerativeUiCanvasContext(
+        canonicalDocument,
+        selectedNodeId,
+      )
+      : undefined;
     const pluginRoutingSource = assemblePluginTurnContext(undefined, {
       modality: "voice",
       include_agent_tools: generativeUiMode === "prefer" || generativeUiMode === "shadow",
@@ -1484,6 +1498,7 @@ async function submitVoiceWorkspaceToManagerAgent(
       continue_chat: true,
       response_mode: "voice",
       generative_ui_mode: generativeUiMode,
+      canvas_context: canvasContext,
       history: managerAgentHistory(workspace),
       agent_config: agentConfig,
       voice_ui_rules: voiceUiRules,
@@ -1603,6 +1618,7 @@ async function processTurn(
   options?: ManagerAgentContainerOptions,
   realtimeHooks?: ManagerAgentRealtimeHooks,
   managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
+  selectedNodeId?: string,
 ): Promise<VoiceTurnResult> {
   appendConversation(workspace, "user", text);
   ensureVoiceSessionTitle(workspace, text);
@@ -1610,7 +1626,28 @@ async function processTurn(
 
   // 真实调用 Manager Agent：与文本模式 /api/manager/chat 走同一条链路。
   // voice agent 和 manager agent 是同一个主 Agent 的不同 I/O 表面。
-  return submitVoiceWorkspaceToManagerAgent(workspace, text, config, options, realtimeHooks);
+  return submitVoiceWorkspaceToManagerAgent(
+    workspace,
+    text,
+    config,
+    options,
+    realtimeHooks,
+    selectedNodeId,
+  );
+}
+
+function selectedGenerativeUiNodeId(body: Record<string, unknown>): string | undefined {
+  if (body.selected_node_id === undefined || body.selected_node_id === null || body.selected_node_id === "") {
+    return undefined;
+  }
+  if (typeof body.selected_node_id !== "string") {
+    throw new HttpBadRequestError("selected_node_id must be a string");
+  }
+  const value = body.selected_node_id.trim();
+  if (!value || value.length > 256 || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new HttpBadRequestError("selected_node_id is invalid");
+  }
+  return value;
 }
 
 function managerStatus(workspace: VoiceWorkspace): Record<string, unknown> {
@@ -1627,19 +1664,6 @@ function managerStatus(workspace: VoiceWorkspace): Record<string, unknown> {
 
 function streamLine(res: http.ServerResponse, event: Record<string, unknown>): void {
   res.write(`${JSON.stringify(event)}\n`);
-}
-
-function resolveArtifact(sessionId: string, filePath = "index.html"): string {
-  const root = path.resolve(artifactRoot(sessionId));
-  const relative = decodeURIComponent(filePath || "index.html").replace(/^\/+/, "");
-  const candidate = path.resolve(root, relative);
-  if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
-    throw new Error("invalid artifact path");
-  }
-  if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) {
-    throw new Error("voice artifact file not found");
-  }
-  return candidate;
 }
 
 export function _clearStoredConfig(): void {
@@ -1786,14 +1810,39 @@ export function voiceAgentBootstrapHandler(
   }
 
   const artifactPreview = pathname.match(/^\/api\/voice-agent\/sessions\/([^/]+)\/artifacts\/preview$/);
+  const artifactPublish = pathname.match(/^\/api\/voice-agent\/sessions\/([^/]+)\/artifacts\/publish$/);
   const artifactFile = pathname.match(/^\/api\/voice-agent\/sessions\/([^/]+)\/artifacts\/(.+)$/);
+  if (method === "POST" && artifactPublish) {
+    readJsonBody(req).then((body) => {
+      const sessionId = decodeURIComponent(artifactPublish[1]);
+      const workspace = loadWorkspace(sessionId);
+      if (!workspace) throw new HttpNotFoundError("Voice workspace not found");
+      const sourcePath = typeof body.source_path === "string" ? body.source_path : "";
+      if (!sourcePath) throw new HttpBadRequestError("Missing required field: source_path");
+      const artifact = publishVoiceArtifact({
+        session_id: sessionId,
+        project_id: workspace.project_id,
+        source_path: sourcePath,
+        title: typeof body.title === "string" ? body.title : undefined,
+      });
+      ok(res, "Voice artifact published", { artifact });
+    }).catch((cause) => {
+      if (cause instanceof HttpNotFoundError) notFound(res, cause.message);
+      else badRequest(res, cause instanceof Error ? cause.message : "Artifact publishing failed");
+    });
+    return true;
+  }
   if (method === "GET" && (artifactPreview || artifactFile)) {
     try {
       const sessionId = decodeURIComponent((artifactPreview ?? artifactFile)![1]);
       const filePath = artifactPreview ? "index.html" : decodeURIComponent(artifactFile![2]);
-      const resolved = resolveArtifact(sessionId, filePath);
+      const resolved = resolveVoiceArtifact(sessionId, filePath);
       const ext = path.extname(resolved).toLowerCase();
-      const type = ext === ".html" ? "text/html; charset=utf-8" : ext === ".svg" ? "image/svg+xml" : ext === ".png" ? "image/png" : "application/octet-stream";
+      const type = ext === ".html" ? "text/html; charset=utf-8"
+        : ext === ".png" ? "image/png"
+          : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg"
+            : ext === ".webp" ? "image/webp"
+              : "application/octet-stream";
       res.writeHead(200, {
         "Content-Type": type,
         "X-Content-Type-Options": "nosniff",
@@ -1861,6 +1910,7 @@ export function voiceAgentBootstrapHandler(
           return;
         }
         const projectIdPatch = typeof body.project_id === "string" ? body.project_id : null;
+        const selectedNodeId = selectedGenerativeUiNodeId(body);
         // workspace 必须在锁内重新读取：否则并发 turn 的第二个请求会拿着旧快照覆盖第一个的结果。
         const result = await withSessionLock(sessionId, async () => {
           const workspace = loadWorkspace(sessionId);
@@ -1869,7 +1919,14 @@ export function voiceAgentBootstrapHandler(
           if (projectIdPatch && !workspace.project_id) workspace.project_id = projectIdPatch;
           registerTurn(sessionId, "running");
           try {
-            const r = await processTurn(workspace, text, managerAgentOptions, undefined, managerAgentConfigOptions);
+            const r = await processTurn(
+              workspace,
+              text,
+              managerAgentOptions,
+              undefined,
+              managerAgentConfigOptions,
+              selectedNodeId,
+            );
             const saved = saveWorkspace(workspace);
             completeTurn(sessionId, saved.progress_brief?.status || "done");
             return { result: r, saved };
@@ -1902,6 +1959,7 @@ export function voiceAgentBootstrapHandler(
         const sessionId = decodeURIComponent(turnStreamMatch[1]);
         const text = typeof body.text === "string" ? body.text.trim() : "";
         const projectIdPatch = typeof body.project_id === "string" ? body.project_id : null;
+        const selectedNodeId = selectedGenerativeUiNodeId(body);
         res.writeHead(200, { "Content-Type": "application/x-ndjson" });
         if (!text) {
           streamLine(res, { type: "error", message: "Missing required field: text" });
@@ -1943,7 +2001,7 @@ export function voiceAgentBootstrapHandler(
                 }
                 streamLine(res, { type: "speech", event, workspace: saved });
               },
-            }, managerAgentConfigOptions);
+            }, managerAgentConfigOptions, selectedNodeId);
             const saved = saveWorkspace(workspace);
             if (streamGenerativeUi) {
               generativeUiCursor = streamCommittedGenerativeUiTransactions(

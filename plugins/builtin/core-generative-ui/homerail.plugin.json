@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "id": "com.homerail.core",
-  "version": "0.1.0",
+  "version": "0.1.7",
   "name": "HomeRail Core Generative UI",
   "publisher": {
     "id": "com.homerail",
@@ -222,7 +222,7 @@
   "tools": [
     {
       "id": "upsert_generated_view",
-      "description": "Create or replace a bounded ViewSpec V1 interface from semantic data. Reuse a stable id for later revisions.",
+      "description": "Create or replace one bounded ViewSpec Block. Reuse its stable id. Choose canvas_size 1x1, 1x2, 2x2, or 3x3. Grid max: 3 columns. Table columns are id/label/path. DAG dependencies use item_depends_on_path.",
       "exposure": ["agent"],
       "input_schema": "generated-view-input-v1",
       "output_schema": "generated-view-content-v1",

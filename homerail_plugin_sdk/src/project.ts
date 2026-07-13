@@ -482,6 +482,8 @@ export function validatePluginFiles(inputFiles: ReadonlyMap<string, Buffer>, roo
         ["surface_pointer", projection.value.surface_pointer],
         ["importance_pointer", projection.value.importance_pointer],
         ["density_pointer", projection.value.density_pointer],
+        ["canvas_size_pointer", projection.value.canvas_size_pointer],
+        ["motion_profile_pointer", projection.value.motion_profile_pointer],
         ["persistence_pointer", projection.value.persistence_pointer],
       ] as const) {
         if (!pointerValue) continue;

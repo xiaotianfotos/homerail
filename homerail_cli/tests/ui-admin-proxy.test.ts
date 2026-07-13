@@ -67,6 +67,31 @@ describe("Agent UI admin proxy trust", () => {
     }).HOMERAIL_UI_ADMIN_PROXY_ENABLED).toBe("0");
   });
 
+  it("enables an explicitly unsafe public test proxy without forwarding a token", () => {
+    const env = resolveUiAdminProxyProcessEnv({
+      uiBindHost: "192.168.1.8",
+      uiPublicUrl: "http://192.168.1.8:19193",
+      managerUrl: "http://127.0.0.1:19191",
+      adminToken: TOKEN,
+      unsafeNoAdminToken: true,
+    });
+    expect(env).toEqual({
+      HOMERAIL_UI_ORIGIN: "http://192.168.1.8:19193",
+      HOMERAIL_UI_ADMIN_PROXY_ENABLED: "1",
+      HOMERAIL_MANAGER_ADMIN_TOKEN: "",
+      HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH: "1",
+    });
+    const policy = createUiAdminProxyPolicy({
+      enabled: true,
+      uiOrigin: env.HOMERAIL_UI_ORIGIN!,
+      uiBindHost: "192.168.1.8",
+      managerUrl: "http://127.0.0.1:19191",
+      unsafeAllowPublicNoAuth: true,
+    });
+    expect(authorizeUiAdminProxyMutation(policy, "http://192.168.1.8:19193", "same-origin"))
+      .toEqual({ allowed: true });
+  });
+
   it("covers every protected API mutation while leaving reads and non-API routes alone", () => {
     expect(isProtectedApiMutation("POST", "/api/runs")).toBe(true);
     expect(isProtectedApiMutation("PUT", "/api/manager-agent/config")).toBe(true);

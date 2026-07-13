@@ -7,6 +7,7 @@
  */
 
 import type {
+  GenerativeUiCanvasSize,
   GenerativeUiDevice,
   GenerativeUiDensity,
   GenerativeUiSurface,
@@ -14,6 +15,7 @@ import type {
   GenerativeUiTransactionV1,
   GenerativeUiDocumentScopeV1,
   GenerativeUiImportance,
+  GenerativeUiMotionProfile,
   GenerativeUiPersistence,
   GenerativeUiActionStyle,
 } from "../generative-ui/types.js";
@@ -379,6 +381,8 @@ export interface HomerailDirectUiProjectionV1 {
   surface_pointer?: string;
   importance_pointer?: string;
   density_pointer?: string;
+  canvas_size_pointer?: string;
+  motion_profile_pointer?: string;
   persistence_pointer?: string;
   omit_content_fields: string[];
   fallback: {
@@ -391,6 +395,8 @@ export interface HomerailDirectUiProjectionV1 {
     surface: GenerativeUiSurface;
     importance: GenerativeUiImportance;
     density: GenerativeUiDensity;
+    canvas_size?: GenerativeUiCanvasSize;
+    motion_profile?: GenerativeUiMotionProfile;
     persistence: GenerativeUiPersistence;
   };
   /** Safe Action presentation/binding; execution policy remains Tool-owned. */

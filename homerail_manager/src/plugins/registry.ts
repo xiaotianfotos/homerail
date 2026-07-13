@@ -61,6 +61,10 @@ export function syncBuiltinPlugins(root = getBuiltinPluginRoot()): SyncBuiltinPl
       source: "builtin",
       locked: descriptor.manifest.id === CORE_PLUGIN_ID,
       default_enabled: true,
+      // Bundled packages ship with HomeRail itself. Refresh their persisted
+      // descriptor when a local/pre-release build changes without weakening
+      // same-version immutability for installed or development packages.
+      refresh_builtin: true,
     });
   });
   if (!seen.has(CORE_PLUGIN_ID)) {

@@ -7,6 +7,7 @@
     "surface": "result",
     "importance": "primary",
     "density": "detail",
+    "canvas_size": "2x2",
     "persistence": "session",
     "content": {
       "data": {

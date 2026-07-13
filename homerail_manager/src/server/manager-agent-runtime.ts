@@ -14,16 +14,21 @@ import {
   runHostCodexManagerAgentTurnStream,
   type VoiceUiRules,
 } from "./host-codex-manager-agent.js";
-import { listManagerSkills, type ManagerSkillSummary } from "./manager-skills.js";
+import { listManagerSkills, readManagerSkill, type ManagerSkillSummary } from "./manager-skills.js";
 import {
   routePluginCapabilities,
   type PluginCapabilityRouteResult,
 } from "../plugins/capability-router.js";
-import { assemblePluginTurnContext, assertCurrentPluginTurnContextSubset } from "../plugins/context-assembler.js";
+import {
+  assemblePluginTurnContext,
+  assertCurrentPluginTurnContextSubset,
+  selectPluginTurnContext,
+} from "../plugins/context-assembler.js";
 import { getPluginToolTurnAuthority } from "../plugins/action-bus.js";
 import {
   managerAgentRuntimePlacementForHarness,
   normalizeManagerAgentHarness,
+  type GenerativeUiCanvasContextV1,
   type ManagerAgentRuntimePlacement,
   type HomerailPluginTurnContextV1,
 } from "homerail-protocol";
@@ -37,6 +42,8 @@ import {
 } from "../persistence/plugin-tool-continuations.js";
 
 export type ManagerAgentResponseMode = "chat" | "voice";
+
+const CORE_GENERATIVE_UI_CAPABILITY_ID = "com.homerail.core:voice-generative-ui";
 
 export interface ManagerAgentPluginRoutingInput {
   inputs?: Record<string, unknown>;
@@ -57,6 +64,8 @@ export interface RunManagerAgentTurnInput {
   response_mode?: ManagerAgentResponseMode;
   /** Trusted session rollout snapshot resolved by Manager, never by a Worker. */
   generative_ui_mode?: GenerativeUiMode;
+  /** Bounded authoritative canvas state assembled by Manager for this turn. */
+  canvas_context?: GenerativeUiCanvasContextV1;
   history?: Array<{ role?: string; content?: string; timestamp?: string }>;
   required_tool_calls?: string[];
   agent_config: ManagerAgentRuntimeConfig;
@@ -79,8 +88,12 @@ export interface RunManagerAgentTurnResult {
 
 export interface ResolvedManagerAgentTurnAssets {
   plugin_context: HomerailPluginTurnContextV1;
-  manager_skills: ManagerSkillSummary[];
+  manager_skills: ResolvedManagerSkill[];
   route: PluginCapabilityRouteResult | null;
+}
+
+export interface ResolvedManagerSkill extends ManagerSkillSummary {
+  content?: string;
 }
 
 export type RunManagerAgentTurnStreamEvent =
@@ -118,7 +131,7 @@ export function managerAgentRuntimePlacement(config: ManagerAgentRuntimeConfig):
 function scopedManagerSkills(
   provided: ManagerSkillSummary[] | undefined,
   pluginContext: HomerailPluginTurnContextV1,
-): ManagerSkillSummary[] {
+): ResolvedManagerSkill[] {
   const resolved = listManagerSkills(pluginContext);
   if (!provided) return resolved;
   const local = provided.filter((skill) => skill.source !== "plugin");
@@ -126,6 +139,26 @@ function scopedManagerSkills(
   const byId = new Map(local.map((skill) => [skill.id, skill]));
   for (const skill of selectedPlugins) byId.set(skill.id, skill);
   return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+const MAX_INLINE_PLUGIN_SKILL_CHARS = 30_000;
+
+function inlineSelectedPluginSkills(
+  skills: ResolvedManagerSkill[],
+  pluginContext: HomerailPluginTurnContextV1,
+): ResolvedManagerSkill[] {
+  const selected = new Map(pluginContext.skills.map((skill) => [skill.qualified_id, skill]));
+  return skills.map((skill) => {
+    if (skill.source !== "plugin") return skill;
+    const descriptor = selected.get(skill.id);
+    if (!descriptor) return skill;
+    const detail = readManagerSkill(skill.id, {
+      plugin_version: descriptor.plugin_version,
+      digest: descriptor.digest,
+    });
+    if (!detail?.content || detail.content.length > MAX_INLINE_PLUGIN_SKILL_CHARS) return skill;
+    return { ...skill, content: detail.content };
+  });
 }
 
 /**
@@ -173,7 +206,10 @@ export function resolveManagerAgentTurnAssets(
     assertAgentPromptTrust(pluginContext, placement);
     return {
       plugin_context: pluginContext,
-      manager_skills: scopedManagerSkills(input.manager_skills, pluginContext),
+      manager_skills: inlineSelectedPluginSkills(
+        scopedManagerSkills(input.manager_skills, pluginContext),
+        pluginContext,
+      ),
       route: null,
     };
   }
@@ -196,10 +232,21 @@ export function resolveManagerAgentTurnAssets(
   }, undefined, {
     source_context: sourceContext,
   });
-  assertAgentPromptTrust(route.selected_context, placement);
+  const selectedContext = toolsBound
+    ? selectPluginTurnContext(sourceContext, [
+      ...new Set([
+        ...route.replay.selected_capability_ids,
+        CORE_GENERATIVE_UI_CAPABILITY_ID,
+      ]),
+    ], route.permission_revision)
+    : route.selected_context;
+  assertAgentPromptTrust(selectedContext, placement);
   return {
-    plugin_context: route.selected_context,
-    manager_skills: scopedManagerSkills(input.manager_skills, route.selected_context),
+    plugin_context: selectedContext,
+    manager_skills: inlineSelectedPluginSkills(
+      scopedManagerSkills(input.manager_skills, selectedContext),
+      selectedContext,
+    ),
     route,
   };
 }
@@ -246,6 +293,7 @@ async function runManagerAgentTurnOnce(
         voice_session_id: input.voice_session_id,
         continue_chat: input.continue_chat,
         history: input.history,
+        canvas_context: input.canvas_context,
         agent_config: input.agent_config,
         managerRestUrl: options?.managerRestUrl,
         response_mode: input.response_mode,
@@ -304,6 +352,7 @@ async function runManagerAgentTurnOnce(
         response_mode: input.response_mode,
         generative_ui_mode: input.generative_ui_mode,
         history: input.history,
+        canvas_context: input.canvas_context,
         required_tool_calls: input.required_tool_calls,
         agent_config: input.agent_config,
         voice_ui_rules: input.voice_ui_rules,
@@ -351,6 +400,7 @@ async function runManagerAgentTurnOnce(
       response_mode: input.response_mode,
       generative_ui_mode: input.generative_ui_mode,
       history: input.history,
+      canvas_context: input.canvas_context,
       required_tool_calls: input.required_tool_calls,
       agent_config: input.agent_config,
       voice_ui_rules: input.voice_ui_rules,
@@ -448,6 +498,7 @@ export async function* runManagerAgentTurnStream(
       voice_session_id: input.voice_session_id,
       continue_chat: input.continue_chat,
       history: input.history,
+      canvas_context: input.canvas_context,
       agent_config: input.agent_config,
       managerRestUrl: options?.managerRestUrl,
       response_mode: input.response_mode,

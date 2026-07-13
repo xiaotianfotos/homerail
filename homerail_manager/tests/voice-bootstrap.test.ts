@@ -19,10 +19,12 @@ import {
 import {
   _setHostCodexManagerAgentRunnerForTest,
   _setHostCodexManagerAgentStreamRunnerForTest,
+  type HostCodexManagerAgentInput,
 } from "../src/server/host-codex-manager-agent.js";
 import { _clearNodes } from "../src/node/registry.js";
 import { managerAgentHostPort, registerFakeDockerNode } from "./helpers/fake-manager-agent-node.js";
 import type { CodexModelCatalog } from "../src/server/codex-models.js";
+import { applyVoiceCanonicalProjectionPatch } from "../src/generative-ui/canonical-voice-service.js";
 
 const TEST_CODEX_MODEL_CATALOG: CodexModelCatalog = {
   binary: "codex",
@@ -1050,6 +1052,117 @@ describe("voice bootstrap routes", () => {
       session_id: createdBody.data.session_id,
       project_id: "p-stream",
     }));
+  });
+
+  it("passes only the selected persisted canvas Block into the next Manager turn", async () => {
+    let seenCanvas: HostCodexManagerAgentInput["canvas_context"];
+    _setHostCodexManagerAgentRunnerForTest(async (input) => {
+      seenCanvas = input.canvas_context;
+      return {
+        text: "已深入当前内容。",
+        spoken_text: "已深入当前内容。",
+        session_id: input.session_id || "host-session-canvas",
+        run_id: null,
+        run_ids: [],
+        objective: { required: false, satisfied: true, tool_calls: [] },
+        tool_calls: [],
+        tool_results: [],
+        commentary_texts: [],
+        voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
+        worker_id: "host-codex",
+        container_name: null,
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.5",
+        reasoning_effort: "low",
+        generative_ui_mode: "prefer",
+      }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    applyVoiceCanonicalProjectionPatch({
+      session_id: createdBody.data.session_id,
+      patch: {
+        base_revision: 0,
+        upsert: [{
+          ir_version: 1,
+          id: "com.homerail.core:ai-news",
+          kind: "com.homerail.core/generated_view",
+          kind_version: 1,
+          owner: { id: "com.homerail.core", version: "0.1.7" },
+          surface: "result",
+          importance: "primary",
+          content: { data: { items: [{ title: "News one" }, { title: "News two" }] } },
+          presentation: { density: "summary", canvas_size: "1x2" },
+          lifecycle: { persistence: "session" },
+          fallback: { title: "AI news", summary: "Two current items" },
+        }],
+        remove_ids: [],
+      },
+      created_at: "2026-07-13T00:00:00.000Z",
+    });
+
+    const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: "深入第二条",
+        selected_node_id: "com.homerail.core:ai-news",
+      }),
+    });
+
+    expect(turn.status).toBe(200);
+    expect(seenCanvas).toMatchObject({
+      selected_node_id: "com.homerail.core:ai-news",
+      nodes: [{
+        id: "com.homerail.core:ai-news",
+        selected: true,
+        content: { data: { items: [{ title: "News one" }, { title: "News two" }] } },
+      }],
+    });
+  });
+
+  it("publishes and serves a standalone project artifact across requests", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-voice-artifact-project-"));
+    const project = createProject({ name: "Artifact project", workspace_path: projectRoot });
+    fs.writeFileSync(path.join(projectRoot, "story.html"), "<!doctype html><title>AI story</title><h1>AI story</h1>");
+    try {
+      const port = await listen(server);
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: project.project_id }),
+      });
+      const createdBody = await created.json() as { data: { session_id: string } };
+      const published = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/artifacts/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_path: "story.html", title: "AI story" }),
+      });
+      const publishedBody = await published.json() as { data: { artifact: { url: string; kind: string } } };
+      expect(published.status).toBe(200);
+      expect(publishedBody.data.artifact.kind).toBe("html");
+
+      const preview = await fetch(`${baseUrl}${publishedBody.data.artifact.url}`);
+      expect(preview.status).toBe(200);
+      expect(preview.headers.get("content-security-policy"))
+        .toBe("sandbox allow-scripts allow-forms allow-pointer-lock allow-popups");
+      expect(await preview.text()).toContain("<h1>AI story</h1>");
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it("streams an accepted workspace event before the Manager Agent turn finishes", async () => {

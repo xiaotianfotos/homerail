@@ -173,6 +173,7 @@ describe("ViewSpec V1", () => {
         surface: "task",
         importance: "critical",
         density: "summary",
+        canvas_size: "1x2",
         persistence: "turn",
         content: node().content,
         view: view(),
@@ -188,16 +189,23 @@ describe("ViewSpec V1", () => {
         surface_pointer: "/surface",
         importance_pointer: "/importance",
         density_pointer: "/density",
+        canvas_size_pointer: "/canvas_size",
         persistence_pointer: "/persistence",
         omit_content_fields: [],
         fallback: { title_pointer: "/title" },
-        defaults: { surface: "result", importance: "primary", density: "detail", persistence: "session" },
+        defaults: {
+          surface: "result",
+          importance: "primary",
+          density: "detail",
+          canvas_size: "2x2",
+          persistence: "session",
+        },
       },
     });
     expect(result.node).toMatchObject({
       surface: "task",
       importance: "critical",
-      presentation: { density: "summary" },
+      presentation: { density: "summary", canvas_size: "1x2" },
       lifecycle: { persistence: "turn" },
       content: node().content,
       view: view(),
@@ -210,5 +218,34 @@ describe("ViewSpec V1", () => {
       root: { id: "link", type: "link", label: { literal: "Unsafe" }, uri: { path: "/data/url" } },
     };
     expect(() => buildHomerailViewModel(linkView, { data: { url: "javascript:alert(1)" } })).toThrow("root did not materialize");
+  });
+
+  it("materializes only browser-safe image, HTML, and file artifacts", () => {
+    const artifactView: HomerailViewSpecV1 = {
+      view_version: 1,
+      root: {
+        id: "cover",
+        type: "artifact",
+        kind: "image",
+        uri: { path: "/data/url" },
+        title: { literal: "AI cover" },
+        description: { literal: "Generated from the selected topic" },
+        alt: { literal: "Abstract AI cover" },
+        layout: "portrait",
+      },
+    };
+    const model = buildHomerailViewModel(artifactView, {
+      data: { url: "/api/voice-agent/sessions/session-one/artifacts/cover.png" },
+    });
+    expect(model.root).toMatchObject({
+      type: "artifact",
+      artifact_kind: "image",
+      uri: "/api/voice-agent/sessions/session-one/artifacts/cover.png",
+      title: "AI cover",
+      layout: "portrait",
+    });
+    expect(() => buildHomerailViewModel(artifactView, {
+      data: { url: "file:///etc/passwd" },
+    })).toThrow("root did not materialize");
   });
 });

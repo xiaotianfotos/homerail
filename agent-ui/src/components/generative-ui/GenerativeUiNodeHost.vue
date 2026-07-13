@@ -2,12 +2,15 @@
 import { computed, onUnmounted, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type {
+  GenerativeUiCanvasSize,
   GenerativeUiCompositionItemV1,
   GenerativeUiDocumentScopeV1,
+  GenerativeUiMotionProfile,
   GenerativeUiStoredNodeV1,
   GenerativeUiSurfaceContextV1,
   HomerailViewNodeV1,
 } from 'homerail-protocol'
+import { Maximize2, Minimize2 } from 'lucide-vue-next'
 import {
   confirmPluginAction,
   invokePluginAction,
@@ -55,13 +58,22 @@ const props = withDefaults(defineProps<{
   node: GenerativeUiStoredNodeV1
   placement: GenerativeUiCompositionItemV1
   context: GenerativeUiSurfaceContextV1
+  canvasSize?: GenerativeUiCanvasSize
   registry?: GenerativeUiRendererRegistry
   actionRegistry?: GenerativeUiActionRegistry
   interactive?: boolean
   actionMode?: GenerativeUiActionMode
+  selected?: boolean
+  attention?: boolean
+  motionProfile?: GenerativeUiMotionProfile
+  attentionDurationMs?: number
 }>(), {
   interactive: true,
   actionMode: 'emit',
+  selected: false,
+  attention: false,
+  motionProfile: 'standard',
+  attentionDurationMs: 2400,
 })
 
 const emit = defineEmits<{
@@ -73,6 +85,7 @@ const emit = defineEmits<{
   }): void
   (event: 'open-preview', payload: GenerativeUiPreviewRequestV1): void
   (event: 'renderer-error', payload: { node_id: string; message: string }): void
+  (event: 'select', payload: { node_id: string }): void
 }>()
 
 const { t } = useI18n()
@@ -107,6 +120,7 @@ const customRenderer = computed(() => (
   resolution.value.mode === 'custom' ? resolution.value : null
 ))
 const customRendererFailure = ref<string>()
+const expanded = ref(false)
 const unavailable = computed(() => resolution.value.mode === 'unavailable' || Boolean(customRendererFailure.value))
 const fallbackReason = computed(() => (
   customRendererFailure.value
@@ -122,6 +136,13 @@ const actionPollGenerations = new Map<string, number>()
 let unmounted = false
 
 watch(resetKey, () => { customRendererFailure.value = undefined })
+watch(expanded, value => {
+  document.body.classList.toggle('generative-ui-node-expanded', value)
+})
+
+function toggleExpanded(): void {
+  expanded.value = !expanded.value
+}
 
 function createActionRequestId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -345,6 +366,7 @@ function actionStatusLabel(status: ActionDisplayStatus): string {
 
 onUnmounted(() => {
   unmounted = true
+  document.body.classList.remove('generative-ui-node-expanded')
   for (const actionId of actionPollGenerations.keys()) cancelActionStatusPoll(actionId)
 })
 
@@ -383,13 +405,40 @@ function requestCustomRendererAction(actionId: string): void {
 <template>
   <article
     class="generative-ui-node-host"
-    :class="`generative-ui-node-host--${placement.variant}`"
+    :class="[
+      `generative-ui-node-host--${placement.variant}`,
+      {
+        'generative-ui-node-host--expanded': expanded,
+        'generative-ui-node-host--selected': selected,
+        'generative-ui-node-host--attention': attention,
+      },
+    ]"
     :data-generative-ui-node="node.id"
     :data-kind="node.kind"
     :data-renderer-resolution="resolutionName"
     :data-placement="placement.placement"
+    :data-canvas-size="canvasSize"
+    :data-motion-profile="motionProfile"
+    :data-attention="attention ? 'true' : 'false'"
+    :data-expanded="expanded ? 'true' : 'false'"
+    :style="{ '--generative-ui-attention-duration': `${attentionDurationMs}ms` }"
+    :aria-selected="selected"
     tabindex="0"
+    @click="emit('select', { node_id: node.id })"
+    @keydown.enter.self="emit('select', { node_id: node.id })"
+    @keydown.esc.stop="expanded = false"
   >
+    <button
+      type="button"
+      class="generative-ui-node-host__expand"
+      :title="expanded ? t('voice.generativeUi.collapse') : t('voice.generativeUi.expand')"
+      :aria-label="expanded ? t('voice.generativeUi.collapse') : t('voice.generativeUi.expand')"
+      :aria-pressed="expanded"
+      @click.stop="toggleExpanded"
+    >
+      <Minimize2 v-if="expanded" :size="18" aria-hidden="true" />
+      <Maximize2 v-else :size="18" aria-hidden="true" />
+    </button>
     <RendererErrorBoundary
       v-if="registeredComponent"
       :reset-key="resetKey"
@@ -400,6 +449,7 @@ function requestCustomRendererAction(actionId: string): void {
         :node="node"
         :placement="placement"
         :context="context"
+        :expanded="expanded"
         @open-preview="emit('open-preview', $event)"
         @request-action="requestCustomRendererAction"
       />
@@ -532,15 +582,131 @@ function requestCustomRendererAction(actionId: string): void {
 
 <style scoped>
 .generative-ui-node-host {
+  position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
+  align-content: start;
+  border: 1px solid rgba(116, 228, 227, 0.16);
+  border-radius: 8px;
+  background: rgba(10, 20, 23, 0.88);
+  padding: 20px;
   outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.generative-ui-node-host:hover,
+.generative-ui-node-host:focus-within {
+  border-color: rgba(116, 228, 227, 0.36);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .generative-ui-node-host:focus-visible {
-  border-radius: 16px;
   box-shadow: 0 0 0 2px rgba(116, 228, 227, 0.8);
+}
+
+.generative-ui-node-host--selected {
+  border-color: rgba(116, 228, 227, 0.82);
+  box-shadow: 0 0 0 2px rgba(68, 209, 199, 0.22), 0 18px 48px rgba(0, 0, 0, 0.28);
+}
+
+.generative-ui-node-host--selected::before {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #74e4df;
+  box-shadow: 0 0 12px rgba(116, 228, 223, 0.72);
+  content: '';
+}
+
+[data-motion-profile='standard'].generative-ui-node-host--attention {
+  animation: generative-ui-standard-attention var(--generative-ui-attention-duration) ease-out both;
+}
+
+[data-motion-profile='standard'].generative-ui-node-host--attention::after {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border: 1px solid rgba(116, 228, 223, 0.75);
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(116, 228, 223, 0.12);
+  content: '';
+  pointer-events: none;
+  animation: generative-ui-standard-attention-frame var(--generative-ui-attention-duration) ease-out both;
+}
+
+@keyframes generative-ui-standard-attention {
+  0% { border-color: rgba(116, 228, 227, 0.16); }
+  14% { border-color: rgba(116, 228, 227, 0.92); box-shadow: 0 0 0 3px rgba(68, 209, 199, 0.2), 0 18px 56px rgba(18, 184, 170, 0.2); }
+  48% { border-color: rgba(116, 228, 227, 0.58); box-shadow: 0 0 0 1px rgba(68, 209, 199, 0.12), 0 14px 44px rgba(18, 184, 170, 0.1); }
+  100% { border-color: rgba(116, 228, 227, 0.16); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035); }
+}
+
+@keyframes generative-ui-standard-attention-frame {
+  0% { opacity: 0; transform: scale(0.985); }
+  14% { opacity: 1; transform: scale(1); }
+  65% { opacity: 0.42; }
+  100% { opacity: 0; transform: scale(1.006); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-motion-profile].generative-ui-node-host--attention,
+  [data-motion-profile].generative-ui-node-host--attention::after {
+    animation: none;
+  }
+
+  [data-motion-profile].generative-ui-node-host--attention {
+    border-color: rgba(116, 228, 227, 0.76);
+    box-shadow: 0 0 0 2px rgba(68, 209, 199, 0.18);
+  }
+}
+
+.generative-ui-node-host__expand {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid rgba(116, 228, 227, 0.22);
+  border-radius: 7px;
+  color: rgba(225, 255, 252, 0.76);
+  background: rgba(7, 18, 21, 0.88);
+  cursor: pointer;
+}
+
+.generative-ui-node-host__expand:hover,
+.generative-ui-node-host__expand:focus-visible {
+  border-color: rgba(116, 228, 227, 0.58);
+  color: #f5fffe;
+  outline: none;
+}
+
+.generative-ui-node-host--expanded {
+  position: fixed !important;
+  inset: 18px !important;
+  z-index: 180;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+  grid-column: auto !important;
+  grid-row: auto !important;
+  overflow: auto;
+  border-color: rgba(116, 228, 227, 0.46);
+  background: #091316;
+  padding: 32px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.72);
+}
+
+:global(body.generative-ui-node-expanded) {
+  overflow: hidden;
 }
 
 .generative-ui-node-host__actions {

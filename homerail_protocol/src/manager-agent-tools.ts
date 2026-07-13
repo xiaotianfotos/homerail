@@ -45,6 +45,7 @@ export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
 export const MANAGER_AGENT_COMMON_VOICE_TOOL_NAMES = [
   "update_voice_memo",
   "update_task_draft",
+  "publish_artifact",
   "validate_widget_file",
   "write_widget_file",
   "read_widget_file",
@@ -510,6 +511,23 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
       "Preserve useful facts, mark answered todos as done, keep open questions compact, and set ready_to_execute only when the task is ready for confirmation.",
     ].join(" "),
     input_schema: voiceMemoSchema,
+  },
+  publish_artifact: {
+    name: "publish_artifact",
+    description: [
+      "Publish a generated PNG, JPEG, WebP, or standalone HTML file from the current project workspace to the current voice session.",
+      "Pass a project-relative source_path. The result returns a persistent browser-safe URL; use that URL in a generated ViewSpec artifact node.",
+      "This tool publishes an existing file only. It does not generate content and never accepts paths outside the current project workspace.",
+    ].join(" "),
+    input_schema: {
+      type: "object",
+      properties: {
+        source_path: { type: "string", minLength: 1, maxLength: 2048 },
+        title: { type: "string", maxLength: 200 },
+      },
+      required: ["source_path"],
+      additionalProperties: false,
+    },
   },
   validate_widget_file: {
     name: "validate_widget_file",
