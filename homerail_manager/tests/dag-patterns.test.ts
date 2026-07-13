@@ -582,6 +582,7 @@ describe("built-in DAG patterns", () => {
     expect(deterministicCheck?.gateway_config).toMatchObject({
       input: "challenge",
       command_field: "test_command",
+      cwd: "$run_workspace",
       success_port: "passed",
       failure_port: "failed",
     });
