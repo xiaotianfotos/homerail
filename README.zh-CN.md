@@ -211,6 +211,8 @@ hr start --ui --public \
 
 Worker 容器通过 Manager 传给 Node 的那个 URL，回连到 Manager。在 Docker Desktop 上，默认的 `host.docker.internal` 映射通常就够了；在 Linux 上，要么使用 Docker 的 `host-gateway` 支持，要么设置 `HOMERAIL_MANAGER_WORKER_WS_BASE_URL`。不要在模板或提交的配置中硬编码 Docker 网桥地址。
 
+远程 Worker 和 Node 必须使用经过身份认证的 `wss://` 端点。token、反向代理、证书和兼容设置见 [控制面 WebSocket 安全说明](docs/control-plane-security.md)。
+
 运行时辅助命令：
 
 ```bash

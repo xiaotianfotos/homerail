@@ -3,12 +3,39 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { WebSocketServer } from "ws";
 import { WsClient } from "../ws-client.js";
 
 // We test the WsClient's event emission and message handling logic
 // without a real WebSocket server by mocking the ws module.
 
 describe("WsClient", () => {
+  it("sends the worker bearer token during the websocket upgrade", async () => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    if (!address || typeof address !== "object") throw new Error("server did not bind");
+    const authorization = new Promise<string | undefined>((resolve) => {
+      server.once("connection", (_socket, request) => resolve(request.headers.authorization));
+    });
+    const client = new WsClient({
+      url: `ws://127.0.0.1:${address.port}`,
+      workerId: "authenticated-worker",
+      token: " worker-secret ",
+    });
+    const connected = new Promise<void>((resolve) => client.once("connected", resolve));
+
+    try {
+      client.connect();
+      await expect(authorization).resolves.toBe("Bearer worker-secret");
+      await connected;
+    } finally {
+      client.close();
+      for (const socket of server.clients) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("emits connected on open", () => {
     const client = new WsClient({
       url: "ws://localhost:9999",

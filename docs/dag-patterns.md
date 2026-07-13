@@ -132,10 +132,12 @@ root or a protected file changed and restored before the final snapshot;
 OS-level containment remains the responsibility of the selected agent backend
 or container sandbox.
 
-Manager-to-Node and Manager-to-Worker WebSocket transport is trusted-network
-transport in this release. Multi-host deployments must provide network-layer
-isolation or a TLS-authenticated reverse proxy until native `wss` authentication
-is implemented.
+Manager-to-Node and Manager-to-Worker WebSocket upgrades are authenticated
+before registration. Connections without configured credentials are restricted
+to loopback; remote clients require a Bearer token and reject plaintext `ws://`
+unless the isolated-network compatibility override is explicit. Multi-host TLS
+termination and certificate renewal remain the reverse proxy's responsibility;
+see [Control-Plane WebSocket Security](control-plane-security.md).
 
 The self-hosted catalog validation uses an operator-configured Qwen 3.6 service
 through its Anthropic-compatible endpoint and the HomeRail `claude-sdk`

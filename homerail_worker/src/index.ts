@@ -23,6 +23,7 @@ const MANAGER_WS_URL =
   process.env.MANAGER_WORKER_WS_URL ??
   `${DEFAULT_MANAGER_WS_BASE}/ws/projects/default/workers/${encodeURIComponent(WORKER_ID)}`;
 const TOKEN = process.env.HOMERAIL_WORKER_TOKEN ?? "";
+const ALLOW_INSECURE_REMOTE_WS = process.env.HOMERAIL_ALLOW_INSECURE_REMOTE_WS === "1";
 const CAPABILITIES = (process.env.HOMERAIL_WORKER_CAPABILITIES ?? "")
   .split(",")
   .map((capability) => capability.trim())
@@ -38,6 +39,7 @@ const client = new WsClient({
   workerId: WORKER_ID,
   capabilities: CAPABILITIES,
   token: TOKEN,
+  allowInsecureRemote: ALLOW_INSECURE_REMOTE_WS,
 });
 
 let activePrompt:

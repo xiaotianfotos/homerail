@@ -6,7 +6,7 @@
 const REDACTED = "***REDACTED***";
 
 const SECRET_TEXT_PATTERNS: Array<[RegExp, string]> = [
-  [/("(?:api[_-]?key|token|secret|password|credential|authorization|auth)"\s*:\s*")[^"]+(")/gi, `$1${REDACTED}$2`],
+  [/("[^"]*(?:api[_-]?key|token|secret|password|credential|authorization|auth)"\s*:\s*")[^"]+(")/gi, `$1${REDACTED}$2`],
   [/(api[_-]?key|token|secret|password)=([^&\s'"]+)/gi, "$1=***REDACTED***"],
   [/(Authorization:\s*(?:Bearer|token)\s+)[^\s'"]+/gi, "$1***REDACTED***"],
   [/(Bearer\s+)[A-Za-z0-9._~+/-]{8,}/gi, "$1***REDACTED***"],
@@ -18,10 +18,7 @@ function isSecretKey(key: string): boolean {
   const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
   return normalized === "apikey"
     || normalized.endsWith("apikey")
-    || normalized === "token"
-    || normalized.endsWith("accesstoken")
-    || normalized.endsWith("refreshtoken")
-    || normalized.endsWith("approvaltoken")
+    || normalized.endsWith("token")
     || normalized === "secret"
     || normalized.endsWith("clientsecret")
     || normalized === "password"

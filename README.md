@@ -308,6 +308,9 @@ Worker containers connect back to the Manager through the URL Manager passes to
 Node. On Docker Desktop the default `host.docker.internal` mapping is usually
 enough; on Linux use Docker `host-gateway` support or set
 `HOMERAIL_MANAGER_WORKER_WS_BASE_URL`. Do not hardcode Docker bridge addresses.
+Remote Worker and Node connections require authenticated `wss://` endpoints;
+see [Control-Plane WebSocket Security](docs/control-plane-security.md) for token,
+reverse-proxy, certificate, and compatibility settings.
 
 Runtime helpers:
 

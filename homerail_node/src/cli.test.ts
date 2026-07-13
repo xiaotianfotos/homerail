@@ -57,6 +57,8 @@ describe("cli arg parsing logic", () => {
     expect(args.nodeId).toBe("");
     expect(args.provider).toBe("docker-cli");
     expect(args.capabilities).toEqual(["docker-cli"]);
+    expect(args.token).toBe("");
+    expect(args.allowInsecureRemoteWs).toBe(false);
   });
 
   it("derives default manager URL from HOMERAIL_MANAGER_PORT", () => {
@@ -94,12 +96,16 @@ describe("cli arg parsing logic", () => {
       HOMERAIL_NODE_ID: "env-node",
       HOMERAIL_NODE_PROVIDER: "docker-api",
       HOMERAIL_NODE_CAPABILITIES: "cap1,cap2",
+      HOMERAIL_NODE_TOKEN: " node-token ",
+      HOMERAIL_ALLOW_INSECURE_REMOTE_WS: "1",
     });
     expect(args.managerUrl).toBe("ws://env-host:5555");
     expect(args.projectId).toBe("env-proj");
     expect(args.nodeId).toBe("env-node");
     expect(args.provider).toBe("docker-api");
     expect(args.capabilities).toEqual(["cap1", "cap2", "docker-api"]);
+    expect(args.token).toBe("node-token");
+    expect(args.allowInsecureRemoteWs).toBe(true);
   });
 
   it("args override env vars", () => {
@@ -135,7 +141,9 @@ describe("node control-plane WebSocket client", () => {
     const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     const port = await listenWebSocket(server);
     const messages: unknown[] = [];
-    server.on("connection", (socket) => {
+    const authorizationHeaders: Array<string | undefined> = [];
+    server.on("connection", (socket, request) => {
+      authorizationHeaders.push(request.headers.authorization);
       socket.on("message", (raw) => {
         messages.push(JSON.parse(raw.toString()));
       });
@@ -147,6 +155,7 @@ describe("node control-plane WebSocket client", () => {
       nodeId: "local-docker-node",
       provider: new MockProvider(),
       capabilities: ["docker-cli"],
+      token: " node-secret ",
       reconnectInitialDelayMs: 50,
       reconnectMaxDelayMs: 50,
     });
@@ -159,6 +168,7 @@ describe("node control-plane WebSocket client", () => {
 
       expect(messages.filter((msg) => (msg as { type?: string }).type === "register")).toHaveLength(2);
       expect(messages.filter((msg) => (msg as { type?: string }).type === "capabilities")).toHaveLength(2);
+      expect(authorizationHeaders).toEqual(["Bearer node-secret", "Bearer node-secret"]);
     } finally {
       client.close();
       await closeWebSocket(server);

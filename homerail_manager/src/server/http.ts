@@ -34,6 +34,7 @@ import type { DAGDispatcher } from "../orchestration/dag-dispatcher.js";
 import { emit } from "../events/bus.js";
 import { dispatchRecoveredRuns } from "../runtime/active-runs.js";
 import { startDagTriggerScheduler } from "../runtime/dag-triggers.js";
+import { readOrCreateControlPlaneToken } from "../persistence/control-plane-secret.js";
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -80,7 +81,24 @@ const WORKER_ENV_PASSTHROUGH = [
   "CLAUDE_MAX_TURNS",
   "CLAUDE_SDK_QUERY_TIMEOUT_MS",
   "CLAUDE_THINKING_BUDGET",
+  "HOMERAIL_ALLOW_INSECURE_REMOTE_WS",
 ] as const;
+
+export interface WorkerControlPlaneAuth {
+  token: string;
+  explicitlyConfigured: boolean;
+}
+
+export function resolveWorkerControlPlaneAuth(
+  env: NodeJS.ProcessEnv = process.env,
+  generateToken: () => string = readOrCreateControlPlaneToken,
+): WorkerControlPlaneAuth {
+  const configured = env.HOMERAIL_WORKER_TOKEN?.trim()
+    || env.HOMERAIL_CONTROL_PLANE_TOKEN?.trim();
+  return configured
+    ? { token: configured, explicitlyConfigured: true }
+    : { token: generateToken(), explicitlyConfigured: false };
+}
 
 const MANAGER_AGENT_ENV_PASSTHROUGH = [
   "HOMERAIL_MANAGER_AGENT_BACKEND",
@@ -93,9 +111,23 @@ const MANAGER_AGENT_ENV_PASSTHROUGH = [
 ] as const;
 
 export function resolveWorkerRuntimeEnv(): Record<string, string> | undefined {
+  return resolveWorkerRuntimeEnvFrom(process.env);
+}
+
+export function resolveProvisionedWorkerRuntimeEnv(
+  auth: WorkerControlPlaneAuth,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  return {
+    ...(resolveWorkerRuntimeEnvFrom(env) ?? {}),
+    HOMERAIL_WORKER_TOKEN: auth.token,
+  };
+}
+
+function resolveWorkerRuntimeEnvFrom(envSource: NodeJS.ProcessEnv): Record<string, string> | undefined {
   const env: Record<string, string> = {};
   for (const key of WORKER_ENV_PASSTHROUGH) {
-    const value = process.env[key];
+    const value = envSource[key];
     if (value !== undefined && value.trim().length > 0) {
       env[key] = value;
     }
@@ -118,6 +150,36 @@ export function resolveManagerAgentRuntimeEnv(): Record<string, string> | undefi
   return Object.keys(env).length > 0 ? env : undefined;
 }
 
+export function mergeProvisionerOptions(
+  defaults: WsDispatchAdapterOptions,
+  overrides: WsDispatchAdapterOptions | false | undefined,
+  workerToken: string,
+): WsDispatchAdapterOptions {
+  if (overrides === undefined) return defaults;
+  if (overrides === false) return { provisioner: false };
+  if (overrides.provisioner === false) {
+    return { ...defaults, ...overrides, provisioner: false };
+  }
+
+  const defaultProvisioner = defaults.provisioner === false
+    ? undefined
+    : defaults.provisioner;
+  const overrideProvisioner = overrides.provisioner;
+  return {
+    ...defaults,
+    ...overrides,
+    provisioner: {
+      ...defaultProvisioner,
+      ...overrideProvisioner,
+      env: {
+        ...(defaultProvisioner?.env ?? {}),
+        ...(overrideProvisioner?.env ?? {}),
+        HOMERAIL_WORKER_TOKEN: workerToken,
+      },
+    },
+  };
+}
+
 export function createServer(
   port: number,
   wsOptions?: WorkerWebSocketOptions & NodeWebSocketOptions,
@@ -126,12 +188,23 @@ export function createServer(
   managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
 ) {
   let server: http.Server;
+  const workerControlPlaneAuth = resolveWorkerControlPlaneAuth();
+  const effectiveWorkerToken = wsOptions?.authToken?.trim()
+    || workerControlPlaneAuth.token;
+  const effectiveWorkerTokenIsExplicit = Boolean(wsOptions?.authToken?.trim())
+    || workerControlPlaneAuth.explicitlyConfigured;
+  const configuredNodeToken = process.env.HOMERAIL_NODE_TOKEN?.trim()
+    || process.env.HOMERAIL_CONTROL_PLANE_TOKEN?.trim();
   const workerImage = process.env.HOMERAIL_WORKER_IMAGE || "homerail-worker:latest";
+  const workerRuntimeEnv = resolveProvisionedWorkerRuntimeEnv({
+    token: effectiveWorkerToken,
+    explicitlyConfigured: effectiveWorkerTokenIsExplicit,
+  });
   const defaultProvisionerOptions: WsDispatchAdapterOptions = {
     provisioner: {
       image: workerImage,
       extraHosts: resolveManagerWorkerExtraHosts(),
-      env: resolveWorkerRuntimeEnv(),
+      env: workerRuntimeEnv,
     },
     managerBaseUrl: () => {
       const addr = server?.address();
@@ -145,12 +218,11 @@ export function createServer(
     },
     projectId: process.env.HOMERAIL_PROJECT_ID ?? "p1",
   };
-  const adapterOptions =
-    provisionerOptions === undefined
-      ? defaultProvisionerOptions
-      : provisionerOptions === false
-        ? { provisioner: false as false }
-        : provisionerOptions;
+  const adapterOptions = mergeProvisionerOptions(
+    defaultProvisionerOptions,
+    provisionerOptions,
+    effectiveWorkerToken,
+  );
   const managerAgentContainerOptions =
     provisionerOptions === false
       ? undefined
@@ -276,8 +348,11 @@ export function createServer(
   });
   server.once("close", stopTriggerScheduler);
 
-  const websocketOptions = {
+  const workerWebsocketOptions: WorkerWebSocketOptions = {
     ...wsOptions,
+    authToken: effectiveWorkerToken,
+    allowLoopbackWithoutToken: wsOptions?.allowLoopbackWithoutToken
+      ?? !effectiveWorkerTokenIsExplicit,
     onHandoffApplied: (runId: string) => {
       graphExecutor.tick(runId);
     },
@@ -340,8 +415,15 @@ export function createServer(
       dispatchRecoveredRuns(actualDispatcher);
     },
   };
-  setupWorkerWebSocket(server, websocketOptions);
-  setupNodeWebSocket(server, websocketOptions);
+  const nodeWebsocketOptions: NodeWebSocketOptions = {
+    ...wsOptions,
+    authToken: wsOptions?.authToken ?? configuredNodeToken,
+    allowLoopbackWithoutToken: wsOptions?.allowLoopbackWithoutToken
+      ?? !configuredNodeToken,
+    onHandoffApplied: workerWebsocketOptions.onHandoffApplied,
+  };
+  setupWorkerWebSocket(server, workerWebsocketOptions);
+  setupNodeWebSocket(server, nodeWebsocketOptions);
   setupEventWebSocket(server);
   setupVoiceRealtimeWebSocket(server);
 
