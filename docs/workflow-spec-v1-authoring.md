@@ -125,7 +125,70 @@ V1 requires the source and target ports of an edge to reference the same named
 contract. Manager validates run input and model handoffs at runtime. A contract
 violation fails the node and cannot continue through a success edge.
 The bounded contract subset supports `oneOf` with two to eight branches when a
-payload field legitimately has a small set of disjoint JSON shapes.
+payload field legitimately has a small set of disjoint JSON shapes. It also
+supports bounded `allOf`, `if` / `then` / `else`, and array `contains` rules for
+cross-field invariants such as requiring executable evidence whenever a review
+claims that reproduction is confirmed.
+
+## Fixed Run Artifacts
+
+Declare stable outputs under `spec.artifacts`. A handoff artifact turns one
+named output port into JSON, Markdown, or plain text. JSON artifacts must name
+the same contract as their source port:
+
+```yaml
+artifacts:
+  - name: diagnosis.json
+    source: { type: handoff, node: diagnose, port: reported }
+    media_type: application/json
+    contract: DiagnosisReport
+    required: true
+    publish: always
+```
+
+A workspace artifact packages one directory from the run-scoped workspace on
+the Node that executed its producer. It is streamed to Manager as a
+deterministic `tar.gz`; Manager never assumes that a remote Node workspace is a
+local filesystem path:
+
+```yaml
+artifacts:
+  - name: evidence.tar.gz
+    source:
+      type: workspace
+      path: evidence
+      produced_by: investigate
+    archive: { format: tar.gz, deterministic: true }
+    publish: always
+    limits:
+      max_files: 10000
+      max_uncompressed_bytes: 268435456
+      max_compressed_bytes: 134217728
+      timeout_ms: 120000
+```
+
+Artifact names are flat safe filenames. Workspace paths must be normalized
+relative POSIX paths; absolute paths, `..`, backslashes, symbolic links, and
+non-file/directory entries are rejected. `publish` is `success`, `failure`, or
+`always` (default `success`). A non-applicable artifact becomes `skipped`; a
+declared output that cannot be materialized becomes `failed` without rewriting
+the already terminal DAG result. `required` lets later CI policy distinguish a
+mandatory output from optional evidence.
+
+Manager stores artifact metadata and content separately from the Node
+workspace, verifies SHA-256 and size, and accepts a workspace upload only with
+a short-lived, single-use token scoped to that run and artifact. List and fetch
+outputs generically:
+
+```bash
+hr dag artifacts <run-id>
+hr dag artifact <run-id> diagnosis.json --output diagnosis.json
+hr dag artifact <run-id> evidence.tar.gz --output evidence.tar.gz
+```
+
+Text and JSON may be written to stdout by omitting `--output`. Binary artifacts
+require `--output`; downloads use a temporary file, verify size and SHA-256,
+then rename atomically.
 
 ## Sync and Revisions
 

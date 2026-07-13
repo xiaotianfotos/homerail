@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import type { ExecutionProvider } from "../providers/types.js";
 import { handleLifecycleRequest, type LifecycleRequest, type LifecycleResponse } from "./lifecycle-handler.js";
 import { assertSecureControlPlaneUrl } from "./security.js";
+import { createWorkspaceArtifactUploader } from "../storage/workspace-artifact-uploader.js";
 
 export interface NodeClientOptions {
   managerUrl: string;
@@ -35,6 +36,7 @@ export function createNodeClient(options: NodeClientOptions): NodeClient {
   const token = options.token?.trim();
   const initialDelay = Math.max(50, options.reconnectInitialDelayMs ?? 1_000);
   const maxDelay = Math.max(initialDelay, options.reconnectMaxDelayMs ?? 30_000);
+  const workspaceArtifactUploader = createWorkspaceArtifactUploader(managerUrl);
 
   function sendRegistration(socket: WebSocket): void {
     socket.send(JSON.stringify({ type: "register", node_id: nodeId }));
@@ -118,7 +120,7 @@ export function createNodeClient(options: NodeClientOptions): NodeClient {
               socket.send(JSON.stringify(resp));
             }
           };
-          handleLifecycleRequest(request, provider, send).catch(() => {
+          handleLifecycleRequest(request, provider, send, { workspaceArtifactUploader }).catch(() => {
             // Handler already sends error response
           });
         }

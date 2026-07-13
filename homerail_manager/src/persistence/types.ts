@@ -1,6 +1,7 @@
 import type { DAGEventType, DAGEventPayload } from "../events/bus.js";
 import type {
   DAGGatewayConfig,
+  DAGArtifactDeclaration,
   DAGNodeRequirements,
   DAGPatternInstanceMeta,
   ScorecardPolicyConfig,
@@ -54,6 +55,7 @@ export interface PersistedRunMetadata {
   compilerVersion?: string;
   sourceApiVersion?: string;
   contracts?: Record<string, unknown>;
+  artifacts?: DAGArtifactDeclaration[];
   runInputTargets?: Array<{ node: string; port: string; contract?: string }>;
   initialPrompt?: string;
   nodeCount?: number;

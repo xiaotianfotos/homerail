@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -564,6 +564,51 @@ describe("handleLifecycleRequest", () => {
     expect(responses).toHaveLength(1);
     expect(responses[0]!.status).toBe("error");
     expect(responses[0]!.error!.message).toContain("unsupported operation");
+  });
+
+  it("delegates deterministic workspace archive uploads to the configured uploader", async () => {
+    const provider = new MockProvider();
+    const responses: LifecycleResponse[] = [];
+    const uploader = vi.fn(async () => ({
+      sha256: "a".repeat(64),
+      size_bytes: 42,
+      uncompressed_bytes: 100,
+      file_count: 2,
+      entry_count: 3,
+    }));
+
+    await handleLifecycleRequest(
+      makeRequest({
+        resource_type: "workspace_artifact",
+        operation: "archive_upload",
+        spec: {
+          workspace_id: "run-1",
+          path: "evidence",
+          archive: { format: "tar.gz", deterministic: true },
+          limits: {
+            max_files: 100,
+            max_uncompressed_bytes: 1_000,
+            max_compressed_bytes: 1_000,
+            timeout_ms: 10_000,
+          },
+          media_type: "application/gzip",
+          upload_url: "/api/runs/run-1/artifacts/evidence.tar.gz/upload",
+          upload_token: "one-time-token",
+        },
+      }),
+      provider,
+      (response) => responses.push(response),
+      { workspaceArtifactUploader: uploader },
+    );
+
+    expect(uploader).toHaveBeenCalledWith(expect.objectContaining({
+      workspace_id: "run-1",
+      path: "evidence",
+      media_type: "application/gzip",
+    }));
+    expect(responses).toEqual([
+      expect.objectContaining({ status: "success", resource_data: expect.objectContaining({ size_bytes: 42 }) }),
+    ]);
   });
 
   it("missing container_id for inspect -> error response", async () => {

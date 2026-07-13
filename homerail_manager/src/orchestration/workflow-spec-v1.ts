@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { LineCounter, isNode, parseDocument, type Document } from "yaml";
 import { Value } from "@sinclair/typebox/value";
 import type {
+  DAGArtifactDeclaration,
   DAGAgentConfig,
   DAGGraphNode,
   DAGEdge,
@@ -17,6 +18,7 @@ import {
   WORKFLOW_KIND,
   WorkflowSpecV1Schema,
   type WorkflowSpecV1,
+  type WorkflowSpecV1Artifact,
   type WorkflowSpecV1Edge,
   type WorkflowSpecV1Node,
 } from "./workflow-spec-v1-schema.js";
@@ -75,6 +77,7 @@ export interface CanonicalWorkflowIR {
   annotations: Record<string, string>;
   workspace: { mode: "isolated" | "shared" };
   contracts: Record<string, unknown>;
+  artifacts: DAGArtifactDeclaration[];
   triggers: Record<string, {
     type: "interval" | "event";
     every_ms?: number;
@@ -289,6 +292,68 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
         `/spec/contracts/${contractName}`,
         "DAG_SEMANTIC_INVALID_CONTRACT",
         `invalid JSON Schema contract '${contractName}': ${validation.details}`,
+      );
+    }
+  }
+
+  const artifactNames = new Set<string>();
+  for (let index = 0; index < (workflow.spec.artifacts ?? []).length; index++) {
+    const artifact = workflow.spec.artifacts![index];
+    const artifactPath = `/spec/artifacts/${index}`;
+    if (artifactNames.has(artifact.name)) {
+      add(`${artifactPath}/name`, "DAG_SEMANTIC_DUPLICATE_ARTIFACT", `duplicate artifact name '${artifact.name}'`);
+    }
+    artifactNames.add(artifact.name);
+
+    if ("media_type" in artifact) {
+      const sourceNode = nodes[artifact.source.node];
+      if (!sourceNode) {
+        add(`${artifactPath}/source/node`, "DAG_SEMANTIC_UNKNOWN_NODE", `unknown artifact source node '${artifact.source.node}'`);
+        continue;
+      }
+      const sourcePort = nodePorts(sourceNode, "outputs")[artifact.source.port];
+      if (!sourcePort) {
+        add(
+          `${artifactPath}/source/port`,
+          "DAG_SEMANTIC_UNKNOWN_PORT",
+          `unknown artifact source output '${artifact.source.node}.${artifact.source.port}'`,
+        );
+      }
+      if (artifact.media_type === "application/json" && !artifact.contract) {
+        add(`${artifactPath}/contract`, "DAG_SEMANTIC_ARTIFACT_CONTRACT_REQUIRED", "JSON handoff artifacts require a contract");
+      }
+      if (artifact.contract && !contracts[artifact.contract]) {
+        add(`${artifactPath}/contract`, "DAG_SEMANTIC_UNKNOWN_CONTRACT", `unknown artifact contract '${artifact.contract}'`);
+      }
+      if (artifact.contract && sourcePort && sourcePort.contract !== artifact.contract) {
+        add(
+          `${artifactPath}/contract`,
+          "DAG_SEMANTIC_ARTIFACT_CONTRACT_MISMATCH",
+          `artifact contract '${artifact.contract}' does not match source port contract '${sourcePort.contract ?? "<none>"}'`,
+        );
+      }
+      continue;
+    }
+
+    if (!isSafeWorkspaceArtifactPath(artifact.source.path)) {
+      add(
+        `${artifactPath}/source/path`,
+        "DAG_SEMANTIC_UNSAFE_ARTIFACT_PATH",
+        "workspace artifact path must be a normalized relative POSIX path without '.', '..', backslashes, or NUL bytes",
+      );
+    }
+    const producer = nodes[artifact.source.produced_by];
+    if (!producer) {
+      add(
+        `${artifactPath}/source/produced_by`,
+        "DAG_SEMANTIC_UNKNOWN_NODE",
+        `unknown artifact producer node '${artifact.source.produced_by}'`,
+      );
+    } else if (producer.kind === "terminal") {
+      add(
+        `${artifactPath}/source/produced_by`,
+        "DAG_SEMANTIC_INVALID_ARTIFACT_PRODUCER",
+        "a terminal node cannot produce a workspace artifact",
       );
     }
   }
@@ -597,6 +662,12 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
   return diagnostics;
 }
 
+function isSafeWorkspaceArtifactPath(value: string): boolean {
+  if (!value || value.startsWith("/") || value.includes("\\") || value.includes("\0")) return false;
+  const segments = value.split("/");
+  return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
 function canonicalNode(id: string, node: WorkflowSpecV1Node): CanonicalNode {
   const base = {
     id,
@@ -653,6 +724,45 @@ function deepSort(value: unknown): unknown {
   );
 }
 
+function canonicalArtifact(artifact: WorkflowSpecV1Artifact): DAGArtifactDeclaration {
+  const common = {
+    name: artifact.name,
+    required: artifact.required ?? false,
+    publish: artifact.publish ?? "success" as const,
+  };
+  if ("media_type" in artifact) {
+    return {
+      ...common,
+      source: {
+        type: "handoff",
+        node: artifact.source.node,
+        port: artifact.source.port,
+      },
+      media_type: artifact.media_type,
+      ...(artifact.contract ? { contract: artifact.contract } : {}),
+    };
+  }
+  return {
+    ...common,
+    source: {
+      type: "workspace",
+      path: artifact.source.path,
+      produced_by: artifact.source.produced_by,
+    },
+    media_type: "application/gzip",
+    archive: {
+      format: "tar.gz",
+      deterministic: artifact.archive.deterministic ?? true,
+    },
+    limits: {
+      max_files: artifact.limits?.max_files ?? 10_000,
+      max_uncompressed_bytes: artifact.limits?.max_uncompressed_bytes ?? 268_435_456,
+      max_compressed_bytes: artifact.limits?.max_compressed_bytes ?? 134_217_728,
+      timeout_ms: artifact.limits?.timeout_ms ?? 120_000,
+    },
+  };
+}
+
 function canonicalJson(canonical: CanonicalWorkflowIR): string {
   return JSON.stringify(deepSort(canonical));
 }
@@ -698,6 +808,9 @@ function compileV1(workflow: WorkflowSpecV1): CanonicalWorkflowIR {
     annotations: deepSort(workflow.metadata.annotations ?? {}) as Record<string, string>,
     workspace: { mode: workflow.spec.workspace?.mode ?? "isolated" },
     contracts: deepSort(workflow.spec.contracts ?? {}) as Record<string, unknown>,
+    artifacts: [...(workflow.spec.artifacts ?? [])]
+      .map(canonicalArtifact)
+      .sort((left, right) => left.name.localeCompare(right.name)),
     triggers: deepSort(Object.fromEntries(Object.entries(workflow.spec.triggers ?? {}).map(([id, trigger]) => [id, {
       ...trigger,
       enabled: trigger.enabled !== false,
@@ -821,6 +934,7 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
     annotations: {},
     workspace: { mode: "isolated" },
     contracts: {},
+    artifacts: [],
     triggers: {},
     agents: Object.fromEntries(Object.entries(metaAgents)
       .sort(([left], [right]) => left.localeCompare(right))
@@ -1166,6 +1280,7 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
       agents,
       pattern: canonical.pattern,
       contracts: canonical.contracts,
+      artifacts: [...(canonical.artifacts ?? [])],
       triggers: canonical.triggers,
       run_input_targets: runInputTargets,
       source_api_version: canonical.source_api_version,
@@ -1324,6 +1439,23 @@ export function canonicalWorkflowToV1Document(canonical: CanonicalWorkflowIR): R
       ...(canonical.description ? { description: canonical.description } : {}),
       workspace: canonical.workspace,
       ...(Object.keys(canonical.contracts).length > 0 ? { contracts: canonical.contracts } : {}),
+      ...((canonical.artifacts ?? []).length > 0 ? {
+        artifacts: canonical.artifacts.map((artifact) => !("archive" in artifact) ? {
+          name: artifact.name,
+          source: artifact.source,
+          media_type: artifact.media_type,
+          ...(artifact.contract ? { contract: artifact.contract } : {}),
+          required: artifact.required,
+          publish: artifact.publish,
+        } : {
+          name: artifact.name,
+          source: artifact.source,
+          archive: artifact.archive,
+          limits: artifact.limits,
+          required: artifact.required,
+          publish: artifact.publish,
+        }),
+      } : {}),
       ...(Object.keys(canonical.triggers).length > 0 ? { triggers: canonical.triggers } : {}),
       agents: Object.fromEntries(Object.entries(canonical.agents).map(([id, agent]) => [id, {
         ...(agent.description ? { description: agent.description } : {}),

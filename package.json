@@ -15,6 +15,7 @@
     "e2e:agent-ui": "npm --prefix agent-ui run e2e",
     "validate:dag-patterns-live": "node scripts/validate-dag-patterns-live.mjs",
     "validate:dag-patterns-runner": "bash scripts/run-dag-patterns-live-runner.sh",
+    "smoke:run-artifacts": "node scripts/run-artifact-live-smoke.mjs",
     "audit": "npm --registry=https://registry.npmjs.org --prefix homerail_protocol audit --audit-level=high && npm --registry=https://registry.npmjs.org --prefix homerail_manager audit --audit-level=high && npm --registry=https://registry.npmjs.org --prefix homerail_node audit --audit-level=high && npm --registry=https://registry.npmjs.org --prefix homerail_worker audit --audit-level=high && npm --registry=https://registry.npmjs.org --prefix homerail_cli audit --audit-level=high && npm --registry=https://registry.npmjs.org --prefix agent-ui audit --audit-level=high",
     "ci": "npm run typecheck && npm run build:packages && npm run test:packages",
     "ci:local": "bash scripts/ci-local.sh",

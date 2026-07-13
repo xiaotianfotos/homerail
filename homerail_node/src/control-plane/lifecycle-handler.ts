@@ -2,6 +2,10 @@ import type { ExecutionProvider, ContainerConfig } from "../providers/types.js";
 import { createContainer, createWorkerContainer } from "../lifecycle/create.js";
 import { prepareWorkerWorkspace } from "../storage/workspace-prepare.js";
 import type { MountPolicyOptions } from "../storage/mount-policy.js";
+import type {
+  WorkspaceArtifactUploadResult,
+  WorkspaceArtifactUploadSpec,
+} from "../storage/workspace-artifact-uploader.js";
 
 export interface LifecycleRequest {
   type: "lifecycle_request";
@@ -21,12 +25,17 @@ export interface LifecycleResponse {
 
 export type SendFn = (msg: LifecycleResponse) => void;
 
-const SUPPORTED_RESOURCE_TYPES = new Set(["container", "worker"]);
+const SUPPORTED_RESOURCE_TYPES = new Set(["container", "worker", "workspace_artifact"]);
+
+export interface LifecycleHandlerOptions {
+  workspaceArtifactUploader?: (spec: WorkspaceArtifactUploadSpec) => Promise<WorkspaceArtifactUploadResult>;
+}
 
 export async function handleLifecycleRequest(
   request: LifecycleRequest,
   provider: ExecutionProvider,
   send: SendFn,
+  options: LifecycleHandlerOptions = {},
 ): Promise<void> {
   const { request_id, resource_type, operation, spec } = request;
 
@@ -41,7 +50,7 @@ export async function handleLifecycleRequest(
   }
 
   try {
-    const result = await dispatchOperation(provider, resource_type, operation, spec);
+    const result = await dispatchOperation(provider, resource_type, operation, spec, options);
     send({
       type: "lifecycle_response",
       request_id,
@@ -63,7 +72,14 @@ async function dispatchOperation(
   resource_type: string,
   operation: string,
   spec: Record<string, unknown>,
+  options: LifecycleHandlerOptions,
 ): Promise<Record<string, unknown> | undefined> {
+  if (resource_type === "workspace_artifact") {
+    if (operation !== "archive_upload") throw new Error(`unsupported workspace artifact operation: ${operation}`);
+    if (!options.workspaceArtifactUploader) throw new Error("workspace artifact uploader is not configured");
+    const result = await options.workspaceArtifactUploader(workspaceArtifactUploadSpec(spec));
+    return result as unknown as Record<string, unknown>;
+  }
   switch (operation) {
     case "create": {
       if (resource_type === "worker") {
@@ -150,6 +166,43 @@ async function dispatchOperation(
     default:
       throw new Error(`unsupported operation: ${operation}`);
   }
+}
+
+function requiredString(spec: Record<string, unknown>, key: string): string {
+  const value = spec[key];
+  if (typeof value !== "string" || !value) throw new Error(`spec.${key} is required`);
+  return value;
+}
+
+function requiredPositiveInteger(value: unknown, key: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) <= 0) throw new Error(`spec.limits.${key} must be a positive integer`);
+  return Number(value);
+}
+
+function workspaceArtifactUploadSpec(spec: Record<string, unknown>): WorkspaceArtifactUploadSpec {
+  const archive = spec.archive;
+  const limits = spec.limits;
+  if (!archive || typeof archive !== "object" || Array.isArray(archive)) throw new Error("spec.archive is required");
+  if (!limits || typeof limits !== "object" || Array.isArray(limits)) throw new Error("spec.limits is required");
+  const archiveRecord = archive as Record<string, unknown>;
+  const limitRecord = limits as Record<string, unknown>;
+  if (archiveRecord.format !== "tar.gz") throw new Error("spec.archive.format must be tar.gz");
+  if (archiveRecord.deterministic !== true) throw new Error("spec.archive.deterministic must be true");
+  if (spec.media_type !== "application/gzip") throw new Error("spec.media_type must be application/gzip");
+  return {
+    workspace_id: requiredString(spec, "workspace_id"),
+    path: requiredString(spec, "path"),
+    archive: { format: "tar.gz", deterministic: true },
+    limits: {
+      max_files: requiredPositiveInteger(limitRecord.max_files, "max_files"),
+      max_uncompressed_bytes: requiredPositiveInteger(limitRecord.max_uncompressed_bytes, "max_uncompressed_bytes"),
+      max_compressed_bytes: requiredPositiveInteger(limitRecord.max_compressed_bytes, "max_compressed_bytes"),
+      timeout_ms: requiredPositiveInteger(limitRecord.timeout_ms, "timeout_ms"),
+    },
+    media_type: "application/gzip",
+    upload_url: requiredString(spec, "upload_url"),
+    upload_token: requiredString(spec, "upload_token"),
+  };
 }
 
 function mountPolicyFromSpec(spec: Record<string, unknown>): MountPolicyOptions | undefined {

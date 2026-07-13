@@ -93,6 +93,47 @@ export interface DAGPatternInstanceMeta {
   parameters?: Record<string, unknown>;
 }
 
+export type DAGArtifactPublish = "success" | "failure" | "always";
+
+export interface DAGHandoffArtifactDeclaration {
+  name: string;
+  source: {
+    type: "handoff";
+    node: string;
+    port: string;
+  };
+  media_type: "application/json" | "text/markdown" | "text/plain";
+  contract?: string;
+  required: boolean;
+  publish: DAGArtifactPublish;
+}
+
+export interface DAGWorkspaceArtifactDeclaration {
+  name: string;
+  source: {
+    type: "workspace";
+    path: string;
+    produced_by: string;
+  };
+  media_type: "application/gzip";
+  archive: {
+    format: "tar.gz";
+    deterministic: boolean;
+  };
+  required: boolean;
+  publish: DAGArtifactPublish;
+  limits: {
+    max_files: number;
+    max_uncompressed_bytes: number;
+    max_compressed_bytes: number;
+    timeout_ms: number;
+  };
+}
+
+export type DAGArtifactDeclaration =
+  | DAGHandoffArtifactDeclaration
+  | DAGWorkspaceArtifactDeclaration;
+
 export interface DAGNodeConfig {
   agent?: string;
   type?: string;
@@ -185,6 +226,7 @@ export interface ResolvedWorkflowMeta {
   compiler_version?: string;
   source_api_version?: string;
   contracts?: Record<string, unknown>;
+  artifacts?: DAGArtifactDeclaration[];
   triggers?: Record<string, {
     type: "interval" | "event";
     every_ms?: number;

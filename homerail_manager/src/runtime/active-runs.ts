@@ -17,7 +17,7 @@ import {
   resetSkippedSuccessDescendants,
   startNode,
 } from "../orchestration/dag-engine.js";
-import type { DAGAgentConfig, DAGEdge, DAGGatewayConfig, DAGGraphNode, DAGOutputRoute, DAGPatternInstanceMeta, ParsedDAG, ScorecardPolicyConfig } from "../orchestration/graph.js";
+import type { DAGAgentConfig, DAGArtifactDeclaration, DAGEdge, DAGGatewayConfig, DAGGraphNode, DAGOutputRoute, DAGPatternInstanceMeta, ParsedDAG, ScorecardPolicyConfig } from "../orchestration/graph.js";
 import { _normalizeOutputsToEdges } from "../orchestration/yaml-loader.js";
 import { assertGraphValid } from "../orchestration/graph-validator.js";
 import { findDispatchTarget } from "../orchestration/dispatch-tracker.js";
@@ -87,6 +87,7 @@ export interface ActiveRun {
   compilerVersion?: string;
   sourceApiVersion?: string;
   contracts?: Record<string, unknown>;
+  artifacts?: DAGArtifactDeclaration[];
   runInputTargets?: Array<{ node: string; port: string; contract?: string }>;
   initialPrompt?: string;
   nodeCount?: number;
@@ -408,6 +409,9 @@ export function createActiveRun(
     compilerVersion: parsedDAG.meta.compiler_version,
     sourceApiVersion: parsedDAG.meta.source_api_version,
     contracts: parsedDAG.meta.contracts ? { ...parsedDAG.meta.contracts } : undefined,
+    artifacts: parsedDAG.meta.artifacts
+      ? structuredClone(parsedDAG.meta.artifacts)
+      : undefined,
     runInputTargets: parsedDAG.meta.run_input_targets
       ? parsedDAG.meta.run_input_targets.map((target) => ({ ...target }))
       : undefined,
@@ -664,6 +668,7 @@ export function restoreActiveRun(
     compilerVersion: metadata.compilerVersion,
     sourceApiVersion: metadata.sourceApiVersion,
     contracts: metadata.contracts ? { ...metadata.contracts } : undefined,
+    artifacts: metadata.artifacts ? structuredClone(metadata.artifacts) : undefined,
     runInputTargets: metadata.runInputTargets
       ? metadata.runInputTargets.map((target) => ({ ...target }))
       : undefined,
@@ -903,8 +908,10 @@ function _correctionPrompt(
     `Previous attempt ended without a valid DAG handoff: ${reason}`,
     `Declared output ports for this node: ${declaredPorts}.`,
     "Treat that error as authoritative. Preserve required field names and JSON array/object/number types exactly.",
-    "If the work already completed, do not repeat it. Do not answer with text.",
-    "Your next and only action must call the handoff tool with exactly one declared output port and contract-valid content derived from the original inputs and completed work.",
+    "Reuse completed evidence when it is available in the original inputs or current workspace.",
+    "If this fresh correction session cannot see the failed attempt's evidence, repeat only the investigation needed to reconstruct it using actual tools.",
+    "Never print a pseudo-tool call as prose, XML, or JSON. Invoke the SDK tool itself.",
+    "Finish by calling the handoff tool exactly once with one declared output port and contract-valid content. Do not end with prose.",
   ].join("\n");
 }
 

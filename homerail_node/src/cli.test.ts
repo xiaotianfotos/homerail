@@ -56,7 +56,7 @@ describe("cli arg parsing logic", () => {
     expect(args.projectId).toBe("");
     expect(args.nodeId).toBe("");
     expect(args.provider).toBe("docker-cli");
-    expect(args.capabilities).toEqual(["docker-cli"]);
+    expect(args.capabilities).toEqual(["docker-cli", "workspace-artifacts"]);
     expect(args.token).toBe("");
     expect(args.allowInsecureRemoteWs).toBe(false);
   });
@@ -81,12 +81,12 @@ describe("cli arg parsing logic", () => {
     expect(args.projectId).toBe("proj1");
     expect(args.nodeId).toBe("node1");
     expect(args.provider).toBe("mock");
-    expect(args.capabilities).toEqual(["a", "b", "c"]);
+    expect(args.capabilities).toEqual(["a", "b", "c", "workspace-artifacts"]);
   });
 
   it("accumulates multiple --capability flags", () => {
     const args = parseArgs(["--capability", "x", "--capability", "y,z"], {});
-    expect(args.capabilities).toEqual(["x", "y", "z", "docker-cli"]);
+    expect(args.capabilities).toEqual(["x", "y", "z", "docker-cli", "workspace-artifacts"]);
   });
 
   it("falls back to env vars", () => {
@@ -103,7 +103,7 @@ describe("cli arg parsing logic", () => {
     expect(args.projectId).toBe("env-proj");
     expect(args.nodeId).toBe("env-node");
     expect(args.provider).toBe("docker-api");
-    expect(args.capabilities).toEqual(["cap1", "cap2", "docker-api"]);
+    expect(args.capabilities).toEqual(["cap1", "cap2", "docker-api", "workspace-artifacts"]);
     expect(args.token).toBe("node-token");
     expect(args.allowInsecureRemoteWs).toBe(true);
   });
@@ -119,7 +119,7 @@ describe("cli arg parsing logic", () => {
 
   it("deduplicates provider capability when explicitly provided", () => {
     const args = parseArgs(["--capability", "docker-cli,custom"], {});
-    expect(args.capabilities).toEqual(["docker-cli", "custom"]);
+    expect(args.capabilities).toEqual(["docker-cli", "custom", "workspace-artifacts"]);
   });
 
   it("rejects unknown flags", () => {

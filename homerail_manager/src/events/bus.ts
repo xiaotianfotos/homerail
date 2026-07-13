@@ -18,6 +18,10 @@ export type DAGEventType =
   | "dag:run_completed"
   | "dag:run_failed"
   | "dag:run_cancelled"
+  | "dag:artifact_pending"
+  | "dag:artifact_ready"
+  | "dag:artifact_failed"
+  | "dag:artifact_skipped"
   | "dag:engine_started"
   | "dag:engine_completed"
   | "dag:engine_aborted"
@@ -75,6 +79,10 @@ export const DAG_EVENT_TYPES: DAGEventType[] = [
   "dag:run_completed",
   "dag:run_failed",
   "dag:run_cancelled",
+  "dag:artifact_pending",
+  "dag:artifact_ready",
+  "dag:artifact_failed",
+  "dag:artifact_skipped",
   "dag:engine_started",
   "dag:engine_completed",
   "dag:engine_aborted",

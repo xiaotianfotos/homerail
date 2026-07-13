@@ -33,6 +33,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_metrics",
   "dag_chats",
   "dag_handoffs",
+  "dag_artifacts",
   "dag_events",
   "dag_run_admissions",
   "dag_runs",
@@ -759,6 +760,22 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
     );
     CREATE INDEX IF NOT EXISTS idx_dag_handoffs_run ON dag_handoffs(run_id, seq);
 
+    CREATE TABLE IF NOT EXISTS dag_artifacts (
+      run_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      artifact_id TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL,
+      upload_token_hash TEXT,
+      upload_expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      data TEXT NOT NULL,
+      PRIMARY KEY(run_id, name),
+      FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_dag_artifacts_run_status
+      ON dag_artifacts(run_id, status, name);
+
     CREATE TABLE IF NOT EXISTS dag_chats (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
       run_id TEXT NOT NULL,
@@ -1127,6 +1144,7 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, nowIso());
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(3, nowIso());
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(5, nowIso());
+  db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(6, nowIso());
   chmodPrivate(filePath);
 }
 

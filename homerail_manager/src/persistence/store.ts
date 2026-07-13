@@ -9,7 +9,7 @@ import type {
   NodeUsageRecord,
   RunWorkspaceRetention,
 } from "./types.js";
-import type { DAGGraphData, DAGPatternInstanceMeta, ScorecardPolicyConfig } from "../orchestration/graph.js";
+import type { DAGArtifactDeclaration, DAGGraphData, DAGPatternInstanceMeta, ScorecardPolicyConfig } from "../orchestration/graph.js";
 import { DAG_EVENT_TYPES, subscribe, type DAGEventPayload } from "../events/bus.js";
 import type { DAGRunCounters, DAGRunLimits } from "../runtime/active-runs.js";
 import { assertStatus, type DagRunStatus } from "./status.js";
@@ -27,6 +27,7 @@ interface SerializableRun {
   compilerVersion?: string;
   sourceApiVersion?: string;
   contracts?: Record<string, unknown>;
+  artifacts?: DAGArtifactDeclaration[];
   runInputTargets?: Array<{ node: string; port: string; contract?: string }>;
   initialPrompt?: string;
   nodeCount?: number;
@@ -200,6 +201,7 @@ export function serializeRunMetadata(run: SerializableRun): PersistedRunMetadata
     compilerVersion: run.compilerVersion,
     sourceApiVersion: run.sourceApiVersion,
     contracts: run.contracts,
+    artifacts: run.artifacts,
     runInputTargets: run.runInputTargets,
     initialPrompt: run.initialPrompt,
     nodeCount: run.nodeCount,
@@ -305,7 +307,7 @@ export function listPersistedRunIds(): string[] {
 }
 
 export function _clearAllPersistence(): void {
-  clearTables(["dag_metrics", "dag_chats", "dag_handoffs", "dag_events", "dag_run_admissions", "dag_runs"]);
+  clearTables(["dag_metrics", "dag_chats", "dag_handoffs", "dag_artifacts", "dag_events", "dag_run_admissions", "dag_runs"]);
 }
 
 export function initEventLogging(): void {

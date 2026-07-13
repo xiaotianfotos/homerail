@@ -100,6 +100,7 @@ export function parseArgs(argv: string[], env: CliEnv = process.env): CliArgs {
   }
 
   appendProviderCapabilities(caps, provider);
+  appendCapability(caps, "workspace-artifacts");
 
   return {
     managerUrl,

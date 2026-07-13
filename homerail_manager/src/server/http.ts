@@ -36,6 +36,8 @@ import { dispatchRecoveredRuns } from "../runtime/active-runs.js";
 import { startDagTriggerScheduler } from "../runtime/dag-triggers.js";
 import { readOrCreateControlPlaneToken } from "../persistence/control-plane-secret.js";
 import { startWorkspaceCleanupScheduler } from "../runtime/workspace-retention.js";
+import { runArtifactRoutesHandler } from "./run-artifacts.js";
+import { startRunArtifactService } from "../runtime/run-artifact-service.js";
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -45,7 +47,8 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Homerail-Approval-Token, X-Homerail-Dag-Token");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Range, X-Homerail-Approval-Token, X-Homerail-Dag-Token, X-Homerail-Artifact-Sha256, X-Homerail-Artifact-Uncompressed-Bytes, X-Homerail-Artifact-File-Count");
+  res.setHeader("Access-Control-Expose-Headers", "Accept-Ranges, Content-Disposition, Content-Length, Content-Range, ETag");
 }
 
 export function resolveManagerWorkerWsBaseUrl(actualPort: number): string {
@@ -79,6 +82,7 @@ export function resolveManagerWorkerExtraHosts(): string[] {
 }
 
 const WORKER_ENV_PASSTHROUGH = [
+  "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
   "CLAUDE_MAX_TURNS",
   "CLAUDE_SDK_QUERY_TIMEOUT_MS",
   "CLAUDE_THINKING_BUDGET",
@@ -243,6 +247,7 @@ export function createServer(
   const changeOrchestrator = new ChangeOrchestrator(graphExecutor);
   const stopTriggerScheduler = startDagTriggerScheduler(changeOrchestrator);
   const stopWorkspaceCleanupScheduler = startWorkspaceCleanupScheduler();
+  const stopRunArtifactService = startRunArtifactService();
 
   server = http.createServer((req, res) => {
     setCorsHeaders(res);
@@ -269,6 +274,10 @@ export function createServer(
         });
         return;
       }
+    }
+
+    if (runArtifactRoutesHandler(req, res)) {
+      return;
     }
 
     if (inspectionRoutesHandler(req, res)) {
@@ -350,6 +359,7 @@ export function createServer(
   });
   server.once("close", stopTriggerScheduler);
   server.once("close", stopWorkspaceCleanupScheduler);
+  server.once("close", stopRunArtifactService);
 
   const workerWebsocketOptions: WorkerWebSocketOptions = {
     ...wsOptions,

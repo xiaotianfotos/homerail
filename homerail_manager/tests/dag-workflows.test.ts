@@ -106,14 +106,14 @@ default:
     expect(result).toMatchObject({
       workflowRevision: 1,
       canonicalHash: synced.workflow.canonical_hash,
-      compilerVersion: "2",
+      compilerVersion: "3",
       sourceApiVersion: "legacy/v0",
     });
     expect(loadRunMetadata(result.runId)).toMatchObject({
       workflowId: "db-workflow",
       workflowRevision: 1,
       canonicalHash: synced.workflow.canonical_hash,
-      compilerVersion: "2",
+      compilerVersion: "3",
       sourceApiVersion: "legacy/v0",
     });
 

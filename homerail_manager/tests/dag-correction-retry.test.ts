@@ -120,7 +120,9 @@ describe("DAG correction and dispatch retry", () => {
     expect(dispatcher.calls).toHaveLength(2);
     expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("agent ended without DAG handoff");
     expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Declared output ports for this node: done.");
-    expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Your next and only action must call the handoff tool");
+    expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("repeat only the investigation needed");
+    expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Never print a pseudo-tool call");
+    expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Finish by calling the handoff tool exactly once");
   });
 
   it("restores success descendants skipped by the failed attempt", () => {

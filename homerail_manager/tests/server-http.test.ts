@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { resolveWorkerRuntimeEnv } from "../src/server/http.js";
 
 const ENV_KEYS = [
+  "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
   "CLAUDE_MAX_TURNS",
   "CLAUDE_SDK_QUERY_TIMEOUT_MS",
   "CLAUDE_THINKING_BUDGET",
@@ -33,6 +34,7 @@ describe("manager HTTP server worker runtime env", () => {
 
   it("passes only explicit safe runtime controls to provisioned workers", () => {
     saveEnv();
+    process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = "8192";
     process.env.CLAUDE_MAX_TURNS = "8";
     process.env.CLAUDE_SDK_QUERY_TIMEOUT_MS = "120000";
     process.env.CLAUDE_THINKING_BUDGET = "2048";
@@ -41,6 +43,7 @@ describe("manager HTTP server worker runtime env", () => {
     process.env.ANTHROPIC_API_KEY = "should-not-propagate";
 
     expect(resolveWorkerRuntimeEnv()).toEqual({
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192",
       CLAUDE_MAX_TURNS: "8",
       CLAUDE_SDK_QUERY_TIMEOUT_MS: "120000",
       CLAUDE_THINKING_BUDGET: "2048",
@@ -50,6 +53,7 @@ describe("manager HTTP server worker runtime env", () => {
 
   it("omits empty runtime controls and returns undefined when none are set", () => {
     saveEnv();
+    delete process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
     delete process.env.CLAUDE_MAX_TURNS;
     process.env.CLAUDE_SDK_QUERY_TIMEOUT_MS = " ";
     delete process.env.CLAUDE_THINKING_BUDGET;
