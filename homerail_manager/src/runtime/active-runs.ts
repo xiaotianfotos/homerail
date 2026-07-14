@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
@@ -72,6 +72,14 @@ import {
 } from "../persistence/dag-runtime-primitives.js";
 import type { RunWorkspaceRetention } from "../persistence/types.js";
 import { getDagActivitySequenceCursor } from "../persistence/dag-activity-journal.js";
+import {
+  advanceDagActorGeneration,
+  DagActorConflictError,
+  getDagActorByNode,
+  registerDagActor,
+  updateDagActorBinding,
+  type DagActorRecord,
+} from "../persistence/dag-actors.js";
 
 export interface InjectResult {
   runId: string;
@@ -271,6 +279,94 @@ function _projectKey(run: ActiveRun): string {
   );
 }
 
+function _runtimeString(node: DAGGraphNode, key: string): string | undefined {
+  const value = _agentRuntimeConfig(node)[key] ?? node.extra?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function _logicalActorId(node: DAGGraphNode): string {
+  return _runtimeString(node, "actor_id") ?? node.node_id;
+}
+
+function _logicalActorRole(node: DAGGraphNode): string {
+  return _runtimeString(node, "role") ?? node.agent ?? node.name ?? node.node_id;
+}
+
+function _logicalActorSurface(node: DAGGraphNode, actorId: string): string {
+  const configured = _activitySurfaceId(node);
+  if (configured) return configured;
+  const candidate = `actor:${actorId}`;
+  return candidate.length <= 256
+    ? candidate
+    : `actor:${createHash("sha256").update(actorId).digest("hex")}`;
+}
+
+function _logicalActorModelProfile(run: ActiveRun, node: DAGGraphNode): Record<string, unknown> {
+  const agent = run.agents?.[node.agent] ?? {};
+  const model = agent.llm?.model ?? agent.model;
+  return {
+    agent_id: node.agent,
+    ...(agent.agent_type ? { agent_type: agent.agent_type } : {}),
+    ...(agent.llm_setting_id ? { llm_setting_id: agent.llm_setting_id } : {}),
+    ...(agent.llm?.provider ? { provider: agent.llm.provider } : {}),
+    ...(model ? { model } : {}),
+    ...(agent.llm?.protocol ? { protocol: agent.llm.protocol } : {}),
+  };
+}
+
+function _ensureLogicalActor(run: ActiveRun, node: DAGGraphNode): DagActorRecord {
+  const existing = getDagActorByNode(run.runId, node.node_id);
+  if (existing) return existing;
+  const actorId = _logicalActorId(node);
+  return registerDagActor({
+    run_id: run.runId,
+    actor_id: actorId,
+    node_id: node.node_id,
+    role: _logicalActorRole(node),
+    model_profile: _logicalActorModelProfile(run, node),
+    surface_id: _logicalActorSurface(node, actorId),
+    workspace_ref: _projectKey(run),
+  }).actor;
+}
+
+function _registerLogicalActors(run: ActiveRun): void {
+  for (const node of run.dagRun.graph.nodes) {
+    if (!_isGatewayNode(node)) _ensureLogicalActor(run, node);
+  }
+}
+
+function _bindLogicalActorSession(
+  run: ActiveRun,
+  nodeId: string,
+  sessionId: string,
+  attempt: number,
+): DagActorRecord | undefined {
+  const node = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === nodeId);
+  if (!node || _isGatewayNode(node)) return undefined;
+  let actor = _ensureLogicalActor(run, node);
+  if (actor.session_id === sessionId && actor.attempt === attempt) return actor;
+  try {
+    return updateDagActorBinding({
+      run_id: run.runId,
+      actor_id: actor.actor_id,
+      expected_version: actor.version,
+      session_id: sessionId,
+      attempt,
+    });
+  } catch (error) {
+    if (!(error instanceof DagActorConflictError) || error.code !== "actor_version_conflict") throw error;
+    actor = getDagActorByNode(run.runId, nodeId) ?? _ensureLogicalActor(run, node);
+    if (actor.session_id === sessionId && actor.attempt === attempt) return actor;
+    return updateDagActorBinding({
+      run_id: run.runId,
+      actor_id: actor.actor_id,
+      expected_version: actor.version,
+      session_id: sessionId,
+      attempt,
+    });
+  }
+}
+
 function _newSessionId(runId: string, nodeId: string): string {
   return _safeIndexSegment(`dag-${runId}-${nodeId}-${randomUUID()}`, `dag-${randomUUID()}`);
 }
@@ -306,6 +402,7 @@ function _persistNodeSession(run: ActiveRun, nodeId: string, state: NodeSessionS
   });
   const persisted = _entryToNodeSession(entry);
   run.nodeSessions.set(nodeId, persisted);
+  _bindLogicalActorSession(run, nodeId, persisted.sessionId, persisted.attempt);
   return persisted;
 }
 
@@ -444,8 +541,9 @@ export function createActiveRun(
     nodeIndex: _buildNodeIndex(parsedDAG.graph.nodes),
     nodeSessions: new Map(),
   };
-  store.set(runId, run);
   writeRunMetadata(runId, serializeRunMetadata(run));
+  _registerLogicalActors(run);
+  store.set(runId, run);
   emit("dag:run_created", {
     runId,
     workflowId: run.workflowId,
@@ -706,9 +804,12 @@ export function restoreActiveRun(
     nodeSessions: new Map(),
   };
 
+  _registerLogicalActors(run);
   // Restore per-node sessions from dag_session_index.
   for (const entry of listDagSessionIndex(metadata.runId)) {
-    run.nodeSessions.set(entry.node_id, _entryToNodeSession(entry));
+    const state = _entryToNodeSession(entry);
+    run.nodeSessions.set(entry.node_id, state);
+    _bindLogicalActorSession(run, entry.node_id, state.sessionId, state.attempt);
   }
 
   store.set(metadata.runId, run);
@@ -1084,6 +1185,25 @@ export function checkpointResumeActiveRun(
     };
   }
   _persistNodeSession(run, nodeId, nextSession);
+  try {
+    const actorNode = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === nodeId);
+    if (!actorNode || _isGatewayNode(actorNode)) throw new Error(`Node ${nodeId} has no logical actor`);
+    const actor = _ensureLogicalActor(run, actorNode);
+    advanceDagActorGeneration({
+      run_id: runId,
+      actor_id: actor.actor_id,
+      expected_generation: actor.generation,
+      expected_version: actor.version,
+      session_id: nextSession.sessionId,
+      attempt: nextSession.attempt,
+      checkpoint_ref: fork.entryUuid,
+    });
+  } catch (err) {
+    return {
+      status: "unavailable",
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
 
   const mailbox = run.dagRun.mailboxes.get(nodeId);
   if (mailbox) {
@@ -1406,6 +1526,7 @@ export function appendRunNode(
   }
 
   writeRunMetadata(runId, serializeRunMetadata(run));
+  if (!_isGatewayNode(node)) _ensureLogicalActor(run, node);
   _emitNodeStateChanges(run, before);
   emit("dag:node_added", { runId, nodeId: node.node_id, after: node.after });
   if (depsSatisfied) emit("dag:node_ready", { runId, nodeId: node.node_id });
@@ -2366,9 +2487,10 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
 
   const inputs = _nodeInputs(run.dagRun, nodeId);
   const nodeSession = _ensureNodeSession(run, nodeId);
-  const actorId = nodeId;
-  const generation = 1;
-  const surfaceId = _activitySurfaceId(node);
+  const actor = _ensureLogicalActor(run, node);
+  const actorId = actor.actor_id;
+  const generation = actor.generation;
+  const surfaceId = actor.surface_id;
   const dispatchInputs = nodeSession.resumeInstruction
     ? { ...inputs, checkpoint_resume: [nodeSession.resumeInstruction] }
     : inputs;

@@ -9,6 +9,7 @@ import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { closeDb } from "../src/persistence/db.js";
 import { getDagSessionIndex } from "../src/persistence/dag-session-index.js";
 import { appendSessionTranscriptForTest, loadSessionTranscript } from "../src/persistence/dag-session-files.js";
+import { getDagActorByNode } from "../src/persistence/dag-actors.js";
 import { _clearAllPersistence } from "../src/persistence/store.js";
 import {
   _clearActiveRuns,
@@ -133,6 +134,11 @@ describe("DAG node SessionStore resume control plane", () => {
     const dispatcher = new CaptureDispatcher();
     expect(dispatchReadyNodes("run-checkpoint-resume", dispatcher)).toBe(1);
     const parentSessionId = dispatcher.dispatched[0].sessionId!;
+    expect(getDagActorByNode("run-checkpoint-resume", "work")).toMatchObject({
+      generation: 1,
+      attempt: 1,
+      session_id: parentSessionId,
+    });
     appendSessionTranscriptForTest(parentSessionId, [
       { uuid: "entry-1", type: "prompt_start", runId: "run-checkpoint-resume", nodeId: "work", content: "first" },
       { uuid: "entry-123", parentUuid: "entry-1", type: "text", runId: "run-checkpoint-resume", nodeId: "work", content: "checkpoint" },
@@ -170,6 +176,13 @@ describe("DAG node SessionStore resume control plane", () => {
       parentSessionId,
       entryUuid: "entry-123",
       attempt: 2,
+    });
+    expect(resumeEnvelope.activity).toMatchObject({ generation: 2 });
+    expect(getDagActorByNode("run-checkpoint-resume", "work")).toMatchObject({
+      generation: 2,
+      attempt: 2,
+      session_id: resumeEnvelope.sessionId,
+      checkpoint_ref: "entry-123",
     });
 
     const current = getCurrentNodeSession("run-checkpoint-resume", "work");

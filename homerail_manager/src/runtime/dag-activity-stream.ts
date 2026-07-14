@@ -1,4 +1,5 @@
 import { appendDagActivityEvent } from "../persistence/dag-activity-journal.js";
+import { getDagActorByNode } from "../persistence/dag-actors.js";
 
 export interface DagActivityStreamContext {
   runId: string;
@@ -23,6 +24,18 @@ export function ingestDagActivityStream(
     || (context.roundId !== undefined && event.round_id !== context.roundId)
   ) {
     throw new Error("DAG activity identity does not match the transport stream context");
+  }
+  const actor = getDagActorByNode(context.runId, context.nodeId);
+  if (actor) {
+    if (event.actor_id !== actor.actor_id) {
+      throw new Error("DAG activity actor identity does not match the logical actor registry");
+    }
+    if (typeof event.generation !== "number" || event.generation > actor.generation) {
+      throw new Error("DAG activity generation is ahead of the logical actor registry");
+    }
+    if (event.surface_id !== undefined && event.surface_id !== actor.surface_id) {
+      throw new Error("DAG activity surface identity does not match the logical actor registry");
+    }
   }
   return appendDagActivityEvent(activity);
 }

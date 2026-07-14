@@ -260,7 +260,7 @@ describe("external plugin package lifecycle", () => {
       expect.objectContaining({ plugin_version: "1.1.0", active: false, enabled: false }),
       expect.objectContaining({ plugin_version: "1.2.0", active: false, enabled: false }),
     ]));
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 19 });
+    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 20 });
     expect(inspectInstalledPlugin("com.example.release-notes")).toMatchObject({ healthy: true, issues: [] });
   });
 
@@ -455,7 +455,7 @@ describe("external plugin package lifecycle", () => {
 
     expect(getPluginRegistryState().revision).toBe(101);
     expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 19 });
+      .toEqual({ version: 20 });
   });
 
   it("rejects a stale uninstall when an inactive version was installed concurrently", () => {

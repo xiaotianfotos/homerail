@@ -136,6 +136,68 @@ nodes:
     });
   });
 
+  it("checks streamed activity against the logical actor registry", () => {
+    const dag = parseDAGYaml(`
+name: activity-actor-identity
+workflow_id: activity-actor-identity
+agents:
+  worker:
+    agent_type: deterministic
+    system: HANDOFF port=done content=ok
+nodes:
+  research:
+    agent: worker
+    extra:
+      agent_runtime:
+        actor_id: researcher
+        surface_id: surface-research
+    outputs:
+      done:
+        to: ""
+`);
+    createActiveRun("run-actor-activity", dag);
+    const built = buildCurrentDispatchEnvelope("run-actor-activity", "research");
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    const valid = event({
+      event_id: "registry-valid",
+      run_id: "run-actor-activity",
+      round_id: built.envelope.sessionId,
+      actor_id: "researcher",
+      surface_id: "surface-research",
+    });
+
+    expect(ingestDagActivityStream({ event: "dag_activity", activity: valid }, {
+      runId: "run-actor-activity",
+      nodeId: "research",
+      roundId: built.envelope.sessionId,
+    })).toMatchObject({ inserted: true });
+    expect(() => ingestDagActivityStream({
+      event: "dag_activity",
+      activity: { ...valid, event_id: "spoofed-actor", actor_id: "other", sequence: 2 },
+    }, {
+      runId: "run-actor-activity",
+      nodeId: "research",
+      roundId: built.envelope.sessionId,
+    })).toThrow("actor identity does not match");
+    expect(() => ingestDagActivityStream({
+      event: "dag_activity",
+      activity: { ...valid, event_id: "future-generation", generation: 2, sequence: 2 },
+    }, {
+      runId: "run-actor-activity",
+      nodeId: "research",
+      roundId: built.envelope.sessionId,
+    })).toThrow("generation is ahead");
+    expect(() => ingestDagActivityStream({
+      event: "dag_activity",
+      activity: { ...valid, event_id: "spoofed-surface", surface_id: "other", sequence: 2 },
+    }, {
+      runId: "run-actor-activity",
+      nodeId: "research",
+      roundId: built.envelope.sessionId,
+    })).toThrow("surface identity does not match");
+  });
+
   it("replays bounded activity pages by run and actor", async () => {
     appendDagActivityEvent(event({ event_id: "research-1", actor_id: "researcher", sequence: 1 }));
     appendDagActivityEvent(event({ event_id: "writer-1", actor_id: "writer", sequence: 1 }));

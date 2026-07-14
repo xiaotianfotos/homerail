@@ -34,6 +34,8 @@ const CLEARABLE_TABLES = new Set([
   "dag_chats",
   "dag_handoffs",
   "dag_artifacts",
+  "dag_actor_commands",
+  "dag_actors",
   "dag_activity_events",
   "dag_events",
   "dag_run_admissions",
@@ -562,6 +564,107 @@ function validateDagActivitySchemaV19(db: SqliteDatabase): void {
     && entry.to === "run_id"
     && entry.on_delete.toUpperCase() === "CASCADE"
   ))) throw new Error("Schema migration 19 is incomplete: activity run retention constraint is missing");
+}
+
+function validateDagActorSchemaV20(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    dag_actors: [
+      "run_id",
+      "actor_id",
+      "node_id",
+      "role",
+      "generation",
+      "attempt",
+      "version",
+      "session_id",
+      "model_profile_json",
+      "surface_id",
+      "workspace_ref",
+      "checkpoint_ref",
+      "created_at",
+      "updated_at",
+    ],
+    dag_actor_commands: [
+      "command_id",
+      "run_id",
+      "actor_id",
+      "round_id",
+      "target_generation",
+      "status",
+      "idempotency_key",
+      "payload_digest",
+      "payload_json",
+      "claimed_generation",
+      "created_at",
+      "delivered_at",
+      "claimed_at",
+      "completed_at",
+      "failure_json",
+    ],
+  };
+  for (const [table, columns] of Object.entries(requiredColumns)) {
+    if (!hasTable(db, table)) {
+      throw new Error(`Schema migration 20 is incomplete: missing table ${table}`);
+    }
+    for (const column of columns) {
+      if (!hasColumn(db, table, column)) {
+        throw new Error(`Schema migration 20 is incomplete: ${table} is missing column ${column}`);
+      }
+    }
+  }
+
+  const expectedIndexes: Record<string, readonly string[]> = {
+    idx_dag_actors_run_node: ["run_id", "node_id"],
+    idx_dag_actors_run_surface: ["run_id", "surface_id"],
+    idx_dag_actor_commands_idempotency: ["run_id", "actor_id", "idempotency_key"],
+    idx_dag_actor_commands_actor_status: ["run_id", "actor_id", "status", "created_at", "command_id"],
+    idx_dag_actor_commands_round: ["run_id", "round_id", "created_at", "command_id"],
+  };
+  for (const [name, expectedColumns] of Object.entries(expectedIndexes)) {
+    const index = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+      .get(name) as { name: string; sql: string | null } | undefined;
+    if (!index) throw new Error(`Schema migration 20 is incomplete: missing index ${name}`);
+    const columns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{
+      seqno: number;
+      name: string;
+    }>).sort((left, right) => left.seqno - right.seqno).map((entry) => entry.name);
+    if (columns.length !== expectedColumns.length || columns.some((column, position) => column !== expectedColumns[position])) {
+      throw new Error(`Schema migration 20 is incomplete: index ${name} has invalid columns`);
+    }
+    if (name !== "idx_dag_actor_commands_actor_status" && name !== "idx_dag_actor_commands_round") {
+      const unique = (db.prepare(`PRAGMA index_list(${name.startsWith("idx_dag_actors") ? "dag_actors" : "dag_actor_commands"})`)
+        .all() as Array<{ name: string; unique: number }>).find((entry) => entry.name === name)?.unique;
+      if (unique !== 1) throw new Error(`Schema migration 20 is incomplete: index ${name} must be unique`);
+    }
+  }
+
+  const actorForeignKeys = db.prepare("PRAGMA foreign_key_list(dag_actors)").all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  if (!actorForeignKeys.some((entry) => (
+    entry.table === "dag_runs"
+    && entry.from === "run_id"
+    && entry.to === "run_id"
+    && entry.on_delete.toUpperCase() === "CASCADE"
+  ))) throw new Error("Schema migration 20 is incomplete: actor run retention constraint is missing");
+
+  const commandForeignKeys = db.prepare("PRAGMA foreign_key_list(dag_actor_commands)").all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  for (const [from, to] of [["run_id", "run_id"], ["actor_id", "actor_id"]] as const) {
+    if (!commandForeignKeys.some((entry) => (
+      entry.table === "dag_actors"
+      && entry.from === from
+      && entry.to === to
+      && entry.on_delete.toUpperCase() === "CASCADE"
+    ))) throw new Error(`Schema migration 20 is incomplete: command actor ${from} constraint is missing`);
+  }
 }
 
 function validateGenerativeUiSchemaV3(db: SqliteDatabase): void {
@@ -1881,6 +1984,66 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         ON dag_activity_events(run_id, actor_id, seq);
     `),
     validate: validateDagActivitySchemaV19,
+  },
+  {
+    version: 20,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_actors (
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        generation INTEGER NOT NULL DEFAULT 1 CHECK(generation >= 1),
+        attempt INTEGER NOT NULL DEFAULT 1 CHECK(attempt >= 1),
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        session_id TEXT,
+        model_profile_json TEXT NOT NULL,
+        surface_id TEXT NOT NULL,
+        workspace_ref TEXT,
+        checkpoint_ref TEXT,
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+        PRIMARY KEY(run_id, actor_id),
+        FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actors_run_node
+        ON dag_actors(run_id, node_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actors_run_surface
+        ON dag_actors(run_id, surface_id);
+
+      CREATE TABLE IF NOT EXISTS dag_actor_commands (
+        command_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        round_id TEXT NOT NULL,
+        target_generation INTEGER NOT NULL CHECK(target_generation >= 1),
+        status TEXT NOT NULL CHECK(status IN ('pending', 'delivered', 'claimed', 'acknowledged', 'failed')),
+        idempotency_key TEXT NOT NULL,
+        payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),
+        payload_json TEXT NOT NULL,
+        claimed_generation INTEGER CHECK(claimed_generation IS NULL OR claimed_generation >= 1),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        delivered_at INTEGER CHECK(delivered_at IS NULL OR delivered_at >= created_at),
+        claimed_at INTEGER CHECK(claimed_at IS NULL OR claimed_at >= created_at),
+        completed_at INTEGER CHECK(completed_at IS NULL OR completed_at >= created_at),
+        failure_json TEXT,
+        CHECK(
+          (status = 'pending' AND delivered_at IS NULL AND claimed_generation IS NULL AND claimed_at IS NULL AND completed_at IS NULL AND failure_json IS NULL)
+          OR (status = 'delivered' AND delivered_at IS NOT NULL AND claimed_generation IS NULL AND claimed_at IS NULL AND completed_at IS NULL AND failure_json IS NULL)
+          OR (status = 'claimed' AND claimed_generation IS NOT NULL AND claimed_at IS NOT NULL AND completed_at IS NULL AND failure_json IS NULL)
+          OR (status = 'acknowledged' AND claimed_generation IS NOT NULL AND claimed_at IS NOT NULL AND completed_at IS NOT NULL AND failure_json IS NULL)
+          OR (status = 'failed' AND claimed_generation IS NOT NULL AND claimed_at IS NOT NULL AND completed_at IS NOT NULL AND failure_json IS NOT NULL)
+        ),
+        FOREIGN KEY(run_id, actor_id) REFERENCES dag_actors(run_id, actor_id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_commands_idempotency
+        ON dag_actor_commands(run_id, actor_id, idempotency_key);
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_commands_actor_status
+        ON dag_actor_commands(run_id, actor_id, status, created_at, command_id);
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_commands_round
+        ON dag_actor_commands(run_id, round_id, created_at, command_id);
+    `),
+    validate: validateDagActorSchemaV20,
   },
 ];
 
