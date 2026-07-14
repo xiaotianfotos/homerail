@@ -16,6 +16,8 @@ test("routes live jobs to isolated runner slots and serializes only Manager port
   const runner = fs.readFileSync(path.join(repoRoot, "scripts", "run-dag-patterns-live-runner.sh"), "utf8");
 
   assert.match(ci, /HOMERAIL_LIVE_SLOT: \$\{\{ runner\.name \}\}/);
+  assert.match(ci, /PR_BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
+  assert.match(ci, /HOMERAIL_LIVE_ISSUE_REVISION=\$revision/);
   assert.match(review, /runs-on: \[self-hosted, Linux, X64, homerail-pr-review\]/);
   assert.match(review, /HOMERAIL_LIVE_SLOT: \$\{\{ runner\.name \}\}/);
   assert.match(actionlint, /- homerail-pr-review/);

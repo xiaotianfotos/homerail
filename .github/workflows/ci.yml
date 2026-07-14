@@ -208,6 +208,14 @@ jobs:
       - name: Build packages
         run: npm run build:packages
 
+      - name: Select immutable issue diagnosis revision
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          revision="${PR_BASE_SHA:-$(git rev-parse HEAD)}"
+          echo "HOMERAIL_LIVE_ISSUE_REVISION=$revision" >> "$GITHUB_ENV"
+
       - name: Run isolated live DAG pattern validation
         env:
           HOMERAIL_LIVE_SLOT: ${{ runner.name }}

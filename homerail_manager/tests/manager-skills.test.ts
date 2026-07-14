@@ -68,6 +68,16 @@ function writeA2uiTemplateManifest(root: string, id: string, overrides: Record<s
   return file;
 }
 
+function unlinkInstalledSkillLinks(root: string): void {
+  const skillsRoot = path.join(root, "skills");
+  if (!fs.existsSync(skillsRoot)) return;
+  for (const entry of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) {
+      fs.unlinkSync(path.join(skillsRoot, entry.name));
+    }
+  }
+}
+
 describe("Manager Agent skill discovery", () => {
   let tmpHome: string;
   let oldHome: string | undefined;
@@ -81,6 +91,7 @@ describe("Manager Agent skill discovery", () => {
   afterEach(() => {
     if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
     else process.env.HOMERAIL_HOME = oldHome;
+    unlinkInstalledSkillLinks(tmpHome);
     fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
