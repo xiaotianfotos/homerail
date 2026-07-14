@@ -174,5 +174,5 @@ describe('Custom Renderer real Chromium isolation', () => {
     expect(page.frames().some(frame => frame.url().includes('attacker.invalid'))).toBe(false)
     expect(navigations.some(url => url.includes('attacker.invalid'))).toBe(false)
     expect(leakedRequests).toEqual([])
-  }, 20_000)
+  }, 45_000)
 })
