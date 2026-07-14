@@ -27,9 +27,16 @@ test("routes live jobs to isolated runner slots and serializes only Manager port
 
   const acquire = runner.indexOf('flock -w 60 8');
   const start = runner.indexOf('cli.js" start --host');
-  const release = runner.indexOf('flock -u 8');
+  const cleanupStart = runner.indexOf("cleanup() {");
+  const cleanupRelease = runner.indexOf('flock -u 8', cleanupStart);
+  const cleanupRuntimeStop = runner.indexOf('cli.js" runtime stop', cleanupStart);
+  const releaseAfterStart = runner.indexOf('flock -u 8', start);
   assert.ok(acquire >= 0 && acquire < start, "port lock must be held before Manager starts");
-  assert.ok(release > start, "port lock must be released after Manager binds its port");
+  assert.ok(releaseAfterStart > start, "port lock must be released after Manager binds its port");
+  assert.ok(
+    cleanupRelease > cleanupStart && cleanupRelease < cleanupRuntimeStop,
+    "failure cleanup must release the port lock before stopping runtime resources",
+  );
 });
 
 test("cleanup fails closed when a custom home omits the matching runner root", { skip: process.platform !== "linux" }, (t) => {

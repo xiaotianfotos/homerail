@@ -83,6 +83,8 @@ mkdir -p "$HOMERAIL_HOME"
 cleanup() {
   local exit_code=$?
   set +e
+  flock -u 8 2>/dev/null || true
+  exec 8>&-
   if [ -x "$REPO_ROOT/homerail_cli/dist/cli.js" ] || [ -f "$REPO_ROOT/homerail_cli/dist/cli.js" ]; then
     node "$REPO_ROOT/homerail_cli/dist/cli.js" runtime stop >/dev/null 2>&1
   fi

@@ -105,6 +105,9 @@ describe("PR Review scenario assets", () => {
       threshold: 2,
       field: "vote",
     });
+    expect(nodes.find((node) => node.id === "coverage_vote")?.outputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "voted", contract: "CoverageVote" }),
+    ]));
     expect(nodes.find((node) => node.id === "quorum_result")?.config).toMatchObject({
       mode: "any",
       field: "passed",
@@ -394,7 +397,7 @@ describe("PR Review scenario assets", () => {
       voter: "false_positive", vote: "reject", confidence: "medium", evidence: "one concern", finding_verdicts: [],
     });
     handoffActiveRun("pr-review-runtime", "coverage_vote", "voted", {
-      voter: "coverage", vote: "accept", confidence: "high", evidence: "all scopes present", finding_verdicts: [],
+      voter: "coverage", vote: "accept", confidence: "high", evidence: "all scopes present",
     });
     expect(executor.tick("pr-review-runtime")).toBeGreaterThan(0);
     expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("refine");

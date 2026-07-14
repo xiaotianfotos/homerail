@@ -613,19 +613,9 @@ function _applyOrphanedNodeDemotion(run: ActiveRun): string[] {
     _markNodeSessionStatus(run, nodeId, "cancelled");
   }
 
-  // A failed prerequisite can leave downstream nodes permanently PENDING. If
-  // recovery has no READY/RUNNING work left, those nodes cannot make progress.
+  _skipPendingNodesWhenFailureStalls(run);
+
   const hasFailedNodes = Array.from(run.dagRun.nodeStates.values()).some((state) => state === "FAILED");
-  const hasRunnableWork = Array.from(run.dagRun.nodeStates.values())
-    .some((state) => state === "READY" || state === "RUNNING");
-  if (hasFailedNodes && !hasRunnableWork) {
-    for (const [nodeId, state] of run.dagRun.nodeStates.entries()) {
-      if (state === "PENDING") {
-        run.dagRun.nodeStates.set(nodeId, "SKIPPED");
-        _markNodeSessionStatus(run, nodeId, "cancelled");
-      }
-    }
-  }
 
   // If demoting orphaned nodes made the run terminal, mark it failed.
   if (hasFailedNodes && isRunTerminal(run.dagRun)) {
@@ -642,6 +632,23 @@ function _applyOrphanedNodeDemotion(run: ActiveRun): string[] {
   }
 
   return demotedFromRunning;
+}
+
+function _skipPendingNodesWhenFailureStalls(run: ActiveRun): string[] {
+  const states = Array.from(run.dagRun.nodeStates.values());
+  if (!states.some((state) => state === "FAILED")) return [];
+  if (states.some((state) =>
+    state === "READY" || state === "RUNNING" || state === "WAITING_FOR_APPROVAL"
+  )) return [];
+
+  const skipped: string[] = [];
+  for (const [nodeId, state] of run.dagRun.nodeStates.entries()) {
+    if (state !== "PENDING") continue;
+    run.dagRun.nodeStates.set(nodeId, "SKIPPED");
+    _markNodeSessionStatus(run, nodeId, "cancelled");
+    skipped.push(nodeId);
+  }
+  return skipped.sort();
 }
 
 export type RestoreActiveRunResult =
@@ -868,6 +875,7 @@ export function failActiveRun(runId: string, nodeId: string, reason: string): Ac
   const readyBefore = new Set(getReadyNodes(run.dagRun));
   failNode(run.dagRun, nodeId, { error: reason });
   _markNodeSessionStatus(run, nodeId, "failed");
+  _skipPendingNodesWhenFailureStalls(run);
   writeRunMetadata(runId, serializeRunMetadata(run));
   _emitNodeStateChanges(run, before);
   emit("dag:node_failed", { runId, nodeId, reason });
