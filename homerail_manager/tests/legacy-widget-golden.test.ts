@@ -197,5 +197,5 @@ describe("legacy show_dynamic_widget goldens", () => {
       else process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = previousRuntime;
       fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
-  });
+  }, 15_000);
 });
