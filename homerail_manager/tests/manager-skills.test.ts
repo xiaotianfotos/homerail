@@ -68,17 +68,6 @@ function writeA2uiTemplateManifest(root: string, id: string, overrides: Record<s
   return file;
 }
 
-function unlinkInstalledSkillLinks(root: string): void {
-  const skillsRoot = path.join(root, "skills");
-  if (!fs.existsSync(skillsRoot)) return;
-  for (const name of fs.readdirSync(skillsRoot)) {
-    const installed = path.join(skillsRoot, name);
-    if (fs.lstatSync(installed).isSymbolicLink()) {
-      fs.unlinkSync(installed);
-    }
-  }
-}
-
 describe("Manager Agent skill discovery", () => {
   let tmpHome: string;
   let oldHome: string | undefined;
@@ -92,7 +81,6 @@ describe("Manager Agent skill discovery", () => {
   afterEach(() => {
     if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
     else process.env.HOMERAIL_HOME = oldHome;
-    unlinkInstalledSkillLinks(tmpHome);
     fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
@@ -118,7 +106,7 @@ describe("Manager Agent skill discovery", () => {
       "Always inspect local policy before choosing a pattern.",
     );
 
-    const skills = listManagerSkills();
+    const skills = listManagerSkills(null);
 
     expect(skills.find((skill) => skill.id === "custom-operator")).toMatchObject({
       description: "Custom operator workflow",
