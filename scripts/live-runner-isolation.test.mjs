@@ -26,6 +26,8 @@ test("routes live jobs to isolated runner slots and serializes only Manager port
   assert.match(runner, /--label "\$LIVE_RUN_LABEL=\$RUN_KEY"/);
   assert.match(runner, /manager-port-allocation\.lock/);
   assert.match(runner, /dag chats "\$REVIEW_RUN_ID" --tools 20 --raw-tools/);
+  assert.doesNotMatch(runner, /--timeout-ms/);
+  assert.match(runner, /--stall-timeout-ms/);
 
   const acquire = runner.indexOf('flock -w 60 8');
   const start = runner.indexOf('cli.js" start --host');

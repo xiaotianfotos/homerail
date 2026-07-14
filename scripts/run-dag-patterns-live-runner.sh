@@ -321,7 +321,7 @@ validation_args=(
   --setting-id "$SETTING_ID"
   --expected-model "$MODEL_NAME"
   --workflow-suffix "$RUN_KEY"
-  --timeout-ms 360000
+  --stall-timeout-ms "${HOMERAIL_LIVE_PATTERN_STALL_TIMEOUT_MS:-1200000}"
   --output "$REPORT_PATH"
 )
 if [ -n "${HOMERAIL_LIVE_PATTERNS:-}" ]; then

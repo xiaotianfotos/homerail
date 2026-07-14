@@ -13,6 +13,7 @@ import {
   semanticFailures,
   semanticRequirements,
 } from "./dag-pattern-live-contracts.mjs";
+import { observeRunProgress } from "./live-run-progress.mjs";
 
 const args = process.argv.slice(2);
 
@@ -34,7 +35,10 @@ const settingId = option("--setting-id", process.env.HOMERAIL_PATTERN_SETTING_ID
 const expectedModel = option("--expected-model", process.env.HOMERAIL_PATTERN_EXPECTED_MODEL ?? "");
 const profileId = option("--profile-id", "live-pattern-validation");
 const workflowSuffix = option("--workflow-suffix", process.env.HOMERAIL_LIVE_WORKFLOW_SUFFIX ?? "");
-const timeoutMs = Number(option("--timeout-ms", "360000"));
+const stallTimeoutMs = Number(option(
+  "--stall-timeout-ms",
+  process.env.HOMERAIL_LIVE_PATTERN_STALL_TIMEOUT_MS ?? "1200000",
+));
 const maxAttempts = Number(option("--max-attempts", process.env.HOMERAIL_LIVE_PATTERN_ATTEMPTS ?? "2"));
 const outputPath = option("--output", "");
 const requestedPatterns = repeatedOption("--pattern");
@@ -47,8 +51,8 @@ if (!settingId) {
   console.error("Missing --setting-id or HOMERAIL_PATTERN_SETTING_ID.");
   process.exit(2);
 }
-if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) {
-  console.error("--timeout-ms must be at least 1000.");
+if (!Number.isFinite(stallTimeoutMs) || stallTimeoutMs < 0 || (stallTimeoutMs > 0 && stallTimeoutMs < 1_000)) {
+  console.error("--stall-timeout-ms must be 0 or at least 1000.");
   process.exit(2);
 }
 if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 3) {
@@ -162,21 +166,26 @@ async function decidePendingApproval(runId) {
 }
 
 async function waitForTerminal(runId, patternId) {
-  const deadline = Date.now() + timeoutMs;
   let nextProgress = 0;
+  let progress;
   let approval;
-  while (Date.now() < deadline) {
+  while (true) {
     const status = await request(`/api/runs/${encodeURIComponent(runId)}/status`);
+    const observedAt = Date.now();
+    progress = observeRunProgress(progress, status, observedAt);
     if (patternId === "compost" && !approval) approval = await decidePendingApproval(runId);
     if (["completed", "failed", "cancelled"].includes(status.status)) return { status, approval };
-    if (Date.now() >= nextProgress) {
-      console.log(`${patternId}: ${status.status}`);
-      nextProgress = Date.now() + 10_000;
+    const stalledForMs = observedAt - progress.last_progress_at;
+    if (stallTimeoutMs > 0 && stalledForMs >= stallTimeoutMs) {
+      await request(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" }).catch(() => undefined);
+      throw new Error(`No DAG progress for ${stalledForMs}ms`);
+    }
+    if (observedAt >= nextProgress) {
+      console.log(`${patternId}: ${status.status}; no progress for ${Math.floor(stalledForMs / 1_000)}s`);
+      nextProgress = observedAt + 10_000;
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  await request(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" }).catch(() => undefined);
-  throw new Error(`Timed out after ${timeoutMs}ms`);
 }
 
 async function modelEvidence(runId) {
@@ -384,6 +393,7 @@ const report = {
   setting_id: settingId,
   expected_model: expectedModel || null,
   workflow_suffix: workflowSuffix || null,
+  stall_timeout_ms: stallTimeoutMs || null,
   max_attempts: maxAttempts,
   catalog_contract: { passed: true, pattern_count: catalog.patterns.length },
   passed: results.every((result) => result.passed),
