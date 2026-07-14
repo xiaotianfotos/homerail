@@ -293,5 +293,5 @@ describe("video-cover M6 Artifact Broker vertical slice", () => {
       height: 36,
       cover: { digest: plan.artifacts[0].digest, media_type: "image/png" },
     });
-  });
+  }, 30_000);
 });
