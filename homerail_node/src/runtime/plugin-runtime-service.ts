@@ -1125,8 +1125,12 @@ function atomicSecureJson(file: string, value: unknown, maxBytes: number): void 
     fs.closeSync(descriptor);
     descriptor = undefined;
     fs.renameSync(temp, file);
-    const directory = fs.openSync(path.dirname(file), fs.constants.O_RDONLY);
-    try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+    // Windows rejects fsync on directory handles with EPERM. The file itself
+    // is already flushed before the atomic rename above.
+    if (process.platform !== "win32") {
+      const directory = fs.openSync(path.dirname(file), fs.constants.O_RDONLY);
+      try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+    }
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor);
     fs.rmSync(temp, { force: true });
