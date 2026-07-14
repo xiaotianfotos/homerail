@@ -9,9 +9,11 @@ import {
 import {
   appendDagActivityEvent,
   DagActivityJournalConflictError,
+  getDagActivityContiguousSequenceCursor,
   listDagActivityEvents,
   MAX_DAG_ACTIVITY_EVENT_BYTES,
   MAX_DAG_ACTIVITY_REPLAY_LIMIT,
+  MAX_DAG_ACTIVITY_SEQUENCE_AHEAD,
 } from "../src/persistence/dag-activity-journal.js";
 import { clearTables, closeDb, getDb } from "../src/persistence/db.js";
 import { appendEvent, ensureRunDir } from "../src/persistence/store.js";
@@ -147,6 +149,22 @@ describe("DAG activity journal persistence", () => {
       generation: 2,
       round_id: "round-2",
     })).inserted).toBe(true);
+  });
+
+  it("bounds out-of-order activity around the earliest gap and advances after repair", () => {
+    ensureRunDir("run-1");
+    appendDagActivityEvent(activity({ event_id: "activity-2", sequence: 2 }));
+    expect(getDagActivityContiguousSequenceCursor("run-1", "researcher", 1)).toBe(0);
+
+    expect(() => appendDagActivityEvent(activity({
+      event_id: "activity-too-far",
+      sequence: MAX_DAG_ACTIVITY_SEQUENCE_AHEAD + 1,
+    }))).toThrowError(expect.objectContaining<DagActivityJournalConflictError>({ code: "sequence_gap" }));
+
+    appendDagActivityEvent(activity({ event_id: "activity-1-repair", sequence: 1 }));
+    expect(getDagActivityContiguousSequenceCursor("run-1", "researcher", 1)).toBe(2);
+    expect(appendDagActivityEvent(activity({ event_id: "activity-3", sequence: 3 })).inserted).toBe(true);
+    expect(getDagActivityContiguousSequenceCursor("run-1", "researcher", 1)).toBe(3);
   });
 
   it("redacts secrets before persistence and supports explicit journal clearing", () => {

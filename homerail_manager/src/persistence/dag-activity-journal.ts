@@ -9,6 +9,7 @@ import { getDb, parseJsonRow } from "./db.js";
 export const DEFAULT_DAG_ACTIVITY_REPLAY_LIMIT = 100;
 export const MAX_DAG_ACTIVITY_REPLAY_LIMIT = 500;
 export const MAX_DAG_ACTIVITY_EVENT_BYTES = 256 * 1024;
+export const MAX_DAG_ACTIVITY_SEQUENCE_AHEAD = 64;
 
 export interface DagActivityJournalEntry {
   /** Monotonic journal cursor. It does not imply a cross-actor causal order. */
@@ -39,12 +40,44 @@ export interface DagActivityEventPage {
 
 export class DagActivityJournalConflictError extends Error {
   constructor(
-    public readonly code: "event_id_collision" | "sequence_collision",
+    public readonly code: "event_id_collision" | "sequence_collision" | "sequence_gap",
     message: string,
   ) {
     super(message);
     this.name = "DagActivityJournalConflictError";
   }
+}
+
+/** Highest contiguous sequence starting at 1 for one actor generation. */
+export function getDagActivityContiguousSequenceCursor(
+  runId: string,
+  actorId: string,
+  generation: number,
+): number {
+  assertIdentifier(runId, "run_id");
+  assertIdentifier(actorId, "actor_id");
+  if (!Number.isSafeInteger(generation) || generation < 1) {
+    throw new Error("generation must be a positive safe integer");
+  }
+  const db = getDb();
+  const first = db.prepare(`
+    SELECT 1 AS present
+    FROM dag_activity_events
+    WHERE run_id = ? AND actor_id = ? AND generation = ? AND activity_sequence = 1
+  `).get(runId, actorId, generation);
+  if (!first) return 0;
+  const row = db.prepare(`
+    SELECT MIN(current.activity_sequence) AS sequence
+    FROM dag_activity_events current
+    LEFT JOIN dag_activity_events next
+      ON next.run_id = current.run_id
+      AND next.actor_id = current.actor_id
+      AND next.generation = current.generation
+      AND next.activity_sequence = current.activity_sequence + 1
+    WHERE current.run_id = ? AND current.actor_id = ? AND current.generation = ?
+      AND next.seq IS NULL
+  `).get(runId, actorId, generation) as { sequence: number | null };
+  return Number(row.sequence ?? 0);
 }
 
 interface ActivityRow {
@@ -201,6 +234,18 @@ export function appendDagActivityEvent(event: unknown): AppendDagActivityEventRe
       throw new DagActivityJournalConflictError(
         "sequence_collision",
         `DAG activity sequence ${storedEvent.sequence} is already used by actor ${storedEvent.actor_id} generation ${storedEvent.generation}`,
+      );
+    }
+
+    const contiguousSequence = getDagActivityContiguousSequenceCursor(
+      storedEvent.run_id,
+      storedEvent.actor_id,
+      storedEvent.generation,
+    );
+    if (storedEvent.sequence > contiguousSequence + MAX_DAG_ACTIVITY_SEQUENCE_AHEAD) {
+      throw new DagActivityJournalConflictError(
+        "sequence_gap",
+        `DAG activity sequence ${storedEvent.sequence} is more than ${MAX_DAG_ACTIVITY_SEQUENCE_AHEAD} entries ahead of contiguous sequence ${contiguousSequence}`,
       );
     }
 
