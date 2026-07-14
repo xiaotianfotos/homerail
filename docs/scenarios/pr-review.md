@@ -29,12 +29,15 @@ metadata.
 ## Execution
 
 1. Manager atomically reserves the declared usage budget.
-2. A preparer clones and checks out the exact head commit in a shared isolated
-   workspace.
+2. A deterministic Manager command validates the credential-free HTTPS clone
+   URLs, clones both exact revisions into the isolated run workspace, verifies
+   `HEAD`, and computes the changed-file list and short diff summary. Git runs
+   with credential helpers, prompts, hooks, and local/ext protocols disabled;
+   no model tool call is involved in checkout.
 3. Runtime, security, tests, and frontend reviewers inspect the same exact diff
    independently and in parallel. Their Docker workspace mount is read-only;
-   only the preparer receives a writable workspace. Each reviewer is restricted
-   to read-only built-in tools plus the `handoff` DAG tool.
+   only the Manager-owned checkout command writes the repository. Each reviewer
+   is restricted to read-only built-in tools plus the `handoff` DAG tool.
 4. A deterministic normalizer preserves every valid reviewer result. If a
    reviewer exhausts contract correction without a handoff, the normalizer
    emits a `status: failed` ReviewerResult with grounded runtime evidence so the
@@ -81,6 +84,9 @@ and Worker protocol at the same commit instead of sending a new template to a
 stale long-lived Manager. Workflow contracts, per-finding verification, and the
 deterministic quorum remain authoritative; the adapter does not reconstruct a
 report from raw handoffs.
+The isolated Manager command allowlist includes `node` and `git`; checkout uses
+only the tracked fixed command and never accepts an executable or argument
+vector from pull request content.
 The adapter verifies that the run reached the terminal state implied by quorum,
 both artifacts are structured and non-empty, the quorum is 2-of-3, and Markdown
 contains the exact HomeRail run id and report identity. A valid rejected quorum

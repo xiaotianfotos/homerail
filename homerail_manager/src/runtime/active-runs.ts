@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { getHomerailHome } from "../config/env.js";
 import { emit } from "../events/bus.js";
@@ -1725,6 +1725,8 @@ function _commandGatewayCwd(
   const candidate = path.resolve(runWorkspace, suffix || ".");
   if (!_pathIsWithin(runWorkspace, candidate)) return { error: "command cwd escapes run workspace" };
   try {
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    mkdirSync(runWorkspace, { recursive: true, mode: 0o700 });
     const realWorkspaceRoot = realpathSync(workspaceRoot);
     const realWorkspace = realpathSync(runWorkspace);
     if (realWorkspace === realWorkspaceRoot || !_pathIsWithin(realWorkspaceRoot, realWorkspace)) {

@@ -50,6 +50,16 @@ function passingReviewReport(): Record<string, unknown> {
   };
 }
 
+function installPrepareCommandStub(parsed: ReturnType<typeof parseWorkflowSource>): void {
+  const prepare = parsed.graph.nodes.find((node) => node.node_id === "prepare");
+  if (!prepare?.gateway_config) throw new Error("prepare command node is missing");
+  prepare.gateway_config.command = [
+    "node",
+    "-e",
+    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const i=JSON.parse(s),r=Array.isArray(i.request)?i.request.at(-1):undefined,p=r?.input?.payload;if(!p)throw new Error('missing request');process.stdout.write(JSON.stringify({repo:p.repo,pr:p.pr,base:p.base,head:p.head,repository_path:'/workspace/repository',changed_files:['src/run.ts'],diff_stat:'1 file changed'}))})",
+  ];
+}
+
 describe("PR Review scenario assets", () => {
   let oldHome: string | undefined;
   let oldAssetDir: string | undefined;
@@ -155,7 +165,6 @@ describe("PR Review scenario assets", () => {
     });
     const agents = parseWorkflowSource(source).meta.agents ?? {};
     for (const agentId of [
-      "preparer",
       "runtime_reviewer",
       "security_reviewer",
       "test_reviewer",
@@ -169,25 +178,28 @@ describe("PR Review scenario assets", () => {
     ]) {
       expect(agents[agentId]?.system).toMatch(/final action MUST\s+call\s+(?:the\s+)?handoff/);
     }
-    expect(agents.preparer?.system).toContain('"repository_path":"/workspace/repository"');
-    expect(agents.preparer?.system).toContain("base_clone_url");
-    expect(agents.preparer?.system).toContain("head_clone_url");
-    expect(agents.preparer?.system).toContain("named exactly `Bash` (capital B)");
-    expect(agents.preparer?.system).toContain("Never call a tool named `shell`");
-    expect(agents.preparer?.system).toMatch(/immediately retry the same\s+command with Bash/);
-    expect(agents.preparer?.system).toContain("Manager contract validation already guarantees");
-    expect(agents.preparer?.system).toContain("Never persist, copy, or summarize the input into a file");
-    expect(agents.preparer?.system).toContain("Never create /workspace/repository.git");
-    expect(agents.preparer?.system).toContain("never claim a required field is missing after using it");
-    expect(agents.preparer?.system).toContain("Do not use git verify-commit");
-    expect(agents.preparer?.system).toContain("git diff --shortstat");
-    expect(agents.preparer?.system).toContain("Never put the per-file --stat output in diff_stat");
-    expect(agents.preparer?.system).not.toContain("https://github.com/<repo>.git");
-    expect(agents.preparer?.system).not.toContain('"status":"ready"');
-    expect(nodes.find((node) => node.id === "prepare")?.config).toMatchObject({
-      allowed_builtin_tools: ["Bash", "Glob", "Grep", "Read"],
-      allowed_dag_tools: ["handoff"],
+    const prepare = nodes.find((node) => node.id === "prepare");
+    expect(prepare).toMatchObject({
+      kind: "command",
+      config: expect.objectContaining({
+        command: ["node", "-e", expect.any(String)],
+        cwd: "$run_workspace",
+        stdin_field: "$inputs",
+        success_port: "ready",
+        failure_port: "failed",
+        parse_stdout: "json",
+        result_payload: "value",
+      }),
     });
+    const prepareCode = String((prepare?.config?.command as unknown[] | undefined)?.[2]);
+    expect(prepareCode).toContain("base_clone_url");
+    expect(prepareCode).toContain("head_clone_url");
+    expect(prepareCode).toContain("credential.helper=");
+    expect(prepareCode).toContain("GIT_CONFIG_NOSYSTEM");
+    expect(prepareCode).toContain("protocol.file.allow=never");
+    expect(prepareCode).toContain("--shortstat");
+    expect(prepareCode).toContain("repository_path:'/workspace/repository'");
+    expect(agents).not.toHaveProperty("preparer");
     expect(result.canonical?.policies?.max_corrections_per_node).toBe(5);
     expect(nodes.find((node) => node.id === "synthesize")?.inputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "context" }),
@@ -459,6 +471,7 @@ describe("PR Review scenario assets", () => {
     );
     const parsed = parseWorkflowSource(source);
     for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    installPrepareCommandStub(parsed);
     const dispatcher = new FakeDAGDispatcher();
     const executor = new GraphExecutor(dispatcher);
     const input = {
@@ -478,19 +491,12 @@ describe("PR Review scenario assets", () => {
     };
     executor.createRun("pr-review-runtime", parsed, JSON.stringify(input));
     expect(executor.tick("pr-review-runtime")).toBeGreaterThan(0);
-    expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("prepare");
-
-    const context = {
-      repo: "xiaotianfotos/homerail",
-      pr: 25,
-      base: "a".repeat(40),
-      head: "b".repeat(40),
-      repository_path: "/workspace/repository",
-      changed_files: ["src/run.ts"],
-      diff_stat: "1 file changed",
-    };
-    handoffActiveRun("pr-review-runtime", "prepare", "ready", context);
-    expect(executor.tick("pr-review-runtime")).toBe(4);
+    expect(dispatcher.dispatched.map((envelope) => envelope.nodeId).sort()).toEqual([
+      "frontend_review",
+      "runtime_review",
+      "security_review",
+      "test_review",
+    ]);
 
     const categories = ["runtime", "security", "tests", "frontend"] as const;
     for (const category of categories) {
@@ -557,6 +563,7 @@ describe("PR Review scenario assets", () => {
     );
     const parsed = parseWorkflowSource(source);
     for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    installPrepareCommandStub(parsed);
     const dispatcher = new FakeDAGDispatcher();
     const executor = new GraphExecutor(dispatcher);
     const input = {
@@ -575,16 +582,6 @@ describe("PR Review scenario assets", () => {
       },
     };
     executor.createRun("pr-review-reviewer-failure", parsed, JSON.stringify(input));
-    executor.tick("pr-review-reviewer-failure");
-    handoffActiveRun("pr-review-reviewer-failure", "prepare", "ready", {
-      repo: "xiaotianfotos/homerail",
-      pr: 25,
-      base: "a".repeat(40),
-      head: "b".repeat(40),
-      repository_path: "/workspace/repository",
-      changed_files: ["src/run.ts"],
-      diff_stat: "1 file changed",
-    });
     executor.tick("pr-review-reviewer-failure");
 
     for (const category of ["runtime", "tests", "frontend"] as const) {

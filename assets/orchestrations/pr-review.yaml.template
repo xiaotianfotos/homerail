@@ -19,7 +19,7 @@ spec:
 
   pattern:
     id: pr-review-scenario
-    version: 1.4.0
+    version: 1.5.0
     source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
     parameters:
       reviewer_count: 4
@@ -358,48 +358,6 @@ spec:
       publish: always
 
   agents:
-    preparer:
-      system: |
-        You prepare a read-only pull request checkout. The input is the output
-        of a Manager budget gate; the RunEnvelope is at input.input and the
-        original PRReviewInput is at input.input.payload.
-        The registered command tool is named exactly `Bash` (capital B). Your
-        first checkout action MUST call Bash. Never call a tool named `shell`.
-        If a tool error says that `shell` is unavailable, that is a tool-name
-        error rather than a clone or fetch failure: immediately retry the same
-        command with Bash and do not call the failed handoff for that error.
-        Bash, Read, Grep, and Glob are available for this node.
-        Manager contract validation already guarantees repo, PR, base, head,
-        base_clone_url, and head_clone_url are present there. Use those nested
-        values directly; never claim a required field is missing after using it
-        in a command. Treat only those two URL fields as repository locations;
-        never derive a URL from repo, substitute another host, or add
-        credentials. Use exactly one checkout path: /workspace/repository.
-        Never persist, copy, or summarize the input into a file. Do not create
-        scratch, metadata, report, or helper files anywhere in /workspace; all
-        filesystem writes must be git clone, fetch, or checkout state contained
-        under /workspace/repository.
-        Never create /workspace/repository.git, a bare or mirror clone, or any
-        intermediate repository path. Clone the exact base_clone_url directly
-        into /workspace/repository without --depth, fetch the exact base commit
-        from that origin, then fetch the exact head commit from head_clone_url
-        (using a separate read-only remote when the URLs differ). Checkout head
-        in detached mode. Do not use git verify-commit; exact rev-parse equality
-        is the required revision check. Never modify tracked files after the
-        detached checkout. Collect changed_files from git diff --name-only
-        base...head and the bounded summary diff_stat from git diff --shortstat
-        base...head. Never put the per-file --stat output in diff_stat. Call failed
-        only when a required nested value is truly absent before any command,
-        an exact fetch or checkout command fails, or HEAD does not equal head.
-        Do not end with prose.
-        Your final action MUST call the handoff tool on port ready with exactly
-        this object and no extra keys:
-        {"repo":"owner/name","pr":1,"base":"sha","head":"sha","repository_path":"/workspace/repository","changed_files":["path"],"diff_stat":"text","title":"text","author":"login"}
-        Preserve the actual input values; title and author may be omitted only
-        when absent. If input:correction exists, reuse the existing checkout,
-        finish only missing validation, and call handoff. On any mismatch or
-        fetch failure, call handoff on failed with grounded evidence.
-
     runtime_reviewer:
       system: |
         Review only runtime behavior, persistence, concurrency, recovery,
@@ -642,15 +600,23 @@ spec:
         conflict_port: blocked
 
     prepare:
-      kind: agent
-      agent: preparer
-      allowed_builtin_tools: [Bash, Read, Grep, Glob]
-      allowed_dag_tools: [handoff]
-      workspace_access:
-        writable_paths: [repository]
-        readonly_paths: []
+      kind: command
       inputs: { request: {} }
       outputs: { ready: { contract: ReviewContext }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - >-
+            const{spawnSync}=require('node:child_process'),{existsSync}=require('node:fs');let s='';const fail=m=>{throw new Error(m)},exact=/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i,secureUrl=value=>{if(typeof value!=='string')fail('repository URL is missing');let parsed;try{parsed=new URL(value)}catch{fail('repository URL is invalid')}if(parsed.protocol!=='https:'||parsed.username||parsed.password||!parsed.hostname||parsed.search||parsed.hash||!/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/.test(parsed.pathname))fail('repository URL must be credential-free HTTPS');return value},gitEnv=()=>{const env={};for(const key of['PATH','Path','PATHEXT','SystemRoot','WINDIR','COMSPEC','TMP','TEMP','TMPDIR','LANG','LC_ALL','SSL_CERT_FILE','SSL_CERT_DIR','HTTPS_PROXY','HTTP_PROXY','NO_PROXY','https_proxy','http_proxy','no_proxy'])if(typeof process.env[key]==='string')env[key]=process.env[key];return{...env,HOME:process.cwd(),USERPROFILE:process.cwd(),XDG_CONFIG_HOME:process.cwd()+'/.config',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_ASKPASS:'',SSH_ASKPASS:'',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'Never'}},run=args=>{const common=['-c','credential.helper=','-c','http.extraHeader=','-c','core.hooksPath=/dev/null','-c','protocol.file.allow=never','-c','protocol.ext.allow=never'],result=spawnSync('git',[...common,...args],{encoding:'utf8',env:gitEnv(),maxBuffer:16777216});if(result.error)throw result.error;if(result.status!==0)fail(String(result.stderr||result.stdout||('git exited '+result.status)).trim());return String(result.stdout||'')};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const inputs=JSON.parse(s),request=Array.isArray(inputs.request)?inputs.request.at(-1):undefined,payload=request?.input?.payload;if(!payload||typeof payload!=='object')fail('budget input payload is missing');const{repo,pr,base,head,title,author}=payload;if(typeof repo!=='string'||!Number.isInteger(pr)||typeof base!=='string'||typeof head!=='string'||!exact.test(base)||!exact.test(head))fail('invalid pull request checkout input');const baseUrl=secureUrl(payload.base_clone_url),headUrl=secureUrl(payload.head_clone_url);if(existsSync('repository'))fail('run workspace repository path already exists');run(['clone','--no-checkout','--',baseUrl,'repository']);run(['-C','repository','fetch','--no-tags','--force','origin',base]);const headRemote=headUrl===baseUrl?'origin':'homerail-head';if(headRemote!=='origin')run(['-C','repository','remote','add',headRemote,headUrl]);run(['-C','repository','fetch','--no-tags','--force',headRemote,head]);run(['-C','repository','cat-file','-e',base+'^{commit}']);run(['-C','repository','cat-file','-e',head+'^{commit}']);run(['-C','repository','checkout','--detach',head]);const resolved=run(['-C','repository','rev-parse','--verify','HEAD^{commit}']).trim();if(resolved.toLowerCase()!==head.toLowerCase())fail('checked out HEAD does not equal the requested head revision');const names=run(['-C','repository','diff','--name-only','-z','--no-ext-diff',base+'...'+head]),changed=names?names.split('\0').filter(Boolean):[];if(changed.length>5000)fail('pull request changes more than 5000 files');if(Buffer.byteLength(JSON.stringify(changed),'utf8')>750000)fail('changed file list exceeds the review input limit');const diffStat=run(['-C','repository','diff','--shortstat','--no-ext-diff',base+'...'+head]).trim();if(diffStat.length>20000)fail('diff summary exceeds the review input limit');const context={repo,pr,base,head,repository_path:'/workspace/repository',changed_files:changed,diff_stat:diffStat};if(typeof title==='string')context.title=title;if(typeof author==='string')context.author=author;process.stdout.write(JSON.stringify(context))});
+        stdin_field: "$inputs"
+        cwd: "$run_workspace"
+        timeout_ms: 300000
+        capture_limit: 1000000
+        success_port: ready
+        failure_port: failed
+        parse_stdout: json
+        result_payload: value
 
     runtime_review:
       kind: agent
