@@ -250,7 +250,15 @@ describe("/api/manager/chat", () => {
         manager_skills: expect.arrayContaining([
           expect.objectContaining({ id: "homerail-dag-patterns", source: "home" }),
         ]),
+        plugin_context: {
+          enabled_plugins: [],
+          skills: [],
+          tools: [],
+          actions: [],
+        },
       });
+      expect((observedChatBodies[0].manager_skills as Array<{ source?: string }>)
+        .filter((skill) => skill.source === "plugin")).toEqual([]);
       expect(fakeNode.requests.map((item) => `${item.resource_type}:${item.operation}`)).toEqual([
         "container:list",
         "container:create",
@@ -991,10 +999,12 @@ describe("/api/manager/chat", () => {
     let seenMessage = "";
     let seenAgentType = "";
     let seenSkills: Array<{ id: string; source?: string }> = [];
+    let seenPluginContext: { enabled_plugins: unknown[]; skills: unknown[]; tools: unknown[]; actions: unknown[] } | undefined;
     _setHostCodexManagerAgentRunnerForTest(async (input) => {
       seenMessage = input.message;
       seenAgentType = input.agent_config.agent_type;
       seenSkills = input.manager_skills ?? [];
+      seenPluginContext = input.plugin_context;
       return {
         text: "host codex handled",
         session_id: input.session_id,
@@ -1049,6 +1059,13 @@ describe("/api/manager/chat", () => {
       id: "homerail-dag-patterns",
       source: "home",
     }));
+    expect(seenSkills.filter((skill) => skill.source === "plugin")).toEqual([]);
+    expect(seenPluginContext).toMatchObject({
+      enabled_plugins: [],
+      skills: [],
+      tools: [],
+      actions: [],
+    });
   });
 
   it("returns host Codex harness failures as structured errors instead of assistant text", async () => {
@@ -1100,7 +1117,7 @@ describe("/api/manager/chat", () => {
     expect(_compactDeltasForTest(["你好", "，", "我可以帮你启动 DAG。"])).toBe("你好，我可以帮你启动 DAG。");
   });
 
-  it("loads baseline, generative UI skill, and user voice UI rules for host Codex", () => {
+  it("keeps voice rule snapshots to baseline plus the user overlay", () => {
     const userRuleDir = path.join(tmpHome, "asset", "voice-agent");
     fs.mkdirSync(userRuleDir, { recursive: true });
     fs.writeFileSync(
@@ -1116,16 +1133,12 @@ describe("/api/manager/chat", () => {
     const rules = _loadVoiceUiRulesForTest();
 
     expect(rules.sources.some((source) => source.startsWith("baseline:"))).toBe(true);
-    expect(rules.sources.some((source) => source.startsWith("skill:"))).toBe(true);
+    expect(rules.sources.some((source) => source.startsWith("skill:"))).toBe(false);
     expect(rules.sources.some((source) => source.startsWith("user:"))).toBe(true);
     expect(rules.hash).toMatch(/^[a-f0-9]{16}$/);
     expect(rules.prompt).toContain("Voice Agent UI Principles");
-    expect(rules.prompt).toContain("Memo Widget");
-    expect(rules.prompt).toContain("Widget Tool Catalog");
-    expect(rules.prompt).toContain("Memo update contract");
-    expect(rules.prompt).toContain("voice-memo");
-    expect(rules.prompt).toContain("show_dynamic_widget");
-    expect(rules.prompt).toContain("update_voice_memo");
+    expect(rules.prompt).not.toContain("Voice Generative UI Skill");
+    expect(rules.prompt).not.toContain("Widget Tool Catalog");
     expect(rules.prompt).toContain("默认使用 voice-memo");
   });
 
@@ -1135,6 +1148,9 @@ describe("/api/manager/chat", () => {
     expect(contract.prompt).toContain("Voice Surface Contract");
     expect(contract.prompt).toContain("same Main Agent");
     expect(contract.prompt).toContain("Generated UI must come from voice tools");
+    expect(contract.prompt).toContain("projection is successful only when the Tool result reports status committed");
+    expect(contract.prompt).toContain("call update_selected_generated_view and do not ask the user to reselect it");
+    expect(contract.prompt).toContain("when the needed value is present there, use it and proceed");
 
     const prompt = _systemPromptForTest({
       agent_type: "codex_appserver",

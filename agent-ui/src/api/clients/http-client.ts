@@ -153,7 +153,10 @@ class HttpClient {
           apiError.code = 401
           break
         case 403:
-          apiError.message = 'Access forbidden'
+          {
+            const message = getErrorMessage()
+            apiError.message = message === `HTTP Error: ${status}` ? 'Access forbidden' : message
+          }
           apiError.code = 403
           break
         case 404:

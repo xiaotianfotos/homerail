@@ -3,7 +3,9 @@ import type {
   ContainerConfig,
   ContainerInfo,
   ExecResult,
+  ContainerNetworkInfo,
 } from "./types.js";
+import { createHash } from "node:crypto";
 
 type MockStatus = "created" | "running" | "stopped" | "removed";
 
@@ -28,6 +30,7 @@ function genId(): string {
 
 export class MockProvider implements ExecutionProvider {
   containers: Map<string, MockContainer> = new Map();
+  networks: Map<string, ContainerNetworkInfo> = new Map();
 
   async create(config: ContainerConfig): Promise<ContainerInfo> {
     const id = genId();
@@ -138,6 +141,10 @@ export class MockProvider implements ExecutionProvider {
     return { exitCode: 0, stdout: "", stderr: "" };
   }
 
+  async execInput(id: string, cmd: string[], _input: string, _options?: { timeoutMs?: number }): Promise<ExecResult> {
+    return this.exec(id, cmd);
+  }
+
   async *logs(id: string): AsyncIterable<string> {
     const c = this.getOrThrow(id);
     for (const line of c.logLines) {
@@ -154,6 +161,27 @@ export class MockProvider implements ExecutionProvider {
     return Array.from(this.containers.values()).map((c) => this.toInfo(c));
   }
 
+  async ensureNetwork(name: string, internal: true): Promise<ContainerNetworkInfo> {
+    const existing = this.networks.get(name);
+    if (existing) {
+      if (!existing.internal) throw new Error(`network ${name} is not internal`);
+      return { ...existing };
+    }
+    const network = {
+      name,
+      id: `mock-network-${createHash("sha256").update(name).digest("hex").slice(0, 16)}`,
+      internal,
+    };
+    this.networks.set(name, network);
+    return { ...network };
+  }
+
+  async inspectNetwork(name: string): Promise<ContainerNetworkInfo> {
+    const network = this.networks.get(name);
+    if (!network) throw new Error(`network ${name} not found`);
+    return { ...network };
+  }
+
   private getOrThrow(id: string): MockContainer {
     const c = this.containers.get(id);
     if (!c) {
@@ -163,6 +191,8 @@ export class MockProvider implements ExecutionProvider {
   }
 
   private toInfo(c: MockContainer): ContainerInfo {
+    const imageDigest = c.config.expectedImageDigest
+      ?? `sha256:${createHash("sha256").update(c.config.image).digest("hex")}`;
     return {
       id: c.id,
       status: c.status,
@@ -170,6 +200,42 @@ export class MockProvider implements ExecutionProvider {
       startedAt: c.startedAt,
       finishedAt: c.finishedAt,
       error: c.error,
+      labels: c.config.labels ? { ...c.config.labels } : undefined,
+      measurement: {
+        imageDigest,
+        command: [...(c.config.command ?? [])],
+        envNames: Object.keys(c.config.env ?? {}).sort(),
+        user: c.config.user ?? "",
+        readOnlyRootfs: c.config.readOnlyRootfs === true,
+        securityOpts: [
+          ...(c.config.noNewPrivileges ? ["no-new-privileges:true"] : []),
+          ...(c.config.securityOpts ?? []),
+        ].sort(),
+        capDrop: [...(c.config.capDrop ?? [])].sort(),
+        mounts: (c.config.mounts ?? []).map((mount) => ({
+          source: mount.host,
+          target: mount.container,
+          mode: (mount.mode ?? "").split(",").map((part) => part.trim().toLowerCase()).includes("ro") ? "ro" as const : "rw" as const,
+        })).sort((left, right) => left.target.localeCompare(right.target)),
+        tmpfs: (c.config.tmpfs ?? []).map((entry) => ({
+          target: entry.target,
+          options: ["nodev", "noexec", "nosuid", "rw", `size=${entry.sizeBytes}`].sort(),
+        })).sort((left, right) => left.target.localeCompare(right.target)),
+        networkMode: c.config.network ?? "default",
+        networkNames: c.config.network && c.config.network !== "none" ? [c.config.network] : [],
+        devices: (c.config.devices ?? []).map((device) => ({
+          host: device.host,
+          container: device.container ?? device.host,
+          permissions: device.permissions ?? "rwm",
+        })).sort((left, right) => left.container.localeCompare(right.container)),
+        gpus: [...(c.config.gpus ?? [])].sort(),
+        resourceLimits: {
+          pids: c.config.resourceLimits?.pids ?? 0,
+          memoryBytes: c.config.resourceLimits?.memoryBytes ?? 0,
+          memorySwapBytes: c.config.resourceLimits?.memorySwapBytes ?? 0,
+          nanoCpus: c.config.resourceLimits?.nanoCpus ?? 0,
+        },
+      },
     };
   }
 }

@@ -7,6 +7,11 @@ import {
   type ManagerAgentReasoningEffort,
   type ManagerAgentServiceTier,
 } from "homerail-protocol";
+import {
+  DEFAULT_GENERATIVE_UI_MODE,
+  parseGenerativeUiMode,
+  type GenerativeUiMode,
+} from "../generative-ui/mode.js";
 
 export interface ManagerAgentConfig {
   agent_type: "manager_agent";
@@ -16,6 +21,7 @@ export interface ManagerAgentConfig {
   model_name: string | null;
   reasoning_effort: ManagerAgentReasoningEffort;
   service_tier: ManagerAgentServiceTier;
+  generative_ui_mode: GenerativeUiMode;
   system_prompt: string;
   session_policy: Record<string, unknown>;
 }
@@ -28,6 +34,7 @@ export const DEFAULT_MANAGER_AGENT_CONFIG: ManagerAgentConfig = {
   model_name: null,
   reasoning_effort: "low",
   service_tier: null,
+  generative_ui_mode: DEFAULT_GENERATIVE_UI_MODE,
   system_prompt: "",
   session_policy: {
     persist_conversation: true,
@@ -74,6 +81,7 @@ function _normalize(raw?: Record<string, unknown> | null): ManagerAgentConfig {
       model_name: modelName,
       reasoning_effort: _reasoningEffort(base.reasoning_effort),
       service_tier: _serviceTier(base.service_tier),
+      generative_ui_mode: parseGenerativeUiMode(base.generative_ui_mode),
       system_prompt: typeof base.system_prompt === "string" ? base.system_prompt : "",
       session_policy: {
         ...DEFAULT_MANAGER_AGENT_CONFIG.session_policy,
@@ -89,6 +97,7 @@ function _normalize(raw?: Record<string, unknown> | null): ManagerAgentConfig {
     model_name: _string(base.model_name),
     reasoning_effort: _reasoningEffort(base.reasoning_effort),
     service_tier: _serviceTier(base.service_tier),
+    generative_ui_mode: parseGenerativeUiMode(base.generative_ui_mode),
     system_prompt: typeof base.system_prompt === "string" ? base.system_prompt : "",
     session_policy: {
       ...DEFAULT_MANAGER_AGENT_CONFIG.session_policy,

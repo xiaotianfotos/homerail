@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ExternalLink, Lightbulb, Target, Users } from 'lucide-vue-next'
+import { isSafeGenerativeUiArtifactUri } from 'homerail-protocol'
 import type { VoiceWidget } from '@/api/agent'
 
 type OutlineSection = {
@@ -17,13 +18,14 @@ type TopicSource = {
 }
 
 const props = defineProps<{
-  widget: VoiceWidget
+  widget?: VoiceWidget
+  content?: Record<string, unknown>
 }>()
 
 const { t } = useI18n()
 
-const data = computed(() => props.widget.data ?? {})
-const brief = computed(() => text(data.value.brief || props.widget.body, 220))
+const data = computed(() => props.content ?? props.widget?.data ?? {})
+const brief = computed(() => text(data.value.brief || props.widget?.body, 220))
 const audience = computed(() => text(data.value.audience, 60))
 const angle = computed(() => text(data.value.angle, 90))
 const thesis = computed(() => text(data.value.thesis, 140))
@@ -51,7 +53,7 @@ const sources = computed<TopicSource[]>(() => {
     const row = item && typeof item === 'object' ? item as Record<string, unknown> : {}
     return {
       title: text(row.title, 72),
-      url: text(row.url, 240),
+      url: safeExternalUrl(row.url),
       note: text(row.note, 96),
     }
   }).filter(item => item.title || item.url || item.note)
@@ -66,6 +68,18 @@ const questions = computed(() => {
 function text(value: unknown, limit: number): string {
   if (typeof value !== 'string' && typeof value !== 'number') return ''
   return String(value).replace(/\s+/g, ' ').trim().slice(0, limit)
+}
+
+function safeExternalUrl(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const candidate = value.trim()
+  if (!isSafeGenerativeUiArtifactUri(candidate)) return ''
+  try {
+    const parsed = new URL(candidate)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? candidate : ''
+  } catch {
+    return ''
+  }
 }
 
 function clampPercent(value: unknown): number {
@@ -108,7 +122,7 @@ function clampPercent(value: unknown): number {
           :key="`${source.title}-${source.url}`"
           :href="source.url || undefined"
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
         >
           <span>{{ source.title || source.note || source.url }}</span>
           <ExternalLink v-if="source.url" :size="13" />

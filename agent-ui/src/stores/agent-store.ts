@@ -201,6 +201,13 @@ export const useAgentStore = defineStore('agent', () => {
 
   function applyManagerAgentConfig(config: Record<string, any> | null | undefined): boolean {
     if (!config) return false
+    if (config.harness === 'codex_appserver') {
+      managerSettingId.value = null
+      managerProviderName.value = 'codex'
+      managerModelName.value = typeof config.model_name === 'string' ? config.model_name : ''
+      persist()
+      return true
+    }
     const settingId = typeof config.llm_setting_id === 'string' ? config.llm_setting_id : ''
     const setting = settingId
       ? llmRuntimeModels.value.find(item => item.id === settingId)

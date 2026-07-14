@@ -1,0 +1,47 @@
+{
+  "tool": "upsert_pr_closeout",
+  "arguments": {
+    "id": "com.homerail.pr-closeout:xiaotianfotos-homerail-19",
+    "title": "PR #19 Generative UI foundation",
+    "repository": "xiaotianfotos/homerail",
+    "pr_number": 19,
+    "pr_url": "https://github.com/xiaotianfotos/homerail/pull/19",
+    "status": "open",
+    "recommendation": "ready",
+    "risk": "low",
+    "summary": "All required checks and platform validations passed. No unresolved blocker remains.",
+    "head_sha": "b6f14939",
+    "updated_at": "2026-07-12T12:30:00+08:00",
+    "checks": [
+      { "id": "ci", "label": "Full CI", "status": "passed", "detail": "1604 passed, 2 skipped" },
+      { "id": "golden", "label": "Runtime Docker Golden", "status": "passed", "detail": "2 passed" }
+    ],
+    "flow": [
+      { "id": "review", "label": "Review", "status": "passed", "progress": 100, "depends_on": [] },
+      { "id": "tests", "label": "Automated tests", "status": "passed", "progress": 100, "depends_on": ["review"] },
+      { "id": "platforms", "label": "Platform validation", "status": "passed", "progress": 100, "depends_on": ["tests"] },
+      { "id": "gate", "label": "Merge gate", "status": "passed", "progress": 100, "depends_on": ["platforms"] }
+    ],
+    "blockers": [],
+    "reviews": [
+      { "id": "r1", "title": "Canonical stream binding", "status": "resolved", "author": "reviewer" }
+    ],
+    "platforms": [
+      { "id": "macos", "label": "macOS", "status": "passed", "detail": "Electron package verified" },
+      { "id": "linux", "label": "Linux", "status": "passed", "detail": "Docker runtime verified" },
+      { "id": "windows", "label": "Windows", "status": "passed", "detail": "Electron package verified" }
+    ],
+    "evidence": [
+      { "id": "e1", "label": "Full CI", "status": "verified", "detail": "All required suites passed", "at": "12:20" },
+      { "id": "e2", "label": "Three-platform package validation", "status": "verified", "detail": "macOS, Linux and Windows", "at": "12:30" }
+    ],
+    "actions": [
+      { "id": "open-pr", "label": "Open PR", "style": "primary", "url": "https://github.com/xiaotianfotos/homerail/pull/19" }
+    ]
+  },
+  "expect": {
+    "recommendation": "ready",
+    "risk": "low",
+    "status": "open"
+  }
+}

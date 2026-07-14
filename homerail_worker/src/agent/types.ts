@@ -9,7 +9,7 @@ import type { AgentBuiltinToolName, AgentToolDefinition } from "homerail-protoco
 
 /** Tool definition with a runtime handler (extends protocol's AgentToolDefinition). */
 export interface DagToolDefinition extends AgentToolDefinition {
-  handler: (args: Record<string, unknown>) => Promise<{
+  handler: (args: Record<string, unknown>, context?: { tool_call_id?: string }) => Promise<{
     content: Array<{ type: "text"; text: string }>;
     is_error?: boolean;
   }>;

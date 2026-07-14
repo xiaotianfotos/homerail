@@ -1,0 +1,364 @@
+{
+  "manifest_version": 1,
+  "id": "com.homerail.core",
+  "version": "0.1.7",
+  "name": "HomeRail Core Generative UI",
+  "publisher": {
+    "id": "com.homerail",
+    "name": "HomeRail"
+  },
+  "license": "MIT",
+  "compatibility": {
+    "homerail": {
+      "min": "0.1.0",
+      "max_exclusive": "0.2.0"
+    },
+    "plugin_api": [1],
+    "ui_ir": [1],
+    "renderer_api": [1]
+  },
+  "capabilities": [
+    {
+      "id": "voice-generative-ui",
+      "summary": "Maintain truthful, compact structured state on the voice surface.",
+      "intents": [
+        "remember evolving task requirements",
+        "show confirmed task or execution state",
+        "compose a dynamic structured interface",
+        "动态生成界面"
+      ],
+      "tags": ["voice", "ui", "core"],
+      "modalities": ["voice", "text", "touch", "gamepad"],
+      "required_inputs": [],
+      "skill": "voice-generative-ui",
+      "tools": ["upsert_generated_view"],
+      "workflows": [],
+      "actions": []
+    }
+  ],
+  "skills": [
+    {
+      "id": "voice-generative-ui",
+      "path": "skills/voice-generative-ui/SKILL.md",
+      "description": "Choose and maintain generated UI for a voice session without inventing execution state."
+    }
+  ],
+  "schemas": [
+    {
+      "id": "legacy-widget-content-v1",
+      "file": "schemas/legacy-widget-content.v1.schema.json"
+    },
+    {
+      "id": "generated-view-input-v1",
+      "file": "schemas/generated-view-input.v1.schema.json"
+    },
+    {
+      "id": "generated-view-content-v1",
+      "file": "schemas/generated-view-content.v1.schema.json"
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "com.homerail.core/task_summary",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "legacy-widget-content-v1",
+        "allowed_surfaces": ["task"],
+        "default_surface": "task",
+        "default_variant": "summary",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["task_draft", "memo"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/notice",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "legacy-widget-content-v1",
+        "allowed_surfaces": ["task", "ambient"],
+        "default_surface": "task",
+        "default_variant": "summary",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["note", "status"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/checklist",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "legacy-widget-content-v1",
+        "allowed_surfaces": ["task"],
+        "default_surface": "task",
+        "default_variant": "summary",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["list", "checklist"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/execution_progress",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "legacy-widget-content-v1",
+        "allowed_surfaces": ["execution"],
+        "default_surface": "execution",
+        "default_variant": "summary",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["progress", "progress_status"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/execution_graph",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "legacy-widget-content-v1",
+        "allowed_surfaces": ["execution"],
+        "default_surface": "execution",
+        "default_variant": "detail",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["dag_flow"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/timeline",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "legacy-widget-content-v1",
+        "allowed_surfaces": ["execution"],
+        "default_surface": "execution",
+        "default_variant": "summary",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["timeline"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/metric_set",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "legacy-widget-content-v1",
+        "allowed_surfaces": ["ambient", "result"],
+        "default_surface": "ambient",
+        "default_variant": "glance",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["metric_strip", "chart"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/artifact",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "legacy-widget-content-v1",
+        "allowed_surfaces": ["result"],
+        "default_surface": "result",
+        "default_variant": "summary",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["artifact", "artifact_ref"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/confirmation",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "legacy-widget-content-v1",
+        "allowed_surfaces": ["task"],
+        "default_surface": "task",
+        "default_variant": "summary",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["confirmation"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    },
+    {
+      "kind": "com.homerail.core/generated_view",
+      "current_version": 1,
+      "versions": [{
+        "version": 1,
+        "content_schema": "generated-view-content-v1",
+        "allowed_surfaces": ["task", "execution", "result", "ambient"],
+        "default_surface": "result",
+        "default_variant": "detail",
+        "max_content_bytes": 131072,
+        "preferred_visuals": ["a2ui", "dashboard", "table", "timeline", "chart", "dag"],
+        "fallback": "portable_required",
+        "actions": []
+      }],
+      "migrations": []
+    }
+  ],
+  "tools": [
+    {
+      "id": "upsert_generated_view",
+      "description": "Create or replace a HomeRail A2UI Block. Reuse its stable id. Choose canvas_size 1x1, 1x2, 2x2, or 3x3. Use HrTable or HrList for long collections, HrLink for HTTP(S) sources, and at most 3 HrGrid columns.",
+      "exposure": ["agent"],
+      "input_schema": "generated-view-input-v1",
+      "output_schema": "generated-view-content-v1",
+      "effect": "write",
+      "permissions": [],
+      "confirmation": "never",
+      "handler": {
+        "type": "projection",
+        "file": "ui/projectors/generated-view.v1.json"
+      }
+    }
+  ],
+  "workflows": [],
+  "renderers": [
+    {
+      "id": "core-task-summary",
+      "kind": "com.homerail.core/task_summary",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["task"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-notice",
+      "kind": "com.homerail.core/notice",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["task", "ambient"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-checklist",
+      "kind": "com.homerail.core/checklist",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["task"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-execution-progress",
+      "kind": "com.homerail.core/execution_progress",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["execution"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-execution-graph",
+      "kind": "com.homerail.core/execution_graph",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["execution"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-timeline",
+      "kind": "com.homerail.core/timeline",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["execution"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-metric-set",
+      "kind": "com.homerail.core/metric_set",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["ambient", "result"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-artifact",
+      "kind": "com.homerail.core/artifact",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["result"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-confirmation",
+      "kind": "com.homerail.core/confirmation",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["task"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "core-legacy-widget" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-generated-view",
+      "kind": "com.homerail.core/generated_view",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["task", "execution", "result", "ambient"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "a2ui" },
+      "fallback": { "type": "portable" }
+    }
+  ],
+  "actions": [],
+  "runtime": {
+    "trust": "data_only",
+    "plugin_api": 1
+  },
+  "permissions": {
+    "required": [],
+    "optional": []
+  },
+  "state": {
+    "schema_version": 1,
+    "migrations": []
+  }
+}

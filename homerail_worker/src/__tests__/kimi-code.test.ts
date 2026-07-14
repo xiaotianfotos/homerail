@@ -318,6 +318,30 @@ describe("KimiCodeAdapter", () => {
       expect(result.error).toContain("Node >= 22.19.0");
     });
 
+    const itOnPosix = process.platform === "win32" ? it.skip : it;
+    itOnPosix("does not expose the Manager admin token to the real readiness subprocess", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "homerail-kimi-readiness-env-"));
+      const kimiBin = join(tempDir, "kimi");
+      writeFileSync(kimiBin, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log(process.env.HOMERAIL_MANAGER_ADMIN_TOKEN ? "TOKEN_LEAKED" : "TOKEN_ABSENT");
+  process.exit(0);
+}
+process.exit(2);
+`, "utf-8");
+      chmodSync(kimiBin, 0o755);
+      vi.stubEnv("HOMERAIL_MANAGER_ADMIN_TOKEN", "readiness-secret-0123456789abcdef");
+      try {
+        await expect(new KimiCodeAdapter(kimiBin).checkReadiness()).resolves.toEqual({
+          ready: true,
+          version: "TOKEN_ABSENT",
+        });
+        expect(process.env.HOMERAIL_MANAGER_ADMIN_TOKEN).toBe("readiness-secret-0123456789abcdef");
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
     const itOnWindows = process.platform === "win32" ? it : it.skip;
     itOnWindows("runs npm kimi.cmd shims through node and the package main", async () => {
       const tempDir = mkdtempSync(join(tmpdir(), "homerail-kimi-cmd-shim-"));

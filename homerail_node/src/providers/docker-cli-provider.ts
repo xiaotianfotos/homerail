@@ -5,13 +5,20 @@ import type {
   ContainerConfig,
   ContainerInfo,
   ExecResult,
+  ContainerNetworkInfo,
 } from "./types.js";
 
 type ExecFileOptions = {
   encoding?: BufferEncoding;
   maxBuffer?: number;
   windowsHide?: boolean;
+  env?: NodeJS.ProcessEnv;
 };
+
+const DOCKER_INHERITED_SECRET_ENV = new Set([
+  "HOMERAIL_MANAGER_ADMIN_TOKEN",
+  "HOMERAIL_PLUGIN_CAPABILITY_SECRET",
+]);
 
 export interface DockerCliProviderOptions {
   dockerPath?: string;
@@ -153,9 +160,32 @@ function buildCreateArgs(config: ContainerConfig): string[] {
     args.push("--workdir", config.workdir);
   }
 
+  if (config.user) args.push("--user", config.user);
+  if (config.readOnlyRootfs) args.push("--read-only");
+  if (config.noNewPrivileges) args.push("--security-opt", "no-new-privileges:true");
+  for (const capability of config.capDrop ?? []) args.push("--cap-drop", capability);
+  for (const option of config.securityOpts ?? []) args.push("--security-opt", option);
+  for (const device of config.devices ?? []) {
+    const target = device.container ?? device.host;
+    const permissions = device.permissions ?? "rwm";
+    args.push("--device", `${device.host}:${target}:${permissions}`);
+  }
+  if (config.gpus?.length) args.push("--gpus", `device=${config.gpus.join(",")}`);
+  for (const entry of config.tmpfs ?? []) {
+    args.push("--tmpfs", `${entry.target}:rw,noexec,nosuid,nodev,size=${entry.sizeBytes}`);
+  }
+  if (config.resourceLimits) {
+    args.push("--pids-limit", String(config.resourceLimits.pids));
+    args.push("--memory", String(config.resourceLimits.memoryBytes));
+    args.push("--memory-swap", String(config.resourceLimits.memorySwapBytes));
+    args.push("--cpus", String(config.resourceLimits.nanoCpus / 1_000_000_000));
+  }
+
   if (config.env) {
     for (const [key, value] of Object.entries(config.env)) {
-      args.push("-e", `${key}=${value}`);
+      // Keep Manager credentials out of process listings and child_process
+      // error messages. Docker copies these named values from its own env.
+      args.push("-e", DOCKER_INHERITED_SECRET_ENV.has(key) ? key : `${key}=${value}`);
     }
   }
 
@@ -206,6 +236,8 @@ function parseInspectOutput(stdout: string): ContainerInfo {
   const parsed = JSON.parse(stdout);
   const data = parsed[0];
   const state = data.State;
+  const config = data.Config ?? {};
+  const host = data.HostConfig ?? {};
   const name = typeof data.Name === "string" ? data.Name.replace(/^\//, "") : undefined;
   return {
     id: data.Id,
@@ -216,6 +248,50 @@ function parseInspectOutput(stdout: string): ContainerInfo {
     startedAt: state.StartedAt,
     finishedAt: state.FinishedAt,
     error: state.Error,
+    measurement: {
+      imageDigest: typeof data.Image === "string" ? data.Image : "",
+      command: [data.Path, ...(Array.isArray(data.Args) ? data.Args : [])]
+        .filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
+      envNames: (Array.isArray(config.Env) ? config.Env : [])
+        .filter((entry: unknown): entry is string => typeof entry === "string")
+        .map((entry: string) => entry.split("=", 1)[0]!)
+        .sort(),
+      user: typeof config.User === "string" ? config.User : "",
+      readOnlyRootfs: host.ReadonlyRootfs === true,
+      securityOpts: (Array.isArray(host.SecurityOpt) ? host.SecurityOpt : []).filter((entry: unknown): entry is string => typeof entry === "string").sort(),
+      capDrop: (Array.isArray(host.CapDrop) ? host.CapDrop : []).filter((entry: unknown): entry is string => typeof entry === "string").sort(),
+      mounts: (Array.isArray(data.Mounts) ? data.Mounts : []).flatMap((mount: Record<string, unknown>) => (
+        typeof mount.Source === "string" && typeof mount.Destination === "string"
+          ? [{ source: mount.Source, target: mount.Destination, mode: mount.RW === false ? "ro" as const : "rw" as const }]
+          : []
+      )).sort((left: { target: string }, right: { target: string }) => left.target.localeCompare(right.target)),
+      tmpfs: Object.entries(host.Tmpfs ?? {}).map(([target, raw]) => ({
+        target,
+        options: String(raw).split(",").map((entry) => entry.trim()).filter(Boolean).sort(),
+      })).sort((left, right) => left.target.localeCompare(right.target)),
+      networkMode: typeof host.NetworkMode === "string" ? host.NetworkMode : "default",
+      networkNames: Object.keys(data.NetworkSettings?.Networks ?? {}).filter((name) => name !== "none").sort(),
+      devices: (Array.isArray(host.Devices) ? host.Devices : []).flatMap((device: Record<string, unknown>) => (
+        typeof device.PathOnHost === "string" && typeof device.PathInContainer === "string"
+          ? [{
+            host: device.PathOnHost,
+            container: device.PathInContainer,
+            permissions: typeof device.CgroupPermissions === "string" ? device.CgroupPermissions : "rwm",
+          }]
+          : []
+      )).sort((left: { container: string }, right: { container: string }) => left.container.localeCompare(right.container)),
+      gpus: (Array.isArray(host.DeviceRequests) ? host.DeviceRequests : [])
+        .filter((request: Record<string, unknown>) => request.Driver === "nvidia")
+        .flatMap((request: Record<string, unknown>) => Array.isArray(request.DeviceIDs) ? request.DeviceIDs : [])
+        .filter((entry: unknown): entry is string => typeof entry === "string")
+        .sort(),
+      resourceLimits: {
+        pids: Number(host.PidsLimit ?? 0),
+        memoryBytes: Number(host.Memory ?? 0),
+        memorySwapBytes: Number(host.MemorySwap ?? 0),
+        nanoCpus: Number(host.NanoCpus ?? 0),
+      },
+    },
   };
 }
 
@@ -253,8 +329,12 @@ export class DockerCliProvider implements ExecutionProvider {
   async create(config: ContainerConfig): Promise<ContainerInfo> {
     try {
       const args = buildCreateArgs(config);
+      const inheritedSecrets = Object.fromEntries(
+        Object.entries(config.env ?? {}).filter(([key]) => DOCKER_INHERITED_SECRET_ENV.has(key)),
+      );
       const { stdout } = await execFile(this.dockerPath, args, {
         encoding: "utf-8",
+        env: { ...process.env, ...inheritedSecrets },
       });
       return parseCreateOutput(stdout, this.dockerPath);
     } catch (err) {
@@ -317,6 +397,43 @@ export class DockerCliProvider implements ExecutionProvider {
       }
       throw classifyError(err as Error);
     }
+  }
+
+  async execInput(id: string, cmd: string[], input: string, options: { timeoutMs?: number } = {}): Promise<ExecResult> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.dockerPath, ["exec", "-i", id, ...cmd], {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        callback();
+      };
+      const timer = options.timeoutMs && options.timeoutMs > 0
+        ? setTimeout(() => {
+          child.kill("SIGKILL");
+          finish(() => reject(new Error(`docker exec timed out after ${options.timeoutMs}ms`)));
+        }, options.timeoutMs)
+        : undefined;
+      const append = (current: string, chunk: unknown) => {
+        const next = current + String(chunk);
+        if (Buffer.byteLength(next, "utf8") > 24 * 1024 * 1024) {
+          child.kill("SIGKILL");
+          finish(() => reject(new Error("docker exec output exceeds 24 MiB")));
+        }
+        return next;
+      };
+      child.stdout?.on("data", (chunk) => { stdout = append(stdout, chunk); });
+      child.stderr?.on("data", (chunk) => { stderr = append(stderr, chunk); });
+      child.once("error", (cause) => finish(() => reject(cause)));
+      child.once("close", (code) => finish(() => resolve({ exitCode: code ?? 1, stdout, stderr })));
+      child.stdin?.end(input);
+    });
   }
 
   async *logs(id: string): AsyncIterable<string> {
@@ -389,6 +506,29 @@ export class DockerCliProvider implements ExecutionProvider {
         });
     } catch (err) {
       throw classifyError(err as Error);
+    }
+  }
+
+  async inspectNetwork(name: string): Promise<ContainerNetworkInfo> {
+    const { stdout } = await execFile(this.dockerPath, ["network", "inspect", name], { encoding: "utf-8" });
+    const data = JSON.parse(stdout)?.[0];
+    if (!data || typeof data.Id !== "string" || typeof data.Name !== "string") {
+      throw new Error(`docker network inspect returned invalid data for ${name}`);
+    }
+    return { name: data.Name, id: data.Id, internal: data.Internal === true };
+  }
+
+  async ensureNetwork(name: string, internal: true): Promise<ContainerNetworkInfo> {
+    try {
+      const existing = await this.inspectNetwork(name);
+      if (!existing.internal) throw new Error(`network ${name} exists but is not internal`);
+      return existing;
+    } catch (cause) {
+      if (cause instanceof Error && cause.message.includes("exists but is not internal")) throw cause;
+      await execFile(this.dockerPath, ["network", "create", "--internal", name], { encoding: "utf-8" });
+      const created = await this.inspectNetwork(name);
+      if (created.internal !== internal) throw new Error(`network ${name} was not created internal`);
+      return created;
     }
   }
 }

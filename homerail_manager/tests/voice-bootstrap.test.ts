@@ -20,10 +20,13 @@ import {
   _setHostCodexAgentEventRunnerForTest,
   _setHostCodexManagerAgentRunnerForTest,
   _setHostCodexManagerAgentStreamRunnerForTest,
+  type HostCodexManagerAgentInput,
 } from "../src/server/host-codex-manager-agent.js";
 import { _clearNodes } from "../src/node/registry.js";
 import { managerAgentHostPort, registerFakeDockerNode } from "./helpers/fake-manager-agent-node.js";
 import type { CodexModelCatalog } from "../src/server/codex-models.js";
+import { applyVoiceCanonicalProjectionPatch } from "../src/generative-ui/canonical-voice-service.js";
+import { persistentGenerativeUiDocumentService } from "../src/generative-ui/shadow-service.js";
 
 const TEST_CODEX_MODEL_CATALOG: CodexModelCatalog = {
   binary: "codex",
@@ -547,6 +550,146 @@ describe("voice bootstrap routes", () => {
     expect(loadedBody.data.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
   });
 
+  it("keeps a persisted legacy VoiceWorkspace, widgets, and UI events readable", async () => {
+    const fixture = JSON.parse(fs.readFileSync(
+      new URL("./fixtures/voice/legacy-voice-workspace-v1.json", import.meta.url),
+      "utf8",
+    )) as {
+      session_id: string;
+      project_id: string;
+      session_title: string;
+      session_slate: string;
+      manager_run_ids: string[];
+      conversation: Array<{
+        id: string;
+        role: string;
+        text: string;
+        channel?: string;
+        created_at: string;
+      }>;
+      progress_brief: { status: string };
+      widgets: Array<Record<string, unknown>>;
+      ui_events: Array<{
+        id: string;
+        session_id: string;
+        voice_message_id: string | null;
+        sequence: number;
+        event_type: string;
+        widget_id: string | null;
+        widget_type: string | null;
+        payload: Record<string, unknown>;
+        created_at: string;
+      }>;
+      created_at: string;
+      updated_at: string;
+      ended_at: string | null;
+    };
+    const port = await listen(server);
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO voice_agent_sessions(session_id, project_id, updated_at, data)
+      VALUES (?, ?, ?, ?)
+    `).run(fixture.session_id, fixture.project_id, fixture.updated_at, JSON.stringify(fixture));
+
+    const loaded = await fetch(`http://127.0.0.1:${port}/api/voice-agent/sessions/${fixture.session_id}`);
+    const loadedBody = await loaded.json() as { success: boolean; data: typeof fixture };
+
+    expect(loaded.status).toBe(200);
+    expect(loadedBody.success).toBe(true);
+    expect(loadedBody.data).toEqual(fixture);
+
+    const listed = await fetch(
+      `http://127.0.0.1:${port}/api/voice-agent/sessions?project_id=${fixture.project_id}&limit=5`,
+    );
+    const listedBody = await listed.json() as { data: { sessions: Array<Record<string, unknown>> } };
+    expect(listedBody.data.sessions).toEqual([{
+      session_id: fixture.session_id,
+      project_id: fixture.project_id,
+      status: fixture.progress_brief.status,
+      title: fixture.session_title,
+      prompt: fixture.session_slate,
+      start_time: fixture.created_at,
+      end_time: fixture.ended_at,
+      message_count: fixture.conversation.length,
+      run_ids: fixture.manager_run_ids,
+      duration_seconds: null,
+    }]);
+
+    const refreshed = await fetch(
+      `http://127.0.0.1:${port}/api/voice-agent/sessions/${fixture.session_id}/manager-status`,
+      { method: "POST" },
+    );
+    expect(refreshed.status).toBe(200);
+
+    const canonicalRow = db.prepare("SELECT data FROM voice_agent_sessions WHERE session_id = ?")
+      .get(fixture.session_id) as { data: string };
+    const canonical = JSON.parse(canonicalRow.data) as typeof fixture;
+    expect(canonical).toEqual({
+      ...fixture,
+      updated_at: expect.any(String),
+    });
+    expect(canonical.updated_at).not.toBe(fixture.updated_at);
+    expect(canonical.widgets).toEqual(fixture.widgets);
+    expect(canonical.ui_events).toEqual(fixture.ui_events);
+
+    const sessionRow = db.prepare(`
+      SELECT session_id, session_type, project_id, status, prompt, start_time,
+             end_time, message_count, run_ids, data
+      FROM sessions
+      WHERE session_id = ?
+    `).get(fixture.session_id) as Record<string, unknown>;
+    expect(sessionRow).toEqual({
+      session_id: fixture.session_id,
+      session_type: "voice_agent",
+      project_id: fixture.project_id,
+      status: fixture.progress_brief.status,
+      prompt: fixture.session_title,
+      start_time: fixture.created_at,
+      end_time: fixture.ended_at,
+      message_count: fixture.conversation.length,
+      run_ids: JSON.stringify(fixture.manager_run_ids),
+      data: canonicalRow.data,
+    });
+
+    const messageRows = db.prepare(`
+      SELECT id, session_id, sequence, message_type, content,
+             metadata, timestamp, synced, data
+      FROM session_messages
+      WHERE session_id = ?
+      ORDER BY sequence
+    `).all(fixture.session_id) as Array<Record<string, unknown>>;
+    expect(messageRows).toEqual(fixture.conversation.map((message, index) => ({
+      id: `${fixture.session_id}:${message.id}`,
+      session_id: fixture.session_id,
+      sequence: index + 1,
+      message_type: message.role,
+      content: message.text,
+      metadata: JSON.stringify({ channel: message.channel ?? "final" }),
+      timestamp: message.created_at,
+      synced: 1,
+      data: JSON.stringify(message),
+    })));
+
+    const eventRows = db.prepare(`
+      SELECT id, session_id, voice_message_id, sequence, event_type,
+             widget_id, widget_type, payload, created_at
+      FROM voice_ui_events
+      WHERE session_id = ?
+      ORDER BY sequence
+    `).all(fixture.session_id) as Array<Record<string, unknown>>;
+    expect(eventRows).toEqual(fixture.ui_events.map((event) => ({
+      id: event.id,
+      session_id: event.session_id,
+      voice_message_id: event.voice_message_id,
+      sequence: event.sequence,
+      event_type: event.event_type,
+      widget_id: event.widget_id,
+      widget_type: event.widget_type,
+      payload: JSON.stringify(event.payload),
+      created_at: event.created_at,
+    })));
+  });
+
   it("snapshots editable voice UI rules when the voice session is created", async () => {
     const userRuleDir = path.join(tmpHome, "asset", "voice-agent");
     fs.mkdirSync(userRuleDir, { recursive: true });
@@ -599,11 +742,21 @@ describe("voice bootstrap routes", () => {
     const createdBody = await created.json() as {
       data: {
         session_id: string;
-        voice_ui_rules: { hash: string; prompt_path: string; sources: string[] };
+        voice_ui_rules: {
+          format_version: number;
+          content_kind: string;
+          hash: string;
+          prompt_path: string;
+          sources: string[];
+        };
       };
     };
     const firstSnapshot = fs.readFileSync(createdBody.data.voice_ui_rules.prompt_path, "utf8");
     expect(firstSnapshot).toContain("SESSION_RULE_A_DO_NOT_RELOAD");
+    expect(createdBody.data.voice_ui_rules).toMatchObject({
+      format_version: 1,
+      content_kind: "user_overlay",
+    });
     expect(createdBody.data.voice_ui_rules.hash).toMatch(/^[a-f0-9]{16}$/);
     expect(createdBody.data.voice_ui_rules.sources.some((source) => source.includes("ui-rules.md"))).toBe(true);
 
@@ -627,6 +780,125 @@ describe("voice bootstrap routes", () => {
     const secondSnapshot = fs.readFileSync(nextBody.data.voice_ui_rules.prompt_path, "utf8");
     expect(secondSnapshot).toContain("SESSION_RULE_B_NEW_SESSION_ONLY");
     expect(secondSnapshot).not.toContain("SESSION_RULE_A_DO_NOT_RELOAD");
+  });
+
+  it("migrates legacy full voice-rule snapshots without reviving the removed builtin Skill", async () => {
+    let seenPrompt = "";
+    _setHostCodexManagerAgentRunnerForTest(async (input) => {
+      seenPrompt = input.voice_ui_rules?.prompt ?? "";
+      return {
+        text: "规则已迁移。",
+        spoken_text: "规则已迁移。",
+        session_id: input.session_id || "host-session-legacy-rules",
+        run_id: null,
+        run_ids: [],
+        objective: { required: false, satisfied: true, tool_calls: [] },
+        tool_calls: [],
+        tool_results: [],
+        commentary_texts: [],
+        voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
+        worker_id: "host-codex",
+        container_name: null,
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5", reasoning_effort: "low" }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as {
+      data: { session_id: string; voice_ui_rules: { prompt_path: string } };
+    };
+    const legacyPrompt = [
+      "## Baseline Voice UI Rules",
+      "OLD_BASELINE",
+      "## Voice Generative UI Skill",
+      "OLD_TOPIC_OUTLINE_BYPASS_INSTRUCTION",
+      "## User Voice UI Rules",
+      "The following user rules are editable assets. Apply them as a voice-surface preference overlay unless they conflict with safety or truthful execution.",
+      "LEGACY_USER_OVERLAY_ONLY",
+    ].join("\n\n");
+    fs.writeFileSync(createdBody.data.voice_ui_rules.prompt_path, legacyPrompt, "utf8");
+    const row = getDb().prepare("SELECT data FROM voice_agent_sessions WHERE session_id = ?")
+      .get(createdBody.data.session_id) as { data: string };
+    const workspace = JSON.parse(row.data) as {
+      voice_ui_rules: Record<string, unknown> & { sources: string[] };
+    };
+    delete workspace.voice_ui_rules.format_version;
+    delete workspace.voice_ui_rules.content_kind;
+    workspace.voice_ui_rules.sources = ["baseline:builtin", "skill:builtin", "user:/legacy/ui-rules.md"];
+    getDb().prepare("UPDATE voice_agent_sessions SET data = ? WHERE session_id = ?")
+      .run(JSON.stringify(workspace), createdBody.data.session_id);
+
+    const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "继续。" }),
+    });
+    expect(turn.status).toBe(200);
+    expect(seenPrompt).toContain("LEGACY_USER_OVERLAY_ONLY");
+    expect(seenPrompt).not.toContain("OLD_TOPIC_OUTLINE_BYPASS_INSTRUCTION");
+    expect(fs.readFileSync(createdBody.data.voice_ui_rules.prompt_path, "utf8")).toBe("LEGACY_USER_OVERLAY_ONLY");
+  });
+
+  it("recovers an extracted user overlay after an interrupted legacy snapshot migration", async () => {
+    let seenPrompt = "";
+    _setHostCodexManagerAgentRunnerForTest(async (input) => {
+      seenPrompt = input.voice_ui_rules?.prompt ?? "";
+      return {
+        text: "规则已恢复。",
+        spoken_text: "规则已恢复。",
+        session_id: input.session_id || "host-session-interrupted-rules",
+        run_id: null,
+        run_ids: [],
+        objective: { required: false, satisfied: true, tool_calls: [] },
+        tool_calls: [],
+        tool_results: [],
+        commentary_texts: [],
+        voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
+        worker_id: "host-codex",
+        container_name: null,
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5", reasoning_effort: "low" }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as {
+      data: { session_id: string; voice_ui_rules: { prompt_path: string } };
+    };
+    fs.writeFileSync(createdBody.data.voice_ui_rules.prompt_path, "INTERRUPTED_USER_OVERLAY", "utf8");
+    const row = getDb().prepare("SELECT data FROM voice_agent_sessions WHERE session_id = ?")
+      .get(createdBody.data.session_id) as { data: string };
+    const workspace = JSON.parse(row.data) as { voice_ui_rules: Record<string, unknown> };
+    delete workspace.voice_ui_rules.format_version;
+    delete workspace.voice_ui_rules.content_kind;
+    getDb().prepare("UPDATE voice_agent_sessions SET data = ? WHERE session_id = ?")
+      .run(JSON.stringify(workspace), createdBody.data.session_id);
+
+    expect((await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "继续。" }),
+    })).status).toBe(200);
+    expect(seenPrompt).toContain("INTERRUPTED_USER_OVERLAY");
+    expect(fs.readFileSync(createdBody.data.voice_ui_rules.prompt_path, "utf8"))
+      .toBe("INTERRUPTED_USER_OVERLAY");
   });
 
   it("passes the selected project workspace to host Codex voice turns", async () => {
@@ -791,6 +1063,198 @@ describe("voice bootstrap routes", () => {
       session_id: createdBody.data.session_id,
       project_id: "p-stream",
     }));
+  });
+
+  it("passes only the selected persisted canvas Block into the next Manager turn", async () => {
+    let seenCanvas: HostCodexManagerAgentInput["canvas_context"];
+    _setHostCodexManagerAgentRunnerForTest(async (input) => {
+      seenCanvas = input.canvas_context;
+      return {
+        text: "已深入当前内容。",
+        spoken_text: "已深入当前内容。",
+        session_id: input.session_id || "host-session-canvas",
+        run_id: null,
+        run_ids: [],
+        objective: { required: false, satisfied: true, tool_calls: [] },
+        tool_calls: [],
+        tool_results: [],
+        commentary_texts: [],
+        voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
+        worker_id: "host-codex",
+        container_name: null,
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.5",
+        reasoning_effort: "low",
+        generative_ui_mode: "prefer",
+      }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    applyVoiceCanonicalProjectionPatch({
+      session_id: createdBody.data.session_id,
+      patch: {
+        base_revision: 0,
+        upsert: [{
+          ir_version: 1,
+          id: "com.homerail.core:ai-news",
+          kind: "com.homerail.core/generated_view",
+          kind_version: 1,
+          owner: { id: "com.homerail.core", version: "0.1.7" },
+          surface: "result",
+          importance: "primary",
+          content: { data: { items: [{ title: "News one" }, { title: "News two" }] } },
+          presentation: { density: "summary", canvas_size: "1x2" },
+          lifecycle: { persistence: "session" },
+          fallback: { title: "AI news", summary: "Two current items" },
+        }],
+        remove_ids: [],
+      },
+      created_at: "2026-07-13T00:00:00.000Z",
+    });
+
+    const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: "深入第二条",
+        selected_node_id: "com.homerail.core:ai-news",
+      }),
+    });
+
+    expect(turn.status).toBe(200);
+    expect(seenCanvas).toMatchObject({
+      selected_node_id: "com.homerail.core:ai-news",
+      nodes: [{
+        id: "com.homerail.core:ai-news",
+        selected: true,
+        content: { data: { items: [{ title: "News one" }, { title: "News two" }] } },
+      }],
+    });
+  });
+
+  it("removes a canonical generated-view Block returned by the Manager Agent", async () => {
+    _setHostCodexManagerAgentRunnerForTest(async (input) => ({
+      text: "临时卡已移除",
+      spoken_text: "临时卡已移除",
+      session_id: input.session_id || "host-session-remove-generated-view",
+      run_id: null,
+      run_ids: [],
+      objective: { required: false, satisfied: true, tool_calls: [] },
+      tool_calls: [{
+        id: "remove-1",
+        name: "remove_generated_view",
+        input: { id: "com.homerail.core:motion-check" },
+      }],
+      tool_results: [{ tool_use_id: "remove-1", content: "generated view queued for removal" }],
+      commentary_texts: [],
+      voice_surface: {
+        progress: null,
+        task_draft: null,
+        widgets: [],
+        remove_widget_ids: ["com.homerail.core:motion-check"],
+      },
+      worker_id: "host-codex",
+      container_name: null,
+    }));
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.5",
+        reasoning_effort: "low",
+        generative_ui_mode: "prefer",
+      }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    const scope = { type: "voice_session", id: createdBody.data.session_id } as const;
+    applyVoiceCanonicalProjectionPatch({
+      session_id: createdBody.data.session_id,
+      patch: {
+        base_revision: 0,
+        upsert: [{
+          ir_version: 1,
+          id: "com.homerail.core:motion-check",
+          kind: "com.homerail.core/generated_view",
+          kind_version: 1,
+          owner: { id: "com.homerail.core", version: "0.1.7" },
+          surface: "result",
+          importance: "secondary",
+          content: { data: { title: "Animation check" } },
+          presentation: { density: "glance", canvas_size: "1x1" },
+          lifecycle: { persistence: "session" },
+          fallback: { title: "Animation check", summary: "Temporary" },
+        }],
+        remove_ids: [],
+      },
+      created_at: "2026-07-13T00:00:00.000Z",
+    });
+
+    const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: "移除临时卡",
+        selected_node_id: "com.homerail.core:motion-check",
+      }),
+    });
+
+    expect(turn.status).toBe(200);
+    expect(persistentGenerativeUiDocumentService.findActiveForScope(scope, "canonical")).toMatchObject({
+      revision: 2,
+      nodes: [],
+    });
+  });
+
+  it("publishes and serves a standalone project artifact across requests", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-voice-artifact-project-"));
+    const project = createProject({ name: "Artifact project", workspace_path: projectRoot });
+    fs.writeFileSync(path.join(projectRoot, "story.html"), "<!doctype html><title>AI story</title><h1>AI story</h1>");
+    try {
+      const port = await listen(server);
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: project.project_id }),
+      });
+      const createdBody = await created.json() as { data: { session_id: string } };
+      const published = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/artifacts/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_path: "story.html", title: "AI story" }),
+      });
+      const publishedBody = await published.json() as { data: { artifact: { url: string; kind: string } } };
+      expect(published.status).toBe(200);
+      expect(publishedBody.data.artifact.kind).toBe("html");
+
+      const preview = await fetch(`${baseUrl}${publishedBody.data.artifact.url}`);
+      expect(preview.status).toBe(200);
+      expect(preview.headers.get("content-security-policy"))
+        .toBe("sandbox allow-scripts allow-forms allow-pointer-lock allow-popups");
+      expect(await preview.text()).toContain("<h1>AI story</h1>");
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it("streams an accepted workspace event before the Manager Agent turn finishes", async () => {

@@ -152,7 +152,7 @@ export class CodexAdapter implements AgentClient {
         isError = true;
       } else {
         try {
-          const result = await def.handler(input);
+          const result = await def.handler(input, { tool_call_id: toolUseId });
           const blocks = result.content as Array<{ type: string; text?: string }> | undefined;
           toolContent = blocks?.map((b) => b.text ?? "").join("") ?? JSON.stringify(result);
           isError = result.is_error === true;

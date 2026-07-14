@@ -7,6 +7,9 @@ import { MockProvider } from "./providers/mock-provider.js";
 import { DockerCliProvider } from "./providers/docker-cli-provider.js";
 import { DockerApiProvider } from "./providers/docker-api-provider.js";
 import type { ExecutionProvider } from "./providers/types.js";
+import { NodeRuntimeAttestationAuthority } from "./security/runtime-attestation-key.js";
+import { PluginRuntimeService } from "./runtime/plugin-runtime-service.js";
+import * as os from "node:os";
 
 // --- arg parsing (hand-rolled, no deps) ---
 
@@ -126,6 +129,48 @@ export function resolveProvider(name: string): ExecutionProvider {
   }
 }
 
+export function resolvePluginRuntimeService(
+  args: CliArgs,
+  provider: ExecutionProvider,
+  env: NodeJS.ProcessEnv = process.env,
+): PluginRuntimeService | undefined {
+  if (!args.capabilities.includes("plugin-runtime")) return undefined;
+  const packageRoots = (env.HOMERAIL_PLUGIN_RUNTIME_PACKAGE_ROOTS ?? "")
+    .split(path.delimiter)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  let imageAllowlist: Record<string, string>;
+  try {
+    const raw = JSON.parse(env.HOMERAIL_PLUGIN_RUNTIME_IMAGE_ALLOWLIST ?? "{}") as unknown;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not an object");
+    imageAllowlist = raw as Record<string, string>;
+  } catch {
+    throw new Error("HOMERAIL_PLUGIN_RUNTIME_IMAGE_ALLOWLIST must be a JSON object of image to sha256 digest");
+  }
+  const seccomp = env.HOMERAIL_PLUGIN_RUNTIME_SECCOMP_PROFILE?.trim();
+  if (!seccomp) throw new Error("HOMERAIL_PLUGIN_RUNTIME_SECCOMP_PROFILE is required for plugin-runtime capability");
+  const home = path.resolve(env.HOMERAIL_HOME?.trim() || path.join(os.homedir(), ".homerail"));
+  const authority = new NodeRuntimeAttestationAuthority({
+    node_id: args.nodeId,
+    ...(env.HOMERAIL_NODE_ATTESTATION_KEY_FILE?.trim()
+      ? { key_file: env.HOMERAIL_NODE_ATTESTATION_KEY_FILE.trim() }
+      : { env }),
+  });
+  const list = (name: string) => (env[name] ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+  return new PluginRuntimeService({
+    node_id: args.nodeId,
+    provider,
+    authority,
+    data_root: path.join(home, "node-runtime"),
+    package_roots: packageRoots,
+    image_allowlist: imageAllowlist,
+    seccomp_profile: seccomp,
+    allowed_devices: list("HOMERAIL_PLUGIN_RUNTIME_ALLOWED_DEVICES"),
+    allowed_gpus: list("HOMERAIL_PLUGIN_RUNTIME_ALLOWED_GPUS"),
+    ...(env.HOMERAIL_PLUGIN_RUNTIME_RUNNER?.trim() ? { runtime_runner: env.HOMERAIL_PLUGIN_RUNTIME_RUNNER.trim() } : {}),
+  });
+}
+
 // --- main ---
 
 async function main(): Promise<void> {
@@ -145,6 +190,7 @@ async function main(): Promise<void> {
   }
 
   const provider = resolveProvider(args.provider);
+  const pluginRuntime = resolvePluginRuntimeService(args, provider);
 
   const client = createNodeClient({
     managerUrl: args.managerUrl,
@@ -152,6 +198,7 @@ async function main(): Promise<void> {
     nodeId: args.nodeId,
     provider,
     capabilities: args.capabilities,
+    pluginRuntime,
     token: args.token,
     allowInsecureRemote: args.allowInsecureRemoteWs,
   });

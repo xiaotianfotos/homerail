@@ -6,6 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ensureDefaultWorkspacePath, getDataRoot, getHomerailHome } from "../config/env.js";
 import { getProject } from "../persistence/projects-changes.js";
+import { getManagerAgentTurnEnvelopeAuthority } from "./manager-agent-turn-envelope.js";
 
 export interface HostShellManagerAgentOptions {
   managerRestUrl: string | (() => string);
@@ -52,6 +53,15 @@ const HOST_AGENT_PORT_SPAN = 5000;
 
 const running = new Map<string, RunningHostShellProcess>();
 const starting = new Map<string, Promise<HostShellManagerAgent>>();
+
+export function managerAgentWorkerControlEnv(
+  source: NodeJS.ProcessEnv | Record<string, string> = process.env,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...source };
+  delete env.HOMERAIL_MANAGER_ADMIN_TOKEN;
+  delete env.HOMERAIL_PLUGIN_CAPABILITY_SECRET;
+  return env;
+}
 
 function canonicalProjectId(projectId?: string): string {
   const trimmed = (projectId ?? "").trim();
@@ -395,6 +405,7 @@ async function ensureHostShellManagerAgentInternal(
   const url = baseUrl(projectId);
   const stateFile = runtimeStatePath(projectId);
   const env: Record<string, string> = {
+    ...managerAgentWorkerControlEnv(options.env ?? {}) as Record<string, string>,
     MANAGER_AGENT_MODE: "1",
     MANAGER_AGENT_PORT: String(hostPort(projectId)),
     HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT: "host_shell",
@@ -405,7 +416,7 @@ async function ensureHostShellManagerAgentInternal(
     HOMERAIL_HOME: getHomerailHome(),
     HOMERAIL_MANAGER_AGENT_SHELL: diagnostics.shell_path,
     SHELL: diagnostics.shell_path,
-    ...(options.env ?? {}),
+    ...getManagerAgentTurnEnvelopeAuthority().workerEnvironment(),
   };
   const fingerprint = hostFingerprint({
     managerRestUrl: resolvedManagerRestUrl,
@@ -474,7 +485,7 @@ async function ensureHostShellManagerAgentInternal(
     shell: false,
     stdio: ["ignore", out, err],
     env: {
-      ...process.env,
+      ...managerAgentWorkerControlEnv(process.env),
       ...env,
       PATH: enrichPathForGitBash(diagnostics.shell_path, process.env),
     },
@@ -567,7 +578,10 @@ export async function forwardChatToHostShellManagerAgent(
   const res = await fetch(`${agent.baseUrl}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(getManagerAgentTurnEnvelopeAuthority().seal({
+      payload,
+      target: { runtime_placement: "host_shell", worker_id: agent.workerId },
+    })),
     signal: AbortSignal.timeout(300_000),
   });
   const text = await res.text();

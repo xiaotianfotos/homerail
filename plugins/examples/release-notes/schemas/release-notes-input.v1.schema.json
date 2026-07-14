@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 28,
+      "maxLength": 256
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "loading",
+        "empty",
+        "partial",
+        "success",
+        "error",
+        "stale"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "notice": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "completion_percent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "changes": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 800
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "added",
+              "changed",
+              "fixed",
+              "security",
+              "deprecated"
+            ]
+          }
+        },
+        "required": [
+          "title",
+          "category"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "resources": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "uri": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "label",
+          "uri"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "version",
+    "lifecycle_state",
+    "completion_percent"
+  ],
+  "additionalProperties": false
+}

@@ -17,6 +17,7 @@ import {
   stopVoiceMonitor,
   updateVoiceAgentConfig,
   type CodexModel,
+  type GenerativeUiStreamEventV1,
   type VoiceAgentConfig,
   type VoiceConversationMessage,
   type VoiceDebugEvent,
@@ -30,6 +31,16 @@ import VoiceSessionProjectSidebar from '@/components/agent/VoiceSessionProjectSi
 import AgentModeTopBar from '@/components/agent/AgentModeTopBar.vue'
 import DagResourceStatusPill from '@/components/agent/DagResourceStatusPill.vue'
 import VoiceDynamicWidget from '@/components/agent/VoiceDynamicWidget.vue'
+import {
+  resolveVoiceSessionProjectRestore,
+  VoiceSessionTransitionGuard,
+} from '@/agent/voice-session-restore'
+import GenerativeUiCanonicalSurface from '@/components/generative-ui/GenerativeUiCanonicalSurface.vue'
+import GenerativeUiShadowPreview from '@/components/generative-ui/GenerativeUiShadowPreview.vue'
+import {
+  resolveVoiceGenerativeUiPresentation,
+  showLegacyWidgetAlongsideCanonical,
+} from '@/generative-ui/production-mode'
 import {
   isCodexModelUnavailable,
   resolveCodexModelOptions,
@@ -136,6 +147,8 @@ const modelConfigButtonLabel = computed(() =>
 )
 const devOnboardingEntryVisible =
   import.meta.env.DEV && flagEnabled(import.meta.env.VITE_HOMERAIL_DEV_ONBOARDING_ENTRY)
+const generativeUiShadowPreviewRequested =
+  import.meta.env.DEV && flagEnabled(import.meta.env.VITE_HOMERAIL_GENERATIVE_UI_SHADOW_PREVIEW)
 const props = withDefaults(
   defineProps<{
     voiceOnly?: boolean
@@ -168,8 +181,27 @@ type VoiceSessionSidebarGamepadControls = {
   ensureGamepadFocus: () => void
   refresh: () => Promise<void>
 }
+type GenerativeUiShadowPreviewControls = {
+  acceptStreamEvent: (event: GenerativeUiStreamEventV1) => Promise<void>
+  refresh: () => Promise<void>
+}
+type GenerativeUiCanonicalSurfaceControls = {
+  refresh: () => Promise<void>
+}
 
 const workspace = ref<VoiceWorkspace | null>(null)
+const generativeUiCanonicalAvailable = ref(false)
+const generativeUiCanonicalResolved = ref(false)
+const generativeUiCanonicalNodeIds = ref<Set<string>>(new Set())
+const selectedGenerativeUiNodeId = ref('')
+const sessionTransitioning = ref(true)
+const voiceSessionTransitions = new VoiceSessionTransitionGuard()
+const generativeUiPresentation = computed(() => resolveVoiceGenerativeUiPresentation({
+  mode: workspace.value?.generative_ui_mode,
+  canonical_available: generativeUiCanonicalAvailable.value,
+  shadow_preview_requested: generativeUiShadowPreviewRequested,
+}))
+const generativeUiShadowPreviewActive = computed(() => generativeUiPresentation.value.show_shadow)
 const loading = ref(false)
 const speaking = ref(false)
 const listening = ref(false)
@@ -238,9 +270,62 @@ const cockpitRoot = ref<HTMLElement | null>(null)
 const modelMenuRef = ref<HTMLElement | null>(null)
 const voiceSidebarRef = ref<VoiceSessionSidebarGamepadControls | null>(null)
 const voiceCardGridRef = ref<HTMLElement | null>(null)
+const generativeUiShadowPreviewRef = ref<GenerativeUiShadowPreviewControls | null>(null)
+const generativeUiCanonicalSurfaceRef = ref<GenerativeUiCanonicalSurfaceControls | null>(null)
 const conversationThreadRef = ref<HTMLElement | null>(null)
 const noSleepVideo = ref<HTMLVideoElement | null>(null)
 const ttsAudioElement = ref<HTMLAudioElement | null>(null)
+
+watch(
+  [
+    () => workspace.value?.session_id,
+    () => workspace.value?.generative_ui_mode,
+  ],
+  () => {
+    generativeUiCanonicalAvailable.value = false
+    generativeUiCanonicalResolved.value = false
+    generativeUiCanonicalNodeIds.value = new Set()
+    selectedGenerativeUiNodeId.value = ''
+  },
+)
+
+function onGenerativeUiCanonicalAvailability(payload: {
+  available: boolean
+  node_ids: string[]
+  loading?: boolean
+}): void {
+  if (payload.loading) {
+    generativeUiCanonicalResolved.value = false
+    generativeUiCanonicalAvailable.value = false
+    generativeUiCanonicalNodeIds.value = new Set()
+    return
+  }
+  generativeUiCanonicalResolved.value = true
+  generativeUiCanonicalAvailable.value = payload.available
+  generativeUiCanonicalNodeIds.value = new Set(payload.node_ids)
+  if (selectedGenerativeUiNodeId.value && !generativeUiCanonicalNodeIds.value.has(selectedGenerativeUiNodeId.value)) {
+    selectedGenerativeUiNodeId.value = ''
+  }
+}
+
+function beginVoiceSessionTransition(): number {
+  const generation = voiceSessionTransitions.begin()
+  sessionTransitioning.value = true
+  generativeUiCanonicalResolved.value = false
+  generativeUiCanonicalAvailable.value = false
+  generativeUiCanonicalNodeIds.value = new Set()
+  selectedGenerativeUiNodeId.value = ''
+  workspace.value = null
+  return generation
+}
+
+function completeVoiceSessionTransition(generation: number): void {
+  if (voiceSessionTransitions.isCurrent(generation)) sessionTransitioning.value = false
+}
+
+function selectGenerativeUiNode(payload: { node_id: string }): void {
+  selectedGenerativeUiNodeId.value = payload.node_id
+}
 
 let mediaStream: MediaStream | null = null
 let nativeVoiceCaptureSession: NativeVoiceCaptureSession | null = null
@@ -278,6 +363,8 @@ let lastSubmittedVoiceTranscriptKey = ''
 let lastSubmittedVoiceTranscriptAt = 0
 let managerStatusTimer = 0
 let voiceStatusUnsub: (() => void) | null = null
+let pluginRegistryUnsub: (() => void) | null = null
+let pluginRegistryStateUnsub: (() => void) | null = null
 let statusFocusApplied = false
 let fullscreenRetryHandler: (() => void) | null = null
 let widgetHighlightTimer = 0
@@ -348,7 +435,12 @@ const displayWidgets = computed<VoiceWidget[]>(() => {
         'manager-agent-blocker'
       ].includes(widget.id) &&
       !isDuplicateTaskDraftWidget(widget) &&
-      widgetUiState(widget) !== 'hidden'
+      widgetUiState(widget) !== 'hidden' &&
+      showLegacyWidgetAlongsideCanonical(
+        widget.id,
+        generativeUiPresentation.value,
+        generativeUiCanonicalNodeIds.value,
+      )
   )
 })
 const minimizedWidgets = computed(() => displayWidgets.value.filter(isWidgetMinimized))
@@ -671,6 +763,12 @@ const workspaceExecutionProgressText = computed(() => {
 })
 const executionCardVisible = computed(() =>
   Boolean(primaryExecutionWidget.value || workspace.value?.manager_run_id)
+)
+const canonicalOwnsCanvasScroll = computed(() =>
+  generativeUiPresentation.value.show_canonical
+  && !taskDraft.value
+  && canvasWidgets.value.length === 0
+  && !executionCardVisible.value
 )
 const executionCardTitle = computed(() => primaryExecutionWidget.value?.title || t('voice.canvas.status'))
 const executionCardStatus = computed(
@@ -1088,6 +1186,14 @@ onUnmounted(() => {
     voiceStatusUnsub()
     voiceStatusUnsub = null
   }
+  if (pluginRegistryUnsub) {
+    pluginRegistryUnsub()
+    pluginRegistryUnsub = null
+  }
+  if (pluginRegistryStateUnsub) {
+    pluginRegistryStateUnsub()
+    pluginRegistryStateUnsub = null
+  }
   voiceWs.disconnect()
   if (widgetHighlightTimer) window.clearTimeout(widgetHighlightTimer)
   window.removeEventListener('resize', updateViewportSize)
@@ -1134,14 +1240,18 @@ function uninstallCodexVoiceTextBridge(): void {
 }
 
 async function startSession(): Promise<void> {
+  const previousWorkspace = workspace.value
+  const generation = beginVoiceSessionTransition()
   loading.value = true
   error.value = ''
   try {
     const restored = await restoreLatestSession()
+    if (!voiceSessionTransitions.isCurrent(generation)) return
     if (restored) {
       workspace.value = restored
     } else {
       const res = await createVoiceSession(store.managerProjectId)
+      if (!voiceSessionTransitions.isCurrent(generation)) return
       workspace.value = res.data
       // 新建的会话成为当前会话，更新服务端指针。
       void setCurrentVoiceSession(workspace.value?.session_id ?? null)
@@ -1151,30 +1261,50 @@ async function startSession(): Promise<void> {
     lastUserTranscript.value = ''
     resetSubmittedTranscriptClear()
     statusFocusApplied = false
+    completeVoiceSessionTransition(generation)
     await loadVoiceSessionShortcuts()
     void voiceSidebarRef.value?.refresh()
   } catch (err: any) {
-    error.value = err?.message || t('voice.errors.sessionStart')
+    if (voiceSessionTransitions.isCurrent(generation)) {
+      workspace.value = previousWorkspace
+      completeVoiceSessionTransition(generation)
+      error.value = err?.message || t('voice.errors.sessionStart')
+    }
   } finally {
-    loading.value = false
+    if (voiceSessionTransitions.isCurrent(generation)) loading.value = false
   }
 }
 
 async function createFreshVoiceSession(): Promise<void> {
+  const previousWorkspace = workspace.value
+  const generation = beginVoiceSessionTransition()
   loading.value = true
   error.value = ''
   try {
-    const reusableSessionId = await findReusableEmptyVoiceSessionId()
+    const reusableSessionId = await findReusableEmptyVoiceSessionId(previousWorkspace)
+    if (!voiceSessionTransitions.isCurrent(generation)) return
     if (reusableSessionId) {
-      if (workspace.value?.session_id !== reusableSessionId) {
-        await handleVoiceSessionSelected(reusableSessionId)
-      }
+      const nextWorkspace = previousWorkspace?.session_id === reusableSessionId
+        ? previousWorkspace
+        : (await getVoiceSession(reusableSessionId)).data
+      if (!voiceSessionTransitions.isCurrent(generation)) return
+      workspace.value = nextWorkspace
+      rememberSpokenAssistantMessages(workspace.value)
+      optimisticConversationItems.value = []
+      liveTranscript.value = ''
+      lastUserTranscript.value = ''
+      spokenText.value = ''
+      resetSubmittedTranscriptClear()
+      statusFocusApplied = false
+      completeVoiceSessionTransition(generation)
+      void setCurrentVoiceSession(reusableSessionId)
       await loadVoiceSessionShortcuts()
       void voiceSidebarRef.value?.refresh()
       void nextTick(() => voiceSidebarRef.value?.ensureGamepadFocus())
       return
     }
     const res = await createVoiceSession(store.managerProjectId)
+    if (!voiceSessionTransitions.isCurrent(generation)) return
     workspace.value = res.data
     rememberSpokenAssistantMessages(workspace.value)
     optimisticConversationItems.value = []
@@ -1183,19 +1313,25 @@ async function createFreshVoiceSession(): Promise<void> {
     spokenText.value = ''
     resetSubmittedTranscriptClear()
     statusFocusApplied = false
+    completeVoiceSessionTransition(generation)
+    void setCurrentVoiceSession(workspace.value?.session_id ?? null)
     await loadVoiceSessionShortcuts()
     void voiceSidebarRef.value?.refresh()
     void nextTick(() => voiceSidebarRef.value?.ensureGamepadFocus())
   } catch (err: any) {
-    error.value = err?.message || t('voice.errors.sessionCreate')
+    if (voiceSessionTransitions.isCurrent(generation)) {
+      workspace.value = previousWorkspace
+      completeVoiceSessionTransition(generation)
+      error.value = err?.message || t('voice.errors.sessionCreate')
+    }
   } finally {
-    loading.value = false
+    if (voiceSessionTransitions.isCurrent(generation)) loading.value = false
   }
 }
 
-async function findReusableEmptyVoiceSessionId(): Promise<string | null> {
-  if (workspace.value && workspaceBelongsToCurrentProject(workspace.value) && isUnusedVoiceWorkspace(workspace.value)) {
-    return workspace.value.session_id
+async function findReusableEmptyVoiceSessionId(currentWorkspace = workspace.value): Promise<string | null> {
+  if (currentWorkspace && workspaceBelongsToCurrentProject(currentWorkspace) && isUnusedVoiceWorkspace(currentWorkspace)) {
+    return currentWorkspace.session_id
   }
   try {
     const res = await listVoiceSessions(store.managerProjectId, 50)
@@ -1242,33 +1378,43 @@ async function handleVoiceProjectSelected(_projectId: string): Promise<void> {
 }
 
 async function handleVoiceSessionSelected(sessionId: string): Promise<void> {
+  if (workspace.value?.session_id === sessionId) {
+    void setCurrentVoiceSession(sessionId)
+    return
+  }
+  const previousWorkspace = workspace.value
   // 切换 session 时停掉当前 session 的 TTS、语音采集和对话流，
   // 只对当前选中 session 发声，避免旧 turn 的回调污染新 workspace。
-  if (workspace.value?.session_id !== sessionId) {
-    cancelLocalSpeech('session_switch')
-    if (listening.value) stopVoiceCapture()
-    voiceTurnAbort?.abort()
-    voiceTurnAbort = null
-    loading.value = false
-  }
+  cancelLocalSpeech('session_switch')
+  if (listening.value) stopVoiceCapture()
+  voiceTurnAbort?.abort()
+  voiceTurnAbort = null
+  loading.value = false
   liveTranscript.value = ''
   lastUserTranscript.value = ''
   resetSubmittedTranscriptClear()
   optimisticConversationItems.value = []
   statusFocusApplied = false
+  const generation = beginVoiceSessionTransition()
   loading.value = true
   try {
     const res = await getVoiceSession(sessionId)
+    if (!voiceSessionTransitions.isCurrent(generation)) return
     workspace.value = res.data
     rememberSpokenAssistantMessages(workspace.value)
     const runId = workspace.value?.manager_run_id
     if (runId) store.setRunId(runId)
+    completeVoiceSessionTransition(generation)
     // 更新服务端当前 session 指针，让其他设备刷新后看到同一个 session。
     void setCurrentVoiceSession(sessionId)
   } catch (err: any) {
-    error.value = err?.message || t('voice.errors.sessionRead')
+    if (voiceSessionTransitions.isCurrent(generation)) {
+      workspace.value = previousWorkspace
+      completeVoiceSessionTransition(generation)
+      error.value = err?.message || t('voice.errors.sessionRead')
+    }
   } finally {
-    loading.value = false
+    if (voiceSessionTransitions.isCurrent(generation)) loading.value = false
   }
 }
 
@@ -1302,6 +1448,12 @@ async function stopAgentLoop(): Promise<void> {
 
 async function restoreLatestSession(): Promise<VoiceWorkspace | null> {
   const projectId = store.managerProjectId || null
+  const acceptWorkspace = (restored: VoiceWorkspace): VoiceWorkspace | null => {
+    const decision = resolveVoiceSessionProjectRestore(projectId, restored.project_id)
+    if (!decision.accepted) return null
+    if (!projectId && decision.projectId) store.setManagerProjectId(decision.projectId)
+    return restored
+  }
   try {
     // 单用户系统：当前 session 指针是服务端真相源。优先读它。
     const pointerRes = await getCurrentVoiceSession()
@@ -1309,7 +1461,8 @@ async function restoreLatestSession(): Promise<VoiceWorkspace | null> {
     if (pointerId) {
       const res = await getVoiceSession(pointerId)
       const restored = res.data
-      if ((restored.project_id || null) === projectId) return restored
+      const accepted = acceptWorkspace(restored)
+      if (accepted) return accepted
     }
   } catch {
     // 指针端点不可用时 fallback 到最近会话。
@@ -1320,10 +1473,7 @@ async function restoreLatestSession(): Promise<VoiceWorkspace | null> {
     if (!sessionId) return null
     const res = await getVoiceSession(sessionId)
     const restored = res.data
-    if ((restored.project_id || null) !== projectId) {
-      return null
-    }
-    return restored
+    return acceptWorkspace(restored)
   } catch {
     return null
   }
@@ -1347,6 +1497,22 @@ function setupVoiceStatusSubscription(): void {
     voiceWs.connect()
     voiceStatusUnsub = voiceWs.on<unknown>('voice:session_status', () => {
       void loadVoiceSessionShortcuts()
+    })
+    pluginRegistryUnsub = voiceWs.on<unknown>('plugin:registry_changed', () => {
+      if (generativeUiShadowPreviewActive.value) {
+        void generativeUiShadowPreviewRef.value?.refresh()
+      }
+      if (generativeUiPresentation.value.request_canonical) {
+        void generativeUiCanonicalSurfaceRef.value?.refresh()
+      }
+    })
+    pluginRegistryStateUnsub = voiceWs.onStateChange((state) => {
+      if (state === 'connected' && generativeUiShadowPreviewActive.value) {
+        void generativeUiShadowPreviewRef.value?.refresh()
+      }
+      if (state === 'connected' && generativeUiPresentation.value.request_canonical) {
+        void generativeUiCanonicalSurfaceRef.value?.refresh()
+      }
     })
   } catch {
     // WebSocket 不可用时降级到纯轮询，不影响功能。
@@ -2665,6 +2831,10 @@ async function handleVoiceStreamEvent(
   event: VoiceStreamEvent,
   optimisticId?: string
 ): Promise<'confirm' | null> {
+  if (event.type === 'generative_ui') {
+    await generativeUiShadowPreviewRef.value?.acceptStreamEvent(event as GenerativeUiStreamEventV1)
+    return null
+  }
   if (event.type === 'workspace') {
     applyStreamWorkspace((event as { workspace?: VoiceWorkspace }).workspace, optimisticId)
     return null
@@ -2729,6 +2899,7 @@ async function handleVoiceStreamEvent(
 
 async function sendText(text: string, optimisticItemId?: string): Promise<void> {
   if (!workspace.value || !text || loading.value) return
+  const selectedNodeId = selectedGenerativeUiNodeId.value || null
   if (listening.value) closeVoiceInputAfterSubmit()
   // 若调用方已提前 append 了 optimistic 消息（如文字输入为追求即时反馈），
   // 直接复用其 id；否则在这里补一条。
@@ -2746,7 +2917,7 @@ async function sendText(text: string, optimisticItemId?: string): Promise<void> 
   try {
     await streamVoiceTurn(workspace.value.session_id, text, store.managerProjectId, async event => {
       suggestedAction = (await handleVoiceStreamEvent(event, optimisticId)) || suggestedAction
-    }, turnSignal)
+    }, turnSignal, selectedNodeId)
     if (suggestedAction === 'confirm') {
       loading.value = false
       await submitDraft(true)
@@ -4733,7 +4904,7 @@ function summarizeTask(value: string): string {
           >
             {{ processingText }}
           </div>
-          <div v-if="minimizedWidgets.length" class="voice-widget-shelf">
+          <div v-if="minimizedWidgets.length && generativeUiPresentation.show_legacy" class="voice-widget-shelf">
             <div
               v-for="widget in minimizedWidgets"
               :key="widget.id"
@@ -4746,15 +4917,45 @@ function summarizeTask(value: string): string {
           </div>
 
           <div class="voice-stage__content min-h-0 flex-1">
+            <GenerativeUiShadowPreview
+              v-if="generativeUiShadowPreviewActive && workspace"
+              ref="generativeUiShadowPreviewRef"
+              :session-id="workspace.session_id"
+              :refresh-token="workspace.updated_at"
+              :active-run-id="workspace.manager_run_id"
+              @open-preview="openWidgetPreview"
+            />
             <div
+              v-if="generativeUiPresentation.show_legacy"
               ref="voiceCardGridRef"
               class="voice-card-grid"
               :class="{
                 'voice-card-grid--status-active': statusFocusActive,
-                'voice-card-grid--deck-active': deckPreviewFocusActive
+                'voice-card-grid--deck-active': deckPreviewFocusActive,
+                'voice-card-grid--canonical-active': generativeUiPresentation.show_canonical,
+                'voice-card-grid--canonical-scroll-owner': canonicalOwnsCanvasScroll
               }"
             >
-              <div v-if="!hasVoiceStageContent" class="voice-empty-state">
+              <GenerativeUiCanonicalSurface
+                v-if="generativeUiPresentation.request_canonical && workspace"
+                ref="generativeUiCanonicalSurfaceRef"
+                :session-id="workspace.session_id"
+                :refresh-token="workspace.updated_at"
+                :active-run-id="workspace.manager_run_id"
+                :selected-node-id="selectedGenerativeUiNodeId"
+                @availability="onGenerativeUiCanonicalAvailability"
+                @open-preview="openWidgetPreview"
+                @select-node="selectGenerativeUiNode"
+              />
+              <div
+                v-if="
+                  !sessionTransitioning
+                  && !hasVoiceStageContent
+                  && !generativeUiPresentation.show_canonical
+                  && (!generativeUiPresentation.request_canonical || generativeUiCanonicalResolved)
+                "
+                class="voice-empty-state"
+              >
                 <div class="voice-empty-state__kicker">{{ t('voice.canvas.dynamicCanvas') }}</div>
                 <h1>{{ t('voice.canvas.emptyTitle') }}</h1>
                 <p>{{ t('voice.canvas.emptyDescription') }}</p>
@@ -6362,12 +6563,33 @@ function summarizeTask(value: string): string {
   -webkit-overflow-scrolling: touch;
 }
 
+.voice-card-grid > :deep(.generative-ui-canonical-surface) {
+  grid-column: span 3;
+}
+
+.voice-cockpit--phone-portrait .voice-card-grid > :deep(.generative-ui-canonical-surface) {
+  grid-column: span 1;
+}
+
 .voice-card-grid--status-active {
   grid-template-columns: none;
 }
 
 .voice-card-grid--deck-active {
   grid-template-rows: repeat(3, minmax(0, 1fr));
+}
+
+.voice-card-grid--canonical-scroll-owner {
+  overflow-x: clip;
+  scroll-snap-type: none;
+}
+
+.voice-card-grid--canonical-active:not(.voice-card-grid--canonical-scroll-owner) {
+  scrollbar-width: none;
+}
+
+.voice-card-grid--canonical-active:not(.voice-card-grid--canonical-scroll-owner)::-webkit-scrollbar {
+  display: none;
 }
 
 .voice-card-grid--status-active .voice-task-card {
@@ -8227,6 +8449,11 @@ function summarizeTask(value: string): string {
 }
 
 @media (max-width: 1024px) {
+  .voice-cockpit:not(.voice-cockpit--phone-landscape):not(.voice-cockpit--phone-portrait)
+    .voice-card-grid > :deep(.generative-ui-canonical-surface) {
+    grid-column: span 1;
+  }
+
   .voice-cockpit:not(.voice-cockpit--phone-landscape):not(.voice-cockpit--phone-portrait)
     .voice-card-grid {
     grid-template-columns: 1fr;

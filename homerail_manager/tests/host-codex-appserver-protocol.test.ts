@@ -4,6 +4,7 @@ import {
   _buildCodexAppServerArgsForTest,
   _buildCodexThreadStartParamsForTest,
   _buildCodexTurnStartParamsForTest,
+  _mapCodexAppServerNotificationForTest,
 } from "../src/server/host-codex-manager-agent.js";
 
 describe("Host Codex app-server protocol params", () => {
@@ -21,6 +22,7 @@ describe("Host Codex app-server protocol params", () => {
       model: "gpt-5.5",
       config: { model_reasoning_effort: "ultra" },
       serviceTier: null,
+      tools: { web_search: { context_size: "medium" } },
     });
     expect(params).not.toHaveProperty("modelReasoningEffort");
   });
@@ -47,5 +49,31 @@ describe("Host Codex app-server protocol params", () => {
 
   it("starts app-server without a hidden Fast service-tier override", () => {
     expect(_buildCodexAppServerArgsForTest()).toEqual(["app-server"]);
+  });
+
+  it("maps built-in web search activity to tool events without synthetic chat commentary", () => {
+    expect(_mapCodexAppServerNotificationForTest("item/started", {
+      item: {
+        type: "webSearch",
+        id: "search-1",
+        query: "latest product release notes",
+      },
+    })).toEqual([{
+      type: "tool_use",
+      id: "search-1",
+      name: "web_search",
+      input: {},
+    }]);
+    expect(_mapCodexAppServerNotificationForTest("item/completed", {
+      item: {
+        type: "webSearch",
+        id: "search-1",
+        query: "latest product release notes",
+      },
+    })).toEqual([{
+      type: "tool_result",
+      tool_use_id: "search-1",
+      content: "Web search completed.",
+    }]);
   });
 });

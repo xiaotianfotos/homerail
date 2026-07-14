@@ -1,0 +1,93 @@
+{
+  "manifest_version": 1,
+  "id": "com.homerail.video-cover",
+  "version": "1.0.0",
+  "name": "Video Cover",
+  "publisher": {
+    "id": "com.homerail",
+    "name": "HomeRail"
+  },
+  "license": "MIT",
+  "compatibility": {
+    "homerail": {
+      "min": "0.1.0",
+      "max_exclusive": "0.2.0"
+    },
+    "plugin_api": [1],
+    "ui_ir": [1],
+    "renderer_api": [1]
+  },
+  "capabilities": [
+    {
+      "id": "generate-video-cover",
+      "summary": "Generate a video cover as content-addressed PNG and JSON artifacts.",
+      "intents": [
+        "create a cover for this video",
+        "generate a thumbnail from this prompt"
+      ],
+      "tags": ["artifact", "gpu", "video-cover"],
+      "modalities": ["voice", "text", "touch"],
+      "required_inputs": ["prompt"],
+      "skill": "generate-video-cover",
+      "tools": ["generate_cover"],
+      "workflows": [],
+      "actions": []
+    }
+  ],
+  "skills": [
+    {
+      "id": "generate-video-cover",
+      "path": "skills/generate-video-cover/SKILL.md",
+      "description": "Generate a deterministic video cover through the sandboxed GPU runtime and Artifact Broker."
+    }
+  ],
+  "schemas": [
+    {
+      "id": "video-cover-input-v1",
+      "file": "schemas/video-cover-input.v1.schema.json"
+    },
+    {
+      "id": "video-cover-output-v1",
+      "file": "schemas/video-cover-output.v1.schema.json"
+    }
+  ],
+  "kinds": [],
+  "tools": [
+    {
+      "id": "generate_cover",
+      "description": "Generate PNG and JSON cover artifacts; never returns or accepts a host filesystem path.",
+      "exposure": ["agent"],
+      "input_schema": "video-cover-input-v1",
+      "output_schema": "video-cover-output-v1",
+      "effect": "write",
+      "permissions": ["artifact.write", "gpu.use"],
+      "confirmation": "policy",
+      "handler": {
+        "type": "runtime",
+        "method": "generate_video_cover"
+      }
+    }
+  ],
+  "workflows": [],
+  "renderers": [],
+  "actions": [],
+  "runtime": {
+    "trust": "sandboxed_runtime",
+    "plugin_api": 1,
+    "entrypoint": {
+      "file": "runtime/fake-gpu-runtime.mjs",
+      "args": ["--stdio"]
+    }
+  },
+  "permissions": {
+    "required": [
+      { "permission": "artifact.write" },
+      { "permission": "gpu.use" }
+    ],
+    "optional": []
+  },
+  "state": {
+    "schema_version": 1,
+    "migrations": []
+  }
+}

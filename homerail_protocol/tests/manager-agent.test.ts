@@ -216,6 +216,8 @@ describe("Manager Agent harness contract", () => {
     expect(prompt).toContain("Voice UI rules hash: abc123");
     expect(prompt).toContain("VOICE_RULES");
     expect(prompt).toContain("Use tool-created widgets for generated UI");
+    expect(prompt).toContain("Commentary is spoken too");
+    expect(prompt).toContain("never narrate Skill loading, tool names, read-only checks, rendering, or canvas updates");
   });
 
   it("renders HomeRail skill metadata and the pattern-first DAG workflow", () => {
@@ -240,6 +242,59 @@ describe("Manager Agent harness contract", () => {
     expect(prompt).toContain("custom-operator: Apply local operations policy. [home]");
     expect(prompt).toContain("call read_skill before acting");
     expect(prompt).toContain("instantiate_dag_pattern and create_and_run");
+  });
+
+  it("embeds already-selected Skill bodies without asking the Agent to reload them", () => {
+    const prompt = buildManagerAgentSystemPrompt({
+      skills: [{
+        id: "com.homerail.core:voice-generative-ui",
+        description: "Build structured voice UI.",
+        source: "plugin",
+        content: "Use the bound Core Tool once and require a committed result.",
+      }],
+    });
+
+    expect(prompt).toContain("com.homerail.core:voice-generative-ui: Build structured voice UI. [plugin] [already loaded]");
+    expect(prompt).toContain("## Loaded HomeRail Skill: com.homerail.core:voice-generative-ui");
+    expect(prompt).toContain("Use the bound Core Tool once and require a committed result.");
+    expect(prompt).toContain("do not call read_skill again");
+  });
+
+  it("advertises validated Skill visual templates without embedding a model-authored layout", () => {
+    const prompt = buildManagerAgentSystemPrompt({
+      responseMode: "voice",
+      skills: [{
+        id: "palquery",
+        description: "Query Palworld data.",
+        source: "home",
+        content: "Use verified query results.",
+        view_templates: [{
+          id: "pal-profile",
+          description: "Compact profile with a real icon.",
+          data_schema: {
+            type: "object",
+            properties: { title: { type: "string", maxLength: 200 } },
+            required: ["title"],
+            additionalProperties: false,
+          },
+          a2ui: {
+            version: "v1.0",
+            catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
+            components: [{ id: "root", component: "Text", text: { path: "/data/title" } }],
+          },
+          defaults: {
+            surface: "result",
+            importance: "primary",
+            density: "summary",
+            canvas_size: "1x1",
+            persistence: "session",
+          },
+        }],
+      }],
+    });
+
+    expect(prompt).toContain("Validated Skill visual templates are available as skill_view_* Tools");
+    expect(prompt).toContain("pal-profile: Compact profile with a real icon.");
   });
 
   it("describes host-shell manager agents separately from containers", () => {

@@ -27,12 +27,21 @@ import {
 } from "./manager-agent-config.js";
 import { managerAgentReadinessRoutesHandler } from "./manager-agent-readiness.js";
 import { setupEventWebSocket } from "./events-websocket.js";
+import { generativeUiRoutesHandler } from "./generative-ui.js";
+import { pluginRoutesHandler } from "./plugins.js";
+import { pluginArtifactRoutesHandler } from "./plugin-artifacts.js";
 import { ChangeOrchestrator } from "../orchestration/change-orchestrator.js";
 import { GraphExecutor } from "../orchestration/graph-executor.js";
 import { WsDispatchAdapter, type WsDispatchAdapterOptions } from "../orchestration/ws-dispatch-adapter.js";
 import type { DAGDispatcher } from "../orchestration/dag-dispatcher.js";
 import { emit } from "../events/bus.js";
 import { dispatchRecoveredRuns } from "../runtime/active-runs.js";
+import {
+  HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
+  createPluginHttpTrustPolicy,
+  pluginHttpTrustHandler,
+} from "./plugin-http-trust.js";
+import { getManagerAgentTurnEnvelopeAuthority } from "./manager-agent-turn-envelope.js";
 import { startDagTriggerScheduler } from "../runtime/dag-triggers.js";
 import { readOrCreateControlPlaneToken } from "../persistence/control-plane-secret.js";
 import { startWorkspaceCleanupScheduler } from "../runtime/workspace-retention.js";
@@ -46,8 +55,11 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 
 function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Range, X-Homerail-Approval-Token, X-Homerail-Dag-Token, X-Homerail-Artifact-Sha256, X-Homerail-Artifact-Uncompressed-Bytes, X-Homerail-Artifact-File-Count");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Authorization, Content-Type, If-None-Match, Range, X-Homerail-Approval-Token, X-Homerail-Dag-Token, X-Homerail-Artifact-Sha256, X-Homerail-Artifact-Uncompressed-Bytes, X-Homerail-Artifact-File-Count",
+  );
   res.setHeader("Access-Control-Expose-Headers", "Accept-Ranges, Content-Disposition, Content-Length, Content-Range, ETag");
 }
 
@@ -193,6 +205,17 @@ export function createServer(
   managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
 ) {
   let server: http.Server;
+  const pluginHttpTrust = createPluginHttpTrustPolicy({
+    bindHost: process.env.HOMERAIL_MANAGER_HOST,
+    publicUrl: process.env.HOMERAIL_MANAGER_PUBLIC_URL,
+    adminToken: process.env.HOMERAIL_MANAGER_ADMIN_TOKEN,
+    allowedOrigins: process.env.HOMERAIL_MANAGER_ADMIN_ORIGINS,
+    unsafeAllowUnauthenticatedPublic:
+      process.env[HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH] === "1",
+    turnAuthorizer: (credential, method, pathname) => (
+      getManagerAgentTurnEnvelopeAuthority().authorizeApiRequest({ credential, method, pathname })
+    ),
+  });
   const workerControlPlaneAuth = resolveWorkerControlPlaneAuth();
   const effectiveWorkerToken = wsOptions?.authToken?.trim()
     || workerControlPlaneAuth.token;
@@ -251,6 +274,14 @@ export function createServer(
 
   server = http.createServer((req, res) => {
     setCorsHeaders(res);
+
+    if (pluginArtifactRoutesHandler(req, res)) {
+      return;
+    }
+
+    if (pluginHttpTrustHandler(req, res, pluginHttpTrust)) {
+      return;
+    }
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -333,6 +364,14 @@ export function createServer(
     }
 
     if (managerAgentReadinessRoutesHandler(req, res, managerAgentContainerOptions, managerAgentConfigOptions)) {
+      return;
+    }
+
+    if (pluginRoutesHandler(req, res)) {
+      return;
+    }
+
+    if (generativeUiRoutesHandler(req, res)) {
       return;
     }
 

@@ -1,0 +1,137 @@
+{
+  "memo": {
+    "id": "voice-memo",
+    "type": "note",
+    "title": "任务记录",
+    "body": "用户希望冻结现有生成式 UI 行为。",
+    "priority": "normal",
+    "status": "clarifying",
+    "items": [
+      "已知 范围包含六种 TOML Widget",
+      "已知 迁移期间旧界面仍是权威输出",
+      "待确认 何时切换到 Shadow 模式",
+      "TODO 建立兼容报告",
+      "DONE 记录当前输出"
+    ],
+    "data": {
+      "ui_state": "visible",
+      "visual": "memo",
+      "width": "wide",
+      "memo_status": "clarifying",
+      "ready_to_execute": false,
+      "memo_path": "/compat/widgets/memo.toml",
+      "next_action": "确认兼容基线"
+    }
+  },
+  "task_draft": {
+    "id": "compat-task-draft",
+    "type": "task_draft",
+    "title": "生成式 UI 重构草稿",
+    "body": "先冻结现有输入输出，再接入 Shadow 模式。",
+    "status": "needs_confirmation",
+    "items": [
+      "验收 六种 TOML Widget 均有 Golden",
+      "验收 旧会话仍可读取",
+      "约束 不修改产品行为",
+      "约束 失败不得影响旧路径"
+    ],
+    "data": {
+      "visual": "task_draft",
+      "widget_file": "/compat/widgets/task_draft.toml",
+      "request": "在不改变旧界面的前提下建立语义 UI 基线。",
+      "acceptance": [
+        "六种 TOML Widget 均有 Golden",
+        "旧会话仍可读取"
+      ],
+      "constraints": [
+        "不修改产品行为",
+        "失败不得影响旧路径"
+      ]
+    }
+  },
+  "progress_status": {
+    "id": "compat-progress",
+    "type": "progress",
+    "title": "兼容基线进度",
+    "body": "正在采集旧 Widget 输出。",
+    "status": "running",
+    "steps": [
+      "收集输入",
+      "冻结输出",
+      "运行回归"
+    ],
+    "active_step": 1,
+    "data": {
+      "visual": "progress_status",
+      "widget_file": "/compat/widgets/progress_status.toml",
+      "run_id": "run-compat-001",
+      "blocked_reason": "",
+      "tool_result_ref": "tool-result://compat/001"
+    }
+  },
+  "checklist": {
+    "id": "compat-checklist",
+    "type": "list",
+    "title": "兼容清单",
+    "body": "冻结迁移前的清单输出。",
+    "priority": "normal",
+    "status": "doing",
+    "items": [
+      "DONE 读取旧 Widget",
+      "TODO 比对规范化结果"
+    ],
+    "data": {
+      "visual": "checklist",
+      "widget_file": "/compat/widgets/checklist.toml",
+      "checklist_items": [
+        {
+          "text": "读取旧 Widget",
+          "done": true
+        },
+        {
+          "text": "比对规范化结果",
+          "done": false
+        }
+      ]
+    }
+  },
+  "artifact_ref": {
+    "id": "compat-artifact",
+    "type": "artifact",
+    "title": "兼容报告",
+    "body": "当前旧协议输出的静态报告。",
+    "status": "ready",
+    "data": {
+      "visual": "artifact_ref",
+      "widget_file": "/compat/widgets/artifact_ref.toml",
+      "artifact_path": "artifacts/compat/report.html",
+      "preview_path": "artifacts/compat/preview.png"
+    }
+  },
+  "timeline": {
+    "id": "compat-timeline",
+    "type": "timeline",
+    "title": "迁移时间线",
+    "body": "记录兼容基线建立过程。",
+    "items": [
+      "10:00 冻结旧协议输入",
+      "10:30 比对规范化输出"
+    ],
+    "data": {
+      "visual": "timeline",
+      "widget_file": "/compat/widgets/timeline.toml",
+      "events": [
+        {
+          "text": "冻结旧协议输入",
+          "time": "10:00",
+          "status": "done"
+        },
+        {
+          "text": "比对规范化输出",
+          "time": "10:30",
+          "status": "running"
+        }
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { resolveWorkerRuntimeEnv } from "../src/server/http.js";
+import { resolveManagerAgentRuntimeEnv, resolveWorkerRuntimeEnv } from "../src/server/http.js";
 
 const ENV_KEYS = [
   "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
@@ -10,6 +10,8 @@ const ENV_KEYS = [
   "HOMERAIL_ALLOW_INSECURE_REMOTE_WS",
   "GITEA_TOKEN",
   "ANTHROPIC_API_KEY",
+  "HOMERAIL_MANAGER_ADMIN_TOKEN",
+  "HOMERAIL_MANAGER_AGENT_BACKEND",
 ] as const;
 
 const savedEnv = new Map<string, string | undefined>();
@@ -59,6 +61,20 @@ describe("manager HTTP server worker runtime env", () => {
     delete process.env.CLAUDE_THINKING_BUDGET;
     delete process.env.HOMERAIL_ALLOW_INSECURE_REMOTE_WS;
 
+    expect(resolveWorkerRuntimeEnv()).toBeUndefined();
+  });
+
+  it("keeps the Manager administrator credential out of every Worker runtime environment", () => {
+    saveEnv();
+    process.env.HOMERAIL_MANAGER_ADMIN_TOKEN = "manager-agent-admin-token-0123456789abcdef";
+    process.env.HOMERAIL_MANAGER_AGENT_BACKEND = "claude-sdk";
+    process.env.ANTHROPIC_API_KEY = "must-not-propagate";
+
+    expect(resolveManagerAgentRuntimeEnv()).toEqual({
+      HOMERAIL_MANAGER_AGENT_BACKEND: "claude-sdk",
+      AGENT_BACKEND: "claude-sdk",
+    });
+    expect(resolveManagerAgentRuntimeEnv()).not.toHaveProperty("HOMERAIL_MANAGER_ADMIN_TOKEN");
     expect(resolveWorkerRuntimeEnv()).toBeUndefined();
   });
 });

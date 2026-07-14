@@ -1,0 +1,14 @@
+widget_id = "compat-checklist"
+widget_type = "checklist"
+schema_version = 1
+title = "兼容清单"
+status = "doing"
+summary = "冻结迁移前的清单输出。"
+
+[[item]]
+text = "读取旧 Widget"
+done = true
+
+[[item]]
+text = "比对规范化结果"
+done = false

@@ -1,0 +1,123 @@
+{
+  "manifest_version": 1,
+  "id": "com.homerail.topic-outline",
+  "version": "1.0.0",
+  "name": "Topic Outline",
+  "publisher": {
+    "id": "com.homerail",
+    "name": "HomeRail"
+  },
+  "license": "MIT",
+  "compatibility": {
+    "homerail": {
+      "min": "0.1.0",
+      "max_exclusive": "0.2.0"
+    },
+    "plugin_api": [1],
+    "ui_ir": [1],
+    "renderer_api": [1]
+  },
+  "capabilities": [
+    {
+      "id": "compose-outline",
+      "summary": "Turn an evolving content brief into a structured topic outline.",
+      "intents": [
+        "create a topic outline",
+        "整理选题和内容大纲",
+        "revise an existing outline"
+      ],
+      "tags": ["content", "outline", "writing"],
+      "modalities": ["voice", "touch", "gamepad"],
+      "required_inputs": ["title"],
+      "skill": "topic-outline",
+      "tools": ["upsert_topic_outline"],
+      "workflows": [],
+      "actions": []
+    }
+  ],
+  "skills": [
+    {
+      "id": "topic-outline",
+      "path": "skills/topic-outline/SKILL.md",
+      "description": "Create and revise a structured topic outline from a partial or complete brief."
+    }
+  ],
+  "schemas": [
+    {
+      "id": "topic-outline-input-v1",
+      "file": "schemas/topic-outline-input.v1.schema.json"
+    },
+    {
+      "id": "topic-outline-content-v1",
+      "file": "schemas/topic-outline-content.v1.schema.json"
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "com.homerail.topic-outline/outline",
+      "current_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "content_schema": "topic-outline-content-v1",
+          "allowed_surfaces": ["task"],
+          "default_surface": "task",
+          "default_variant": "detail",
+          "max_content_bytes": 32768,
+          "preferred_visuals": ["outline"],
+          "fallback": "portable_required",
+          "actions": []
+        }
+      ],
+      "migrations": []
+    }
+  ],
+  "tools": [
+    {
+      "id": "upsert_topic_outline",
+      "description": "Create or replace the complete current topic outline. Reuse a stable id across revisions.",
+      "exposure": ["agent"],
+      "input_schema": "topic-outline-input-v1",
+      "output_schema": "topic-outline-content-v1",
+      "effect": "write",
+      "permissions": [],
+      "confirmation": "never",
+      "handler": {
+        "type": "projection",
+        "file": "ui/projectors/topic-outline.v1.json"
+      }
+    }
+  ],
+  "workflows": [],
+  "renderers": [
+    {
+      "id": "topic-outline-main",
+      "kind": "com.homerail.topic-outline/outline",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["task"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": {
+        "type": "builtin",
+        "id": "topic-outline"
+      },
+      "fallback": {
+        "type": "portable"
+      }
+    }
+  ],
+  "actions": [],
+  "runtime": {
+    "trust": "data_only",
+    "plugin_api": 1
+  },
+  "permissions": {
+    "required": [],
+    "optional": []
+  },
+  "state": {
+    "schema_version": 1,
+    "migrations": []
+  }
+}

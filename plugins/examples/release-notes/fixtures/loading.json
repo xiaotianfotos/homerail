@@ -1,0 +1,18 @@
+{
+  "tool": "publish_release_notes",
+  "arguments": {
+    "id": "dev.homerail.release-notes:current",
+    "title": "HomeRail 0.2.0 Release Notes",
+    "version": "0.2.0",
+    "lifecycle_state": "loading",
+    "summary": "Loading release details.",
+    "notice": "The snapshot is being assembled.",
+    "completion_percent": 0
+  },
+  "expect": {
+    "title": "HomeRail 0.2.0 Release Notes",
+    "version": "0.2.0",
+    "lifecycle_state": "loading",
+    "completion_percent": 0
+  }
+}

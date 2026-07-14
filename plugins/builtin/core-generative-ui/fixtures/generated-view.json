@@ -1,0 +1,61 @@
+{
+  "tool": "upsert_generated_view",
+  "arguments": {
+    "id": "com.homerail.core:generated-ci-overview",
+    "title": "CI overview",
+    "summary": "Three checks passed; Windows validation is pending.",
+    "surface": "result",
+    "importance": "primary",
+    "density": "detail",
+    "canvas_size": "2x2",
+    "persistence": "session",
+    "content": {
+      "data": {
+        "title": "Release readiness",
+        "passed": 3,
+        "blocked": 1,
+        "checks": [
+          { "label": "Manager", "status": "passed", "detail": "583 passed" },
+          { "label": "Windows", "status": "pending", "detail": "Real-machine run required" }
+        ]
+      }
+    },
+    "a2ui": {
+      "version": "v1.0",
+      "catalogId": "https://homerail.dev/a2ui/catalogs/core/v1",
+      "components": [
+        { "id": "root", "component": "Column", "children": ["title", "metrics", "checks"] },
+        {
+          "id": "title",
+          "component": "Text",
+          "text": { "call": "formatString", "args": { "value": "## ${/data/title}" } }
+        },
+        {
+          "id": "metrics",
+          "component": "HrGrid",
+          "columns": { "default": 2, "compact": 1 },
+          "gap": "sm",
+          "children": ["passed-cell", "blocked-cell"]
+        },
+        { "id": "passed-cell", "component": "HrGridItem", "child": "passed", "span": 1 },
+        { "id": "blocked-cell", "component": "HrGridItem", "child": "blocked", "span": 1 },
+        { "id": "passed", "component": "HrMetric", "label": "Passed", "value": { "path": "/data/passed" }, "tone": "positive" },
+        { "id": "blocked", "component": "HrMetric", "label": "Blocked", "value": { "path": "/data/blocked" }, "tone": "warning" },
+        {
+          "id": "checks",
+          "component": "HrList",
+          "source": { "path": "/data/checks" },
+          "itemTitlePath": "/label",
+          "itemDetailPath": "/detail",
+          "itemStatusPath": "/status"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "data": {
+      "title": "Release readiness",
+      "passed": 3
+    }
+  }
+}

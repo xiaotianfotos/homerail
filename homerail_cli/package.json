@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "commander": "^12.1.0",
+    "homerail-plugin-sdk": "file:../homerail_plugin_sdk",
     "homerail-protocol": "file:../homerail_protocol"
   },
   "devDependencies": {

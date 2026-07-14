@@ -1,0 +1,120 @@
+{
+  "manifest_version": 1,
+  "id": "com.homerail.pr-closeout",
+  "version": "1.0.0",
+  "name": "PR Closeout",
+  "publisher": {
+    "id": "com.homerail",
+    "name": "HomeRail"
+  },
+  "license": "MIT",
+  "compatibility": {
+    "homerail": {
+      "min": "0.1.0",
+      "max_exclusive": "0.2.0"
+    },
+    "plugin_api": [1],
+    "ui_ir": [1],
+    "renderer_api": [1]
+  },
+  "capabilities": [
+    {
+      "id": "summarize-pr-closeout",
+      "summary": "Present a pull request closeout decision with checks, evidence, blockers, platform coverage, and verification flow.",
+      "intents": [
+        "summarize pull request readiness",
+        "show PR closeout status",
+        "判断这个 PR 是否可以合并",
+        "整理 PR 验证证据"
+      ],
+      "tags": ["git", "pull-request", "review", "closeout", "evidence"],
+      "modalities": ["voice", "text", "touch", "gamepad"],
+      "required_inputs": ["repository", "pr_number", "recommendation"],
+      "skill": "pr-closeout",
+      "tools": ["upsert_pr_closeout"],
+      "workflows": [],
+      "actions": []
+    }
+  ],
+  "skills": [
+    {
+      "id": "pr-closeout",
+      "path": "skills/pr-closeout/SKILL.md",
+      "description": "Build an evidence-grounded pull request closeout snapshot after review or validation work."
+    }
+  ],
+  "schemas": [
+    {
+      "id": "pr-closeout-content-v1",
+      "file": "schemas/pr-closeout-content.v1.schema.json"
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "com.homerail.pr-closeout/report",
+      "current_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "content_schema": "pr-closeout-content-v1",
+          "allowed_surfaces": ["task", "result"],
+          "default_surface": "result",
+          "default_variant": "detail",
+          "max_content_bytes": 131072,
+          "preferred_visuals": ["dashboard", "graph", "timeline", "matrix"],
+          "fallback": "portable_required",
+          "actions": []
+        }
+      ],
+      "migrations": []
+    }
+  ],
+  "tools": [
+    {
+      "id": "upsert_pr_closeout",
+      "description": "Create or replace the complete evidence-grounded PR closeout snapshot. Reuse one stable id for later revisions.",
+      "exposure": ["agent"],
+      "input_schema": "pr-closeout-content-v1",
+      "output_schema": "pr-closeout-content-v1",
+      "effect": "write",
+      "permissions": [],
+      "confirmation": "never",
+      "handler": {
+        "type": "projection",
+        "file": "ui/projectors/pr-closeout.v1.json"
+      }
+    }
+  ],
+  "workflows": [],
+  "renderers": [
+    {
+      "id": "pr-closeout-main",
+      "kind": "com.homerail.pr-closeout/report",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["task", "result"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": {
+        "type": "builtin",
+        "id": "pr-closeout"
+      },
+      "fallback": {
+        "type": "portable"
+      }
+    }
+  ],
+  "actions": [],
+  "runtime": {
+    "trust": "data_only",
+    "plugin_api": 1
+  },
+  "permissions": {
+    "required": [],
+    "optional": []
+  },
+  "state": {
+    "schema_version": 1,
+    "migrations": []
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "tool": "generate_cover",
+  "arguments": {
+    "prompt": "A blue HomeRail train crossing a luminous horizon",
+    "width": 64,
+    "height": 36,
+    "style": "cinematic"
+  },
+  "expect": {
+    "artifact_ids": ["cover", "metadata"],
+    "media_types": ["image/png", "application/json"]
+  }
+}

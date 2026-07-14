@@ -1,0 +1,39 @@
+{
+  "name": "homerail-plugin-sdk",
+  "version": "0.1.0",
+  "description": "HomeRail declarative plugin development kit and deterministic HRP package codec.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "homerail-protocol": "file:../homerail_protocol",
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.8"
+  }
+}

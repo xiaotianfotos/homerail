@@ -10,6 +10,7 @@
     "voice": "語音",
     "device": "WireGuard",
     "skills": "Skills",
+    "plugins": "外掛",
     "mcp": "MCP 服務器",
     "memory": "記憶"
   },
@@ -18,6 +19,7 @@
     "git": "管理 Git Server token。項目和倉庫在新增目錄時關聯。",
     "providers": "維護供應商、模型能力和本地加密保存的模型配置。",
     "voice": "配置語音播報和按鍵控制。",
+    "plugins": "查看已解析的外掛能力，並啓用或停用可選場景。",
     "default": "配置 HomeRail Agent UI 使用的本地能力。"
   },
   "general": {
@@ -68,6 +70,24 @@
     "disable": "停用",
     "delete": "刪除",
     "operationFailed": "操作失敗"
+  },
+  "plugins": {
+    "registry": "外掛註冊表",
+    "revision": "註冊表修訂 {revision}",
+    "enabled": "已啓用",
+    "disabled": "已停用",
+    "toggleLabel": "{name}：{state}",
+    "core": "核心",
+    "counts": {
+      "capabilities": "{count} 項能力",
+      "skills": "{count} 個 Skill",
+      "tools": "{count} 個工具",
+      "kinds": "{count} 個語義類型",
+      "renderers": "{count} 個渲染器"
+    },
+    "empty": "沒有已安裝的外掛。",
+    "loadFailed": "外掛註冊表載入失敗",
+    "updateFailed": "外掛狀態更新失敗"
   },
   "git": {
     "tokenStatus": "Token 狀態",

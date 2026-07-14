@@ -61,6 +61,7 @@ export {
   runVoiceTextTurn,
 } from './agent-voice-bridge'
 export * from './agent-voice-api'
+export * from './agent-generative-ui-api'
 
 // ---------------------------------------------------------------------------
 // Raw re-exports — backward-compatible passthrough for legacy call signatures

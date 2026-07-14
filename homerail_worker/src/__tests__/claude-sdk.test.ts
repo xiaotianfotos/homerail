@@ -85,6 +85,39 @@ describe("ClaudeSdkAdapter", () => {
     ]);
   });
 
+  it("maps MCP tool results carried by SDK user messages", async () => {
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () =>
+      makeFakeSdk([
+        {
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "call-2",
+                content: [{ type: "text", text: "invalid view" }],
+                is_error: true,
+              },
+            ],
+          },
+        },
+        { type: "result", subtype: "success", is_error: false },
+      ]),
+    );
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    const events: AgentEvent[] = [];
+    for await (const event of adapter.run("test", [], ctx)) events.push(event);
+
+    expect(events).toContainEqual({
+      type: "tool_result",
+      tool_use_id: "call-2",
+      content: JSON.stringify([{ type: "text", text: "invalid view" }]),
+      is_error: true,
+    });
+  });
+
   it("handles SDK not installed gracefully", async () => {
     vi.doMock("@anthropic-ai/claude-agent-sdk", () => {
       throw new Error("Cannot find module");
@@ -624,6 +657,54 @@ describe("ClaudeSdkAdapter", () => {
     expect(typed.content.parse({ ok: true })).toEqual({ ok: true });
     expect(typed.summary.parse(undefined)).toBeUndefined();
     expect(() => typed.port.parse(undefined)).toThrow();
+  });
+
+  it("resolves local object refs and decodes JSON-object strings at the SDK boundary", () => {
+    const shape = jsonSchemaObjectToZodRawShape({
+      type: "object",
+      properties: {
+        content: { $ref: "#/definitions/content" },
+        a2ui: {
+          type: "object",
+          properties: {
+            version: { type: "string" },
+            catalogId: { type: "string" },
+            components: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  component: { type: "string" },
+                  text: { type: "string" },
+                },
+                required: ["id", "component"],
+              },
+            },
+          },
+          required: ["version", "catalogId", "components"],
+        },
+      },
+      required: ["content", "a2ui"],
+      definitions: {
+        content: {
+          type: "object",
+          properties: { data: { type: "object" } },
+          required: ["data"],
+        },
+      },
+    }) as { content: TestZodParser; a2ui: TestZodParser };
+
+    const surface = {
+      version: "v1.0",
+      catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
+      components: [{ id: "root", component: "Text", text: "Ready" }],
+    };
+    expect(shape.content.parse('{"data":{"ok":true}}')).toEqual({ data: { ok: true } });
+    expect(shape.a2ui.parse(JSON.stringify(surface))).toEqual(surface);
+    expect(shape.a2ui.parse(JSON.stringify(JSON.stringify(surface)))).toEqual(surface);
+    expect(() => shape.content.parse("[]")).toThrow();
+    expect(() => shape.a2ui.parse("not-json")).toThrow();
   });
 
   it("passes Zod tool shapes to the Claude SDK instead of raw JSON Schema", async () => {

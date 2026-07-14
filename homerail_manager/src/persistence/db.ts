@@ -52,6 +52,31 @@ const CLEARABLE_TABLES = new Set([
   "manager_agent_config",
   "voice_agent_config",
   "voice_agent_sessions",
+  "generative_ui_user_overrides",
+  "generative_ui_transactions",
+  "generative_ui_documents",
+  "plugin_activation_events",
+  "plugin_action_events",
+  "plugin_capability_nonces",
+  "plugin_confirmation_challenges",
+  "plugin_action_requests",
+  "plugin_tool_events",
+  "plugin_tool_capability_nonces",
+  "plugin_tool_confirmation_challenges",
+  "plugin_agent_tool_continuations",
+  "plugin_tool_requests",
+  "plugin_permission_events",
+  "plugin_permission_grants",
+  "plugin_installations",
+  "plugin_activations",
+  "plugin_packages",
+  "plugin_publisher_trust_events",
+  "plugin_publisher_trust",
+  "plugin_distribution_meta",
+  "plugin_package_signatures",
+  "plugin_registry_update_attempts",
+  "plugin_registry_releases",
+  "plugin_registry_sources",
   "experience_nodes",
   "experience_relationships",
   "storages",
@@ -353,10 +378,1419 @@ function seedBuiltinProviderCatalog(db: SqliteDatabase): void {
   })();
 }
 
+interface SchemaMigration {
+  version: number;
+  up: (db: SqliteDatabase) => void;
+  validate?: (db: SqliteDatabase) => void;
+}
+
+function runSchemaMigrations(db: SqliteDatabase, migrations: readonly SchemaMigration[]): void {
+  const ordered = [...migrations].sort((left, right) => left.version - right.version);
+  if (ordered.some((migration, index) => migration.version < 3 || (index > 0 && migration.version === ordered[index - 1].version))) {
+    throw new Error("Schema migrations must have unique versions >= 3");
+  }
+  const supportedVersion = ordered.at(-1)?.version ?? 2;
+  const currentVersion = (db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as {
+    version: number | null;
+  }).version ?? 0;
+  if (currentVersion > supportedVersion) {
+    throw new Error(`Database schema version ${currentVersion} is newer than supported version ${supportedVersion}`);
+  }
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = ?");
+  const record = db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)");
+  for (const migration of ordered) {
+    db.transaction(() => {
+      const alreadyApplied = Boolean(applied.get(migration.version));
+      if (!alreadyApplied) migration.up(db);
+      migration.validate?.(db);
+      if (!alreadyApplied) record.run(migration.version, nowIso());
+    }).immediate();
+  }
+}
+
+function hasTable(db: SqliteDatabase, table: string): boolean {
+  return Boolean(db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+  ).get(table));
+}
+
+/**
+ * main used migration ids 3/4/5/6 for DAG schema work while the A2UI branch independently
+ * used the same ids for Generative UI and plugins. Detect only databases that
+ * already have main's physical DAG schema and no Generative UI schema, then
+ * free those ids so the merged 3-14 chain can run. The DAG changes receive
+ * durable ids 15/16/17/18.
+ */
+function legacyMainMigrationVersions(db: SqliteDatabase): number[] {
+  if (!hasTable(db, "schema_migrations") || hasTable(db, "generative_ui_documents")) return [];
+  const hasVersion = (version: number) => Boolean(db.prepare(
+    "SELECT 1 FROM schema_migrations WHERE version = ?",
+  ).get(version));
+  const versions: number[] = [];
+  if (
+    hasVersion(3)
+    && hasTable(db, "dag_workflow_revisions")
+    && hasColumn(db, "dag_workflows", "head_revision")
+    && hasColumn(db, "dag_workflows", "canonical_hash")
+  ) versions.push(3);
+  if (
+    hasVersion(4)
+    && hasTable(db, "dag_approvals")
+    && hasColumn(db, "dag_approvals", "proposer_actor")
+  ) versions.push(4);
+  if (
+    hasVersion(5)
+    && hasTable(db, "dag_run_admissions")
+    && !hasTable(db, "plugin_packages")
+  ) versions.push(5);
+  if (
+    hasVersion(6)
+    && hasTable(db, "dag_artifacts")
+    && !hasTable(db, "plugin_packages")
+  ) versions.push(6);
+  return versions;
+}
+
+function validateDagWorkflowSchemaV15(db: SqliteDatabase): void {
+  if (!hasTable(db, "dag_workflow_revisions")) {
+    throw new Error("Schema migration 15 is incomplete: missing table dag_workflow_revisions");
+  }
+  for (const column of ["head_revision", "api_version", "canonical_hash", "compiler_version"]) {
+    if (!hasColumn(db, "dag_workflows", column)) {
+      throw new Error(`Schema migration 15 is incomplete: dag_workflows is missing column ${column}`);
+    }
+  }
+}
+
+function validateDagApprovalIdentityV16(db: SqliteDatabase): void {
+  if (!hasTable(db, "dag_approvals") || !hasColumn(db, "dag_approvals", "proposer_actor")) {
+    throw new Error("Schema migration 16 is incomplete: dag_approvals proposer identity is missing");
+  }
+}
+
+function validateDagRunAdmissionSchemaV17(db: SqliteDatabase): void {
+  if (!hasTable(db, "dag_run_admissions")) {
+    throw new Error("Schema migration 17 is incomplete: missing table dag_run_admissions");
+  }
+  for (const column of ["run_id", "workflow_id", "source", "created_at"]) {
+    if (!hasColumn(db, "dag_run_admissions", column)) {
+      throw new Error(`Schema migration 17 is incomplete: dag_run_admissions is missing column ${column}`);
+    }
+  }
+}
+
+function validateDagArtifactSchemaV18(db: SqliteDatabase): void {
+  if (!hasTable(db, "dag_artifacts")) {
+    throw new Error("Schema migration 18 is incomplete: missing table dag_artifacts");
+  }
+  for (const column of [
+    "run_id",
+    "name",
+    "artifact_id",
+    "status",
+    "upload_token_hash",
+    "upload_expires_at",
+    "created_at",
+    "updated_at",
+    "data",
+  ]) {
+    if (!hasColumn(db, "dag_artifacts", column)) {
+      throw new Error(`Schema migration 18 is incomplete: dag_artifacts is missing column ${column}`);
+    }
+  }
+}
+
+function validateGenerativeUiSchemaV3(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    generative_ui_documents: [
+      "document_id",
+      "purpose",
+      "scope_type",
+      "scope_id",
+      "ir_version",
+      "revision",
+      "snapshot_json",
+      "snapshot_hash",
+      "created_at",
+      "updated_at",
+      "deleted_at",
+    ],
+    generative_ui_transactions: [
+      "seq",
+      "document_id",
+      "transaction_id",
+      "fingerprint",
+      "base_revision",
+      "committed_revision",
+      "transaction_json",
+      "producer_created_at",
+      "committed_at",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const tableRow = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(table);
+    if (!tableRow) throw new Error(`Schema migration 3 is incomplete: missing table ${table}`);
+    const columns = new Set(
+      (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    const missing = required.filter((column) => !columns.has(column));
+    if (missing.length > 0) {
+      throw new Error(`Schema migration 3 is incomplete: ${table} is missing columns ${missing.join(", ")}`);
+    }
+  }
+
+  const documentIndexes = db.prepare("PRAGMA index_list(generative_ui_documents)").all() as Array<{
+    name: string;
+    unique: number;
+    partial: number;
+  }>;
+  const activeScope = documentIndexes.find((index) => index.name === "idx_generative_ui_documents_active_scope");
+  if (!activeScope || activeScope.unique !== 1 || activeScope.partial !== 1) {
+    throw new Error("Schema migration 3 is incomplete: active Generative UI scope index is not unique and partial");
+  }
+
+  const foreignKeys = db.prepare("PRAGMA foreign_key_list(generative_ui_transactions)").all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  const documentForeignKey = foreignKeys.find((foreignKey) => (
+    foreignKey.table === "generative_ui_documents"
+    && foreignKey.from === "document_id"
+    && foreignKey.to === "document_id"
+    && foreignKey.on_delete.toUpperCase() === "RESTRICT"
+  ));
+  if (!documentForeignKey) {
+    throw new Error("Schema migration 3 is incomplete: Generative UI transaction ownership constraint is missing");
+  }
+}
+
+function validateGenerativeUiSchemaV4(db: SqliteDatabase): void {
+  const table = "generative_ui_user_overrides";
+  const tableRow = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+  ).get(table);
+  if (!tableRow) throw new Error(`Schema migration 4 is incomplete: missing table ${table}`);
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string; pk: number }>;
+  const byName = new Map(columns.map((column) => [column.name, column]));
+  const required = ["document_id", "node_id", "visibility", "pinned", "preferred_surface", "updated_at"];
+  const missing = required.filter((column) => !byName.has(column));
+  if (missing.length) {
+    throw new Error(`Schema migration 4 is incomplete: ${table} is missing columns ${missing.join(", ")}`);
+  }
+  if (byName.get("document_id")?.pk !== 1 || byName.get("node_id")?.pk !== 2) {
+    throw new Error("Schema migration 4 is incomplete: Generative UI override identity constraint is missing");
+  }
+  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  const documentForeignKey = foreignKeys.find((foreignKey) => (
+    foreignKey.table === "generative_ui_documents"
+    && foreignKey.from === "document_id"
+    && foreignKey.to === "document_id"
+    && foreignKey.on_delete.toUpperCase() === "RESTRICT"
+  ));
+  if (!documentForeignKey) {
+    throw new Error("Schema migration 4 is incomplete: Generative UI override ownership constraint is missing");
+  }
+}
+
+function validatePluginRegistrySchemaV5(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    plugin_packages: [
+      "plugin_id",
+      "plugin_version",
+      "manifest_version",
+      "package_digest",
+      "manifest_json",
+      "resolved_descriptor_json",
+      "source",
+      "installed_at",
+    ],
+    plugin_activations: [
+      "plugin_id",
+      "active_version",
+      "enabled",
+      "locked",
+      "revision",
+      "updated_at",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const tableRow = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(table) as { sql: string } | undefined;
+    if (!tableRow) throw new Error(`Schema migration 5 is incomplete: missing table ${table}`);
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+      pk: number;
+    }>;
+    const byName = new Map(columns.map((column) => [column.name, column]));
+    const missing = required.filter((column) => !byName.has(column));
+    if (missing.length) {
+      throw new Error(`Schema migration 5 is incomplete: ${table} is missing columns ${missing.join(", ")}`);
+    }
+    if (table === "plugin_packages") {
+      if (byName.get("plugin_id")?.pk !== 1 || byName.get("plugin_version")?.pk !== 2) {
+        throw new Error("Schema migration 5 is incomplete: plugin package identity constraint is missing");
+      }
+    } else if (byName.get("plugin_id")?.pk !== 1) {
+      throw new Error("Schema migration 5 is incomplete: plugin activation identity constraint is missing");
+    }
+  }
+
+  const foreignKeys = db.prepare("PRAGMA foreign_key_list(plugin_activations)").all() as Array<{
+    id: number;
+    seq: number;
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  const packageForeignKeys = foreignKeys.filter((foreignKey) => (
+    foreignKey.table === "plugin_packages"
+    && foreignKey.on_delete.toUpperCase() === "RESTRICT"
+  ));
+  const grouped = new Map<number, Map<string, string>>();
+  for (const foreignKey of packageForeignKeys) {
+    const columns = grouped.get(foreignKey.id) ?? new Map<string, string>();
+    columns.set(foreignKey.from, foreignKey.to);
+    grouped.set(foreignKey.id, columns);
+  }
+  const packageOwnership = [...grouped.values()].some((columns) => (
+    columns.get("plugin_id") === "plugin_id"
+    && columns.get("active_version") === "plugin_version"
+  ));
+  if (!packageOwnership) {
+    throw new Error("Schema migration 5 is incomplete: plugin activation package constraint is missing");
+  }
+
+  const activationSql = (db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'plugin_activations'",
+  ).get() as { sql: string }).sql.replace(/\s+/g, " ").toLowerCase();
+  if (!activationSql.includes("check(locked = 0 or enabled = 1)")) {
+    throw new Error("Schema migration 5 is incomplete: locked plugins are not protected");
+  }
+}
+
+function validatePluginLifecycleSchemaV6(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    plugin_installations: [
+      "plugin_id", "plugin_version", "archive_digest", "payload_digest", "channel",
+      "lifecycle_state", "health_state", "signature_state", "package_path",
+      "installed_at", "updated_at", "removed_at",
+    ],
+    plugin_permission_grants: [
+      "plugin_id", "plugin_version", "permission", "grant_json", "status", "revision", "updated_at",
+    ],
+    plugin_activation_events: [
+      "seq", "plugin_id", "event_type", "from_version", "to_version",
+      "activation_revision", "created_at", "data_json",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const tableRow = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(table) as { sql: string } | undefined;
+    if (!tableRow) throw new Error(`Schema migration 6 is incomplete: missing table ${table}`);
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string; pk: number }>;
+    const names = new Set(columns.map((column) => column.name));
+    const missing = required.filter((column) => !names.has(column));
+    if (missing.length) throw new Error(`Schema migration 6 is incomplete: ${table} is missing ${missing.join(", ")}`);
+  }
+  const installationPk = new Map((db.prepare("PRAGMA table_info(plugin_installations)").all() as Array<{
+    name: string; pk: number;
+  }>).map((column) => [column.name, column.pk]));
+  if (installationPk.get("plugin_id") !== 1 || installationPk.get("plugin_version") !== 2) {
+    throw new Error("Schema migration 6 is incomplete: plugin installation identity is not composite");
+  }
+  const grantPk = new Map((db.prepare("PRAGMA table_info(plugin_permission_grants)").all() as Array<{
+    name: string; pk: number;
+  }>).map((column) => [column.name, column.pk]));
+  if (grantPk.get("plugin_id") !== 1 || grantPk.get("plugin_version") !== 2 || grantPk.get("permission") !== 3) {
+    throw new Error("Schema migration 6 is incomplete: plugin grant identity is not composite");
+  }
+  for (const table of ["plugin_installations", "plugin_permission_grants", "plugin_activation_events"]) {
+    const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+      table: string; on_delete: string;
+    }>;
+    if (!foreignKeys.some((foreignKey) => (
+      foreignKey.table === "plugin_packages" && foreignKey.on_delete.toUpperCase() === "RESTRICT"
+    ))) throw new Error(`Schema migration 6 is incomplete: ${table} package retention constraint is missing`);
+  }
+}
+
+function validatePluginRegistryRevisionSchemaV7(db: SqliteDatabase): void {
+  const table = "plugin_registry_meta";
+  const tableRow = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+  ).get(table) as { sql: string } | undefined;
+  if (!tableRow) throw new Error(`Schema migration 7 is incomplete: missing table ${table}`);
+  const columns = new Map((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    pk: number;
+  }>).map((column) => [column.name, column]));
+  if (columns.get("singleton")?.pk !== 1 || !columns.has("revision")) {
+    throw new Error("Schema migration 7 is incomplete: plugin registry revision identity is invalid");
+  }
+  const row = db.prepare(`SELECT singleton, revision FROM ${table}`).get() as {
+    singleton: number;
+    revision: number;
+  } | undefined;
+  const count = (db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+  if (count !== 1 || row?.singleton !== 1 || !Number.isSafeInteger(row.revision) || row.revision < 0) {
+    throw new Error("Schema migration 7 is incomplete: plugin registry revision singleton is invalid");
+  }
+  const requiredTriggers = [
+    "plugin_registry_revision_after_activation_insert",
+    "plugin_registry_revision_after_activation_update",
+    "plugin_registry_revision_after_activation_delete",
+  ];
+  const triggers = new Set((db.prepare(`
+    SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?, ?)
+  `).all(...requiredTriggers) as Array<{ name: string }>).map((entry) => entry.name));
+  const missing = requiredTriggers.filter((name) => !triggers.has(name));
+  if (missing.length) {
+    throw new Error(`Schema migration 7 is incomplete: missing plugin registry triggers ${missing.join(", ")}`);
+  }
+}
+
+function validatePluginPermissionAuditSchemaV8(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    plugin_permission_meta: ["singleton", "revision"],
+    plugin_permission_events: [
+      "seq", "plugin_id", "plugin_version", "permission", "event_type",
+      "from_status", "to_status", "grant_revision", "permission_revision",
+      "actor_type", "actor_id", "request_digest", "created_at", "data_json",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const tableRow = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(table);
+    if (!tableRow) throw new Error(`Schema migration 8 is incomplete: missing table ${table}`);
+    const columns = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>).map((column) => column.name));
+    const missing = required.filter((column) => !columns.has(column));
+    if (missing.length) {
+      throw new Error(`Schema migration 8 is incomplete: ${table} is missing ${missing.join(", ")}`);
+    }
+  }
+  const meta = db.prepare("SELECT singleton, revision FROM plugin_permission_meta").get() as {
+    singleton: number;
+    revision: number;
+  } | undefined;
+  const metaCount = (db.prepare("SELECT COUNT(*) AS count FROM plugin_permission_meta").get() as {
+    count: number;
+  }).count;
+  if (metaCount !== 1 || meta?.singleton !== 1 || !Number.isSafeInteger(meta.revision) || meta.revision < 0) {
+    throw new Error("Schema migration 8 is incomplete: plugin permission revision singleton is invalid");
+  }
+  const requiredTriggers = [
+    "plugin_permission_revision_after_grant_insert",
+    "plugin_permission_revision_after_grant_update",
+    "plugin_permission_revision_after_grant_delete",
+  ];
+  const triggers = new Set((db.prepare(`
+    SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?, ?)
+  `).all(...requiredTriggers) as Array<{ name: string }>).map((entry) => entry.name));
+  const missingTriggers = requiredTriggers.filter((name) => !triggers.has(name));
+  if (missingTriggers.length) {
+    throw new Error(`Schema migration 8 is incomplete: missing plugin permission triggers ${missingTriggers.join(", ")}`);
+  }
+  const foreignKeys = db.prepare("PRAGMA foreign_key_list(plugin_permission_events)").all() as Array<{
+    id: number;
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  const packageKeys = foreignKeys.filter((entry) => (
+    entry.table === "plugin_packages" && entry.on_delete.toUpperCase() === "RESTRICT"
+  ));
+  const grouped = new Map<number, Map<string, string>>();
+  for (const entry of packageKeys) {
+    const columns = grouped.get(entry.id) ?? new Map<string, string>();
+    columns.set(entry.from, entry.to);
+    grouped.set(entry.id, columns);
+  }
+  if (![...grouped.values()].some((columns) => (
+    columns.get("plugin_id") === "plugin_id" && columns.get("plugin_version") === "plugin_version"
+  ))) {
+    throw new Error("Schema migration 8 is incomplete: plugin permission audit retention constraint is missing");
+  }
+}
+
+function validatePluginActionBusSchemaV9(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    plugin_action_requests: [
+      "request_id", "idempotency_key", "request_digest", "plugin_id", "plugin_version",
+      "document_id", "document_revision", "node_id", "node_revision", "action_id",
+      "action_intent", "status", "policy_digest", "permission_revision",
+      "invocation_json", "result_json", "error_code", "error_message", "created_at", "updated_at",
+    ],
+    plugin_confirmation_challenges: [
+      "challenge_id", "request_id", "request_digest", "status", "challenge_json",
+      "decision_json", "expires_at", "created_at", "decided_at", "consumed_at",
+    ],
+    plugin_capability_nonces: [
+      "nonce", "capability_id", "request_id", "request_digest", "token_digest",
+      "expires_at", "created_at", "consumed_at",
+    ],
+    plugin_action_events: [
+      "seq", "request_id", "request_digest", "event_type", "created_at", "data_json",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    if (!exists) throw new Error(`Schema migration 9 is incomplete: missing table ${table}`);
+    const columns = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>).map((column) => column.name));
+    const missing = required.filter((column) => !columns.has(column));
+    if (missing.length) throw new Error(`Schema migration 9 is incomplete: ${table} is missing ${missing.join(", ")}`);
+  }
+  const actionIndexes = db.prepare("PRAGMA index_list(plugin_action_requests)").all() as Array<{
+    name: string;
+    unique: number;
+  }>;
+  if (!actionIndexes.some((index) => index.name === "idx_plugin_action_requests_idempotency" && index.unique === 1)) {
+    throw new Error("Schema migration 9 is incomplete: Action idempotency identity is not unique");
+  }
+  for (const table of ["plugin_action_requests", "plugin_confirmation_challenges", "plugin_capability_nonces", "plugin_action_events"]) {
+    const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+      table: string;
+      on_delete: string;
+    }>;
+    if (table === "plugin_action_requests") {
+      if (!foreignKeys.some((entry) => (
+        entry.table === "plugin_packages" && entry.on_delete.toUpperCase() === "RESTRICT"
+      ))) throw new Error("Schema migration 9 is incomplete: Action package retention constraint is missing");
+    } else if (!foreignKeys.some((entry) => (
+      entry.table === "plugin_action_requests" && entry.on_delete.toUpperCase() === "RESTRICT"
+    ))) {
+      throw new Error(`Schema migration 9 is incomplete: ${table} Action retention constraint is missing`);
+    }
+  }
+}
+
+function validatePluginToolBusSchemaV10(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    plugin_tool_requests: [
+      "request_id", "idempotency_key", "request_digest", "plugin_id", "plugin_version",
+      "source_type", "document_id", "document_revision", "node_id", "node_revision",
+      "action_id", "action_intent", "tool_id", "tool_wire_id", "status", "policy_digest",
+      "permission_revision", "invocation_json", "result_json", "error_code", "error_message",
+      "created_at", "updated_at",
+    ],
+    plugin_tool_confirmation_challenges: [
+      "challenge_id", "request_id", "request_digest", "status", "challenge_json",
+      "decision_json", "expires_at", "created_at", "decided_at", "consumed_at",
+    ],
+    plugin_tool_capability_nonces: [
+      "nonce", "capability_id", "request_id", "request_digest", "token_digest",
+      "expires_at", "created_at", "consumed_at",
+    ],
+    plugin_tool_events: [
+      "seq", "request_id", "request_digest", "event_type", "created_at", "data_json",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    if (!exists) throw new Error(`Schema migration 10 is incomplete: missing table ${table}`);
+    const columns = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>).map((column) => column.name));
+    const missing = required.filter((column) => !columns.has(column));
+    if (missing.length) throw new Error(`Schema migration 10 is incomplete: ${table} is missing ${missing.join(", ")}`);
+  }
+  const indexes = db.prepare("PRAGMA index_list(plugin_tool_requests)").all() as Array<{
+    name: string;
+    unique: number;
+  }>;
+  if (!indexes.some((index) => index.name === "idx_plugin_tool_requests_idempotency" && index.unique === 1)) {
+    throw new Error("Schema migration 10 is incomplete: Tool idempotency identity is not unique");
+  }
+  for (const table of [
+    "plugin_tool_requests",
+    "plugin_tool_confirmation_challenges",
+    "plugin_tool_capability_nonces",
+    "plugin_tool_events",
+  ]) {
+    const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+      table: string;
+      on_delete: string;
+    }>;
+    if (table === "plugin_tool_requests") {
+      if (!foreignKeys.some((entry) => (
+        entry.table === "plugin_packages" && entry.on_delete.toUpperCase() === "RESTRICT"
+      ))) throw new Error("Schema migration 10 is incomplete: Tool package retention constraint is missing");
+    } else if (!foreignKeys.some((entry) => (
+      entry.table === "plugin_tool_requests" && entry.on_delete.toUpperCase() === "RESTRICT"
+    ))) {
+      throw new Error(`Schema migration 10 is incomplete: ${table} Tool retention constraint is missing`);
+    }
+  }
+}
+
+function validatePluginPublisherTrustSchemaV11(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    plugin_distribution_meta: ["singleton", "revision"],
+    plugin_publisher_trust: [
+      "key_id", "publisher", "public_key_spki", "state", "revision",
+      "reason", "created_at", "updated_at",
+    ],
+    plugin_publisher_trust_events: [
+      "seq", "key_id", "publisher", "from_state", "to_state",
+      "trust_revision", "distribution_revision", "actor", "reason", "created_at", "data_json",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    if (!exists) throw new Error(`Schema migration 11 is incomplete: missing table ${table}`);
+    const columns = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>).map((column) => column.name));
+    const missing = required.filter((column) => !columns.has(column));
+    if (missing.length) throw new Error(`Schema migration 11 is incomplete: ${table} is missing ${missing.join(", ")}`);
+  }
+  const meta = db.prepare("SELECT singleton, revision FROM plugin_distribution_meta").get() as {
+    singleton: number;
+    revision: number;
+  } | undefined;
+  const count = (db.prepare("SELECT COUNT(*) AS count FROM plugin_distribution_meta").get() as {
+    count: number;
+  }).count;
+  if (count !== 1 || meta?.singleton !== 1 || !Number.isSafeInteger(meta.revision) || meta.revision < 0) {
+    throw new Error("Schema migration 11 is incomplete: plugin distribution revision singleton is invalid");
+  }
+  const trustPk = new Map((db.prepare("PRAGMA table_info(plugin_publisher_trust)").all() as Array<{
+    name: string;
+    pk: number;
+  }>).map((column) => [column.name, column.pk]));
+  if (trustPk.get("key_id") !== 1) {
+    throw new Error("Schema migration 11 is incomplete: publisher trust key identity is invalid");
+  }
+  const triggers = new Set((db.prepare(`
+    SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (
+      'plugin_distribution_revision_after_trust_insert',
+      'plugin_distribution_revision_after_trust_update'
+    )
+  `).all() as Array<{ name: string }>).map((entry) => entry.name));
+  if (triggers.size !== 2) {
+    throw new Error("Schema migration 11 is incomplete: publisher trust revision triggers are missing");
+  }
+  const eventForeignKeys = db.prepare("PRAGMA foreign_key_list(plugin_publisher_trust_events)").all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  if (!eventForeignKeys.some((entry) => (
+    entry.table === "plugin_publisher_trust"
+    && entry.from === "key_id"
+    && entry.to === "key_id"
+    && entry.on_delete.toUpperCase() === "RESTRICT"
+  ))) throw new Error("Schema migration 11 is incomplete: publisher trust audit retention constraint is missing");
+}
+
+function validatePluginPackageSignatureSchemaV12(db: SqliteDatabase): void {
+  const table = "plugin_package_signatures";
+  const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+  if (!exists) throw new Error(`Schema migration 12 is incomplete: missing table ${table}`);
+  const columns = new Map((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    pk: number;
+  }>).map((column) => [column.name, column]));
+  for (const column of [
+    "plugin_id", "plugin_version", "key_id", "publisher", "public_key_spki",
+    "payload_digest", "created_at",
+  ]) {
+    if (!columns.has(column)) throw new Error(`Schema migration 12 is incomplete: ${table} is missing ${column}`);
+  }
+  if (columns.get("plugin_id")?.pk !== 1 || columns.get("plugin_version")?.pk !== 2) {
+    throw new Error("Schema migration 12 is incomplete: package signature identity is invalid");
+  }
+  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+    id: number;
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  const packageKeys = foreignKeys.filter((entry) => (
+    entry.table === "plugin_packages" && entry.on_delete.toUpperCase() === "RESTRICT"
+  ));
+  const grouped = new Map<number, Map<string, string>>();
+  for (const entry of packageKeys) {
+    const values = grouped.get(entry.id) ?? new Map<string, string>();
+    values.set(entry.from, entry.to);
+    grouped.set(entry.id, values);
+  }
+  if (![...grouped.values()].some((values) => (
+    values.get("plugin_id") === "plugin_id" && values.get("plugin_version") === "plugin_version"
+  ))) throw new Error("Schema migration 12 is incomplete: package signature retention constraint is missing");
+}
+
+function validatePluginRemoteRegistrySchemaV13(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    plugin_registry_sources: [
+      "registry_id", "source_url", "root_key_id", "last_sequence", "last_index_digest",
+      "last_issued_at", "last_expires_at", "last_synced_at", "created_at", "updated_at",
+    ],
+    plugin_registry_releases: [
+      "registry_id", "plugin_id", "plugin_version", "archive_path", "archive_digest",
+      "payload_digest", "publisher_key_id", "index_sequence", "created_at",
+    ],
+    plugin_registry_update_attempts: [
+      "seq", "attempt_id", "registry_id", "operation", "status", "plugin_id",
+      "from_version", "to_version", "index_sequence", "index_digest",
+      "rollback_version", "error", "created_at", "completed_at", "data_json",
+    ],
+  };
+  for (const [table, required] of Object.entries(requiredColumns)) {
+    const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    if (!exists) throw new Error(`Schema migration 13 is incomplete: missing table ${table}`);
+    const columns = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>).map((column) => column.name));
+    const missing = required.filter((column) => !columns.has(column));
+    if (missing.length) throw new Error(`Schema migration 13 is incomplete: ${table} is missing ${missing.join(", ")}`);
+  }
+  const sourcePk = new Map((db.prepare("PRAGMA table_info(plugin_registry_sources)").all() as Array<{
+    name: string;
+    pk: number;
+  }>).map((column) => [column.name, column.pk]));
+  if (sourcePk.get("registry_id") !== 1) {
+    throw new Error("Schema migration 13 is incomplete: registry source identity is invalid");
+  }
+  const releasePk = new Map((db.prepare("PRAGMA table_info(plugin_registry_releases)").all() as Array<{
+    name: string;
+    pk: number;
+  }>).map((column) => [column.name, column.pk]));
+  if (
+    releasePk.get("registry_id") !== 1
+    || releasePk.get("plugin_id") !== 2
+    || releasePk.get("plugin_version") !== 3
+  ) throw new Error("Schema migration 13 is incomplete: registry release identity is invalid");
+  for (const table of ["plugin_registry_releases", "plugin_registry_update_attempts"]) {
+    const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+      table: string;
+      on_delete: string;
+    }>;
+    if (!foreignKeys.some((entry) => (
+      entry.table === "plugin_registry_sources" && entry.on_delete.toUpperCase() === "RESTRICT"
+    ))) throw new Error(`Schema migration 13 is incomplete: ${table} audit retention constraint is missing`);
+  }
+}
+
+function validatePluginAgentToolContinuationSchemaV14(db: SqliteDatabase): void {
+  const table = "plugin_agent_tool_continuations";
+  const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+  if (!exists) throw new Error(`Schema migration 14 is incomplete: missing table ${table}`);
+  const columns = new Map((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    pk: number;
+  }>).map((column) => [column.name, column]));
+  for (const column of [
+    "request_id", "scope_type", "scope_id", "call_id", "status", "payload_json",
+    "lease_id", "lease_expires_at", "delivery_attempts", "created_at", "delivered_at",
+  ]) {
+    if (!columns.has(column)) throw new Error(`Schema migration 14 is incomplete: ${table} is missing ${column}`);
+  }
+  if (columns.get("request_id")?.pk !== 1) {
+    throw new Error("Schema migration 14 is incomplete: Agent Tool continuation identity is invalid");
+  }
+  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  if (!foreignKeys.some((entry) => (
+    entry.table === "plugin_tool_requests"
+    && entry.from === "request_id"
+    && entry.to === "request_id"
+    && entry.on_delete.toUpperCase() === "RESTRICT"
+  ))) throw new Error("Schema migration 14 is incomplete: Agent Tool continuation retention constraint is missing");
+}
+
+const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
+  {
+    version: 3,
+    up: (db) => db.exec(`
+      CREATE TABLE generative_ui_documents (
+        document_id TEXT PRIMARY KEY,
+        purpose TEXT NOT NULL CHECK(purpose IN ('canonical', 'legacy_widget_shadow')),
+        scope_type TEXT NOT NULL CHECK(scope_type IN ('voice_session', 'project', 'run')),
+        scope_id TEXT NOT NULL,
+        ir_version INTEGER NOT NULL CHECK(ir_version = 1),
+        revision INTEGER NOT NULL CHECK(revision >= 0),
+        snapshot_json TEXT NOT NULL,
+        snapshot_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+      );
+      CREATE INDEX idx_generative_ui_documents_scope
+        ON generative_ui_documents(scope_type, scope_id, deleted_at, updated_at);
+      CREATE UNIQUE INDEX idx_generative_ui_documents_active_scope
+        ON generative_ui_documents(scope_type, scope_id, purpose)
+        WHERE deleted_at IS NULL;
+
+      CREATE TABLE generative_ui_transactions (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id TEXT NOT NULL,
+        transaction_id TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        base_revision INTEGER NOT NULL CHECK(base_revision >= 0),
+        committed_revision INTEGER NOT NULL CHECK(committed_revision >= 1),
+        transaction_json TEXT NOT NULL,
+        producer_created_at TEXT NOT NULL,
+        committed_at TEXT NOT NULL,
+        CHECK(committed_revision = base_revision + 1),
+        UNIQUE(document_id, transaction_id),
+        UNIQUE(document_id, committed_revision),
+        FOREIGN KEY(document_id) REFERENCES generative_ui_documents(document_id) ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_generative_ui_transactions_document_seq
+        ON generative_ui_transactions(document_id, seq);
+    `),
+    validate: validateGenerativeUiSchemaV3,
+  },
+  {
+    version: 4,
+    up: (db) => db.exec(`
+      CREATE TABLE generative_ui_user_overrides (
+        document_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        visibility TEXT CHECK(visibility IN ('visible', 'minimized', 'hidden')),
+        pinned INTEGER CHECK(pinned IN (0, 1)),
+        preferred_surface TEXT CHECK(preferred_surface IN ('task', 'execution', 'result', 'ambient')),
+        updated_at TEXT NOT NULL,
+        CHECK(visibility IS NOT NULL OR pinned IS NOT NULL OR preferred_surface IS NOT NULL),
+        PRIMARY KEY(document_id, node_id),
+        FOREIGN KEY(document_id) REFERENCES generative_ui_documents(document_id) ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_generative_ui_user_overrides_document
+        ON generative_ui_user_overrides(document_id, node_id);
+    `),
+    validate: validateGenerativeUiSchemaV4,
+  },
+  {
+    version: 5,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_packages (
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        manifest_version INTEGER NOT NULL CHECK(manifest_version = 1),
+        package_digest TEXT NOT NULL CHECK(length(package_digest) = 64),
+        manifest_json TEXT NOT NULL,
+        resolved_descriptor_json TEXT NOT NULL,
+        source TEXT NOT NULL CHECK(source IN ('builtin', 'installed', 'development')),
+        installed_at TEXT NOT NULL,
+        PRIMARY KEY(plugin_id, plugin_version)
+      );
+
+      CREATE TABLE plugin_activations (
+        plugin_id TEXT PRIMARY KEY,
+        active_version TEXT NOT NULL,
+        enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+        locked INTEGER NOT NULL CHECK(locked IN (0, 1)),
+        revision INTEGER NOT NULL CHECK(revision >= 1),
+        updated_at TEXT NOT NULL,
+        CHECK(locked = 0 OR enabled = 1),
+        FOREIGN KEY(plugin_id, active_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_packages_id_installed
+        ON plugin_packages(plugin_id, installed_at, plugin_version);
+    `),
+    validate: validatePluginRegistrySchemaV5,
+  },
+  {
+    version: 6,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_installations (
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        archive_digest TEXT NOT NULL CHECK(length(archive_digest) = 64),
+        payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),
+        channel TEXT NOT NULL CHECK(channel IN ('staging', 'local', 'registry')),
+        lifecycle_state TEXT NOT NULL CHECK(lifecycle_state IN ('staged', 'installed', 'removed', 'failed')),
+        health_state TEXT NOT NULL CHECK(health_state IN ('unchecked', 'healthy', 'unhealthy')),
+        signature_state TEXT NOT NULL CHECK(signature_state IN ('unsigned', 'verified', 'untrusted', 'revoked')),
+        package_path TEXT NOT NULL,
+        installed_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        removed_at TEXT,
+        PRIMARY KEY(plugin_id, plugin_version),
+        FOREIGN KEY(plugin_id, plugin_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_installations_state
+        ON plugin_installations(lifecycle_state, updated_at, plugin_id, plugin_version);
+
+      CREATE TABLE plugin_permission_grants (
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        permission TEXT NOT NULL,
+        grant_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'granted', 'denied')),
+        revision INTEGER NOT NULL CHECK(revision >= 1),
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(plugin_id, plugin_version, permission),
+        FOREIGN KEY(plugin_id, plugin_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_permission_grants_status
+        ON plugin_permission_grants(plugin_id, plugin_version, status, permission);
+
+      CREATE TABLE plugin_activation_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        plugin_id TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK(event_type IN ('install', 'activate', 'enable', 'disable', 'rollback', 'uninstall')),
+        from_version TEXT,
+        to_version TEXT,
+        activation_revision INTEGER NOT NULL CHECK(activation_revision >= 0),
+        created_at TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        FOREIGN KEY(plugin_id, to_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_activation_events_plugin
+        ON plugin_activation_events(plugin_id, seq);
+    `),
+    validate: validatePluginLifecycleSchemaV6,
+  },
+  {
+    version: 7,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_registry_meta (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        revision INTEGER NOT NULL CHECK(revision >= 0)
+      );
+
+      INSERT INTO plugin_registry_meta(singleton, revision)
+      SELECT 1, COALESCE(SUM(history.max_revision), 0)
+      FROM (
+        SELECT plugin_id, MAX(revision) AS max_revision
+        FROM (
+          SELECT plugin_id, revision FROM plugin_activations
+          UNION ALL
+          SELECT plugin_id, activation_revision AS revision FROM plugin_activation_events
+        ) revisions
+        GROUP BY plugin_id
+      ) history;
+
+      CREATE TRIGGER plugin_registry_revision_after_activation_insert
+      AFTER INSERT ON plugin_activations
+      BEGIN
+        UPDATE plugin_registry_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+
+      CREATE TRIGGER plugin_registry_revision_after_activation_update
+      AFTER UPDATE OF active_version, enabled, locked, revision ON plugin_activations
+      BEGIN
+        UPDATE plugin_registry_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+
+      CREATE TRIGGER plugin_registry_revision_after_activation_delete
+      AFTER DELETE ON plugin_activations
+      BEGIN
+        UPDATE plugin_registry_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+    `),
+    validate: validatePluginRegistryRevisionSchemaV7,
+  },
+  {
+    version: 8,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_permission_meta (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        revision INTEGER NOT NULL CHECK(revision >= 0)
+      );
+      INSERT INTO plugin_permission_meta(singleton, revision)
+      SELECT 1, COALESCE(SUM(revision), 0) FROM plugin_permission_grants;
+
+      CREATE TRIGGER plugin_permission_revision_after_grant_insert
+      AFTER INSERT ON plugin_permission_grants
+      BEGIN
+        UPDATE plugin_permission_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+
+      CREATE TRIGGER plugin_permission_revision_after_grant_update
+      AFTER UPDATE OF grant_json, status, revision ON plugin_permission_grants
+      BEGIN
+        UPDATE plugin_permission_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+
+      CREATE TRIGGER plugin_permission_revision_after_grant_delete
+      AFTER DELETE ON plugin_permission_grants
+      BEGIN
+        UPDATE plugin_permission_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+
+      CREATE TABLE plugin_permission_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        permission TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK(event_type IN ('declared', 'granted', 'denied', 'reset')),
+        from_status TEXT CHECK(from_status IN ('pending', 'granted', 'denied')),
+        to_status TEXT NOT NULL CHECK(to_status IN ('pending', 'granted', 'denied')),
+        grant_revision INTEGER NOT NULL CHECK(grant_revision >= 1),
+        permission_revision INTEGER NOT NULL CHECK(permission_revision >= 1),
+        actor_type TEXT NOT NULL CHECK(actor_type IN ('system', 'operator', 'action')),
+        actor_id TEXT,
+        request_digest TEXT CHECK(request_digest IS NULL OR length(request_digest) = 64),
+        created_at TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        FOREIGN KEY(plugin_id, plugin_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_permission_events_target
+        ON plugin_permission_events(plugin_id, plugin_version, seq);
+      CREATE INDEX idx_plugin_permission_events_revision
+        ON plugin_permission_events(permission_revision, seq);
+    `),
+    validate: validatePluginPermissionAuditSchemaV8,
+  },
+  {
+    version: 9,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_action_requests (
+        request_id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL,
+        request_digest TEXT NOT NULL CHECK(length(request_digest) = 64),
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        document_revision INTEGER NOT NULL CHECK(document_revision >= 0),
+        node_id TEXT NOT NULL,
+        node_revision INTEGER NOT NULL CHECK(node_revision >= 1),
+        action_id TEXT NOT NULL,
+        action_intent TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN (
+          'needs_grant', 'awaiting_confirmation', 'authorized', 'running',
+          'committed', 'denied', 'failed', 'cancelled'
+        )),
+        policy_digest TEXT NOT NULL CHECK(length(policy_digest) = 64),
+        permission_revision INTEGER NOT NULL CHECK(permission_revision >= 0),
+        invocation_json TEXT NOT NULL,
+        result_json TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(plugin_id, plugin_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE UNIQUE INDEX idx_plugin_action_requests_idempotency
+        ON plugin_action_requests(plugin_id, plugin_version, idempotency_key);
+      CREATE INDEX idx_plugin_action_requests_target
+        ON plugin_action_requests(document_id, node_id, created_at, request_id);
+      CREATE INDEX idx_plugin_action_requests_status
+        ON plugin_action_requests(status, updated_at, request_id);
+
+      CREATE TABLE plugin_confirmation_challenges (
+        challenge_id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL UNIQUE,
+        request_digest TEXT NOT NULL CHECK(length(request_digest) = 64),
+        status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'denied', 'consumed', 'expired')),
+        challenge_json TEXT NOT NULL,
+        decision_json TEXT,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        consumed_at TEXT,
+        FOREIGN KEY(request_id) REFERENCES plugin_action_requests(request_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_confirmation_challenges_status
+        ON plugin_confirmation_challenges(status, expires_at, challenge_id);
+
+      CREATE TABLE plugin_capability_nonces (
+        nonce TEXT PRIMARY KEY,
+        capability_id TEXT NOT NULL UNIQUE,
+        request_id TEXT NOT NULL UNIQUE,
+        request_digest TEXT NOT NULL CHECK(length(request_digest) = 64),
+        token_digest TEXT NOT NULL UNIQUE CHECK(length(token_digest) = 64),
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        consumed_at TEXT,
+        FOREIGN KEY(request_id) REFERENCES plugin_action_requests(request_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_capability_nonces_expiry
+        ON plugin_capability_nonces(expires_at, consumed_at, nonce);
+
+      CREATE TABLE plugin_action_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id TEXT NOT NULL,
+        request_digest TEXT NOT NULL CHECK(length(request_digest) = 64),
+        event_type TEXT NOT NULL CHECK(event_type IN (
+          'requested', 'needs_grant', 'confirmation_issued', 'confirmed',
+          'denied', 'authorized', 'running', 'committed', 'failed',
+          'cancelled', 'duplicate'
+        )),
+        created_at TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        FOREIGN KEY(request_id) REFERENCES plugin_action_requests(request_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_action_events_request
+        ON plugin_action_events(request_id, seq);
+    `),
+    validate: validatePluginActionBusSchemaV9,
+  },
+  {
+    version: 10,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_tool_requests (
+        request_id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL,
+        request_digest TEXT NOT NULL CHECK(length(request_digest) = 64),
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        source_type TEXT NOT NULL CHECK(source_type IN ('ui_action', 'agent')),
+        document_id TEXT NOT NULL,
+        document_revision INTEGER NOT NULL CHECK(document_revision >= 0),
+        node_id TEXT,
+        node_revision INTEGER CHECK(node_revision IS NULL OR node_revision >= 1),
+        action_id TEXT,
+        action_intent TEXT,
+        tool_id TEXT NOT NULL,
+        tool_wire_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN (
+          'needs_grant', 'awaiting_confirmation', 'authorized', 'running',
+          'committed', 'denied', 'failed', 'cancelled'
+        )),
+        policy_digest TEXT NOT NULL CHECK(length(policy_digest) = 64),
+        permission_revision INTEGER NOT NULL CHECK(permission_revision >= 0),
+        invocation_json TEXT NOT NULL,
+        result_json TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK(
+          (source_type = 'ui_action' AND node_id IS NOT NULL AND node_revision IS NOT NULL
+            AND action_id IS NOT NULL AND action_intent IS NOT NULL)
+          OR
+          (source_type = 'agent' AND node_id IS NULL AND node_revision IS NULL
+            AND action_id IS NULL AND action_intent IS NULL)
+        ),
+        FOREIGN KEY(plugin_id, plugin_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE UNIQUE INDEX idx_plugin_tool_requests_idempotency
+        ON plugin_tool_requests(plugin_id, plugin_version, idempotency_key);
+      CREATE INDEX idx_plugin_tool_requests_target
+        ON plugin_tool_requests(document_id, node_id, created_at, request_id);
+      CREATE INDEX idx_plugin_tool_requests_status
+        ON plugin_tool_requests(status, updated_at, request_id);
+
+      CREATE TABLE plugin_tool_confirmation_challenges (
+        challenge_id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL UNIQUE,
+        request_digest TEXT NOT NULL CHECK(length(request_digest) = 64),
+        status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'denied', 'consumed', 'expired')),
+        challenge_json TEXT NOT NULL,
+        decision_json TEXT,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        consumed_at TEXT,
+        FOREIGN KEY(request_id) REFERENCES plugin_tool_requests(request_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_tool_confirmation_challenges_status
+        ON plugin_tool_confirmation_challenges(status, expires_at, challenge_id);
+
+      CREATE TABLE plugin_tool_capability_nonces (
+        nonce TEXT PRIMARY KEY,
+        capability_id TEXT NOT NULL UNIQUE,
+        request_id TEXT NOT NULL UNIQUE,
+        request_digest TEXT NOT NULL CHECK(length(request_digest) = 64),
+        token_digest TEXT NOT NULL UNIQUE CHECK(length(token_digest) = 64),
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        consumed_at TEXT,
+        FOREIGN KEY(request_id) REFERENCES plugin_tool_requests(request_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_tool_capability_nonces_expiry
+        ON plugin_tool_capability_nonces(expires_at, consumed_at, nonce);
+
+      CREATE TABLE plugin_tool_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id TEXT NOT NULL,
+        request_digest TEXT NOT NULL CHECK(length(request_digest) = 64),
+        event_type TEXT NOT NULL CHECK(event_type IN (
+          'requested', 'needs_grant', 'confirmation_issued', 'confirmed',
+          'denied', 'authorized', 'running', 'committed', 'failed',
+          'cancelled', 'duplicate'
+        )),
+        created_at TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        FOREIGN KEY(request_id) REFERENCES plugin_tool_requests(request_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_tool_events_request
+        ON plugin_tool_events(request_id, seq);
+    `),
+    validate: validatePluginToolBusSchemaV10,
+  },
+  {
+    version: 11,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_distribution_meta (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        revision INTEGER NOT NULL CHECK(revision >= 0)
+      );
+      INSERT INTO plugin_distribution_meta(singleton, revision) VALUES (1, 0);
+
+      CREATE TABLE plugin_publisher_trust (
+        key_id TEXT PRIMARY KEY CHECK(length(key_id) = 71),
+        publisher TEXT NOT NULL CHECK(length(publisher) BETWEEN 1 AND 128),
+        public_key_spki TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('trusted', 'revoked')),
+        revision INTEGER NOT NULL CHECK(revision >= 1),
+        reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_plugin_publisher_trust_state
+        ON plugin_publisher_trust(state, publisher, key_id);
+
+      CREATE TRIGGER plugin_distribution_revision_after_trust_insert
+      AFTER INSERT ON plugin_publisher_trust
+      BEGIN
+        UPDATE plugin_distribution_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+
+      CREATE TRIGGER plugin_distribution_revision_after_trust_update
+      AFTER UPDATE OF publisher, public_key_spki, state, revision, reason ON plugin_publisher_trust
+      BEGIN
+        UPDATE plugin_distribution_meta SET revision = revision + 1 WHERE singleton = 1;
+      END;
+
+      CREATE TABLE plugin_publisher_trust_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        key_id TEXT NOT NULL,
+        publisher TEXT NOT NULL,
+        from_state TEXT CHECK(from_state IN ('trusted', 'revoked')),
+        to_state TEXT NOT NULL CHECK(to_state IN ('trusted', 'revoked')),
+        trust_revision INTEGER NOT NULL CHECK(trust_revision >= 1),
+        distribution_revision INTEGER NOT NULL CHECK(distribution_revision >= 1),
+        actor TEXT NOT NULL,
+        reason TEXT,
+        created_at TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        FOREIGN KEY(key_id) REFERENCES plugin_publisher_trust(key_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_publisher_trust_events_key
+        ON plugin_publisher_trust_events(key_id, seq);
+      CREATE INDEX idx_plugin_publisher_trust_events_revision
+        ON plugin_publisher_trust_events(distribution_revision, seq);
+    `),
+    validate: validatePluginPublisherTrustSchemaV11,
+  },
+  {
+    version: 12,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_package_signatures (
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        key_id TEXT NOT NULL CHECK(length(key_id) = 71),
+        publisher TEXT NOT NULL CHECK(length(publisher) BETWEEN 1 AND 128),
+        public_key_spki TEXT NOT NULL,
+        payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(plugin_id, plugin_version),
+        FOREIGN KEY(plugin_id, plugin_version)
+          REFERENCES plugin_packages(plugin_id, plugin_version)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_package_signatures_key
+        ON plugin_package_signatures(key_id, plugin_id, plugin_version);
+    `),
+    validate: validatePluginPackageSignatureSchemaV12,
+  },
+  {
+    version: 13,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_registry_sources (
+        registry_id TEXT PRIMARY KEY,
+        source_url TEXT NOT NULL,
+        root_key_id TEXT NOT NULL CHECK(length(root_key_id) = 71),
+        last_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_sequence >= 0),
+        last_index_digest TEXT CHECK(last_index_digest IS NULL OR length(last_index_digest) = 64),
+        last_issued_at TEXT,
+        last_expires_at TEXT,
+        last_synced_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_plugin_registry_sources_updated
+        ON plugin_registry_sources(updated_at, registry_id);
+
+      CREATE TABLE plugin_registry_releases (
+        registry_id TEXT NOT NULL,
+        plugin_id TEXT NOT NULL,
+        plugin_version TEXT NOT NULL,
+        archive_path TEXT NOT NULL,
+        archive_digest TEXT NOT NULL CHECK(length(archive_digest) = 64),
+        payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),
+        publisher_key_id TEXT NOT NULL CHECK(length(publisher_key_id) = 71),
+        index_sequence INTEGER NOT NULL CHECK(index_sequence >= 1),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(registry_id, plugin_id, plugin_version),
+        UNIQUE(registry_id, archive_path),
+        FOREIGN KEY(registry_id) REFERENCES plugin_registry_sources(registry_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_registry_releases_plugin
+        ON plugin_registry_releases(plugin_id, plugin_version, registry_id);
+
+      CREATE TABLE plugin_registry_update_attempts (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        attempt_id TEXT NOT NULL UNIQUE,
+        registry_id TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK(operation IN (
+          'configure', 'sync', 'install', 'update', 'activate', 'rollback'
+        )),
+        status TEXT NOT NULL CHECK(status IN ('succeeded', 'failed')),
+        plugin_id TEXT,
+        from_version TEXT,
+        to_version TEXT,
+        index_sequence INTEGER CHECK(index_sequence IS NULL OR index_sequence >= 1),
+        index_digest TEXT CHECK(index_digest IS NULL OR length(index_digest) = 64),
+        rollback_version TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        FOREIGN KEY(registry_id) REFERENCES plugin_registry_sources(registry_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_registry_update_attempts_target
+        ON plugin_registry_update_attempts(registry_id, plugin_id, seq);
+      CREATE INDEX idx_plugin_registry_update_attempts_status
+        ON plugin_registry_update_attempts(status, completed_at, seq);
+    `),
+    validate: validatePluginRemoteRegistrySchemaV13,
+  },
+  {
+    version: 14,
+    up: (db) => db.exec(`
+      CREATE TABLE plugin_agent_tool_continuations (
+        request_id TEXT PRIMARY KEY,
+        scope_type TEXT NOT NULL CHECK(scope_type IN ('voice_session', 'project', 'run')),
+        scope_id TEXT NOT NULL,
+        call_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'leased', 'delivered')),
+        payload_json TEXT NOT NULL,
+        lease_id TEXT,
+        lease_expires_at TEXT,
+        delivery_attempts INTEGER NOT NULL DEFAULT 0 CHECK(delivery_attempts >= 0),
+        created_at TEXT NOT NULL,
+        delivered_at TEXT,
+        CHECK(
+          (status = 'pending' AND lease_id IS NULL AND lease_expires_at IS NULL AND delivered_at IS NULL)
+          OR (status = 'leased' AND lease_id IS NOT NULL AND lease_expires_at IS NOT NULL AND delivered_at IS NULL)
+          OR (status = 'delivered' AND lease_id IS NULL AND lease_expires_at IS NULL AND delivered_at IS NOT NULL)
+        ),
+        FOREIGN KEY(request_id) REFERENCES plugin_tool_requests(request_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX idx_plugin_agent_tool_continuations_scope
+        ON plugin_agent_tool_continuations(scope_type, scope_id, status, created_at, request_id);
+      CREATE INDEX idx_plugin_agent_tool_continuations_lease
+        ON plugin_agent_tool_continuations(status, lease_expires_at, lease_id);
+    `),
+    validate: validatePluginAgentToolContinuationSchemaV14,
+  },
+  {
+    version: 15,
+    up: (db) => {
+      ensureColumn(db, "dag_workflows", "head_revision", "INTEGER NOT NULL DEFAULT 0");
+      ensureColumn(db, "dag_workflows", "api_version", "TEXT");
+      ensureColumn(db, "dag_workflows", "canonical_hash", "TEXT");
+      ensureColumn(db, "dag_workflows", "compiler_version", "TEXT");
+    },
+    validate: validateDagWorkflowSchemaV15,
+  },
+  {
+    version: 16,
+    up: (db) => {
+      ensureColumn(db, "dag_approvals", "proposer_actor", "TEXT NOT NULL DEFAULT ''");
+      db.prepare(`
+        UPDATE dag_approvals
+        SET expires_at = 0, decision = NULL, actor = NULL, updated_at = ?
+        WHERE status = 'waiting' AND TRIM(COALESCE(proposer_actor, '')) = ''
+      `).run(Date.now());
+    },
+    validate: validateDagApprovalIdentityV16,
+  },
+  {
+    version: 17,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_run_admissions (
+        run_id TEXT PRIMARY KEY,
+        workflow_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_run_admissions_workflow
+        ON dag_run_admissions(workflow_id, created_at);
+    `),
+    validate: validateDagRunAdmissionSchemaV17,
+  },
+  {
+    version: 18,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_artifacts (
+        run_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        artifact_id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL,
+        upload_token_hash TEXT,
+        upload_expires_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY(run_id, name),
+        FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_artifacts_run_status
+        ON dag_artifacts(run_id, status, name);
+    `),
+    validate: validateDagArtifactSchemaV18,
+  },
+];
+
 function initializeSchema(db: SqliteDatabase, filePath: string): void {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
+  const collidingMainVersions = legacyMainMigrationVersions(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
@@ -1122,29 +2556,15 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
   `);
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(1, nowIso());
   ensureExpandedColumns(db);
-  ensureColumn(db, "dag_workflows", "head_revision", "INTEGER NOT NULL DEFAULT 0");
-  ensureColumn(db, "dag_workflows", "api_version", "TEXT");
-  ensureColumn(db, "dag_workflows", "canonical_hash", "TEXT");
-  ensureColumn(db, "dag_workflows", "compiler_version", "TEXT");
-  const approvalIdentityMigrationApplied = db.prepare(
-    "SELECT 1 FROM schema_migrations WHERE version = 4",
-  ).get();
-  if (!approvalIdentityMigrationApplied) {
-    db.transaction(() => {
-      ensureColumn(db, "dag_approvals", "proposer_actor", "TEXT NOT NULL DEFAULT ''");
-      db.prepare(`
-        UPDATE dag_approvals
-        SET expires_at = 0, decision = NULL, actor = NULL, updated_at = ?
-        WHERE status = 'waiting' AND TRIM(COALESCE(proposer_actor, '')) = ''
-      `).run(Date.now());
-      db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(4, nowIso());
-    })();
-  }
   seedBuiltinProviderCatalog(db);
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, nowIso());
-  db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(3, nowIso());
-  db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(5, nowIso());
-  db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(6, nowIso());
+  if (collidingMainVersions.length > 0) {
+    const remove = db.prepare("DELETE FROM schema_migrations WHERE version = ?");
+    db.transaction(() => {
+      for (const version of collidingMainVersions) remove.run(version);
+    })();
+  }
+  runSchemaMigrations(db, SCHEMA_MIGRATIONS);
   chmodPrivate(filePath);
 }
 
@@ -1157,7 +2577,12 @@ export function getDb(): SqliteDatabase {
   }
   ensureDbDir(filePath);
   const db = new Database(filePath);
-  initializeSchema(db, filePath);
+  try {
+    initializeSchema(db, filePath);
+  } catch (cause) {
+    try { db.close(); } catch { /* Preserve the initialization failure. */ }
+    throw cause;
+  }
   currentDbPath = filePath;
   currentDb = db;
   return db;

@@ -1,0 +1,184 @@
+{
+  "session_id": "legacy-voice-workspace-v1",
+  "mode": "voice",
+  "project_id": "legacy-project",
+  "project_workspace_path": null,
+  "voice_assets_dir": null,
+  "manager_session_id": "legacy-manager-session",
+  "manager_run_id": "legacy-run-2",
+  "manager_run_ids": [
+    "legacy-run-1",
+    "legacy-run-2"
+  ],
+  "orchestrator_session_id": null,
+  "source_issue_number": 42,
+  "source_issue_url": "https://example.invalid/issues/42",
+  "source_issue_title": "Preserve the legacy voice workspace",
+  "session_title": "旧语音会话兼容快照",
+  "session_slate": "整理旧语音会话的兼容契约",
+  "active_objective": "确保旧 session、widget 和 UI event 仍可读取",
+  "task_draft": {
+    "title": "旧会话兼容检查",
+    "request": "读取持久化的旧 VoiceWorkspace",
+    "acceptance": [
+      "Widget 保持可读",
+      "UI event 保持可读"
+    ],
+    "constraints": [
+      "不改写旧快照字段"
+    ],
+    "status": "needs_confirmation"
+  },
+  "pending_confirmations": [
+    {
+      "id": "submit-task",
+      "kind": "submit_task",
+      "summary": "旧会话兼容检查"
+    }
+  ],
+  "memory_refs": [
+    {
+      "id": "legacy-memory-1",
+      "title": "旧会话说明",
+      "summary": "这是一条持久化的历史 memory 引用。",
+      "source": "legacy-fixture"
+    }
+  ],
+  "conversation": [
+    {
+      "id": "legacy-message-user",
+      "role": "user",
+      "text": "请保留这条旧会话。",
+      "channel": "final",
+      "created_at": "2025-12-01T08:00:00.000Z"
+    },
+    {
+      "id": "legacy-message-assistant",
+      "role": "assistant",
+      "text": "旧会话已记录。",
+      "channel": "final",
+      "created_at": "2025-12-01T08:00:01.000Z"
+    }
+  ],
+  "debug_events": [
+    {
+      "id": "legacy-debug-1",
+      "level": "info",
+      "code": "legacy_snapshot",
+      "message": "Loaded from the legacy fixture.",
+      "created_at": "2025-12-01T08:00:01.500Z"
+    }
+  ],
+  "progress_brief": {
+    "status": "running",
+    "short_text": "正在读取旧会话",
+    "updated_at": "2025-12-01T08:00:02.000Z"
+  },
+  "widgets": [
+    {
+      "id": "legacy-task-draft",
+      "type": "task_draft",
+      "title": "旧会话兼容检查",
+      "body": "读取持久化的旧 VoiceWorkspace",
+      "priority": "high",
+      "status": "needs_confirmation",
+      "items": [
+        "Widget 保持可读",
+        "UI event 保持可读"
+      ],
+      "steps": [
+        "不改写旧快照字段"
+      ],
+      "active_step": 0,
+      "data": {
+        "ui_state": "visible",
+        "task_draft": {
+          "title": "旧会话兼容检查",
+          "request": "读取持久化的旧 VoiceWorkspace",
+          "status": "needs_confirmation"
+        }
+      }
+    },
+    {
+      "id": "legacy-timeline",
+      "type": "timeline",
+      "title": "旧执行时间线",
+      "body": "旧动态 Widget 数据",
+      "priority": "normal",
+      "status": "running",
+      "items": [],
+      "steps": [],
+      "active_step": null,
+      "data": {
+        "ui_state": "visible",
+        "visual": "timeline",
+        "timeline": [
+          {
+            "time": "08:00",
+            "label": "读取快照",
+            "status": "done",
+            "detail": "从 SQLite JSON blob 读取"
+          }
+        ]
+      }
+    }
+  ],
+  "ui_events": [
+    {
+      "id": "legacy-ui-event-1",
+      "session_id": "legacy-voice-workspace-v1",
+      "voice_message_id": "legacy-message-assistant",
+      "sequence": 0,
+      "event_type": "upsert_widget",
+      "widget_id": "legacy-timeline",
+      "widget_type": "timeline",
+      "payload": {
+        "widget": {
+          "id": "legacy-timeline",
+          "type": "timeline",
+          "title": "旧执行时间线",
+          "body": "旧动态 Widget 数据",
+          "priority": "normal",
+          "status": "running",
+          "items": [],
+          "steps": [],
+          "active_step": null,
+          "data": {
+            "ui_state": "visible",
+            "visual": "timeline",
+            "timeline": [
+              {
+                "time": "08:00",
+                "label": "读取快照",
+                "status": "done",
+                "detail": "从 SQLite JSON blob 读取"
+              }
+            ]
+          }
+        }
+      },
+      "created_at": "2025-12-01T08:00:02.500Z"
+    },
+    {
+      "id": "legacy-ui-event-2",
+      "session_id": "legacy-voice-workspace-v1",
+      "voice_message_id": null,
+      "sequence": 1,
+      "event_type": "widget_snapshot",
+      "widget_id": null,
+      "widget_type": null,
+      "payload": {
+        "widget_ids": [
+          "legacy-task-draft",
+          "legacy-timeline"
+        ]
+      },
+      "created_at": "2025-12-01T08:00:03.000Z"
+    }
+  ],
+  "codex_monitor_status": "done",
+  "codex_monitor_run_id": "legacy-monitor-run",
+  "ended_at": null,
+  "created_at": "2025-12-01T08:00:00.000Z",
+  "updated_at": "2025-12-01T08:00:03.000Z"
+}

@@ -10,6 +10,7 @@ import {
   listManagerSkills,
   readManagerSkill,
 } from "./manager-skills.js";
+import { isCanonicalHomerailPluginSemver } from "homerail-protocol";
 
 interface BaseResponse {
   success: boolean;
@@ -56,9 +57,9 @@ function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown
   });
 }
 
-function readSkillsCatalog() {
+function readSkillsCatalog(includePlugins = true) {
   const install = ensureManagerSkillsInstalled();
-  const skills = listManagerSkills();
+  const skills = listManagerSkills(includePlugins ? undefined : null);
   return { skills, total: skills.length, root: install.root, install };
 }
 
@@ -513,7 +514,7 @@ export function settingsBootstrapHandler(
   }
 
   if (pathname === "/api/skills" && req.method === "GET") {
-    _ok(res, "Skills retrieved", readSkillsCatalog());
+    _ok(res, "Skills retrieved", readSkillsCatalog(url.searchParams.get("local_only") !== "1"));
     return true;
   }
 
@@ -526,7 +527,27 @@ export function settingsBootstrapHandler(
       json(res, 400, { success: false, message: "Invalid skill id", error: "Invalid skill id" });
       return true;
     }
-    const skill = readManagerSkill(skillId);
+    const pluginVersion = url.searchParams.get("plugin_version");
+    const digest = url.searchParams.get("digest");
+    if ((pluginVersion && !digest) || (!pluginVersion && digest)) {
+      json(res, 400, { success: false, message: "Exact plugin Skill requires version and digest", error: "Invalid exact Skill reference" });
+      return true;
+    }
+    if (
+      pluginVersion
+      && digest
+      && (
+        !isCanonicalHomerailPluginSemver(pluginVersion)
+        || !/^[a-f0-9]{64}$/.test(digest)
+      )
+    ) {
+      json(res, 400, { success: false, message: "Invalid exact plugin Skill version or digest", error: "Invalid exact Skill reference" });
+      return true;
+    }
+    const skill = readManagerSkill(
+      skillId,
+      pluginVersion && digest ? { plugin_version: pluginVersion, digest } : undefined,
+    );
     if (!skill) {
       json(res, 404, { success: false, message: "Skill not found", error: "Skill not found" });
     } else {

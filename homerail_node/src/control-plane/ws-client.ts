@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import type { ExecutionProvider } from "../providers/types.js";
 import { handleLifecycleRequest, type LifecycleRequest, type LifecycleResponse } from "./lifecycle-handler.js";
+import type { PluginRuntimeService } from "../runtime/plugin-runtime-service.js";
 import { assertSecureControlPlaneUrl } from "./security.js";
 import { createWorkspaceArtifactUploader } from "../storage/workspace-artifact-uploader.js";
 
@@ -14,6 +15,7 @@ export interface NodeClientOptions {
   allowInsecureRemote?: boolean;
   reconnectInitialDelayMs?: number;
   reconnectMaxDelayMs?: number;
+  pluginRuntime?: PluginRuntimeService;
 }
 
 export interface NodeClient {
@@ -120,7 +122,10 @@ export function createNodeClient(options: NodeClientOptions): NodeClient {
               socket.send(JSON.stringify(resp));
             }
           };
-          handleLifecycleRequest(request, provider, send, { workspaceArtifactUploader }).catch(() => {
+          handleLifecycleRequest(request, provider, send, {
+            workspaceArtifactUploader,
+            pluginRuntime: options.pluginRuntime,
+          }).catch(() => {
             // Handler already sends error response
           });
         }

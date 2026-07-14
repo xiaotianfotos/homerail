@@ -1,0 +1,24 @@
+{
+  "tool": "publish_release_notes",
+  "arguments": {
+    "id": "dev.homerail.release-notes:current",
+    "title": "HomeRail 0.2.0 Release Notes",
+    "version": "0.2.0",
+    "lifecycle_state": "error",
+    "summary": "The complete release snapshot could not be assembled.",
+    "notice": "Previously validated details remain visible; retry the source operation.",
+    "completion_percent": 25,
+    "changes": [
+      {
+        "title": "Declarative plugin cards",
+        "detail": "This validated item was retained before the source failed.",
+        "category": "added"
+      }
+    ]
+  },
+  "expect": {
+    "lifecycle_state": "error",
+    "notice": "Previously validated details remain visible; retry the source operation.",
+    "completion_percent": 25
+  }
+}

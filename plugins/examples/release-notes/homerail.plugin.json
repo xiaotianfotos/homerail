@@ -1,0 +1,155 @@
+{
+  "manifest_version": 1,
+  "id": "dev.homerail.release-notes",
+  "version": "0.1.0",
+  "name": "Release Notes",
+  "publisher": {
+    "id": "dev.homerail",
+    "name": "HomeRail Examples"
+  },
+  "license": "MIT",
+  "compatibility": {
+    "homerail": {
+      "min": "0.1.0",
+      "max_exclusive": "0.2.0"
+    },
+    "plugin_api": [
+      1
+    ],
+    "ui_ir": [
+      1
+    ],
+    "renderer_api": [
+      1
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "compose-release-notes",
+      "summary": "Create or replace a semantic release-notes card.",
+      "intents": [
+        "show release notes",
+        "create release notes",
+        "update release notes"
+      ],
+      "tags": [
+        "data-only",
+        "release-notes"
+      ],
+      "modalities": [
+        "voice",
+        "text",
+        "touch"
+      ],
+      "required_inputs": [
+        "title",
+        "version"
+      ],
+      "skill": "compose-release-notes",
+      "tools": [
+        "publish_release_notes"
+      ],
+      "workflows": [],
+      "actions": []
+    }
+  ],
+  "skills": [
+    {
+      "id": "compose-release-notes",
+      "path": "skills/compose-release-notes/SKILL.md",
+      "description": "Create a complete release-notes snapshot with an explicit lifecycle state."
+    }
+  ],
+  "schemas": [
+    {
+      "id": "release-notes-input-v1",
+      "file": "schemas/release-notes-input.v1.schema.json"
+    },
+    {
+      "id": "release-notes-content-v1",
+      "file": "schemas/release-notes-content.v1.schema.json"
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "dev.homerail.release-notes/release-notes",
+      "current_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "content_schema": "release-notes-content-v1",
+          "allowed_surfaces": [
+            "task",
+            "result"
+          ],
+          "default_surface": "result",
+          "default_variant": "detail",
+          "max_content_bytes": 32768,
+          "preferred_visuals": [
+            "card",
+            "list",
+            "metrics"
+          ],
+          "fallback": "portable_required",
+          "actions": []
+        }
+      ],
+      "migrations": []
+    }
+  ],
+  "tools": [
+    {
+      "id": "publish_release_notes",
+      "description": "Create or replace one complete release-notes snapshot using a stable plugin-owned id.",
+      "exposure": ["agent"],
+      "input_schema": "release-notes-input-v1",
+      "output_schema": "release-notes-content-v1",
+      "effect": "write",
+      "permissions": [],
+      "confirmation": "never",
+      "handler": {
+        "type": "projection",
+        "file": "ui/projectors/release-notes.v1.json"
+      }
+    }
+  ],
+  "workflows": [],
+  "renderers": [
+    {
+      "id": "release-notes-main",
+      "kind": "dev.homerail.release-notes/release-notes",
+      "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "declarative",
+      "surfaces": [
+        "task",
+        "result"
+      ],
+      "devices": [
+        "phone",
+        "desktop",
+        "tv"
+      ],
+      "source": {
+        "type": "declarative",
+        "file": "ui/views/release-notes.v1.json"
+      },
+      "fallback": {
+        "type": "portable"
+      }
+    }
+  ],
+  "actions": [],
+  "runtime": {
+    "trust": "data_only",
+    "plugin_api": 1
+  },
+  "permissions": {
+    "required": [],
+    "optional": []
+  },
+  "state": {
+    "schema_version": 1,
+    "migrations": []
+  }
+}

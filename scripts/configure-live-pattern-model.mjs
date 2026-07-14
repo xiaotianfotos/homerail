@@ -7,6 +7,7 @@ const providerId = process.env.HOMERAIL_PATTERN_PROVIDER_ID ?? "homerail-runner-
 const providerName = process.env.HOMERAIL_PATTERN_PROVIDER_NAME ?? `HomeRail Runner ${modelName}`;
 const modelApiKey = process.env.HOMERAIL_PATTERN_MODEL_API_KEY ?? "local-no-key";
 const modelProtocol = process.env.HOMERAIL_PATTERN_MODEL_PROTOCOL ?? "anthropic_compatible";
+const managerAdminToken = process.env.HOMERAIL_MANAGER_ADMIN_TOKEN ?? "";
 
 if (!modelBaseUrl) {
   throw new Error("HOMERAIL_PATTERN_MODEL_BASE_URL is required");
@@ -19,7 +20,15 @@ if (modelProtocol !== "anthropic_compatible") {
 }
 
 async function request(path, init) {
-  const response = await fetch(`${managerUrl}${path}`, init);
+  const response = await fetch(`${managerUrl}${path}`, {
+    ...init,
+    headers: {
+      ...(init?.headers ?? {}),
+      ...(managerAdminToken && init?.method && init.method !== "GET"
+        ? { Authorization: `Bearer ${managerAdminToken}` }
+        : {}),
+    },
+  });
   const body = await response.json();
   if (!response.ok || body.success === false) {
     throw new Error(`${init?.method ?? "GET"} ${path}: ${body.error ?? body.message ?? `HTTP ${response.status}`}`);

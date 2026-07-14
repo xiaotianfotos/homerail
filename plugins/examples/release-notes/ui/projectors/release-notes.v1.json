@@ -1,0 +1,29 @@
+{
+  "projection_version": 1,
+  "type": "direct_ui_node",
+  "kind": "dev.homerail.release-notes/release-notes",
+  "kind_version": 1,
+  "node_id_pointer": "/id",
+  "content_pointer": "",
+  "omit_content_fields": [
+    "id"
+  ],
+  "fallback": {
+    "title_pointer": "/title",
+    "summary_pointer": "/summary",
+    "item_projections": [
+      {
+        "pointer": "/changes",
+        "mode": "records",
+        "title_pointer": "/title",
+        "detail_pointer": "/detail"
+      }
+    ]
+  },
+  "defaults": {
+    "surface": "result",
+    "importance": "primary",
+    "density": "detail",
+    "persistence": "session"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "runtime_fixture_version": 1,
+  "plugin_id": "com.homerail.video-cover",
+  "plugin_version": "1.0.0",
+  "entrypoint": {
+    "file": "runtime/fake-gpu-runtime.mjs",
+    "args": ["--stdio"]
+  },
+  "sandbox": {
+    "profile_id": "homerail.plugin-runtime.gpu.v1",
+    "network": "broker-only",
+    "gpu_devices": ["fake-gpu:0"],
+    "host_paths": []
+  },
+  "artifact_broker": {
+    "capability_version": 1,
+    "single_use": true,
+    "content_addressed": true,
+    "media_types": ["application/json", "image/png"]
+  }
+}

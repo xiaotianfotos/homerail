@@ -1,0 +1,18 @@
+widget_id = "compat-progress"
+widget_type = "progress_status"
+schema_version = 1
+title = "兼容基线进度"
+status = "running"
+summary = "正在采集旧 Widget 输出。"
+run_id = "run-compat-001"
+tool_result_ref = "tool-result://compat/001"
+active_step = 1
+
+[[step]]
+text = "收集输入"
+
+[[step]]
+text = "冻结输出"
+
+[[step]]
+text = "运行回归"

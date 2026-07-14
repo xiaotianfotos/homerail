@@ -9,7 +9,7 @@
 
 import type { AgentClient, AgentEvent, AgentRunContext, DagToolDefinition } from "./types.js";
 import { spawn, type ChildProcess, type SpawnOptions } from "child_process";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
 import { createRequire } from "module";
@@ -17,6 +17,7 @@ import type { AddressInfo } from "net";
 import { tmpdir } from "os";
 import { dirname, extname, isAbsolute, join, resolve } from "path";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
+import { sanitizedAgentChildEnv } from "./child-env.js";
 import {
   createSession as createKimiSdkSession,
   ProtocolClient as KimiSdkProtocolClient,
@@ -454,7 +455,7 @@ export class KimiCodeAdapter implements AgentClient {
           for (const event of events) {
             yield event;
             if (event.type === "tool_use" && !mcpBridge) {
-              const result = await this.executeTool(toolMap, event.name, event.input);
+              const result = await this.executeTool(toolMap, event.name, event.input, event.id);
               yield {
                 type: "tool_result",
                 tool_use_id: event.id,
@@ -732,7 +733,7 @@ export class KimiCodeAdapter implements AgentClient {
    * Must NOT expose KIMI_MODEL_API_KEY in any debug output.
    */
   buildKimiEnv(context: AgentRunContext, kimiHome: string): Record<string, string | undefined> {
-    const env = { ...process.env };
+    const env = sanitizedAgentChildEnv();
 
     // Isolated KIMI_CODE_HOME
     env.KIMI_CODE_HOME = kimiHome;
@@ -911,13 +912,15 @@ export class KimiCodeAdapter implements AgentClient {
       description: tool.description,
       parameters: normalizeJsonSchema(tool.input_schema),
       handler: async (params: Record<string, unknown>) => {
-        const id = randomUUID();
+        const key = toolEventKey(tool.name, params);
+        const id = executedTools.find((entry) => entry.key === key)?.id
+          ?? `kimi_${createHash("sha256").update(key).digest("hex")}`;
         try {
-          const result = await tool.handler(params);
+          const result = await tool.handler(params, { tool_call_id: id });
           const content = result.content.map((block) => block.text).join("");
           executedTools.push({
             id,
-            key: toolEventKey(tool.name, params),
+            key,
             name: tool.name,
             input: params,
             content,
@@ -1070,7 +1073,7 @@ export class KimiCodeAdapter implements AgentClient {
           }
           if (event.type === "tool_use") {
             yield event;
-            const result = await this.executeTool(toolMap, event.name, event.input);
+            const result = await this.executeTool(toolMap, event.name, event.input, event.id);
             yield {
               type: "tool_result",
               tool_use_id: event.id,
@@ -1118,7 +1121,7 @@ export class KimiCodeAdapter implements AgentClient {
         }
         const toolId = randomUUID();
         yield { type: "tool_use", id: toolId, name: marker.name, input: marker.input };
-        const result = await this.executeTool(toolMap, marker.name, marker.input);
+        const result = await this.executeTool(toolMap, marker.name, marker.input, toolId);
         toolMarkerEmitted = true;
         if (marker.name === "create_and_run" && result.is_error !== true) {
           promptModeCreatedRun = true;
@@ -1140,7 +1143,7 @@ export class KimiCodeAdapter implements AgentClient {
           ...(handoff.summary ? { summary: handoff.summary } : {}),
         };
         yield { type: "tool_use", id: toolId, name: "handoff", input };
-        const result = await this.executeTool(toolMap, "handoff", input);
+        const result = await this.executeTool(toolMap, "handoff", input, toolId);
         handoffEmitted = true;
         yield {
           type: "tool_result",
@@ -1319,6 +1322,7 @@ export class KimiCodeAdapter implements AgentClient {
       try {
         child = this.spawnKimi(["--version"], {
           stdio: ["pipe", "pipe", "pipe"],
+          env: sanitizedAgentChildEnv(),
         });
       } catch (err) {
         resolve({
@@ -1386,13 +1390,14 @@ export class KimiCodeAdapter implements AgentClient {
     toolMap: Map<string, DagToolDefinition>,
     name: string,
     input: Record<string, unknown>,
+    toolCallId?: string,
   ): Promise<{ content: string; is_error?: boolean }> {
     const def = toolMap.get(name);
     if (!def) {
       return { content: `Unknown tool: ${name}`, is_error: true };
     }
     try {
-      const result = await def.handler(input);
+      const result = await def.handler(input, toolCallId ? { tool_call_id: toolCallId } : undefined);
       return {
         content: result.content.map((block) => block.text).join(""),
         is_error: result.is_error === true,
@@ -1461,7 +1466,12 @@ export class KimiCodeAdapter implements AgentClient {
       const args = body.args && typeof body.args === "object" && !Array.isArray(body.args)
         ? body.args as Record<string, unknown>
         : {};
-      const result = await this.executeTool(toolMap, name, args);
+      const result = await this.executeTool(
+        toolMap,
+        name,
+        args,
+        typeof body.tool_call_id === "string" ? body.tool_call_id : undefined,
+      );
       writeJsonResponse(res, 200, result);
     } catch (err) {
       writeJsonResponse(res, 500, {
@@ -1615,7 +1625,7 @@ function error(id, code, message) {
   write({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
-async function callTool(name, args) {
+async function callTool(name, args, toolCallId) {
   if (!BRIDGE_URL || !BRIDGE_TOKEN) {
     return { content: "HomeRail MCP bridge is not configured", is_error: true };
   }
@@ -1625,7 +1635,11 @@ async function callTool(name, args) {
       "authorization": "Bearer " + BRIDGE_TOKEN,
       "content-type": "application/json"
     },
-    body: JSON.stringify({ name, args: args && typeof args === "object" ? args : {} })
+    body: JSON.stringify({
+      name,
+      args: args && typeof args === "object" ? args : {},
+      tool_call_id: String(toolCallId)
+    })
   });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -1667,7 +1681,7 @@ rl.on("line", async (line) => {
       case "tools/call": {
         const name = String(request.params?.name || "");
         const args = request.params?.arguments ?? request.params?.args ?? {};
-        const toolResult = await callTool(name, args);
+        const toolResult = await callTool(name, args, id);
         result(id, {
           content: [{ type: "text", text: String(toolResult.content ?? "") }],
           isError: toolResult.is_error === true || toolResult.isError === true

@@ -298,6 +298,61 @@ describe("Codex model catalog", () => {
     });
   });
 
+  it("does not let a stale provider-model patch replace an active Codex model", async () => {
+    const catalog: CodexModelCatalog = {
+      binary: "/opt/homebrew/bin/codex",
+      models: [{
+        id: "gpt-5.6-terra",
+        model: "gpt-5.6-terra",
+        display_name: "GPT-5.6-Terra",
+        description: "",
+        is_default: true,
+        default_reasoning_effort: "medium",
+        supported_reasoning_efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        service_tiers: [],
+      }],
+    };
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res, { loadCodexModels: async () => catalog });
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const configured = await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.6-terra",
+        reasoning_effort: "high",
+        service_tier: null,
+      }),
+    });
+    expect(configured.status).toBe(200);
+
+    const stalePatch = await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        llm_setting_id: "local-default",
+        provider_name: "kimi",
+        model_name: "kimi-k2.7-code",
+      }),
+    });
+    const body = await stalePatch.json() as { data: Record<string, unknown> };
+
+    expect(stalePatch.status).toBe(200);
+    expect(body.data).toMatchObject({
+      harness: "codex_appserver",
+      llm_setting_id: null,
+      provider_name: null,
+      model_name: "gpt-5.6-terra",
+      reasoning_effort: "high",
+    });
+  });
+
   it("rejects service tiers not advertised by the selected model", async () => {
     const catalog: CodexModelCatalog = {
       binary: "C:\\Codex\\codex.exe",

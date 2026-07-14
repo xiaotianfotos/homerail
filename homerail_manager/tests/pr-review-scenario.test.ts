@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -227,6 +228,83 @@ describe("PR Review scenario assets", () => {
     const listed = await _invokeHostCodexVoiceToolForTest("list_orchestrations", {});
     const text = listed.result.content.map((entry) => entry.text).join("\n");
     expect(text).toContain("pr-review.yaml.template");
+  });
+
+  it("starts PR Review from Host Codex with code-resolved immutable GitHub metadata", async () => {
+    let createRunBody: Record<string, unknown> | undefined;
+    const server = http.createServer((req, res) => {
+      if (req.method === "GET" && req.url === "/repos/xiaotianfotos/homerail/pulls/25") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          title: "Native A2UI",
+          user: { login: "contributor" },
+          base: {
+            sha: "a".repeat(40),
+            repo: {
+              full_name: "xiaotianfotos/homerail",
+              clone_url: "https://github.com/xiaotianfotos/homerail.git",
+            },
+          },
+          head: {
+            sha: "b".repeat(40),
+            repo: {
+              full_name: "contributor/homerail",
+              clone_url: "https://github.com/contributor/homerail.git",
+            },
+          },
+        }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/api/runs/create-and-run") {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        req.on("end", () => {
+          createRunBody = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ data: { runId: "host-pr-review-run" } }));
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind a TCP port");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const previousGithubApi = process.env.HOMERAIL_GITHUB_API_BASE_URL;
+    process.env.HOMERAIL_GITHUB_API_BASE_URL = baseUrl;
+    try {
+      const invoked = await _invokeHostCodexVoiceToolForTest(
+        "run_pr_review",
+        { repo: "xiaotianfotos/homerail", pr: 25, expected_usage: 8 },
+        { managerRestUrl: `${baseUrl}/api` },
+      );
+      expect(JSON.parse(invoked.result.content[0].text)).toMatchObject({
+        run_id: "host-pr-review-run",
+        workflow_id: "pr-review",
+        base: "a".repeat(40),
+        head: "b".repeat(40),
+      });
+      expect(createRunBody).toMatchObject({ yamlPath: "assets/orchestrations/pr-review.yaml.template" });
+      const envelope = JSON.parse(String(createRunBody?.prompt)) as Record<string, unknown>;
+      expect(envelope).toMatchObject({
+        trigger_id: "manager-agent",
+        payload: {
+          repo: "xiaotianfotos/homerail",
+          pr: 25,
+          base: "a".repeat(40),
+          head: "b".repeat(40),
+          base_clone_url: "https://github.com/xiaotianfotos/homerail.git",
+          head_clone_url: "https://github.com/contributor/homerail.git",
+          expected_usage: 8,
+        },
+      });
+    } finally {
+      if (previousGithubApi === undefined) delete process.env.HOMERAIL_GITHUB_API_BASE_URL;
+      else process.env.HOMERAIL_GITHUB_API_BASE_URL = previousGithubApi;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("keeps the GitHub adapter thin, truthful, and off untrusted fork PRs", () => {

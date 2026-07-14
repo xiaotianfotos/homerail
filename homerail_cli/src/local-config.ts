@@ -42,6 +42,7 @@ export const DEFAULT_UI_HOST = "127.0.0.1";
 export const DEFAULT_UI_PORT = 19192;
 export const DEFAULT_UI_HTTP_PORT = 19193;
 export const DEFAULT_UI_URL = `https://localhost:${DEFAULT_UI_PORT}`;
+export const HOMERAIL_MANAGER_ADMIN_TOKEN = "HOMERAIL_MANAGER_ADMIN_TOKEN";
 
 export function getHomerailHome(): string {
   return process.env.HOMERAIL_HOME?.trim() || path.join(os.homedir(), ".homerail");
@@ -112,7 +113,7 @@ export function loadLocalSecrets(): Record<string, string> {
   const filePath = getSecretsPath();
   if (!fs.existsSync(filePath)) return {};
   const out: Record<string, string> = {};
-  for (const line of fs.readFileSync(filePath, "utf-8").split(/\r?\n/)) {
+  for (const line of readPrivateSecretsFile(filePath).split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
@@ -126,6 +127,17 @@ export function loadLocalSecrets(): Record<string, string> {
 
 export function getLocalSecret(key: string): string | undefined {
   return process.env[key] || loadLocalSecrets()[key];
+}
+
+/** Resolve the Manager mutation credential without ever reading config.json. */
+export function resolveConfiguredManagerAdminToken(): string | undefined {
+  const fromEnvironment = process.env[HOMERAIL_MANAGER_ADMIN_TOKEN];
+  if (fromEnvironment !== undefined) return fromEnvironment || undefined;
+
+  const filePath = getSecretsPath();
+  if (!fs.existsSync(filePath)) return undefined;
+  const value = loadLocalSecrets()[HOMERAIL_MANAGER_ADMIN_TOKEN];
+  return value || undefined;
 }
 
 export function saveLocalSecret(key: string, value: string): void {
@@ -333,6 +345,35 @@ function writeSecrets(secrets: Record<string, string>): void {
     fs.chmodSync(filePath, 0o600);
   } catch {
     // Best effort on platforms that do not support POSIX modes.
+  }
+}
+
+function assertPrivateSecretsFile(filePath: string): fs.Stats {
+  const stat = fs.lstatSync(filePath);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error("Refusing to load Manager admin token from a non-regular secrets file");
+  }
+  if (process.platform !== "win32" && (stat.mode & 0o077) !== 0) {
+    throw new Error("Refusing to load Manager admin token from a group/world-accessible secrets file");
+  }
+  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+    throw new Error("Refusing to load Manager admin token from a secrets file owned by another user");
+  }
+  return stat;
+}
+
+function readPrivateSecretsFile(filePath: string): string {
+  const before = assertPrivateSecretsFile(filePath);
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const opened = fs.fstatSync(descriptor);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new Error("Refusing to load a secrets file that changed while opening");
+    }
+    return fs.readFileSync(descriptor, "utf8");
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
   }
 }
 

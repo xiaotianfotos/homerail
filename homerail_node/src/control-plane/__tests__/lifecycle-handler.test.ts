@@ -116,6 +116,84 @@ describe("handleLifecycleRequest", () => {
     );
   });
 
+  it("redacts the Manager credential from lifecycle error responses", async () => {
+    const token = "node-lifecycle-admin-token-0123456789abcdef";
+    const provider = new MockProvider();
+    provider.create = async () => {
+      throw new Error(`docker failed with Bearer ${token}; env=${token}`);
+    };
+    const responses: LifecycleResponse[] = [];
+
+    await handleLifecycleRequest(
+      makeRequest({
+        operation: "create",
+        spec: {
+          image: "alpine:latest",
+          env: { HOMERAIL_MANAGER_ADMIN_TOKEN: token },
+        },
+      }),
+      provider,
+      (response) => responses.push(response),
+    );
+
+    expect(responses[0]?.status).toBe("error");
+    expect(responses[0]?.error?.message).toContain("REDACTED");
+    expect(responses[0]?.error?.message).not.toContain(token);
+  });
+
+  it("rejects Plugin Runtime launch specs that leak Manager authority or omit isolation", async () => {
+    const provider = new MockProvider();
+    const responses: LifecycleResponse[] = [];
+    const capabilitySecret = "plugin-capability-secret-0123456789abcdef";
+    await handleLifecycleRequest(
+      makeRequest({
+        operation: "create",
+        spec: {
+          image: "plugin-runtime:latest",
+          labels: { "homerail.resource_type": "plugin-runtime" },
+          env: { HOMERAIL_PLUGIN_CAPABILITY_SECRET: capabilitySecret },
+        },
+      }),
+      provider,
+      (response) => responses.push(response),
+    );
+    expect(responses[0]).toMatchObject({ status: "error" });
+    expect(responses[0]?.error?.message).toContain("HOMERAIL_PLUGIN_CAPABILITY_SECRET");
+    expect(responses[0]?.error?.message).not.toContain(capabilitySecret);
+    expect(provider.containers.size).toBe(0);
+  });
+
+  it("accepts a complete fail-closed Plugin Runtime isolation profile", async () => {
+    const provider = new MockProvider();
+    const responses: LifecycleResponse[] = [];
+    await handleLifecycleRequest(
+      makeRequest({
+        operation: "create",
+        spec: {
+          image: "plugin-runtime:latest",
+          labels: { "homerail.resource_type": "plugin-runtime" },
+          env: { RUNTIME_INSTANCE_ID: "runtime-one" },
+          user: "65532:65532",
+          readOnlyRootfs: true,
+          noNewPrivileges: true,
+          capDrop: ["ALL"],
+          securityOpts: ["seccomp=/profiles/plugin-runtime.json"],
+          network: "none",
+        },
+      }),
+      provider,
+      (response) => responses.push(response),
+    );
+    expect(responses[0]).toMatchObject({ status: "success" });
+    expect([...provider.containers.values()][0]?.config).toMatchObject({
+      user: "65532:65532",
+      readOnlyRootfs: true,
+      noNewPrivileges: true,
+      capDrop: ["ALL"],
+      network: "none",
+    });
+  });
+
   it("start -> success", async () => {
     const provider = new MockProvider();
     const info = await provider.create({ image: "alpine:latest" });

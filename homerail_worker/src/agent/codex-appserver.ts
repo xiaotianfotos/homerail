@@ -12,6 +12,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { AgentClient, AgentEvent, AgentRunContext, DagToolDefinition } from "./types.js";
+import { sanitizedAgentChildEnv } from "./child-env.js";
 
 const CLIENT_NAME = "homerail_codex_appserver";
 const CLIENT_TITLE = "HomeRail Codex AppServer Adapter";
@@ -237,7 +238,7 @@ export class CodexAppServerAdapter implements AgentClient {
               let content: string;
               let isError = false;
               try {
-                const result = await def.handler(event.input);
+                const result = await def.handler(event.input, { tool_call_id: event.id });
                 const blocks = result.content as Array<{ type: string; text?: string }> | undefined;
                 content = blocks?.map((b) => b.text ?? "").join("") ?? JSON.stringify(result);
                 isError = result.is_error === true;
@@ -571,7 +572,7 @@ export class CodexAppServerAdapter implements AgentClient {
   }
 
   private buildEnv(context: AgentRunContext): Record<string, string | undefined> {
-    const env: Record<string, string | undefined> = { ...process.env };
+    const env = sanitizedAgentChildEnv();
 
     const apiKey = context.apiKey || process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || "";
     if (apiKey) {

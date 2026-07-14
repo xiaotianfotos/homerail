@@ -6,6 +6,13 @@
 import AjvModule from "ajv";
 import type { ErrorObject, ValidateFunction } from "ajv";
 import { allSchemas } from "./schemas.js";
+import {
+  validateHomerailPluginManifest,
+  validateHomerailPluginTurnContext,
+  validateHomerailPluginUiProjection,
+  validateHomerailResolvedPluginDescriptorWire,
+  validateHomerailDirectUiProjection,
+} from "./plugins/validation.js";
 
 // ajv ships CJS types that aren't directly constructable under NodeNext module resolution.
 // At runtime the default export is the Ajv class; we bypass the type checker here.
@@ -61,6 +68,26 @@ export function resetValidator(): void {
 }
 
 export function validateMessage(data: unknown, schemaName: string): ValidationResult {
+  if (schemaName === "homerail-plugin-manifest-v1") {
+    const result = validateHomerailPluginManifest(data);
+    return { valid: result.valid, errors: result.errors };
+  }
+  if (schemaName === "homerail-plugin-turn-context-v1") {
+    const result = validateHomerailPluginTurnContext(data);
+    return { valid: result.valid, errors: result.errors };
+  }
+  if (schemaName === "homerail-plugin-ui-projection-v1") {
+    const result = validateHomerailPluginUiProjection(data);
+    return { valid: result.valid, errors: result.errors };
+  }
+  if (schemaName === "homerail-resolved-plugin-descriptor-v1") {
+    const result = validateHomerailResolvedPluginDescriptorWire(data);
+    return { valid: result.valid, errors: result.errors };
+  }
+  if (schemaName === "homerail-direct-ui-projection-v1") {
+    const result = validateHomerailDirectUiProjection(data);
+    return { valid: result.valid, errors: result.errors };
+  }
   const ajv = getAjv();
   const validateFn: ValidateFunction | undefined = ajv.getSchema(schemaName);
 

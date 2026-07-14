@@ -14,6 +14,7 @@ import {
   type ManagerAgentReasoningEffort,
   type ManagerAgentServiceTier,
 } from "homerail-protocol";
+import { getManagerAgentTurnEnvelopeAuthority } from "./manager-agent-turn-envelope.js";
 
 export interface ManagerAgentRuntimeConfig {
   provider_name: string;
@@ -45,6 +46,7 @@ export interface ManagerAgentContainer {
   nodeId: string;
   baseUrl: string;
   containerName: string;
+  workerId: string;
 }
 
 const MANAGER_AGENT_CONTAINER_PORT = 9001;
@@ -54,6 +56,13 @@ const LOCAL_NODE_ID = "local-docker-node";
 
 let localNodeStartPromise: Promise<string | undefined> | null = null;
 
+function managerAgentContainerEnv(source: Record<string, string> = {}): Record<string, string> {
+  const env = { ...source };
+  delete env.HOMERAIL_MANAGER_ADMIN_TOKEN;
+  delete env.HOMERAIL_PLUGIN_CAPABILITY_SECRET;
+  return env;
+}
+
 function canonicalProjectId(projectId?: string): string {
   const trimmed = (projectId ?? "").trim();
   if (!trimmed || trimmed === "None") return "__default__";
@@ -62,6 +71,10 @@ function canonicalProjectId(projectId?: string): string {
 
 function containerName(projectId?: string): string {
   return `homerail-manager-agent-${canonicalProjectId(projectId)}`;
+}
+
+function workerId(projectId?: string): string {
+  return `manager-agent-${canonicalProjectId(projectId)}`;
 }
 
 function hostPort(projectId?: string): number {
@@ -327,14 +340,15 @@ export async function ensureManagerAgentContainer(
   const projectWorkspace = resolveProjectWorkspace(projectId);
   const resolvedManagerRestUrl = managerRestUrl(options);
   const env = {
+    ...managerAgentContainerEnv(options.env),
     MANAGER_AGENT_MODE: "1",
     MANAGER_AGENT_PORT: String(MANAGER_AGENT_CONTAINER_PORT),
     HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT: "container",
     MANAGER_REST_URL: resolvedManagerRestUrl,
     PROJECT_ID: projectId ?? "",
     PROJECT_WORKSPACE: projectWorkspace ? "/workspace/project" : "",
-    HOMERAIL_WORKER_ID: `manager-agent-${canonicalProjectId(projectId)}`,
-    ...(options.env ?? {}),
+    HOMERAIL_WORKER_ID: workerId(projectId),
+    ...getManagerAgentTurnEnvelopeAuthority().workerEnvironment(),
   };
   const fingerprint = managerAgentConfigFingerprint({
     image,
@@ -354,7 +368,7 @@ export async function ensureManagerAgentContainer(
       labels["homerail.config_fingerprint"] === fingerprint &&
       await health(url);
     if (reusable) {
-      return { containerId: String(existing.id), nodeId, baseUrl: url, containerName: name };
+      return { containerId: String(existing.id), nodeId, baseUrl: url, containerName: name, workerId: workerId(projectId) };
     }
   }
   if (existing?.id) {
@@ -403,7 +417,7 @@ export async function ensureManagerAgentContainer(
     await stopRemove(nodeId, containerId);
     throw new Error("Manager Agent container did not become healthy");
   }
-  return { containerId, nodeId, baseUrl: url, containerName: name };
+  return { containerId, nodeId, baseUrl: url, containerName: name, workerId: workerId(projectId) };
 }
 
 export async function forwardChatToManagerAgentContainer(
@@ -413,7 +427,10 @@ export async function forwardChatToManagerAgentContainer(
   const res = await fetch(`${container.baseUrl}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(getManagerAgentTurnEnvelopeAuthority().seal({
+      payload,
+      target: { runtime_placement: "container", worker_id: container.workerId },
+    })),
     signal: AbortSignal.timeout(300_000),
   });
   const text = await res.text();

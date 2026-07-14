@@ -1,0 +1,194 @@
+[
+  {
+    "name": "html",
+    "input": {
+      "id": "dynamic-html-dashboard",
+      "type": "html",
+      "title": "运行摘要",
+      "body": "已生成交互式摘要。",
+      "status": "ready",
+      "priority": "high",
+      "items": ["仅供预览"],
+      "steps": [],
+      "active_step": 0,
+      "data": {
+        "visual": "html",
+        "html": "<section class=\"summary\"><strong>4</strong><span>个节点完成</span></section>",
+        "css": ".summary { display: grid; gap: 8px; }",
+        "layout": "tall",
+        "ui_state": "visible"
+      }
+    }
+  },
+  {
+    "name": "metric_strip",
+    "input": {
+      "id": "dynamic-metrics",
+      "type": "metric_strip",
+      "title": "运行指标",
+      "body": "本轮执行的关键指标。",
+      "status": "live",
+      "priority": "normal",
+      "items": [],
+      "steps": [],
+      "active_step": 0,
+      "data": {
+        "visual": "metric_strip",
+        "metrics": [
+          { "label": "完成节点", "value": "4", "unit": "个", "tone": "success" },
+          { "label": "耗时", "value": "18", "unit": "秒", "tone": "neutral" }
+        ]
+      }
+    }
+  },
+  {
+    "name": "timeline",
+    "input": {
+      "id": "dynamic-timeline",
+      "type": "timeline",
+      "title": "执行时间线",
+      "body": "最近两条执行事件。",
+      "status": "running",
+      "priority": "normal",
+      "items": ["10:00 开始", "10:01 完成分析"],
+      "steps": [],
+      "active_step": 0,
+      "data": {
+        "visual": "timeline",
+        "timeline": [
+          { "time": "10:00", "label": "开始执行", "status": "done", "detail": "已载入会话" },
+          { "time": "10:01", "label": "分析协议", "status": "running", "detail": "正在生成基线" }
+        ]
+      }
+    }
+  },
+  {
+    "name": "dag_flow",
+    "input": {
+      "id": "dynamic-dag",
+      "type": "dag_flow",
+      "title": "DAG 态势",
+      "body": "三节点串行工作流。",
+      "status": "running",
+      "priority": "high",
+      "items": [],
+      "steps": ["读取", "转换", "比对"],
+      "active_step": 1,
+      "data": {
+        "visual": "dag_flow",
+        "nodes": [
+          { "id": "read", "label": "读取旧状态", "status": "done", "detail": "快照已载入", "progress": 100 },
+          { "id": "compare", "label": "比对输出", "status": "running", "detail": "Shadow 处理中", "progress": 45 },
+          { "id": "report", "label": "生成报告", "status": "pending", "detail": "等待上游", "progress": 0 }
+        ]
+      }
+    }
+  },
+  {
+    "name": "chart",
+    "input": {
+      "id": "dynamic-chart",
+      "type": "chart",
+      "title": "兼容覆盖率",
+      "body": "按 Widget 类型统计。",
+      "status": "ready",
+      "priority": "normal",
+      "items": [],
+      "steps": [],
+      "active_step": 0,
+      "data": {
+        "visual": "chart",
+        "chart_values": [
+          { "label": "TOML", "value": 100, "tone": "success" },
+          { "label": "动态组件", "value": 80, "tone": "warning" }
+        ]
+      }
+    }
+  },
+  {
+    "name": "topic_outline",
+    "input": {
+      "id": "dynamic-topic-outline",
+      "type": "topic_outline",
+      "title": "生成式 UI 插件化选题",
+      "body": "解释 DSL、插件和开发管线之间的关系。",
+      "status": "draft",
+      "priority": "high",
+      "items": [],
+      "steps": [],
+      "active_step": 0,
+      "data": {
+        "visual": "topic_outline",
+        "brief": "从基础架构到新场景插件交付，给出一条可验收的纵向路径。",
+        "audience": "HomeRail 开发者",
+        "angle": "DSL 是 ABI，插件是交付单元",
+        "thesis": "生成式 UI 必须与插件开发管线一起设计。",
+        "confidence": 92,
+        "questions": ["首个插件选择哪个场景？"],
+        "outline": [
+          { "title": "为什么需要语义 DSL", "status": "ready", "points": ["隔离模型与布局", "提供稳定 ABI"] },
+          { "title": "如何交付新场景", "status": "draft", "points": ["Skill", "Tool", "Renderer"] }
+        ],
+        "sources": [
+          { "title": "HomeRail 架构草案", "url": "https://example.com/homerail", "note": "内部设计基线" }
+        ],
+        "next_action": "确认首个纵向插件"
+      }
+    }
+  },
+  {
+    "name": "slide_deck",
+    "input": {
+      "id": "dynamic-slide-deck",
+      "type": "slide_deck",
+      "title": "生成式 UI 架构演示",
+      "body": "从语义 DSL 到插件运行时。",
+      "status": "ready",
+      "priority": "high",
+      "items": [],
+      "steps": [],
+      "active_step": 0,
+      "data": {
+        "visual": "slide_deck",
+        "deck_title": "生成式 UI 底层架构",
+        "deck_subtitle": "DSL、Surface Composer 与插件 PDK",
+        "format": "HTML deck",
+        "run_id": "run-deck-001",
+        "artifact_id": "artifact-deck-001",
+        "updated_at": "2026-07-11T10:30:00+08:00",
+        "slides": [
+          { "title": "模型生成语义", "subtitle": "宿主决定呈现", "bullets": ["Semantic UI IR", "确定性布局"], "speaker_notes": "先讲职责边界。", "visual": "编译器管线图", "status": "ready" },
+          { "title": "插件纵向闭环", "subtitle": "新场景无需修改 Core", "bullets": ["Skill", "Tool", "Renderer"], "speaker_notes": "演示 Golden Scenario。", "visual": "插件结构图", "status": "draft" }
+        ]
+      }
+    }
+  },
+  {
+    "name": "xiaohongshu_note",
+    "input": {
+      "id": "dynamic-xiaohongshu-note",
+      "type": "xiaohongshu_note",
+      "title": "周末家庭影院布置",
+      "body": "客厅秒变家庭影院\n三步完成影音联动",
+      "status": "ready",
+      "priority": "normal",
+      "items": [],
+      "steps": [],
+      "active_step": 0,
+      "data": {
+        "visual": "xiaohongshu_note",
+        "title": "周末家庭影院布置",
+        "body": "客厅秒变家庭影院\n三步完成影音联动",
+        "images": ["cover.png", "setup/step-2.png"],
+        "tags": ["家庭影院", "智能家居", "HomeRail"],
+        "author": { "nickname": "HomeRail", "avatar_url": "https://example.com/avatar.png" },
+        "likes": 128,
+        "collects": 46,
+        "comments": 12,
+        "page_count": 2,
+        "run_id": "run-xhs-001",
+        "artifact_id": "artifact-xhs-001"
+      }
+    }
+  }
+]

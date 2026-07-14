@@ -9,6 +9,7 @@
 import { AGENT_BUILTIN_TOOL_NAMES } from "homerail-protocol";
 import type { AgentClient, AgentEvent, AgentRunContext, AgentUsage, DagToolDefinition } from "./types.js";
 import { jsonSchemaObjectToZodRawShape } from "./json-schema-zod.js";
+import { sanitizedAgentChildEnv } from "./child-env.js";
 
 const HANDOFF_ONLY_THINKING_BUDGET = 2048;
 
@@ -43,6 +44,9 @@ interface SdkMessage {
       id?: string;
       name?: string;
       input?: Record<string, unknown>;
+      tool_use_id?: string;
+      content?: unknown;
+      is_error?: boolean;
     }>;
     stop_reason?: string;
     usage?: {
@@ -79,6 +83,20 @@ interface SdkMessage {
   is_error?: boolean;
 }
 
+function sdkToolCallId(extra: unknown): string | undefined {
+  if (!extra || typeof extra !== "object" || Array.isArray(extra)) return undefined;
+  const record = extra as Record<string, unknown>;
+  for (const value of [
+    record.toolUseId,
+    record.tool_use_id,
+    record.requestId,
+    record.request_id,
+  ]) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return undefined;
+}
+
 interface SdkTransportGuard {
   promise: Promise<Error>;
   cleanup: () => void;
@@ -86,6 +104,12 @@ interface SdkTransportGuard {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
+}
+
+function sdkToolResultContent(block: { text?: string; content?: unknown }): string {
+  if (typeof block.content === "string") return block.content;
+  if (block.content !== undefined) return JSON.stringify(block.content);
+  return block.text ?? "";
 }
 
 function isClaudeSdkTransportError(err: unknown): err is Error {
@@ -223,8 +247,9 @@ export class ClaudeSdkAdapter implements AgentClient {
       // Register DAG tools as an in-process MCP server
       if (tools.length > 0 && sdk.createSdkMcpServer && sdk.tool) {
         const sdkTools = tools.map((t) =>
-          sdk.tool(t.name, t.description, jsonSchemaObjectToZodRawShape(t.input_schema), async (args) => {
-            const res = await t.handler(args);
+          sdk.tool(t.name, t.description, jsonSchemaObjectToZodRawShape(t.input_schema), async (args, extra) => {
+            const toolCallId = sdkToolCallId(extra);
+            const res = await t.handler(args, toolCallId ? { tool_call_id: toolCallId } : undefined);
             return {
               content: [{ type: "text" as const, text: res.content.map((c) => c.text).join("") }],
               isError: res.is_error,
@@ -447,7 +472,7 @@ export class ClaudeSdkAdapter implements AgentClient {
     const fromAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL ?? "";
     const fromLlmBaseUrl = process.env.LLM_BASE_URL ?? "";
     const baseUrl = fromContextBaseUrl || fromAnthropicBaseUrl || fromLlmBaseUrl;
-    const env = { ...process.env };
+    const env = sanitizedAgentChildEnv();
     if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
     if (baseUrl) {
       env.ANTHROPIC_BASE_URL = baseUrl;
@@ -510,10 +535,23 @@ export class ClaudeSdkAdapter implements AgentClient {
           } else if (block.type === "tool_result") {
             events.push({
               type: "tool_result",
-              tool_use_id: block.id ?? "",
-              content: typeof block.text === "string" ? block.text : JSON.stringify(block),
+              tool_use_id: block.tool_use_id ?? block.id ?? "",
+              content: sdkToolResultContent(block),
+              is_error: block.is_error,
             });
           }
+        }
+        break;
+      }
+      case "user": {
+        for (const block of msg.message?.content ?? []) {
+          if (block.type !== "tool_result") continue;
+          events.push({
+            type: "tool_result",
+            tool_use_id: block.tool_use_id ?? block.id ?? "",
+            content: sdkToolResultContent(block),
+            is_error: block.is_error,
+          });
         }
         break;
       }

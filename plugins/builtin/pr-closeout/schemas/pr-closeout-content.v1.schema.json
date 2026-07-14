@@ -1,0 +1,182 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "pr_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pr_url": {
+      "type": "string",
+      "maxLength": 2048
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "open", "closed", "merged"]
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": ["ready", "blocked", "changes_requested", "unknown"]
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical", "unknown"]
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "head_sha": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "updated_at": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "checks": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "running", "passed", "failed", "skipped", "unknown"]
+          },
+          "detail": { "type": "string", "maxLength": 500 },
+          "url": { "type": "string", "maxLength": 2048 },
+          "duration_seconds": { "type": "number", "minimum": 0, "maximum": 86400 }
+        },
+        "required": ["id", "label", "status"],
+        "additionalProperties": false
+      }
+    },
+    "flow": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "label": { "type": "string", "minLength": 1, "maxLength": 140 },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "running", "passed", "failed", "skipped", "blocked", "unknown"]
+          },
+          "detail": { "type": "string", "maxLength": 400 },
+          "progress": { "type": "number", "minimum": 0, "maximum": 100 },
+          "depends_on": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+          }
+        },
+        "required": ["id", "label", "status", "depends_on"],
+        "additionalProperties": false
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 180 },
+          "severity": { "type": "string", "enum": ["info", "warning", "blocking", "critical"] },
+          "detail": { "type": "string", "maxLength": 800 },
+          "owner": { "type": "string", "maxLength": 120 }
+        },
+        "required": ["id", "title", "severity"],
+        "additionalProperties": false
+      }
+    },
+    "reviews": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 180 },
+          "status": { "type": "string", "enum": ["open", "resolved", "outdated", "dismissed", "unknown"] },
+          "author": { "type": "string", "maxLength": 120 },
+          "detail": { "type": "string", "maxLength": 800 },
+          "url": { "type": "string", "maxLength": 2048 }
+        },
+        "required": ["id", "title", "status"],
+        "additionalProperties": false
+      }
+    },
+    "platforms": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "status": {
+            "type": "string",
+            "enum": ["not_run", "pending", "running", "passed", "failed", "skipped", "unknown"]
+          },
+          "detail": { "type": "string", "maxLength": 500 }
+        },
+        "required": ["id", "label", "status"],
+        "additionalProperties": false
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "label": { "type": "string", "minLength": 1, "maxLength": 180 },
+          "status": { "type": "string", "enum": ["verified", "pending", "failed", "superseded", "unknown"] },
+          "detail": { "type": "string", "maxLength": 800 },
+          "at": { "type": "string", "maxLength": 80 },
+          "url": { "type": "string", "maxLength": 2048 }
+        },
+        "required": ["id", "label", "status"],
+        "additionalProperties": false
+      }
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "label": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "style": { "type": "string", "enum": ["primary", "secondary"] },
+          "url": { "type": "string", "minLength": 1, "maxLength": 2048 }
+        },
+        "required": ["id", "label", "style", "url"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["id", "title", "repository", "pr_number", "status", "recommendation"],
+  "additionalProperties": false
+}

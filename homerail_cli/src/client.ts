@@ -1,4 +1,7 @@
-import { resolveConfiguredManagerUrl } from "./local-config.js";
+import {
+  resolveConfiguredManagerAdminToken,
+  resolveConfiguredManagerUrl,
+} from "./local-config.js";
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface BaseResponse {
@@ -11,17 +14,22 @@ export interface BaseResponse {
 export interface HomeRailClientOptions {
   baseUrl?: string;
   timeoutMs?: number;
+  adminToken?: string;
   mutationToken?: string;
 }
 
 export class HomeRailClient {
   readonly baseUrl: string;
   readonly timeoutMs: number;
+  private readonly adminToken?: string;
   readonly mutationToken?: string;
 
   constructor(opts: HomeRailClientOptions = {}) {
     this.baseUrl = HomeRailClient.resolveBaseUrl(opts.baseUrl);
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.adminToken = opts.adminToken === undefined
+      ? resolveConfiguredManagerAdminToken()
+      : opts.adminToken || undefined;
     this.mutationToken = opts.mutationToken ?? process.env.HOMERAIL_DAG_MUTATION_TOKEN;
   }
 
@@ -34,15 +42,43 @@ export class HomeRailClient {
   }
 
   async post<T = BaseResponse>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("POST", path, body);
+    return this.request<T>("POST", path, body === undefined ? undefined : {
+      type: "json",
+      value: body,
+    });
+  }
+
+  async postBinary<T = BaseResponse>(
+    path: string,
+    body: Uint8Array,
+    contentType = "application/vnd.homerail.plugin+zip",
+  ): Promise<T> {
+    return this.request<T>("POST", path, {
+      type: "binary",
+      value: Uint8Array.from(body),
+      contentType,
+    });
   }
 
   async put<T = BaseResponse>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("PUT", path, body);
+    return this.request<T>("PUT", path, body === undefined ? undefined : {
+      type: "json",
+      value: body,
+    });
   }
 
-  async delete<T = BaseResponse>(path: string): Promise<T> {
-    return this.request<T>("DELETE", path);
+  async patch<T = BaseResponse>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>("PATCH", path, body === undefined ? undefined : {
+      type: "json",
+      value: body,
+    });
+  }
+
+  async delete<T = BaseResponse>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>("DELETE", path, body === undefined ? undefined : {
+      type: "json",
+      value: body,
+    });
   }
 
   async getRunStatus(runId: string): Promise<BaseResponse> {
@@ -145,7 +181,9 @@ export class HomeRailClient {
   private async request<T>(
     method: string,
     path: string,
-    body?: unknown,
+    payload?:
+      | { type: "json"; value: unknown }
+      | { type: "binary"; value: Uint8Array; contentType: string },
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const controller = new AbortController();
@@ -155,15 +193,25 @@ export class HomeRailClient {
       const init: RequestInit = {
         method,
         headers: {
-          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...(this.adminToken && isProtectedApiMutationRequest(method, path) ? {
+            Authorization: `Bearer ${this.adminToken}`,
+          } : {}),
           ...(method !== "GET" && this.mutationToken
             ? { "X-Homerail-Dag-Token": this.mutationToken }
             : {}),
+          ...(payload ? {
+            "Content-Type": payload.type === "json"
+              ? "application/json"
+              : payload.contentType,
+          } : {}),
         },
         signal: controller.signal,
       };
-      if (body !== undefined) {
-        init.body = JSON.stringify(body);
+      if (payload?.type === "json") {
+        init.body = JSON.stringify(payload.value);
+      } else if (payload?.type === "binary") {
+        init.body = payload.value as BodyInit;
       }
 
       const response = await fetch(url, init);
@@ -174,6 +222,8 @@ export class HomeRailClient {
           const errBody = (await response.json()) as Record<string, unknown>;
           if (typeof errBody.message === "string") {
             message = errBody.message;
+          } else if (typeof errBody.error === "string") {
+            message = errBody.error;
           }
         } catch {
           // ignore parse error on error body
@@ -186,11 +236,35 @@ export class HomeRailClient {
       if (err instanceof Error && err.name === "AbortError") {
         throw new Error(`Request timed out after ${this.timeoutMs}ms`);
       }
-      throw err;
+      throw redactClientError(err, this.adminToken, this.mutationToken);
     } finally {
       clearTimeout(timer);
     }
   }
+}
+
+function isProtectedApiMutationRequest(method: string, pathValue: string): boolean {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase())) return false;
+  try {
+    const pathname = new URL(pathValue, "http://localhost").pathname;
+    return pathname === "/api" || pathname.startsWith("/api/");
+  } catch {
+    return false;
+  }
+}
+
+function redactClientError(
+  error: unknown,
+  adminToken: string | undefined,
+  mutationToken: string | undefined,
+): Error {
+  let message = error instanceof Error ? error.message : String(error);
+  if (adminToken) message = message.split(adminToken).join("***REDACTED***");
+  if (mutationToken) message = message.split(mutationToken).join("***REDACTED***");
+  message = message.replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1***REDACTED***");
+  const safe = new Error(message);
+  if (error instanceof Error) safe.name = error.name;
+  return safe;
 }
 
 function withQuery(

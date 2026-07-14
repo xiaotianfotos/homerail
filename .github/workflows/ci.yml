@@ -129,6 +129,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm --prefix homerail_protocol ci
+          npm --prefix homerail_protocol run build
           npm --prefix agent-ui ci
 
       - name: Run full-source coverage

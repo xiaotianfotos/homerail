@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "dockerode": "^5.0.0",
+    "homerail-protocol": "file:../homerail_protocol",
     "ws": "^8.18.0"
   },
   "devDependencies": {

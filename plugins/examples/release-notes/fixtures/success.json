@@ -1,0 +1,56 @@
+{
+  "tool": "publish_release_notes",
+  "arguments": {
+    "id": "dev.homerail.release-notes:current",
+    "title": "HomeRail 0.2.0 Release Notes",
+    "version": "0.2.0",
+    "lifecycle_state": "success",
+    "summary": "The complete release snapshot is ready.",
+    "completion_percent": 100,
+    "changes": [
+      {
+        "title": "Declarative plugin cards",
+        "detail": "Pure-data packages can project semantic UI through the shared renderer DSL.",
+        "category": "added"
+      },
+      {
+        "title": "Deterministic HRP packages",
+        "detail": "Package bytes and locks are stable across repeated builds.",
+        "category": "changed"
+      },
+      {
+        "title": "Portable fallback summaries",
+        "detail": "Every release-note node remains readable without its rich renderer.",
+        "category": "fixed"
+      }
+    ],
+    "resources": [
+      {
+        "label": "Release artifact",
+        "uri": "artifact:releases/homerail-0.2.0.md"
+      },
+      {
+        "label": "HomeRail documentation",
+        "uri": "https://example.com/homerail/releases/0.2.0"
+      }
+    ]
+  },
+  "expect": {
+    "lifecycle_state": "success",
+    "completion_percent": 100,
+    "changes": [
+      {
+        "title": "Declarative plugin cards"
+      },
+      {
+        "title": "Deterministic HRP packages"
+      }
+    ],
+    "resources": [
+      {
+        "label": "Release artifact",
+        "uri": "artifact:releases/homerail-0.2.0.md"
+      }
+    ]
+  }
+}

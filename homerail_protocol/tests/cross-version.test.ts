@@ -50,6 +50,16 @@ describe("Protocol version consistency", () => {
 
   it("allSchemas covers all fixture schemas", () => {
     const requiredSchemas = [
+      "generative-ui-node", "generative-ui-stored-node", "generative-ui-document",
+      "generative-ui-transaction", "generative-ui-user-override",
+      "generative-ui-composition-context", "generative-ui-composition",
+      "generative-ui-interaction-event",
+      "homerail-plugin-manifest-v1",
+      "homerail-plugin-turn-context-v1",
+      "homerail-plugin-ui-projection-v1",
+      "homerail-resolved-plugin-descriptor-v1",
+      "homerail-direct-ui-projection-v1",
+      "homerail-plugin-tool-execution-envelope-v1",
       "handoff-request", "handoff-response",
       "tool-call", "tool-result",
       "send-message", "receive-message",

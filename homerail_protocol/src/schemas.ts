@@ -3,6 +3,11 @@
  * @version 0.1.0
  */
 
+import {
+  generativeUiSchemas,
+} from "./generative-ui/schemas.js";
+import { homerailPluginSchemas } from "./plugins/schemas.js";
+
 // ── DAG Tool Schemas ─────────────────────────────────────────────
 
 export const handoffRequestSchema = {
@@ -384,6 +389,8 @@ export const asyncResultSchema = {
 
 /** All schemas indexed by name for validator registration */
 export const allSchemas: Record<string, Record<string, unknown>> = {
+  ...generativeUiSchemas,
+  ...homerailPluginSchemas,
   "handoff-request": handoffRequestSchema as Record<string, unknown>,
   "handoff-response": handoffResponseSchema as Record<string, unknown>,
   "tool-call": toolCallSchema as Record<string, unknown>,

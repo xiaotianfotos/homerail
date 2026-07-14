@@ -549,6 +549,14 @@ describe("manager-agent server", () => {
           tool_calls: [],
           satisfied: true,
         },
+        effective_config: {
+          harness: "manager-agent-no-tool-test",
+          response_mode: "chat",
+          model: "test-model",
+          workspace,
+          plugin_registry_revision: 0,
+          plugin_context_digest: null,
+        },
       });
     } finally {
       await close(server);

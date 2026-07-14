@@ -35,6 +35,8 @@ export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
   "validate_dag_workflow",
   "sync_dag_workflow",
   "create_change",
+  "run_pr_review",
+  "run_pr_closeout",
   "create_and_run",
   "invoke_run",
   "get_run_status",
@@ -45,6 +47,7 @@ export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
 export const MANAGER_AGENT_COMMON_VOICE_TOOL_NAMES = [
   "update_voice_memo",
   "update_task_draft",
+  "publish_artifact",
   "validate_widget_file",
   "write_widget_file",
   "read_widget_file",
@@ -72,6 +75,99 @@ export type ManagerAgentToolName = ManagerAgentCommonToolName | ManagerAgentHost
 
 export const HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL = "homerail_tool_call";
 export const HOMERAIL_PROMPT_HANDOFF_PROTOCOL = "homerail_handoff";
+
+/** Historical widgets remain readable, but new writes for these scene types
+ * must cross their enabled plugin Tool boundary. */
+export interface ManagerAgentPluginLegacyWidgetCatalog {
+  /** Manager-only archived reservations used at the final ingestion boundary. */
+  legacy_widget_reservations?: readonly { legacy_types: readonly string[] }[];
+  /** V1-compatible Host/Worker hint derived from enabled projection Tools. */
+  tools?: ReadonlyArray<{ handler: { type: string; document?: unknown } }>;
+}
+
+export interface ManagerAgentPluginSkillCatalog {
+  skills: ReadonlyArray<{
+    plugin_id: string;
+    plugin_version: string;
+    local_id: string;
+    qualified_id: string;
+    description: string;
+    digest: string;
+  }>;
+}
+
+export function managerAgentPluginSkillSnapshot(
+  catalog: ManagerAgentPluginSkillCatalog | undefined,
+  qualifiedId: string,
+): ManagerAgentPluginSkillCatalog["skills"][number] | undefined {
+  return catalog?.skills.find((skill) => skill.qualified_id === qualifiedId);
+}
+
+export function mergeManagerAgentPluginSkillCatalog(
+  body: unknown,
+  catalog: ManagerAgentPluginSkillCatalog | undefined,
+): Record<string, unknown> {
+  const root = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const data = root.data && typeof root.data === "object" && !Array.isArray(root.data)
+    ? root.data as Record<string, unknown>
+    : {};
+  const localSkills = Array.isArray(data.skills)
+    ? data.skills.filter((skill) => skill && typeof skill === "object" && !Array.isArray(skill))
+    : [];
+  const pluginSkills = (catalog?.skills ?? []).map((skill) => ({
+    id: skill.qualified_id,
+    name: skill.local_id,
+    description: skill.description,
+    relative_path: `plugin://${skill.plugin_id}@${skill.plugin_version}/skills/${skill.local_id}`,
+    source: "plugin",
+    enabled: true,
+    plugin_id: skill.plugin_id,
+    plugin_version: skill.plugin_version,
+    digest: skill.digest,
+  }));
+  const skills = [...localSkills, ...pluginSkills].sort((left, right) => {
+    const leftId = String((left as Record<string, unknown>).id ?? "");
+    const rightId = String((right as Record<string, unknown>).id ?? "");
+    return leftId.localeCompare(rightId);
+  });
+  return {
+    ...root,
+    data: { ...data, skills, total: skills.length },
+  };
+}
+
+export function managerAgentPluginOwnedLegacyWidgetType(
+  catalog: ManagerAgentPluginLegacyWidgetCatalog | undefined,
+  value: unknown,
+): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const reserved = new Set(catalog?.legacy_widget_reservations?.flatMap((entry) => entry.legacy_types) ?? []);
+  for (const tool of catalog?.tools ?? []) {
+    if (tool.handler.type !== "projection") continue;
+    const document = tool.handler.document;
+    if (!document || typeof document !== "object" || Array.isArray(document)) continue;
+    const bridge = (document as Record<string, unknown>).legacy_bridge;
+    if (!bridge || typeof bridge !== "object" || Array.isArray(bridge)) continue;
+    for (const candidate of [
+      (bridge as Record<string, unknown>).widget_type,
+      (bridge as Record<string, unknown>).visual,
+    ]) {
+      if (typeof candidate === "string" && candidate.trim()) reserved.add(candidate.trim().toLowerCase());
+    }
+  }
+  const widget = value as Record<string, unknown>;
+  const data = widget.data && typeof widget.data === "object" && !Array.isArray(widget.data)
+    ? widget.data as Record<string, unknown>
+    : undefined;
+  for (const candidate of [widget.type, widget.widget_type, data?.visual]) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.trim().toLowerCase();
+    if (reserved.has(normalized)) return normalized;
+  }
+  return undefined;
+}
 
 export interface HomeRailPromptToolCall {
   name: string;
@@ -223,7 +319,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   list_orchestrations: {
     name: "list_orchestrations",
-    description: "List repo-local orchestration YAML templates available to create runs.",
+    description: "List HomeRail orchestration YAML templates available to the current runtime.",
     input_schema: emptyObjectSchema,
   },
   list_dag_patterns: {
@@ -339,6 +435,39 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
       additionalProperties: false,
     },
   },
+  run_pr_review: {
+    name: "run_pr_review",
+    description: "Resolve immutable GitHub PR metadata in code and start HomeRail's built-in read-only pr-review DAG. Prefer this over manually calling gh, curl, or create_and_run for PR reviews.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/name form" },
+        pr: { type: "integer", minimum: 1 },
+        expected_usage: { type: "integer", minimum: 0, maximum: 100 },
+      },
+      required: ["repo", "pr"],
+      additionalProperties: false,
+    },
+  },
+  run_pr_closeout: {
+    name: "run_pr_closeout",
+    description: "Resolve GitHub and persisted HomeRail evidence in code, then start the deterministic pr-closeout DAG. This tool never merges a PR and does not accept model-asserted local test evidence.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/name form" },
+        pr: { type: "integer", minimum: 1 },
+        phase: { type: "string", enum: ["draft", "merge"] },
+        validation_runs: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          maxItems: 20,
+        },
+      },
+      required: ["repo", "pr"],
+      additionalProperties: false,
+    },
+  },
   create_and_run: {
     name: "create_and_run",
     description: "Create and immediately invoke a DAG run from a DB workflow_id or repo-local YAML path.",
@@ -417,6 +546,23 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
       "Preserve useful facts, mark answered todos as done, keep open questions compact, and set ready_to_execute only when the task is ready for confirmation.",
     ].join(" "),
     input_schema: voiceMemoSchema,
+  },
+  publish_artifact: {
+    name: "publish_artifact",
+    description: [
+      "Publish a generated PNG, JPEG, WebP, or standalone HTML file from the current project workspace to the current voice session.",
+      "Pass a project-relative source_path. The result returns a persistent browser-safe URL; bind that URL from a HomeRail A2UI HrArtifact component.",
+      "This tool publishes an existing file only. It does not generate content and never accepts paths outside the current project workspace.",
+    ].join(" "),
+    input_schema: {
+      type: "object",
+      properties: {
+        source_path: { type: "string", minLength: 1, maxLength: 2048 },
+        title: { type: "string", maxLength: 200 },
+      },
+      required: ["source_path"],
+      additionalProperties: false,
+    },
   },
   validate_widget_file: {
     name: "validate_widget_file",
@@ -512,7 +658,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   show_dynamic_widget: {
     name: "show_dynamic_widget",
-    description: "显示动态小组件。type 可为 html、metric_strip、timeline、dag_flow、chart、topic_outline、slide_deck 等。",
+    description: "显示 Core 兼容动态小组件，例如 html、metric_strip、timeline、dag_flow、chart 或 slide_deck。插件拥有的场景必须使用当前 turn Tool catalog 中的插件 Tool。",
     input_schema: widgetSchema,
   },
   remove_widget: {

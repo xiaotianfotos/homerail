@@ -17,6 +17,7 @@ import { registerSmokeCommand } from "./commands/smoke.js";
 import { registerConfigCommand } from "./commands/config.js";
 import { registerRuntimeCommands } from "./commands/runtime.js";
 import { registerPatternsCommand } from "./commands/patterns.js";
+import { registerPluginCommand } from "./commands/plugin.js";
 import { DEFAULT_MANAGER_URL } from "./local-config.js";
 
 export { HomeRailClient } from "./client.js";
@@ -34,6 +35,7 @@ export function createProgram(): Command {
 
   registerTemplatesCommand(program);
   registerPatternsCommand(program);
+  registerPluginCommand(program);
   registerRunCommand(program);
   registerRunsCommand(program);
   registerStatusCommand(program);

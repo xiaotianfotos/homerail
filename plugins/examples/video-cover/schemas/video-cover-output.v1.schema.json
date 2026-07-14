@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "artifacts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": ["cover", "metadata"]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "uri": {
+            "type": "string",
+            "minLength": 80,
+            "maxLength": 80
+          },
+          "media_type": {
+            "type": "string",
+            "enum": ["application/json", "image/png"]
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16777216
+          }
+        },
+        "required": ["id", "label", "uri", "media_type", "digest", "size_bytes"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["artifacts"],
+  "additionalProperties": false
+}

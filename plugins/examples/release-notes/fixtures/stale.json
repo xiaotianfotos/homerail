@@ -1,0 +1,30 @@
+{
+  "tool": "publish_release_notes",
+  "arguments": {
+    "id": "dev.homerail.release-notes:current",
+    "title": "HomeRail 0.2.0 Release Notes",
+    "version": "0.2.0",
+    "lifecycle_state": "stale",
+    "summary": "This complete snapshot is cached and may no longer match the source.",
+    "notice": "Refresh before relying on these notes for deployment decisions.",
+    "completion_percent": 100,
+    "changes": [
+      {
+        "title": "Declarative plugin cards",
+        "detail": "Cached from the last successful snapshot.",
+        "category": "added"
+      }
+    ],
+    "resources": [
+      {
+        "label": "Cached release artifact",
+        "uri": "artifact:releases/homerail-0.2.0.md"
+      }
+    ]
+  },
+  "expect": {
+    "lifecycle_state": "stale",
+    "notice": "Refresh before relying on these notes for deployment decisions.",
+    "completion_percent": 100
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "projection_version": 1,
+  "type": "direct_ui_node",
+  "kind": "com.homerail.topic-outline/outline",
+  "kind_version": 1,
+  "node_id_pointer": "/id",
+  "content_pointer": "",
+  "omit_content_fields": ["id"],
+  "fallback": {
+    "title_pointer": "/title",
+    "summary_pointer": "/brief",
+    "item_projections": [
+      {
+        "pointer": "/thesis",
+        "mode": "scalar",
+        "prefix": "Thesis: "
+      },
+      {
+        "pointer": "/next_action",
+        "mode": "scalar",
+        "prefix": "Next: "
+      },
+      {
+        "pointer": "/outline",
+        "mode": "records",
+        "prefix": "Section: ",
+        "title_pointer": "/title",
+        "items_pointer": "/points"
+      },
+      {
+        "pointer": "/questions",
+        "mode": "strings",
+        "prefix": "Question: "
+      },
+      {
+        "pointer": "/sources",
+        "mode": "records",
+        "prefix": "Source: ",
+        "title_pointer": "/title",
+        "detail_pointer": "/note"
+      }
+    ]
+  },
+  "defaults": {
+    "surface": "task",
+    "importance": "primary",
+    "density": "detail",
+    "persistence": "session"
+  },
+  "legacy_bridge": {
+    "widget_type": "topic_outline",
+    "visual": "topic_outline"
+  }
+}

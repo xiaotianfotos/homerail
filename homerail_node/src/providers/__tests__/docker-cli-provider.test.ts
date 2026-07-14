@@ -143,6 +143,62 @@ describe("DockerCliProvider (unit, mocked)", () => {
       expect(createArgs).toContain("FOO=bar");
     });
 
+    it("passes the Manager credential by inherited env without exposing its value in argv", async () => {
+      mockExecFileCb.mockImplementationOnce(resolveWith("abc123\n"));
+      mockExecFileCb.mockImplementationOnce(
+        resolveWith(makeInspectJson("abc123", "created")),
+      );
+      const token = "node-manager-admin-token-0123456789abcdef";
+
+      await provider.create({
+        image: "node:20-alpine",
+        env: { HOMERAIL_MANAGER_ADMIN_TOKEN: token },
+      });
+
+      const createArgs = mockExecFileCb.mock.calls[0]![1] as string[];
+      const createOptions = mockExecFileCb.mock.calls[0]![2] as { env?: NodeJS.ProcessEnv };
+      expect(createArgs).toContain("HOMERAIL_MANAGER_ADMIN_TOKEN");
+      expect(createArgs.join(" ")).not.toContain(token);
+      expect(createOptions.env?.HOMERAIL_MANAGER_ADMIN_TOKEN).toBe(token);
+    });
+
+    it("renders the attested non-root sandbox profile without putting secrets in argv", async () => {
+      mockExecFileCb.mockImplementationOnce(resolveWith("abc123\n"));
+      mockExecFileCb.mockImplementationOnce(
+        resolveWith(makeInspectJson("abc123", "created")),
+      );
+      const capabilitySecret = "runtime-capability-secret-0123456789abcdef";
+
+      await provider.create({
+        image: "plugin-runtime:latest",
+        user: "65532:65532",
+        readOnlyRootfs: true,
+        noNewPrivileges: true,
+        capDrop: ["ALL"],
+        securityOpts: ["seccomp=/profiles/plugin-runtime.json"],
+        network: "none",
+        devices: [{ host: "/dev/dri/renderD128", permissions: "r" }],
+        gpus: ["0"],
+        env: { HOMERAIL_PLUGIN_CAPABILITY_SECRET: capabilitySecret },
+      });
+
+      const createArgs = mockExecFileCb.mock.calls[0]![1] as string[];
+      const createOptions = mockExecFileCb.mock.calls[0]![2] as { env?: NodeJS.ProcessEnv };
+      expect(createArgs).toEqual(expect.arrayContaining([
+        "--user", "65532:65532",
+        "--read-only",
+        "--security-opt", "no-new-privileges:true",
+        "--cap-drop", "ALL",
+        "seccomp=/profiles/plugin-runtime.json",
+        "--network", "none",
+        "--device", "/dev/dri/renderD128:/dev/dri/renderD128:r",
+        "--gpus", "device=0",
+        "HOMERAIL_PLUGIN_CAPABILITY_SECRET",
+      ]));
+      expect(createArgs.join(" ")).not.toContain(capabilitySecret);
+      expect(createOptions.env?.HOMERAIL_PLUGIN_CAPABILITY_SECRET).toBe(capabilitySecret);
+    });
+
     it("includes mounts in create args", async () => {
       mockExecFileCb.mockImplementationOnce(resolveWith("abc123\n"));
       mockExecFileCb.mockImplementationOnce(

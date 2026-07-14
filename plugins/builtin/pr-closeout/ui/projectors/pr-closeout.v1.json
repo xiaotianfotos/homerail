@@ -1,0 +1,49 @@
+{
+  "projection_version": 1,
+  "type": "direct_ui_node",
+  "kind": "com.homerail.pr-closeout/report",
+  "kind_version": 1,
+  "node_id_pointer": "/id",
+  "content_pointer": "",
+  "omit_content_fields": [],
+  "fallback": {
+    "title_pointer": "/title",
+    "summary_pointer": "/summary",
+    "item_projections": [
+      {
+        "pointer": "/blockers",
+        "mode": "records",
+        "prefix": "Blocker: ",
+        "title_pointer": "/title",
+        "detail_pointer": "/detail"
+      },
+      {
+        "pointer": "/checks",
+        "mode": "records",
+        "prefix": "Check: ",
+        "title_pointer": "/label",
+        "detail_pointer": "/detail"
+      },
+      {
+        "pointer": "/platforms",
+        "mode": "records",
+        "prefix": "Platform: ",
+        "title_pointer": "/label",
+        "detail_pointer": "/detail"
+      },
+      {
+        "pointer": "/evidence",
+        "mode": "records",
+        "prefix": "Evidence: ",
+        "title_pointer": "/label",
+        "detail_pointer": "/detail"
+      }
+    ]
+  },
+  "defaults": {
+    "surface": "result",
+    "importance": "primary",
+    "density": "detail",
+    "persistence": "session"
+  }
+}

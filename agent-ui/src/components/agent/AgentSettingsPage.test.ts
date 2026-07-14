@@ -280,6 +280,25 @@ describe('AgentSettingsPage Android TV WireGuard settings', () => {
     app.unmount()
   })
 
+  it('keeps plugin management hidden from user settings', async () => {
+    setBridge({
+      isAndroidTV: () => false,
+      getWireGuardConfig: () => '{}',
+      saveWireGuardConfig: () => '{}',
+      clearWireGuardConfig: () => '{}',
+      getWireGuardStatus: () => '{}',
+      connectWireGuard: () => '{}',
+      disconnectWireGuard: () => '{}'
+    })
+
+    const { app, root } = mountSettings()
+    await flush()
+
+    expect(root.querySelector('[data-testid="agent-settings-tab-plugins"]')).toBeNull()
+    expect(root.querySelector('[data-testid="agent-settings-section-plugins"]')).toBeNull()
+    app.unmount()
+  })
+
   it('renders save errors returned by the Android TV bridge', async () => {
     setBridge({
       isAndroidTV: () => true,

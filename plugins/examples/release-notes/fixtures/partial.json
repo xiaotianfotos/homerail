@@ -1,0 +1,29 @@
+{
+  "tool": "publish_release_notes",
+  "arguments": {
+    "id": "dev.homerail.release-notes:current",
+    "title": "HomeRail 0.2.0 Release Notes",
+    "version": "0.2.0",
+    "lifecycle_state": "partial",
+    "summary": "A partial preview is available while remaining sections are generated.",
+    "notice": "More changes may be added before publication.",
+    "completion_percent": 50,
+    "changes": [
+      {
+        "title": "Declarative plugin cards",
+        "detail": "Pure-data plugins can project semantic cards without application branches.",
+        "category": "added"
+      }
+    ]
+  },
+  "expect": {
+    "lifecycle_state": "partial",
+    "completion_percent": 50,
+    "changes": [
+      {
+        "title": "Declarative plugin cards",
+        "category": "added"
+      }
+    ]
+  }
+}

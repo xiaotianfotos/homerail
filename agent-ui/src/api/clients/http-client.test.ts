@@ -116,7 +116,8 @@ describe('HttpClient', () => {
   })
 
   it.each([
-    [403, { message: 'ignored' }, 'Access forbidden'],
+    [403, { error: 'Manager mutation Origin is not trusted' }, 'Manager mutation Origin is not trusted'],
+    [403, {}, 'Access forbidden'],
     [404, { error: { message: 'Missing run' } }, 'Missing run'],
     [409, { message: 'Run is active' }, 'Run is active'],
     [422, { detail: 'Invalid field', details: { field: 'name' } }, 'Invalid field'],
