@@ -155,7 +155,9 @@ describe("plugin PDK workflow", () => {
       publisher: "com.example",
       key_id: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
     }));
-    expect(fs.statSync(String(generated.private_key)).mode & 0o077).toBe(0);
+    if (process.platform !== "win32") {
+      expect(fs.statSync(String(generated.private_key)).mode & 0o077).toBe(0);
+    }
 
     await runJson(
       "pack",
