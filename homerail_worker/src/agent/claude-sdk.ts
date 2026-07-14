@@ -240,9 +240,11 @@ export class ClaudeSdkAdapter implements AgentClient {
         }
       }
 
-      if (context.systemPrompt) {
-        options.systemPrompt = context.systemPrompt;
-      }
+      options.systemPrompt = {
+        type: "preset",
+        preset: "claude_code",
+        ...(context.systemPrompt ? { append: context.systemPrompt } : {}),
+      };
 
       // Register DAG tools as an in-process MCP server
       if (tools.length > 0 && sdk.createSdkMcpServer && sdk.tool) {

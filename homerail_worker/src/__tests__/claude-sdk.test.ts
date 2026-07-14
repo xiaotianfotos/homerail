@@ -328,6 +328,37 @@ describe("ClaudeSdkAdapter", () => {
     });
   });
 
+  it("keeps the Claude Code system prompt and appends the HomeRail contract", async () => {
+    const captured: Record<string, unknown>[] = [];
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: Record<string, unknown> }) {
+        captured.push(params.options ?? {});
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(_opts: { name: string; tools?: Array<Record<string, unknown>> }) {
+        return { type: "sdk", name: _opts.name };
+      },
+      tool(name: string) {
+        return { name };
+      },
+    }));
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    for await (const _event of adapter.run("test", [], {
+      ...ctx,
+      systemPrompt: "HomeRail Manager contract",
+    })) {
+      // Consume the adapter stream.
+    }
+
+    expect(captured[0]?.systemPrompt).toEqual({
+      type: "preset",
+      preset: "claude_code",
+      append: "HomeRail Manager contract",
+    });
+  });
+
   it("respects env vars", async () => {
     vi.stubEnv("CLAUDE_MODEL", "claude-opus-4-20250514");
     vi.stubEnv("CLAUDE_THINKING_BUDGET", "32000");
