@@ -6,6 +6,7 @@ import {
   normalizeVoiceSpeechTextForKey,
   pruneVoiceSpeechEventKeys,
   rememberVoiceSpeechEvent,
+  voiceConversationMessageSpeechText,
 } from './voice-speech-queue'
 
 describe('voice speech queue helpers', () => {
@@ -18,12 +19,31 @@ describe('voice speech queue helpers', () => {
 
   it('dedupes explicit speech events and workspace fallback by spoken text', () => {
     const seen = new Map<string, number>()
-    const explicit = { id: 'speech-1', channel: 'final', text: '队列复测会播放 TTS。' }
-    const fallback = { id: 'assistant-1', channel: 'final', text: '队列复测会播放 TTS。' }
+    const explicit = { id: 'speech-1', channel: 'final', text: '精简的 TTS。' }
+    const conversation = {
+      id: 'assistant-1',
+      channel: 'final',
+      text: '这是详情面板需要完整展示、但绝不能在流式事件结束后再次朗读的 Manager 回答。',
+      spoken_text: '精简的 TTS。',
+    }
+    const fallback = {
+      channel: conversation.channel,
+      text: voiceConversationMessageSpeechText(conversation),
+    }
 
     expect(hasRecentVoiceSpeechEvent(seen, fallback, 1_000)).toBe(false)
     rememberVoiceSpeechEvent(seen, explicit, 1_000)
     expect(hasRecentVoiceSpeechEvent(seen, fallback, 1_001)).toBe(true)
+  })
+
+  it('prefers persisted spoken text and falls back for legacy conversation messages', () => {
+    expect(voiceConversationMessageSpeechText({
+      text: '完整显示文本',
+      spoken_text: '精简朗读文本',
+    })).toBe('精简朗读文本')
+    expect(voiceConversationMessageSpeechText({ text: '旧会话文本' })).toBe('旧会话文本')
+    expect(voiceConversationMessageSpeechText({ text: '不要朗读', spoken_text: '' })).toBe('')
+    expect(voiceConversationMessageSpeechText({ text: '   ', spoken_text: '   ' })).toBe('')
   })
 
   it('keeps commentary and final channels separate', () => {
@@ -53,6 +73,12 @@ describe('voice speech queue helpers', () => {
       role: 'assistant',
       kind: 'message',
       text: '任务已经完成。',
+    })).toBe(true)
+    expect(isVoiceConversationMessageSpeakable({
+      role: 'assistant',
+      kind: 'message',
+      text: '',
+      spoken_text: '任务已经完成。',
     })).toBe(true)
   })
 })

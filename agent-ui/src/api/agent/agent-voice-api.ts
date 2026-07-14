@@ -32,6 +32,7 @@ export type {
   UpdateVoiceAgentConfigRequest,
   VoiceTtsOutputChannel,
   VoiceSpeechEvent,
+  VoiceManagerResult,
   VoiceTurnResponse,
   VoiceConfirmResponse,
   VoiceStreamEvent,

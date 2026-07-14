@@ -52,6 +52,7 @@ export interface VoiceConversationMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
   text: string
+  spoken_text?: string
   created_at: string
   channel?: 'final' | 'commentary'
   kind?: 'message' | 'error'
@@ -162,24 +163,30 @@ export interface VoiceSpeechEvent {
   text: string
 }
 
+export interface VoiceManagerResult {
+  [key: string]: unknown
+  text?: string
+  run_id?: string | null
+  run_ids?: string[]
+  session_id?: string | null
+  issue?: Record<string, unknown>
+  orchestrator?: Record<string, unknown>
+  manager_provider_name?: string
+  manager_model_name?: string
+}
+
 export interface VoiceTurnResponse {
   workspace: VoiceWorkspace
   spoken_text: string
   voice_events?: VoiceSpeechEvent[]
   suggested_action?: 'confirm' | null
+  manager?: VoiceManagerResult
+  manager_status?: VoiceManagerStatus
 }
 
 export interface VoiceConfirmResponse {
   workspace: VoiceWorkspace
-  manager: {
-    text?: string
-    run_id?: string | null
-    session_id?: string | null
-    issue?: Record<string, unknown>
-    orchestrator?: Record<string, unknown>
-    manager_provider_name?: string
-    manager_model_name?: string
-  }
+  manager: VoiceManagerResult
   manager_status?: VoiceManagerStatus
   spoken_text: string
   voice_events?: VoiceSpeechEvent[]
@@ -188,7 +195,7 @@ export interface VoiceConfirmResponse {
 export type VoiceStreamEvent =
   | { type: 'workspace'; workspace: VoiceWorkspace }
   | { type: 'speech'; event: VoiceSpeechEvent; workspace?: VoiceWorkspace }
-  | { type: 'done'; workspace: VoiceWorkspace; spoken_text?: string; voice_events?: VoiceSpeechEvent[]; suggested_action?: 'confirm' | null; manager_status?: VoiceManagerStatus }
+  | { type: 'done'; workspace: VoiceWorkspace; spoken_text?: string; voice_events?: VoiceSpeechEvent[]; suggested_action?: 'confirm' | null; manager?: VoiceManagerResult; manager_status?: VoiceManagerStatus }
   | { type: 'error'; message: string; workspace?: VoiceWorkspace }
   | { type: string; [key: string]: unknown }
 
