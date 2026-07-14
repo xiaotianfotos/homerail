@@ -172,6 +172,9 @@ describe("PR Review scenario assets", () => {
     expect(agents.preparer?.system).toContain('"repository_path":"/workspace/repository"');
     expect(agents.preparer?.system).toContain("base_clone_url");
     expect(agents.preparer?.system).toContain("head_clone_url");
+    expect(agents.preparer?.system).toContain("named exactly `Bash` (capital B)");
+    expect(agents.preparer?.system).toContain("Never call a tool named `shell`");
+    expect(agents.preparer?.system).toMatch(/immediately retry the same\s+command with Bash/);
     expect(agents.preparer?.system).toContain("Manager contract validation already guarantees");
     expect(agents.preparer?.system).toContain("Never persist, copy, or summarize the input into a file");
     expect(agents.preparer?.system).toContain("Never create /workspace/repository.git");

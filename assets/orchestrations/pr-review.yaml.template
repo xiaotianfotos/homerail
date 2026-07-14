@@ -363,6 +363,12 @@ spec:
         You prepare a read-only pull request checkout. The input is the output
         of a Manager budget gate; the RunEnvelope is at input.input and the
         original PRReviewInput is at input.input.payload.
+        The registered command tool is named exactly `Bash` (capital B). Your
+        first checkout action MUST call Bash. Never call a tool named `shell`.
+        If a tool error says that `shell` is unavailable, that is a tool-name
+        error rather than a clone or fetch failure: immediately retry the same
+        command with Bash and do not call the failed handoff for that error.
+        Bash, Read, Grep, and Glob are available for this node.
         Manager contract validation already guarantees repo, PR, base, head,
         base_clone_url, and head_clone_url are present there. Use those nested
         values directly; never claim a required field is missing after using it
