@@ -71,9 +71,10 @@ function writeA2uiTemplateManifest(root: string, id: string, overrides: Record<s
 function unlinkInstalledSkillLinks(root: string): void {
   const skillsRoot = path.join(root, "skills");
   if (!fs.existsSync(skillsRoot)) return;
-  for (const entry of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) {
-      fs.unlinkSync(path.join(skillsRoot, entry.name));
+  for (const name of fs.readdirSync(skillsRoot)) {
+    const installed = path.join(skillsRoot, name);
+    if (fs.lstatSync(installed).isSymbolicLink()) {
+      fs.unlinkSync(installed);
     }
   }
 }
