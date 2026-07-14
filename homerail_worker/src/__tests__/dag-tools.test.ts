@@ -119,6 +119,10 @@ describe("DAG tools", () => {
       const tools = createDagTools(state);
       const handoffTool = tools.find((t) => t.name === "handoff")!;
 
+      expect(handoffTool.input_schema).toMatchObject({
+        properties: { port: { enum: ["done"] } },
+      });
+
       const result = await handoffTool.handler({
         port: "invalid",
         content: "x",

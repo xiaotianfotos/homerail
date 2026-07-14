@@ -198,7 +198,7 @@ const issueDiagnosis = createIssueDiagnosisPattern(DAG_PATTERN_SOURCE);
 
 const orchestratorWorkers: DAGPatternDefinition = {
   id: "orchestrator-workers",
-  version: "1.1.3",
+  version: "1.2.0",
   name: "Orchestrator and Workers",
   summary: "Separate planning from parallel execution, then aggregate and verify all worker results.",
   intent: "Give one planner ownership of decomposition while independent workers execute bounded parts in parallel.",
@@ -235,8 +235,9 @@ const orchestratorWorkers: DAGPatternDefinition = {
         Objective: { type: "string", minLength: 1 },
         Plan: {
           type: "object",
-          required: ["work_items"],
+          required: ["context", "work_items"],
           properties: {
+            context: { type: "string", minLength: 1 },
             work_items: {
               type: "array",
               minItems: 1,
@@ -263,19 +264,19 @@ const orchestratorWorkers: DAGPatternDefinition = {
         },
       },
       agents: {
-        orchestrator: { system: "Plan only: never inspect repositories, read task files, call shell tools, or execute any work item. Decompose the supplied objective into 1..N non-overlapping work_items. Every item must contain exactly id as a non-empty string, task as a non-empty string, and acceptance_criteria as a non-empty JSON array of strings; acceptance_criteria must never be a single string. Workers must report status using exactly success or failed; never ask for pass/fail or any alternative status vocabulary. Never precompute findings, evidence, status, or result values for a worker. The DAG already has a separate verifier after fan-out: never add verifier, reviewer, aggregator, coordinator, or summary items to work_items. Your first and only tool call must hand off on the exact port planned, never plan or plan.planned, with only the top-level work_items array." },
-        worker: { system: "Execute only the supplied fan-out item and inspect the real inputs required by its task. Use the minimum tools needed to produce grounded evidence and do not wait for other workers. After the work is complete, your final tool call must hand off on the exact port result, with exactly one JSON object containing top-level status set to success or failed and top-level evidence grounded in the work performed. Use status failed when an acceptance criterion cannot be checked. Never use done, completed, pass, or any other port or status vocabulary; never copy planner claims as evidence; never omit, nest, or rename status or evidence." },
+        orchestrator: { system: "Plan only: never inspect repositories, read task files, call shell tools, or execute any work item. Copy the supplied objective verbatim into the top-level context field so every worker receives the same immutable source context, then decompose it into 1..N non-overlapping work_items. Every item must contain exactly id as a non-empty string, task as a non-empty string, and acceptance_criteria as a non-empty JSON array of strings; acceptance_criteria must never be a single string. Workers must report status using exactly success or failed; never ask for pass/fail or any alternative status vocabulary. Never precompute findings, evidence, status, or result values for a worker. The DAG already has a separate verifier after fan-out: never add verifier, reviewer, aggregator, coordinator, or summary items to work_items. Your first and only tool call must hand off on the exact port planned, never plan or plan.planned, with only top-level context and work_items." },
+        worker: { system: "Execute only the supplied fan-out item. Its envelope contains item plus the original immutable context; use that context as source evidence and inspect additional real inputs only when the task requires them. Use the minimum tools needed to produce grounded evidence and do not wait for other workers. After the work is complete, your final tool call must hand off on the exact port result, with exactly one JSON object containing top-level status set to success or failed and top-level evidence grounded in the work performed. Use status failed when an acceptance criterion cannot be checked. Never use done, completed, pass, or any other port or status vocabulary; never copy planner claims as evidence; never omit, nest, or rename status or evidence." },
         verifier: { system: "Verify the combined fan-out evidence against the original objective. Your first and only tool call must hand off on the exact port verified when every result is grounded and satisfies the objective, otherwise on the exact port failed." },
       },
       nodes: {
-        plan: { kind: "agent", agent: "orchestrator", inputs: { objective: { contract: "Objective" } }, outputs: { planned: { contract: "Plan" } } },
+        plan: { kind: "agent", agent: "orchestrator", allowed_builtin_tools: [], allowed_dag_tools: ["handoff"], inputs: { objective: { contract: "Objective" } }, outputs: { planned: { contract: "Plan" } } },
         fanout: {
           kind: "fanout",
           inputs: { plan: { contract: "Plan" } },
           outputs: { passed: {}, failed: {} },
-          config: { input: "plan", item_field: "work_items", worker_agent: "worker", max_items: "{{max_workers}}", max_parallelism: "{{max_parallelism}}", completion: "all", result_contract: "WorkerResult", success_field: "status", success_values: ["success"], result_port: "passed", failed_port: "failed", cancel_remaining: false },
+          config: { input: "plan", item_field: "work_items", context_field: "context", worker_agent: "worker", max_items: "{{max_workers}}", max_parallelism: "{{max_parallelism}}", completion: "all", result_contract: "WorkerResult", success_field: "status", success_values: ["success"], result_port: "passed", failed_port: "failed", cancel_remaining: false },
         },
-        verify: { kind: "agent", agent: "verifier", inputs: { aggregate: {} }, outputs: { verified: {}, failed: {} } },
+        verify: { kind: "agent", agent: "verifier", allowed_builtin_tools: [], allowed_dag_tools: ["handoff"], inputs: { aggregate: {} }, outputs: { verified: {}, failed: {} } },
         done: { kind: "terminal", outcome: "success", inputs: { result: {} } },
         worker_failed: { kind: "terminal", outcome: "failure", inputs: { result: {} } },
         verification_failed: { kind: "terminal", outcome: "failure", inputs: { result: {} } },

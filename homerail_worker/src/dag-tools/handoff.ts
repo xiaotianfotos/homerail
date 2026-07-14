@@ -29,6 +29,7 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
       properties: {
         port: {
           type: "string",
+          ...(state.availablePorts.length > 0 ? { enum: state.availablePorts } : {}),
           description: "输出端口名（必须是系统提示中列出的可用端口之一）",
         },
         content: {

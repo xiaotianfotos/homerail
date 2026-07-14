@@ -543,10 +543,20 @@ describe("built-in DAG patterns", () => {
     );
 
     expect(planEdges.map((edge) => [edge.from_port, edge.to_node, edge.to_port])).toEqual([["planned", "fanout", "plan"]]);
+    const planner = pattern.parsed.graph.nodes.find((node) => node.node_id === "plan");
     const fanout = pattern.parsed.graph.nodes.find((node) => node.node_id === "fanout");
-    expect(fanout?.gateway_config).toMatchObject({ type: "fanout", max_items: 16, max_parallelism: 4, worker_agent: "worker" });
+    const verifier = pattern.parsed.graph.nodes.find((node) => node.node_id === "verify");
+    expect(fanout?.gateway_config).toMatchObject({
+      type: "fanout",
+      max_items: 16,
+      max_parallelism: 4,
+      worker_agent: "worker",
+      context_field: "context",
+    });
     expect(pattern.parsed.meta.contracts?.Plan).toMatchObject({
+      required: ["context", "work_items"],
       properties: {
+        context: { type: "string", minLength: 1 },
         work_items: {
           items: {
             required: ["id", "task", "acceptance_criteria"],
@@ -559,10 +569,20 @@ describe("built-in DAG patterns", () => {
     expect(fanout?.gateway_config?.result_contract).toBe("WorkerResult");
     expect(pattern.parsed.meta.agents.orchestrator?.system).toContain("1..N");
     expect(pattern.parsed.meta.agents.orchestrator?.system).toContain("Never precompute");
+    expect(pattern.parsed.meta.agents.orchestrator?.system).toContain("objective verbatim");
     expect(pattern.parsed.meta.agents.orchestrator?.system).toContain("exactly success or failed");
     expect(pattern.parsed.meta.agents.orchestrator?.system).toContain("non-empty JSON array of strings");
     expect(pattern.parsed.meta.agents.orchestrator?.system).toContain("exact port planned");
     expect(pattern.parsed.meta.agents.worker?.system).toContain("fan-out item");
+    expect(pattern.parsed.meta.agents.worker?.system).toContain("original immutable context");
+    expect(planner?.extra?.agent_runtime).toMatchObject({
+      allowed_builtin_tools: [],
+      allowed_dag_tools: ["handoff"],
+    });
+    expect(verifier?.extra?.agent_runtime).toMatchObject({
+      allowed_builtin_tools: [],
+      allowed_dag_tools: ["handoff"],
+    });
   });
 
   it("keeps compost proposals behind a durable human approval node", () => {
