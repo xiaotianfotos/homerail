@@ -44,7 +44,7 @@ export interface CanonicalPort {
 
 export interface CanonicalNode {
   id: string;
-  kind: "agent" | "command" | "approval" | "state" | "fanout" | "condition" | "join" | "foreach" | "while" | "terminal";
+  kind: "agent" | "command" | "approval" | "state" | "fanout" | "await_command" | "condition" | "join" | "foreach" | "while" | "terminal";
   description?: string;
   agent?: string;
   depends_on: string[];
@@ -260,7 +260,7 @@ function portEntries(ports: Record<string, { contract?: string; description?: st
 
 function nodePorts(node: WorkflowSpecV1Node, direction: "inputs" | "outputs"): Record<string, { contract?: string }> {
   if (direction === "inputs") return node.inputs ?? {};
-  if (node.kind === "terminal") return {};
+  if (node.kind === "terminal" || node.kind === "await_command") return {};
   return node.outputs ?? {};
 }
 
@@ -283,6 +283,18 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
       ...(hint ? { hint } : {}),
     }));
   };
+
+  const awaitCommandNodeIds = Object.entries(nodes)
+    .filter(([, node]) => node.kind === "await_command")
+    .map(([nodeId]) => nodeId)
+    .sort();
+  if (awaitCommandNodeIds.length > 1) {
+    add(
+      "/spec/nodes",
+      "DAG_SEMANTIC_MULTIPLE_AWAIT_COMMAND",
+      `workflow supports at most one await_command node: ${awaitCommandNodeIds.join(", ")}`,
+    );
+  }
 
   for (const [contractName, contract] of Object.entries(contracts)) {
     const validation = validateJsonContractSchema(contract);
@@ -389,6 +401,12 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
         add(`${nodePath}/depends_on`, "DAG_SEMANTIC_UNKNOWN_NODE", `unknown dependency '${dependency}'`);
       } else if (dependency === nodeId) {
         add(`${nodePath}/depends_on`, "DAG_SEMANTIC_SELF_DEPENDENCY", "a node cannot depend on itself");
+      } else if (nodes[dependency].kind === "await_command") {
+        add(
+          `${nodePath}/depends_on`,
+          "DAG_SEMANTIC_AWAIT_COMMAND_DOWNSTREAM",
+          `await_command '${dependency}' cannot have downstream dependents`,
+        );
       }
     }
     for (const direction of ["inputs", "outputs"] as const) {
@@ -494,6 +512,25 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
       }
       if (node.config.max_parallelism > node.config.max_items) {
         add(`${nodePath}/config/max_parallelism`, "DAG_SEMANTIC_INVALID_PARALLELISM", "max_parallelism cannot exceed max_items");
+      }
+    }
+    if (node.kind === "await_command") {
+      for (let index = 0; index < (node.config.target_actors ?? []).length; index++) {
+        const targetActor = node.config.target_actors![index];
+        const targetNode = nodes[targetActor];
+        if (!targetNode) {
+          add(
+            `${nodePath}/config/target_actors/${index}`,
+            "DAG_SEMANTIC_UNKNOWN_NODE",
+            `unknown target actor node '${targetActor}'`,
+          );
+        } else if (targetActor === nodeId || targetNode.kind !== "agent") {
+          add(
+            `${nodePath}/config/target_actors/${index}`,
+            "DAG_SEMANTIC_INVALID_TARGET_ACTOR",
+            `target actor '${targetActor}' must reference an agent node`,
+          );
+        }
       }
     }
     if (node.kind === "foreach") {
@@ -638,11 +675,18 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
   const terminalNodes = Object.entries(nodes)
     .filter(([, node]) => node.kind === "terminal")
     .map(([id]) => id);
-  if (terminalNodes.length === 0) {
-    add("/spec/nodes", "DAG_SEMANTIC_TERMINAL_REQUIRED", "workflow must contain at least one terminal node");
+  const suspensionNodes = Object.entries(nodes)
+    .filter(([, node]) => node.kind === "await_command")
+    .map(([id]) => id);
+  if (terminalNodes.length === 0 && suspensionNodes.length === 0) {
+    add(
+      "/spec/nodes",
+      "DAG_SEMANTIC_TERMINAL_REQUIRED",
+      "workflow must contain at least one terminal or await_command node",
+    );
   } else {
-    const reachesTerminal = new Set(terminalNodes);
-    const queue = [...terminalNodes];
+    const reachesTerminal = new Set([...terminalNodes, ...suspensionNodes]);
+    const queue = [...reachesTerminal];
     while (queue.length > 0) {
       const current = queue.shift()!;
       for (const predecessor of reverseReachability.get(current) ?? []) {
@@ -654,7 +698,11 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
     }
     for (const [nodeId, node] of Object.entries(nodes)) {
       if (node.kind !== "terminal" && !reachesTerminal.has(nodeId)) {
-        add(`/spec/nodes/${nodeId}`, "DAG_SEMANTIC_NO_TERMINAL_PATH", `node '${nodeId}' has no path to a terminal node`);
+        add(
+          `/spec/nodes/${nodeId}`,
+          "DAG_SEMANTIC_NO_TERMINAL_PATH",
+          `node '${nodeId}' has no path to a terminal or await_command node`,
+        );
       }
     }
   }
@@ -683,7 +731,7 @@ function canonicalNode(id: string, node: WorkflowSpecV1Node): CanonicalNode {
     ...(node.description ? { description: node.description } : {}),
     depends_on: [...(node.depends_on ?? [])].sort(),
     inputs: portEntries(node.inputs),
-    outputs: node.kind === "terminal" ? [] : portEntries(node.outputs),
+    outputs: node.kind === "terminal" || node.kind === "await_command" ? [] : portEntries(node.outputs),
   };
   if (node.kind === "agent") {
     const config = {
@@ -866,11 +914,21 @@ function compileV1(workflow: WorkflowSpecV1): CanonicalWorkflowIR {
 }
 
 function legacyKind(node: DAGGraphNode): CanonicalNode["kind"] {
+  if (node.node_type === "await_command_gateway") return "await_command";
   if (node.node_type === "condition_gateway") return "condition";
   if (node.node_type === "join_gateway") return "join";
   if (node.node_type === "loop_gateway") return "foreach";
   if (node.node_type === "while_gateway") return "while";
   return "agent";
+}
+
+function legacyConfig(node: DAGGraphNode, kind: CanonicalNode["kind"]): Record<string, unknown> {
+  const config = node.gateway_config ?? {};
+  if (kind === "await_command") {
+    const { type: _type, kind: _kind, ...strictConfig } = config;
+    return deepSort(strictConfig) as Record<string, unknown>;
+  }
+  return deepSort(config) as Record<string, unknown>;
 }
 
 function legacyTerminalId(edge: DAGEdge, index: number): string {
@@ -890,16 +948,19 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
       inputPorts.get(edge.to_node)?.add(edge.to_port);
     }
   }
-  const nodes: CanonicalNode[] = parsed.graph.nodes.map((node) => ({
-    id: node.node_id,
-    kind: legacyKind(node),
-    ...(node.description ? { description: node.description } : {}),
-    ...(legacyKind(node) === "agent" ? { agent: node.agent } : {}),
-    depends_on: [...node.after].sort(),
-    inputs: [...(inputPorts.get(node.node_id) ?? [])].sort().map((name) => ({ name })),
-    outputs: Object.keys(node.outputs).sort().map((name) => ({ name })),
-    ...(legacyKind(node) !== "agent" ? { config: deepSort(node.gateway_config ?? {}) as Record<string, unknown> } : {}),
-  }));
+  const nodes: CanonicalNode[] = parsed.graph.nodes.map((node) => {
+    const kind = legacyKind(node);
+    return {
+      id: node.node_id,
+      kind,
+      ...(node.description ? { description: node.description } : {}),
+      ...(kind === "agent" ? { agent: node.agent } : {}),
+      depends_on: [...node.after].sort(),
+      inputs: [...(inputPorts.get(node.node_id) ?? [])].sort().map((name) => ({ name })),
+      outputs: Object.keys(node.outputs).sort().map((name) => ({ name })),
+      ...(kind !== "agent" ? { config: legacyConfig(node, kind) } : {}),
+    };
+  });
   const sourceNodes = new Map(parsed.graph.nodes.map((node) => [node.node_id, node]));
   const edges: CanonicalEdge[] = [];
   parsed.graph.edges.forEach((edge, index) => {
@@ -1129,6 +1190,7 @@ export function workflowSchemaResponse(): {
 }
 
 function runtimeNodeType(kind: CanonicalNode["kind"]): string {
+  if (kind === "await_command") return "await_command_gateway";
   if (kind === "command") return "command_gateway";
   if (kind === "approval") return "approval_gateway";
   if (kind === "state") return "state_gateway";
@@ -1154,7 +1216,7 @@ function runtimeGatewayConfig(node: CanonicalNode): Record<string, unknown> | un
   if (node.kind === "join") return { type: "join", ...node.config };
   if (node.kind === "foreach") return { type: "loop", ...node.config };
   if (node.kind === "while") return { type: "while", ...node.config };
-  if (node.kind === "command" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout") {
+  if (node.kind === "command" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout" || node.kind === "await_command") {
     return { type: node.kind, ...node.config };
   }
   return undefined;
@@ -1336,7 +1398,7 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
     ...(node.description ? { description: node.description } : {}),
     ...(dependsOn.length > 0 ? { depends_on: dependsOn } : {}),
     ...(authoringPorts(node.inputs) ? { inputs: authoringPorts(node.inputs) } : {}),
-    ...(node.kind !== "terminal" && authoringPorts(node.outputs) ? { outputs: authoringPorts(node.outputs) } : {}),
+    ...(node.kind !== "terminal" && node.kind !== "await_command" && authoringPorts(node.outputs) ? { outputs: authoringPorts(node.outputs) } : {}),
   };
   if (node.kind === "agent") {
     return {
@@ -1379,7 +1441,7 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
       },
     };
   }
-  if (node.kind === "command" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout") {
+  if (node.kind === "command" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout" || node.kind === "await_command") {
     return { ...base, config };
   }
   if (node.kind === "foreach") {

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { getHomerailHome } from "../config/env.js";
 import { emit } from "../events/bus.js";
 import type { DAGDispatcher, DispatchEnvelope } from "../orchestration/dag-dispatcher.js";
@@ -16,6 +17,7 @@ import {
   handoff,
   isFailurePort,
   isRunTerminal,
+  resetNodesForRound,
   resetSkippedSuccessDescendants,
   startNode,
 } from "../orchestration/dag-engine.js";
@@ -29,6 +31,7 @@ import { getNode } from "../node/registry.js";
 import {
   AGENT_BUILTIN_TOOL_NAMES,
   DAG_AGENT_TOOL_NAMES,
+  DAG_TRANSPORT_FENCE_CAPABILITY,
   isDisabledDirectLlmAgentType,
   normalizeManagerAgentRuntimeAgentType,
   redactTelemetry,
@@ -51,6 +54,7 @@ import type {
   PersistedRunMetadata,
 } from "../persistence/types.js";
 import { dbTransaction } from "../persistence/db.js";
+import type { DagRunStatus } from "../persistence/status.js";
 import {
   getDagSessionIndex,
   upsertDagSessionIndex,
@@ -73,10 +77,27 @@ import {
 } from "../persistence/dag-runtime-primitives.js";
 import type { RunWorkspaceRetention } from "../persistence/types.js";
 import { getDagActivitySequenceCursor } from "../persistence/dag-activity-journal.js";
+import { getDb } from "../persistence/db.js";
 import {
+  createInitialDagRunRound,
+  getCurrentDagRunRound,
+  listDagRunRounds,
+  openNextDagRunRound,
+  terminalizeCurrentDagRunRound,
+  transitionDagRunRoundToWaiting,
+} from "../persistence/dag-run-rounds.js";
+import {
+  acknowledgeDagActorCommand,
   advanceDagActorGeneration,
+  cancelUnclaimedDagActorCommands,
+  claimDagActorCommand,
+  createDagActorCommand,
   DagActorConflictError,
+  getDagActorCommand,
   getDagActorByNode,
+  listDagActors,
+  listDagActorCommands,
+  markDagActorCommandDelivered,
   registerDagActor,
   updateDagActorBinding,
   type DagActorRecord,
@@ -114,12 +135,32 @@ export interface ActiveRun {
   pattern?: DAGPatternInstanceMeta;
   dagRun: DAGRun;
   createdAt: number;
-  status: "active" | "completed" | "failed" | "cancelled";
+  status: DagRunStatus;
+  currentRound: ActiveRunRound;
   completedAt?: number;
   limits: DAGRunLimits;
   counters: DAGRunCounters;
   nodeIndex: Map<string, number>;
   nodeSessions: Map<string, NodeSessionState>;
+}
+
+export interface ActiveRunRound {
+  round_id: string;
+  ordinal: number;
+  status: "active" | "waiting" | "completed" | "cancelled" | "failed";
+  target_actor_ids: string[];
+  await_node_id?: string;
+  opened_at: number;
+  closed_at?: number;
+  expires_at?: number;
+}
+
+export interface HandoffTransportFence {
+  transport?: boolean;
+  roundId?: string;
+  actorId?: string;
+  generation?: number;
+  commandId?: string;
 }
 
 export interface NodeSessionState {
@@ -152,6 +193,30 @@ export type CheckpointResumeResult =
       instruction: string;
     }
   | { status: "unavailable"; reason: string };
+
+export interface WaitingRunCommandInput {
+  actor_id: string;
+  payload: unknown;
+  command_id?: string;
+  idempotency_key?: string;
+}
+
+export interface ResumeWaitingRunRequest {
+  expected_round_id: string;
+  commands: WaitingRunCommandInput[];
+}
+
+export interface ResumeWaitingRunResult {
+  runId: string;
+  previousRoundId: string;
+  roundId: string;
+  ordinal: number;
+  actorIds: string[];
+  nodeIds: string[];
+  commandIds: string[];
+  readyNodeIds: string[];
+  deduplicated?: boolean;
+}
 
 export interface DAGRunLimits {
   max_nodes: number;
@@ -207,6 +272,7 @@ const RECOVERABLE_NODE_STATES: ReadonlySet<string> = new Set([
   "READY",
   "RUNNING",
   "WAITING_FOR_APPROVAL",
+  "WAITING_FOR_COMMAND",
   "COMPLETED",
   "FAILED",
   "CANCELLED",
@@ -469,6 +535,35 @@ function _snapshotNodeStates(run: ActiveRun): Map<string, string> {
   return new Map(run.dagRun.nodeStates);
 }
 
+interface MutableRunSnapshot {
+  dagRun: DAGRun;
+  status: DagRunStatus;
+  currentRound: ActiveRunRound;
+  completedAt?: number;
+  counters: DAGRunCounters;
+  nodeSessions: Map<string, NodeSessionState>;
+}
+
+function _snapshotMutableRun(run: ActiveRun): MutableRunSnapshot {
+  return {
+    dagRun: structuredClone(run.dagRun),
+    status: run.status,
+    currentRound: structuredClone(run.currentRound),
+    completedAt: run.completedAt,
+    counters: structuredClone(run.counters),
+    nodeSessions: structuredClone(run.nodeSessions),
+  };
+}
+
+function _restoreMutableRun(run: ActiveRun, snapshot: MutableRunSnapshot): void {
+  run.dagRun = snapshot.dagRun;
+  run.status = snapshot.status;
+  run.currentRound = snapshot.currentRound;
+  run.completedAt = snapshot.completedAt;
+  run.counters = snapshot.counters;
+  run.nodeSessions = snapshot.nodeSessions;
+}
+
 function _nodeName(run: ActiveRun, nodeId: string): string {
   return run.dagRun.graph.nodes.find((node) => node.node_id === nodeId)?.name ?? nodeId;
 }
@@ -521,12 +616,30 @@ export function _clearActiveRuns(): void {
   store.clear();
 }
 
+function _roundId(ordinal: number): string {
+  return `round-${String(ordinal).padStart(4, "0")}`;
+}
+
+function _initialRound(parsedDAG: ParsedDAG, openedAt: number): ActiveRunRound {
+  return {
+    round_id: _roundId(1),
+    ordinal: 1,
+    status: "active",
+    target_actor_ids: parsedDAG.graph.nodes
+      .filter((node) => !_isGatewayNode(node))
+      .map(_logicalActorId)
+      .sort(),
+    opened_at: openedAt,
+  };
+}
+
 export function createActiveRun(
   runId: string,
   parsedDAG: ParsedDAG,
   options: CreateActiveRunOptions = {},
 ): ActiveRun {
   const dagRun = createDAGRun(parsedDAG, runId);
+  const createdAt = Date.now();
   seedInitialPrompt(
     dagRun,
     options.initialPrompt,
@@ -563,8 +676,9 @@ export function createActiveRun(
       ? { ...parsedDAG.meta.pattern, parameters: { ...(parsedDAG.meta.pattern.parameters ?? {}) } }
       : undefined,
     dagRun,
-    createdAt: Date.now(),
+    createdAt,
     status: "active",
+    currentRound: _initialRound(parsedDAG, createdAt),
     limits: _resolveLimits(parsedDAG.meta.limits),
     counters: _initialCounters(),
     nodeIndex: _buildNodeIndex(parsedDAG.graph.nodes),
@@ -573,6 +687,12 @@ export function createActiveRun(
   _assertLogicalActorIdentities(run.dagRun.graph.nodes);
   dbTransaction(() => {
     writeRunMetadata(runId, serializeRunMetadata(run));
+    createInitialDagRunRound({
+      run_id: runId,
+      round_id: run.currentRound.round_id,
+      target_actor_ids: run.currentRound.target_actor_ids,
+      opened_at: run.currentRound.opened_at,
+    });
     _registerLogicalActors(run);
   });
   store.set(runId, run);
@@ -703,9 +823,21 @@ function _rebuildDagRunFromPersisted(metadata: PersistedRunMetadata, graphData: 
     mailboxes,
   };
 
-  const snapshot = loadRunSnapshot(metadata.runId);
-  if (snapshot && snapshot.handoffs.length > 0) {
-    _replayHandoffsInto(dagRun, snapshot.handoffs);
+  const runtimeState = metadata.dagRuntimeState;
+  if (runtimeState) {
+    dagRun.loopSources = new Set(runtimeState.loop_sources);
+    for (const node of nodes) {
+      dagRun.afterSatisfied.set(node.node_id, new Set(runtimeState.after_satisfied[node.node_id] ?? []));
+      dagRun.inputSatisfied.set(node.node_id, new Set(runtimeState.input_satisfied[node.node_id] ?? []));
+      dagRun.mailboxes.set(node.node_id, new Map(
+        Object.entries(runtimeState.mailboxes[node.node_id] ?? {}).map(([port, values]) => [port, structuredClone(values)]),
+      ));
+    }
+  } else {
+    const snapshot = loadRunSnapshot(metadata.runId);
+    if (snapshot && snapshot.handoffs.length > 0) {
+      _replayHandoffsInto(dagRun, snapshot.handoffs);
+    }
   }
 
   // Layer the authoritative node-state snapshot on top of the replay. The replay
@@ -752,6 +884,7 @@ function _applyOrphanedNodeDemotion(run: ActiveRun): string[] {
   if (hasFailedNodes && isRunTerminal(run.dagRun)) {
     run.status = "failed";
     run.completedAt = Date.now();
+    _persistTerminalRun(run, "failed");
     emit("dag:run_failed", {
       runId: run.runId,
       nodeId: demotedFromRunning[0],
@@ -769,7 +902,7 @@ function _skipPendingNodesWhenFailureStalls(run: ActiveRun): string[] {
   const states = Array.from(run.dagRun.nodeStates.values());
   if (!states.some((state) => state === "FAILED")) return [];
   if (states.some((state) =>
-    state === "READY" || state === "RUNNING" || state === "WAITING_FOR_APPROVAL"
+    state === "READY" || state === "RUNNING" || state === "WAITING_FOR_APPROVAL" || state === "WAITING_FOR_COMMAND"
   )) return [];
 
   const skipped: string[] = [];
@@ -786,12 +919,11 @@ export type RestoreActiveRunResult =
   | { status: "restored"; run: ActiveRun; demotedFromRunning: string[] }
   | { status: "skipped"; reason: string };
 
-/** Reconstruct a single ActiveRun from persisted metadata and replay it into
- * the in-memory store. Only `status: "active"` runs are recoverable. */
+/** Reconstruct a single nonterminal run from persisted metadata. */
 export function restoreActiveRun(
   metadata: PersistedRunMetadata,
 ): RestoreActiveRunResult {
-  if (metadata.status !== "active") {
+  if (metadata.status !== "active" && metadata.status !== "waiting") {
     return { status: "skipped", reason: `run is ${metadata.status}` };
   }
   if (!metadata.graph) {
@@ -802,7 +934,38 @@ export function restoreActiveRun(
   }
 
   const { dagRun, nodes } = _rebuildDagRunFromPersisted(metadata, metadata.graph);
-  seedInitialPrompt(dagRun, metadata.initialPrompt, metadata.runInputTargets, metadata.contracts);
+  if (!metadata.dagRuntimeState) {
+    seedInitialPrompt(dagRun, metadata.initialPrompt, metadata.runInputTargets, metadata.contracts);
+  }
+  const persistedRound = getCurrentDagRunRound(metadata.runId);
+  const currentRound = persistedRound ? {
+    round_id: persistedRound.round_id,
+    ordinal: persistedRound.ordinal,
+    status: persistedRound.status,
+    target_actor_ids: persistedRound.target_actor_ids,
+    ...(persistedRound.await_node_id ? { await_node_id: persistedRound.await_node_id } : {}),
+    opened_at: persistedRound.opened_at,
+    ...(persistedRound.closed_at === undefined ? {} : { closed_at: persistedRound.closed_at }),
+    ...(persistedRound.expires_at === undefined ? {} : { expires_at: persistedRound.expires_at }),
+  } : metadata.currentRound ?? {
+    round_id: _roundId(1),
+    ordinal: 1,
+    status: metadata.status,
+    target_actor_ids: nodes.filter((node) => !_isGatewayNode(node)).map(_logicalActorId).sort(),
+    opened_at: metadata.createdAt,
+  };
+  if (!persistedRound) {
+    createInitialDagRunRound({
+      run_id: metadata.runId,
+      round_id: currentRound.round_id,
+      target_actor_ids: currentRound.target_actor_ids,
+      opened_at: currentRound.opened_at,
+      status: currentRound.status,
+      await_node_id: currentRound.await_node_id,
+      closed_at: currentRound.closed_at,
+      expires_at: currentRound.expires_at,
+    });
+  }
   const run: ActiveRun = {
     runId: metadata.runId,
     workflowId: metadata.workflowId,
@@ -829,7 +992,8 @@ export function restoreActiveRun(
       : undefined,
     dagRun,
     createdAt: metadata.createdAt,
-    status: "active",
+    status: metadata.status,
+    currentRound,
     limits: metadata.limits ?? { ...DEFAULT_LIMITS },
     counters: _restoreCounters(metadata.counters),
     nodeIndex: _buildNodeIndex(nodes),
@@ -846,7 +1010,7 @@ export function restoreActiveRun(
 
   store.set(metadata.runId, run);
 
-  const demotedFromRunning = _applyOrphanedNodeDemotion(run);
+  const demotedFromRunning = run.status === "active" ? _applyOrphanedNodeDemotion(run) : [];
   writeRunMetadata(metadata.runId, serializeRunMetadata(run));
 
   emit("dag:run_recovered", {
@@ -932,16 +1096,283 @@ export function listActiveRuns(): ActiveRun[] {
   return Array.from(store.values());
 }
 
+function _deduplicatedResumeResult(
+  run: ActiveRun,
+  request: ResumeWaitingRunRequest,
+  expectedRoundId: string,
+): ResumeWaitingRunResult | undefined {
+  if ((run.status !== "active" && run.status !== "waiting") || run.currentRound.ordinal <= 1) return undefined;
+  const previous = listDagRunRounds(run.runId).find(
+    (round) => round.round_id === expectedRoundId && round.ordinal === run.currentRound.ordinal - 1,
+  );
+  if (!previous || previous.status !== "completed") return undefined;
+  const commands = listDagActorCommands({
+    run_id: run.runId,
+    round_id: run.currentRound.round_id,
+    // Fetch one extra row so a strict subset cannot masquerade as a retry of
+    // the complete command set accepted for this round.
+    limit: request.commands.length + 1,
+  });
+  if (commands.length !== request.commands.length) return undefined;
+  const actorsById = new Map(listDagActors(run.runId).map((actor) => [actor.actor_id, actor]));
+  const commandsByActor = new Map(commands.map((command) => [command.actor_id, command]));
+  if (commandsByActor.size !== commands.length) return undefined;
+  const matched = request.commands.map((requested) => {
+    const actorId = requested.actor_id.trim();
+    const command = commandsByActor.get(actorId);
+    if (!command) return undefined;
+    const expectedKey = requested.idempotency_key?.trim() || `${run.currentRound.round_id}:${actorId}`;
+    if (requested.command_id?.trim() && requested.command_id.trim() !== command.command_id) return undefined;
+    if (expectedKey !== command.idempotency_key || !isDeepStrictEqual(requested.payload, command.payload)) return undefined;
+    return { command, actor: actorsById.get(actorId) };
+  });
+  if (matched.some((entry) => !entry?.actor)) return undefined;
+  const entries = matched as Array<{
+    command: NonNullable<ReturnType<typeof getDagActorCommand>>;
+    actor: DagActorRecord;
+  }>;
+  return {
+    runId: run.runId,
+    previousRoundId: expectedRoundId,
+    roundId: run.currentRound.round_id,
+    ordinal: run.currentRound.ordinal,
+    actorIds: entries.map((entry) => entry.actor.actor_id),
+    nodeIds: entries.map((entry) => entry.actor.node_id),
+    commandIds: entries.map((entry) => entry.command.command_id),
+    readyNodeIds: entries
+      .map((entry) => entry.actor.node_id)
+      .filter((nodeId) => run.dagRun.nodeStates.get(nodeId) === "READY"),
+    deduplicated: true,
+  };
+}
+
+function _validateResumeRequest(request: ResumeWaitingRunRequest): void {
+  if (!Array.isArray(request.commands) || request.commands.length < 1 || request.commands.length > 128) {
+    throw new Error("commands must contain between 1 and 128 entries");
+  }
+  const actorIds = request.commands.map((command) => {
+    if (!command || typeof command.actor_id !== "string") throw new Error("actor_id is required");
+    const actorId = command.actor_id.trim();
+    if (!actorId) throw new Error("actor_id is required");
+    return actorId;
+  });
+  if (new Set(actorIds).size !== actorIds.length) {
+    throw new Error("Each actor may receive at most one command per round");
+  }
+}
+
+export function deduplicateWaitingActiveRunResume(
+  runId: string,
+  request: ResumeWaitingRunRequest,
+): ResumeWaitingRunResult | undefined {
+  _validateResumeRequest(request);
+  const run = store.get(runId);
+  if (!run) return undefined;
+  const expectedRoundId = request.expected_round_id.trim();
+  if (!expectedRoundId) throw new Error("expected_round_id is required");
+  return _deduplicatedResumeResult(run, request, expectedRoundId);
+}
+
+export function resumeWaitingActiveRun(
+  runId: string,
+  request: ResumeWaitingRunRequest,
+): ResumeWaitingRunResult {
+  const run = store.get(runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+  _validateResumeRequest(request);
+  const expectedRoundId = request.expected_round_id.trim();
+  if (!expectedRoundId) throw new Error("expected_round_id is required");
+  const deduplicated = _deduplicatedResumeResult(run, request, expectedRoundId);
+  if (deduplicated) return deduplicated;
+  if (run.status !== "waiting" || run.currentRound.status !== "waiting") {
+    throw new Error(`Run ${runId} is not waiting`);
+  }
+  if (expectedRoundId !== run.currentRound.round_id) {
+    throw new Error(`Waiting round conflict: current round is ${run.currentRound.round_id}`);
+  }
+  const persistedRound = getCurrentDagRunRound(runId);
+  if (!persistedRound || persistedRound.round_id !== expectedRoundId || persistedRound.status !== "waiting") {
+    throw new Error(`Persisted waiting round conflict for ${runId}/${expectedRoundId}`);
+  }
+  const awaitNodeId = run.currentRound.await_node_id;
+  const awaitNode = awaitNodeId
+    ? run.dagRun.graph.nodes.find((node) => node.node_id === awaitNodeId)
+    : undefined;
+  if (!awaitNode || awaitNode.node_type !== "await_command_gateway") {
+    throw new Error(`Run ${runId} has no active await_command node`);
+  }
+
+  const actorsById = new Map(listDagActors(runId).map((actor) => [actor.actor_id, actor]));
+  const requestedActorIds = request.commands.map((command) => command.actor_id.trim());
+  const actors = requestedActorIds.map((actorId) => {
+    const actor = actorsById.get(actorId);
+    if (!actor) throw new Error(`Unknown DAG actor: ${runId}/${actorId}`);
+    return actor;
+  });
+  const configuredTargets = awaitNode.gateway_config?.target_actors;
+  if (configuredTargets && configuredTargets.length > 0) {
+    const allowed = new Set(configuredTargets);
+    for (const actor of actors) {
+      if (!allowed.has(actor.actor_id) && !allowed.has(actor.node_id)) {
+        throw new Error(`Actor ${actor.actor_id} is not allowed by await_command ${awaitNode.node_id}`);
+      }
+    }
+  }
+
+  const selectedNodeIds = new Set(actors.map((actor) => actor.node_id));
+  const resetNodeIds = _roundResetNodeIds(run, selectedNodeIds, awaitNode.node_id);
+  const nextOrdinal = run.currentRound.ordinal + 1;
+  const nextRoundId = _roundId(nextOrdinal);
+  const openedAt = Date.now();
+  const commandPort = awaitNode.gateway_config?.command_port || "command";
+  const commandRows = request.commands.map((command, index) => {
+    const actor = actors[index];
+    const commandId = command.command_id?.trim() || `command-${randomUUID()}`;
+    const idempotencyKey = command.idempotency_key?.trim() || `${nextRoundId}:${actor.actor_id}`;
+    return {
+      command_id: commandId,
+      run_id: runId,
+      actor_id: actor.actor_id,
+      round_id: nextRoundId,
+      idempotency_key: idempotencyKey,
+      target_generation: actor.generation,
+      payload: command.payload,
+      node_id: actor.node_id,
+    };
+  });
+  const commandInputs = new Map(commandRows.map((command) => [command.node_id, {
+    port: commandPort,
+    value: {
+      command_id: command.command_id,
+      round_id: command.round_id,
+      actor_id: command.actor_id,
+      payload: command.payload,
+    },
+  }]));
+
+  const previousDagRun = structuredClone(run.dagRun);
+  const previousRound = structuredClone(run.currentRound);
+  const previousCounters = structuredClone(run.counters);
+  const before = _snapshotNodeStates(run);
+  const resetNodeSet = new Set(resetNodeIds);
+  const reset = resetNodesForRound(run.dagRun, {
+    resetNodeIds,
+    commandInputs,
+    carryoverInputs: _roundCarryoverInputs(run, resetNodeSet),
+  });
+  run.status = "active";
+  run.completedAt = undefined;
+  run.currentRound = {
+    round_id: nextRoundId,
+    ordinal: nextOrdinal,
+    status: "active",
+    target_actor_ids: requestedActorIds.slice().sort(),
+    opened_at: openedAt,
+  };
+  run.counters = _initialCounters();
+
+  try {
+    getDb().transaction(() => {
+      openNextDagRunRound({
+        run_id: runId,
+        expected_round_id: expectedRoundId,
+        round_id: nextRoundId,
+        target_actor_ids: run.currentRound.target_actor_ids,
+        opened_at: openedAt,
+      });
+      for (const command of commandRows) createDagActorCommand(command);
+      writeRunMetadata(runId, serializeRunMetadata(run));
+    }).immediate();
+  } catch (error) {
+    run.dagRun = previousDagRun;
+    run.currentRound = previousRound;
+    run.counters = previousCounters;
+    run.status = "waiting";
+    throw error;
+  }
+
+  _emitNodeStateChanges(run, before);
+  for (const nodeId of reset.readyNodes) emit("dag:node_ready", { runId, nodeId });
+  emit("dag:round_started", {
+    runId,
+    roundId: nextRoundId,
+    ordinal: nextOrdinal,
+    actorIds: requestedActorIds,
+  });
+  for (const command of commandRows) {
+    emit("dag:command_queued", {
+      runId,
+      roundId: nextRoundId,
+      commandId: command.command_id,
+      actorId: command.actor_id,
+      nodeId: command.node_id,
+    });
+  }
+  emit("dag:run_resumed", {
+    runId,
+    previousRoundId: expectedRoundId,
+    roundId: nextRoundId,
+    actorIds: requestedActorIds,
+  });
+  return {
+    runId,
+    previousRoundId: expectedRoundId,
+    roundId: nextRoundId,
+    ordinal: nextOrdinal,
+    actorIds: requestedActorIds,
+    nodeIds: actors.map((actor) => actor.node_id),
+    commandIds: commandRows.map((command) => command.command_id),
+    readyNodeIds: reset.readyNodes,
+  };
+}
+
+function _persistTerminalRun(
+  run: ActiveRun,
+  status: "completed" | "cancelled" | "failed",
+): void {
+  const closedAt = run.completedAt ?? Date.now();
+  run.currentRound = {
+    ...run.currentRound,
+    status,
+    closed_at: run.currentRound.closed_at ?? closedAt,
+  };
+  getDb().transaction(() => {
+    terminalizeCurrentDagRunRound({
+      run_id: run.runId,
+      round_id: run.currentRound.round_id,
+      status,
+      closed_at: closedAt,
+    });
+    cancelUnclaimedDagActorCommands({
+      run_id: run.runId,
+      reason: { status, message: `run ${status}` },
+    });
+    writeRunMetadata(run.runId, serializeRunMetadata(run));
+  }).immediate();
+}
+
 export function completeActiveRun(runId: string): ActiveRun | undefined {
   const run = store.get(runId);
   if (!run) return undefined;
+  if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") return run;
+  const mutableBefore = _snapshotMutableRun(run);
   const before = _snapshotNodeStates(run);
-  run.status = "completed";
-  run.completedAt = Date.now();
-  for (const nodeId of run.nodeSessions.keys()) {
-    _markNodeSessionStatus(run, nodeId, "completed");
+  try {
+    getDb().transaction(() => {
+      if (run.currentRound.await_node_id && run.dagRun.nodeStates.get(run.currentRound.await_node_id) === "WAITING_FOR_COMMAND") {
+        run.dagRun.nodeStates.set(run.currentRound.await_node_id, "COMPLETED");
+      }
+      run.status = "completed";
+      run.completedAt = Date.now();
+      for (const nodeId of run.nodeSessions.keys()) {
+        _markNodeSessionStatus(run, nodeId, "completed");
+      }
+      _persistTerminalRun(run, "completed");
+    }).immediate();
+  } catch (error) {
+    _restoreMutableRun(run, mutableBefore);
+    throw error;
   }
-  writeRunMetadata(runId, serializeRunMetadata(run));
   _emitNodeStateChanges(run, before);
   emit("dag:run_completed", { runId });
   emit("dag:engine_completed", { runId });
@@ -952,19 +1383,27 @@ export function completeActiveRun(runId: string): ActiveRun | undefined {
 export function cancelActiveRun(runId: string): ActiveRun | undefined {
   const run = store.get(runId);
   if (!run) return undefined;
-  if (run.status !== "active") return run;
+  if (run.status !== "active" && run.status !== "waiting") return run;
+  const mutableBefore = _snapshotMutableRun(run);
   const before = _snapshotNodeStates(run);
-  for (const [nodeId, state] of run.dagRun.nodeStates.entries()) {
-    if (state === "RUNNING" || state === "READY") {
-      run.dagRun.nodeStates.set(nodeId, "CANCELLED");
-      _markNodeSessionStatus(run, nodeId, "cancelled");
-    } else if (state === "PENDING") {
-      run.dagRun.nodeStates.set(nodeId, "SKIPPED");
-    }
+  try {
+    getDb().transaction(() => {
+      for (const [nodeId, state] of run.dagRun.nodeStates.entries()) {
+        if (state === "RUNNING" || state === "READY" || state === "WAITING_FOR_COMMAND" || state === "WAITING_FOR_APPROVAL") {
+          run.dagRun.nodeStates.set(nodeId, "CANCELLED");
+          _markNodeSessionStatus(run, nodeId, "cancelled");
+        } else if (state === "PENDING") {
+          run.dagRun.nodeStates.set(nodeId, "SKIPPED");
+        }
+      }
+      run.status = "cancelled";
+      run.completedAt = Date.now();
+      _persistTerminalRun(run, "cancelled");
+    }).immediate();
+  } catch (error) {
+    _restoreMutableRun(run, mutableBefore);
+    throw error;
   }
-  run.status = "cancelled";
-  run.completedAt = Date.now();
-  writeRunMetadata(runId, serializeRunMetadata(run));
   _emitNodeStateChanges(run, before);
   emit("dag:run_cancelled", { runId });
   deprovisionProvisionedForRun(runId);
@@ -975,24 +1414,32 @@ export function abortActiveRun(runId: string, reason: string, nodeId?: string): 
   const run = store.get(runId);
   if (!run) return undefined;
   if (run.status !== "active") return run;
+  const mutableBefore = _snapshotMutableRun(run);
   const before = _snapshotNodeStates(run);
-  if (nodeId && run.dagRun.nodeStates.has(nodeId)) {
-    run.dagRun.nodeStates.set(nodeId, "FAILED");
-    _markNodeSessionStatus(run, nodeId, "failed");
+  try {
+    getDb().transaction(() => {
+      if (nodeId && run.dagRun.nodeStates.has(nodeId)) {
+        run.dagRun.nodeStates.set(nodeId, "FAILED");
+        _markNodeSessionStatus(run, nodeId, "failed");
+      }
+      for (const [id, state] of run.dagRun.nodeStates.entries()) {
+        if (id === nodeId) continue;
+        if (state === "READY" || state === "RUNNING") {
+          run.dagRun.nodeStates.set(id, "CANCELLED");
+          _markNodeSessionStatus(run, id, "cancelled");
+        } else if (state === "PENDING") {
+          run.dagRun.nodeStates.set(id, "SKIPPED");
+        }
+      }
+      run.status = "failed";
+      run.completedAt = Date.now();
+      run.counters.abort_reason = reason;
+      _persistTerminalRun(run, "failed");
+    }).immediate();
+  } catch (error) {
+    _restoreMutableRun(run, mutableBefore);
+    throw error;
   }
-  for (const [id, state] of run.dagRun.nodeStates.entries()) {
-    if (id === nodeId) continue;
-    if (state === "READY" || state === "RUNNING") {
-      run.dagRun.nodeStates.set(id, "CANCELLED");
-      _markNodeSessionStatus(run, id, "cancelled");
-    } else if (state === "PENDING") {
-      run.dagRun.nodeStates.set(id, "SKIPPED");
-    }
-  }
-  run.status = "failed";
-  run.completedAt = Date.now();
-  run.counters.abort_reason = reason;
-  writeRunMetadata(runId, serializeRunMetadata(run));
   _emitNodeStateChanges(run, before);
   emit("dag:engine_aborted", { runId, nodeId, reason });
   emit("dag:run_failed", { runId, nodeId: nodeId ?? "", reason });
@@ -1030,7 +1477,7 @@ export function failActiveRun(runId: string, nodeId: string, reason: string): Ac
   if (isRunTerminal(run.dagRun)) {
     run.status = "failed";
     run.completedAt = Date.now();
-    writeRunMetadata(runId, serializeRunMetadata(run));
+    _persistTerminalRun(run, "failed");
     _emitStatusUpdate(run);
     emit("dag:run_failed", { runId, nodeId, reason });
     deprovisionProvisionedForRun(runId);
@@ -1276,47 +1723,72 @@ export function handoffActiveRun(
   fromNode: string,
   port: string,
   content: unknown,
+  fence?: HandoffTransportFence,
 ): ActiveRun | undefined {
   const run = store.get(runId);
   if (!run) return undefined;
   if (run.status !== "active") throw new Error(`Run ${runId} is not active`);
+  const fencedCommand = _validateHandoffTransportFence(run, fromNode, fence);
   const sourceState = getNodeState(run.dagRun, fromNode);
   if (sourceState === "COMPLETED" || sourceState === "FAILED" || sourceState === "CANCELLED" || sourceState === "SKIPPED") {
     throw new Error(`Node ${fromNode} cannot hand off from terminal state ${sourceState}`);
   }
   _assertHandoffPreconditions(run, fromNode, port, content, true);
+  const mutableBefore = _snapshotMutableRun(run);
   const before = _snapshotNodeStates(run);
   const readyBefore = new Set(getReadyNodes(run.dagRun));
-  run.counters.handoffs++;
+  let transition!: ReturnType<typeof handoff>;
+  try {
+    getDb().transaction(() => {
+      run.counters.handoffs++;
 
-  for (const edge of run.dagRun.graph.edges) {
-    if (edge.from_node !== fromNode || edge.to_node === "" || edge.label === "after_dep") continue;
-    if (!edgeMatchesHandoff(edge, port)) continue;
-    if (!_isBackwardEdge(run, edge)) continue;
-    const key = `${edge.from_node}/${edge.from_port}->${edge.to_node}/${edge.to_port}`;
-    const nextCount = (run.counters.edge_traversals[key] ?? 0) + 1;
-    run.counters.edge_traversals[key] = nextCount;
-    const edgeLimit = edge.retry_policy?.max_retries ?? run.limits.max_edge_traversals;
-    if (nextCount > edgeLimit) {
-      abortActiveRun(runId, `edge retry limit (${edgeLimit}) exceeded for ${key}`, fromNode);
-      throw new Error(`edge retry limit (${edgeLimit}) exceeded for ${key}`);
-    }
+      for (const edge of run.dagRun.graph.edges) {
+        if (edge.from_node !== fromNode || edge.to_node === "" || edge.label === "after_dep") continue;
+        if (!edgeMatchesHandoff(edge, port) || !_isBackwardEdge(run, edge)) continue;
+        const key = `${edge.from_node}/${edge.from_port}->${edge.to_node}/${edge.to_port}`;
+        run.counters.edge_traversals[key] = (run.counters.edge_traversals[key] ?? 0) + 1;
+      }
+
+      if (fencedCommand) {
+        claimDagActorCommand({
+          command_id: fencedCommand.command_id,
+          run_id: runId,
+          actor_id: fencedCommand.actor_id,
+          generation: fencedCommand.target_generation,
+        });
+      }
+      transition = handoff(run.dagRun, fromNode, port, content);
+      _markNodeSessionStatus(
+        run,
+        fromNode,
+        transition.terminalOutcome === "cancelled"
+          ? "cancelled"
+          : transition.terminalFailure
+            ? "failed"
+            : "completed",
+      );
+      appendHandoff(runId, {
+        runId,
+        roundId: run.currentRound.round_id,
+        fromNode,
+        port,
+        content,
+        timestamp: Date.now(),
+      });
+      if (fencedCommand) {
+        acknowledgeDagActorCommand({
+          command_id: fencedCommand.command_id,
+          generation: fencedCommand.target_generation,
+        });
+      }
+      const handedOffNode = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === fromNode);
+      if (handedOffNode) _recordFanoutChild(run, handedOffNode, port, content);
+      writeRunMetadata(runId, serializeRunMetadata(run));
+    }).immediate();
+  } catch (error) {
+    _restoreMutableRun(run, mutableBefore);
+    throw error;
   }
-
-  const transition = handoff(run.dagRun, fromNode, port, content);
-  _markNodeSessionStatus(
-    run,
-    fromNode,
-    transition.terminalOutcome === "cancelled"
-      ? "cancelled"
-      : transition.terminalFailure
-        ? "failed"
-        : "completed",
-  );
-  appendHandoff(runId, { runId, fromNode, port, content, timestamp: Date.now() });
-  const handedOffNode = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === fromNode);
-  if (handedOffNode) _recordFanoutChild(run, handedOffNode, port, content);
-  writeRunMetadata(runId, serializeRunMetadata(run));
   _emitNodeStateChanges(run, before);
   emit("dag:handoff", { runId, fromNode, port });
   if (transition.terminalFailure) {
@@ -1333,18 +1805,58 @@ export function handoffActiveRun(
 
   if (run.status === "active" && isRunTerminal(run.dagRun)) {
     if (transition.terminalOutcome === "cancelled") {
-      run.status = "cancelled";
-      run.completedAt = Date.now();
-      writeRunMetadata(runId, serializeRunMetadata(run));
-      _emitStatusUpdate(run);
-      emit("dag:run_cancelled", { runId, nodeId: fromNode, reason: `terminal cancelled handoff on port ${port}` });
-      deprovisionProvisionedForRun(runId);
+      cancelActiveRun(runId);
     } else {
       completeActiveRun(runId);
     }
   }
 
   return run;
+}
+
+function _validateHandoffTransportFence(
+  run: ActiveRun,
+  fromNode: string,
+  fence: HandoffTransportFence | undefined,
+): ReturnType<typeof getDagActorCommand> {
+  if (fence?.transport !== true) return undefined;
+  const actor = getDagActorByNode(run.runId, fromNode);
+  if (!actor) throw new Error(`DAG_HANDOFF_ACTOR_FENCE_MISSING ${run.runId}/${fromNode}`);
+  const requiresDurableFence = run.currentRound.ordinal > 1;
+  if (!fence.roundId) {
+    if (requiresDurableFence) {
+      throw new Error(`DAG_HANDOFF_ROUND_FENCE_MISSING ${run.runId}/${fromNode}`);
+    }
+    return undefined;
+  }
+  if (fence.roundId !== run.currentRound.round_id) {
+    throw new Error(
+      `DAG_HANDOFF_ROUND_CONFLICT ${run.runId}/${fromNode}: received ${fence.roundId}, current ${run.currentRound.round_id}`,
+    );
+  }
+  if (fence.actorId !== undefined && fence.actorId !== actor.actor_id) {
+    throw new Error(`DAG_HANDOFF_ACTOR_CONFLICT ${run.runId}/${fromNode}`);
+  }
+  if (fence.generation !== undefined && fence.generation !== actor.generation) {
+    throw new Error(
+      `DAG_HANDOFF_GENERATION_CONFLICT ${run.runId}/${fromNode}: received ${String(fence.generation)}, current ${actor.generation}`,
+    );
+  }
+  if (requiresDurableFence && (!fence.actorId || fence.generation === undefined || !fence.commandId)) {
+    throw new Error(`DAG_HANDOFF_COMMAND_FENCE_MISSING ${run.runId}/${fromNode}`);
+  }
+  if (!fence.commandId) return undefined;
+  const command = getDagActorCommand(fence.commandId);
+  if (!command
+    || command.run_id !== run.runId
+    || command.actor_id !== actor.actor_id
+    || command.round_id !== run.currentRound.round_id) {
+    throw new Error(`DAG_HANDOFF_COMMAND_CONFLICT ${run.runId}/${fromNode}`);
+  }
+  if (command.target_generation !== actor.generation) {
+    throw new Error(`DAG_HANDOFF_COMMAND_GENERATION_CONFLICT ${run.runId}/${fromNode}`);
+  }
+  return command;
 }
 
 function _assertHandoffPreconditions(
@@ -1463,6 +1975,49 @@ export function expireActiveRunApprovals(now = Date.now()): DagApprovalRecord[] 
   return expired;
 }
 
+export function expireWaitingActiveRuns(now = Date.now()): string[] {
+  const expired: string[] = [];
+  for (const run of store.values()) {
+    if (run.status !== "waiting") continue;
+    if (run.currentRound.expires_at === undefined || run.currentRound.expires_at > now) continue;
+    const mutableBefore = _snapshotMutableRun(run);
+    const before = _snapshotNodeStates(run);
+    const awaitNodeId = run.currentRound.await_node_id;
+    try {
+      getDb().transaction(() => {
+        if (awaitNodeId && run.dagRun.nodeStates.get(awaitNodeId) === "WAITING_FOR_COMMAND") {
+          run.dagRun.nodeStates.set(awaitNodeId, "FAILED");
+        }
+        run.status = "failed";
+        run.completedAt = now;
+        run.counters.abort_reason = `await_command expired at ${run.currentRound.expires_at}`;
+        _persistTerminalRun(run, "failed");
+      }).immediate();
+    } catch (error) {
+      _restoreMutableRun(run, mutableBefore);
+      console.error(
+        `[homerail_manager] failed to expire waiting run ${run.runId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
+    _emitNodeStateChanges(run, before);
+    emit("dag:run_expired", {
+      runId: run.runId,
+      roundId: run.currentRound.round_id,
+      awaitNodeId,
+      expiredAt: now,
+    });
+    emit("dag:run_failed", {
+      runId: run.runId,
+      nodeId: awaitNodeId ?? "",
+      reason: "await_command expired",
+    });
+    deprovisionProvisionedForRun(run.runId);
+    expired.push(run.runId);
+  }
+  return expired.sort();
+}
+
 function _handoffContractViolation(
   run: ActiveRun,
   fromNode: string,
@@ -1487,6 +2042,14 @@ export function getActiveRunCount(): number {
   let count = 0;
   for (const run of store.values()) {
     if (run.status === "active") count++;
+  }
+  return count;
+}
+
+export function getWaitingRunCount(): number {
+  let count = 0;
+  for (const run of store.values()) {
+    if (run.status === "waiting") count++;
   }
   return count;
 }
@@ -1580,15 +2143,18 @@ export interface CancelAllResult {
 }
 
 export function cancelAllActiveRuns(): CancelAllResult {
-  const activeBefore = getActiveRunCount();
+  const activeBefore = Array.from(store.values())
+    .filter((run) => run.status === "active" || run.status === "waiting").length;
   const cancelled: string[] = [];
   for (const run of store.values()) {
-    if (run.status === "active") {
+    if (run.status === "active" || run.status === "waiting") {
       cancelActiveRun(run.runId);
       cancelled.push(run.runId);
     }
   }
-  return { cancelled, activeBefore, activeAfter: getActiveRunCount() };
+  const activeAfter = Array.from(store.values())
+    .filter((run) => run.status === "active" || run.status === "waiting").length;
+  return { cancelled, activeBefore, activeAfter };
 }
 
 export function injectActiveRun(
@@ -1690,7 +2256,69 @@ function _isGatewayNode(node: DAGGraphNode): boolean {
     node.node_type === "command_gateway" ||
     node.node_type === "approval_gateway" ||
     node.node_type === "state_gateway" ||
-    node.node_type === "fanout_gateway";
+    node.node_type === "fanout_gateway" ||
+    node.node_type === "await_command_gateway";
+}
+
+function _roundResetNodeIds(
+  run: ActiveRun,
+  selectedNodeIds: ReadonlySet<string>,
+  awaitNodeId: string,
+): string[] {
+  const reset = new Set(selectedNodeIds);
+  const reachedAwait = new Set<string>();
+  for (const selectedNodeId of selectedNodeIds) {
+    const queue = [selectedNodeId];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      for (const edge of run.dagRun.graph.edges) {
+        if (edge.from_node !== current || !edge.to_node) continue;
+        if (edge.to_node === awaitNodeId) {
+          reset.add(awaitNodeId);
+          reachedAwait.add(selectedNodeId);
+          continue;
+        }
+        const target = run.dagRun.graph.nodes.find((node) => node.node_id === edge.to_node);
+        if (!target || !_isGatewayNode(target)) continue;
+        reset.add(target.node_id);
+        queue.push(target.node_id);
+      }
+    }
+  }
+  const missing = Array.from(selectedNodeIds).filter((nodeId) => !reachedAwait.has(nodeId));
+  if (missing.length > 0) {
+    throw new Error(`Selected actors have no gateway-only path to await_command ${awaitNodeId}: ${missing.join(", ")}`);
+  }
+  return Array.from(reset).sort();
+}
+
+function _roundCarryoverInputs(
+  run: ActiveRun,
+  resetNodeIds: ReadonlySet<string>,
+): Map<string, Array<{ fromNode: string; port: string; value: unknown }>> {
+  const handoffs = loadRunSnapshot(run.runId)?.handoffs ?? [];
+  const carryover = new Map<string, Array<{ fromNode: string; port: string; value: unknown }>>();
+  for (const edge of run.dagRun.graph.edges) {
+    if (!edge.to_node || edge.label === "after_dep" || !resetNodeIds.has(edge.to_node) || resetNodeIds.has(edge.from_node)) {
+      continue;
+    }
+    let previous: (typeof handoffs)[number] | undefined;
+    for (let index = handoffs.length - 1; index >= 0; index -= 1) {
+      const record = handoffs[index];
+      if (record.fromNode === edge.from_node && edgeMatchesHandoff(edge, record.port)) {
+        previous = record;
+        break;
+      }
+    }
+    if (!previous) continue;
+    const inputs = carryover.get(edge.to_node) ?? [];
+    inputs.push({ fromNode: edge.from_node, port: edge.to_port, value: previous.content });
+    carryover.set(edge.to_node, inputs);
+  }
+  return carryover;
 }
 
 function _firstInputValue(inputs: Record<string, unknown[]>): unknown {
@@ -2111,6 +2739,70 @@ function _startApproval(run: ActiveRun, node: DAGGraphNode): DagApprovalRecord {
   return approval;
 }
 
+function _startAwaitCommand(run: ActiveRun, node: DAGGraphNode): boolean {
+  const config = node.gateway_config;
+  if (config?.primitive_version !== 1) {
+    throw new Error(`await_command ${node.node_id} requires primitive_version 1`);
+  }
+  if (run.status !== "active" || run.currentRound.status !== "active") {
+    throw new Error(`Run ${run.runId} cannot enter await_command from ${run.status}/${run.currentRound.status}`);
+  }
+  const nonQuiescent = Array.from(run.dagRun.nodeStates.entries())
+    .filter(([nodeId, state]) => nodeId !== node.node_id &&
+      state !== "COMPLETED" && state !== "FAILED" && state !== "CANCELLED" && state !== "SKIPPED")
+    .map(([nodeId, state]) => `${nodeId}:${state}`)
+    .sort();
+  if (nonQuiescent.length > 0) {
+    return false;
+  }
+  const before = _snapshotNodeStates(run);
+  const previousRound = structuredClone(run.currentRound);
+  const now = Date.now();
+  const expiresAt = config.expires_after_ms === undefined
+    ? undefined
+    : now + Math.max(1_000, Math.floor(config.expires_after_ms));
+  run.dagRun.nodeStates.set(node.node_id, "WAITING_FOR_COMMAND");
+  run.status = "waiting";
+  run.currentRound = {
+    ...run.currentRound,
+    status: "waiting",
+    await_node_id: node.node_id,
+    closed_at: now,
+    ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+  };
+  try {
+    getDb().transaction(() => {
+      transitionDagRunRoundToWaiting({
+        run_id: run.runId,
+        round_id: previousRound.round_id,
+        await_node_id: node.node_id,
+        closed_at: now,
+        expires_at: expiresAt,
+      });
+      writeRunMetadata(run.runId, serializeRunMetadata(run));
+    }).immediate();
+  } catch (error) {
+    run.status = "active";
+    run.currentRound = previousRound;
+    run.dagRun.nodeStates.set(node.node_id, before.get(node.node_id) as NodeState);
+    throw error;
+  }
+  _emitNodeStateChanges(run, before);
+  emit("dag:round_closed", {
+    runId: run.runId,
+    roundId: run.currentRound.round_id,
+    ordinal: run.currentRound.ordinal,
+    awaitNodeId: node.node_id,
+  });
+  emit("dag:run_waiting", {
+    runId: run.runId,
+    roundId: run.currentRound.round_id,
+    awaitNodeId: node.node_id,
+    expiresAt,
+  });
+  return true;
+}
+
 interface FanoutRuntimeState {
   items: unknown[];
   context?: unknown;
@@ -2258,6 +2950,17 @@ function _recordFanoutChild(run: ActiveRun, child: DAGGraphNode, port: string, c
 }
 
 function _executeGatewayNode(runId: string, run: ActiveRun, node: DAGGraphNode): boolean {
+  if (node.node_type === "await_command_gateway") {
+    if (!_startAwaitCommand(run, node)) return false;
+    emit("dag:gateway_executed", {
+      runId,
+      nodeId: node.node_id,
+      gatewayType: node.node_type,
+      port: "waiting",
+    });
+    return true;
+  }
+
   if (node.node_type === "command_gateway") {
     const result = _commandGatewayResult(run, node);
     return Boolean(handoffActiveRun(runId, node.node_id, result.port, result.payload));
@@ -2495,6 +3198,22 @@ function _allowedDagTools(node: DAGGraphNode): DagAgentToolName[] | undefined {
   ));
 }
 
+function _requiredDispatchCapabilities(
+  run: ActiveRun,
+  node: DAGGraphNode,
+): string[] | undefined {
+  const required = new Set<string>();
+  for (const capability of node.requires?.capabilities ?? []) {
+    if (typeof capability !== "string") continue;
+    const normalized = capability.trim();
+    if (normalized) required.add(normalized);
+  }
+  if (run.currentRound.ordinal > 1) {
+    required.add(DAG_TRANSPORT_FENCE_CAPABILITY);
+  }
+  return required.size > 0 ? Array.from(required) : undefined;
+}
+
 function _activitySurfaceId(node: DAGGraphNode): string | undefined {
   const value = _agentRuntimeConfig(node).surface_id;
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -2524,6 +3243,11 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
   const actorId = actor.actor_id;
   const generation = actor.generation;
   const surfaceId = actor.surface_id;
+  const roundCommand = listDagActorCommands({
+    run_id: run.runId,
+    actor_id: actorId,
+    round_id: run.currentRound.round_id,
+  }).find((command) => command.status !== "cancelled" && command.status !== "failed");
   const dispatchInputs = nodeSession.resumeInstruction
     ? { ...inputs, checkpoint_resume: [nodeSession.resumeInstruction] }
     : inputs;
@@ -2554,15 +3278,16 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
       workspace: run.workspace,
       image: node.image,
       container_group: node.container_group,
-      requiredCapabilities: node.requires?.capabilities,
+      requiredCapabilities: _requiredDispatchCapabilities(run, node),
       advisors: advisorResolution.advisors,
       workspaceAccess: _workspaceAccess(node),
       allowedBuiltinTools: _allowedBuiltinTools(node),
       allowedDagTools: _allowedDagTools(node),
       activity: {
-        roundId: nodeSession.sessionId,
+        roundId: run.currentRound.round_id,
         actorId,
         generation,
+        ...(roundCommand ? { commandId: roundCommand.command_id } : {}),
         ...(surfaceId ? { surfaceId } : {}),
         sequenceStart: getDagActivitySequenceCursor(run.runId, actorId, generation),
       },
@@ -2579,14 +3304,27 @@ export function buildCurrentDispatchEnvelope(
   return _buildDispatchEnvelope(run, nodeId);
 }
 
+function _markRoundCommandsDelivered(run: ActiveRun, nodeId: string): void {
+  const actor = getDagActorByNode(run.runId, nodeId);
+  if (!actor) return;
+  const commands = listDagActorCommands({
+    run_id: run.runId,
+    actor_id: actor.actor_id,
+    round_id: run.currentRound.round_id,
+    status: "pending",
+  });
+  for (const command of commands) markDagActorCommandDelivered(command.command_id);
+}
+
 export function dispatchReadyNodes(
   runId: string,
   dispatcher: DAGDispatcher,
 ): number {
   const run = store.get(runId);
-  if (!run) return 0;
+  if (!run || run.status !== "active") return 0;
 
   let count = 0;
+  let dispatchCounterChanged = false;
   const before = _snapshotNodeStates(run);
   const ready = getReadyNodes(run.dagRun);
   for (const nodeId of ready) {
@@ -2599,6 +3337,7 @@ export function dispatchReadyNodes(
         const message = error instanceof Error ? error.message : String(error);
         failActiveRun(runId, nodeId, `gateway execution failed: ${message}`);
       }
+      if (run.status !== "active") break;
       continue;
     }
 
@@ -2611,11 +3350,13 @@ export function dispatchReadyNodes(
       abortActiveRun(runId, `max_dispatches (${run.limits.max_dispatches}) exceeded`, nodeId);
       break;
     }
-    run.counters.dispatches++;
-
     const envelope = built.envelope;
 
     let result = dispatcher.dispatch(envelope);
+    if (result.status !== "skipped") {
+      run.counters.dispatches++;
+      dispatchCounterChanged = true;
+    }
     if (result.status === "failed") {
       const retryable = result.retryable !== false;
       if (retryable && recordNodeDispatchRetry(runId, nodeId, result.reason)) {
@@ -2623,7 +3364,6 @@ export function dispatchReadyNodes(
           abortActiveRun(runId, `max_dispatches (${run.limits.max_dispatches}) exceeded`, nodeId);
           break;
         }
-        run.counters.dispatches++;
         result = dispatcher.dispatch({
           ...envelope,
           inputs: {
@@ -2633,6 +3373,10 @@ export function dispatchReadyNodes(
             ],
           },
         });
+        if (result.status !== "skipped") {
+          run.counters.dispatches++;
+          dispatchCounterChanged = true;
+        }
       }
       if (result.status === "failed") {
         failActiveRun(runId, nodeId, result.reason);
@@ -2642,11 +3386,14 @@ export function dispatchReadyNodes(
     if (result.status !== "dispatched") continue;
     startNode(run.dagRun, nodeId);
     _markNodeSessionStatus(run, nodeId, "running");
+    _markRoundCommandsDelivered(run, nodeId);
     emit("dag:node_dispatched", { runId, nodeId, agentId: envelope.agentId, sessionId: envelope.sessionId });
     count++;
   }
-  if (count > 0) {
+  if (count > 0 || dispatchCounterChanged) {
     writeRunMetadata(runId, serializeRunMetadata(run));
+  }
+  if (count > 0) {
     _emitNodeStateChanges(run, before);
   }
   return count;
@@ -2667,8 +3414,30 @@ export function markNodeDispatched(
   startNode(run.dagRun, nodeId);
   const nodeSession = _ensureNodeSession(run, nodeId);
   _markNodeSessionStatus(run, nodeId, "running");
+  _markRoundCommandsDelivered(run, nodeId);
   emit("dag:node_dispatched", { runId, nodeId, agentId: node.agent, sessionId: nodeSession.sessionId });
   writeRunMetadata(runId, serializeRunMetadata(run));
   _emitNodeStateChanges(run, before);
+  return true;
+}
+
+export function recordProvisionedNodeDispatchAttempt(
+  runId: string,
+  nodeId: string,
+): boolean {
+  const run = store.get(runId);
+  if (!run || run.status !== "active" || getNodeState(run.dagRun, nodeId) !== "READY") return false;
+  if (run.counters.dispatches >= run.limits.max_dispatches) {
+    abortActiveRun(runId, `max_dispatches (${run.limits.max_dispatches}) exceeded`, nodeId);
+    return false;
+  }
+  const mutableBefore = _snapshotMutableRun(run);
+  try {
+    run.counters.dispatches++;
+    writeRunMetadata(runId, serializeRunMetadata(run));
+  } catch (error) {
+    _restoreMutableRun(run, mutableBefore);
+    throw error;
+  }
   return true;
 }

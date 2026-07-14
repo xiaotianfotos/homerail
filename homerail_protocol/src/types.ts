@@ -456,6 +456,39 @@ export const DAG_AGENT_TOOL_NAMES = [
 
 export type DagAgentToolName = (typeof DAG_AGENT_TOOL_NAMES)[number];
 
+/** Versioned Worker capability for round-aware terminal transport. @version 0.1.0 */
+export const DAG_TRANSPORT_FENCE_PROTOCOL_VERSION = 1 as const;
+export const DAG_TRANSPORT_FENCE_CAPABILITY = "dag-transport-fence-v1" as const;
+export const DAG_TRANSPORT_FENCE_SCHEMA_ID = "dag-transport-fence-v1" as const;
+export const DAG_NODE_ERROR_SCHEMA_ID = "dag-node-error" as const;
+
+/** Optional on round-one wire messages; required by Manager for later rounds. */
+export interface DagTransportFenceMetadata {
+  round_id?: string;
+  actor_id?: string;
+  generation?: number;
+  command_id?: string;
+}
+
+export interface DagTransportFenceV1 {
+  round_id: string;
+  actor_id: string;
+  generation: number;
+  command_id: string;
+}
+
+export interface DagNodeErrorData extends DagTransportFenceMetadata {
+  runId: string;
+  nodeId: string;
+  message: string;
+  session_id?: string;
+}
+
+export interface DagNodeErrorMessage {
+  type: "node_error";
+  data: DagNodeErrorData;
+}
+
 /** @version 0.1.0 */
 export interface Edge {
   from_node?: string;
@@ -473,10 +506,11 @@ export interface DagNodeConfig {
   incoming_edges: Edge[];
   graph_nodes: string[];
   session_id?: string;
-  /** Activity routing metadata. Defaults are assigned by the Worker when omitted. */
+  /** Dispatch routing metadata. It may be omitted only for legacy first-round work. */
   round_id?: string;
   actor_id?: string;
   generation?: number;
+  command_id?: string;
   surface_id?: string;
   /** Last persisted activity sequence; the next emitted event starts after this value. */
   activity_sequence_start?: number;
@@ -513,7 +547,7 @@ export interface DagWorkspaceAccess {
 // ── Event Emitter Wire Types ─────────────────────────────────────
 
 /** @version 0.1.0 */
-export interface HandoffEvent {
+export interface HandoffEvent extends DagTransportFenceMetadata {
   type: "node_handoff";
   from_node: string;
   from_port: string;

@@ -391,6 +391,8 @@ describe("renderSnapshot", () => {
     const snap: DagSnapshot = {
       run_id: "run-001",
       run_status: "running",
+      waiting_for_command: false,
+      current_round_id: null,
       current_phase: "execute",
       dag_status: "active",
       node_counts: { running: 1, completed: 1 },
@@ -418,6 +420,8 @@ describe("renderSnapshotJson", () => {
     const snap: DagSnapshot = {
       run_id: "run-001",
       run_status: "completed",
+      waiting_for_command: false,
+      current_round_id: null,
       current_phase: null,
       dag_status: "done",
       node_counts: { completed: 3 },

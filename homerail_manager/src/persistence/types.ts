@@ -46,6 +46,26 @@ export interface RunWorkspaceRetention {
   cleanedAt?: number;
 }
 
+export type DagRunRoundStatus = "active" | "waiting" | "completed" | "cancelled" | "failed";
+
+export interface PersistedCurrentDagRunRound {
+  round_id: string;
+  ordinal: number;
+  status: DagRunRoundStatus;
+  target_actor_ids: string[];
+  await_node_id?: string;
+  opened_at: number;
+  closed_at?: number;
+  expires_at?: number;
+}
+
+export interface PersistedDagRuntimeState {
+  after_satisfied: Record<string, string[]>;
+  input_satisfied: Record<string, string[]>;
+  mailboxes: Record<string, Record<string, unknown[]>>;
+  loop_sources: string[];
+}
+
 export interface PersistedRunMetadata {
   runId: string;
   workflowId?: string;
@@ -66,6 +86,8 @@ export interface PersistedRunMetadata {
   pattern?: DAGPatternInstanceMeta;
   createdAt: number;
   status: DagRunStatus;
+  currentRound?: PersistedCurrentDagRunRound;
+  dagRuntimeState?: PersistedDagRuntimeState;
   completedAt?: number;
   limits?: DAGRunLimits;
   counters?: DAGRunCounters;
@@ -82,6 +104,7 @@ export interface PersistedEvent {
 
 export interface HandoffRecord {
   runId: string;
+  roundId?: string;
   fromNode: string;
   port: string;
   content?: unknown;

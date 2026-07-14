@@ -14,6 +14,7 @@ import { cmdResume, type ResumeOptions } from "./resume.js";
 import { orchestrationsDir, resolveTemplatePath } from "./templates.js";
 import { registerDagRunTemplateCommands } from "./dag-run-template.js";
 import { cmdDagArtifact, cmdDagArtifacts, type DagArtifactDownloadOptions } from "./dag-artifacts.js";
+import { registerDagMultiroundCommands } from "./dag-multiround.js";
 
 interface GlobalOpts {
   baseUrl?: string;
@@ -49,6 +50,7 @@ interface WorkflowValidationResult {
 export function registerDagCommands(program: Command): void {
   const dagCmd = program.command("dag").description("DAG status and supervision commands");
   registerDagRunTemplateCommands(dagCmd, program);
+  registerDagMultiroundCommands(dagCmd, program);
   const registerResumeCommand = (command: Command) => {
     command
       .command("resume <runId> <nodeId>")

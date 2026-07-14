@@ -81,6 +81,16 @@ export async function cmdDagSuperviseContinuous(
       return result.exit_code;
     }
 
+    if (result.waiting_for_command) {
+      if (json) {
+        console.log(JSON.stringify(result.report));
+      } else {
+        console.log(renderSuperviseTick(runId, result));
+        console.log("Run is waiting for a command.");
+      }
+      return 0;
+    }
+
     // Print if changed or heartbeat interval elapsed
     const elapsedSinceReport = (Date.now() - lastReport) / 1000;
     if (result.changed || elapsedSinceReport >= reportEvery) {

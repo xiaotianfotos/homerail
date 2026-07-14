@@ -6,6 +6,7 @@ export type NodeState =
   | "READY"
   | "RUNNING"
   | "WAITING_FOR_APPROVAL"
+  | "WAITING_FOR_COMMAND"
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED"
@@ -29,6 +30,21 @@ export interface DAGTransitionResult {
   routedNodes: string[];
   terminalFailure?: boolean;
   terminalOutcome?: "success" | "failure" | "cancelled";
+}
+
+export interface DAGRoundResetInput {
+  resetNodeIds: Iterable<string>;
+  commandInputs?: ReadonlyMap<string, { port: string; value: unknown }>;
+  carryoverInputs?: ReadonlyMap<string, ReadonlyArray<{
+    fromNode: string;
+    port: string;
+    value: unknown;
+  }>>;
+}
+
+export interface DAGRoundResetResult {
+  resetNodes: string[];
+  readyNodes: string[];
 }
 
 export function isFailurePort(port: string): boolean {
@@ -181,6 +197,7 @@ function _hasAlternativePath(run: DAGRun, nodeId: string, excludePred: string): 
     if (
       status === "COMPLETED" ||
       status === "RUNNING" ||
+      status === "WAITING_FOR_COMMAND" ||
       status === "PENDING" ||
       status === "READY"
     ) {
@@ -421,6 +438,7 @@ export function failNode(
 export function isRunTerminal(run: DAGRun): boolean {
   for (const [id, state] of run.nodeStates) {
     if (state === "READY") return false;
+    if (state === "WAITING_FOR_COMMAND" || state === "WAITING_FOR_APPROVAL") return false;
     if (state === "FAILED") continue;
     if (state === "SKIPPED" || state === "CANCELLED") continue;
     if (run.loopSources.has(id) && state === "RUNNING") continue;
@@ -428,6 +446,65 @@ export function isRunTerminal(run: DAGRun): boolean {
     if (state !== "COMPLETED") return false;
   }
   return true;
+}
+
+/**
+ * Re-opens a bounded subset of a completed DAG for a new command round.
+ * Nodes outside the subset retain their latest result and satisfy structural
+ * dependencies, but their payload is not replayed into the new round. This
+ * keeps a round scoped to the explicitly selected logical actors.
+ */
+export function resetNodesForRound(
+  run: DAGRun,
+  input: DAGRoundResetInput,
+): DAGRoundResetResult {
+  const resetNodes = Array.from(new Set(input.resetNodeIds)).sort();
+  if (resetNodes.length === 0) throw new Error("A DAG round must reset at least one node");
+  for (const nodeId of resetNodes) {
+    if (!run.nodeStates.has(nodeId)) throw new Error(`Unknown node: ${nodeId}`);
+  }
+
+  const reset = new Set(resetNodes);
+  const previousStates = new Map(run.nodeStates);
+  const previousHandoffs = new Set(run.handoffedNodes);
+
+  for (const nodeId of resetNodes) {
+    run.nodeStates.set(nodeId, "PENDING");
+    run.handoffedNodes.delete(nodeId);
+    run.afterSatisfied.set(nodeId, new Set<string>());
+    run.inputSatisfied.set(nodeId, new Set<string>());
+    run.mailboxes.set(nodeId, new Map<string, unknown[]>());
+  }
+
+  for (const nodeId of resetNodes) {
+    const afterSatisfied = run.afterSatisfied.get(nodeId)!;
+    const inputSatisfied = run.inputSatisfied.get(nodeId)!;
+    for (const carryover of input.carryoverInputs?.get(nodeId) ?? []) {
+      const mailbox = run.mailboxes.get(nodeId)!;
+      const values = mailbox.get(carryover.port) ?? [];
+      values.push(carryover.value);
+      mailbox.set(carryover.port, values);
+      inputSatisfied.add(carryover.fromNode);
+    }
+    for (const dependency of _incomingAfterDeps(run.graph.edges, nodeId)) {
+      if (reset.has(dependency.from_node)) continue;
+      const previous = previousStates.get(dependency.from_node);
+      const supplied = previousHandoffs.has(dependency.from_node)
+        && previous !== "FAILED"
+        && previous !== "CANCELLED"
+        && previous !== "SKIPPED";
+      if (!supplied) continue;
+      afterSatisfied.add(dependency.from_node);
+    }
+    const command = input.commandInputs?.get(nodeId);
+    if (command) run.mailboxes.get(nodeId)!.set(command.port, [command.value]);
+  }
+
+  for (const nodeId of resetNodes) _tryPromote(run, nodeId);
+  return {
+    resetNodes,
+    readyNodes: resetNodes.filter((nodeId) => run.nodeStates.get(nodeId) === "READY"),
+  };
 }
 
 export function getReadyNodes(run: DAGRun): string[] {

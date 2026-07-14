@@ -83,11 +83,13 @@ function _normalizeNodeType(cfg: DAGNodeConfig): string {
   if (type === "condition" || type === "condition_gateway") return "condition_gateway";
   if (type === "join" || type === "join_gateway") return "join_gateway";
   if (type === "while" || type === "while_gateway") return "while_gateway";
+  if (type === "await_command" || type === "await_command_gateway") return "await_command_gateway";
   if (type === "gateway") {
     if (kind === "loop") return "loop_gateway";
     if (kind === "condition") return "condition_gateway";
     if (kind === "join") return "join_gateway";
     if (kind === "while") return "while_gateway";
+    if (kind === "await_command") return "await_command_gateway";
   }
   return type || "agent";
 }
@@ -96,7 +98,12 @@ function _isGatewayNodeType(nodeType: string): boolean {
   return nodeType === "loop_gateway" ||
     nodeType === "condition_gateway" ||
     nodeType === "join_gateway" ||
-    nodeType === "while_gateway";
+    nodeType === "while_gateway" ||
+    nodeType === "command_gateway" ||
+    nodeType === "approval_gateway" ||
+    nodeType === "state_gateway" ||
+    nodeType === "fanout_gateway" ||
+    nodeType === "await_command_gateway";
 }
 
 export function _detectLoopSources(

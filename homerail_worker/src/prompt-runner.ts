@@ -274,6 +274,10 @@ export async function runPrompt(
           run_id: job.runId,
           node_id: job.dagConfig.node_id,
           session_id: job.dagConfig.session_id ?? job.runId,
+          ...(job.dagConfig.round_id !== undefined ? { round_id: job.dagConfig.round_id } : {}),
+          ...(job.dagConfig.actor_id !== undefined ? { actor_id: job.dagConfig.actor_id } : {}),
+          ...(job.dagConfig.generation !== undefined ? { generation: job.dagConfig.generation } : {}),
+          ...(job.dagConfig.command_id !== undefined ? { command_id: job.dagConfig.command_id } : {}),
         },
       }),
     );
@@ -552,6 +556,10 @@ export async function runPrompt(
       nodeId: job.dagConfig.node_id,
       message: redactedMessage,
       session_id: job.dagConfig.session_id ?? job.runId,
+      ...(job.dagConfig.round_id !== undefined ? { round_id: job.dagConfig.round_id } : {}),
+      ...(job.dagConfig.actor_id !== undefined ? { actor_id: job.dagConfig.actor_id } : {}),
+      ...(job.dagConfig.generation !== undefined ? { generation: job.dagConfig.generation } : {}),
+      ...(job.dagConfig.command_id !== undefined ? { command_id: job.dagConfig.command_id } : {}),
     };
     sendTerminalMessage(JSON.stringify({ type: "node_error", data }));
   }

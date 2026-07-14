@@ -88,6 +88,53 @@ describe("WorkflowSpec v1 legacy runtime parity", () => {
     expect(() => assertRuntimeGraphParity(file, legacy, v1)).not.toThrow();
   });
 
+  it("recognizes legacy await_command gateways and preserves their runtime config", () => {
+    const source = `
+name: legacy-await-command
+agents:
+  worker: { system: Work. }
+nodes:
+  actor:
+    agent: worker
+    outputs:
+      summary: { to: suspend.in:summary }
+  suspend:
+    type: gateway
+    after: [actor]
+    gateway_config:
+      kind: await_command
+      primitive_version: 1
+      target_actors: [actor]
+      expires_after_ms: 60000
+      command_port: next_command
+  finisher:
+    agent: worker
+    outputs:
+      done: { to: "" }
+`;
+    const compilation = compileWorkflowSource(source);
+    expect(compilation.valid, compilation.diagnostics.map((entry) => entry.message).join("\n")).toBe(true);
+    expect(compilation.canonical?.nodes.find((node) => node.id === "suspend")).toMatchObject({
+      kind: "await_command",
+      config: {
+        primitive_version: 1,
+        target_actors: ["actor"],
+        expires_after_ms: 60_000,
+        command_port: "next_command",
+      },
+    });
+
+    const authoring = canonicalWorkflowToV1Document(compilation.canonical!);
+    expect((authoring.spec as any).nodes.suspend.config).toEqual({
+      command_port: "next_command",
+      expires_after_ms: 60_000,
+      primitive_version: 1,
+      target_actors: ["actor"],
+    });
+    const { legacy, v1 } = convertLegacySource(source);
+    expect(() => assertRuntimeGraphParity("legacy-await-command", legacy, v1)).not.toThrow();
+  });
+
   it("preserves quorum branch selection and skipped descendants", () => {
     const { legacy, v1 } = loadLegacyAndV1("pattern-quorum-offline.yaml");
     createActiveRun("quorum-legacy", legacy);

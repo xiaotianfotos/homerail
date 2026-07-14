@@ -32,6 +32,10 @@ export interface DagToolsState {
   nodeId: string;
   runId: string;
   sessionId: string;
+  roundId?: string;
+  actorId?: string;
+  generation?: number;
+  commandId?: string;
   graphNodes: string[];
   availablePorts: string[];
   outgoingEdges: Edge[];
@@ -85,6 +89,10 @@ export function createDagToolsState(
     nodeId: config.node_id,
     runId,
     sessionId: config.session_id || runId,
+    roundId: config.round_id,
+    actorId: config.actor_id,
+    generation: config.generation,
+    commandId: config.command_id,
     graphNodes: config.graph_nodes,
     availablePorts: [...ports].sort(),
     outgoingEdges: config.outgoing_edges,

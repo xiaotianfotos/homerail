@@ -11,7 +11,10 @@ import {
   getWorker,
   type WorkerState,
 } from "./registry.js";
-import { applyResponseHandoff } from "../orchestration/response-bridge.js";
+import {
+  applyResponseHandoff,
+  assessDagTransportFence,
+} from "../orchestration/response-bridge.js";
 import { handleDagMessageResponse } from "../orchestration/dag-message-router.js";
 import { clearByTargetId, isCurrentDispatchTarget } from "../orchestration/dispatch-tracker.js";
 import { emit } from "../events/bus.js";
@@ -20,6 +23,7 @@ import { appendSessionTranscriptEntry } from "../persistence/dag-session-files.j
 import {
   autoHandoffAfterCorrectionExhausted,
   failActiveRun,
+  getActiveRun,
   getCurrentNodeSession,
   recordAdvisorCall,
   requestNodeCorrection,
@@ -68,6 +72,28 @@ function objectData(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function dagActivityRoundContext(data: Record<string, unknown>, runId: string): string {
+  const run = getActiveRun(runId);
+  if (!run) throw new Error(`DAG activity run ${runId} is not active`);
+  const currentRoundId = run.currentRound.round_id;
+  if (data.round_id !== undefined) {
+    if (typeof data.round_id !== "string" || !data.round_id.trim()) {
+      throw new Error("DAG activity transport round is invalid");
+    }
+    if (data.round_id !== currentRoundId) {
+      throw new Error(`DAG activity transport round ${data.round_id} is not current (${currentRoundId})`);
+    }
+    return currentRoundId;
+  }
+
+  const activityRoundId = objectData(data.activity)?.round_id;
+  const sessionId = dataSessionId(data);
+  if (run.currentRound.ordinal === 1 && typeof activityRoundId === "string" && activityRoundId === sessionId) {
+    return activityRoundId;
+  }
+  return currentRoundId;
 }
 
 function shouldIgnoreStaleSession(
@@ -219,9 +245,10 @@ export function setupWorkerWebSocket(
 
       ws.on("message", (raw: Buffer) => {
         let msg: IncomingWorkerMessage | null;
+        let rawMessage: unknown;
         try {
-          const parsed = JSON.parse(raw.toString());
-          msg = parseIncomingMessage(parsed);
+          rawMessage = JSON.parse(raw.toString());
+          msg = parseIncomingMessage(rawMessage);
         } catch {
           msg = null;
         }
@@ -370,18 +397,30 @@ export function setupWorkerWebSocket(
             });
             options.onHandoffApplied?.(result.runId);
           } else {
+            const reason = result.status === "malformed_payload"
+              ? result.reason
+              : result.status === "unknown_run"
+                ? `unknown run ${result.runId}`
+                : result.reason;
             emit("dag:response_handoff_failed", {
               runId: "runId" in result ? (result.runId as string) : undefined,
-              nodeId: result.status === "handoff_failed" ? result.nodeId : undefined,
-              reason:
-                result.status === "malformed_payload"
-                  ? result.reason
-                  : result.status === "unknown_run"
-                    ? `unknown run ${result.runId}`
-                    : result.reason,
+              nodeId: result.status === "handoff_failed" || result.status === "handoff_ignored"
+                ? result.nodeId
+                : undefined,
+              reason,
               source: "worker",
               sourceId: worker_id,
             });
+            if (result.status === "handoff_ignored") {
+              mirrorSessionTranscript(
+                worker_id,
+                `handoff_${result.disposition}_ignored`,
+                result.runId,
+                result.nodeId,
+                responseSessionId,
+                { disposition: result.disposition, reason, payload: msg.data },
+              );
+            }
             if (result.status === "handoff_failed") {
               tryCorrectNode(result.runId, result.nodeId, result.reason);
             }
@@ -401,10 +440,11 @@ export function setupWorkerWebSocket(
                 throw new Error("DAG activity source does not match the current dispatch target");
               }
               if (shouldIgnoreStaleSession(worker_id, "dag_activity", msg.data)) return;
+              const roundId = dagActivityRoundContext(msg.data, runId);
               ingestDagActivityStream(msg.data, {
                 runId,
                 nodeId,
-                roundId: sessionId,
+                roundId,
               });
             } catch (error) {
               console.warn(
@@ -461,16 +501,42 @@ export function setupWorkerWebSocket(
         }
 
         if (msg.type === "node_error") {
+          const rawData = objectData(objectData(rawMessage)?.data) ?? msg.data;
           if (shouldIgnoreStaleSession(worker_id, "node_error", {
             runId: msg.data.runId,
             nodeId: msg.data.nodeId,
             session_id: msg.data.session_id,
           })) return;
+          const assessment = assessDagTransportFence(rawData);
+          if (assessment.status !== "current") {
+            const runId = assessment.status === "malformed_payload" ? msg.data.runId : assessment.runId;
+            const nodeId = assessment.status === "malformed_payload" ? msg.data.nodeId : assessment.nodeId;
+            const disposition = assessment.status === "ignored" ? assessment.disposition : assessment.status;
+            const reason = assessment.status === "unknown_run"
+              ? `unknown run ${assessment.runId}`
+              : assessment.reason;
+            emit("dag:response_handoff_failed", {
+              runId,
+              nodeId,
+              reason: `node_error ${disposition} ignored: ${reason}`,
+              source: "worker",
+              sourceId: worker_id,
+            });
+            mirrorSessionTranscript(
+              worker_id,
+              `node_error_${disposition}_ignored`,
+              runId,
+              nodeId,
+              msg.data.session_id,
+              { disposition, reason, payload: rawData },
+            );
+            return;
+          }
           appendChatEntry(msg.data.runId, msg.data.nodeId, {
             role: "worker",
             type: "response",
             targetId: worker_id,
-            content: msg.data,
+            content: rawData,
             timestamp: Date.now(),
           });
           mirrorSessionTranscript(
@@ -479,7 +545,7 @@ export function setupWorkerWebSocket(
             msg.data.runId,
             msg.data.nodeId,
             msg.data.session_id,
-            msg.data,
+            rawData,
           );
           if (tryCorrectNode(msg.data.runId, msg.data.nodeId, msg.data.message)) {
             return;

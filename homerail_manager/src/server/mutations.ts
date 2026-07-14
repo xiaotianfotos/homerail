@@ -456,6 +456,75 @@ export function mutationRoutesHandler(
     return true;
   }
 
+  // POST /api/runs/:run_id/complete
+  const completeMatch = pathname.match(/^\/api\/runs\/([^/]+)\/complete$/);
+  if (completeMatch && req.method === "POST") {
+    const runId = decodeURIComponent(completeMatch[1]);
+    void _readJsonBody(req).then((raw) => {
+      const body = raw as Record<string, unknown>;
+      const expectedRoundId = typeof body.expected_round_id === "string"
+        ? body.expected_round_id.trim()
+        : "";
+      if (!expectedRoundId) throw new Error("expected_round_id is required");
+      const result = changeOrchestrator.completeRun(runId, expectedRoundId);
+      _ok(res, "Run completed", { completed: result });
+    }).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("not found")) _notFound(res, message);
+      else if (message.includes("not waiting") || message.includes("conflict")) {
+        json(res, 409, { success: false, message, error: message });
+      } else _badRequest(res, message);
+    });
+    return true;
+  }
+
+  // POST /api/runs/:run_id/commands
+  const commandsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/commands$/);
+  if (commandsMatch && req.method === "POST") {
+    const runId = decodeURIComponent(commandsMatch[1]);
+    void _readJsonBody(req).then((raw) => {
+      const body = raw as Record<string, unknown>;
+      const expectedRoundId = typeof body.expected_round_id === "string"
+        ? body.expected_round_id.trim()
+        : "";
+      if (!expectedRoundId) throw new Error("expected_round_id is required");
+      if (!Array.isArray(body.commands) || body.commands.length < 1 || body.commands.length > 128) {
+        throw new Error("commands must contain between 1 and 128 entries");
+      }
+      const commands = body.commands.map((rawCommand, index) => {
+        if (!rawCommand || typeof rawCommand !== "object" || Array.isArray(rawCommand)) {
+          throw new Error(`commands[${index}] must be an object`);
+        }
+        const command = rawCommand as Record<string, unknown>;
+        const actorId = typeof command.actor_id === "string" ? command.actor_id.trim() : "";
+        if (!actorId) throw new Error(`commands[${index}].actor_id is required`);
+        if (!("payload" in command)) throw new Error(`commands[${index}].payload is required`);
+        const commandId = typeof command.command_id === "string" ? command.command_id.trim() : undefined;
+        const idempotencyKey = typeof command.idempotency_key === "string"
+          ? command.idempotency_key.trim()
+          : undefined;
+        return {
+          actor_id: actorId,
+          payload: command.payload,
+          ...(commandId ? { command_id: commandId } : {}),
+          ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+        };
+      });
+      const result = changeOrchestrator.resumeRun(runId, {
+        expected_round_id: expectedRoundId,
+        commands,
+      });
+      _ok(res, "Waiting run resumed", result);
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("not found") || message.includes("Unknown DAG actor")) _notFound(res, message);
+      else if (message.includes("not waiting") || message.includes("conflict")) {
+        json(res, 409, { success: false, message, error: message });
+      } else _badRequest(res, message);
+    });
+    return true;
+  }
+
   const workspaceRetentionMatch = pathname.match(/^\/api\/runs\/([^/]+)\/workspace-retention$/);
   if (workspaceRetentionMatch && req.method === "POST") {
     const runId = decodeURIComponent(workspaceRetentionMatch[1]);

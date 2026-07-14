@@ -4,7 +4,12 @@ import {
   DAG_ACTIVITY_EVENT_V1_SCHEMA_ID,
   DAG_ACTIVITY_TYPES,
   DAG_AGENT_TOOL_NAMES,
+  DAG_NODE_ERROR_SCHEMA_ID,
+  DAG_TRANSPORT_FENCE_CAPABILITY,
+  DAG_TRANSPORT_FENCE_PROTOCOL_VERSION,
+  DAG_TRANSPORT_FENCE_SCHEMA_ID,
   type DagActivityEventV1,
+  type DagNodeErrorMessage,
   validateDagActivityEventV1,
 } from "../src/index.js";
 import { allSchemas } from "../src/schemas.js";
@@ -106,6 +111,7 @@ describe("DAG activity routing metadata", () => {
     round_id: "round-02",
     actor_id: "researcher",
     generation: 2,
+    command_id: "command-02",
     surface_id: "surface-news",
     activity_sequence_start: 41,
   };
@@ -119,11 +125,62 @@ describe("DAG activity routing metadata", () => {
     ["round_id", ""],
     ["actor_id", ""],
     ["generation", 0],
+    ["command_id", ""],
     ["surface_id", ""],
     ["activity_sequence_start", -1],
     ["activity_sequence_start", 1.5],
     ["activity_sequence_start", Number.MAX_SAFE_INTEGER + 1],
   ])("rejects invalid %s metadata", (key, value) => {
     expect(validateMessage({ ...config, [key]: value }, "dag-node-config").valid).toBe(false);
+  });
+});
+
+describe("DAG terminal transport fence", () => {
+  const fencedError: DagNodeErrorMessage = {
+    type: "node_error",
+    data: {
+      runId: "run-02",
+      nodeId: "worker-01",
+      message: "agent failed",
+      session_id: "session-01",
+      round_id: "round-02",
+      actor_id: "researcher",
+      generation: 2,
+      command_id: "command-02",
+    },
+  };
+
+  it("exports an explicit versioned Worker capability", () => {
+    expect(DAG_TRANSPORT_FENCE_PROTOCOL_VERSION).toBe(1);
+    expect(DAG_TRANSPORT_FENCE_CAPABILITY).toBe("dag-transport-fence-v1");
+    expect(DAG_TRANSPORT_FENCE_SCHEMA_ID).toBe(DAG_TRANSPORT_FENCE_CAPABILITY);
+    expect(allSchemas[DAG_TRANSPORT_FENCE_SCHEMA_ID]).toBeDefined();
+    expect(allSchemas[DAG_NODE_ERROR_SCHEMA_ID]).toBeDefined();
+  });
+
+  it("validates a complete v1 fence and fenced node_error", () => {
+    expect(validateMessage({
+      round_id: "round-02",
+      actor_id: "researcher",
+      generation: 2,
+      command_id: "command-02",
+    }, DAG_TRANSPORT_FENCE_SCHEMA_ID).valid).toBe(true);
+    expect(validateMessage(fencedError, DAG_NODE_ERROR_SCHEMA_ID).valid).toBe(true);
+  });
+
+  it("keeps legacy round-one node_error compatible while rejecting malformed metadata", () => {
+    expect(validateMessage({
+      type: "node_error",
+      data: { runId: "run-01", nodeId: "worker-01", message: "legacy failure" },
+    }, DAG_NODE_ERROR_SCHEMA_ID).valid).toBe(true);
+    expect(validateMessage({
+      ...fencedError,
+      data: { ...fencedError.data, generation: 0 },
+    }, DAG_NODE_ERROR_SCHEMA_ID).valid).toBe(false);
+    expect(validateMessage({
+      round_id: "round-02",
+      actor_id: "researcher",
+      generation: 2,
+    }, DAG_TRANSPORT_FENCE_SCHEMA_ID).valid).toBe(false);
   });
 });

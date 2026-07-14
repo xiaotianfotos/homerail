@@ -53,6 +53,16 @@ describe("SQLite persistence contracts", () => {
       nodeStates: {},
       handoffedNodes: [],
     } as never)).toThrow(/Invalid dag_run status/);
+
+    writeRunMetadata("run-waiting", {
+      runId: "run-waiting",
+      createdAt: Date.now(),
+      status: "waiting",
+      nodeStates: { await: "WAITING_FOR_COMMAND" },
+      handoffedNodes: [],
+    });
+    expect(getDb().prepare("SELECT status FROM dag_runs WHERE run_id = ?").get("run-waiting"))
+      .toEqual({ status: "waiting" });
   });
 
   it("uses explicit timestamp helpers for ISO and epoch-ms domains", () => {

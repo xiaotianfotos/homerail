@@ -13,12 +13,24 @@ import {
   parseStoredDagWorkflow,
   resolveDagRuntimeProfile,
 } from "../persistence/dag-workflows.js";
-import { appendRunNode, cancelActiveRun, cancelAllActiveRuns, checkpointResumeActiveRun, decideActiveRunApproval, injectActiveRun } from "../runtime/active-runs.js";
+import {
+  appendRunNode,
+  cancelActiveRun,
+  cancelAllActiveRuns,
+  checkpointResumeActiveRun,
+  completeActiveRun,
+  deduplicateWaitingActiveRunResume,
+  decideActiveRunApproval,
+  injectActiveRun,
+  resumeWaitingActiveRun,
+  type ResumeWaitingRunRequest,
+} from "../runtime/active-runs.js";
 import type { DagApprovalRecord } from "../persistence/dag-runtime-primitives.js";
 import type { InjectResult, CancelAllResult, CheckpointResumeRequest } from "../runtime/active-runs.js";
 import { emit } from "../events/bus.js";
 import {
   deriveWorkflowConcurrencyPolicy,
+  loadWorkflowConcurrencyPolicy,
   releaseWorkflowRunReservation,
   reserveWorkflowRun,
 } from "../persistence/dag-run-admission.js";
@@ -63,6 +75,19 @@ export interface InjectRunResponse {
   delivery_target_type?: "worker" | "node";
   delivery_target_id?: string;
   delivery_gap?: string;
+}
+
+export interface ResumeRunResponse {
+  resumed: true;
+  previous_round_id: string;
+  round_id: string;
+  ordinal: number;
+  actor_ids: string[];
+  node_ids: string[];
+  command_ids: string[];
+  ready_node_ids: string[];
+  dispatched: number;
+  deduplicated?: boolean;
 }
 
 export interface CheckpointResumeResponse {
@@ -332,6 +357,53 @@ export class ChangeOrchestrator {
     }
     cancelActiveRun(runId);
     return true;
+  }
+
+  completeRun(runId: string, expectedRoundId: string): boolean {
+    const run = this.graphExecutor.getRun(runId);
+    if (!run) throw new Error(`Run not found: ${runId}`);
+    if (run.status !== "waiting") throw new Error(`Run ${runId} is not waiting for explicit completion`);
+    if (!expectedRoundId.trim() || run.currentRound.round_id !== expectedRoundId.trim()) {
+      throw new Error(`Waiting round conflict: current round is ${run.currentRound.round_id}`);
+    }
+    completeActiveRun(runId);
+    return true;
+  }
+
+  resumeRun(runId: string, request: ResumeWaitingRunRequest): ResumeRunResponse {
+    const run = this.graphExecutor.getRun(runId);
+    if (!run) throw new Error(`Run not found: ${runId}`);
+
+    const alreadyResumed = deduplicateWaitingActiveRunResume(runId, request);
+    const resumed = alreadyResumed ?? (() => {
+      const reservationId = `resume:${runId}`;
+      const reservation = run.status === "waiting" && run.workflowId
+        ? reserveWorkflowRun({
+            runId: reservationId,
+            workflowId: run.workflowId,
+            source: "resume:command",
+            policy: loadWorkflowConcurrencyPolicy(run.workflowId),
+          })
+        : { reserved: false };
+      try {
+        return resumeWaitingActiveRun(runId, request);
+      } finally {
+        if (reservation.reserved) releaseWorkflowRunReservation(reservationId);
+      }
+    })();
+    const dispatched = this.graphExecutor.tick(runId);
+    return {
+      resumed: true,
+      previous_round_id: resumed.previousRoundId,
+      round_id: resumed.roundId,
+      ordinal: resumed.ordinal,
+      actor_ids: resumed.actorIds,
+      node_ids: resumed.nodeIds,
+      command_ids: resumed.commandIds,
+      ready_node_ids: resumed.readyNodeIds,
+      dispatched,
+      ...(resumed.deduplicated ? { deduplicated: true } : {}),
+    };
   }
 
   emergencyStopAllRuns(): { stopped: number; run_ids: string[]; active_before: number; active_after: number } {

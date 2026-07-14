@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   acknowledgeDagActorCommand,
   advanceDagActorGeneration,
+  cancelUnclaimedDagActorCommands,
   claimDagActorCommand,
   createDagActorCommand,
   DagActorConflictError,
@@ -14,6 +15,7 @@ import {
   getDagActorCommand,
   listDagActorCommands,
   listDagActors,
+  markDagActorCommandDelivered,
   registerDagActor,
   updateDagActorBinding,
 } from "../src/persistence/dag-actors.js";
@@ -106,9 +108,10 @@ describe("durable DAG logical actors and command inbox", () => {
 
   it("upgrades a v19 database and validates migration v20 on repeated startup", () => {
     getDb().exec(`
+      DROP TABLE dag_run_rounds;
       DROP TABLE dag_actor_commands;
       DROP TABLE dag_actors;
-      DELETE FROM schema_migrations WHERE version = 20;
+      DELETE FROM schema_migrations WHERE version IN (20, 23);
     `);
     closeDb();
 
@@ -354,6 +357,46 @@ nodes:
     expect(listDagActorCommands({ run_id: "run-1" })).toHaveLength(1);
     expect(() => createCommand({ payload: { instruction: "Different work" } }))
       .toThrowError(expect.objectContaining<DagActorConflictError>({ code: "command_identity_conflict" }));
+  });
+
+  it("cancels only pending and delivered commands while preserving audit rows", () => {
+    registerActor();
+    createCommand();
+    createCommand({ command_id: "command-2", idempotency_key: "research-round-1-delivered" });
+    createCommand({ command_id: "command-3", idempotency_key: "research-round-1-claimed" });
+    const delivered = markDagActorCommandDelivered("command-2").command;
+    claimDagActorCommand({
+      command_id: "command-3",
+      run_id: "run-1",
+      actor_id: "researcher",
+      generation: 1,
+    });
+
+    const cancelled = cancelUnclaimedDagActorCommands({
+      run_id: "run-1",
+      completed_at: Date.now() + 1_000,
+      reason: { status: "cancelled", message: "run cancelled" },
+    });
+
+    expect(cancelled.map((command) => [command.command_id, command.status]))
+      .toEqual([
+        ["command-1", "cancelled"],
+        ["command-2", "cancelled"],
+      ]);
+    expect(getDagActorCommand("command-2")).toMatchObject({
+      status: "cancelled",
+      delivered_at: delivered.delivered_at,
+      failure: { status: "cancelled", message: "run cancelled" },
+    });
+    expect(getDagActorCommand("command-3")?.status).toBe("claimed");
+    expect(listDagActorCommands({ run_id: "run-1" })).toHaveLength(3);
+    expect(cancelUnclaimedDagActorCommands("run-1")).toEqual([]);
+    expect(() => claimDagActorCommand({
+      command_id: "command-1",
+      run_id: "run-1",
+      actor_id: "researcher",
+      generation: 1,
+    })).toThrowError(expect.objectContaining<DagActorConflictError>({ code: "command_status_conflict" }));
   });
 
   it("allows only the current generation to claim and complete a command", () => {

@@ -18,6 +18,12 @@ export type DAGEventType =
   | "dag:run_completed"
   | "dag:run_failed"
   | "dag:run_cancelled"
+  | "dag:run_waiting"
+  | "dag:run_resumed"
+  | "dag:run_expired"
+  | "dag:round_started"
+  | "dag:round_closed"
+  | "dag:command_queued"
   | "dag:artifact_pending"
   | "dag:artifact_ready"
   | "dag:artifact_failed"
@@ -80,6 +86,12 @@ export const DAG_EVENT_TYPES: DAGEventType[] = [
   "dag:run_completed",
   "dag:run_failed",
   "dag:run_cancelled",
+  "dag:run_waiting",
+  "dag:run_resumed",
+  "dag:run_expired",
+  "dag:round_started",
+  "dag:round_closed",
+  "dag:command_queued",
   "dag:artifact_pending",
   "dag:artifact_ready",
   "dag:artifact_failed",

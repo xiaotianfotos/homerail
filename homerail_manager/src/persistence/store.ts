@@ -8,6 +8,8 @@ import type {
   PersistedGraphData,
   NodeUsageRecord,
   RunWorkspaceRetention,
+  PersistedCurrentDagRunRound,
+  PersistedDagRuntimeState,
 } from "./types.js";
 import type { DAGArtifactDeclaration, DAGGraphData, DAGPatternInstanceMeta, ScorecardPolicyConfig } from "../orchestration/graph.js";
 import { DAG_EVENT_TYPES, subscribe, type DAGEventPayload } from "../events/bus.js";
@@ -18,7 +20,7 @@ import { redactTelemetry } from "homerail-protocol";
 
 // Contract marker for regression: "dag:instruction_terminal_no_active_target"
 // is persisted through DAG_EVENT_TYPES.
-interface SerializableRun {
+export interface SerializableRun {
   runId: string;
   workflowId?: string;
   workflowName?: string;
@@ -38,6 +40,7 @@ interface SerializableRun {
   pattern?: DAGPatternInstanceMeta;
   createdAt: number;
   status: DagRunStatus;
+  currentRound?: PersistedCurrentDagRunRound;
   completedAt?: number;
   limits?: DAGRunLimits;
   counters?: DAGRunCounters;
@@ -45,6 +48,10 @@ interface SerializableRun {
     nodeStates: Map<string, string>;
     handoffedNodes: Set<string>;
     graph: DAGGraphData;
+    afterSatisfied?: ReadonlyMap<string, ReadonlySet<string>>;
+    inputSatisfied?: ReadonlyMap<string, ReadonlySet<string>>;
+    mailboxes?: ReadonlyMap<string, ReadonlyMap<string, readonly unknown[]>>;
+    loopSources?: ReadonlySet<string>;
   };
 }
 
@@ -187,11 +194,67 @@ function _serializeGraph(graph: DAGGraphData): PersistedGraphData {
   };
 }
 
+function _serializeSetMap(
+  values: ReadonlyMap<string, ReadonlySet<string>>,
+): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const key of Array.from(values.keys()).sort()) {
+    result[key] = Array.from(values.get(key) ?? []).sort();
+  }
+  return result;
+}
+
+function _serializeMailboxes(
+  mailboxes: ReadonlyMap<string, ReadonlyMap<string, readonly unknown[]>>,
+): Record<string, Record<string, unknown[]>> {
+  const result: Record<string, Record<string, unknown[]>> = {};
+  for (const nodeId of Array.from(mailboxes.keys()).sort()) {
+    const ports: Record<string, unknown[]> = {};
+    const mailbox = mailboxes.get(nodeId);
+    if (mailbox) {
+      for (const port of Array.from(mailbox.keys()).sort()) {
+        ports[port] = Array.from(mailbox.get(port) ?? []);
+      }
+    }
+    result[nodeId] = ports;
+  }
+  return result;
+}
+
+function _serializeDagRuntimeState(run: SerializableRun): PersistedDagRuntimeState | undefined {
+  const { afterSatisfied, inputSatisfied, mailboxes, loopSources } = run.dagRun;
+  if (!afterSatisfied || !inputSatisfied || !mailboxes || !loopSources) return undefined;
+  return {
+    after_satisfied: _serializeSetMap(afterSatisfied),
+    input_satisfied: _serializeSetMap(inputSatisfied),
+    mailboxes: _serializeMailboxes(mailboxes),
+    loop_sources: Array.from(loopSources).sort(),
+  };
+}
+
+function _serializeCurrentRound(
+  round: SerializableRun["currentRound"],
+): PersistedCurrentDagRunRound | undefined {
+  if (!round) return undefined;
+  return {
+    round_id: round.round_id,
+    ordinal: round.ordinal,
+    status: round.status,
+    target_actor_ids: Array.from(new Set(round.target_actor_ids)).sort(),
+    ...(round.await_node_id === undefined ? {} : { await_node_id: round.await_node_id }),
+    opened_at: round.opened_at,
+    ...(round.closed_at === undefined ? {} : { closed_at: round.closed_at }),
+    ...(round.expires_at === undefined ? {} : { expires_at: round.expires_at }),
+  };
+}
+
 export function serializeRunMetadata(run: SerializableRun): PersistedRunMetadata {
   const nodeStates: Record<string, string> = {};
-  for (const [nodeId, state] of run.dagRun.nodeStates) {
-    nodeStates[nodeId] = state;
+  for (const nodeId of Array.from(run.dagRun.nodeStates.keys()).sort()) {
+    nodeStates[nodeId] = run.dagRun.nodeStates.get(nodeId)!;
   }
+  const currentRound = _serializeCurrentRound(run.currentRound);
+  const dagRuntimeState = _serializeDagRuntimeState(run);
   return {
     runId: run.runId,
     workflowId: run.workflowId,
@@ -212,11 +275,13 @@ export function serializeRunMetadata(run: SerializableRun): PersistedRunMetadata
     pattern: run.pattern,
     createdAt: run.createdAt,
     status: run.status,
+    ...(currentRound ? { currentRound } : {}),
+    ...(dagRuntimeState ? { dagRuntimeState } : {}),
     completedAt: run.completedAt,
     limits: run.limits,
     counters: run.counters,
     nodeStates,
-    handoffedNodes: Array.from(run.dagRun.handoffedNodes),
+    handoffedNodes: Array.from(run.dagRun.handoffedNodes).sort(),
     graph: _serializeGraph(run.dagRun.graph),
   };
 }

@@ -29,6 +29,7 @@ export interface DispatchEnvelope {
     roundId: string;
     actorId: string;
     generation: number;
+    commandId?: string;
     surfaceId?: string;
     sequenceStart: number;
   };

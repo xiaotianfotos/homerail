@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ChangeOrchestrator } from "../src/orchestration/change-orchestrator.js";
 import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
+import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import {
   deriveWorkflowConcurrencyPolicy,
@@ -15,7 +16,13 @@ import {
   reserveWorkflowRun,
 } from "../src/persistence/dag-run-admission.js";
 import { upsertDagWorkflowFromYaml } from "../src/persistence/dag-workflows.js";
-import { _clearActiveRuns, getActiveRun } from "../src/runtime/active-runs.js";
+import {
+  _clearActiveRuns,
+  createActiveRun,
+  dispatchReadyNodes,
+  getActiveRun,
+  handoffActiveRun,
+} from "../src/runtime/active-runs.js";
 import { fireDagEventTrigger, startDagTriggerScheduler } from "../src/runtime/dag-triggers.js";
 import { createServer } from "../src/server/http.js";
 
@@ -69,6 +76,57 @@ ${triggerBlock}  agents: {}
     - { from: review.approved, to: done.result }
     - { from: review.rejected, to: rejected.result, condition: on_failure }
 `;
+}
+
+function multiRoundWorkflow(id: string): string {
+  return `
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: ${id}, name: ${id} }
+spec:
+  triggers:
+    push:
+      type: event
+      event: repo.push
+      overlap: allow
+      max_concurrency: 1
+  agents:
+    worker: { system: "HANDOFF port=summary content=ok" }
+  nodes:
+    actor:
+      kind: agent
+      agent: worker
+      outputs: { summary: {} }
+    suspend:
+      kind: await_command
+      inputs: { summary: {} }
+      config:
+        primitive_version: 1
+        target_actors: [actor]
+        command_port: command
+  edges:
+    - { from: actor.summary, to: suspend.summary }
+`;
+}
+
+function multiRoundRuntimeDag(id: string) {
+  return parseDAGYaml(`
+name: ${id}
+workflow_id: ${id}
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  actor:
+    agent: worker
+    outputs: { summary: { to: suspend.in:summary } }
+  suspend:
+    type: await_command
+    after: [actor]
+    gateway_config:
+      primitive_version: 1
+      target_actors: [actor]
+      command_port: command
+`);
 }
 
 describe("workflow-level run admission", () => {
@@ -156,6 +214,16 @@ describe("workflow-level run admission", () => {
       "SELECT COUNT(*) AS count FROM dag_run_admissions WHERE run_id = ?",
     ).get("crash-window-run")).toEqual({ count: 0 });
 
+    getDb().prepare("UPDATE dag_runs SET status = 'waiting', updated_at = ? WHERE run_id = ?")
+      .run(Date.now(), "crash-window-run");
+    expect(reserveWorkflowRun({
+      runId: "while-waiting-run",
+      workflowId: "restart-workflow",
+      source: "test:while-waiting",
+      policy,
+    })).toMatchObject({ reserved: true });
+    releaseWorkflowRunReservation("while-waiting-run");
+
     getDb().prepare("UPDATE dag_runs SET status = 'completed', updated_at = ? WHERE run_id = ?")
       .run(Date.now(), "crash-window-run");
     expect(reserveWorkflowRun({
@@ -164,6 +232,37 @@ describe("workflow-level run admission", () => {
       source: "test:after-terminal",
       policy,
     })).toMatchObject({ reserved: true });
+  });
+
+  it("cleans a crash-window resume reservation as soon as the real run becomes active", () => {
+    const workflowId = "resume-restart-workflow";
+    const runId = "resume-restart-run";
+    const reservationId = `resume:${runId}`;
+    const policy = { overlap: "allow", max_concurrency: 2, trigger_ids: ["push"] } as const;
+    const now = Date.now();
+    getDb().prepare(`
+      INSERT INTO dag_runs(run_id, status, created_at, updated_at, workflow_id, metadata)
+      VALUES (?, 'waiting', ?, ?, ?, '{}')
+    `).run(runId, now, now, workflowId);
+    expect(reserveWorkflowRun({
+      runId: reservationId,
+      workflowId,
+      source: "resume:command",
+      policy,
+    })).toMatchObject({ reserved: true });
+
+    getDb().prepare("UPDATE dag_runs SET status = 'active', updated_at = ? WHERE run_id = ?")
+      .run(Date.now(), runId);
+    expect(reserveWorkflowRun({
+      runId: "resume-restart-competing",
+      workflowId,
+      source: "test:competing",
+      policy,
+    })).toMatchObject({ reserved: true });
+    expect(getDb().prepare(
+      "SELECT COUNT(*) AS count FROM dag_run_admissions WHERE run_id = ?",
+    ).get(reservationId)).toEqual({ count: 0 });
+    releaseWorkflowRunReservation("resume-restart-competing");
   });
 
   it("expires orphaned reservations that never created a run row", () => {
@@ -215,6 +314,110 @@ timer:
     } finally {
       stop();
     }
+  });
+
+  it("rejects waiting-run resume when another run holds the workflow slot", async () => {
+    upsertDagWorkflowFromYaml({ yaml_text: multiRoundWorkflow("resume-admission") });
+    const dispatcher = new FakeDAGDispatcher();
+    const orchestrator = new ChangeOrchestrator(new GraphExecutor(dispatcher));
+    createActiveRun("waiting-resume-run", multiRoundRuntimeDag("resume-admission"));
+    expect(dispatchReadyNodes("waiting-resume-run", dispatcher)).toBe(1);
+    handoffActiveRun("waiting-resume-run", "actor", "summary", { result: "round one" });
+    expect(dispatchReadyNodes("waiting-resume-run", dispatcher)).toBe(1);
+    const waitingBefore = structuredClone(getActiveRun("waiting-resume-run")!.currentRound);
+    expect(getActiveRun("waiting-resume-run")).toMatchObject({ status: "waiting" });
+
+    expect(orchestrator.createRun({
+      workflowId: "resume-admission",
+      runId: "competing-active-run",
+    }).status).toBe("active");
+
+    const server = createServer(0, undefined, dispatcher, false);
+    const baseUrl = `http://127.0.0.1:${await listen(server)}`;
+    try {
+      const response = await fetch(`${baseUrl}/api/runs/waiting-resume-run/commands`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_round_id: "round-0001",
+          commands: [{ actor_id: "actor", payload: { task: "continue" } }],
+        }),
+      });
+      const body = await response.json() as { error: string };
+
+      expect(response.status).toBe(409);
+      expect(body.error).toContain("max_concurrency");
+      expect(getActiveRun("waiting-resume-run")?.status).toBe("waiting");
+      expect(getActiveRun("waiting-resume-run")?.currentRound).toEqual(waitingBefore);
+      expect(getActiveRun("waiting-resume-run")?.dagRun.nodeStates.get("suspend")).toBe("WAITING_FOR_COMMAND");
+      expect(getDb().prepare(
+        "SELECT COUNT(*) AS count FROM dag_actor_commands WHERE run_id = ?",
+      ).get("waiting-resume-run")).toEqual({ count: 0 });
+      expect(getActiveRun("competing-active-run")?.status).toBe("active");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("deduplicates an accepted resume retry even after workflow admission becomes blocked", () => {
+    const workflowId = "resume-retry-admission";
+    const runId = "resume-retry-waiting-run";
+    upsertDagWorkflowFromYaml({ yaml_text: multiRoundWorkflow(workflowId) });
+    const dispatcher = new FakeDAGDispatcher();
+    const orchestrator = new ChangeOrchestrator(new GraphExecutor(dispatcher));
+    createActiveRun(runId, multiRoundRuntimeDag(workflowId));
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    handoffActiveRun(runId, "actor", "summary", { result: "round one" });
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(getActiveRun(runId)?.status).toBe("waiting");
+
+    const request = {
+      expected_round_id: "round-0001",
+      commands: [{
+        actor_id: "actor",
+        command_id: "resume-retry-command",
+        idempotency_key: "resume-retry-key",
+        payload: { task: "continue" },
+      }],
+    };
+    dispatcher.reset();
+    const firstResume = orchestrator.resumeRun(runId, request);
+    expect(firstResume).toMatchObject({
+      resumed: true,
+      round_id: "round-0002",
+      dispatched: 1,
+    });
+    expect(firstResume.deduplicated).toBeUndefined();
+    handoffActiveRun(runId, "actor", "summary", { result: "round two" }, {
+      transport: true,
+      roundId: "round-0002",
+      actorId: "actor",
+      generation: 1,
+      commandId: "resume-retry-command",
+    });
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(getActiveRun(runId)).toMatchObject({
+      status: "waiting",
+      currentRound: { round_id: "round-0002", status: "waiting" },
+    });
+
+    expect(orchestrator.createRun({
+      workflowId,
+      runId: "resume-retry-competing-run",
+    }).status).toBe("active");
+    expect(() => reserveWorkflowRun({
+      runId: "resume-retry-admission-probe",
+      workflowId,
+      source: "test:probe",
+      policy: { overlap: "allow", max_concurrency: 1, trigger_ids: ["push"] },
+    })).toThrowError(expect.objectContaining({ reason: "max_concurrency" }));
+
+    expect(orchestrator.resumeRun(runId, request)).toMatchObject({
+      resumed: true,
+      round_id: "round-0002",
+      deduplicated: true,
+      dispatched: 0,
+    });
   });
 
   it("makes a skip policy global even when another trigger allows overlap", () => {

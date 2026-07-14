@@ -79,7 +79,27 @@ describe("DAG tools", () => {
         session_id: "run-1",
         content: "test content",
       });
+      expect(state.handoffData).not.toHaveProperty("round_id");
       expect(state.yielded).toBe(true);
+    });
+
+    it("stages the dispatch transport fence in the authoritative handoff", async () => {
+      state = createDagToolsState(makeConfig({
+        round_id: "round-0002",
+        actor_id: "actor-coder",
+        generation: 2,
+        command_id: "command-2",
+      }), "run-1", wsSend);
+      const handoffTool = createDagTools(state).find((tool) => tool.name === "handoff")!;
+
+      await handoffTool.handler({ port: "done", content: { ok: true } });
+
+      expect(state.handoffData).toMatchObject({
+        round_id: "round-0002",
+        actor_id: "actor-coder",
+        generation: 2,
+        command_id: "command-2",
+      });
     });
 
     it("uses the DAG node session id on handoff when provided", async () => {

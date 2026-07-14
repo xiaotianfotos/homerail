@@ -3,7 +3,7 @@ import { AGENT_BUILTIN_TOOL_NAMES, DAG_AGENT_TOOL_NAMES } from "homerail-protoco
 
 export const WORKFLOW_API_VERSION = "homerail.ai/v1" as const;
 export const WORKFLOW_KIND = "Workflow" as const;
-export const WORKFLOW_COMPILER_VERSION = "4" as const;
+export const WORKFLOW_COMPILER_VERSION = "5" as const;
 
 const IDENTIFIER_PATTERN = "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$";
 const PORT_REFERENCE_PATTERN = "^(?:\\$run\\.input|[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*\\.[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*)$";
@@ -244,6 +244,25 @@ const FanoutNode = Type.Object({
   }, { additionalProperties: false }),
 }, { additionalProperties: false });
 
+const AwaitCommandNode = Type.Object({
+  kind: Type.Literal("await_command"),
+  description: Type.Optional(ShortText),
+  depends_on: Type.Optional(Type.Array(Identifier, {
+    uniqueItems: true,
+    maxItems: 256,
+  })),
+  inputs: Type.Optional(PortMap),
+  config: Type.Object({
+    primitive_version: Type.Literal(1),
+    target_actors: Type.Optional(Type.Array(Identifier, {
+      uniqueItems: true,
+      maxItems: 256,
+    })),
+    expires_after_ms: Type.Optional(Type.Integer({ minimum: 1_000 })),
+    command_port: Type.Optional(Identifier),
+  }, { additionalProperties: false }),
+}, { additionalProperties: false });
+
 const ConditionNode = Type.Object({
   kind: Type.Literal("condition"),
   ...NodeBase,
@@ -328,6 +347,7 @@ const WorkflowNode = Type.Union([
   ApprovalNode,
   StateNode,
   FanoutNode,
+  AwaitCommandNode,
   ConditionNode,
   JoinNode,
   ForeachNode,

@@ -132,7 +132,7 @@ nodes:
       actorId: "research",
       generation: 1,
       sequenceStart: 2,
-      roundId: built.envelope.sessionId,
+      roundId: "round-0001",
     });
   });
 
@@ -187,7 +187,15 @@ nodes:
       runId: "run-actor-activity",
       nodeId: "research",
       roundId: built.envelope.sessionId,
-    })).toThrow("generation is ahead");
+    })).toThrow("generation does not match");
+    expect(() => ingestDagActivityStream({
+      event: "dag_activity",
+      activity: { ...valid, event_id: "stale-generation", generation: 0, sequence: 2 },
+    }, {
+      runId: "run-actor-activity",
+      nodeId: "research",
+      roundId: built.envelope.sessionId,
+    })).toThrow("generation does not match");
     expect(() => ingestDagActivityStream({
       event: "dag_activity",
       activity: { ...valid, event_id: "spoofed-surface", surface_id: "other", sequence: 2 },

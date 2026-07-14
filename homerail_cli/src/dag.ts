@@ -9,6 +9,8 @@ import type { HomeRailClient, BaseResponse } from "./client.js";
 export interface DagSnapshot {
   run_id: string;
   run_status: string;
+  waiting_for_command: boolean;
+  current_round_id: string | null;
   current_phase: string | null;
   dag_status: string | null;
   node_counts: Record<string, number>;
@@ -26,6 +28,7 @@ export interface DagSnapshot {
 export interface SuperviseTickResult {
   new_cursor: string;
   terminal: boolean;
+  waiting_for_command: boolean;
   changed: boolean;
   severity: string;
   summary: string;
@@ -53,6 +56,24 @@ function extractNodes(
 function extractEvents(eventsData: Record<string, unknown>): unknown[] {
   const arr = eventsData.events;
   return Array.isArray(arr) ? arr : [];
+}
+
+function extractCurrentRoundId(...sources: Record<string, unknown>[]): string | null {
+  for (const source of sources) {
+    for (const key of ["current_round_id", "currentRoundId"] as const) {
+      if (typeof source[key] === "string" && source[key].trim()) {
+        return source[key].trim();
+      }
+    }
+    for (const key of ["current_round", "currentRound"] as const) {
+      const round = source[key];
+      if (!round || typeof round !== "object" || Array.isArray(round)) continue;
+      const record = round as Record<string, unknown>;
+      const value = record.round_id ?? record.roundId;
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+  return null;
 }
 
 export function countNodeStatuses(
@@ -99,6 +120,7 @@ export function computeStalledHint(
 ): string {
   if (runHasError) return `run_status_api_error: ${runStatus}`;
   if (dagHasError) return "dag_status_api_error";
+  if (runStatus === "waiting") return "waiting_for_command";
   if (["completed", "failed", "cancelled"].includes(runStatus)) {
     return "terminal";
   }
@@ -188,6 +210,8 @@ export async function buildDagSnapshot(
 
   const runStatus =
     typeof runData.status === "string" ? runData.status : "?";
+  const waitingForCommand = runStatus === "waiting";
+  const currentRoundId = extractCurrentRoundId(runData, dagData, exec ?? {});
   const currentPhase =
     typeof runData.current_phase === "string" ? runData.current_phase : null;
   const dagStatus =
@@ -214,6 +238,8 @@ export async function buildDagSnapshot(
   return {
     run_id: runId,
     run_status: runStatus,
+    waiting_for_command: waitingForCommand,
+    current_round_id: currentRoundId,
     current_phase: currentPhase,
     dag_status: dagStatus,
     node_counts: nodeCounts,
@@ -515,6 +541,13 @@ export function renderSnapshot(snapshot: DagSnapshot): string {
     `  Run: ${snapshot.run_status}  Phase: ${snapshot.current_phase ?? "-"}  DAG: ${snapshot.dag_status ?? "-"}`,
   ];
 
+  if (snapshot.current_round_id) {
+    lines.push(`  Round: ${snapshot.current_round_id}`);
+  }
+  if (snapshot.waiting_for_command) {
+    lines.push("  Boundary: waiting for command");
+  }
+
   const counts = Object.entries(snapshot.node_counts)
     .map(([k, v]) => `${k}: ${v}`)
     .join(", ");
@@ -544,6 +577,8 @@ export function renderSnapshotJson(snapshot: DagSnapshot): string {
   return JSON.stringify({
     run_id: snapshot.run_id,
     run_status: snapshot.run_status,
+    waiting_for_command: snapshot.waiting_for_command,
+    current_round_id: snapshot.current_round_id,
     current_phase: snapshot.current_phase,
     dag_status: snapshot.dag_status,
     node_counts: snapshot.node_counts,
@@ -816,12 +851,15 @@ export async function superviseTickData(
   const terminal = ["completed", "failed", "cancelled"].includes(
     snap.run_status,
   );
+  const waitingForCommand = snap.waiting_for_command;
 
   const newCursor = `events:${snap.event_count}`;
   const changed = cursor === "" || cursor !== newCursor;
 
   const summary = terminal
     ? `run ${snap.run_status}; failed=${JSON.stringify(snap.failed_nodes)}`
+    : waitingForCommand
+      ? `run waiting for command${snap.current_round_id ? ` at ${snap.current_round_id}` : ""}`
     : changed
       ? `${snap.event_count} new event(s); running=${JSON.stringify(snap.running_nodes)}`
       : `no change; running=${JSON.stringify(snap.running_nodes)}`;
@@ -830,6 +868,8 @@ export async function superviseTickData(
     ? snap.run_status === "failed"
       ? "fail"
       : "done"
+    : waitingForCommand
+      ? "waiting"
     : changed
       ? "update"
       : "heartbeat";
@@ -839,9 +879,12 @@ export async function superviseTickData(
     cursor: newCursor,
     changed,
     terminal,
+    waiting_for_command: waitingForCommand,
     summary,
     snapshot: {
       run_status: snap.run_status,
+      waiting_for_command: waitingForCommand,
+      current_round_id: snap.current_round_id,
       current_phase: snap.current_phase,
       dag_status: snap.dag_status,
       node_counts: snap.node_counts,
@@ -861,6 +904,7 @@ export async function superviseTickData(
   return {
     new_cursor: newCursor,
     terminal,
+    waiting_for_command: waitingForCommand,
     changed,
     severity,
     summary,

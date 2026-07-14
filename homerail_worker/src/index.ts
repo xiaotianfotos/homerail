@@ -7,7 +7,14 @@
 import { WsClient } from "./ws-client.js";
 import { runPrompt } from "./prompt-runner.js";
 import type { PromptJob } from "./prompt-runner.js";
-import type { AgentBuiltinToolName, DagAdvisorConfig, DagAgentToolName, DagNodeConfig, DagWorkspaceAccess } from "homerail-protocol";
+import {
+  DAG_TRANSPORT_FENCE_CAPABILITY,
+  type AgentBuiltinToolName,
+  type DagAdvisorConfig,
+  type DagAgentToolName,
+  type DagNodeConfig,
+  type DagWorkspaceAccess,
+} from "homerail-protocol";
 import { startManagerAgentServer } from "./manager-agent/server.js";
 import { resolveWorkerAgentBackend } from "./agent/backend-selection.js";
 import { envelopeInputsToTaskText } from "./envelope-task.js";
@@ -24,10 +31,14 @@ const MANAGER_WS_URL =
   `${DEFAULT_MANAGER_WS_BASE}/ws/projects/default/workers/${encodeURIComponent(WORKER_ID)}`;
 const TOKEN = process.env.HOMERAIL_WORKER_TOKEN ?? "";
 const ALLOW_INSECURE_REMOTE_WS = process.env.HOMERAIL_ALLOW_INSECURE_REMOTE_WS === "1";
-const CAPABILITIES = (process.env.HOMERAIL_WORKER_CAPABILITIES ?? "")
+const CONFIGURED_CAPABILITIES = (process.env.HOMERAIL_WORKER_CAPABILITIES ?? "")
   .split(",")
   .map((capability) => capability.trim())
   .filter((capability) => capability.length > 0);
+const CAPABILITIES = Array.from(new Set([
+  ...CONFIGURED_CAPABILITIES,
+  DAG_TRANSPORT_FENCE_CAPABILITY,
+]));
 
 if (process.env.MANAGER_AGENT_MODE === "1") {
   startManagerAgentServer();
@@ -139,9 +150,10 @@ client.on("task", async (msg) => {
         incoming_edges: [],
         graph_nodes: [nodeId],
         session_id: sessionId,
-        round_id: typeof activity?.roundId === "string" ? activity.roundId : sessionId,
-        actor_id: typeof activity?.actorId === "string" ? activity.actorId : nodeId,
-        generation: typeof activity?.generation === "number" ? activity.generation : 1,
+        round_id: typeof activity?.roundId === "string" ? activity.roundId : undefined,
+        actor_id: typeof activity?.actorId === "string" ? activity.actorId : undefined,
+        generation: typeof activity?.generation === "number" ? activity.generation : undefined,
+        command_id: typeof activity?.commandId === "string" ? activity.commandId : undefined,
         surface_id: typeof activity?.surfaceId === "string" ? activity.surfaceId : undefined,
         activity_sequence_start: typeof activity?.sequenceStart === "number" ? activity.sequenceStart : 0,
         advisors: Array.isArray(envelope.advisors) ? envelope.advisors as DagAdvisorConfig[] : undefined,

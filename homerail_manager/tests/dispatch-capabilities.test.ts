@@ -3,14 +3,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import WebSocket from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DAG_TRANSPORT_FENCE_CAPABILITY } from "homerail-protocol";
 
 import type { DispatchEnvelope } from "../src/orchestration/dag-dispatcher.js";
-import { _clearAllDispatches, recordProvisioning } from "../src/orchestration/dispatch-tracker.js";
+import { _clearAllDispatches, recordDispatch, recordProvisioning } from "../src/orchestration/dispatch-tracker.js";
 import { normalizeAgentBackend, WsDispatchAdapter } from "../src/orchestration/ws-dispatch-adapter.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
-import { _clearListeners } from "../src/events/bus.js";
+import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { registerNode, _clearNodes } from "../src/node/registry.js";
 import { createSetting, upsertProvider } from "../src/persistence/llm-settings.js";
+import { listDagActorCommands } from "../src/persistence/dag-actors.js";
 import { appendSessionTranscriptForTest, loadSessionTranscript } from "../src/persistence/dag-session-files.js";
 import { _clearAllPersistence } from "../src/persistence/store.js";
 import { closeDb } from "../src/persistence/db.js";
@@ -21,6 +23,8 @@ import {
   dispatchReadyNodes,
   getActiveRun,
   getCurrentNodeSession,
+  handoffActiveRun,
+  resumeWaitingActiveRun,
 } from "../src/runtime/active-runs.js";
 import { registerWorker, _clearWorkers } from "../src/worker/registry.js";
 
@@ -44,6 +48,16 @@ function makeEnvelope(overrides: Partial<DispatchEnvelope> = {}): DispatchEnvelo
     image: "homerail-worker:latest",
     ...overrides,
   };
+}
+
+function waitForProvisioningCompleted(runId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const unsubscribe = subscribe("dag:provisioning_completed", (payload) => {
+      if ((payload as { runId?: string }).runId !== runId) return;
+      unsubscribe();
+      resolve();
+    });
+  });
 }
 
 describe("DAG node capability requirements", () => {
@@ -144,6 +158,42 @@ nodes:
     expect(hostSocket.send).toHaveBeenCalledTimes(1);
   });
 
+  it("reuses the previous online worker for a hot multi-round actor", () => {
+    const otherSocket = makeSocket();
+    const hotSocket = makeSocket();
+    registerWorker({
+      worker_id: "other-worker",
+      project_id: "p1",
+      socket: otherSocket,
+      status: "idle",
+      capabilities: ["browser"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+    registerWorker({
+      worker_id: "hot-worker",
+      project_id: "p1",
+      socket: hotSocket,
+      status: "idle",
+      capabilities: ["browser"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+    recordDispatch("run-capabilities", "diagnose", "worker", "hot-worker");
+
+    const result = new WsDispatchAdapter({ provisioner: false }).dispatch(
+      makeEnvelope({ requiredCapabilities: ["browser"] }),
+    );
+
+    expect(result).toMatchObject({
+      status: "dispatched",
+      targetType: "worker",
+      targetId: "hot-worker",
+    });
+    expect(hotSocket.send).toHaveBeenCalledTimes(1);
+    expect(otherSocket.send).not.toHaveBeenCalled();
+  });
+
   it("mirrors dispatched prompts into the manager-side session store", () => {
     const socket = makeSocket();
     registerWorker({
@@ -193,7 +243,7 @@ nodes:
     });
   });
 
-  it("does not fall back to a node when required worker capabilities are missing", () => {
+  it("keeps a required-capability node READY instead of falling back to a Node", () => {
     const nodeSocket = makeSocket();
     registerNode({
       node_id: "docker-node",
@@ -205,16 +255,154 @@ nodes:
       last_heartbeat: Date.now(),
       pending_requests: new Map(),
     });
+    createActiveRun("run-required-capability", parseDAGYaml(`
+name: required-capability
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  diagnose:
+    agent: worker
+    requires:
+      capabilities: [browser]
+    outputs: { done: { to: "" } }
+`));
+    const adapter = new WsDispatchAdapter({ provisioner: false });
+    const dispatch = vi.spyOn(adapter, "dispatch");
 
-    const result = new WsDispatchAdapter({ provisioner: false }).dispatch(
-      makeEnvelope({ requiredCapabilities: ["browser"] }),
-    );
+    expect(dispatchReadyNodes("run-required-capability", adapter)).toBe(0);
 
-    expect(result).toMatchObject({
-      status: "failed",
-      reason: "no available worker satisfies required capabilities: browser",
+    expect(dispatch).toHaveReturnedWith(expect.objectContaining({
+      status: "skipped",
+    }));
+    expect(getActiveRun("run-required-capability")).toMatchObject({
+      status: "active",
     });
+    expect(getActiveRun("run-required-capability")?.dagRun.nodeStates.get("diagnose")).toBe("READY");
     expect(nodeSocket.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps an offline node READY and retries after a node registers", async () => {
+    createActiveRun("run-offline-node-reconnect", parseDAGYaml(`
+name: offline-node-reconnect
+workflow_id: offline-node-reconnect
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  diagnose:
+    agent: worker
+    outputs: { done: { to: "" } }
+`));
+    const adapter = new WsDispatchAdapter({ provisioner: false });
+
+    expect(dispatchReadyNodes("run-offline-node-reconnect", adapter)).toBe(0);
+    expect(getActiveRun("run-offline-node-reconnect")).toMatchObject({ status: "active" });
+    expect(getActiveRun("run-offline-node-reconnect")?.dagRun.nodeStates.get("diagnose")).toBe("READY");
+
+    const nodeSocket = makeSocket();
+    registerNode({
+      node_id: "late-node",
+      project_id: "p1",
+      socket: nodeSocket,
+      status: "connected",
+      capabilities: [],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+      pending_requests: new Map(),
+    });
+
+    await vi.waitFor(
+      () => expect(nodeSocket.send).toHaveBeenCalledTimes(1),
+      { timeout: 2_500 },
+    );
+    expect(getActiveRun("run-offline-node-reconnect")?.dagRun.nodeStates.get("diagnose")).toBe("RUNNING");
+    expect(JSON.parse(String(nodeSocket.send.mock.calls[0]?.[0]))).toMatchObject({
+      type: "prompt",
+      envelope: { runId: "run-offline-node-reconnect", nodeId: "diagnose" },
+    });
+  });
+
+  it("contains an offline retry timer dispatch error and recovers after another target change", async () => {
+    const runId = "run-offline-retry-error";
+    createActiveRun(runId, parseDAGYaml(`
+name: offline-retry-error
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  diagnose:
+    agent: worker
+    outputs: { done: { to: "" } }
+`));
+    const adapter = new WsDispatchAdapter({ provisioner: false });
+    const originalDispatch = adapter.dispatch.bind(adapter);
+    let throwOnNextDispatch = false;
+    const dispatch = vi.spyOn(adapter, "dispatch").mockImplementation((envelope) => {
+      if (throwOnNextDispatch) {
+        throwOnNextDispatch = false;
+        throw new Error("forced offline retry dispatch failure");
+      }
+      return originalDispatch(envelope);
+    });
+
+    expect(dispatchReadyNodes(runId, adapter)).toBe(0);
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("diagnose")).toBe("READY");
+
+    throwOnNextDispatch = true;
+    const firstWorkerSocket = makeSocket();
+    registerWorker({
+      worker_id: "offline-retry-worker-1",
+      project_id: "p1",
+      socket: firstWorkerSocket,
+      status: "idle",
+      capabilities: [],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+    await vi.waitFor(
+      () => expect(dispatch).toHaveBeenCalledTimes(2),
+      { timeout: 2_500 },
+    );
+    expect(firstWorkerSocket.send).not.toHaveBeenCalled();
+    expect(getActiveRun(runId)).toMatchObject({ status: "active" });
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("diagnose")).toBe("READY");
+
+    const secondWorkerSocket = makeSocket();
+    registerWorker({
+      worker_id: "offline-retry-worker-2",
+      project_id: "p1",
+      socket: secondWorkerSocket,
+      status: "idle",
+      capabilities: [],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+    await vi.waitFor(
+      () => expect(firstWorkerSocket.send.mock.calls.length + secondWorkerSocket.send.mock.calls.length).toBe(1),
+      { timeout: 3_500 },
+    );
+    expect(dispatch.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("diagnose")).toBe("RUNNING");
+  }, 8_000);
+
+  it("keeps socket send errors on the failed dispatch path", () => {
+    const workerSocket = makeSocket();
+    workerSocket.send.mockImplementation(() => {
+      throw new Error("socket write failed");
+    });
+    registerWorker({
+      worker_id: "broken-worker",
+      project_id: "p1",
+      socket: workerSocket,
+      status: "idle",
+      capabilities: [],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+
+    expect(new WsDispatchAdapter({ provisioner: false }).dispatch(makeEnvelope())).toMatchObject({
+      status: "failed",
+      reason: "socket write failed",
+      retryable: true,
+    });
   });
 
   it("provisions a run-scoped worker instead of reusing generic workers for isolated workspaces", async () => {
@@ -291,7 +479,7 @@ nodes:
     });
   });
 
-  it("provisions through a docker-api capable node", async () => {
+  it("provisions through a docker-api Node before waiting for a capability-matched Worker", async () => {
     const nodeSocket = makeSocket();
     const created: Array<{ nodeId: string; workspaceId: string }> = [];
     registerNode({
@@ -317,7 +505,7 @@ nodes:
           worker_ids: ["provisioned-run-capabilities-diagnose"],
         }),
       },
-    }).dispatch(makeEnvelope());
+    }).dispatch(makeEnvelope({ requiredCapabilities: ["browser"] }));
 
     expect(result).toMatchObject({
       status: "skipped",
@@ -331,6 +519,250 @@ nodes:
         },
       ]);
     });
+  });
+
+  it("keeps a node READY when its provisioned Worker lacks required capabilities", async () => {
+    const runId = "run-provisioned-capability-mismatch";
+    const nodeSocket = makeSocket();
+    registerNode({
+      node_id: "provisioning-node",
+      project_id: "p1",
+      socket: nodeSocket,
+      status: "connected",
+      capabilities: ["docker-api"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+      pending_requests: new Map(),
+    });
+    createActiveRun(runId, parseDAGYaml(`
+name: provisioned-capability-mismatch
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  diagnose:
+    agent: worker
+    requires:
+      capabilities: [browser]
+    outputs: { done: { to: "" } }
+`));
+
+    const provisionedWorkerId = "provisioned-run-provisioned-capability-mismatch-diagnose";
+    const incompatibleSocket = makeSocket();
+    const provisioningCompleted = waitForProvisioningCompleted(runId);
+    const adapter = new WsDispatchAdapter({
+      managerBaseUrl: "http://127.0.0.1:19191",
+      provisioner: {
+        createFn: async () => ({ status: "success", resource_data: { id: "container-incompatible" } }),
+        startFn: async () => {
+          registerWorker({
+            worker_id: provisionedWorkerId,
+            project_id: "p1",
+            socket: incompatibleSocket,
+            status: "idle",
+            capabilities: [],
+            registered_at: Date.now(),
+            last_heartbeat: Date.now(),
+          });
+          return { status: "success" };
+        },
+        runtimeStatusFn: async () => ({ worker_ids: [provisionedWorkerId] }),
+      },
+    });
+
+    expect(dispatchReadyNodes(runId, adapter)).toBe(0);
+    await provisioningCompleted;
+    expect(incompatibleSocket.send).not.toHaveBeenCalled();
+    expect(getActiveRun(runId)).toMatchObject({
+      status: "active",
+      counters: { dispatches: 0 },
+    });
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("diagnose")).toBe("READY");
+
+    const compatibleSocket = makeSocket();
+    registerWorker({
+      worker_id: "compatible-browser-worker",
+      project_id: "p1",
+      socket: compatibleSocket,
+      status: "idle",
+      capabilities: ["browser"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+    await vi.waitFor(
+      () => expect(compatibleSocket.send).toHaveBeenCalledTimes(1),
+      { timeout: 2_500 },
+    );
+    expect(incompatibleSocket.send).not.toHaveBeenCalled();
+    expect(getActiveRun(runId)).toMatchObject({
+      status: "active",
+      counters: { dispatches: 1 },
+    });
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("diagnose")).toBe("RUNNING");
+  }, 6_000);
+
+  it("counts a successful provisioning send against max_dispatches", async () => {
+    const runId = "run-provisioning-dispatch-budget";
+    const nodeSocket = makeSocket();
+    registerNode({
+      node_id: "budget-provisioning-node",
+      project_id: "p1",
+      socket: nodeSocket,
+      status: "connected",
+      capabilities: ["docker-api"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+      pending_requests: new Map(),
+    });
+    createActiveRun(runId, parseDAGYaml(`
+name: provisioning-dispatch-budget
+limits:
+  max_dispatches: 1
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  diagnose:
+    agent: worker
+    outputs: { done: { to: "" } }
+`));
+
+    const workerId = "provisioned-run-provisioning-dispatch-budget-diagnose";
+    const workerSocket = makeSocket();
+    const provisioningCompleted = waitForProvisioningCompleted(runId);
+    const adapter = new WsDispatchAdapter({
+      managerBaseUrl: "http://127.0.0.1:19191",
+      provisioner: {
+        createFn: async () => ({ status: "success", resource_data: { id: "container-budget" } }),
+        startFn: async () => {
+          registerWorker({
+            worker_id: workerId,
+            project_id: "p1",
+            socket: workerSocket,
+            status: "idle",
+            capabilities: [],
+            registered_at: Date.now(),
+            last_heartbeat: Date.now(),
+          });
+          return { status: "success" };
+        },
+        runtimeStatusFn: async () => ({ worker_ids: [workerId] }),
+      },
+    });
+
+    expect(dispatchReadyNodes(runId, adapter)).toBe(0);
+    await provisioningCompleted;
+    expect(workerSocket.send).toHaveBeenCalledTimes(1);
+    expect(getActiveRun(runId)).toMatchObject({
+      status: "active",
+      limits: { max_dispatches: 1 },
+      counters: { dispatches: 1 },
+    });
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("diagnose")).toBe("RUNNING");
+
+    expect(checkpointResumeActiveRun(runId, "diagnose", {
+      instruction: "retry after the provisioning send",
+    })).toMatchObject({ status: "scheduled" });
+    expect(dispatchReadyNodes(runId, adapter)).toBe(0);
+    expect(workerSocket.send).toHaveBeenCalledTimes(1);
+    expect(getActiveRun(runId)).toMatchObject({
+      status: "failed",
+      counters: { abort_reason: "max_dispatches (1) exceeded" },
+    });
+  });
+
+  it("marks a round-two actor command delivered after async provisioned dispatch", async () => {
+    const runId = "run-provisioned-round-two-delivery";
+    const initialDispatcher = {
+      dispatch: vi.fn(() => ({ status: "dispatched" as const })),
+    };
+    createActiveRun(runId, parseDAGYaml(`
+name: provisioned-round-two-delivery
+workflow_id: provisioned-round-two-delivery
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  actor:
+    agent: worker
+    extra:
+      agent_runtime:
+        actor_id: researcher
+    outputs:
+      summary: { to: suspend.in:summary }
+  suspend:
+    type: await_command
+    after: [actor]
+    gateway_config:
+      primitive_version: 1
+      target_actors: [actor]
+      command_port: command
+`));
+    expect(dispatchReadyNodes(runId, initialDispatcher)).toBe(1);
+    handoffActiveRun(runId, "actor", "summary", { result: "round one" });
+    expect(dispatchReadyNodes(runId, initialDispatcher)).toBe(1);
+    expect(getActiveRun(runId)?.status).toBe("waiting");
+
+    const commandId = "provisioned-round-two-command";
+    resumeWaitingActiveRun(runId, {
+      expected_round_id: "round-0001",
+      commands: [{
+        actor_id: "researcher",
+        command_id: commandId,
+        payload: { task: "continue through provisioning" },
+      }],
+    });
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("actor")).toBe("READY");
+    expect(listDagActorCommands({ run_id: runId, round_id: "round-0002" })).toMatchObject([
+      { command_id: commandId, status: "pending" },
+    ]);
+
+    const nodeSocket = makeSocket();
+    registerNode({
+      node_id: "round-two-provisioning-node",
+      project_id: "p1",
+      socket: nodeSocket,
+      status: "connected",
+      capabilities: ["docker-api"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+      pending_requests: new Map(),
+    });
+    const workerId = "provisioned-run-provisioned-round-two-delivery-actor";
+    const workerSocket = makeSocket();
+    const provisioningCompleted = waitForProvisioningCompleted(runId);
+    const adapter = new WsDispatchAdapter({
+      managerBaseUrl: "http://127.0.0.1:19191",
+      provisioner: {
+        createFn: async () => ({ status: "success", resource_data: { id: "container-round-two" } }),
+        startFn: async () => {
+          registerWorker({
+            worker_id: workerId,
+            project_id: "p1",
+            socket: workerSocket,
+            status: "idle",
+            capabilities: [DAG_TRANSPORT_FENCE_CAPABILITY],
+            registered_at: Date.now(),
+            last_heartbeat: Date.now(),
+          });
+          return { status: "success" };
+        },
+        runtimeStatusFn: async () => ({ worker_ids: [workerId] }),
+      },
+    });
+
+    expect(dispatchReadyNodes(runId, adapter)).toBe(0);
+    expect(listDagActorCommands({ run_id: runId, round_id: "round-0002" })).toMatchObject([
+      { command_id: commandId, status: "pending" },
+    ]);
+    await provisioningCompleted;
+
+    expect(workerSocket.send).toHaveBeenCalledTimes(1);
+    expect(getActiveRun(runId)).toMatchObject({
+      status: "active",
+      currentRound: { round_id: "round-0002", status: "active" },
+    });
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("actor")).toBe("RUNNING");
+    expect(listDagActorCommands({ run_id: runId, round_id: "round-0002" })).toMatchObject([
+      { command_id: commandId, status: "delivered" },
+    ]);
   });
 
   it("does not dispatch a node while its provisioned worker is still being finalized", () => {
@@ -452,7 +884,7 @@ nodes:
     });
   });
 
-  it("does not dispatch a node to another node's run-scoped worker", () => {
+  it("keeps dispatch retryable when only another node's run-scoped worker exists", () => {
     const otherNodeWorkerSocket = makeSocket();
     registerWorker({
       worker_id: "provisioned-run-capabilities-other-node",
@@ -469,7 +901,7 @@ nodes:
     );
 
     expect(result).toMatchObject({
-      status: "failed",
+      status: "skipped",
       reason: "no available worker or node",
     });
     expect(otherNodeWorkerSocket.send).not.toHaveBeenCalled();

@@ -175,6 +175,11 @@ hr scorecard <run_id>
 hr eval-run <run_id>
 ```
 
+For workflows that pause at a durable command boundary and resume selected
+logical actors under the same run, see [Multi-Round DAGs](docs/multi-round-dags.md).
+The guide covers strict WorkflowSpec v1 authoring, round fencing, CLI and HTTP
+commands, recovery, expiry, and concurrency-slot behavior.
+
 For a topology check without a live model provider, the two-node template ships
 an offline deterministic profile:
 

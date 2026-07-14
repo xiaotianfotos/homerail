@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { listDagTriggers } from "./dag-triggers.js";
 
 export interface WorkflowConcurrencyPolicy {
   overlap: "skip" | "allow";
@@ -14,7 +15,7 @@ export class WorkflowRunAdmissionError extends Error {
     readonly policy: WorkflowConcurrencyPolicy,
   ) {
     super(
-      `Workflow '${workflowId}' rejected a new run: ${reason} `
+      `Workflow '${workflowId}' admission conflict: ${reason} `
         + `(active=${activeCount}, max=${policy.max_concurrency}, triggers=${policy.trigger_ids.join(",")})`,
     );
     this.name = "WorkflowRunAdmissionError";
@@ -41,6 +42,21 @@ export function deriveWorkflowConcurrencyPolicy(
   };
 }
 
+export function loadWorkflowConcurrencyPolicy(
+  workflowId: string,
+): WorkflowConcurrencyPolicy | undefined {
+  const triggers = Object.fromEntries(
+    listDagTriggers()
+      .filter((record) => record.workflow_id === workflowId)
+      .map((record) => [record.trigger_id, {
+        overlap: record.config.overlap,
+        max_concurrency: record.config.max_concurrency,
+        enabled: record.enabled && record.config.enabled,
+      }]),
+  );
+  return deriveWorkflowConcurrencyPolicy(triggers);
+}
+
 export function reserveWorkflowRun(input: {
   runId: string;
   workflowId: string;
@@ -63,6 +79,11 @@ export function reserveWorkflowRun(input: {
         OR EXISTS (
           SELECT 1 FROM dag_runs
           WHERE dag_runs.run_id = dag_run_admissions.run_id
+            OR (
+              dag_run_admissions.source = 'resume:command'
+              AND dag_run_admissions.run_id = 'resume:' || dag_runs.run_id
+              AND dag_runs.status <> 'waiting'
+            )
         )
     `).run(now - 300_000);
     const activeRuns = Number((getDb().prepare(`

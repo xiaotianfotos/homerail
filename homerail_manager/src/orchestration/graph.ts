@@ -34,8 +34,8 @@ export interface DAGNodeRequirements {
 }
 
 export interface DAGGatewayConfig {
-  type?: "loop" | "condition" | "join" | "while" | "command" | "approval" | "state" | "fanout" | string;
-  kind?: "loop" | "condition" | "join" | "while" | "command" | "approval" | "state" | "fanout" | string;
+  type?: "loop" | "condition" | "join" | "while" | "command" | "approval" | "state" | "fanout" | "await_command" | string;
+  kind?: "loop" | "condition" | "join" | "while" | "command" | "approval" | "state" | "fanout" | "await_command" | string;
   mode?: "all" | "any" | "n_of_m" | string;
   field?: string;
   routes?: Record<string, string>;
@@ -73,7 +73,10 @@ export interface DAGGatewayConfig {
   authorized_actors?: string[];
   approved_port?: string;
   rejected_port?: string;
+  primitive_version?: 1;
+  target_actors?: string[];
   expires_after_ms?: number;
+  command_port?: string;
   namespace?: string;
   key?: string;
   key_field?: string;

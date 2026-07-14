@@ -11,7 +11,11 @@ import { getDiagnostics } from "../config/diagnostics.js";
 import { runtimeStatusHandler } from "../runtime/status.js";
 import { computeScorecard, renderScorecardJson } from "./scorecard.js";
 import { buildEvalReport, renderEvalJson } from "./eval.js";
-import { computeSuperviseTick } from "./supervise.js";
+import {
+  computeSuperviseTick,
+  isTerminalDagRunEvent,
+  isTerminalDagRunStatus,
+} from "./supervise.js";
 import { buildReplayReport } from "./replay.js";
 import { ingestRunExperience } from "./experience.js";
 import {
@@ -22,6 +26,8 @@ import { listActiveRuns } from "../runtime/active-runs.js";
 import { getDagState, listPendingApprovals } from "../persistence/dag-runtime-primitives.js";
 import { listDagTriggers } from "../persistence/dag-triggers.js";
 import { listDagActivityEvents } from "../persistence/dag-activity-journal.js";
+import { listDagActorCommands, type DagActorCommandStatus } from "../persistence/dag-actors.js";
+import { listDagRunRounds } from "../persistence/dag-run-rounds.js";
 
 interface BaseResponse {
   success: boolean;
@@ -92,7 +98,7 @@ function _buildExecutionStatus(metadata: ReturnType<typeof loadRunMetadata>) {
     .filter(([, state]) => state === "FAILED")
     .map(([id]) => id);
   return {
-    complete: ["completed", "failed"].includes(metadata.status),
+    complete: isTerminalDagRunStatus(metadata.status),
     active_nodes: activeNodes,
     completed_nodes: completedNodes,
     failed_nodes: failedNodes,
@@ -189,9 +195,7 @@ function _streamDagEvents(
     cleanup.push(subscribe(eventType, (payload) => {
       if (closed || _payloadRunId(payload) !== runId) return;
       res.write(_sseEvent(eventType, payload));
-      if (eventType === "dag:run_completed" || eventType === "dag:run_cancelled") {
-        close();
-      }
+      if (isTerminalDagRunEvent(eventType)) close();
     }));
   }
 
@@ -199,7 +203,7 @@ function _streamDagEvents(
   for (const event of snapshot.events) {
     res.write(_sseEvent(event.type, event.payload));
   }
-  if (metadata.status === "completed") {
+  if (isTerminalDagRunStatus(metadata.status)) {
     close();
   }
 }
@@ -377,6 +381,7 @@ export function inspectionRoutesHandler(
         workflowName: m.workflowName,
         nodeCount: m.nodeCount,
         status: m.status,
+        currentRound: m.currentRound,
         createdAt: m.createdAt,
         completedAt: m.completedAt,
       }));
@@ -409,13 +414,14 @@ export function inspectionRoutesHandler(
   // GET /api/runs/active/list
   if (pathname === "/api/runs/active/list" && req.method === "GET") {
     const runs = listActiveRuns()
-      .filter((run) => run.status === "active")
+      .filter((run) => run.status === "active" || run.status === "waiting")
       .map((run) => ({
         runId: run.runId,
         workflowId: run.workflowId,
         workflowName: run.workflowName,
         nodeCount: run.nodeCount,
         status: run.status,
+        currentRound: run.currentRound,
         createdAt: run.createdAt,
       }));
     _ok(res, "Active runs retrieved", { runs, total: runs.length });
@@ -425,13 +431,14 @@ export function inspectionRoutesHandler(
   // GET /api/runs/active/dashboard
   if (pathname === "/api/runs/active/dashboard" && req.method === "GET") {
     const runs = listActiveRuns()
-      .filter((run) => run.status === "active")
+      .filter((run) => run.status === "active" || run.status === "waiting")
       .map((run) => ({
         runId: run.runId,
         workflowId: run.workflowId,
         workflowName: run.workflowName,
         nodeCount: run.nodeCount,
         status: run.status,
+        currentRound: run.currentRound,
         createdAt: run.createdAt,
       }));
     _ok(res, "Active dashboard runs retrieved", { runs, total: runs.length });
@@ -447,6 +454,7 @@ export function inspectionRoutesHandler(
       homerail_home: process.env.HOMERAIL_HOME || null,
       active_runs: runtime.active_runs,
       active_run_ids: activeRunsList.filter((r) => r.status === "active").map((r) => r.runId),
+      waiting_run_ids: activeRunsList.filter((r) => r.status === "waiting").map((r) => r.runId),
       connected_nodes: runtime.connected_nodes,
       connected_workers: runtime.connected_workers,
       directory_import: {
@@ -512,7 +520,9 @@ export function inspectionRoutesHandler(
       run_id: metadata.runId,
       runId: metadata.runId,
       status: metadata.status,
+      terminal: isTerminalDagRunStatus(metadata.status),
       current_phase: metadata.status,
+      current_round: metadata.currentRound,
       created_at: new Date(metadata.createdAt).toISOString(),
       completed_at: metadata.completedAt ? new Date(metadata.completedAt).toISOString() : null,
       node_states: metadata.nodeStates,
@@ -573,8 +583,45 @@ export function inspectionRoutesHandler(
     return true;
   }
 
+  const roundsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/rounds$/);
+  if (roundsMatch && req.method === "GET") {
+    const runId = decodeURIComponent(roundsMatch[1]);
+    if (!loadRunMetadata(runId)) {
+      _notFound(res, `Run not found: ${runId}`);
+      return true;
+    }
+    const rounds = listDagRunRounds(runId);
+    _ok(res, `Found ${rounds.length} round(s)`, { rounds, total: rounds.length });
+    return true;
+  }
+
+  const commandsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/commands$/);
+  if (commandsMatch && req.method === "GET") {
+    const runId = decodeURIComponent(commandsMatch[1]);
+    if (!loadRunMetadata(runId)) {
+      _notFound(res, `Run not found: ${runId}`);
+      return true;
+    }
+    const url = new URL(req.url || "/", "http://localhost");
+    const status = url.searchParams.get("status") || undefined;
+    try {
+      const commands = listDagActorCommands({
+        run_id: runId,
+        actor_id: url.searchParams.get("actor_id") || undefined,
+        round_id: url.searchParams.get("round_id") || undefined,
+        status: status as DagActorCommandStatus | undefined,
+        limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+      });
+      _ok(res, `Found ${commands.length} command(s)`, { commands, total: commands.length });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      json(res, 400, { success: false, message, error: message });
+    }
+    return true;
+  }
+
   // GET /api/runs/:run_id
-  if (pathname.startsWith("/api/runs/") && !pathname.includes("/activities") && !pathname.includes("/events") && !pathname.includes("/handoffs") && !pathname.includes("/chats") && !pathname.includes("/scorecard") && !pathname.includes("/eval-run") && !pathname.includes("/supervise") && !pathname.includes("/inject") && !pathname.includes("/experience") && !pathname.includes("/status") && !pathname.includes("/audit") && req.method === "GET") {
+  if (pathname.startsWith("/api/runs/") && !pathname.includes("/activities") && !pathname.includes("/events") && !pathname.includes("/handoffs") && !pathname.includes("/chats") && !pathname.includes("/scorecard") && !pathname.includes("/eval-run") && !pathname.includes("/supervise") && !pathname.includes("/inject") && !pathname.includes("/experience") && !pathname.includes("/status") && !pathname.includes("/audit") && !pathname.includes("/rounds") && !pathname.includes("/commands") && !pathname.includes("/complete") && req.method === "GET") {
     const runId = _parseRunId(pathname, "/api/runs/");
     if (!runId) {
       _notFound(res, "Invalid run ID");
@@ -593,6 +640,7 @@ export function inspectionRoutesHandler(
       agents: metadata.agents,
       createdAt: metadata.createdAt,
       status: metadata.status,
+      currentRound: metadata.currentRound,
       completedAt: metadata.completedAt,
       nodeStates: metadata.nodeStates,
       handoffedNodes: metadata.handoffedNodes,

@@ -249,6 +249,53 @@ describe("prompt runner", () => {
     }]);
   });
 
+  it("binds node_error to the same round transport fence as handoff", async () => {
+    const mockAgent: AgentClient = {
+      run() {
+        return (async function* () {
+          yield { type: "error" as const, message: "round two failed" };
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-fenced-node-error", () => mockAgent);
+
+    const terminalMessages: string[] = [];
+    await runPrompt(
+      {
+        task: "test",
+        sender: "test",
+        runId: "run-fenced-node-error",
+        dagConfig: makeConfigWith({
+          session_id: "session-fenced",
+          round_id: "round-0002",
+          actor_id: "actor-coder",
+          generation: 3,
+          command_id: "command-2",
+        }),
+      },
+      {
+        wsSend: () => {},
+        onTerminalMessage: (data) => terminalMessages.push(data),
+        agentBackend: "test-fenced-node-error",
+      },
+    );
+
+    expect(terminalMessages.map((message) => JSON.parse(message))).toEqual([{
+      type: "node_error",
+      data: {
+        runId: "run-fenced-node-error",
+        nodeId: "coder",
+        message: "round two failed",
+        session_id: "session-fenced",
+        round_id: "round-0002",
+        actor_id: "actor-coder",
+        generation: 3,
+        command_id: "command-2",
+      },
+    }]);
+  });
+
   it("fails claude-sdk before execution when the protocol is missing", async () => {
     const sent: string[] = [];
     await runPrompt(
@@ -689,6 +736,10 @@ describe("prompt runner", () => {
           agent_type: "deterministic",
           graph_nodes: ["live_node"],
           outgoing_edges: [{ from_port: "done", to_node: "", to_port: "" }],
+          round_id: "round-0002",
+          actor_id: "actor-live",
+          generation: 4,
+          command_id: "command-live-2",
         },
         systemPrompt: "  HANDOFF port=done content=Source Issue: #847\n\nArtifact: ok",
       },
@@ -707,10 +758,24 @@ describe("prompt runner", () => {
       runId: "run-det",
       nodeId: "live_node",
       port: "done",
+      round_id: "round-0002",
+      actor_id: "actor-live",
+      generation: 4,
+      command_id: "command-live-2",
       content: "Source Issue: #847\n\nArtifact: ok",
     });
-    const activities = parsed
-      .filter((message) => message.type === "stream" && message.data?.event === "dag_activity")
+    const activityStreams = parsed
+      .filter((message) => message.type === "stream" && message.data?.event === "dag_activity");
+    expect(activityStreams).not.toHaveLength(0);
+    for (const message of activityStreams) {
+      expect(message.data).toMatchObject({
+        round_id: "round-0002",
+        actor_id: "actor-live",
+        generation: 4,
+        command_id: "command-live-2",
+      });
+    }
+    const activities = activityStreams
       .map((message) => message.data.activity);
     expect(activities.map((activity) => activity.type)).toEqual([
       "started",

@@ -50,6 +50,14 @@ export async function cmdDagWatch(
       return snap.run_status === "failed" ? 1 : 0;
     }
 
+    if (snap.waiting_for_command) {
+      if (!json) {
+        const round = snap.current_round_id ? ` (${snap.current_round_id})` : "";
+        console.log(`Run is waiting for a command${round}.`);
+      }
+      return 0;
+    }
+
     // Sleep
     const sleepMs = normalizedPollIntervalSecs(interval) * 1000;
     await new Promise((resolve) => setTimeout(resolve, sleepMs));

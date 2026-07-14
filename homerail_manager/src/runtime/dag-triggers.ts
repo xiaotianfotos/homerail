@@ -1,6 +1,6 @@
 import type { ChangeOrchestrator } from "../orchestration/change-orchestrator.js";
 import { emit } from "../events/bus.js";
-import { expireActiveRunApprovals } from "./active-runs.js";
+import { expireActiveRunApprovals, expireWaitingActiveRuns } from "./active-runs.js";
 import {
   claimTriggerDelivery,
   completeTriggerDelivery,
@@ -13,6 +13,16 @@ import {
 import { WorkflowRunAdmissionError } from "../persistence/dag-run-admission.js";
 
 let orchestrator: ChangeOrchestrator | undefined;
+
+function runMaintenance(label: string, task: () => void): void {
+  try {
+    task();
+  } catch (error) {
+    console.error(
+      `[homerail_manager] DAG maintenance ${label} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
 
 function dispatch(record: DagTriggerRecord, fireKey: string, payload: unknown): { dispatched: boolean; runId?: string; reason?: string } {
   if (!orchestrator) return { dispatched: false, reason: "trigger dispatcher is not initialized" };
@@ -47,7 +57,8 @@ function dispatch(record: DagTriggerRecord, fireKey: string, payload: unknown): 
 export function startDagTriggerScheduler(changeOrchestrator: ChangeOrchestrator, intervalMs = 1_000): () => void {
   orchestrator = changeOrchestrator;
   const tick = () => {
-    expireActiveRunApprovals();
+    runMaintenance("approval expiry", () => { expireActiveRunApprovals(); });
+    runMaintenance("waiting-run expiry", () => { expireWaitingActiveRuns(); });
     for (const record of dueIntervalTriggers()) {
       const fireAt = record.next_fire_at ?? Date.now();
       dispatch(record, `interval:${fireAt}`, { scheduled_at: fireAt });

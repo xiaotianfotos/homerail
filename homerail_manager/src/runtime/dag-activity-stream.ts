@@ -30,8 +30,8 @@ export function ingestDagActivityStream(
     if (event.actor_id !== actor.actor_id) {
       throw new Error("DAG activity actor identity does not match the logical actor registry");
     }
-    if (typeof event.generation !== "number" || event.generation > actor.generation) {
-      throw new Error("DAG activity generation is ahead of the logical actor registry");
+    if (typeof event.generation !== "number" || event.generation !== actor.generation) {
+      throw new Error("DAG activity generation does not match the logical actor registry");
     }
     if (event.surface_id !== undefined && event.surface_id !== actor.surface_id) {
       throw new Error("DAG activity surface identity does not match the logical actor registry");

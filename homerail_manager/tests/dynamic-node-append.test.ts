@@ -4,6 +4,7 @@ import { ChangeOrchestrator } from "../src/orchestration/change-orchestrator.js"
 import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import type { ParsedDAG } from "../src/orchestration/graph.js";
+import { _clearAllPersistence } from "../src/persistence/store.js";
 import { _clearActiveRuns } from "../src/runtime/active-runs.js";
 
 function parsedDag(): ParsedDAG {
@@ -35,6 +36,7 @@ function parsedDag(): ParsedDAG {
 describe("dynamic node append", () => {
   afterEach(() => {
     _clearActiveRuns();
+    _clearAllPersistence();
   });
 
   it("requires explicit agent configuration", () => {

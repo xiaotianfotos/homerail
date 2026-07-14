@@ -3,7 +3,12 @@ import YAML from "yaml";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Value } from "@sinclair/typebox/value";
-import { compileWorkflowSource, parseWorkflowSourceFile } from "../src/orchestration/workflow-spec-v1.js";
+import {
+  canonicalWorkflowToV1Document,
+  compileWorkflowSource,
+  parseWorkflowSourceFile,
+  projectCanonicalWorkflowToParsedDAG,
+} from "../src/orchestration/workflow-spec-v1.js";
 import { WorkflowSpecV1Schema } from "../src/orchestration/workflow-spec-v1-schema.js";
 
 const PUBLIC_V1_ASSETS = [
@@ -63,6 +68,37 @@ const MINIMAL_WORKFLOW = {
     ],
   },
 } as const;
+
+function awaitCommandWorkflow(): any {
+  return {
+    api_version: "homerail.ai/v1",
+    kind: "Workflow",
+    metadata: { id: "multi-round", name: "Multi Round" },
+    spec: {
+      agents: { worker: { system: "Work." } },
+      nodes: {
+        actor: {
+          kind: "agent",
+          agent: "worker",
+          outputs: { summary: {} },
+        },
+        suspend: {
+          kind: "await_command",
+          inputs: { summary: {} },
+          config: {
+            primitive_version: 1,
+            target_actors: ["actor"],
+            expires_after_ms: 60_000,
+            command_port: "next_command",
+          },
+        },
+      },
+      edges: [
+        { from: "actor.summary", to: "suspend.summary" },
+      ],
+    },
+  };
+}
 
 describe("WorkflowSpec v1", () => {
   it("canonicalizes strict per-agent built-in tool allowlists", () => {
@@ -179,6 +215,11 @@ describe("WorkflowSpec v1", () => {
               max_iterations: 3,
             },
           },
+          suspend: {
+            kind: "await_command",
+            inputs: { summary: { contract: "Data" } },
+            config: { primitive_version: 1, target_actors: ["worker"], command_port: "command" },
+          },
           terminal: {
             kind: "terminal",
             outcome: "success",
@@ -236,7 +277,7 @@ describe("WorkflowSpec v1", () => {
     const result = compileWorkflowSource(YAML.stringify(workflow));
 
     expect(result.valid, result.diagnostics.map((item) => item.message).join("\n")).toBe(true);
-    expect(result.canonical?.compiler_version).toBe("4");
+    expect(result.canonical?.compiler_version).toBe("5");
     expect(result.canonical?.artifacts).toEqual([
       {
         name: "evidence.tar.gz",
@@ -429,6 +470,122 @@ spec:
         path: "/spec/nodes/approve/config/authorized_actors",
       }),
     ]));
+  });
+
+  it("compiles await_command as an outputless persistent runtime gateway", () => {
+    const result = compileWorkflowSource(YAML.stringify(awaitCommandWorkflow()));
+
+    expect(result.valid, result.diagnostics.map((item) => item.message).join("\n")).toBe(true);
+    expect(result.diagnostics.map((item) => item.code)).not.toContain("DAG_SEMANTIC_NO_TERMINAL_PATH");
+    expect(result.canonical?.compiler_version).toBe("5");
+    expect(result.canonical?.feedback_edges).toEqual([]);
+    expect(result.canonical?.nodes.find((node) => node.id === "suspend")).toMatchObject({
+      kind: "await_command",
+      outputs: [],
+      config: {
+        primitive_version: 1,
+        target_actors: ["actor"],
+        expires_after_ms: 60_000,
+        command_port: "next_command",
+      },
+    });
+
+    const runtime = projectCanonicalWorkflowToParsedDAG(result.canonical!);
+    expect(runtime.graph.nodes.find((node) => node.node_id === "suspend")).toMatchObject({
+      node_type: "await_command_gateway",
+      agent: "__gateway__",
+      outputs: {},
+      gateway_config: {
+        type: "await_command",
+        primitive_version: 1,
+        target_actors: ["actor"],
+        expires_after_ms: 60_000,
+        command_port: "next_command",
+      },
+    });
+  });
+
+  it("accepts await_command as the persistent workflow boundary", () => {
+    const workflow = awaitCommandWorkflow();
+
+    const result = compileWorkflowSource(YAML.stringify(workflow));
+
+    expect(result.valid, result.diagnostics.map((entry) => entry.message).join("\n")).toBe(true);
+    expect(result.diagnostics.map((entry) => entry.code)).not.toContain("DAG_SEMANTIC_TERMINAL_REQUIRED");
+  });
+
+  it("rejects strict downstream dependencies from await_command", () => {
+    const workflow = awaitCommandWorkflow();
+    workflow.spec.nodes.after_suspend = {
+      kind: "terminal",
+      outcome: "success",
+      depends_on: ["suspend"],
+    };
+
+    const result = compileWorkflowSource(YAML.stringify(workflow));
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "DAG_SEMANTIC_AWAIT_COMMAND_DOWNSTREAM",
+      path: "/spec/nodes/after_suspend/depends_on",
+      message: expect.stringMatching(/await_command .* cannot have downstream dependents/i),
+    }));
+  });
+
+  it.each([0, 2, 1.5, "1"])("rejects await_command primitive_version %j", (primitiveVersion) => {
+    const workflow = awaitCommandWorkflow();
+    workflow.spec.nodes.suspend.config.primitive_version = primitiveVersion;
+
+    const result = compileWorkflowSource(YAML.stringify(workflow));
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "DAG_SCHEMA_INVALID_FIELD",
+      path: "/spec/nodes/suspend",
+    }));
+  });
+
+  it.each([
+    ["itself", "suspend", "DAG_SEMANTIC_INVALID_TARGET_ACTOR"],
+    ["another gateway", "other_suspend", "DAG_SEMANTIC_INVALID_TARGET_ACTOR"],
+    ["an unknown node", "missing_actor", "DAG_SEMANTIC_UNKNOWN_NODE"],
+  ])("rejects await_command target_actors that reference %s", (_label, targetActor, code) => {
+    const workflow = awaitCommandWorkflow();
+    workflow.spec.nodes.other_suspend = {
+      kind: "await_command",
+      config: { primitive_version: 1, target_actors: ["actor"] },
+    };
+    workflow.spec.nodes.suspend.config.target_actors = [targetActor];
+
+    const result = compileWorkflowSource(YAML.stringify(workflow));
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code,
+      path: "/spec/nodes/suspend/config/target_actors/0",
+    }));
+  });
+
+  it("preserves await_command config through canonical and authoring round trips", () => {
+    const first = compileWorkflowSource(YAML.stringify(awaitCommandWorkflow()));
+    expect(first.valid).toBe(true);
+
+    const authoring = canonicalWorkflowToV1Document(first.canonical!);
+    expect((authoring.spec as any).nodes.suspend).toEqual({
+      kind: "await_command",
+      inputs: { summary: {} },
+      config: {
+        command_port: "next_command",
+        expires_after_ms: 60_000,
+        primitive_version: 1,
+        target_actors: ["actor"],
+      },
+    });
+
+    const second = compileWorkflowSource(YAML.stringify(authoring));
+    expect(second.valid, second.diagnostics.map((item) => item.message).join("\n")).toBe(true);
+    expect(second.canonical?.nodes.find((node) => node.id === "suspend")?.config)
+      .toEqual(first.canonical?.nodes.find((node) => node.id === "suspend")?.config);
   });
 
   it("requires explicit terminals and rejects normal cycles", () => {

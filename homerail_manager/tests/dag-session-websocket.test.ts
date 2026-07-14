@@ -239,6 +239,7 @@ describe("worker websocket node session filtering", () => {
     const dispatcher = new CaptureDispatcher();
     expect(dispatchReadyNodes("run-ws-activity", dispatcher)).toBe(1);
     const sessionId = dispatcher.dispatched[0].sessionId!;
+    const roundId = dispatcher.dispatched[0].activity!.roundId;
     recordDispatch("run-ws-activity", "work", "worker", "worker-activity");
 
     const staleEvents: unknown[] = [];
@@ -276,7 +277,10 @@ describe("worker websocket node session filtering", () => {
         activity,
         run_id: "run-ws-activity",
         node_id: "work",
-        session_id: "stale-round",
+        session_id: sessionId,
+        round_id: "stale-round",
+        actor_id: "work",
+        generation: 1,
       },
     });
     ws.send(stream);
@@ -285,13 +289,36 @@ describe("worker websocket node session filtering", () => {
 
     const page = listDagActivityEvents({ run_id: "run-ws-activity" });
     expect(page.events).toHaveLength(0);
-    expect(staleEvents).toHaveLength(2);
+    expect(staleEvents).toHaveLength(0);
     const genericEvidence = JSON.stringify({
       chats: loadRunSnapshot("run-ws-activity")?.chats,
       transcript: loadSessionTranscript(sessionId),
     });
     expect(genericEvidence).not.toContain("durable finding");
     expect(genericEvidence).not.toContain("raw-worker-secret");
+
+    ws.send(JSON.stringify({
+      type: "stream",
+      data: {
+        type: "dag_activity",
+        event: "dag_activity",
+        activity: {
+          ...activity,
+          event_id: "ws-activity-current",
+          round_id: roundId,
+          payload: { message: "current round finding" },
+        },
+        run_id: "run-ws-activity",
+        node_id: "work",
+        session_id: sessionId,
+        round_id: roundId,
+        actor_id: "work",
+        generation: 1,
+      },
+    }));
+    await delay(20);
+    expect(listDagActivityEvents({ run_id: "run-ws-activity" }).events)
+      .toMatchObject([{ event: { event_id: "ws-activity-current", round_id: roundId } }]);
     ws.close();
   });
 
@@ -300,6 +327,7 @@ describe("worker websocket node session filtering", () => {
     const dispatcher = new CaptureDispatcher();
     expect(dispatchReadyNodes("run-ws-source-bound", dispatcher)).toBe(1);
     const sessionId = dispatcher.dispatched[0].sessionId!;
+    const roundId = dispatcher.dispatched[0].activity!.roundId;
     recordDispatch("run-ws-source-bound", "work", "worker", "worker-owner");
 
     server = http.createServer();
@@ -317,11 +345,14 @@ describe("worker websocket node session filtering", () => {
         run_id: "run-ws-source-bound",
         node_id: "work",
         session_id: sessionId,
+        round_id: roundId,
+        actor_id: "work",
+        generation: 1,
         activity: {
           schema_version: 1,
           event_id: "spoofed-source-activity",
           run_id: "run-ws-source-bound",
-          round_id: sessionId,
+          round_id: roundId,
           node_id: "work",
           actor_id: "work",
           generation: 1,
@@ -335,6 +366,51 @@ describe("worker websocket node session filtering", () => {
     await delay(30);
 
     expect(listDagActivityEvents({ run_id: "run-ws-source-bound" }).events).toEqual([]);
+    ws.close();
+  });
+
+  it("accepts legacy session-based activity during the first round", async () => {
+    createActiveRun("run-ws-legacy-activity", simpleDag());
+    const dispatcher = new CaptureDispatcher();
+    expect(dispatchReadyNodes("run-ws-legacy-activity", dispatcher)).toBe(1);
+    const sessionId = dispatcher.dispatched[0].sessionId!;
+    recordDispatch("run-ws-legacy-activity", "work", "worker", "worker-legacy-activity");
+
+    server = http.createServer();
+    setupWorkerWebSocket(server, { registrationTimeoutMs: 500, pingIntervalMs: 5_000 });
+    const port = await listen(server);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/projects/default/workers/worker-legacy-activity`);
+    await new Promise<void>((resolve) => ws.once("open", () => resolve()));
+    ws.send(JSON.stringify({ type: "register", worker_id: "worker-legacy-activity" }));
+    await delay(20);
+
+    ws.send(JSON.stringify({
+      type: "stream",
+      data: {
+        type: "dag_activity",
+        event: "dag_activity",
+        run_id: "run-ws-legacy-activity",
+        node_id: "work",
+        session_id: sessionId,
+        activity: {
+          schema_version: 1,
+          event_id: "legacy-first-round-activity",
+          run_id: "run-ws-legacy-activity",
+          round_id: sessionId,
+          node_id: "work",
+          actor_id: "work",
+          generation: 1,
+          sequence: 1,
+          timestamp: Date.now(),
+          type: "finding",
+          payload: { message: "legacy accepted" },
+        },
+      },
+    }));
+    await delay(20);
+
+    expect(listDagActivityEvents({ run_id: "run-ws-legacy-activity" }).events)
+      .toMatchObject([{ event: { event_id: "legacy-first-round-activity", round_id: sessionId } }]);
     ws.close();
   });
 

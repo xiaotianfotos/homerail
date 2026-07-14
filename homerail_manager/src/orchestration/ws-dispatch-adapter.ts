@@ -9,6 +9,8 @@ import { emit } from "../events/bus.js";
 import { appendChatEntry } from "../persistence/store.js";
 import { appendSessionTranscriptEntry } from "../persistence/dag-session-files.js";
 import {
+  findDispatchTarget,
+  clearDispatchTarget,
   recordDispatch,
   recordProvisioning,
   recordDispatchFailed,
@@ -20,14 +22,27 @@ import {
 } from "../node/worker-provisioner.js";
 import {
   buildCurrentDispatchEnvelope,
+  dispatchReadyNodes,
   failActiveRun,
+  getActiveRun,
   markNodeDispatched,
+  recordProvisionedNodeDispatchAttempt,
   recordNodeDispatchRetry,
 } from "../runtime/active-runs.js";
 import { getPort } from "../config/env.js";
 import { registerProvisionedWorker } from "./provisioned-cleanup.js";
 import { normalizeManagerAgentRuntimeAgentType, redactTelemetry } from "homerail-protocol";
 import WebSocket from "ws";
+
+const OFFLINE_RETRY_MIN_MS = 1_000;
+const OFFLINE_RETRY_MAX_MS = 30_000;
+
+interface DeferredOfflineDispatch {
+  runId: string;
+  nodeId: string;
+  targetSignature: string;
+  forceRetry?: boolean;
+}
 
 export interface WsDispatchAdapterOptions {
   provisioner?: ProvisionerOptions | false;
@@ -91,12 +106,17 @@ export function normalizeAgentBackend(agentType: string | undefined): string | u
  * is returned as a skipped result.
  */
 export class WsDispatchAdapter implements DAGDispatcher {
+  private static offlineRetryAdapters = new Set<WsDispatchAdapter>();
+  private static offlineRetryTimer?: ReturnType<typeof setTimeout>;
+  private static offlineRetryDelayMs = OFFLINE_RETRY_MIN_MS;
+
   private provisionerOpts?: ProvisionerOptions;
   private managerBaseUrl: string | (() => string);
   private managerWorkerWsBaseUrl?: string | (() => string);
   private projectId: string;
   private inflightProvisioning = new Set<string>();
   private nextWorkerIndex = 0;
+  private deferredOfflineDispatches = new Map<string, DeferredOfflineDispatch>();
 
   constructor(options?: WsDispatchAdapterOptions) {
     this.provisionerOpts = options?.provisioner === false ? undefined : options?.provisioner;
@@ -120,7 +140,131 @@ export class WsDispatchAdapter implements DAGDispatcher {
     return `${base.replace(/\/$/, "")}/ws/projects/${this.projectId}/workers/${workerId}`;
   }
 
+  private _dispatchKey(runId: string, nodeId: string): string {
+    return `${runId}\0${nodeId}`;
+  }
+
+  private _targetSignature(): string {
+    const workers = getAllWorkers()
+      .filter((worker) => worker.socket.readyState === WebSocket.OPEN)
+      .map((worker) => `worker:${worker.worker_id}:${worker.registered_at}:${worker.capabilities.slice().sort().join(",")}`);
+    const nodes = getAllNodes()
+      .filter((node) => node.socket.readyState === WebSocket.OPEN)
+      .map((node) => `node:${node.node_id}:${node.registered_at}:${node.capabilities.slice().sort().join(",")}`);
+    return [...workers, ...nodes].sort().join("|");
+  }
+
+  private static _ensureOfflineRetryTimer(resetDelay = false): void {
+    if (resetDelay) {
+      WsDispatchAdapter.offlineRetryDelayMs = OFFLINE_RETRY_MIN_MS;
+      if (WsDispatchAdapter.offlineRetryTimer) {
+        clearTimeout(WsDispatchAdapter.offlineRetryTimer);
+        WsDispatchAdapter.offlineRetryTimer = undefined;
+      }
+    }
+    if (WsDispatchAdapter.offlineRetryTimer || WsDispatchAdapter.offlineRetryAdapters.size === 0) return;
+    WsDispatchAdapter.offlineRetryTimer = setTimeout(() => {
+      WsDispatchAdapter.offlineRetryTimer = undefined;
+      let targetChanged = false;
+      for (const adapter of Array.from(WsDispatchAdapter.offlineRetryAdapters)) {
+        try {
+          targetChanged = adapter._retryDeferredOfflineDispatches() || targetChanged;
+        } catch (error) {
+          console.error(
+            `[homerail_manager] deferred DAG dispatch retry failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        if (adapter.deferredOfflineDispatches.size === 0) {
+          WsDispatchAdapter.offlineRetryAdapters.delete(adapter);
+        }
+      }
+      if (WsDispatchAdapter.offlineRetryAdapters.size === 0) {
+        WsDispatchAdapter.offlineRetryDelayMs = OFFLINE_RETRY_MIN_MS;
+        return;
+      }
+      WsDispatchAdapter.offlineRetryDelayMs = targetChanged
+        ? OFFLINE_RETRY_MIN_MS
+        : Math.min(OFFLINE_RETRY_MAX_MS, WsDispatchAdapter.offlineRetryDelayMs * 2);
+      WsDispatchAdapter._ensureOfflineRetryTimer();
+    }, WsDispatchAdapter.offlineRetryDelayMs);
+    WsDispatchAdapter.offlineRetryTimer.unref?.();
+  }
+
+  private static _removeOfflineRetryAdapter(adapter: WsDispatchAdapter): void {
+    WsDispatchAdapter.offlineRetryAdapters.delete(adapter);
+    if (WsDispatchAdapter.offlineRetryAdapters.size > 0) return;
+    if (WsDispatchAdapter.offlineRetryTimer) clearTimeout(WsDispatchAdapter.offlineRetryTimer);
+    WsDispatchAdapter.offlineRetryTimer = undefined;
+    WsDispatchAdapter.offlineRetryDelayMs = OFFLINE_RETRY_MIN_MS;
+  }
+
+  private _scheduleOfflineRetry(): void {
+    if (this.deferredOfflineDispatches.size === 0) return;
+    WsDispatchAdapter.offlineRetryAdapters.add(this);
+    WsDispatchAdapter._ensureOfflineRetryTimer(true);
+  }
+
+  private _forgetDeferredOfflineDispatch(runId: string, nodeId: string): void {
+    this.deferredOfflineDispatches.delete(this._dispatchKey(runId, nodeId));
+    if (this.deferredOfflineDispatches.size === 0) {
+      WsDispatchAdapter._removeOfflineRetryAdapter(this);
+    }
+  }
+
+  private _retryDeferredOfflineDispatches(): boolean {
+    const targetSignature = this._targetSignature();
+    const pendingByRun = new Map<string, DeferredOfflineDispatch[]>();
+    let targetChanged = false;
+    for (const [key, pending] of this.deferredOfflineDispatches) {
+      const run = getActiveRun(pending.runId);
+      if (!run || run.status !== "active" || run.dagRun.nodeStates.get(pending.nodeId) !== "READY") {
+        this.deferredOfflineDispatches.delete(key);
+        continue;
+      }
+      if (!pending.forceRetry && pending.targetSignature === targetSignature) continue;
+      targetChanged = true;
+      this.deferredOfflineDispatches.delete(key);
+      const entries = pendingByRun.get(pending.runId) ?? [];
+      entries.push(pending);
+      pendingByRun.set(pending.runId, entries);
+    }
+    for (const [runId, pendingEntries] of pendingByRun) {
+      try {
+        dispatchReadyNodes(runId, this);
+      } catch (error) {
+        console.error(
+          `[homerail_manager] deferred DAG dispatch failed for ${runId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        for (const pending of pendingEntries) {
+          const run = getActiveRun(pending.runId);
+          if (!run || run.status !== "active" || run.dagRun.nodeStates.get(pending.nodeId) !== "READY") continue;
+          this.deferredOfflineDispatches.set(this._dispatchKey(pending.runId, pending.nodeId), {
+            ...pending,
+            targetSignature,
+            forceRetry: true,
+          });
+        }
+      }
+    }
+    return targetChanged;
+  }
+
+  private _deferOfflineDispatch(
+    envelope: DispatchEnvelope,
+    reason = "no available worker or node",
+  ): DispatchResult {
+    const key = this._dispatchKey(envelope.runId, envelope.nodeId);
+    this.deferredOfflineDispatches.set(key, {
+      runId: envelope.runId,
+      nodeId: envelope.nodeId,
+      targetSignature: this._targetSignature(),
+    });
+    this._scheduleOfflineRetry();
+    return { status: "skipped", reason };
+  }
+
   dispatch(envelope: DispatchEnvelope): DispatchResult {
+    this._forgetDeferredOfflineDispatch(envelope.runId, envelope.nodeId);
     const requiredCapabilities = envelope.requiredCapabilities
       ?.map((capability) => capability.trim())
       .filter((capability) => capability.length > 0);
@@ -151,22 +295,12 @@ export class WsDispatchAdapter implements DAGDispatcher {
       };
     }
 
-    if (requiredCapabilities && requiredCapabilities.length > 0) {
-      const reason = `no available worker satisfies required capabilities: ${requiredCapabilitiesText(requiredCapabilities)}`;
-      emit("dag:ws_dispatch_failed", {
-        runId: envelope.runId,
-        nodeId: envelope.nodeId,
-        reason,
-      });
-      return { status: "failed", reason, retryable: false };
-    }
-
+    const openWorkers = getAllWorkers().filter((candidate) => candidate.socket.readyState === WebSocket.OPEN);
+    const openNodes = getAllNodes().filter((candidate) => candidate.socket.readyState === WebSocket.OPEN);
     // Try to find a Docker-capable node for provisioning.
     if (this.provisionerOpts) {
-      const nodes = getAllNodes();
-      const dockerNode = nodes.find(
+      const dockerNode = openNodes.find(
         (n) =>
-          n.socket.readyState === WebSocket.OPEN &&
           isDockerCapableNode(n),
       );
       if (dockerNode) {
@@ -175,9 +309,16 @@ export class WsDispatchAdapter implements DAGDispatcher {
       }
     }
 
-    // Fallback: dispatch directly to any connected node (previous behavior)
-    const nodes = getAllNodes();
-    const node = nodes.find((n) => n.socket.readyState === WebSocket.OPEN);
+    if (requiredCapabilities && requiredCapabilities.length > 0) {
+      return this._deferOfflineDispatch(
+        envelope,
+        `no available worker satisfies required capabilities: ${requiredCapabilitiesText(requiredCapabilities)}`,
+      );
+    }
+
+    // Fallback: dispatch directly to any connected node when the task has no
+    // worker capability contract.
+    const node = openNodes[0];
     if (node) {
       try {
         this._dispatchToNode(envelope, node.node_id, node.socket);
@@ -198,17 +339,7 @@ export class WsDispatchAdapter implements DAGDispatcher {
       };
     }
 
-    // No worker, no node — fail
-    emit("dag:ws_dispatch_failed", {
-      runId: envelope.runId,
-      nodeId: envelope.nodeId,
-      reason: "no available worker or node",
-    });
-    return {
-      status: "failed",
-      reason: "no available worker or node",
-      retryable: true,
-    };
+    return this._deferOfflineDispatch(envelope);
   }
 
   private _selectOpenWorker(
@@ -222,6 +353,12 @@ export class WsDispatchAdapter implements DAGDispatcher {
         hasCapabilities(w.capabilities, envelope.requiredCapabilities),
     );
     if (workers.length === 0) return undefined;
+
+    const previousTarget = findDispatchTarget(envelope.runId, envelope.nodeId);
+    if (previousTarget?.state === "dispatched" && previousTarget.targetType === "worker") {
+      const hotWorker = workers.find((worker) => worker.worker_id === previousTarget.targetId);
+      if (hotWorker) return hotWorker;
+    }
 
     const runScopedPrefix = `provisioned-${sanitizeProvisionedWorkerToken(envelope.runId)}-`;
     const exactRunScopedWorkerId = sanitizeProvisionedWorkerToken(
@@ -382,12 +519,26 @@ export class WsDispatchAdapter implements DAGDispatcher {
       (w) => w.worker_id === workerId && w.socket.readyState === WebSocket.OPEN,
     );
     if (newWorker) {
+      if (!hasCapabilities(newWorker.capabilities, currentEnvelope.envelope.requiredCapabilities)) {
+        clearDispatchTarget(currentEnvelope.envelope.runId, currentEnvelope.envelope.nodeId);
+        this._deferOfflineDispatch(
+          currentEnvelope.envelope,
+          `provisioned worker ${workerId} does not satisfy required capabilities: ${requiredCapabilitiesText(currentEnvelope.envelope.requiredCapabilities)}`,
+        );
+        return;
+      }
+      if (!recordProvisionedNodeDispatchAttempt(
+        currentEnvelope.envelope.runId,
+        currentEnvelope.envelope.nodeId,
+      )) {
+        return;
+      }
+      this._dispatchToWorker(currentEnvelope.envelope, workerId, newWorker.socket);
       if (!markNodeDispatched(currentEnvelope.envelope.runId, currentEnvelope.envelope.nodeId)) {
         recordDispatchFailed(currentEnvelope.envelope.runId, currentEnvelope.envelope.nodeId);
         this._failProvisioning(currentEnvelope.envelope, `node ${currentEnvelope.envelope.nodeId} was not READY after worker provisioning`);
         return;
       }
-      this._dispatchToWorker(currentEnvelope.envelope, workerId, newWorker.socket);
     } else {
       // Worker registered but socket not ready — mark failed
       recordDispatchFailed(envelope.runId, envelope.nodeId);

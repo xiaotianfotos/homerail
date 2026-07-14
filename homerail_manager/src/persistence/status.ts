@@ -1,5 +1,5 @@
 export const PERSISTENCE_STATUS_VALUES = {
-  dag_run: ["active", "completed", "failed", "cancelled"] as const,
+  dag_run: ["active", "waiting", "completed", "failed", "cancelled"] as const,
   session: [
     "active",
     "closed",

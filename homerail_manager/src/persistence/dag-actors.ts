@@ -23,13 +23,14 @@ export interface DagActorRecord {
   updated_at: number;
 }
 
-export type DagActorCommandStatus = "pending" | "delivered" | "claimed" | "acknowledged" | "failed";
+export type DagActorCommandStatus = "pending" | "delivered" | "claimed" | "acknowledged" | "failed" | "cancelled";
 const DAG_ACTOR_COMMAND_STATUSES: ReadonlySet<string> = new Set([
   "pending",
   "delivered",
   "claimed",
   "acknowledged",
   "failed",
+  "cancelled",
 ]);
 
 export interface DagActorCommandRecord {
@@ -566,7 +567,8 @@ export function listDagActorCommands(input: {
   `).all(...params) as DagActorCommandRow[]).map(commandFromRow);
 }
 
-function markCommandDelivered(commandId: string): DagActorCommandMutationResult {
+export function markDagActorCommandDelivered(rawCommandId: string): DagActorCommandMutationResult {
+  const commandId = assertIdentifier(rawCommandId, "command_id");
   const db = getDb();
   return db.transaction(() => {
     const current = requireCommand(commandId);
@@ -610,7 +612,57 @@ export async function deliverDagActorCommand(input: {
   if (delivered === false) {
     return { command: requireCommand(commandId), changed: false, deduplicated: false, delivered: false };
   }
-  return { ...markCommandDelivered(commandId), delivered: true };
+  return { ...markDagActorCommandDelivered(commandId), delivered: true };
+}
+
+export function cancelUnclaimedDagActorCommands(runId: string, completedAt?: number): DagActorCommandRecord[];
+export function cancelUnclaimedDagActorCommands(input: {
+  run_id: string;
+  completed_at?: number;
+  reason?: unknown;
+}): DagActorCommandRecord[];
+export function cancelUnclaimedDagActorCommands(
+  input: string | { run_id: string; completed_at?: number; reason?: unknown },
+  requestedCompletedAt?: number,
+): DagActorCommandRecord[] {
+  const runId = assertIdentifier(typeof input === "string" ? input : input.run_id, "run_id");
+  const completedAt = typeof input === "string"
+    ? requestedCompletedAt ?? Date.now()
+    : input.completed_at ?? Date.now();
+  if (!Number.isSafeInteger(completedAt) || completedAt < 0) {
+    throw new Error("completed_at must be a non-negative epoch millisecond integer");
+  }
+  const reason = typeof input === "string"
+    ? { message: "command cancelled" }
+    : input.reason ?? { message: "command cancelled" };
+  const reasonJson = encodeBoundedDocument(reason, "command cancellation reason").json;
+  const db = getDb();
+
+  return db.transaction(() => {
+    const candidates = db.prepare(`
+      SELECT * FROM dag_actor_commands
+      WHERE run_id = ? AND status IN ('pending', 'delivered')
+      ORDER BY created_at, command_id
+    `).all(runId) as DagActorCommandRow[];
+    if (candidates.length === 0) return [];
+    if (candidates.some((command) => completedAt < Number(command.created_at))) {
+      throw new Error("completed_at must not precede command creation");
+    }
+    const changed = db.prepare(`
+      UPDATE dag_actor_commands SET
+        status = 'cancelled',
+        completed_at = ?,
+        failure_json = ?
+      WHERE run_id = ? AND status IN ('pending', 'delivered')
+    `).run(completedAt, reasonJson, runId);
+    if (changed.changes !== candidates.length) {
+      throw new DagActorConflictError(
+        "command_status_conflict",
+        `Unclaimed DAG actor commands for run ${runId} changed concurrently`,
+      );
+    }
+    return candidates.map((candidate) => requireCommand(candidate.command_id));
+  })();
 }
 
 export function claimDagActorCommand(input: {

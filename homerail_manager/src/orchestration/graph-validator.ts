@@ -18,6 +18,18 @@ function _isTerminalEdge(edge: DAGEdge): boolean {
   return edge.to_node === "";
 }
 
+function _isGatewayNodeType(nodeType: string): boolean {
+  return nodeType === "loop_gateway" ||
+    nodeType === "condition_gateway" ||
+    nodeType === "join_gateway" ||
+    nodeType === "while_gateway" ||
+    nodeType === "command_gateway" ||
+    nodeType === "approval_gateway" ||
+    nodeType === "state_gateway" ||
+    nodeType === "fanout_gateway" ||
+    nodeType === "await_command_gateway";
+}
+
 function _isLoopFeedbackEdge(graph: DAGGraphData, edge: DAGEdge): boolean {
   if (_isTerminalEdge(edge)) return false;
   const target = graph.nodes.find((node) => node.node_id === edge.to_node);
@@ -52,12 +64,17 @@ function _entryNodes(graph: DAGGraphData): string[] {
 
 function _terminalNodes(graph: DAGGraphData): string[] {
   const ids = new Set(_nodeIds(graph));
+  const suspensionNodes = new Set(
+    graph.nodes
+      .filter((node) => node.node_type === "await_command_gateway")
+      .map((node) => node.node_id),
+  );
   const outgoing = new Set<string>();
   for (const edge of graph.edges) {
     if (_isFailureEdge(edge) || _isTerminalEdge(edge)) continue;
     if (ids.has(edge.from_node)) outgoing.add(edge.from_node);
   }
-  return Array.from(ids).filter((id) => !outgoing.has(id)).sort();
+  return Array.from(ids).filter((id) => !outgoing.has(id) && !suspensionNodes.has(id)).sort();
 }
 
 function _explicitTerminalNodes(graph: DAGGraphData): Set<string> {
@@ -136,8 +153,27 @@ function _maxRetries(edge: DAGEdge): number | undefined {
 
 const JOIN_MODES = new Set(["all", "any", "n_of_m"]);
 const WHILE_OPERATORS = new Set(["eq", "ne", "gt", "gte", "lt", "lte", "truthy", "falsy"]);
+const NODE_IDENTIFIER = /^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/;
+const AWAIT_COMMAND_CONFIG_FIELDS = new Set([
+  "type",
+  "kind",
+  "primitive_version",
+  "target_actors",
+  "expires_after_ms",
+  "command_port",
+]);
 
 function _validateGatewayConfigs(graph: DAGGraphData, errors: string[]): void {
+  const nodesById = new Map(graph.nodes.map((node) => [node.node_id, node]));
+  const awaitCommandNodes = graph.nodes.filter((node) => node.node_type === "await_command_gateway");
+  if (awaitCommandNodes.length > 1) {
+    errors.push(
+      `Graph supports at most one await_command gateway: ${awaitCommandNodes
+        .map((node) => node.node_id)
+        .sort()
+        .join(", ")}`,
+    );
+  }
   for (const node of graph.nodes) {
     const config = node.gateway_config;
     if (node.node_type === "join_gateway") {
@@ -185,6 +221,66 @@ function _validateGatewayConfigs(graph: DAGGraphData, errors: string[]): void {
       const maxIterations = config?.max_iterations ?? 3;
       if (!Number.isInteger(maxIterations) || maxIterations < 1) {
         errors.push(`While gateway ${node.node_id} requires max_iterations to be a positive integer`);
+      }
+    }
+    if (node.node_type === "await_command_gateway") {
+      if (Object.keys(node.outputs).length > 0) {
+        errors.push(`await_command ${node.node_id} does not support output routes`);
+      }
+      if (graph.edges.some((edge) => edge.from_node === node.node_id)) {
+        errors.push(
+          `await_command ${node.node_id} cannot have outgoing edges or downstream dependents`,
+        );
+      }
+      const unknownFields = Object.keys(config ?? {}).filter((field) => !AWAIT_COMMAND_CONFIG_FIELDS.has(field));
+      if (unknownFields.length > 0) {
+        errors.push(`await_command ${node.node_id} has unsupported config fields: ${unknownFields.sort().join(", ")}`);
+      }
+      if (config?.primitive_version !== 1 || !Number.isInteger(config.primitive_version)) {
+        errors.push(`await_command ${node.node_id} requires primitive_version 1`);
+      }
+      if (
+        config?.expires_after_ms !== undefined &&
+        (!Number.isInteger(config.expires_after_ms) || config.expires_after_ms < 1_000)
+      ) {
+        errors.push(`await_command ${node.node_id} requires expires_after_ms to be an integer of at least 1000`);
+      }
+      if (
+        config?.command_port !== undefined &&
+        (typeof config.command_port !== "string" || !NODE_IDENTIFIER.test(config.command_port))
+      ) {
+        errors.push(`await_command ${node.node_id} has invalid command_port identifier`);
+      }
+
+      const targetActors: unknown = config?.target_actors;
+      if (targetActors !== undefined) {
+        if (!Array.isArray(targetActors) || targetActors.length > 256) {
+          errors.push(`await_command ${node.node_id} requires target_actors to contain at most 256 unique node identifiers`);
+          continue;
+        }
+        const seen = new Set<string>();
+        for (let index = 0; index < targetActors.length; index++) {
+          const targetActor: unknown = targetActors[index];
+          if (typeof targetActor !== "string" || !NODE_IDENTIFIER.test(targetActor)) {
+            errors.push(`await_command ${node.node_id} target_actors[${index}] is not a valid node identifier`);
+            continue;
+          }
+          if (seen.has(targetActor)) {
+            errors.push(`await_command ${node.node_id} has duplicate target actor: ${targetActor}`);
+            continue;
+          }
+          seen.add(targetActor);
+          if (targetActor === node.node_id) {
+            errors.push(`await_command ${node.node_id} cannot target itself`);
+            continue;
+          }
+          const targetNode = nodesById.get(targetActor);
+          if (!targetNode) {
+            errors.push(`await_command ${node.node_id} references unknown target actor: ${targetActor}`);
+          } else if (_isGatewayNodeType(targetNode.node_type) || targetNode.node_type !== "agent") {
+            errors.push(`await_command ${node.node_id} target actor ${targetActor} must reference an agent node`);
+          }
+        }
       }
     }
   }
@@ -245,7 +341,8 @@ export function validateGraph(graph: DAGGraphData): GraphValidationResult {
     if (idSet.has(edge.from_node) && !_isFailureEdge(edge)) outgoing.add(edge.from_node);
   }
   for (const id of ids) {
-    if (!outgoing.has(id) && !explicitTerminal.has(id)) {
+    const node = graph.nodes.find((candidate) => candidate.node_id === id);
+    if (!outgoing.has(id) && !explicitTerminal.has(id) && node?.node_type !== "await_command_gateway") {
       warnings.push(`Dead-end node (no terminal or outgoing edges): ${id}`);
     }
   }

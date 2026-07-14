@@ -154,6 +154,105 @@ nodes:
     expect(result.warnings).toContain("Dead-end node (no terminal or outgoing edges): middle");
   });
 
+  it("treats await_command as a non-terminal suspension boundary without requiring feedback", () => {
+    const parsed = parseDAGYaml(`
+name: await-command-boundary
+nodes:
+  actor:
+    agent: worker
+    outputs:
+      summary: { to: suspend.in:summary }
+  suspend:
+    type: await_command_gateway
+    gateway_config:
+      primitive_version: 1
+      target_actors: [actor]
+      expires_after_ms: 60000
+      command_port: next_command
+  finisher:
+    agent: worker
+    outputs:
+      done: { to: "" }
+`);
+
+    const result = validateGraph(parsed.graph);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).not.toContain("Dead-end node (no terminal or outgoing edges): suspend");
+    expect(result.terminal_nodes).toEqual(["finisher"]);
+    expect(parsed.loop_sources).toEqual([]);
+  });
+
+  it.each([
+    ["primitive_version: 2", /requires primitive_version 1/],
+    ["primitive_version: 1\n      expires_after_ms: 999", /expires_after_ms to be an integer of at least 1000/],
+    ["primitive_version: 1\n      command_port: Invalid.Port", /invalid command_port identifier/],
+    ["primitive_version: 1\n      unexpected: true", /unsupported config fields: unexpected/],
+    ["primitive_version: 1\n      target_actors: [actor, actor]", /duplicate target actor: actor/],
+  ])("rejects invalid legacy await_command config: %s", (config, expected) => {
+    expect(() => parseDAGYaml(`
+name: invalid-await-command
+nodes:
+  actor: { agent: worker }
+  suspend:
+    type: await_command_gateway
+    gateway_config:
+      ${config}
+`)).toThrow(expected);
+  });
+
+  it("rejects legacy await_command output routes", () => {
+    expect(() => parseDAGYaml(`
+name: invalid-await-command-output
+nodes:
+  suspend:
+    type: await_command_gateway
+    gateway_config: { primitive_version: 1 }
+    outputs:
+      resumed: { to: "" }
+`)).toThrow(/does not support output routes/);
+  });
+
+  it("rejects legacy downstream dependencies from await_command", () => {
+    expect(() => parseDAGYaml(`
+name: invalid-await-command-dependent
+nodes:
+  actor:
+    agent: worker
+    outputs:
+      summary: { to: suspend.in:summary }
+  suspend:
+    type: await_command_gateway
+    gateway_config:
+      primitive_version: 1
+      target_actors: [actor]
+  after_suspend:
+    agent: worker
+    after: [suspend]
+    outputs:
+      done: { to: "" }
+`)).toThrow(/await_command suspend cannot have outgoing edges or downstream dependents/i);
+  });
+
+  it.each([
+    ["suspend", /cannot target itself/],
+    ["gate", /must reference an agent node/],
+    ["missing", /references unknown target actor: missing/],
+  ])("rejects legacy await_command target actor %s", (targetActor, expected) => {
+    expect(() => parseDAGYaml(`
+name: invalid-await-command-target
+nodes:
+  actor: { agent: worker }
+  gate: { type: command_gateway }
+  suspend:
+    type: await_command_gateway
+    gateway_config:
+      primitive_version: 1
+      target_actors: [${targetActor}]
+`)).toThrow(expected);
+  });
+
   it("warns when high-retry on_failure feedback edges can loop", () => {
     const parsed = parseDAGYaml(`
 name: feedback-risk-warning

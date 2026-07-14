@@ -98,6 +98,10 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
         from_node: state.nodeId,
         from_port: port,
         session_id: state.sessionId,
+        ...(state.roundId !== undefined ? { round_id: state.roundId } : {}),
+        ...(state.actorId !== undefined ? { actor_id: state.actorId } : {}),
+        ...(state.generation !== undefined ? { generation: state.generation } : {}),
+        ...(state.commandId !== undefined ? { command_id: state.commandId } : {}),
         content,
         summary,
       };

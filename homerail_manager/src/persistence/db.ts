@@ -34,6 +34,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_chats",
   "dag_handoffs",
   "dag_artifacts",
+  "dag_run_rounds",
   "dag_actor_commands",
   "dag_actors",
   "dag_activity_events",
@@ -664,6 +665,180 @@ function validateDagActorSchemaV20(db: SqliteDatabase): void {
       && entry.to === to
       && entry.on_delete.toUpperCase() === "CASCADE"
     ))) throw new Error(`Schema migration 20 is incomplete: command actor ${from} constraint is missing`);
+  }
+}
+
+function compactSchemaSql(db: SqliteDatabase, type: "table" | "index", name: string): string {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = ? AND name = ?")
+    .get(type, name) as { sql: string | null } | undefined;
+  return row?.sql?.toLowerCase().replace(/\s+/g, "") ?? "";
+}
+
+function dagActorCommandsSupportsCancelled(db: SqliteDatabase): boolean {
+  const sql = compactSchemaSql(db, "table", "dag_actor_commands");
+  return sql.includes(
+    "statusin('pending','delivered','claimed','acknowledged','failed','cancelled')",
+  ) && sql.includes(
+    "(status='cancelled'andclaimed_generationisnullandclaimed_atisnullandcompleted_atisnotnullandfailure_jsonisnotnull)",
+  );
+}
+
+function upgradeDagActorCommandsV23(db: SqliteDatabase): void {
+  if (dagActorCommandsSupportsCancelled(db)) return;
+
+  db.exec(`
+    DROP TABLE IF EXISTS dag_actor_commands_v23;
+    CREATE TABLE dag_actor_commands_v23 (
+      command_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      round_id TEXT NOT NULL,
+      target_generation INTEGER NOT NULL CHECK(target_generation >= 1),
+      status TEXT NOT NULL CHECK(status IN ('pending', 'delivered', 'claimed', 'acknowledged', 'failed', 'cancelled')),
+      idempotency_key TEXT NOT NULL,
+      payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),
+      payload_json TEXT NOT NULL,
+      claimed_generation INTEGER CHECK(claimed_generation IS NULL OR claimed_generation >= 1),
+      created_at INTEGER NOT NULL CHECK(created_at >= 0),
+      delivered_at INTEGER CHECK(delivered_at IS NULL OR delivered_at >= created_at),
+      claimed_at INTEGER CHECK(claimed_at IS NULL OR claimed_at >= created_at),
+      completed_at INTEGER CHECK(completed_at IS NULL OR completed_at >= created_at),
+      failure_json TEXT,
+      CHECK(
+        (status = 'pending' AND delivered_at IS NULL AND claimed_generation IS NULL AND claimed_at IS NULL AND completed_at IS NULL AND failure_json IS NULL)
+        OR (status = 'delivered' AND delivered_at IS NOT NULL AND claimed_generation IS NULL AND claimed_at IS NULL AND completed_at IS NULL AND failure_json IS NULL)
+        OR (status = 'claimed' AND claimed_generation IS NOT NULL AND claimed_at IS NOT NULL AND completed_at IS NULL AND failure_json IS NULL)
+        OR (status = 'acknowledged' AND claimed_generation IS NOT NULL AND claimed_at IS NOT NULL AND completed_at IS NOT NULL AND failure_json IS NULL)
+        OR (status = 'failed' AND claimed_generation IS NOT NULL AND claimed_at IS NOT NULL AND completed_at IS NOT NULL AND failure_json IS NOT NULL)
+        OR (status = 'cancelled' AND claimed_generation IS NULL AND claimed_at IS NULL AND completed_at IS NOT NULL AND failure_json IS NOT NULL)
+      ),
+      FOREIGN KEY(run_id, actor_id) REFERENCES dag_actors(run_id, actor_id) ON DELETE CASCADE
+    );
+    INSERT INTO dag_actor_commands_v23(
+      command_id, run_id, actor_id, round_id, target_generation, status,
+      idempotency_key, payload_digest, payload_json, claimed_generation,
+      created_at, delivered_at, claimed_at, completed_at, failure_json
+    )
+    SELECT
+      command_id, run_id, actor_id, round_id, target_generation, status,
+      idempotency_key, payload_digest, payload_json, claimed_generation,
+      created_at, delivered_at, claimed_at, completed_at, failure_json
+    FROM dag_actor_commands;
+    DROP TABLE dag_actor_commands;
+    ALTER TABLE dag_actor_commands_v23 RENAME TO dag_actor_commands;
+    CREATE UNIQUE INDEX idx_dag_actor_commands_idempotency
+      ON dag_actor_commands(run_id, actor_id, idempotency_key);
+    CREATE INDEX idx_dag_actor_commands_actor_status
+      ON dag_actor_commands(run_id, actor_id, status, created_at, command_id);
+    CREATE INDEX idx_dag_actor_commands_round
+      ON dag_actor_commands(run_id, round_id, created_at, command_id);
+  `);
+}
+
+function validateDagRunRoundSchemaV23(db: SqliteDatabase): void {
+  const table = "dag_run_rounds";
+  if (!hasTable(db, table)) {
+    throw new Error(`Schema migration 23 is incomplete: missing table ${table}`);
+  }
+
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    cid: number;
+    name: string;
+    type: string;
+    notnull: number;
+    pk: number;
+  }>;
+  const expectedColumns = [
+    ["run_id", "TEXT", 1, 1],
+    ["round_id", "TEXT", 1, 2],
+    ["ordinal", "INTEGER", 1, 0],
+    ["status", "TEXT", 1, 0],
+    ["target_actor_ids_json", "TEXT", 1, 0],
+    ["await_node_id", "TEXT", 0, 0],
+    ["opened_at", "INTEGER", 1, 0],
+    ["closed_at", "INTEGER", 0, 0],
+    ["expires_at", "INTEGER", 0, 0],
+  ] as const;
+  if (columns.length !== expectedColumns.length) {
+    throw new Error(`Schema migration 23 is incomplete: ${table} has invalid columns`);
+  }
+  for (const [position, [name, type, notnull, pk]] of expectedColumns.entries()) {
+    const column = columns[position];
+    if (
+      column.name !== name
+      || column.type.toUpperCase() !== type
+      || column.notnull !== notnull
+      || column.pk !== pk
+    ) {
+      throw new Error(`Schema migration 23 is incomplete: ${table} column ${name} is invalid`);
+    }
+  }
+
+  const tableSql = compactSchemaSql(db, "table", table);
+  for (const fragment of [
+    "statusin('active','waiting','completed','cancelled','failed')",
+    "check(ordinal>=1)",
+    "check(opened_at>=0)",
+    "check(closed_atisnullorclosed_at>=opened_at)",
+    "check(expires_atisnullorexpires_at>=opened_at)",
+    "(status='active'andawait_node_idisnullandclosed_atisnull)",
+    "(status='waiting'andawait_node_idisnotnullandclosed_atisnotnull)",
+    "(statusin('completed','cancelled','failed')andclosed_atisnotnull)",
+  ]) {
+    if (!tableSql.includes(fragment)) {
+      throw new Error(`Schema migration 23 is incomplete: ${table} constraints are invalid`);
+    }
+  }
+
+  const indexes = new Map((db.prepare(`PRAGMA index_list(${table})`).all() as Array<{
+    name: string;
+    unique: number;
+    partial: number;
+  }>).map((index) => [index.name, index]));
+  for (const [name, expectedColumnsForIndex, partial] of [
+    ["idx_dag_run_rounds_run_ordinal", ["run_id", "ordinal"], 0],
+    ["idx_dag_run_rounds_current", ["run_id"], 1],
+  ] as const) {
+    const index = indexes.get(name);
+    if (index?.unique !== 1 || index.partial !== partial) {
+      throw new Error(`Schema migration 23 is incomplete: index ${name} is missing or invalid`);
+    }
+    const actualColumns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{
+      seqno: number;
+      name: string;
+    }>).sort((left, right) => left.seqno - right.seqno).map((entry) => entry.name);
+    if (
+      actualColumns.length !== expectedColumnsForIndex.length
+      || actualColumns.some((column, indexPosition) => column !== expectedColumnsForIndex[indexPosition])
+    ) {
+      throw new Error(`Schema migration 23 is incomplete: index ${name} has invalid columns`);
+    }
+  }
+  if (!compactSchemaSql(db, "index", "idx_dag_run_rounds_current").includes(
+    "wherestatusin('active','waiting')",
+  )) {
+    throw new Error("Schema migration 23 is incomplete: current round index predicate is invalid");
+  }
+
+  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  if (
+    foreignKeys.length !== 1
+    || foreignKeys[0].table !== "dag_runs"
+    || foreignKeys[0].from !== "run_id"
+    || foreignKeys[0].to !== "run_id"
+    || foreignKeys[0].on_delete.toUpperCase() !== "CASCADE"
+  ) {
+    throw new Error("Schema migration 23 is incomplete: round run retention constraint is invalid");
+  }
+
+  validateDagActorSchemaV20(db);
+  if (!dagActorCommandsSupportsCancelled(db)) {
+    throw new Error("Schema migration 23 is incomplete: dag_actor_commands does not support cancelled commands");
   }
 }
 
@@ -2044,6 +2219,39 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         ON dag_actor_commands(run_id, round_id, created_at, command_id);
     `),
     validate: validateDagActorSchemaV20,
+  },
+  // Versions 21 and 22 are reserved for the parallel live-surface projector work.
+  {
+    version: 23,
+    up: (db) => {
+      upgradeDagActorCommandsV23(db);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS dag_run_rounds (
+          run_id TEXT NOT NULL,
+          round_id TEXT NOT NULL,
+          ordinal INTEGER NOT NULL CHECK(ordinal >= 1),
+          status TEXT NOT NULL CHECK(status IN ('active', 'waiting', 'completed', 'cancelled', 'failed')),
+          target_actor_ids_json TEXT NOT NULL,
+          await_node_id TEXT,
+          opened_at INTEGER NOT NULL CHECK(opened_at >= 0),
+          closed_at INTEGER CHECK(closed_at IS NULL OR closed_at >= opened_at),
+          expires_at INTEGER CHECK(expires_at IS NULL OR expires_at >= opened_at),
+          PRIMARY KEY(run_id, round_id),
+          CHECK(
+            (status = 'active' AND await_node_id IS NULL AND closed_at IS NULL)
+            OR (status = 'waiting' AND await_node_id IS NOT NULL AND closed_at IS NOT NULL)
+            OR (status IN ('completed', 'cancelled', 'failed') AND closed_at IS NOT NULL)
+          ),
+          FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_run_rounds_run_ordinal
+          ON dag_run_rounds(run_id, ordinal);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_run_rounds_current
+          ON dag_run_rounds(run_id)
+          WHERE status IN ('active', 'waiting');
+      `);
+    },
+    validate: validateDagRunRoundSchemaV23,
   },
 ];
 
