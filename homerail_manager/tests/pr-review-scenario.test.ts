@@ -64,6 +64,39 @@ function installPrepareCommandStub(
   ];
 }
 
+function productionPrepareCommand(): string {
+  const source = fs.readFileSync(
+    path.resolve(process.cwd(), "..", "assets", "orchestrations", "pr-review.yaml.template"),
+    "utf8",
+  );
+  const parsed = parseWorkflowSource(source);
+  const command = parsed.graph.nodes.find((node) => node.node_id === "prepare")?.gateway_config?.command;
+  if (!Array.isArray(command) || typeof command[2] !== "string") {
+    throw new Error("production prepare command is missing");
+  }
+  return command[2];
+}
+
+function prepareCommandInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    request: [{
+      input: {
+        payload: {
+          repo: "enterprise/homerail",
+          pr: 8,
+          base: "a".repeat(40),
+          head: "b".repeat(40),
+          base_clone_url: "https://github.example/enterprise/homerail.git",
+          head_clone_url: "https://github.example/enterprise/homerail.git",
+          expected_usage: 8,
+          budget_key: "pr-review:enterprise/homerail:prepare-command",
+          ...overrides,
+        },
+      },
+    }],
+  };
+}
+
 describe("PR Review scenario assets", () => {
   let oldHome: string | undefined;
   let oldAssetDir: string | undefined;
@@ -344,6 +377,81 @@ describe("PR Review scenario assets", () => {
       head: "b".repeat(12),
     })).toMatchObject({ valid: false });
   });
+
+  it("executes production prepare URL validation against hostile clone URLs", () => {
+    const cwd = path.join(tmpHome, "prepare-url-validation");
+    fs.mkdirSync(cwd, { recursive: true });
+    const command = productionPrepareCommand();
+    for (const base_clone_url of [
+      "https://token@github.example/enterprise/homerail.git",
+      "http://github.example/enterprise/homerail.git",
+      "https://github.example/enterprise/homerail.git?token=secret",
+      "https://github.example/git/enterprise/homerail.git",
+    ]) {
+      const result = spawnSync(process.execPath, ["-e", command], {
+        cwd,
+        encoding: "utf8",
+        input: JSON.stringify(prepareCommandInput({ base_clone_url })),
+        maxBuffer: 2_000_000,
+      });
+      expect(result.status).not.toBe(0);
+      expect(`${result.stderr}${result.stdout}`).toContain("repository URL must be credential-free HTTPS");
+      expect(fs.existsSync(path.join(cwd, "repository"))).toBe(false);
+    }
+  }, 30_000);
+
+  it.runIf(process.platform !== "win32")(
+    "executes production prepare truncation with deterministic Git output",
+    () => {
+      const cwd = path.join(tmpHome, "prepare-truncation");
+      const bin = path.join(cwd, "bin");
+      fs.mkdirSync(bin, { recursive: true });
+      const fakeGit = path.join(bin, "fake-git.cjs");
+      const head = "b".repeat(40);
+      fs.writeFileSync(fakeGit, [
+        "const fs = require('node:fs');",
+        "const args = process.argv.slice(2);",
+        "const has = (value) => args.includes(value);",
+        "if (has('clone')) fs.mkdirSync(args.at(-1), { recursive: true });",
+        `else if (has('rev-parse')) process.stdout.write(${JSON.stringify(head)});`,
+        `else if (has('diff') && has('--name-only')) process.stdout.write(${JSON.stringify("src/quoted.ts\0")});`,
+        "else if (has('diff') && has('--shortstat')) process.stdout.write('1 file changed, 1 insertion(+), 1 deletion(-)');",
+        "else if (has('diff')) process.stdout.write('\"'.repeat(700000));",
+      ].join("\n"));
+      const git = path.join(bin, "git");
+      fs.writeFileSync(git, `#!/usr/bin/env node\nrequire(${JSON.stringify(fakeGit)});\n`);
+      fs.chmodSync(git, 0o755);
+
+      const result = spawnSync(process.execPath, ["-e", productionPrepareCommand()], {
+        cwd,
+        encoding: "utf8",
+        input: JSON.stringify(prepareCommandInput()),
+        env: {
+          ...process.env,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+        maxBuffer: 2_000_000,
+      });
+      if (result.status !== 0) {
+        throw new Error(`production prepare command failed: ${result.stderr || result.stdout}`);
+      }
+      const context = JSON.parse(result.stdout) as {
+        head: string;
+        changed_files: string[];
+        diff_patch: string;
+        diff_truncated: boolean;
+      };
+      expect(context).toMatchObject({
+        head,
+        changed_files: ["src/quoted.ts"],
+        diff_truncated: true,
+      });
+      expect(context.diff_patch).toContain("HomeRail diff truncated by deterministic evidence limit");
+      expect(context.diff_patch.length).toBeLessThan(500000);
+      expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(900000);
+    },
+    30_000,
+  );
 
   it("installs Manager guidance and lists tracked template assets", async () => {
     expect(ensureManagerSkillsInstalled().installed).toContain("homerail-pr-review");
