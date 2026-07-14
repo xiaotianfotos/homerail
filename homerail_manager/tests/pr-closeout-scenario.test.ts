@@ -69,6 +69,10 @@ describe("PR closeout scenario", () => {
       proposer_actor: "system:pr-closeout",
       authorized_actors: ["human:owner"],
     });
+    expect(result.canonical?.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: { node: "status_gate", port: "blocked" }, condition: "on_failure" }),
+      expect.objectContaining({ from: { node: "status_gate", port: "stale" }, condition: "on_failure" }),
+    ]));
   });
 
   it("completes draft closeout without a model or merge mutation", async () => {

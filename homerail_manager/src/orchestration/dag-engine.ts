@@ -1,3 +1,4 @@
+import { FAILURE_PORT_NAMES } from "./graph.js";
 import type { DAGEdge, DAGGraphData, ParsedDAG } from "./graph.js";
 
 export type NodeState =
@@ -21,7 +22,7 @@ export interface DAGRun {
   mailboxes: Map<string, Map<string, unknown[]>>;
 }
 
-export const FAILURE_PORTS = new Set(["failed", "failure", "rejected", "error"]);
+export const FAILURE_PORTS = FAILURE_PORT_NAMES;
 
 export interface DAGTransitionResult {
   affectedNodes: string[];

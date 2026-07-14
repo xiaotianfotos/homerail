@@ -500,6 +500,8 @@ describe("built-in DAG patterns", () => {
 
     expect(verifier?.system).toContain("top-level verdict");
     expect(verifier?.system).toContain("Never nest verdict");
+    expect(verifier?.system).toContain("input:order.done_when");
+    expect(verifier?.system).toContain("never fail merely because that command has not run yet");
     for (const role of ["triage", "conductor", "worker", "verifier"] as const) {
       expect(heartbeat.parsed.meta.agents[role]?.system).toMatch(/(?:do not|never) execute check_command/i);
     }
@@ -511,6 +513,21 @@ describe("built-in DAG patterns", () => {
       to_node: "deterministic_check",
       to_port: "order",
     }));
+    expect(heartbeat.parsed.graph.edges).toContainEqual(expect.objectContaining({
+      from_node: "conduct",
+      from_port: "ordered",
+      to_node: "verify",
+      to_port: "order",
+    }));
+    expect(validateJsonContract(heartbeat.parsed.meta.contracts?.WorkOrder, {
+      done_when: "heartbeat acknowledgement is recorded",
+      evidence: "synthetic",
+      check_command: ["node", "-e", "process.exit(0)"],
+    })).toMatchObject({ valid: true });
+    expect(validateJsonContract(heartbeat.parsed.meta.contracts?.WorkResult, {
+      status: "pass",
+      evidence: "synthetic",
+    })).toMatchObject({ valid: false });
     expect(validateJsonContract(heartbeat.parsed.meta.contracts?.Signals, "CLI prompt signal")).toMatchObject({
       valid: true,
     });

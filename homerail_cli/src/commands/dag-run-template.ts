@@ -1,6 +1,11 @@
 import type { Command } from "commander";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import {
+  DEFAULT_PR_REVIEW_EXPECTED_USAGE,
+  defaultPrReviewBudgetKey,
+  isFullGitRevision,
+} from "homerail-protocol";
 
 import type { BaseResponse, HomeRailClient } from "../client.js";
 import { getClient } from "../index.js";
@@ -48,7 +53,6 @@ interface RunArtifactSummary {
   sha256?: string;
 }
 
-const SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const TERMINAL_ARTIFACT_STATUSES = new Set(["ready", "failed", "skipped"]);
@@ -159,14 +163,15 @@ export async function resolvePrReviewInput(
   const head = optionalString(input.head) ?? optionalString(headRecord?.sha);
   const title = optionalString(input.title) ?? optionalString(data.title);
   const author = optionalString(input.author) ?? optionalString(userRecord?.login);
-  if (!base || !SHA_PATTERN.test(base)) throw new Error("pr-review base must be a commit SHA");
-  if (!head || !SHA_PATTERN.test(head)) throw new Error("pr-review head must be a commit SHA");
+  if (!isFullGitRevision(base)) throw new Error("pr-review base must be a full commit SHA");
+  if (!isFullGitRevision(head)) throw new Error("pr-review head must be a full commit SHA");
 
-  const expectedUsage = input.expected_usage === undefined ? 8 : Number(input.expected_usage);
+  const expectedUsage = input.expected_usage === undefined
+    ? DEFAULT_PR_REVIEW_EXPECTED_USAGE
+    : Number(input.expected_usage);
   if (!Number.isFinite(expectedUsage) || expectedUsage < 0 || expectedUsage > 100) {
     throw new Error("pr-review expected_usage must be between 0 and 100");
   }
-  const date = (options.now ?? new Date()).toISOString().slice(0, 10);
   return {
     repo,
     pr,
@@ -175,7 +180,7 @@ export async function resolvePrReviewInput(
     base_clone_url: baseRepository.cloneUrl,
     head_clone_url: headRepository.cloneUrl,
     expected_usage: expectedUsage,
-    budget_key: optionalString(input.budget_key) ?? `pr-review:${repo}:${date}`,
+    budget_key: optionalString(input.budget_key) ?? defaultPrReviewBudgetKey(repo, options.now),
     ...(title ? { title } : {}),
     ...(author ? { author } : {}),
   };

@@ -66,16 +66,43 @@ function githubFetch(options: {
 function managerClient(): HomeRailClient {
   return {
     async get(url: string) {
+      if (url === "/api/runs/review-run-26") return { data: { workflowId: "pr-review" } };
       if (url.endsWith("/status")) return { data: { status: "completed" } };
       if (url.endsWith("/handoffs")) {
-        return { data: { handoffs: [
-          { fromNode: "budget", content: { input: { payload: { head: "b".repeat(40) } } } },
-          { fromNode: "publish", content: { report: { status: "pass", actionable_count: 0, head: "b".repeat(40) } } },
-        ] } };
+        return { data: { handoffs: [{
+          fromNode: "publish",
+          port: "published",
+          content: passingPublication(),
+        }] } };
       }
       throw new Error(`unexpected Manager URL: ${url}`);
     },
   } as HomeRailClient;
+}
+
+function passingPublication(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    report: {
+      repo: "xiaotianfotos/homerail",
+      pr: 26,
+      base: "a".repeat(40),
+      head: "b".repeat(40),
+      status: "pass",
+      confidence: "high",
+      summary: "No actionable findings",
+      actionable_count: 0,
+      findings: [],
+      reviewer_results: ["runtime", "security", "tests", "frontend"].map((reviewer) => ({
+        reviewer,
+        status: "complete",
+        summary: `${reviewer} review complete`,
+        findings: [],
+      })),
+    },
+    markdown: "# HomeRail PR Review\n\nNo actionable findings.",
+    quorum: { passed: true, successes: 3, total: 3, threshold: 2 },
+    ...overrides,
+  };
 }
 
 describe("PR closeout input", () => {
@@ -117,6 +144,7 @@ describe("PR closeout input", () => {
   it("does not treat another completed closeout run as validation evidence", async () => {
     const client = {
       async get(url: string) {
+        if (url === "/api/runs/old-closeout-run") return { data: { workflowId: "pr-closeout" } };
         if (url.endsWith("/status")) return { data: { status: "completed" } };
         if (url.endsWith("/handoffs")) {
           return { data: { handoffs: [{
@@ -142,6 +170,80 @@ describe("PR closeout input", () => {
     expect(result.closeout_status).toBe("blocked");
     expect(result.evidence).toContainEqual(expect.objectContaining({ validated: false }));
     expect(result.blockers).toContainEqual(expect.objectContaining({ code: "validation_evidence_missing" }));
+  });
+
+  it("rejects an unrelated completed run with a nested pass status", async () => {
+    const client = {
+      async get(url: string) {
+        if (url === "/api/runs/unrelated-run") return { data: { workflowId: "unrelated" } };
+        if (url.endsWith("/status")) return { data: { status: "completed" } };
+        if (url.endsWith("/handoffs")) {
+          return { data: { handoffs: [{
+            fromNode: "result",
+            port: "done",
+            content: { head: "b".repeat(40), nested: { status: "pass" } },
+          }] } };
+        }
+        throw new Error(`unexpected Manager URL: ${url}`);
+      },
+    } as HomeRailClient;
+    const result = await resolvePrCloseoutInput({
+      repo: "xiaotianfotos/homerail",
+      pr: 26,
+      validation_runs: ["unrelated-run"],
+    }, { client, fetchImpl: githubFetch({ draft: true }) as typeof fetch, env: {} });
+
+    expect(result.closeout_status).toBe("blocked");
+    expect(result.evidence).toContainEqual(expect.objectContaining({
+      kind: "unrecognized_run",
+      evidence_valid: false,
+      validated: false,
+      validation_error: "run workflow_id is not pr-review",
+    }));
+    expect(result.blockers).toContainEqual(expect.objectContaining({ code: "validation_evidence_missing" }));
+  });
+
+  it("does not treat a malformed PR Review report as a zero-finding merge review", async () => {
+    const client = {
+      async get(url: string) {
+        if (url === "/api/runs/malformed-review") return { data: { workflowId: "pr-review" } };
+        if (url.endsWith("/status")) return { data: { status: "completed" } };
+        if (url.endsWith("/handoffs")) {
+          return { data: { handoffs: [{
+            fromNode: "publish",
+            port: "published",
+            content: { head: "b".repeat(40), report: { status: "pass", head: "b".repeat(40) } },
+          }] } };
+        }
+        throw new Error(`unexpected Manager URL: ${url}`);
+      },
+    } as HomeRailClient;
+    const result = await resolvePrCloseoutInput({
+      repo: "xiaotianfotos/homerail",
+      pr: 26,
+      phase: "merge",
+      validation_runs: ["malformed-review"],
+    }, {
+      client,
+      fetchImpl: githubFetch({
+        draft: false,
+        checks: [{ name: "Core Linux", status: "completed", conclusion: "success" }],
+        statuses: [{ context: "branch-policy", state: "success" }],
+      }) as typeof fetch,
+      env: { GH_TOKEN: "test-token" },
+    });
+
+    expect(result.closeout_status).toBe("blocked");
+    expect(result.evidence).toContainEqual(expect.objectContaining({
+      kind: "pr_review",
+      evidence_valid: false,
+      validated: false,
+      validation_error: expect.stringContaining("repository identity"),
+    }));
+    expect(result.blockers.map((item) => item.code)).toEqual(expect.arrayContaining([
+      "validation_evidence_missing",
+      "pr_review_missing",
+    ]));
   });
 
   it("requires successful remote gates and a zero-finding HomeRail review before human merge approval", async () => {

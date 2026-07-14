@@ -80,6 +80,30 @@ function makePrReviewApiServer(createAndRunBodies: Record<string, unknown>[]): h
   });
 }
 
+function passingPrReviewPublication(): Record<string, unknown> {
+  return {
+    report: {
+      repo: "xiaotianfotos/homerail",
+      pr: 26,
+      base: "a".repeat(40),
+      head: "b".repeat(40),
+      status: "pass",
+      confidence: "high",
+      summary: "No actionable findings",
+      actionable_count: 0,
+      findings: [],
+      reviewer_results: ["runtime", "security", "tests", "frontend"].map((reviewer) => ({
+        reviewer,
+        status: "complete",
+        summary: `${reviewer} review complete`,
+        findings: [],
+      })),
+    },
+    markdown: "# HomeRail PR Review\n\nNo actionable findings.",
+    quorum: { passed: true, successes: 3, total: 3, threshold: 2 },
+  };
+}
+
 function makePrCloseoutApiServer(createAndRunBodies: Record<string, unknown>[], draft = true): http.Server {
   return http.createServer((req, res) => {
     const url = new URL(req.url || "/", "http://localhost");
@@ -118,12 +142,20 @@ function makePrCloseoutApiServer(createAndRunBodies: Record<string, unknown>[], 
       send([{ filename: "src/index.ts" }]);
       return;
     }
+    if (req.method === "GET" && pathname === "/api/runs/validation-run-26") {
+      send({ success: true, data: { workflowId: "pr-review" } });
+      return;
+    }
     if (req.method === "GET" && pathname === "/api/runs/validation-run-26/status") {
       send({ success: true, data: { status: "completed" } });
       return;
     }
     if (req.method === "GET" && pathname === "/api/runs/validation-run-26/handoffs") {
-      send({ success: true, data: { handoffs: [{ fromNode: "result", content: { head: "b".repeat(40), status: "pass" } }] } });
+      send({ success: true, data: { handoffs: [{
+        fromNode: "publish",
+        port: "published",
+        content: passingPrReviewPublication(),
+      }] } });
       return;
     }
     if (req.method === "POST" && pathname === "/api/runs/create-and-run") {
@@ -762,6 +794,7 @@ describe("manager-agent server", () => {
         base_clone_url: "https://github.example/xiaotianfotos/homerail.git",
         head_clone_url: "https://github.example/contributor/homerail.git",
         expected_usage: 0,
+        budget_key: expect.stringMatching(/^pr-review:xiaotianfotos\/homerail:\d{4}-\d{2}-\d{2}$/),
       });
     } finally {
       await close(server);

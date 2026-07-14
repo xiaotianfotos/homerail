@@ -134,6 +134,6 @@ spec:
     - { from: status_gate.ready_for_review, to: ready_for_review.snapshot }
     - { from: status_gate.merge_candidate, to: merge_approval.proposal }
     - { from: merge_approval.approved, to: ready_for_human_merge.snapshot }
-    - { from: merge_approval.rejected, to: approval_rejected.snapshot }
-    - { from: status_gate.blocked, to: blocked.snapshot }
-    - { from: status_gate.stale, to: stale_evidence.snapshot }
+    - { from: merge_approval.rejected, to: approval_rejected.snapshot, condition: on_failure }
+    - { from: status_gate.blocked, to: blocked.snapshot, condition: on_failure }
+    - { from: status_gate.stale, to: stale_evidence.snapshot, condition: on_failure }

@@ -8,14 +8,19 @@ import type { AgentEvent, AgentRunContext, DagToolDefinition } from "../agent/ty
 import {
   buildManagerAgentSystemPrompt,
   createManagerAgentWidgetFileTools,
+  DEFAULT_PR_REVIEW_EXPECTED_USAGE,
   DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
+  defaultPrReviewBudgetKey,
+  isFullGitRevision,
   managerAgentToolSpec,
   normalizeManagerAgentRuntimeAgentType,
   redactTelemetry,
+  resolvePrCloseout,
   type ManagerAgentWidgetFileToolAdapter,
   type ManagerAgentWidgetFileToolResult,
   type ManagerAgentToolName,
   type ManagerAgentPromptSkill,
+  type ResolvedPrCloseoutInput,
 } from "homerail-protocol";
 
 interface ManagerAgentConfig {
@@ -217,7 +222,7 @@ async function resolveGitHubPullRequest(repo: string, pr: number): Promise<{
   const headRecord = githubRecord(body.head);
   const base = String(baseRecord?.sha ?? "");
   const head = String(headRecord?.sha ?? "");
-  if (!/^[0-9a-f]{40}$/i.test(base) || !/^[0-9a-f]{40}$/i.test(head)) {
+  if (!isFullGitRevision(base) || !isFullGitRevision(head)) {
     throw new Error("GitHub PR response did not contain immutable base/head SHAs");
   }
   const baseRepository = githubCloneUrl(githubRecord(baseRecord?.repo), repo, "base");
@@ -279,205 +284,34 @@ async function githubReviewThreadStatus(repo: string, pr: number): Promise<{ ver
     : { verified: false, unresolved: null };
 }
 
-function closeoutPlatforms(files: string[]): string[] {
-  const required = new Set<string>(["linux"]);
-  for (const file of files.map((value) => value.toLowerCase())) {
-    if (/(^|\/)(electron|desktop|windows|win32)(\/|\.|$)/.test(file)) required.add("windows");
-    if (/(^|\/)(electron|desktop|macos|darwin)(\/|\.|$)/.test(file)) required.add("macos");
-    if (/(dockerfile|docker-compose|^docker\/|\/docker\/)/.test(file)) required.add("docker");
-  }
-  return [...required].sort();
-}
-
-function nestedHead(value: unknown, depth = 0): string | undefined {
-  if (depth > 8 || value === null || value === undefined) return undefined;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = nestedHead(item, depth + 1);
-      if (found) return found;
-    }
-    return undefined;
-  }
-  if (typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
-  const direct = typeof record.head === "string" ? record.head : "";
-  if (/^[0-9a-f]{40}$/i.test(direct)) return direct;
-  for (const item of Object.values(record)) {
-    const found = nestedHead(item, depth + 1);
-    if (found) return found;
-  }
-  return undefined;
-}
-
-function hasManagerValidationPass(value: unknown, depth = 0): boolean {
-  if (depth > 8 || value === null || value === undefined) return false;
-  if (Array.isArray(value)) return value.some((item) => hasManagerValidationPass(item, depth + 1));
-  if (typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  if (record.validation_status === "passed" || record.validation_status === "pass") return true;
-  if (record.status === "passed" || record.status === "pass") return true;
-  return Object.values(record).some((item) => hasManagerValidationPass(item, depth + 1));
-}
-
-async function managerRunCloseoutEvidence(runId: string, head: string): Promise<Record<string, unknown>> {
-  const status = managerData(await requestManager(`/runs/${encodeURIComponent(runId)}/status`));
-  const handoffData = managerData(await requestManager(`/runs/${encodeURIComponent(runId)}/handoffs`));
-  const handoffs = Array.isArray(handoffData.handoffs) ? handoffData.handoffs as Record<string, unknown>[] : [];
-  const published = handoffs
-    .slice()
-    .reverse()
-    .map((handoff) => dataRecord(handoff.content))
-    .find((content) => content.report && typeof content.report === "object");
-  const report = published?.report as Record<string, unknown> | undefined;
-  const evidenceHead = nestedHead(handoffs) ?? "unknown";
-  const validated = Boolean(report) || hasManagerValidationPass(handoffs);
-  return {
-    source: "homerail_run",
-    name: `HomeRail run ${runId}`,
-    run_id: runId,
-    head: evidenceHead,
-    status: String(status.status ?? "unknown"),
-    fresh: evidenceHead === head,
-    validated,
-    kind: report ? "pr_review" : "dag_validation",
-    ...(report ? {
-      report_status: String(report.status ?? "unknown"),
-      actionable_count: Number(report.actionable_count ?? 0),
-    } : {}),
-  };
-}
-
 async function resolveGitHubCloseout(
   repo: string,
   pr: number,
   requestedPhase: string | undefined,
   validationRuns: string[],
-): Promise<Record<string, unknown>> {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must use the owner/name form");
-  if (!Number.isInteger(pr) || pr < 1) throw new Error("pr must be a positive integer");
-  if (requestedPhase && requestedPhase !== "draft" && requestedPhase !== "merge") {
-    throw new Error("phase must be draft or merge");
-  }
-  const [owner] = repo.split("/");
-  const repository = await githubRequest(`/repos/${repo}`) as Record<string, unknown>;
-  const pull = await githubRequest(`/repos/${repo}/pulls/${pr}`) as Record<string, unknown>;
-  const baseRecord = pull.base as Record<string, unknown> | undefined;
-  const headRecord = pull.head as Record<string, unknown> | undefined;
-  const base = String(baseRecord?.sha ?? "");
-  const head = String(headRecord?.sha ?? "");
-  const baseRef = String(baseRecord?.ref ?? "");
-  if (!/^[0-9a-f]{40}$/i.test(base) || !/^[0-9a-f]{40}$/i.test(head)) {
-    throw new Error("GitHub PR response did not contain immutable base/head SHAs");
-  }
-  const checksBody = await githubRequest(`/repos/${repo}/commits/${head}/check-runs?per_page=100`) as Record<string, unknown>;
-  const statusesBody = await githubRequest(`/repos/${repo}/commits/${head}/status`) as Record<string, unknown>;
-  const reviewsBody = await githubRequest(`/repos/${repo}/pulls/${pr}/reviews?per_page=100`);
-  const filesBody = await githubRequest(`/repos/${repo}/pulls/${pr}/files?per_page=100`);
-  const reviewThreads = await githubReviewThreadStatus(repo, pr);
-  const checks = Array.isArray(checksBody.check_runs) ? checksBody.check_runs as Record<string, unknown>[] : [];
-  const statuses = Array.isArray(statusesBody.statuses) ? statusesBody.statuses as Record<string, unknown>[] : [];
-  const reviews = Array.isArray(reviewsBody) ? reviewsBody as Record<string, unknown>[] : [];
-  const changedFiles = Array.isArray(filesBody)
-    ? filesBody.map((item) => String((item as Record<string, unknown>).filename ?? "")).filter(Boolean)
-    : [];
-  const requiredPlatforms = closeoutPlatforms(changedFiles);
-  const defaultBranch = String(repository.default_branch ?? "main");
-  let dependency: Record<string, unknown> | undefined;
-  if (baseRef && baseRef !== defaultBranch) {
-    const candidates = await githubRequest(
-      `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${baseRef}`)}&per_page=100`,
-    );
-    dependency = Array.isArray(candidates)
-      ? candidates.find((item) => Number((item as Record<string, unknown>).number) !== pr) as Record<string, unknown> | undefined
-      : undefined;
-  }
-  const evidence = await Promise.all(validationRuns.map((runId) => managerRunCloseoutEvidence(runId, head)));
-  const blockers: Array<{ code: string; message: string }> = [];
-  const freshPassed = evidence.some((item) => item.fresh === true && item.status === "completed" && item.validated === true);
-  if (!freshPassed) blockers.push({ code: "validation_evidence_missing", message: "No completed HomeRail validation run matches the current head." });
-  const isDraft = pull.draft === true;
-  const phase = requestedPhase ?? (isDraft ? "draft" : "merge");
-  if (phase === "draft" && !isDraft) {
-    blockers.push({ code: "phase_mismatch", message: "The PR is no longer a Draft; run merge closeout instead." });
-  }
-  const relevantChecks = checks.filter((check) => !/PR Closeout/i.test(String(check.name ?? "")));
-  const pendingChecks = relevantChecks.filter((check) => check.status !== "completed");
-  const failedChecks = relevantChecks.filter((check) =>
-    check.status === "completed" && check.conclusion !== "success" && check.conclusion !== "neutral"
-  );
-  const latestReviews = new Map<string, string>();
-  for (const review of reviews) {
-    const login = String((review.user as Record<string, unknown> | undefined)?.login ?? "");
-    const state = String(review.state ?? "").toUpperCase();
-    if (login && state !== "COMMENTED" && state !== "PENDING") latestReviews.set(login, state);
-  }
-  if (phase === "merge") {
-    if (isDraft) blockers.push({ code: "pr_is_draft", message: "The PR must leave draft before merge closeout." });
-    if (dependency) blockers.push({ code: "dependency_open", message: `Stacked dependency PR #${String(dependency.number)} is still open.` });
-    const mergeState = String(pull.mergeable_state ?? "unknown");
-    if (pull.mergeable !== true || ["dirty", "blocked", "unknown"].includes(mergeState)) {
-      blockers.push({ code: "not_mergeable", message: `GitHub reports mergeable=${String(pull.mergeable)} and state=${mergeState}.` });
-    }
-    if (relevantChecks.length === 0) blockers.push({ code: "checks_missing", message: "No GitHub checks exist for the current head." });
-    if (pendingChecks.length > 0) blockers.push({ code: "checks_pending", message: `${pendingChecks.length} GitHub checks are pending.` });
-    if (failedChecks.length > 0 || statuses.some((status) => status.state !== "success")) {
-      blockers.push({ code: "checks_failed", message: "At least one GitHub check or commit status is not successful." });
-    }
-    const changesRequested = [...latestReviews.entries()].filter(([, state]) => state === "CHANGES_REQUESTED").map(([login]) => login);
-    if (changesRequested.length > 0) blockers.push({ code: "changes_requested", message: `Changes are requested by: ${changesRequested.join(", ")}.` });
-    if (!reviewThreads.verified) {
-      blockers.push({ code: "review_threads_unverified", message: "Unresolved review threads could not be verified with the GitHub GraphQL API." });
-    } else if ((reviewThreads.unresolved ?? 0) > 0) {
-      blockers.push({ code: "review_threads_open", message: `${reviewThreads.unresolved} review threads remain unresolved.` });
-    }
-    const observedPlatforms = new Set<string>();
-    for (const check of relevantChecks) {
-      const name = String(check.name ?? "").toLowerCase();
-      if (name.includes("linux")) observedPlatforms.add("linux");
-      if (name.includes("windows")) observedPlatforms.add("windows");
-      if (name.includes("macos") || name.includes("mac os")) observedPlatforms.add("macos");
-      if (name.includes("docker")) observedPlatforms.add("docker");
-    }
-    const missingPlatforms = requiredPlatforms.filter((platform) => !observedPlatforms.has(platform));
-    if (missingPlatforms.length > 0) blockers.push({ code: "platform_evidence_missing", message: `Missing required platform evidence: ${missingPlatforms.join(", ")}.` });
-    const reviewEvidence = evidence.some((item) =>
-      item.fresh === true && item.status === "completed" && item.kind === "pr_review" &&
-      item.report_status === "pass" && item.actionable_count === 0
-    );
-    if (!reviewEvidence) blockers.push({ code: "pr_review_missing", message: "No conclusive zero-finding PR Review matches the current head." });
-  }
-  const staleOnly = evidence.length > 0 && evidence.every((item) => item.fresh !== true);
-  const closeoutStatus = staleOnly
-    ? "stale_evidence"
-    : blockers.length > 0
-      ? "blocked"
-      : phase === "draft"
-        ? "ready_for_review"
-        : "ready_for_human_merge_candidate";
-  return {
+): Promise<ResolvedPrCloseoutInput> {
+  const snapshot = await resolvePrCloseout({
     repo,
     pr,
-    base,
-    head,
-    phase,
-    closeout_status: closeoutStatus,
-    blockers,
-    evidence,
-    github: {
-      draft: isDraft,
-      mergeable: pull.mergeable ?? null,
-      mergeable_state: pull.mergeable_state ?? "unknown",
-      base_ref: baseRef,
-      default_branch: defaultBranch,
-      dependency: dependency ? { number: dependency.number, title: dependency.title, state: dependency.state } : null,
-      checks: relevantChecks.map((check) => ({ name: check.name, status: check.status, conclusion: check.conclusion })),
-      statuses: statuses.map((status) => ({ context: status.context, state: status.state })),
-      review_states: Object.fromEntries(latestReviews),
-      review_threads: reviewThreads,
-      changed_files: changedFiles,
-      required_platforms: requiredPlatforms,
+    ...(requestedPhase ? { phase: requestedPhase } : {}),
+    validation_runs: validationRuns,
+  }, {
+    github: githubRequest,
+    reviewThreads: githubReviewThreadStatus,
+    run: async (runId) => {
+      const encoded = encodeURIComponent(runId);
+      const metadata = managerData(await requestManager(`/runs/${encoded}`));
+      const status = managerData(await requestManager(`/runs/${encoded}/status`));
+      const handoffData = managerData(await requestManager(`/runs/${encoded}/handoffs`));
+      const handoffs = Array.isArray(handoffData.handoffs)
+        ? handoffData.handoffs.filter(
+            (item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)),
+          )
+        : [];
+      return { metadata, status, handoffs };
     },
-  };
+  });
+  return snapshot;
 }
 
 function managerAgentTurnTimeoutMs(): number {
@@ -913,7 +747,7 @@ function createManagerTools(state: {
           const requestedUsage = Number(args.expected_usage);
           const expectedUsage = Number.isInteger(requestedUsage) && requestedUsage >= 0 && requestedUsage <= 100
             ? requestedUsage
-            : 8;
+            : DEFAULT_PR_REVIEW_EXPECTED_USAGE;
           const envelope = {
             trigger_id: "manager-agent",
             trigger_type: "manual",
@@ -928,7 +762,7 @@ function createManagerTools(state: {
               title: metadata.title,
               author: metadata.author,
               expected_usage: expectedUsage,
-              budget_key: `pr-review:${repo}:${metadata.head}`,
+              budget_key: defaultPrReviewBudgetKey(repo),
             },
           };
           const body = await requestManager("/runs/create-and-run", {

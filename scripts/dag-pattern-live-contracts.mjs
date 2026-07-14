@@ -59,8 +59,8 @@ export const LIVE_ISSUE_REVISION = process.env.HOMERAIL_LIVE_ISSUE_REVISION
 
 export const prompts = {
   heartbeat: JSON.stringify({
-    signal: { value: 2, status: "actionable" },
-    instruction: "Select one bounded synthetic action and preserve the exact check_command in the conductor work order.",
+    signal: { value: 2, status: "actionable", action: "record synthetic heartbeat acknowledgement" },
+    instruction: "Select the synthetic heartbeat acknowledgement as the bounded action. Set done_when so the worker can satisfy it with status=completed and explicit acknowledgement evidence. Preserve check_command only as the separate Manager-owned deterministic check; never describe the command as the action itself.",
     check_command: passCommand,
   }),
   "issue-diagnosis": JSON.stringify({

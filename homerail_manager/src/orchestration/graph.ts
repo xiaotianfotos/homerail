@@ -1,3 +1,13 @@
+/** Ports whose handoffs represent a negative branch rather than success. */
+export const FAILURE_PORT_NAMES: ReadonlySet<string> = new Set([
+  "failed",
+  "failure",
+  "rejected",
+  "error",
+  "blocked",
+  "stale",
+]);
+
 export interface DAGAgentConfig {
   agent_type?: string;
   llm_setting_id?: string;

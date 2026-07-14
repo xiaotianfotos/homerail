@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import YAML from "yaml";
+import { FAILURE_PORT_NAMES } from "./graph.js";
 import type {
   DAGEdge,
   DAGGraphData,
@@ -11,8 +12,6 @@ import type {
   ResolvedWorkflowMeta,
 } from "./graph.js";
 import { assertGraphValid } from "./graph-validator.js";
-
-const FAILURE_PORTS = new Set(["failed", "failure", "rejected", "error"]);
 
 function _parseTarget(
   target: string,
@@ -60,7 +59,7 @@ function _normalizeOutputCondition(
   if (raw === "on_success" || raw === "on_failure" || raw === "always") {
     return raw;
   }
-  return FAILURE_PORTS.has(port.toLowerCase()) ? "on_failure" : "on_success";
+  return FAILURE_PORT_NAMES.has(port.toLowerCase()) ? "on_failure" : "on_success";
 }
 
 function _normalizeRequirements(value: unknown): DAGNodeRequirements | undefined {

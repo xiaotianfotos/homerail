@@ -9,6 +9,7 @@ import type {
   DAGEdge,
   ParsedDAG,
 } from "./graph.js";
+import { FAILURE_PORT_NAMES } from "./graph.js";
 import { parseDAGYaml } from "./yaml-loader.js";
 import { assertGraphValid } from "./graph-validator.js";
 import { validateJsonContractSchema } from "./json-contract.js";
@@ -25,8 +26,6 @@ import {
 
 export type WorkflowSourceVersion = typeof WORKFLOW_API_VERSION | "legacy/v0";
 export type WorkflowSourceFormat = "yaml" | "json";
-const FAILURE_PORT_NAMES = new Set(["failed", "failure", "rejected", "error"]);
-
 export interface WorkflowDiagnostic {
   severity: "error" | "warning";
   code: string;

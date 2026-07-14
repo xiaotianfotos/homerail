@@ -90,6 +90,33 @@ describe("DAG failure routing", () => {
     }));
   });
 
+  it.each(["blocked", "stale"])("treats the %s port as a failure route", (port) => {
+    const parsed = parseDAGYaml(`
+name: negative-routing
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  start:
+    agent: worker
+    outputs:
+      ${port}: { to: recovery.in:task }
+  recovery:
+    agent: worker
+    after: [start]
+    outputs: { done: { to: "" } }
+`);
+
+    expect(parsed.graph.edges).toContainEqual(expect.objectContaining({
+      from_node: "start",
+      from_port: port,
+      to_node: "recovery",
+      condition: "on_failure",
+    }));
+    createActiveRun(`run-${port}`, parsed);
+    expect(handoffActiveRun(`run-${port}`, "start", port, { reason: port })?.dagRun.nodeStates.get("recovery"))
+      .toBe("READY");
+  });
+
   it("skips the failure branch when a node handoffs on a success port", () => {
     const parsed = parseDAGYaml(failureBranchYaml());
     createActiveRun("run-success", parsed);

@@ -17,3 +17,5 @@ export * from "./manager-agent-tools.js";
 export * from "./manager-agent-widget-tools.js";
 export * from "./manager-agent-prompt.js";
 export * from "./telemetry-redaction.js";
+export * from "./pr-closeout.js";
+export * from "./pr-review.js";

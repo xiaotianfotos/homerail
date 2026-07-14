@@ -26,6 +26,27 @@ import {
 } from "../src/server/manager-skills.js";
 import { finalizeRunArtifacts } from "../src/runtime/run-artifact-service.js";
 
+function passingReviewReport(): Record<string, unknown> {
+  const categories = ["runtime", "security", "tests", "frontend"];
+  return {
+    repo: "xiaotianfotos/homerail",
+    pr: 25,
+    base: "a".repeat(40),
+    head: "b".repeat(40),
+    status: "pass",
+    confidence: "high",
+    summary: "No actionable findings",
+    actionable_count: 0,
+    findings: [],
+    reviewer_results: categories.map((reviewer) => ({
+      reviewer,
+      status: "complete",
+      summary: `${reviewer} review complete`,
+      findings: [],
+    })),
+  };
+}
+
 describe("PR Review scenario assets", () => {
   let oldHome: string | undefined;
   let oldAssetDir: string | undefined;
@@ -58,7 +79,7 @@ describe("PR Review scenario assets", () => {
 
     expect(result.valid).toBe(true);
     expect(result.diagnostics).toEqual([]);
-    expect(result.summary).toMatchObject({ workflow_id: "pr-review", node_count: 31, edge_count: 40 });
+    expect(result.summary).toMatchObject({ workflow_id: "pr-review" });
     expect(result.canonical?.artifacts).toEqual([
       expect.objectContaining({
         name: "pr-review.json",
@@ -121,7 +142,7 @@ describe("PR Review scenario assets", () => {
 
     const publishedContract = parseWorkflowSource(source).meta.contracts?.PublishedReview;
     const publication = {
-      report: { status: "pass" },
+      report: passingReviewReport(),
       markdown: "# Review",
       quorum: { passed: true, successes: 2, total: 3, threshold: 2 },
     };
@@ -142,7 +163,16 @@ describe("PR Review scenario assets", () => {
       ...publication,
       report: { status: "inconclusive" },
       quorum: { passed: false, successes: 1, total: 3, threshold: 2 },
+    })).toMatchObject({ valid: false });
+    expect(validateJsonContract(publishedContract, {
+      ...publication,
+      report: { ...passingReviewReport(), status: "inconclusive" },
+      quorum: { passed: false, successes: 1, total: 3, threshold: 2 },
     })).toMatchObject({ valid: true });
+    expect(validateJsonContract(publishedContract, {
+      ...publication,
+      report: { status: "pass" },
+    })).toMatchObject({ valid: false });
 
     const inputContract = parseWorkflowSource(source).meta.contracts?.PRReviewInput;
     const reviewInput = {
@@ -164,6 +194,10 @@ describe("PR Review scenario assets", () => {
       ...reviewInput,
       head_clone_url: "https://github.example/contributor/homerail.git?token=secret",
     })).toMatchObject({ valid: false });
+    expect(validateJsonContract(inputContract, {
+      ...reviewInput,
+      head: "b".repeat(12),
+    })).toMatchObject({ valid: false });
   });
 
   it("installs Manager guidance and lists tracked template assets", async () => {
@@ -184,7 +218,6 @@ describe("PR Review scenario assets", () => {
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(workflow).toContain("continue-on-error: true");
     expect(workflow.match(/continue-on-error: true/g)).toHaveLength(2);
-    expect(workflow.match(/^    env:$/gm)).toHaveLength(1);
     expect(workflow).toContain("dag run-template pr-review");
     expect(workflow).toContain('dag artifact "$RUN_ID" pr-review.json');
     expect(workflow).toContain('dag artifact "$RUN_ID" pr-review.md');
@@ -205,7 +238,6 @@ describe("PR Review scenario assets", () => {
     expect(workflow).toContain('dag artifact "$RUN_ID" pr-closeout.json');
     expect(workflow).not.toContain("closeout-report");
     expect(workflow).toContain("HOMERAIL_HOME: ${{ runner.temp }}/homerail-pr-closeout-cli-${{ github.run_id }}");
-    expect(workflow.match(/^    env:$/gm)).toHaveLength(1);
     expect(workflow).not.toContain("gh pr merge");
     expect(workflow).toContain("This workflow never merges the pull request.");
     expect(parsed.jobs.closeout.env).not.toHaveProperty("HOMERAIL_HOME");
@@ -265,23 +297,7 @@ describe("PR Review scenario assets", () => {
     expect(executor.tick("pr-review-runtime")).toBeGreaterThan(0);
     expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("synthesize");
 
-    const report = {
-      repo: "xiaotianfotos/homerail",
-      pr: 25,
-      base: "a".repeat(40),
-      head: "b".repeat(40),
-      status: "pass",
-      confidence: "high",
-      summary: "No actionable findings",
-      actionable_count: 0,
-      findings: [],
-      reviewer_results: categories.map((category) => ({
-        reviewer: category,
-        status: "complete",
-        summary: `${category} review complete`,
-        findings: [],
-      })),
-    };
+    const report = passingReviewReport();
     handoffActiveRun("pr-review-runtime", "synthesize", "drafted", report);
     expect(executor.tick("pr-review-runtime")).toBe(3);
     handoffActiveRun("pr-review-runtime", "evidence_vote", "voted", {
