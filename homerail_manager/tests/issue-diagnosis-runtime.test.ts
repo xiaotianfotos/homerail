@@ -68,14 +68,6 @@ const plan = {
   ],
 };
 
-const preparation = {
-  status: "prepared",
-  tested_revision: revision,
-  source_path: "source",
-  evidence: ["Checked out " + revision + " into source."],
-  limitations: [],
-};
-
 const reproductionReview = {
   reviewer_id: "reproduction",
   tested_revision: revision,
@@ -241,7 +233,6 @@ function vote(reviewerId: "scenario" | "evidence" | "adversarial", verdict: "pas
 
 function prepareDiagnosisRun(
   runId: string,
-  repositoryPreparation = preparation,
   focusedFiles: Record<string, string> = {},
 ): FakeDAGDispatcher {
   const dispatcher = new FakeDAGDispatcher();
@@ -278,7 +269,19 @@ function prepareDiagnosisRun(
   handoffActiveRun(runId, "triage", "planned", plan);
 
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
-  handoffActiveRun(runId, "prepare_repository", "prepared", repositoryPreparation);
+  expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+  expect(loadRunSnapshot(runId)?.handoffs.find(
+    (handoff) => handoff.fromNode === "prepare_repository",
+  )?.content).toEqual({
+    status: "prepared",
+    tested_revision: revision,
+    source_path: "source",
+    evidence: {
+      checkout_ok: true,
+      checked_revision: revision,
+    },
+    limitations: [],
+  });
 
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
@@ -287,11 +290,11 @@ function prepareDiagnosisRun(
   return dispatcher;
 }
 
-function runToConsensus(runId: string, repositoryPreparation = preparation): {
+function runToConsensus(runId: string): {
   dispatcher: FakeDAGDispatcher;
   votes: ReturnType<typeof vote>[];
 } {
-  const dispatcher = prepareDiagnosisRun(runId, repositoryPreparation);
+  const dispatcher = prepareDiagnosisRun(runId);
   handoffActiveRun(runId, "review_reproduction", "reviewed", reproductionReview);
 
   expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
@@ -377,7 +380,7 @@ describe("issue-diagnosis pattern runtime", () => {
 
   it("captures bounded line-numbered focus evidence without reading traversal paths", () => {
     const runId = "issue-diagnosis-focused-source-snapshot";
-    prepareDiagnosisRun(runId, preparation, {
+    prepareDiagnosisRun(runId, {
       "homerail_manager/src/orchestration/dag-patterns.ts": [
         "const heartbeat = { id: 'heartbeat' };",
         "export const patterns = [heartbeat];",
@@ -449,11 +452,7 @@ describe("issue-diagnosis pattern runtime", () => {
 
   it("publishes the arbitrated report after unanimous verification", async () => {
     const runId = "issue-diagnosis-pass";
-    const { dispatcher, votes } = runToConsensus(runId, {
-      ...preparation,
-      status: "unavailable",
-      limitations: ["The correction handoff was conservative; deterministic Git HEAD verification is authoritative."],
-    });
+    const { dispatcher, votes } = runToConsensus(runId);
     const verification = {
       verdict: "pass",
       policy: "unanimous-three-reviewers",

@@ -56,7 +56,7 @@ function installPrepareCommandStub(parsed: ReturnType<typeof parseWorkflowSource
   prepare.gateway_config.command = [
     "node",
     "-e",
-    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const i=JSON.parse(s),r=Array.isArray(i.request)?i.request.at(-1):undefined,p=r?.input?.payload;if(!p)throw new Error('missing request');process.stdout.write(JSON.stringify({repo:p.repo,pr:p.pr,base:p.base,head:p.head,repository_path:'/workspace/repository',changed_files:['src/run.ts'],diff_stat:'1 file changed'}))})",
+    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const i=JSON.parse(s),r=Array.isArray(i.request)?i.request.at(-1):undefined,p=r?.input?.payload;if(!p)throw new Error('missing request');process.stdout.write(JSON.stringify({repo:p.repo,pr:p.pr,base:p.base,head:p.head,repository_path:'/workspace/repository',changed_files:['src/run.ts'],diff_stat:'1 file changed',diff_patch:'diff --git a/src/run.ts b/src/run.ts',diff_truncated:false}))})",
   ];
 }
 
@@ -120,7 +120,7 @@ describe("PR Review scenario assets", () => {
     ]);
     for (const reviewer of ["runtime", "security", "test", "frontend"]) {
       expect(nodes.find((node) => node.id === `${reviewer}_review`)?.config).toMatchObject({
-        allowed_builtin_tools: ["Bash", "Glob", "Grep", "Read"],
+        allowed_builtin_tools: [],
         allowed_dag_tools: ["handoff"],
       });
       expect(nodes.find((node) => node.id === `normalize_${reviewer}_review`)).toMatchObject({
@@ -148,6 +148,18 @@ describe("PR Review scenario assets", () => {
     expect(nodes.find((node) => node.id === "coverage_vote")?.outputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "voted", contract: "CoverageVote" }),
     ]));
+    for (const voter of ["evidence_vote", "false_positive_vote"]) {
+      expect(nodes.find((node) => node.id === voter)).toMatchObject({
+        config: expect.objectContaining({
+          allowed_builtin_tools: [],
+          allowed_dag_tools: ["handoff"],
+        }),
+        inputs: expect.arrayContaining([
+          expect.objectContaining({ name: "report", contract: "DraftReviewReport" }),
+          expect.objectContaining({ name: "context", contract: "ReviewContext" }),
+        ]),
+      });
+    }
     expect(nodes.find((node) => node.id === "quorum_result")?.config).toMatchObject({
       mode: "any",
       field: "passed",
@@ -198,7 +210,10 @@ describe("PR Review scenario assets", () => {
     expect(prepareCode).toContain("GIT_CONFIG_NOSYSTEM");
     expect(prepareCode).toContain("protocol.file.allow=never");
     expect(prepareCode).toContain("--shortstat");
-    expect(prepareCode).toContain("repository_path:'/workspace/repository'");
+    expect(prepareCode).toContain("--unified=80");
+    expect(prepareCode).toContain("diff_patch");
+    expect(prepareCode).toContain("diff_truncated");
+    expect(prepareCode).toContain("repository_path: '/workspace/repository'");
     expect(agents).not.toHaveProperty("preparer");
     expect(result.canonical?.policies?.max_corrections_per_node).toBe(5);
     expect(nodes.find((node) => node.id === "synthesize")?.inputs).toEqual(expect.arrayContaining([
@@ -206,6 +221,17 @@ describe("PR Review scenario assets", () => {
     ]));
 
     const contracts = parseWorkflowSource(source).meta.contracts ?? {};
+    expect(validateJsonContract(contracts.ReviewContext, {
+      repo: "xiaotianfotos/homerail",
+      pr: 25,
+      base: "a".repeat(40),
+      head: "b".repeat(40),
+      repository_path: "/workspace/repository",
+      changed_files: ["src/run.ts"],
+      diff_stat: "1 file changed",
+      diff_patch: "diff --git a/src/run.ts b/src/run.ts",
+      diff_truncated: false,
+    })).toMatchObject({ valid: true });
     const finalReview = {
       report: passingReviewReport(),
       quorum: { passed: true, successes: 2, total: 3, threshold: 2 },

@@ -78,7 +78,7 @@ describe("built-in DAG patterns", () => {
     expect(Object.values(nodes).map((node) => node.kind)).toEqual([
       "agent",
       "command",
-      "agent",
+      "command",
       "command",
       "command",
       "command",
@@ -106,9 +106,16 @@ describe("built-in DAG patterns", () => {
       failure_port: "checked",
     });
     expect(nodes.checkout_repository?.config).not.toHaveProperty("command_field");
-    expect(nodes.prepare_repository?.workspace_access).toEqual({ writable_paths: [], readonly_paths: [] });
     expect(nodes.prepare_repository?.inputs).toHaveProperty("checkout");
-    for (const nodeId of ["triage", "prepare_repository", "arbitrate", "consensus"]) {
+    expect(nodes.prepare_repository?.config).toMatchObject({
+      command: ["node", "-e", expect.stringMatching(/(?=.*checkout_ok)(?=.*checked_revision)(?=.*tested_revision)/)],
+      stdin_field: "$inputs",
+      parse_stdout: "json",
+      result_payload: "value",
+      success_port: "prepared",
+      failure_port: "prepared",
+    });
+    for (const nodeId of ["triage", "arbitrate", "consensus"]) {
       expect(nodes[nodeId]?.allowed_builtin_tools).toEqual([]);
       expect(nodes[nodeId]?.allowed_dag_tools).toEqual(["handoff"]);
     }
@@ -178,11 +185,7 @@ describe("built-in DAG patterns", () => {
     });
     expect((spec.policies as Record<string, unknown>).max_parallelism).toBe(3);
     expect((spec.policies as Record<string, unknown>).max_corrections_per_node).toBe(5);
-    expect(pattern.parsed.meta.agents.repository_preparer?.system).toContain("Manager already ran the fixed credential-free checkout command");
-    expect(pattern.parsed.meta.agents.repository_preparer?.system).toContain("do not prepare, inspect, or mutate");
-    expect(pattern.parsed.meta.agents.repository_preparer?.system).toContain("checkout.ok=true");
-    expect(pattern.parsed.meta.agents.repository_preparer?.system).toContain("any tool except handoff");
-    expect(pattern.parsed.meta.agents.repository_preparer?.system).toContain("Never invent a hash");
+    expect(pattern.parsed.meta.agents).not.toHaveProperty("repository_preparer");
     expect(pattern.parsed.meta.agents.reproduction_reviewer?.system).toContain("claim proved true");
     expect(pattern.parsed.meta.agents.reproduction_reviewer?.system).toContain("revision_check.ok=true");
     expect(pattern.parsed.meta.agents.reproduction_reviewer?.system).toContain("reproduction=not_reproduced");
