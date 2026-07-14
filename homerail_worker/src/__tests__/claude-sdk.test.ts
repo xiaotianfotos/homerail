@@ -328,7 +328,7 @@ describe("ClaudeSdkAdapter", () => {
     });
   });
 
-  it("keeps the Claude Code system prompt and appends the HomeRail contract", async () => {
+  it("supports explicit custom prompt replacement and isolates Claude SDK settings", async () => {
     const captured: Record<string, unknown>[] = [];
     vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
       async *query(params: { options?: Record<string, unknown> }) {
@@ -345,17 +345,57 @@ describe("ClaudeSdkAdapter", () => {
 
     const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
     const adapter = new ClaudeSdkAdapter();
-    for await (const _event of adapter.run("test", [], {
+    const events: AgentEvent[] = [];
+    for await (const event of adapter.run("test", [], {
+      ...ctx,
+      systemPrompt: "HomeRail DAG contract",
+      systemPromptMode: "replace",
+    })) {
+      events.push(event);
+    }
+
+    expect(captured[0].systemPrompt).toBe("HomeRail DAG contract");
+    expect(captured[0].settingSources).toEqual([]);
+    expect(captured[0].strictMcpConfig).toBe(true);
+    expect(events.find((event) => event.type === "debug" && event.message === "query_start")).toMatchObject({
+      type: "debug",
+      data: expect.objectContaining({ system_prompt_mode: "replace" }),
+    });
+  });
+
+  it("appends HomeRail instructions to the Claude Code system prompt preset by default", async () => {
+    const captured: Record<string, unknown>[] = [];
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: Record<string, unknown> }) {
+        captured.push(params.options ?? {});
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(_opts: { name: string; tools?: Array<Record<string, unknown>> }) {
+        return { type: "sdk", name: _opts.name };
+      },
+      tool(name: string) {
+        return { name };
+      },
+    }));
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    const events: AgentEvent[] = [];
+    for await (const event of adapter.run("test", [], {
       ...ctx,
       systemPrompt: "HomeRail Manager contract",
     })) {
-      // Consume the adapter stream.
+      events.push(event);
     }
 
-    expect(captured[0]?.systemPrompt).toEqual({
+    expect(captured[0].systemPrompt).toEqual({
       type: "preset",
       preset: "claude_code",
       append: "HomeRail Manager contract",
+    });
+    expect(events.find((event) => event.type === "debug" && event.message === "query_start")).toMatchObject({
+      type: "debug",
+      data: expect.objectContaining({ system_prompt_mode: "append" }),
     });
   });
 

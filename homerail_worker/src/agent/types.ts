@@ -56,6 +56,12 @@ export interface AgentClient {
 /** Context passed to the agent for a single run. */
 export interface AgentRunContext {
   systemPrompt?: string;
+  /**
+   * `append` preserves the Claude Code preset and adds HomeRail instructions.
+   * Claude SDK defaults to `append`; `replace` remains available for explicit
+   * experiments. Other backends keep their existing custom prompt behavior.
+   */
+  systemPromptMode?: "replace" | "append";
   provider?: string;
   protocol?: string;
   model: string;

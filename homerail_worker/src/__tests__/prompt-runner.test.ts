@@ -459,6 +459,7 @@ describe("prompt runner", () => {
     );
 
     expect(observed).toMatchObject({
+      systemPromptMode: "append",
       provider: "anthropic",
       apiKey: "anthropic-test-secret",
       baseUrl: "https://api.anthropic.test",

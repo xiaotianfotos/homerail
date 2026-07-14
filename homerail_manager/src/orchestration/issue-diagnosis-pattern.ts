@@ -137,6 +137,16 @@ const nativeToolDiscipline = prompt(
   "Do not end by describing a future action. Finish the investigation with the required real handoff call.",
 );
 
+const handoffOnlyToolPolicy = {
+  allowed_builtin_tools: [],
+  allowed_dag_tools: ["handoff"],
+};
+
+const readOnlyInvestigationToolPolicy = {
+  allowed_builtin_tools: ["Bash", "Read", "Grep", "Glob"],
+  allowed_dag_tools: ["handoff"],
+};
+
 const independentReviewPrompt = (
   reviewerId: "reproduction" | "dataflow" | "history",
   idPrefix: "repro" | "dataflow" | "history",
@@ -881,6 +891,7 @@ export function createIssueDiagnosisPattern(
           triage: {
             kind: "agent",
             agent: "triage",
+            ...handoffOnlyToolPolicy,
             workspace_access: { writable_paths: [], readonly_paths: [] },
             inputs: { request: { contract: "IssueDiagnosisRequest" } },
             outputs: { planned: { contract: "DiagnosticPlan" } },
@@ -904,6 +915,7 @@ export function createIssueDiagnosisPattern(
           prepare_repository: {
             kind: "agent",
             agent: "repository_preparer",
+            ...handoffOnlyToolPolicy,
             workspace_access: { writable_paths: [], readonly_paths: [] },
             inputs: {
               request: { contract: "IssueDiagnosisRequest" },
@@ -965,6 +977,7 @@ export function createIssueDiagnosisPattern(
           review_reproduction: {
             kind: "agent",
             agent: "reproduction_reviewer",
+            ...readOnlyInvestigationToolPolicy,
             workspace_access: {
               writable_paths: ["scratch/reproduction"],
               readonly_paths: ["source"],
@@ -1006,6 +1019,7 @@ export function createIssueDiagnosisPattern(
           review_dataflow: {
             kind: "agent",
             agent: "dataflow_reviewer",
+            ...readOnlyInvestigationToolPolicy,
             // The reproduction node is the only reviewer allowed to write its
             // scratch copy. Finish that writer before read-only snapshots begin.
             depends_on: ["normalize_reproduction"],
@@ -1046,6 +1060,7 @@ export function createIssueDiagnosisPattern(
           review_history: {
             kind: "agent",
             agent: "history_reviewer",
+            ...readOnlyInvestigationToolPolicy,
             depends_on: ["normalize_reproduction"],
             workspace_access: { writable_paths: [], readonly_paths: ["source"], max_snapshot_files: 100000 },
             inputs: {
@@ -1084,6 +1099,7 @@ export function createIssueDiagnosisPattern(
           arbitrate: {
             kind: "agent",
             agent: "arbiter",
+            ...handoffOnlyToolPolicy,
             workspace_access: { writable_paths: [], readonly_paths: [] },
             inputs: {
               request: { contract: "IssueDiagnosisRequest" },
@@ -1097,6 +1113,7 @@ export function createIssueDiagnosisPattern(
           verify_scenario: {
             kind: "agent",
             agent: "scenario_verifier",
+            ...readOnlyInvestigationToolPolicy,
             workspace_access: { writable_paths: [], readonly_paths: ["source"], max_snapshot_files: 100000 },
             inputs: {
               request: { contract: "IssueDiagnosisRequest" },
@@ -1112,6 +1129,7 @@ export function createIssueDiagnosisPattern(
           verify_evidence: {
             kind: "agent",
             agent: "evidence_verifier",
+            ...readOnlyInvestigationToolPolicy,
             workspace_access: { writable_paths: [], readonly_paths: ["source"], max_snapshot_files: 100000 },
             inputs: {
               request: { contract: "IssueDiagnosisRequest" },
@@ -1127,6 +1145,7 @@ export function createIssueDiagnosisPattern(
           verify_adversarial: {
             kind: "agent",
             agent: "adversarial_verifier",
+            ...readOnlyInvestigationToolPolicy,
             workspace_access: { writable_paths: [], readonly_paths: ["source"], max_snapshot_files: 100000 },
             inputs: {
               request: { contract: "IssueDiagnosisRequest" },
@@ -1143,6 +1162,7 @@ export function createIssueDiagnosisPattern(
           consensus: {
             kind: "agent",
             agent: "consensus",
+            ...handoffOnlyToolPolicy,
             workspace_access: { writable_paths: [], readonly_paths: [] },
             inputs: {
               report: { contract: "DiagnosisReport" },

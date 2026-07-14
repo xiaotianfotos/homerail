@@ -108,6 +108,10 @@ describe("built-in DAG patterns", () => {
     expect(nodes.checkout_repository?.config).not.toHaveProperty("command_field");
     expect(nodes.prepare_repository?.workspace_access).toEqual({ writable_paths: [], readonly_paths: [] });
     expect(nodes.prepare_repository?.inputs).toHaveProperty("checkout");
+    for (const nodeId of ["triage", "prepare_repository", "arbitrate", "consensus"]) {
+      expect(nodes[nodeId]?.allowed_builtin_tools).toEqual([]);
+      expect(nodes[nodeId]?.allowed_dag_tools).toEqual(["handoff"]);
+    }
     expect(nodes.resolve_repository_head?.config).toMatchObject({
       command: ["git", "-c", "safe.directory=*", "rev-parse", "HEAD"],
       cwd: "$run_workspace/source",
@@ -146,6 +150,8 @@ describe("built-in DAG patterns", () => {
       "verify_adversarial",
     ]) {
       expect(nodes[nodeId]?.inputs).toHaveProperty("focus_snapshot");
+      expect(nodes[nodeId]?.allowed_builtin_tools).toEqual(["Bash", "Read", "Grep", "Glob"]);
+      expect(nodes[nodeId]?.allowed_dag_tools).toEqual(["handoff"]);
     }
     expect(nodes.review_dataflow?.depends_on).toEqual(["normalize_reproduction"]);
     expect(nodes.review_history?.depends_on).toEqual(["normalize_reproduction"]);
