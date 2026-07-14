@@ -82,7 +82,8 @@ import {
   createVoiceSpeechEventKey,
   hasRecentVoiceSpeechEvent,
   isVoiceConversationMessageSpeakable,
-  rememberVoiceSpeechEvent
+  rememberVoiceSpeechEvent,
+  voiceConversationMessageSpeechText
 } from '@/utils/voice-speech-queue'
 import {
   isAndroidTvCompactViewport,
@@ -3076,18 +3077,19 @@ function queueNewAssistantSpeech(nextWorkspace: VoiceWorkspace | null | undefine
     item =>
       isVoiceConversationMessageSpeakable(item) &&
       !spokenAssistantMessageIds.value.has(item.id) &&
-      item.text.trim()
+      voiceConversationMessageSpeechText(item)
   )
   if (!candidates.length) return
   const next = new Set(spokenAssistantMessageIds.value)
   for (const item of candidates) next.add(item.id)
   spokenAssistantMessageIds.value = next
   const messages = candidates.filter(item => {
-    const event = { channel: item.channel || 'final', text: item.text }
+    const speechText = voiceConversationMessageSpeechText(item)
+    const event = { channel: item.channel || 'final', text: speechText }
     if (!hasRecentVoiceSpeechEvent(speechEventKeySeenAt, event)) return true
     recordTtsDebug(
       'tts_workspace_fallback_deduped',
-      `id=${item.id} key=${createVoiceSpeechEventKey(event)} text="${previewSpeechText(item.text)}"`
+      `id=${item.id} key=${createVoiceSpeechEventKey(event)} text="${previewSpeechText(speechText)}"`
     )
     return false
   })
@@ -3095,7 +3097,14 @@ function queueNewAssistantSpeech(nextWorkspace: VoiceWorkspace | null | undefine
   backgroundSpeechQueue = backgroundSpeechQueue
     .then(async () => {
       for (const item of messages) {
-        enqueueSpeechEvent({ id: item.id, channel: item.channel || 'final', text: item.text }, 'workspace')
+        enqueueSpeechEvent(
+          {
+            id: item.id,
+            channel: item.channel || 'final',
+            text: voiceConversationMessageSpeechText(item)
+          },
+          'workspace'
+        )
       }
     })
     .catch((err: any) => {

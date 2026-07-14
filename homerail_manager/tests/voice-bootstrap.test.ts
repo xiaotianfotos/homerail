@@ -850,14 +850,15 @@ describe("voice bootstrap routes", () => {
   });
 
   it("streams Manager Agent commentary before the final done event", async () => {
+    const fullCommentary = `正在检查项目：${"逐项核对完整的依赖、配置与运行日志。".repeat(8)}`;
     _setHostCodexManagerAgentStreamRunnerForTest(async function* (input) {
-      yield { type: "commentary", text: "正在检查项目。", source: "tool" };
+      yield { type: "commentary", text: fullCommentary, source: "tool" };
       yield {
         type: "result",
         result: {
           text: `handled ${input.message}`,
           spoken_text: "处理完成。",
-          commentary_texts: ["正在检查项目。"],
+          commentary_texts: [fullCommentary],
           session_id: input.session_id || "host-session-stream",
           run_id: null,
           run_ids: [],
@@ -891,16 +892,30 @@ describe("voice bootstrap routes", () => {
     const lines = (await stream.text())
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { type: string; event?: { channel?: string; text?: string } });
+      .map((line) => JSON.parse(line) as {
+        type: string;
+        event?: { channel?: string; text?: string };
+        workspace?: {
+          conversation: Array<{ role: string; text: string; spoken_text?: string; channel?: string }>;
+        };
+      });
     const commentaryIndex = lines.findIndex((line) => line.type === "speech" && line.event?.channel === "commentary");
     const doneIndex = lines.findIndex((line) => line.type === "done");
     const commentaryEvents = lines.filter((line) => line.type === "speech" && line.event?.channel === "commentary");
+    const doneWorkspace = lines[doneIndex]?.workspace;
 
     expect(stream.status).toBe(200);
     expect(commentaryIndex).toBeGreaterThan(-1);
     expect(doneIndex).toBeGreaterThan(commentaryIndex);
     expect(commentaryEvents).toHaveLength(1);
-    expect(commentaryEvents[0]?.event?.text).toBe("正在检查项目。");
+    expect(commentaryEvents[0]?.event?.text?.length).toBeLessThanOrEqual(120);
+    expect(commentaryEvents[0]?.event?.text).not.toBe(fullCommentary);
+    expect(doneWorkspace?.conversation).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      text: fullCommentary,
+      spoken_text: commentaryEvents[0]?.event?.text,
+      channel: "commentary",
+    }));
   });
 
   it("persists manager-agent voice errors as failed sessions instead of throwing status errors", async () => {
@@ -1525,7 +1540,7 @@ describe("voice bootstrap routes", () => {
           task_draft: unknown;
           pending_confirmations: unknown[];
           widgets: Array<{ id: string }>;
-          conversation: Array<{ role: string; text: string; channel?: string }>;
+          conversation: Array<{ role: string; text: string; spoken_text?: string; channel?: string }>;
           debug_events: Array<{ code: string }>;
           progress_brief: { status: string };
         };
@@ -1544,7 +1559,14 @@ describe("voice bootstrap routes", () => {
     expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
       role: "assistant",
       text: "正在调用 Manager tools。",
+      spoken_text: "正在调用 Manager tools。",
       channel: "commentary",
+    }));
+    expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      text: "host codex handled: HomeRail 语音测试，请创建一个一句话任务摘要，不要执行真实操作。",
+      spoken_text: "已启动执行，我会继续跟进。",
+      channel: "final",
     }));
     expect(body.data.workspace.progress_brief.status).toBe("done");
     expect(body.data.workspace.debug_events).toContainEqual(expect.objectContaining({ code: "manager_agent_warning" }));
@@ -1849,7 +1871,7 @@ describe("voice bootstrap routes", () => {
         spoken_text: string;
         workspace: {
           widgets: Array<{ id: string; type: string; body: string }>;
-          conversation: Array<{ role: string; text: string; channel?: string }>;
+          conversation: Array<{ role: string; text: string; spoken_text?: string; channel?: string }>;
         };
       };
     };
@@ -1861,9 +1883,115 @@ describe("voice bootstrap routes", () => {
     expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-summary" }));
     expect(body.data.workspace.conversation.at(-1)).toMatchObject({
       role: "assistant",
-      text: body.data.spoken_text,
+      text: verbose,
+      spoken_text: body.data.spoken_text,
       channel: "final",
     });
+    const reloaded = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}`);
+    const reloadedBody = await reloaded.json() as {
+      data: {
+        conversation: Array<{ role: string; text: string; spoken_text?: string; channel?: string }>;
+      };
+    };
+    expect(reloaded.status).toBe(200);
+    expect(reloadedBody.data.conversation.at(-1)).toMatchObject({
+      role: "assistant",
+      text: verbose,
+      spoken_text: body.data.spoken_text,
+      channel: "final",
+    });
+  });
+
+  it("persists full blocked and failed explanations while speaking concise status text", async () => {
+    const fullCommentary = `正在核对失败原因：${"检查运行记录和依赖状态。".repeat(12)}`;
+    const explanations = {
+      blocked: `任务暂时被阻塞：${"缺少继续执行所需的外部输入和确认。".repeat(10)}`,
+      failed: `任务执行失败：${"下游服务返回了不可恢复的错误，需要人工处理。".repeat(10)}`,
+    };
+    _setHostCodexManagerAgentRunnerForTest(async (input) => {
+      const status = input.message === "simulate failed" ? "failed" : "blocked";
+      return {
+        text: explanations[status],
+        spoken_text: explanations[status],
+        session_id: input.session_id || "host-session-status",
+        run_id: null,
+        run_ids: [],
+        objective: { required: true, satisfied: false, tool_calls: [] },
+        tool_calls: [],
+        tool_results: [],
+        commentary_texts: [fullCommentary],
+        voice_surface: {
+          progress: { status, short_text: explanations[status] },
+          task_draft: null,
+          widgets: [],
+          remove_widget_ids: [],
+        },
+        worker_id: "host-codex",
+        container_name: null,
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5", reasoning_effort: "low" }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+
+    for (const status of ["blocked", "failed"] as const) {
+      const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `simulate ${status}` }),
+      });
+      const body = await turn.json() as {
+        data: {
+          spoken_text: string;
+          voice_events: Array<{ channel: string; text: string }>;
+          manager: { text?: string };
+          workspace: {
+            progress_brief: { status: string };
+            conversation: Array<{
+              role: string;
+              text: string;
+              spoken_text?: string;
+              channel?: string;
+            }>;
+          };
+        };
+      };
+      const finalMessage = body.data.workspace.conversation.at(-1);
+      const commentaryMessage = body.data.workspace.conversation.findLast(
+        (item) => item.channel === "commentary" && item.text === fullCommentary,
+      );
+      const commentarySpeech = body.data.voice_events.find((event) => event.channel === "commentary");
+
+      expect(turn.status).toBe(200);
+      expect(body.data.workspace.progress_brief.status).toBe(status);
+      expect(body.data.manager.text).toBe(explanations[status]);
+      expect(body.data.spoken_text).toBe("处理被阻塞，原因已放到屏幕上。");
+      expect(finalMessage).toMatchObject({
+        role: "assistant",
+        text: explanations[status],
+        spoken_text: body.data.spoken_text,
+        channel: "final",
+      });
+      expect(commentarySpeech?.text.length).toBeLessThanOrEqual(120);
+      expect(commentarySpeech?.text).not.toBe(fullCommentary);
+      expect(commentaryMessage).toMatchObject({
+        role: "assistant",
+        text: fullCommentary,
+        spoken_text: commentarySpeech?.text,
+        channel: "commentary",
+      });
+    }
   });
 
   it("applies structured voice surface without creating the default Manager Agent status card", async () => {
