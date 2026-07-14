@@ -80,6 +80,7 @@ const rootScope = computed(() => ({ value: dataModel.value, key: 'root' }))
   --hr-a2ui-gap-sm: 10px;
   --hr-a2ui-gap-md: 16px;
   --hr-a2ui-gap-lg: 24px;
+  --tone: #91aaa7;
   min-width: 0;
   min-height: 100%;
   overflow: visible;
@@ -379,21 +380,21 @@ const rootScope = computed(() => ({ value: dataModel.value, key: 'root' }))
 }
 .hr-a2ui__section > header { color: #6fe3d9; font-size: 12px; font-weight: 850; text-transform: uppercase; }
 
-.hr-a2ui__node[data-tone='positive'] { --tone: #45d5a4; }
-.hr-a2ui__node[data-tone='info'] { --tone: #5ed9cf; }
-.hr-a2ui__node[data-tone='warning'] { --tone: #efb34f; }
-.hr-a2ui__node[data-tone='critical'] { --tone: #f17478; }
-.hr-a2ui__node[data-tone='neutral'] { --tone: #91aaa7; }
+.homerail-a2ui [data-tone='positive'] { --tone: #45d58a; }
+.homerail-a2ui [data-tone='info'] { --tone: #59b8ff; }
+.homerail-a2ui [data-tone='warning'] { --tone: #efb34f; }
+.homerail-a2ui [data-tone='critical'] { --tone: #f17478; }
+.homerail-a2ui [data-tone='neutral'] { --tone: #91aaa7; }
 
 .hr-a2ui__metric {
   display: grid;
   min-height: 92px;
   align-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid color-mix(in srgb, var(--tone) 24%, rgba(255, 255, 255, 0.08));
   border-left: 3px solid var(--tone);
   border-radius: 7px;
   padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.025);
+  background: color-mix(in srgb, var(--tone) 8%, rgba(255, 255, 255, 0.025));
 }
 .hr-a2ui__metric span { color: rgba(207, 228, 225, 0.56); font-size: 12px; }
 .hr-a2ui__metric strong { margin-top: 4px; color: #f7ffff; font-size: 28px; }
@@ -409,7 +410,7 @@ const rootScope = computed(() => ({ value: dataModel.value, key: 'root' }))
   padding: 5px 9px;
   overflow-wrap: anywhere;
   color: var(--tone);
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--tone) 10%, rgba(255, 255, 255, 0.04));
   font-size: 11px;
   font-weight: 800;
 }

@@ -134,6 +134,25 @@ describe('A2uiRenderer', () => {
     expect(rendererSource).toContain('.hr-a2ui__step-rail::after')
   })
 
+  it('applies the semantic palette to tone-bearing collection items', () => {
+    const mounted = mount(surface([
+      { id: 'root', component: 'HrBarChart', source: { path: '/channels' }, itemLabelPath: '/label', itemValuePath: '/value', itemTonePath: '/tone' },
+    ]), {
+      channels: [
+        { label: 'Video', value: 82, tone: 'info' },
+        { label: 'Article', value: 64, tone: 'positive' },
+        { label: 'Post', value: 91, tone: 'warning' },
+        { label: 'Live', value: 48, tone: 'critical' },
+      ],
+    })
+
+    expect([...mounted.querySelectorAll<HTMLElement>('.hr-a2ui__bar-chart > div')].map(item => item.dataset.tone)).toEqual([
+      'info', 'positive', 'warning', 'critical',
+    ])
+    expect(rendererSource).toContain(".homerail-a2ui [data-tone='info'] { --tone: #59b8ff; }")
+    expect(rendererSource).toContain(".homerail-a2ui [data-tone='positive'] { --tone: #45d58a; }")
+  })
+
   it('renders camelCase Metric, Table, DAG, and passive Artifact components', async () => {
     const mounted = mount(surface([
       { id: 'root', component: 'Column', children: ['metric', 'table', 'dag', 'source', 'remote', 'image', 'html'] },
