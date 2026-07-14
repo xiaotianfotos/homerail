@@ -69,6 +69,12 @@ describe("prompt runner", () => {
     expect(types).toContain("content");
     expect(types).toContain("node_error");
     expect(types).toContain("SESSION_END");
+    const activities = sent
+      .map((message) => JSON.parse(message))
+      .filter((message) => message.type === "stream" && message.data?.event === "dag_activity")
+      .map((message) => message.data.activity);
+    expect(activities.map((activity) => activity.type)).toEqual(["started", "failed"]);
+    expect(activities.map((activity) => activity.sequence)).toEqual([1, 2]);
   });
 
   it("sends node_error with agent error when a prompt ends without handoff", async () => {
@@ -703,6 +709,16 @@ describe("prompt runner", () => {
       port: "done",
       content: "Source Issue: #847\n\nArtifact: ok",
     });
+    const activities = parsed
+      .filter((message) => message.type === "stream" && message.data?.event === "dag_activity")
+      .map((message) => message.data.activity);
+    expect(activities.map((activity) => activity.type)).toEqual([
+      "started",
+      "tool_used",
+      "tool_used",
+      "completed",
+    ]);
+    expect(activities.map((activity) => activity.sequence)).toEqual([1, 2, 3, 4]);
     expect(parsed.map((msg) => msg.type)).toContain("SESSION_END");
   });
 });

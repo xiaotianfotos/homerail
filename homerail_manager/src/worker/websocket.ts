@@ -28,6 +28,7 @@ import {
   isControlPlaneUpgradeAuthorized,
   rejectWebSocketUpgrade,
 } from "../server/control-plane-auth.js";
+import { ingestDagActivityStream } from "../runtime/dag-activity-stream.js";
 
 const WS_URL_PATTERN = /^\/ws\/projects\/([^\/]+)\/workers\/([^\/]+)$/;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
@@ -389,9 +390,24 @@ export function setupWorkerWebSocket(
         }
 
         if (msg.type === "stream") {
-          if (shouldIgnoreStaleSession(worker_id, "stream", msg.data)) return;
           const runId = streamRunId(msg.data);
           const nodeId = streamNodeId(msg.data);
+          if (msg.data.event === "dag_activity") {
+            try {
+              if (!runId || !nodeId) throw new Error("DAG activity transport identity is missing");
+              ingestDagActivityStream(msg.data, {
+                runId,
+                nodeId,
+                roundId: dataSessionId(msg.data),
+              });
+            } catch (error) {
+              console.warn(
+                `[homerail_manager] rejected DAG activity from worker ${worker_id}: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+            return;
+          }
+          if (shouldIgnoreStaleSession(worker_id, "stream", msg.data)) return;
           if (runId && nodeId) {
             if (msg.data.event === "advisor_call_started" && typeof msg.data.advisor_id === "string") {
               recordAdvisorCall(runId, nodeId, msg.data.advisor_id);

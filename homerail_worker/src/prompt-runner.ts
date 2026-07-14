@@ -14,6 +14,7 @@ import type { AuditWriters } from "./audit/index.js";
 import { appendTranscriptEntry, redactAgentContext, saveSession } from "./session/session-store.js";
 import { redactTelemetry } from "./telemetry-redaction.js";
 import { snapshotWorkspace, verifyWorkspacePolicy, type WorkspaceSnapshot } from "./workspace-policy.js";
+import { createDagActivityEmitter } from "./dag-activity.js";
 
 export interface PromptJob {
   task: string;
@@ -196,8 +197,12 @@ export async function runPrompt(
   const dagState = createDagToolsState(job.dagConfig, job.runId, wsSend);
   const workspace = process.env.WORKSPACE ?? process.cwd();
   const correctionOnly = /(?:^|\n)## input:correction(?:\r?\n|$)/.test(job.task);
+  const activityEmitter = createDagActivityEmitter(job.dagConfig, job.runId, (activity) => {
+    sendStream({ event: "dag_activity", activity });
+  });
   const allDagTools = createDagTools(dagState, {
     advisorRunner: (advisor, question) => runAdvisorCall(advisor, question, workspace, deps.abortSignal),
+    activityEmitter: (type, payload) => activityEmitter.emit(type, payload),
   });
   const allowedDagTools = job.dagConfig.allowed_dag_tools === undefined
     ? undefined
@@ -280,6 +285,13 @@ export async function runPrompt(
   let nodeDurationMs: number | undefined;
   let nodeNumTurns: number | undefined;
   let workspaceBefore: WorkspaceSnapshot | undefined;
+  let terminalActivityEmitted = false;
+  const toolNamesById = new Map<string, string>();
+
+  activityEmitter.emit("started", {
+    session_id: job.dagConfig.session_id ?? job.runId,
+    sender: job.sender,
+  });
 
   try {
     if (dagState.workspaceAccess) {
@@ -361,6 +373,7 @@ export async function runPrompt(
           break;
         }
         case "tool_use":
+          toolNamesById.set(event.id, event.name);
           appendSessionTranscript("tool_use", undefined, {
             tool_name: event.name,
             tool_id: event.id,
@@ -372,6 +385,14 @@ export async function runPrompt(
             tool_id: event.id,
             tool_input: redactTelemetry(event.input),
           });
+          if (event.name !== "report_activity") {
+            activityEmitter.emit("tool_used", {
+              phase: "started",
+              tool_name: event.name,
+              tool_id: event.id,
+              input: event.input,
+            });
+          }
           audit?.toolEvents.write({
             event: "tool_use",
             tool_name: event.name,
@@ -393,6 +414,15 @@ export async function runPrompt(
             is_error: event.is_error,
             result_preview: redactTelemetry(event.content),
           });
+          if (toolNamesById.get(event.tool_use_id) !== "report_activity") {
+            activityEmitter.emit("tool_used", {
+              phase: "completed",
+              tool_name: toolNamesById.get(event.tool_use_id) ?? "unknown",
+              tool_id: event.tool_use_id,
+              is_error: event.is_error === true,
+              result_preview: String(redactTelemetry(event.content)).slice(0, 4000),
+            });
+          }
           audit?.toolEvents.write({
             event: "tool_result",
             tool_use_id: event.tool_use_id,
@@ -447,6 +477,14 @@ export async function runPrompt(
         }
       }
       if (workspaceValid && dagState.handoffData) {
+        const handoff = dagState.handoffData as Record<string, unknown>;
+        const port = typeof handoff.port === "string"
+          ? handoff.port
+          : typeof handoff.from_port === "string"
+            ? handoff.from_port
+            : undefined;
+        activityEmitter.emit("completed", port ? { port } : {});
+        terminalActivityEmitted = true;
         // This is the authoritative runtime payload, not telemetry. The
         // Manager applies it before writing redacted evidence copies.
         sendTerminalMessage(JSON.stringify({
@@ -505,6 +543,10 @@ export async function runPrompt(
 
   function sendNodeError(message: string) {
     const redactedMessage = String(redactTelemetry(message));
+    if (!terminalActivityEmitted) {
+      activityEmitter.emit("failed", { message: redactedMessage });
+      terminalActivityEmitted = true;
+    }
     const data = {
       runId: job.runId,
       nodeId: job.dagConfig.node_id,

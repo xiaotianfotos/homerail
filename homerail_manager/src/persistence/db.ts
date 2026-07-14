@@ -34,6 +34,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_chats",
   "dag_handoffs",
   "dag_artifacts",
+  "dag_activity_events",
   "dag_events",
   "dag_run_admissions",
   "dag_runs",
@@ -498,6 +499,69 @@ function validateDagArtifactSchemaV18(db: SqliteDatabase): void {
       throw new Error(`Schema migration 18 is incomplete: dag_artifacts is missing column ${column}`);
     }
   }
+}
+
+function validateDagActivitySchemaV19(db: SqliteDatabase): void {
+  const table = "dag_activity_events";
+  if (!hasTable(db, table)) {
+    throw new Error(`Schema migration 19 is incomplete: missing table ${table}`);
+  }
+  for (const column of [
+    "seq",
+    "event_id",
+    "schema_version",
+    "run_id",
+    "round_id",
+    "node_id",
+    "actor_id",
+    "generation",
+    "surface_id",
+    "activity_sequence",
+    "activity_type",
+    "timestamp",
+    "received_at",
+    "event_digest",
+    "event_json",
+  ]) {
+    if (!hasColumn(db, table, column)) {
+      throw new Error(`Schema migration 19 is incomplete: ${table} is missing column ${column}`);
+    }
+  }
+
+  const indexes = new Map((db.prepare(`PRAGMA index_list(${table})`).all() as Array<{
+    name: string;
+    unique: number;
+  }>).map((index) => [index.name, index]));
+  for (const [name, unique, expectedColumns] of [
+    ["idx_dag_activity_events_event_id", 1, ["event_id"]],
+    ["idx_dag_activity_events_actor_sequence", 1, ["run_id", "actor_id", "generation", "activity_sequence"]],
+    ["idx_dag_activity_events_run_seq", 0, ["run_id", "seq"]],
+    ["idx_dag_activity_events_run_actor_seq", 0, ["run_id", "actor_id", "seq"]],
+  ] as const) {
+    if (indexes.get(name)?.unique !== unique) {
+      throw new Error(`Schema migration 19 is incomplete: index ${name} is missing or invalid`);
+    }
+    const columns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{
+      seqno: number;
+      name: string;
+    }>).sort((left, right) => left.seqno - right.seqno).map((entry) => entry.name);
+    if (columns.length !== expectedColumns.length || columns.some((column, index) => column !== expectedColumns[index])) {
+      throw new Error(`Schema migration 19 is incomplete: index ${name} has invalid columns`);
+    }
+  }
+
+  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  }>;
+  if (!foreignKeys.some((entry) => (
+    entry.table === "dag_runs"
+    && entry.from === "run_id"
+    && entry.to === "run_id"
+    && entry.on_delete.toUpperCase() === "CASCADE"
+  ))) throw new Error("Schema migration 19 is incomplete: activity run retention constraint is missing");
 }
 
 function validateGenerativeUiSchemaV3(db: SqliteDatabase): void {
@@ -1783,6 +1847,40 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         ON dag_artifacts(run_id, status, name);
     `),
     validate: validateDagArtifactSchemaV18,
+  },
+  {
+    version: 19,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_activity_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL,
+        schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+        run_id TEXT NOT NULL,
+        round_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK(generation >= 1),
+        surface_id TEXT,
+        activity_sequence INTEGER NOT NULL CHECK(activity_sequence >= 1),
+        activity_type TEXT NOT NULL CHECK(activity_type IN (
+          'started', 'progress', 'finding', 'tool_used', 'blocked', 'completed', 'failed'
+        )),
+        timestamp INTEGER NOT NULL CHECK(timestamp >= 0),
+        received_at INTEGER NOT NULL CHECK(received_at >= 0),
+        event_digest TEXT NOT NULL CHECK(length(event_digest) = 64),
+        event_json TEXT NOT NULL,
+        FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_activity_events_event_id
+        ON dag_activity_events(event_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_activity_events_actor_sequence
+        ON dag_activity_events(run_id, actor_id, generation, activity_sequence);
+      CREATE INDEX IF NOT EXISTS idx_dag_activity_events_run_seq
+        ON dag_activity_events(run_id, seq);
+      CREATE INDEX IF NOT EXISTS idx_dag_activity_events_run_actor_seq
+        ON dag_activity_events(run_id, actor_id, seq);
+    `),
+    validate: validateDagActivitySchemaV19,
   },
 ];
 

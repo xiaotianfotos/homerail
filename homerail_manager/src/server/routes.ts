@@ -21,6 +21,7 @@ import {
 import { listActiveRuns } from "../runtime/active-runs.js";
 import { getDagState, listPendingApprovals } from "../persistence/dag-runtime-primitives.js";
 import { listDagTriggers } from "../persistence/dag-triggers.js";
+import { listDagActivityEvents } from "../persistence/dag-activity-journal.js";
 
 interface BaseResponse {
   success: boolean;
@@ -531,8 +532,49 @@ export function inspectionRoutesHandler(
     return true;
   }
 
+  // GET /api/runs/:run_id/activities?actor_id=&after_seq=&limit=
+  if (pathname.match(/^\/api\/runs\/[^/]+\/activities$/) && req.method === "GET") {
+    let runId = "";
+    try {
+      runId = decodeURIComponent(pathname.split("/")[3] ?? "");
+    } catch {
+      json(res, 400, { success: false, message: "Invalid encoded run ID", error: "Invalid encoded run ID" });
+      return true;
+    }
+    if (!runId) {
+      _notFound(res, "Invalid run ID");
+      return true;
+    }
+    if (!loadRunMetadata(runId)) {
+      _notFound(res, `Run not found: ${runId}`);
+      return true;
+    }
+    const url = new URL(req.url || "/", "http://localhost");
+    const parseInteger = (name: "after_seq" | "limit"): number | undefined => {
+      const raw = url.searchParams.get(name);
+      if (raw === null) return undefined;
+      if (!/^\d+$/.test(raw)) throw new Error(`${name} must be a non-negative integer`);
+      const value = Number(raw);
+      if (!Number.isSafeInteger(value)) throw new Error(`${name} must be a safe integer`);
+      return value;
+    };
+    try {
+      const page = listDagActivityEvents({
+        run_id: runId,
+        actor_id: url.searchParams.get("actor_id") ?? undefined,
+        after_seq: parseInteger("after_seq"),
+        limit: parseInteger("limit"),
+      });
+      _ok(res, `Activity history retrieved (${page.events.length} events)`, page);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      json(res, 400, { success: false, message, error: message });
+    }
+    return true;
+  }
+
   // GET /api/runs/:run_id
-  if (pathname.startsWith("/api/runs/") && !pathname.includes("/events") && !pathname.includes("/handoffs") && !pathname.includes("/chats") && !pathname.includes("/scorecard") && !pathname.includes("/eval-run") && !pathname.includes("/supervise") && !pathname.includes("/inject") && !pathname.includes("/experience") && !pathname.includes("/status") && !pathname.includes("/audit") && req.method === "GET") {
+  if (pathname.startsWith("/api/runs/") && !pathname.includes("/activities") && !pathname.includes("/events") && !pathname.includes("/handoffs") && !pathname.includes("/chats") && !pathname.includes("/scorecard") && !pathname.includes("/eval-run") && !pathname.includes("/supervise") && !pathname.includes("/inject") && !pathname.includes("/experience") && !pathname.includes("/status") && !pathname.includes("/audit") && req.method === "GET") {
     const runId = _parseRunId(pathname, "/api/runs/");
     if (!runId) {
       _notFound(res, "Invalid run ID");
