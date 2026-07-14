@@ -74,7 +74,7 @@ describe("static Agent UI mutation proxy", () => {
     });
     servers.push(manager);
     const managerUrl = await listen(manager, "127.0.0.1");
-    const uiPort = await reservePort();
+    const uiPort = await reservePort("0.0.0.0");
     const uiOrigin = `http://127.0.0.1:${uiPort}`;
     await startStaticUi({ port: uiPort, host: "0.0.0.0", origin: uiOrigin, managerUrl });
 
@@ -181,9 +181,9 @@ async function listen(server: http.Server, host: string): Promise<string> {
   return `http://${host}:${address.port}`;
 }
 
-async function reservePort(): Promise<number> {
+async function reservePort(host = "127.0.0.1"): Promise<number> {
   const server = http.createServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(0, host, resolve));
   const address = server.address();
   if (!address || typeof address !== "object") throw new Error("server did not bind");
   const port = address.port;
