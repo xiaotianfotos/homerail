@@ -16,7 +16,7 @@ import {
 import { resolveLifecycleResponse, rejectAllPendingRequests } from "./lifecycle-request.js";
 import { applyResponseHandoff } from "../orchestration/response-bridge.js";
 import { handleDagMessageResponse } from "../orchestration/dag-message-router.js";
-import { clearByTargetId } from "../orchestration/dispatch-tracker.js";
+import { clearByTargetId, isCurrentDispatchTarget } from "../orchestration/dispatch-tracker.js";
 import { emit } from "../events/bus.js";
 import { appendChatEntry } from "../persistence/store.js";
 import { appendSessionTranscriptEntry } from "../persistence/dag-session-files.js";
@@ -394,10 +394,16 @@ export function setupNodeWebSocket(
           if (msg.data.event === "dag_activity") {
             try {
               if (!runId || !nodeId) throw new Error("DAG activity transport identity is missing");
+              const sessionId = dataSessionId(msg.data);
+              if (!sessionId) throw new Error("DAG activity transport session is missing");
+              if (!isCurrentDispatchTarget(runId, nodeId, "node", node_id)) {
+                throw new Error("DAG activity source does not match the current dispatch target");
+              }
+              if (shouldIgnoreStaleSession(node_id, "dag_activity", msg.data)) return;
               ingestDagActivityStream(msg.data, {
                 runId,
                 nodeId,
-                roundId: dataSessionId(msg.data),
+                roundId: sessionId,
               });
             } catch (error) {
               console.warn(
