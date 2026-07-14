@@ -18,6 +18,8 @@ import {
   managerAgentToolSpec,
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
+  managerAgentSkillViewToolDefinitions,
+  materializeManagerAgentSkillViewInput,
   mergeManagerAgentPluginSkillCatalog,
   executeHomerailPluginTool,
   validateHomerailPluginTurnContext,
@@ -453,7 +455,7 @@ export function createManagerTools(state: {
   finalNotes: string[];
   objectiveToolCalls: Array<{ name: string; success: boolean; error?: string; inferred?: boolean }>;
   voiceSurface: VoiceSurfaceState;
-}, responseMode: "chat" | "voice", pluginContext?: HomerailPluginTurnContextV1, pluginToolTurnToken?: string, canvasContext?: GenerativeUiCanvasContextV1): DagToolDefinition[] {
+}, responseMode: "chat" | "voice", pluginContext?: HomerailPluginTurnContextV1, pluginToolTurnToken?: string, canvasContext?: GenerativeUiCanvasContextV1, managerSkills?: ManagerAgentPromptSkill[]): DagToolDefinition[] {
   if (pluginContext && (
     !validateHomerailPluginTurnContext(pluginContext).valid
     || pluginContextDigest(pluginContext) !== pluginContext.context_digest
@@ -1006,6 +1008,28 @@ export function createManagerTools(state: {
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
   };
+  const generatedViewDescriptor = responseMode === "voice"
+    ? pluginContext?.tools.find((tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view")
+    : undefined;
+  if (generatedViewDescriptor) {
+    for (const definition of managerAgentSkillViewToolDefinitions(managerSkills ?? [])) {
+      if (tools.some((tool) => tool.name === definition.name)) {
+        throw new Error(`Skill view Tool collides with an existing Tool: ${definition.name}`);
+      }
+      tools.push({
+        name: definition.name,
+        description: definition.description,
+        input_schema: definition.input_schema,
+        async handler(args, context) {
+          return invokePluginTool(
+            generatedViewDescriptor,
+            materializeManagerAgentSkillViewInput(definition, args),
+            context,
+          );
+        },
+      });
+    }
+  }
   for (const descriptor of responseMode === "voice" ? pluginContext?.tools ?? [] : []) {
     if (tools.some((tool) => tool.name === descriptor.wire_id)) {
       throw new Error(`Plugin Tool wire id collides with an existing Tool: ${descriptor.wire_id}`);
@@ -1175,6 +1199,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     pluginContext,
     body.plugin_tool_turn_token,
     body.canvas_context,
+    body.manager_skills,
   );
   const agent = createAgentClient(normalizeBackend(body.agent_config?.agent_type));
   const config = body.agent_config ?? {};

@@ -32,6 +32,8 @@ function view(): HomerailViewSpecV1 {
           type: "repeat",
           source: "/data/checks",
           max_items: 4,
+          columns: { default: 2, compact: 1 },
+          gap: "xs",
           item: {
             id: "check",
             type: "section",
@@ -82,6 +84,11 @@ describe("ViewSpec V1", () => {
       expect.objectContaining({ id: "check:0", title: "Manager" }),
       expect.objectContaining({ id: "check:1", title: "Windows" }),
     ]);
+    expect(model.root.children?.[2]).toMatchObject({
+      type: "repeat",
+      columns: { default: 2, compact: 1 },
+      gap: "xs",
+    });
   });
 
   it("rejects unknown shape, duplicate ids, out-of-scope item bindings, and unbound actions", () => {

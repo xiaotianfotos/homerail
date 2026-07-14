@@ -128,7 +128,15 @@ export type HomerailViewNodeV1 =
       alt?: HomerailViewValueV1;
       layout?: HomerailViewArtifactLayoutV1;
     })
-  | (HomerailViewNodeBaseV1 & { type: "repeat"; source: string; max_items?: number; item: HomerailViewNodeV1 });
+  | (HomerailViewNodeBaseV1 & {
+      type: "repeat";
+      source: string;
+      max_items?: number;
+      item: HomerailViewNodeV1;
+      columns?: { default: 1 | 2 | 3; compact?: 1 | 2 };
+      gap?: HomerailViewGapV1;
+      align?: HomerailViewAlignV1;
+    });
 
 export type HomerailViewIconV1 =
   | "activity" | "alert" | "check" | "clock" | "database" | "external-link"
@@ -217,7 +225,7 @@ const NODE_KEYS: Record<HomerailViewNodeV1["type"], readonly string[]> = {
   disclosure: ["title", "children", "open"],
   link: ["label", "uri"],
   artifact: ["kind", "uri", "title", "description", "alt", "layout"],
-  repeat: ["source", "max_items", "item"],
+  repeat: ["source", "max_items", "item", "columns", "gap", "align"],
 };
 const NODE_REQUIRED_KEYS: Record<HomerailViewNodeV1["type"], readonly string[]> = {
   stack: ["children"], grid: ["children", "columns"], section: ["children"], heading: ["text"],
@@ -415,7 +423,9 @@ export function buildHomerailViewModel(
     const model: HomerailViewModelNodeV1 = { id: `${node.id}${suffix}`, type: node.type, span: node.span ?? 1 };
     if ("gap" in node) model.gap = node.gap;
     if ("align" in node) model.align = node.align;
-    if (node.type === "grid") model.columns = structuredClone(node.columns);
+    if ((node.type === "grid" || node.type === "repeat") && node.columns) {
+      model.columns = structuredClone(node.columns);
+    }
     if ("tone" in node) model.tone = resolvedTone(node.tone, content, item);
     if (node.type === "stack" || node.type === "grid" || node.type === "section" || node.type === "disclosure") {
       if (node.type === "section") model.title = binding(node.title, content, item, options.locale).text;
@@ -430,7 +440,7 @@ export function buildHomerailViewModel(
       return model;
     }
     if (node.type === "repeat") {
-      model.gap = "sm";
+      model.gap = node.gap ?? "sm";
       model.children = sourceItems(content, node.source, node.max_items).flatMap((entry, index) => {
         const result = materialize(node.item, entry, `${suffix}:${index}`);
         return result ? [result] : [];

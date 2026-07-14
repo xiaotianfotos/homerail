@@ -136,13 +136,20 @@ describe('ViewSpecRenderer', () => {
     expect(mounted.querySelector<HTMLAnchorElement>('.hr-view__link')?.href).toBe('https://example.com/evidence')
   })
 
-  it('marks compact grids so the renderer can balance odd two-column content', () => {
+  it('marks compact grids and repeats so the renderer can balance odd two-column content', () => {
     const mounted = mount({
       view_version: 1,
-      root: { id: 'root', type: 'grid', columns: { default: 3, compact: 2 }, children: [
-        { id: 'one', type: 'text', text: { literal: 'One' } },
-        { id: 'two', type: 'text', text: { literal: 'Two' } },
-        { id: 'three', type: 'text', text: { literal: 'Three' } },
+      root: { id: 'root', type: 'stack', children: [
+        { id: 'grid', type: 'grid', columns: { default: 3, compact: 2 }, children: [
+          { id: 'one', type: 'text', text: { literal: 'One' } },
+          { id: 'two', type: 'text', text: { literal: 'Two' } },
+          { id: 'three', type: 'text', text: { literal: 'Three' } },
+        ] },
+        {
+          id: 'repeat', type: 'repeat', source: '/data/checks', columns: { default: 3, compact: 2 }, gap: 'xs', item: {
+            id: 'repeated-check', type: 'text', text: { item_path: '/label' },
+          },
+        },
       ] },
     }, { ...context, device: 'phone', viewport: 'compact', input: 'touch' })
     expect(mounted.querySelector('.homerail-view-spec')?.getAttribute('data-viewport')).toBe('compact')
@@ -150,6 +157,9 @@ describe('ViewSpecRenderer', () => {
     expect(mounted.querySelector<HTMLElement>('.hr-view__grid')?.style.getPropertyValue('--compact-columns')).toBe('2')
     expect(mounted.querySelector('.hr-view__grid')?.getAttribute('data-compact-columns')).toBe('2')
     expect(mounted.querySelectorAll('.hr-view__grid > .hr-view__node')).toHaveLength(3)
+    expect(mounted.querySelector<HTMLElement>('.hr-view__repeat')?.style.getPropertyValue('--columns')).toBe('3')
+    expect(mounted.querySelector<HTMLElement>('.hr-view__repeat')?.style.getPropertyValue('--compact-columns')).toBe('2')
+    expect(mounted.querySelector('.hr-view__repeat')?.getAttribute('data-compact-columns')).toBe('2')
   })
 
   it('opens secondary disclosure content when the host expands the Block', () => {

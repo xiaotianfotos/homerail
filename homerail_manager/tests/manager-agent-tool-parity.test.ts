@@ -8,6 +8,7 @@ import {
   type AgentToolDefinition,
   type GenerativeUiCanvasContextV1,
   type ManagerAgentResponseMode,
+  type ManagerAgentPromptSkill,
   type HomerailPluginToolExecutionEnvelopeV1,
   type HomerailPluginTurnContextV1,
 } from "homerail-protocol";
@@ -46,6 +47,7 @@ function createHarnessTools(
   pluginContext?: HomerailPluginTurnContextV1,
   pluginToolTurnToken?: string,
   canvasContext?: GenerativeUiCanvasContextV1,
+  managerSkills?: ManagerAgentPromptSkill[],
 ) {
   const hostState = {
     restUrl: "http://127.0.0.1:1/api",
@@ -80,6 +82,7 @@ function createHarnessTools(
       pluginContext,
       pluginToolTurnToken,
       canvasContext,
+      managerSkills,
     ) as ComparableTool[],
     workerTools: createWorkerManagerTools(
       workerState,
@@ -87,6 +90,7 @@ function createHarnessTools(
       pluginContext,
       pluginToolTurnToken,
       canvasContext,
+      managerSkills,
     ) as ComparableTool[],
   };
 }
@@ -168,6 +172,57 @@ describe("Manager Agent deterministic result envelope parity", () => {
       for (const name of forbidden) expect(names).not.toContain(name);
     }
     expect(catalogProjection(hostTools)).toEqual(catalogProjection(workerTools));
+  });
+
+  it("builds and executes the same validated Skill view Tool in both voice harnesses", async () => {
+    const context = assemblePluginTurnContext(undefined, { modality: "voice" });
+    const managerSkills: ManagerAgentPromptSkill[] = [{
+      id: "visual-skill",
+      content: "Use the profile template for compact answers.",
+      view_templates: [{
+        id: "profile",
+        description: "Show a compact entity profile.",
+        data_schema: {
+          type: "object",
+          properties: {
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            value: { type: "number" },
+          },
+          required: ["title", "value"],
+          additionalProperties: false,
+        },
+        view: {
+          view_version: 1,
+          root: {
+            id: "root",
+            type: "metric",
+            label: { path: "/data/title" },
+            value: { path: "/data/value" },
+          },
+        },
+        defaults: {
+          surface: "result",
+          importance: "primary",
+          density: "summary",
+          canvas_size: "1x1",
+          persistence: "session",
+        },
+      }],
+    }];
+    const { hostTools, workerTools } = createHarnessTools(
+      "voice",
+      context,
+      undefined,
+      undefined,
+      managerSkills,
+    );
+    const hostSkillTools = hostTools.filter((tool) => tool.name.startsWith("skill_view_"));
+    const workerSkillTools = workerTools.filter((tool) => tool.name.startsWith("skill_view_"));
+    expect(catalogProjection(hostSkillTools)).toEqual(catalogProjection(workerSkillTools));
+    expect(hostSkillTools).toHaveLength(1);
+
+    const input = { id: "profile-one", data: { title: "Profile", value: 4 } };
+    expect(await hostSkillTools[0].handler(input)).toEqual(await workerSkillTools[0].handler(input));
   });
 
   it("keeps side-effect-free Host Codex and Worker handlers compatible", async () => {

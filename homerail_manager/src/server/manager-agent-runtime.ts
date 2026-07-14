@@ -14,7 +14,12 @@ import {
   runHostCodexManagerAgentTurnStream,
   type VoiceUiRules,
 } from "./host-codex-manager-agent.js";
-import { listManagerSkills, readManagerSkill, type ManagerSkillSummary } from "./manager-skills.js";
+import {
+  listManagerSkills,
+  readManagerSkill,
+  readManagerSkillViewTemplates,
+  type ManagerSkillSummary,
+} from "./manager-skills.js";
 import {
   routePluginCapabilities,
   type PluginCapabilityRouteResult,
@@ -31,6 +36,7 @@ import {
   type GenerativeUiCanvasContextV1,
   type ManagerAgentRuntimePlacement,
   type HomerailPluginTurnContextV1,
+  type ManagerAgentSkillViewTemplateV1,
 } from "homerail-protocol";
 import type { GenerativeUiMode } from "../generative-ui/mode.js";
 import { getActivePlugin, isTrustedRegistryPluginAgentAsset } from "../persistence/plugins.js";
@@ -94,6 +100,7 @@ export interface ResolvedManagerAgentTurnAssets {
 
 export interface ResolvedManagerSkill extends ManagerSkillSummary {
   content?: string;
+  view_templates?: ManagerAgentSkillViewTemplateV1[];
 }
 
 export type RunManagerAgentTurnStreamEvent =
@@ -142,6 +149,110 @@ function scopedManagerSkills(
 }
 
 const MAX_INLINE_PLUGIN_SKILL_CHARS = 30_000;
+const MAX_INLINE_LOCAL_SKILL_CHARS = 30_000;
+const MAX_INLINE_LOCAL_SKILL_TOTAL_CHARS = 60_000;
+const MAX_INLINE_LOCAL_SKILLS = 2;
+const MIN_LOCAL_SKILL_MATCH_SCORE = 12;
+
+const SKILL_MATCH_STOP_WORDS = new Set([
+  "about",
+  "agent",
+  "answer",
+  "data",
+  "from",
+  "home",
+  "homerail",
+  "information",
+  "query",
+  "skill",
+  "the",
+  "this",
+  "tool",
+  "use",
+  "user",
+  "with",
+]);
+
+function compactSkillMatchText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\p{P}\p{S}\s_]+/gu, "");
+}
+
+function quotedSkillExamples(description: string): string[] {
+  const examples: string[] = [];
+  for (const pattern of [
+    /“([^”]{2,80})”/gu,
+    /‘([^’]{2,80})’/gu,
+    /"([^"]{2,80})"/gu,
+    /'([^']{2,80})'/gu,
+  ]) {
+    for (const match of description.matchAll(pattern)) examples.push(match[1]);
+  }
+  return examples;
+}
+
+function latinSkillMatchTokens(value: string): Set<string> {
+  return new Set(
+    (value.normalize("NFKC").toLocaleLowerCase().match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])
+      .filter((token) => !SKILL_MATCH_STOP_WORDS.has(token)),
+  );
+}
+
+function hanSkillMatchText(value: string): string {
+  return (value.normalize("NFKC").match(/\p{Script=Han}+/gu) ?? []).join("");
+}
+
+function longestSharedSubstringLength(left: string, right: string): number {
+  if (!left || !right) return 0;
+  const shorter = left.length <= right.length ? left : right;
+  const longer = left.length <= right.length ? right : left;
+  let previous = new Uint16Array(shorter.length + 1);
+  let longest = 0;
+  for (let longIndex = 1; longIndex <= longer.length; longIndex += 1) {
+    const current = new Uint16Array(shorter.length + 1);
+    for (let shortIndex = 1; shortIndex <= shorter.length; shortIndex += 1) {
+      if (longer[longIndex - 1] !== shorter[shortIndex - 1]) continue;
+      current[shortIndex] = previous[shortIndex - 1] + 1;
+      if (current[shortIndex] > longest) longest = current[shortIndex];
+    }
+    previous = current;
+  }
+  return longest;
+}
+
+function localSkillMatchScore(skill: ResolvedManagerSkill, utterance: string): number {
+  const compactUtterance = compactSkillMatchText(utterance);
+  if (!compactUtterance) return 0;
+
+  let score = 0;
+  for (const identity of [skill.id, skill.name]) {
+    const compactIdentity = compactSkillMatchText(identity);
+    if (compactIdentity.length >= 3 && compactUtterance.includes(compactIdentity)) score += 100;
+  }
+
+  for (const example of quotedSkillExamples(skill.description)) {
+    const compactExample = compactSkillMatchText(example);
+    if (compactExample.length >= 3 && compactUtterance.includes(compactExample)) score += 100;
+  }
+
+  const utteranceTokens = latinSkillMatchTokens(utterance);
+  const descriptionTokens = latinSkillMatchTokens(`${skill.name} ${skill.description}`);
+  for (const token of utteranceTokens) {
+    if (!descriptionTokens.has(token)) continue;
+    score += token.length >= 7 ? 12 : token.length >= 5 ? 8 : 4;
+  }
+
+  const sharedHanLength = longestSharedSubstringLength(
+    hanSkillMatchText(utterance),
+    hanSkillMatchText(skill.description),
+  );
+  if (sharedHanLength >= 6) score += 20;
+  else if (sharedHanLength === 5) score += 16;
+  else if (sharedHanLength === 4) score += 12;
+  return score;
+}
 
 function inlineSelectedPluginSkills(
   skills: ResolvedManagerSkill[],
@@ -159,6 +270,48 @@ function inlineSelectedPluginSkills(
     if (!detail?.content || detail.content.length > MAX_INLINE_PLUGIN_SKILL_CHARS) return skill;
     return { ...skill, content: detail.content };
   });
+}
+
+function inlineMatchingLocalSkills(
+  skills: ResolvedManagerSkill[],
+  utterance: string,
+): ResolvedManagerSkill[] {
+  const candidates = skills
+    .filter((skill) => skill.source !== "plugin" && !skill.content?.trim())
+    .map((skill) => ({ skill, score: localSkillMatchScore(skill, utterance) }))
+    .filter((candidate) => candidate.score >= MIN_LOCAL_SKILL_MATCH_SCORE)
+    .sort((left, right) => right.score - left.score || left.skill.id.localeCompare(right.skill.id));
+
+  const selected = new Map<string, string>();
+  let totalChars = 0;
+  for (const candidate of candidates) {
+    if (selected.size >= MAX_INLINE_LOCAL_SKILLS) break;
+    const detail = readManagerSkill(candidate.skill.id);
+    const content = detail?.content?.trim();
+    if (!content || content.length > MAX_INLINE_LOCAL_SKILL_CHARS) continue;
+    if (totalChars + content.length > MAX_INLINE_LOCAL_SKILL_TOTAL_CHARS) continue;
+    selected.set(candidate.skill.id, content);
+    totalChars += content.length;
+  }
+
+  if (selected.size === 0) return skills;
+  return skills.map((skill) => {
+    const content = selected.get(skill.id);
+    return content
+      ? { ...skill, content, view_templates: readManagerSkillViewTemplates(skill.id) }
+      : skill;
+  });
+}
+
+function resolveManagerSkillsForTurn(
+  provided: ManagerSkillSummary[] | undefined,
+  pluginContext: HomerailPluginTurnContextV1,
+  utterance: string,
+): ResolvedManagerSkill[] {
+  return inlineMatchingLocalSkills(
+    inlineSelectedPluginSkills(scopedManagerSkills(provided, pluginContext), pluginContext),
+    utterance,
+  );
 }
 
 /**
@@ -206,10 +359,7 @@ export function resolveManagerAgentTurnAssets(
     assertAgentPromptTrust(pluginContext, placement);
     return {
       plugin_context: pluginContext,
-      manager_skills: inlineSelectedPluginSkills(
-        scopedManagerSkills(input.manager_skills, pluginContext),
-        pluginContext,
-      ),
+      manager_skills: resolveManagerSkillsForTurn(input.manager_skills, pluginContext, input.message),
       route: null,
     };
   }
@@ -243,10 +393,7 @@ export function resolveManagerAgentTurnAssets(
   assertAgentPromptTrust(selectedContext, placement);
   return {
     plugin_context: selectedContext,
-    manager_skills: inlineSelectedPluginSkills(
-      scopedManagerSkills(input.manager_skills, selectedContext),
-      selectedContext,
-    ),
+    manager_skills: resolveManagerSkillsForTurn(input.manager_skills, selectedContext, input.message),
     route,
   };
 }

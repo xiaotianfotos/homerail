@@ -3,6 +3,8 @@
  * @version 0.1.0
  */
 
+import type { ManagerAgentSkillViewTemplateV1 } from "./manager-agent-skill-views.js";
+
 export interface ManagerAgentPromptRuntime {
   placement?: "host" | "host_shell" | "container";
   provider?: string;
@@ -27,6 +29,8 @@ export interface ManagerAgentPromptSkill {
   source?: string;
   /** Exact trusted body selected for this turn; catalog-only skills omit it. */
   content?: string;
+  /** Validated visual grammars loaded from the same selected local Skill. */
+  view_templates?: ManagerAgentSkillViewTemplateV1[];
 }
 
 export interface ManagerAgentPromptInput {
@@ -72,6 +76,13 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
         `## Loaded HomeRail Skill: ${skill.id}`,
         skill.content!.trim(),
       );
+      if (skill.view_templates?.length) {
+        lines.push(
+          "",
+          "Validated Skill visual templates are available as skill_view_* Tools. Prefer the matching template Tool so the model supplies business data while HomeRail preserves the layout:",
+          ...skill.view_templates.map((template) => `- ${template.id}: ${template.description}`),
+        );
+      }
     }
   } else {
     lines.push(
@@ -92,6 +103,7 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
     }
     lines.push(
       "This turn is spoken through the voice UI. Final user-facing text must be short conversational Chinese, usually one or two sentences and under 80 Chinese characters unless the user explicitly asks for detail.",
+      "Commentary is spoken too. Omit commentary for short one- or two-tool requests. When progress is genuinely useful, use at most one short Chinese sentence about user-visible progress; never narrate Skill loading, tool names, read-only checks, rendering, or canvas updates.",
       "Do not use Markdown headings, bullet lists, tables, or long capability inventories in the final spoken text.",
       "When saying a path, model name, command, or identifier in voice mode, use plain text without backticks or Markdown formatting.",
       "For capability questions, answer with two or three broad examples, then ask what the user wants to do next.",

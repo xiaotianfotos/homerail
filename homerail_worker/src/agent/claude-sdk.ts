@@ -43,6 +43,9 @@ interface SdkMessage {
       id?: string;
       name?: string;
       input?: Record<string, unknown>;
+      tool_use_id?: string;
+      content?: unknown;
+      is_error?: boolean;
     }>;
     stop_reason?: string;
     usage?: {
@@ -100,6 +103,12 @@ interface SdkTransportGuard {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
+}
+
+function sdkToolResultContent(block: { text?: string; content?: unknown }): string {
+  if (typeof block.content === "string") return block.content;
+  if (block.content !== undefined) return JSON.stringify(block.content);
+  return block.text ?? "";
 }
 
 function isClaudeSdkTransportError(err: unknown): err is Error {
@@ -516,10 +525,23 @@ export class ClaudeSdkAdapter implements AgentClient {
           } else if (block.type === "tool_result") {
             events.push({
               type: "tool_result",
-              tool_use_id: block.id ?? "",
-              content: typeof block.text === "string" ? block.text : JSON.stringify(block),
+              tool_use_id: block.tool_use_id ?? block.id ?? "",
+              content: sdkToolResultContent(block),
+              is_error: block.is_error,
             });
           }
+        }
+        break;
+      }
+      case "user": {
+        for (const block of msg.message?.content ?? []) {
+          if (block.type !== "tool_result") continue;
+          events.push({
+            type: "tool_result",
+            tool_use_id: block.tool_use_id ?? block.id ?? "",
+            content: sdkToolResultContent(block),
+            is_error: block.is_error,
+          });
         }
         break;
       }

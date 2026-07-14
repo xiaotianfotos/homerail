@@ -119,6 +119,50 @@ function pluginContext(payload: Record<string, unknown>) {
   return payload.plugin_context as ReturnType<typeof assemblePluginTurnContext>;
 }
 
+function writeHomeSkill(
+  home: string,
+  id: string,
+  description: string,
+  body = "# Test Skill\n\nLOCAL_SKILL_BODY_LOADED",
+): void {
+  const root = path.join(home, "skills", id);
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "SKILL.md"),
+    `---\nname: ${id}\ndescription: ${description}\n---\n\n${body}\n`,
+    "utf8",
+  );
+}
+
+function writeHomeSkillViewTemplate(home: string, id: string): void {
+  const root = path.join(home, "skills", id, "assets", "homerail");
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, "view-templates.json"), JSON.stringify({
+    manifest_version: 1,
+    templates: [{
+      id: "result",
+      description: "Show a compact visual result.",
+      data_schema: {
+        type: "object",
+        properties: { title: { type: "string", minLength: 1, maxLength: 200 } },
+        required: ["title"],
+        additionalProperties: false,
+      },
+      view: {
+        view_version: 1,
+        root: { id: "root", type: "heading", text: { path: "/data/title" } },
+      },
+      defaults: {
+        surface: "result",
+        importance: "primary",
+        density: "summary",
+        canvas_size: "1x1",
+        persistence: "session",
+      },
+    }],
+  }), "utf8");
+}
+
 describe("Manager Agent per-turn capability routing", () => {
   let previousHome: string | undefined;
   let tmpHome: string;
@@ -338,6 +382,67 @@ describe("Manager Agent per-turn capability routing", () => {
       agent_config: runtimeConfig("host"),
       plugin_routing: { source_context: tamperedSource },
     })).toThrow(/digest verification/);
+  });
+
+  it("preloads a matching local Skill body for a short natural utterance", () => {
+    writeHomeSkill(
+      tmpHome,
+      "palquery",
+      "查询游戏资料与配种；典型短问包括“能配出什么”“怎么配”“适合干什么”。",
+    );
+    writeHomeSkillViewTemplate(tmpHome, "palquery");
+
+    const routed = resolveManagerAgentTurnAssets({
+      message: "空涡龙和妖焰灯能配出什么？",
+      response_mode: "voice",
+      generative_ui_mode: "prefer",
+      voice_session_id: "natural-local-skill",
+      agent_config: runtimeConfig("host"),
+    });
+    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.content)
+      .toContain("LOCAL_SKILL_BODY_LOADED");
+    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.view_templates)
+      .toEqual([expect.objectContaining({ id: "result" })]);
+
+    const explicit = resolveManagerAgentTurnAssets({
+      message: "阿努比斯怎么配？",
+      response_mode: "voice",
+      agent_config: runtimeConfig("host"),
+      plugin_context: assemblePluginTurnContext(undefined, { modality: "voice" }),
+    });
+    expect(explicit.manager_skills.find((skill) => skill.id === "palquery")?.content)
+      .toContain("LOCAL_SKILL_BODY_LOADED");
+  });
+
+  it("keeps local Skill preloading relevant and bounded", () => {
+    writeHomeSkill(tmpHome, "alpha", "分析资料；典型短问包括“分析这些结果”。", "# Alpha\n\nalpha-body");
+    writeHomeSkill(tmpHome, "beta", "整理资料；典型短问包括“分析这些结果”。", "# Beta\n\nbeta-body");
+    writeHomeSkill(tmpHome, "gamma", "复核资料；典型短问包括“分析这些结果”。", "# Gamma\n\ngamma-body");
+    writeHomeSkill(
+      tmpHome,
+      "oversized",
+      "生成资料；典型短问包括“分析这些结果”。",
+      `# Oversized\n\n${"x".repeat(30_001)}`,
+    );
+
+    const unrelated = resolveManagerAgentTurnAssets({
+      message: "明天上海会下雨吗？",
+      response_mode: "voice",
+      agent_config: runtimeConfig("host"),
+    });
+    expect(unrelated.manager_skills.filter((skill) => skill.content)).toEqual([]);
+
+    const matching = resolveManagerAgentTurnAssets({
+      message: "帮我分析这些结果",
+      response_mode: "voice",
+      agent_config: runtimeConfig("host"),
+    });
+    expect(matching.manager_skills.filter((skill) => skill.content).map((skill) => skill.id)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(matching.manager_skills.find((skill) => skill.id === "gamma")?.content).toBeUndefined();
+    expect(matching.manager_skills.find((skill) => skill.id === "oversized")?.content).toBeUndefined();
   });
 
   it("uses the same selected context for the host streaming path", async () => {

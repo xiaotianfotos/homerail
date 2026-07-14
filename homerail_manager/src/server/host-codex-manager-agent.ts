@@ -22,6 +22,8 @@ import {
   managerAgentToolSpec,
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
+  managerAgentSkillViewToolDefinitions,
+  materializeManagerAgentSkillViewInput,
   mergeManagerAgentPluginSkillCatalog,
   executeHomerailPluginTool,
   homerailPluginTurnContextDigestInput,
@@ -585,7 +587,7 @@ export function createManagerTools(state: {
   finalNotes: string[];
   objectiveToolCalls: Array<{ name: string; success: boolean; error?: string }>;
   voiceSurface: VoiceSurfaceState;
-}, responseMode: "chat" | "voice", pluginContext?: HomerailPluginTurnContextV1, pluginToolTurnToken?: string, canvasContext?: GenerativeUiCanvasContextV1): ToolDefinition[] {
+}, responseMode: "chat" | "voice", pluginContext?: HomerailPluginTurnContextV1, pluginToolTurnToken?: string, canvasContext?: GenerativeUiCanvasContextV1, managerSkills?: ManagerAgentPromptSkill[]): ToolDefinition[] {
   if (pluginContext && (
     !validateHomerailPluginTurnContext(pluginContext).valid
     || pluginJsonDigest(homerailPluginTurnContextDigestInput(pluginContext)) !== pluginContext.context_digest
@@ -1142,6 +1144,28 @@ export function createManagerTools(state: {
     });
     return { content: [{ type: "text", text: JSON.stringify(result) }] };
   };
+  const generatedViewDescriptor = responseMode === "voice"
+    ? pluginContext?.tools.find((tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view")
+    : undefined;
+  if (generatedViewDescriptor) {
+    for (const definition of managerAgentSkillViewToolDefinitions(managerSkills ?? [])) {
+      if (tools.some((tool) => tool.name === definition.name)) {
+        throw new Error(`Skill view Tool collides with an existing Tool: ${definition.name}`);
+      }
+      tools.push({
+        name: definition.name,
+        description: definition.description,
+        input_schema: definition.input_schema,
+        async handler(args, context) {
+          return invokePluginTool(
+            generatedViewDescriptor,
+            materializeManagerAgentSkillViewInput(definition, args),
+            context,
+          );
+        },
+      });
+    }
+  }
   for (const descriptor of responseMode === "voice" ? pluginContext?.tools ?? [] : []) {
     if (tools.some((tool) => tool.name === descriptor.wire_id)) {
       throw new Error(`Plugin Tool wire id collides with an existing Tool: ${descriptor.wire_id}`);
@@ -1553,6 +1577,7 @@ async function* runHostCodexManagerAgentTurnEvents(
         input.plugin_context,
         input.plugin_tool_turn_token,
         input.canvas_context,
+        input.manager_skills,
       ),
       {
         systemPrompt: systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, input.manager_skills),

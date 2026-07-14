@@ -54,8 +54,18 @@ function renderNode(
 ): VNode {
   const base = [`hr-view__node`, `hr-view__${node.type}`]
   const attrs = { class: base, 'data-tone': node.tone ?? 'neutral', style: spanStyle(node) }
-  if (node.type === 'stack' || node.type === 'repeat') {
+  if (node.type === 'stack') {
     return h('div', { ...attrs, 'data-gap': node.gap ?? 'md', 'data-align': node.align ?? 'stretch' }, children(node, emitAction, emitPreview, compact, expanded))
+  }
+  if (node.type === 'repeat') {
+    const compactColumns = node.columns?.compact ?? 1
+    return h('div', {
+      ...attrs,
+      'data-gap': node.gap ?? 'sm',
+      'data-align': node.align ?? 'stretch',
+      'data-compact-columns': compactColumns,
+      style: { ...spanStyle(node), '--columns': node.columns?.default ?? 1, '--compact-columns': compactColumns },
+    }, children(node, emitAction, emitPreview, compact, expanded))
   }
   if (node.type === 'grid') {
     const compactColumns = node.columns?.compact ?? 1

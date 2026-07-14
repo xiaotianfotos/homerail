@@ -9,7 +9,13 @@ import {
   readArchivedPluginSkill,
   readExactArchivedPluginSkill,
 } from "../plugins/context-assembler.js";
-import type { HomerailPluginTurnContextV1 } from "homerail-protocol";
+import {
+  analyzeHomerailPluginSchemaPolicy,
+  validateHomerailViewSpec,
+  type HomerailPluginTurnContextV1,
+  type ManagerAgentSkillViewCanvasSizeV1,
+  type ManagerAgentSkillViewTemplateV1,
+} from "homerail-protocol";
 
 export interface ManagerSkillSummary {
   id: string;
@@ -35,6 +41,14 @@ export interface ManagerSkillInstallResult {
 }
 
 const MAX_SKILL_BYTES = 256 * 1024;
+const MAX_SKILL_VIEW_MANIFEST_BYTES = 256 * 1024;
+const MAX_SKILL_VIEW_TEMPLATES = 8;
+const SKILL_VIEW_MANIFEST = path.join("assets", "homerail", "view-templates.json");
+const VIEW_SURFACES = new Set(["task", "execution", "result", "ambient"]);
+const VIEW_IMPORTANCE = new Set(["critical", "primary", "secondary", "ambient"]);
+const VIEW_DENSITIES = new Set(["glance", "summary", "detail"]);
+const VIEW_CANVAS_SIZES = new Set<ManagerAgentSkillViewCanvasSizeV1>(["1x1", "1x2", "2x2", "3x3"]);
+const VIEW_PERSISTENCE = new Set(["turn", "session", "project"]);
 
 function skillDescription(content: string): { name?: string; description?: string } {
   if (!content.startsWith("---")) return {};
@@ -59,6 +73,96 @@ function readSkillFile(file: string): string | undefined {
     return fs.readFileSync(file, "utf8");
   } catch {
     return undefined;
+  }
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function validTemplateDataSchema(value: unknown): value is Record<string, unknown> {
+  const schema = record(value);
+  if (!schema || schema.type !== "object" || schema.additionalProperties !== false) return false;
+  const properties = record(schema.properties);
+  const title = record(properties?.title);
+  const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
+  if (!title || title.type !== "string" || !required.includes("title")) return false;
+  return analyzeHomerailPluginSchemaPolicy(schema).length === 0;
+}
+
+function parseSkillViewTemplate(value: unknown): ManagerAgentSkillViewTemplateV1 | undefined {
+  const template = record(value);
+  if (!template) return undefined;
+  const defaults = record(template.defaults);
+  const id = typeof template.id === "string" ? template.id.trim() : "";
+  const description = typeof template.description === "string" ? template.description.trim() : "";
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) || !description || description.length > 1000 || !defaults) {
+    return undefined;
+  }
+  if (
+    !VIEW_SURFACES.has(String(defaults.surface))
+    || !VIEW_IMPORTANCE.has(String(defaults.importance))
+    || !VIEW_DENSITIES.has(String(defaults.density))
+    || !VIEW_CANVAS_SIZES.has(String(defaults.canvas_size) as ManagerAgentSkillViewCanvasSizeV1)
+    || !VIEW_PERSISTENCE.has(String(defaults.persistence))
+    || !validTemplateDataSchema(template.data_schema)
+  ) return undefined;
+  const view = validateHomerailViewSpec(template.view);
+  if (!view.valid || !view.value) return undefined;
+  const allowed = Array.isArray(template.allowed_canvas_sizes)
+    ? Array.from(new Set(template.allowed_canvas_sizes.map(String)))
+    : undefined;
+  if (allowed?.some((item) => !VIEW_CANVAS_SIZES.has(item as ManagerAgentSkillViewCanvasSizeV1))) return undefined;
+  if (allowed && !allowed.includes(String(defaults.canvas_size))) return undefined;
+  return {
+    id,
+    description,
+    data_schema: structuredClone(template.data_schema as Record<string, unknown>),
+    view: view.value,
+    defaults: {
+      surface: defaults.surface as ManagerAgentSkillViewTemplateV1["defaults"]["surface"],
+      importance: defaults.importance as ManagerAgentSkillViewTemplateV1["defaults"]["importance"],
+      density: defaults.density as ManagerAgentSkillViewTemplateV1["defaults"]["density"],
+      canvas_size: defaults.canvas_size as ManagerAgentSkillViewCanvasSizeV1,
+      persistence: defaults.persistence as ManagerAgentSkillViewTemplateV1["defaults"]["persistence"],
+    },
+    ...(allowed?.length ? { allowed_canvas_sizes: allowed as ManagerAgentSkillViewCanvasSizeV1[] } : {}),
+  };
+}
+
+function localSkillRoot(id: string): string | undefined {
+  for (const root of [getManagerSkillsRoot(), path.join(repoRoot(), "skills")]) {
+    const skillRoot = path.join(root, id);
+    if (readSkillFile(path.join(skillRoot, "SKILL.md")) !== undefined) return skillRoot;
+  }
+  return undefined;
+}
+
+export function readManagerSkillViewTemplates(id: string): ManagerAgentSkillViewTemplateV1[] {
+  const normalized = id.trim();
+  if (!normalized || normalized.includes(":") || normalized.includes("/") || normalized.includes("\\") || normalized === "." || normalized === "..") {
+    return [];
+  }
+  ensureManagerSkillsInstalled();
+  const skillRoot = localSkillRoot(normalized);
+  if (!skillRoot) return [];
+  const file = path.join(skillRoot, SKILL_VIEW_MANIFEST);
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > MAX_SKILL_VIEW_MANIFEST_BYTES) return [];
+    const parsed = record(JSON.parse(fs.readFileSync(file, "utf8")));
+    if (parsed?.manifest_version !== 1 || !Array.isArray(parsed.templates) || parsed.templates.length > MAX_SKILL_VIEW_TEMPLATES) {
+      return [];
+    }
+    const templates = parsed.templates.map(parseSkillViewTemplate);
+    if (templates.some((template) => template === undefined)) return [];
+    const valid = templates as ManagerAgentSkillViewTemplateV1[];
+    if (new Set(valid.map((template) => template.id)).size !== valid.length) return [];
+    return valid;
+  } catch {
+    return [];
   }
 }
 
