@@ -230,6 +230,16 @@ function service(
 }
 
 describe("PluginRuntimeService persistence and idempotency", () => {
+  it.skipIf(typeof process.getuid !== "function")("rejects a POSIX-accessible Runtime state directory", () => {
+    const root = temporary("runtime-insecure-state");
+    const state = path.join(root, "state");
+    fs.mkdirSync(state, { mode: 0o700 });
+    fs.chmodSync(state, 0o755);
+
+    expect(() => service(root, new ScriptedProvider(), root, `sha256:${"f".repeat(64)}`))
+      .toThrow(/Unsafe Plugin Runtime directory/);
+  });
+
   it.each([
     { permission: "secret.use" as const, paths: ["/secrets/video-api"] },
     { permission: "workspace.read" as const, paths: ["/workspace/input.mp4"] },

@@ -1076,10 +1076,14 @@ function canonicalSubset(raw: string[] | undefined, allowed: ReadonlySet<string>
   return values;
 }
 
+function hasInsecurePosixAccess(stat: fs.Stats): boolean {
+  return typeof process.getuid === "function" && (stat.mode & 0o077) !== 0;
+}
+
 function secureDirectory(dir: string): string {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stat = fs.lstatSync(dir);
-  if (stat.isSymbolicLink() || !stat.isDirectory() || (stat.mode & 0o077) !== 0) throw new Error(`Unsafe Plugin Runtime directory: ${dir}`);
+  if (stat.isSymbolicLink() || !stat.isDirectory() || hasInsecurePosixAccess(stat)) throw new Error(`Unsafe Plugin Runtime directory: ${dir}`);
   return fs.realpathSync(dir);
 }
 
@@ -1092,7 +1096,7 @@ function secureRegularFile(file: string): string {
 
 function readSecureJson(file: string, maxBytes: number): unknown {
   const stat = fs.lstatSync(file);
-  if (stat.isSymbolicLink() || !stat.isFile() || (stat.mode & 0o077) !== 0
+  if (stat.isSymbolicLink() || !stat.isFile() || hasInsecurePosixAccess(stat)
     || stat.size < 2 || stat.size > maxBytes) {
     throw new Error("Plugin Runtime state file is unsafe");
   }
