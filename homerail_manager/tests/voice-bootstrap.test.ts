@@ -23,7 +23,11 @@ import {
   type HostCodexManagerAgentInput,
 } from "../src/server/host-codex-manager-agent.js";
 import { _clearNodes } from "../src/node/registry.js";
-import { managerAgentHostPort, registerFakeDockerNode } from "./helpers/fake-manager-agent-node.js";
+import {
+  findAvailableManagerAgentPort,
+  managerAgentHostPort,
+  registerFakeDockerNode,
+} from "./helpers/fake-manager-agent-node.js";
 import type { CodexModelCatalog } from "../src/server/codex-models.js";
 import { applyVoiceCanonicalProjectionPatch } from "../src/generative-ui/canonical-voice-service.js";
 import { persistentGenerativeUiDocumentService } from "../src/generative-ui/shadow-service.js";
@@ -89,15 +93,18 @@ describe("voice bootstrap routes", () => {
   let oldHome: string | undefined;
   let oldLocalNodeAutostart: string | undefined;
   let oldManagerRuntime: string | undefined;
+  let oldManagerAgentPort: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     oldHome = process.env.HOMERAIL_HOME;
     oldLocalNodeAutostart = process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
     oldManagerRuntime = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
+    oldManagerAgentPort = process.env.HOMERAIL_MANAGER_AGENT_PORT;
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-voice-bootstrap-"));
     process.env.HOMERAIL_HOME = tmpHome;
     process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = "0";
     process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "container";
+    process.env.HOMERAIL_MANAGER_AGENT_PORT = String(await findAvailableManagerAgentPort());
     _clearStoredConfig();
     _clearStoredVoiceSettings();
     _clearAllSettings();
@@ -125,6 +132,8 @@ describe("voice bootstrap routes", () => {
     else process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = oldLocalNodeAutostart;
     if (oldManagerRuntime === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
     else process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = oldManagerRuntime;
+    if (oldManagerAgentPort === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_PORT;
+    else process.env.HOMERAIL_MANAGER_AGENT_PORT = oldManagerAgentPort;
     delete process.env.HOMERAIL_MIMO_API_KEY;
     delete process.env.HOMERAIL_TTS_API_KEY;
     fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
