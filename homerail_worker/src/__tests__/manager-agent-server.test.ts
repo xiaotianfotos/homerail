@@ -394,6 +394,7 @@ class ListOrchestrationsAgent implements AgentClient {
 class ToolCatalogAgent implements AgentClient {
   toolNames: string[] = [];
   systemPrompt = "";
+  systemPromptMode: AgentRunContext["systemPromptMode"] = undefined;
 
   async *run(
     _prompt: string,
@@ -402,6 +403,7 @@ class ToolCatalogAgent implements AgentClient {
   ): AsyncIterable<AgentEvent> {
     this.toolNames = tools.map((tool) => tool.name).sort();
     this.systemPrompt = context.systemPrompt ?? "";
+    this.systemPromptMode = context.systemPromptMode;
     yield { type: "text", text: "catalog captured" };
     yield { type: "done" };
   }
@@ -1085,6 +1087,7 @@ describe("manager-agent server", () => {
       expect(agent.systemPrompt).toContain("VOICE_SYSTEM_CONTRACT_TEST");
       expect(agent.systemPrompt).toContain("Voice UI rules hash: rules-hash");
       expect(agent.systemPrompt).toContain("VOICE_RULES_TEST");
+      expect(agent.systemPromptMode).toBe("append");
     } finally {
       await close(server);
       await close(managerApi);

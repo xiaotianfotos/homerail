@@ -189,6 +189,7 @@ export class ClaudeSdkAdapter implements AgentClient {
       const effectiveThinkingBudget = context.handoffOnly
         ? Math.min(this.thinkingBudget, HANDOFF_ONLY_THINKING_BUDGET)
         : this.thinkingBudget;
+      const systemPromptMode = context.systemPromptMode ?? "append";
       const options: Record<string, unknown> = {
         model: effectiveModel,
         maxThinkingTokens: effectiveThinkingBudget,
@@ -199,6 +200,8 @@ export class ClaudeSdkAdapter implements AgentClient {
         cwd: context.workspace ?? process.cwd(),
         stderr: (data: string) => appendStderr(data),
         env: authEnv.env,
+        settingSources: [],
+        strictMcpConfig: true,
       };
       if (this.maxTurns !== null) {
         options.maxTurns = this.maxTurns;
@@ -217,7 +220,13 @@ export class ClaudeSdkAdapter implements AgentClient {
       }
 
       if (context.systemPrompt) {
-        options.systemPrompt = context.systemPrompt;
+        options.systemPrompt = systemPromptMode === "replace"
+          ? context.systemPrompt
+          : {
+              type: "preset",
+              preset: "claude_code",
+              append: context.systemPrompt,
+            };
       }
 
       // Register DAG tools as an in-process MCP server
@@ -259,6 +268,7 @@ export class ClaudeSdkAdapter implements AgentClient {
           thinking_budget: effectiveThinkingBudget,
           cwd: options.cwd,
           has_system_prompt: Boolean(context.systemPrompt),
+          system_prompt_mode: systemPromptMode,
           tool_count: tools.length,
           auth_env: authEnv.authEnv,
           auth_source: authEnv.authSource,

@@ -1176,6 +1176,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
   }
   const context: AgentRunContext = {
     systemPrompt: systemPrompt(config, responseMode, body.voice_ui_rules, body.voice_system_contract, body.manager_skills),
+    systemPromptMode: "append",
     provider: config.provider_name,
     model,
     apiKey: String(config.api_key || ""),
