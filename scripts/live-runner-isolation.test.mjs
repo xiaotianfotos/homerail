@@ -20,6 +20,8 @@ test("routes live jobs to isolated runner slots and serializes only Manager port
   assert.match(review, /HOMERAIL_LIVE_SLOT: \$\{\{ runner\.name \}\}/);
   assert.match(actionlint, /- homerail-pr-review/);
   assert.match(runner, /org\.homerail\.live_slot=\$LIVE_SLOT/);
+  assert.match(runner, /LIVE_RUN_LABEL="org\.homerail\.live_run_v2"/);
+  assert.match(runner, /--label "\$LIVE_RUN_LABEL=\$RUN_KEY"/);
   assert.match(runner, /manager-port-allocation\.lock/);
 
   const acquire = runner.indexOf('flock -w 60 8');

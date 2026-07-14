@@ -15,7 +15,14 @@ MODEL_PROTOCOL="${HOMERAIL_PATTERN_MODEL_PROTOCOL:-anthropic_compatible}"
 AGENT_TYPE="${HOMERAIL_PATTERN_AGENT_TYPE:-claude-sdk}"
 RUN_KEY="${HOMERAIL_LIVE_RUN_KEY:-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}}"
 RUN_KEY="$(printf '%s' "$RUN_KEY" | tr -c 'A-Za-z0-9_.-' '-')"
-LIVE_SLOT="$(printf '%s' "${HOMERAIL_LIVE_SLOT:-legacy}" | tr -c 'A-Za-z0-9_.-' '-')"
+LIVE_SLOT_INPUT="${HOMERAIL_LIVE_SLOT:-}"
+LIVE_SLOT="$(printf '%s' "${LIVE_SLOT_INPUT:-legacy}" | tr -c 'A-Za-z0-9_.-' '-')"
+LIVE_RUN_LABEL="org.homerail.live_run"
+if [ -n "$LIVE_SLOT_INPUT" ]; then
+  # Old checkout scripts globally delete the legacy label, so explicit slots use
+  # a versioned label that remains safe during the migration.
+  LIVE_RUN_LABEL="org.homerail.live_run_v2"
+fi
 
 case "$LIVE_SLOT" in
   ""|.|..)
@@ -79,11 +86,11 @@ cleanup() {
   if [ -x "$REPO_ROOT/homerail_cli/dist/cli.js" ] || [ -f "$REPO_ROOT/homerail_cli/dist/cli.js" ]; then
     node "$REPO_ROOT/homerail_cli/dist/cli.js" runtime stop >/dev/null 2>&1
   fi
-  mapfile -t containers < <(docker ps -aq --filter "label=org.homerail.live_run=$RUN_KEY" 2>/dev/null)
+  mapfile -t containers < <(docker ps -aq --filter "label=$LIVE_RUN_LABEL=$RUN_KEY" 2>/dev/null)
   if [ "${#containers[@]}" -gt 0 ]; then
     docker rm -f "${containers[@]}" >/dev/null 2>&1
   fi
-  mapfile -t images < <(docker images --filter "label=org.homerail.live_run=$RUN_KEY" --format "{{.ID}}" | sort -u)
+  mapfile -t images < <(docker images --filter "label=$LIVE_RUN_LABEL=$RUN_KEY" --format "{{.ID}}" | sort -u)
   if [ "${#images[@]}" -gt 0 ]; then
     docker image rm -f "${images[@]}" >/dev/null 2>&1
   fi
@@ -217,7 +224,7 @@ fi
 
 echo "Building isolated worker image $HOMERAIL_WORKER_IMAGE"
 docker build \
-  --label "org.homerail.live_run=$RUN_KEY" \
+  --label "$LIVE_RUN_LABEL=$RUN_KEY" \
   --label "org.homerail.live_slot=$LIVE_SLOT" \
   -t "$HOMERAIL_WORKER_IMAGE" \
   -f "$REPO_ROOT/homerail_worker/Dockerfile" \
