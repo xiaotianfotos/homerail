@@ -5,7 +5,7 @@
  * @version 0.1.0
  */
 
-import type { AgentToolDefinition } from "homerail-protocol";
+import type { AgentBuiltinToolName, AgentToolDefinition } from "homerail-protocol";
 
 /** Tool definition with a runtime handler (extends protocol's AgentToolDefinition). */
 export interface DagToolDefinition extends AgentToolDefinition {
@@ -67,4 +67,6 @@ export interface AgentRunContext {
   abortSignal?: AbortSignal;
   /** Contract-correction turns may only submit a DAG handoff. */
   handoffOnly?: boolean;
+  /** Exact allowlist for backend-provided shell and file tools. */
+  allowedBuiltinTools?: AgentBuiltinToolName[];
 }

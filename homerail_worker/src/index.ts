@@ -7,7 +7,7 @@
 import { WsClient } from "./ws-client.js";
 import { runPrompt } from "./prompt-runner.js";
 import type { PromptJob } from "./prompt-runner.js";
-import type { DagAdvisorConfig, DagNodeConfig, DagWorkspaceAccess } from "homerail-protocol";
+import type { AgentBuiltinToolName, DagAdvisorConfig, DagAgentToolName, DagNodeConfig, DagWorkspaceAccess } from "homerail-protocol";
 import { startManagerAgentServer } from "./manager-agent/server.js";
 import { resolveWorkerAgentBackend } from "./agent/backend-selection.js";
 import { envelopeInputsToTaskText } from "./envelope-task.js";
@@ -139,6 +139,12 @@ client.on("task", async (msg) => {
         advisors: Array.isArray(envelope.advisors) ? envelope.advisors as DagAdvisorConfig[] : undefined,
         workspace_access: envelope.workspaceAccess && typeof envelope.workspaceAccess === "object"
           ? envelope.workspaceAccess as unknown as DagWorkspaceAccess
+          : undefined,
+        allowed_builtin_tools: Array.isArray(envelope.allowedBuiltinTools)
+          ? envelope.allowedBuiltinTools as AgentBuiltinToolName[]
+          : undefined,
+        allowed_dag_tools: Array.isArray(envelope.allowedDagTools)
+          ? envelope.allowedDagTools as DagAgentToolName[]
           : undefined,
       }
     : (data.dag_config ?? data.dagConfig ?? {}) as DagNodeConfig;

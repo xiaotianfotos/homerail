@@ -27,10 +27,14 @@ import { deprovisionProvisionedForRun } from "../orchestration/provisioned-clean
 import { getWorker } from "../worker/registry.js";
 import { getNode } from "../node/registry.js";
 import {
+  AGENT_BUILTIN_TOOL_NAMES,
+  DAG_AGENT_TOOL_NAMES,
   isDisabledDirectLlmAgentType,
   normalizeManagerAgentRuntimeAgentType,
   redactTelemetry,
+  type AgentBuiltinToolName,
   type DagAdvisorConfig,
+  type DagAgentToolName,
   type DagWorkspaceAccess,
 } from "homerail-protocol";
 import { resolveAgentRuntimeConfig } from "./agent-runtime-resolver.js";
@@ -2308,6 +2312,24 @@ function _workspaceAccess(node: DAGGraphNode): DagWorkspaceAccess | undefined {
   };
 }
 
+function _allowedBuiltinTools(node: DAGGraphNode): AgentBuiltinToolName[] | undefined {
+  const raw = _agentRuntimeConfig(node).allowed_builtin_tools;
+  if (!Array.isArray(raw)) return undefined;
+  const allowed = new Set<string>(AGENT_BUILTIN_TOOL_NAMES);
+  return raw.filter((entry): entry is AgentBuiltinToolName => (
+    typeof entry === "string" && allowed.has(entry)
+  ));
+}
+
+function _allowedDagTools(node: DAGGraphNode): DagAgentToolName[] | undefined {
+  const raw = _agentRuntimeConfig(node).allowed_dag_tools;
+  if (!Array.isArray(raw)) return undefined;
+  const allowed = new Set<string>(DAG_AGENT_TOOL_NAMES);
+  return raw.filter((entry): entry is DagAgentToolName => (
+    typeof entry === "string" && allowed.has(entry)
+  ));
+}
+
 function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelopeBuildResult {
   if (run.status !== "active") return { ok: false, reason: `run ${run.runId} is not active` };
   if (getNodeState(run.dagRun, nodeId) !== "READY") {
@@ -2361,6 +2383,8 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
       requiredCapabilities: node.requires?.capabilities,
       advisors: advisorResolution.advisors,
       workspaceAccess: _workspaceAccess(node),
+      allowedBuiltinTools: _allowedBuiltinTools(node),
+      allowedDagTools: _allowedDagTools(node),
     },
   };
 }

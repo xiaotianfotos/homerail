@@ -374,6 +374,15 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
         }
         advisorIds.add(advisor.id);
       }
+      if (node.allowed_dag_tools !== undefined
+        && Object.keys(node.outputs ?? {}).length > 0
+        && !node.allowed_dag_tools.includes("handoff")) {
+        add(
+          `${nodePath}/allowed_dag_tools`,
+          "DAG_SEMANTIC_HANDOFF_TOOL_REQUIRED",
+          "agent nodes with outputs must allow the handoff DAG tool",
+        );
+      }
     }
     for (const dependency of node.depends_on ?? []) {
       if (!nodes[dependency]) {
@@ -680,6 +689,12 @@ function canonicalNode(id: string, node: WorkflowSpecV1Node): CanonicalNode {
     const config = {
       ...(node.advisors ? { advisors: node.advisors } : {}),
       ...(node.workspace_access ? { workspace_access: node.workspace_access } : {}),
+      ...(node.allowed_builtin_tools !== undefined
+        ? { allowed_builtin_tools: [...node.allowed_builtin_tools].sort() }
+        : {}),
+      ...(node.allowed_dag_tools !== undefined
+        ? { allowed_dag_tools: [...node.allowed_dag_tools].sort() }
+        : {}),
     };
     return {
       ...base,
@@ -1329,6 +1344,12 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
       agent: node.agent,
       ...(Array.isArray(node.config?.advisors) ? { advisors: node.config.advisors } : {}),
       ...(node.config?.workspace_access ? { workspace_access: node.config.workspace_access } : {}),
+      ...(Array.isArray(node.config?.allowed_builtin_tools)
+        ? { allowed_builtin_tools: node.config.allowed_builtin_tools }
+        : {}),
+      ...(Array.isArray(node.config?.allowed_dag_tools)
+        ? { allowed_dag_tools: node.config.allowed_dag_tools }
+        : {}),
     };
   }
   if (node.kind === "terminal") {

@@ -44,6 +44,8 @@ spec:
     execute:
       kind: agent
       agent: worker
+      allowed_builtin_tools: [Write]
+      allowed_dag_tools: [handoff]
       inputs: { task: { contract: Text } }
       outputs: { result: { contract: Text } }
     terminal:
@@ -115,6 +117,8 @@ describe("WorkflowSpec v1 runtime projection", () => {
       dispatched: 1,
     });
     expect(dispatcher.dispatched[0].inputs).toMatchObject({ task: ["hello"] });
+    expect(dispatcher.dispatched[0].allowedBuiltinTools).toEqual(["Write"]);
+    expect(dispatcher.dispatched[0].allowedDagTools).toEqual(["handoff"]);
 
     const completed = handoffActiveRun(created.runId, "execute", "result", "verified");
     expect(completed?.status).toBe("completed");

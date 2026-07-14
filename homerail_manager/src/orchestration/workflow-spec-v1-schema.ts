@@ -1,8 +1,9 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
+import { AGENT_BUILTIN_TOOL_NAMES, DAG_AGENT_TOOL_NAMES } from "homerail-protocol";
 
 export const WORKFLOW_API_VERSION = "homerail.ai/v1" as const;
 export const WORKFLOW_KIND = "Workflow" as const;
-export const WORKFLOW_COMPILER_VERSION = "3" as const;
+export const WORKFLOW_COMPILER_VERSION = "4" as const;
 
 const IDENTIFIER_PATTERN = "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$";
 const PORT_REFERENCE_PATTERN = "^(?:\\$run\\.input|[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*\\.[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*)$";
@@ -118,11 +119,29 @@ const WorkspaceAccess = Type.Object({
   max_snapshot_files: Type.Optional(Type.Integer({ minimum: 1, maximum: 100_000 })),
 }, { additionalProperties: false });
 
+const AgentBuiltinToolName = Type.Union(
+  AGENT_BUILTIN_TOOL_NAMES.map((name) => Type.Literal(name)),
+);
+
+const DagAgentToolName = Type.Union(
+  DAG_AGENT_TOOL_NAMES.map((name) => Type.Literal(name)),
+);
+
 const AgentNode = Type.Object({
   kind: Type.Literal("agent"),
   agent: Identifier,
   advisors: Type.Optional(Type.Array(AdvisorBinding, { uniqueItems: true, maxItems: 16 })),
   workspace_access: Type.Optional(WorkspaceAccess),
+  allowed_builtin_tools: Type.Optional(Type.Array(AgentBuiltinToolName, {
+    uniqueItems: true,
+    maxItems: AGENT_BUILTIN_TOOL_NAMES.length,
+    description: "Exact allowlist for backend-provided shell and file tools; an empty list disables them.",
+  })),
+  allowed_dag_tools: Type.Optional(Type.Array(DagAgentToolName, {
+    uniqueItems: true,
+    maxItems: DAG_AGENT_TOOL_NAMES.length,
+    description: "Exact allowlist for HomeRail DAG tools.",
+  })),
   ...NodeBase,
 }, { additionalProperties: false });
 

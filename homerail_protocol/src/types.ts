@@ -429,6 +429,31 @@ export interface ContractSpec {
 
 // ── DAG Node Config ──────────────────────────────────────────────
 
+/** Stable names understood by the Claude SDK built-in tool policy. @version 0.1.0 */
+export const AGENT_BUILTIN_TOOL_NAMES = [
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "Grep",
+  "Glob",
+  "LS",
+] as const;
+
+export type AgentBuiltinToolName = (typeof AGENT_BUILTIN_TOOL_NAMES)[number];
+
+export const DAG_AGENT_TOOL_NAMES = [
+  "handoff",
+  "send_message",
+  "receive_message",
+  "get_graph_context",
+  "manager_command",
+  "consult_advisor",
+] as const;
+
+export type DagAgentToolName = (typeof DAG_AGENT_TOOL_NAMES)[number];
+
 /** @version 0.1.0 */
 export interface Edge {
   from_node?: string;
@@ -448,6 +473,10 @@ export interface DagNodeConfig {
   session_id?: string;
   advisors?: DagAdvisorConfig[];
   workspace_access?: DagWorkspaceAccess;
+  /** Optional exact allowlist for backend-provided shell and file tools. */
+  allowed_builtin_tools?: AgentBuiltinToolName[];
+  /** Optional exact allowlist for HomeRail DAG tools. */
+  allowed_dag_tools?: DagAgentToolName[];
 }
 
 export interface DagAdvisorConfig {

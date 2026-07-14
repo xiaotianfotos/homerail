@@ -579,6 +579,8 @@ describe("built-in DAG patterns", () => {
 
   it("requires sparring challenge and repair evidence before downstream work", () => {
     const pattern = instantiateDAGPattern("sparring");
+    const breaker = pattern.parsed.graph.nodes.find((node) => node.node_id === "break");
+    const builder = pattern.parsed.graph.nodes.find((node) => node.node_id === "build");
     const deterministicCheck = pattern.parsed.graph.nodes.find((node) => node.node_id === "deterministic_check");
     const verifier = pattern.parsed.graph.nodes.find((node) => node.node_id === "verify");
 
@@ -595,6 +597,18 @@ describe("built-in DAG patterns", () => {
     expect(pattern.parsed.meta.agents.builder?.system).toContain("fix_applied");
     expect(pattern.parsed.meta.agents.verifier?.system).toContain("Manager-owned input:check");
     expect(pattern.parsed.meta.agents.verifier?.system).toContain("check.ok is true");
+    expect(breaker?.extra?.agent_runtime).toMatchObject({
+      allowed_builtin_tools: ["Write"],
+      allowed_dag_tools: ["handoff"],
+    });
+    expect(builder?.extra?.agent_runtime).toMatchObject({
+      allowed_builtin_tools: ["Write"],
+      allowed_dag_tools: ["handoff"],
+    });
+    expect(verifier?.extra?.agent_runtime).toMatchObject({
+      allowed_builtin_tools: [],
+      allowed_dag_tools: ["handoff"],
+    });
     expect(deterministicCheck?.node_type).toBe("command_gateway");
     expect(deterministicCheck?.gateway_config).toMatchObject({
       input: "challenge",

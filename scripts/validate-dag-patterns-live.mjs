@@ -5,6 +5,7 @@ import * as path from "node:path";
 
 import {
   catalogCoverageFailures,
+  diagnosticFailureHandoffs,
   matchingHandoffs,
   parseContent,
   patternParameters,
@@ -296,6 +297,7 @@ async function runPattern(pattern, attempt) {
       port: handoff.port,
       content_keys: Object.keys(parseContent(handoff.content) ?? {}).slice(0, 20),
     })),
+    diagnostic_failure_handoffs: diagnosticFailureHandoffs(handoffs),
     semantic_handoffs: semanticRequirements[pattern.id].map((requirement) => ({
       node: requirement.node,
       port: requirement.port,

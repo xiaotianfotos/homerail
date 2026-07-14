@@ -67,6 +67,17 @@ function assertAgentRuntimeProtocol(agentBackend: string | undefined, protocol: 
   }
 }
 
+function assertBuiltinToolPolicySupported(agentBackend: string | undefined, allowedTools: unknown): void {
+  if (allowedTools === undefined) return;
+  const backend = normalizeManagerAgentRuntimeAgentType(
+    agentBackend ?? process.env.AGENT_BACKEND ?? "claude-sdk",
+  );
+  if (backend === "claude-sdk" || backend === "deterministic") return;
+  throw new Error(
+    `allowed_builtin_tools is not enforced by agent backend '${backend ?? "unknown"}'`,
+  );
+}
+
 async function runAdvisorCall(
   advisor: DagAdvisorConfig,
   question: string,
@@ -188,9 +199,15 @@ export async function runPrompt(
   const allDagTools = createDagTools(dagState, {
     advisorRunner: (advisor, question) => runAdvisorCall(advisor, question, workspace, deps.abortSignal),
   });
+  const allowedDagTools = job.dagConfig.allowed_dag_tools === undefined
+    ? undefined
+    : new Set<string>(job.dagConfig.allowed_dag_tools);
+  const selectedDagTools = allowedDagTools === undefined
+    ? allDagTools
+    : allDagTools.filter((tool) => allowedDagTools.has(tool.name));
   const dagTools = correctionOnly
     ? allDagTools.filter((tool) => tool.name === "handoff")
-    : allDagTools;
+    : selectedDagTools;
   const effectiveSystemPrompt = correctionOnly
     ? [
         "DAG CONTRACT CORRECTION MODE.",
@@ -274,6 +291,7 @@ export async function runPrompt(
       });
     }
     assertAgentRuntimeProtocol(agentBackend, job.llmProtocol);
+    assertBuiltinToolPolicySupported(agentBackend, job.dagConfig.allowed_builtin_tools);
     const agent = createAgentClient(agentBackend);
     const context: AgentRunContext = {
       systemPrompt: effectiveSystemPrompt,
@@ -286,6 +304,7 @@ export async function runPrompt(
       sessionId: job.dagConfig.session_id ?? job.runId,
       abortSignal: deps.abortSignal,
       handoffOnly: correctionOnly,
+      allowedBuiltinTools: job.dagConfig.allowed_builtin_tools,
     };
     try {
       saveSession({

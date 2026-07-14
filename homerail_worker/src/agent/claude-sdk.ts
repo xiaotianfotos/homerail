@@ -6,10 +6,10 @@
  * @version 0.1.0
  */
 
+import { AGENT_BUILTIN_TOOL_NAMES } from "homerail-protocol";
 import type { AgentClient, AgentEvent, AgentRunContext, AgentUsage, DagToolDefinition } from "./types.js";
 import { jsonSchemaObjectToZodRawShape } from "./json-schema-zod.js";
 
-const BUILTIN_TOOLS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "LS"] as const;
 const HANDOFF_ONLY_THINKING_BUDGET = 2048;
 
 interface SdkModule {
@@ -181,7 +181,11 @@ export class ClaudeSdkAdapter implements AgentClient {
     try {
       const effectiveModel = context.model || this.model;
       const authEnv = this.buildClaudeEnv(context, effectiveModel);
-      const builtinTools = context.handoffOnly ? [] : [...BUILTIN_TOOLS];
+      const requestedBuiltinTools = context.allowedBuiltinTools ?? AGENT_BUILTIN_TOOL_NAMES;
+      const supportedBuiltinTools = new Set<string>(AGENT_BUILTIN_TOOL_NAMES);
+      const builtinTools = context.handoffOnly
+        ? []
+        : requestedBuiltinTools.filter((tool) => supportedBuiltinTools.has(tool));
       const effectiveThinkingBudget = context.handoffOnly
         ? Math.min(this.thinkingBudget, HANDOFF_ONLY_THINKING_BUDGET)
         : this.thinkingBudget;

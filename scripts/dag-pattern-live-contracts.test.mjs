@@ -5,6 +5,7 @@ import {
   EXPECTED_PATTERN_IDS,
   LIVE_ISSUE_REVISION,
   catalogCoverageFailures,
+  diagnosticFailureHandoffs,
   parseContent,
   patternParameters,
   prompts,
@@ -38,6 +39,7 @@ test("uses current runtime-backed topology contracts", () => {
   assert.match(prompts.sparring, /Manager runs test_command/);
   assert.match(prompts.sparring, /\[\"node\",\"-e\"/);
   assert.match(prompts.sparring, /src\/live-fix\.txt/);
+  assert.match(prompts.sparring, /trimEnd/);
 });
 
 test("bounds fan-out, advisor, and approval parameters", () => {
@@ -63,6 +65,17 @@ test("parses structured handoff strings without coercing plain text", () => {
   assert.deepEqual(parseContent('{"status":"success"}'), { status: "success" });
   assert.equal(parseContent("plain text"), "plain text");
   assert.equal(parseContent("{broken}"), "{broken}");
+});
+
+test("retains complete negative handoffs for live failure diagnostics", () => {
+  assert.deepEqual(diagnosticFailureHandoffs([
+    { from_node: "check", port: "failed", content: '{"exit_code":1,"stderr":"missing file"}' },
+    { from_node: "done", port: "passed", content: { ok: true } },
+  ]), [{
+    node: "check",
+    port: "failed",
+    content: { exit_code: 1, stderr: "missing file" },
+  }]);
 });
 
 test("requires real advisor and durable approval evidence", () => {

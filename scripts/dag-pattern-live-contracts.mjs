@@ -51,7 +51,7 @@ const passCommand = ["node", "-e", "process.exit(0)"];
 const sparringTestCommand = [
   "node",
   "-e",
-  "const fs=require('node:fs');const challenge=fs.readFileSync('tests/sparring/live.txt','utf8');const repair=fs.readFileSync('src/live-fix.txt','utf8');process.exit(challenge==='1+1 must equal 2'&&repair==='2'?0:1)",
+  "const fs=require('node:fs');const challenge=fs.readFileSync('tests/sparring/live.txt','utf8').trimEnd();const repair=fs.readFileSync('src/live-fix.txt','utf8').trimEnd();process.exit(challenge==='1+1 must equal 2'&&repair==='2'?0:1)",
 ];
 
 export const LIVE_ISSUE_REVISION = process.env.HOMERAIL_LIVE_ISSUE_REVISION
@@ -189,6 +189,28 @@ export function parseContent(content) {
 
 export function matchingHandoffs(handoffs, node, port) {
   return handoffs.filter((handoff) => handoffNode(handoff) === node && handoff.port === port);
+}
+
+const DIAGNOSTIC_FAILURE_PORTS = new Set([
+  "failed",
+  "failure",
+  "rejected",
+  "error",
+  "blocked",
+  "stale",
+  "disputed",
+  "conflict",
+  "exhausted",
+]);
+
+export function diagnosticFailureHandoffs(handoffs) {
+  return handoffs
+    .filter((handoff) => DIAGNOSTIC_FAILURE_PORTS.has(String(handoff.port ?? "").toLowerCase()))
+    .map((handoff) => ({
+      node: handoffNode(handoff),
+      port: handoff.port,
+      content: parseContent(handoff.content),
+    }));
 }
 
 function objectValue(value) {

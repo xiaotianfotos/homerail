@@ -150,6 +150,59 @@ describe("prompt runner", () => {
     }));
   });
 
+  it("filters HomeRail DAG tools through the node allowlist", async () => {
+    let observedTools: string[] = [];
+    const mockAgent: AgentClient = {
+      run(_prompt, tools) {
+        observedTools = tools.map((tool) => tool.name);
+        return (async function* () {
+          await tools[0].handler({ port: "done", content: "restricted" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-dag-tool-policy", () => mockAgent);
+
+    await runPrompt(
+      {
+        task: "handoff only",
+        sender: "test",
+        runId: "run-dag-tool-policy",
+        dagConfig: makeConfigWith({ allowed_dag_tools: ["handoff"] }),
+      },
+      {
+        wsSend: () => {},
+        agentBackend: "test-dag-tool-policy",
+      },
+    );
+
+    expect(observedTools).toEqual(["handoff"]);
+  });
+
+  it("fails closed when a backend cannot enforce the built-in tool allowlist", async () => {
+    const sent: string[] = [];
+
+    await runPrompt(
+      {
+        task: "must stay write-only",
+        sender: "test",
+        runId: "run-unsupported-builtin-policy",
+        dagConfig: makeConfigWith({ allowed_builtin_tools: ["Write"] }),
+      },
+      {
+        wsSend: (data) => sent.push(data),
+        agentBackend: "kimi_code",
+      },
+    );
+
+    expect(sent.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+      type: "node_error",
+      data: expect.objectContaining({
+        message: "allowed_builtin_tools is not enforced by agent backend 'kimi_code'",
+      }),
+    }));
+  });
+
   it("defers node_error delivery to the worker lifecycle when requested", async () => {
     const mockAgent: AgentClient = {
       run() {

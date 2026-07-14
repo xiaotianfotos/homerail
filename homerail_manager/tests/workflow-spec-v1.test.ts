@@ -65,6 +65,49 @@ const MINIMAL_WORKFLOW = {
 } as const;
 
 describe("WorkflowSpec v1", () => {
+  it("canonicalizes strict per-agent built-in tool allowlists", () => {
+    const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
+    workflow.spec.nodes.execute.allowed_builtin_tools = ["Write", "Read"];
+    workflow.spec.nodes.execute.allowed_dag_tools = ["handoff", "get_graph_context"];
+
+    const result = compileWorkflowSource(YAML.stringify(workflow));
+
+    expect(result.valid, result.diagnostics.map((item) => item.message).join("\n")).toBe(true);
+    expect(result.canonical?.nodes.find((node) => node.id === "execute")?.config).toMatchObject({
+      allowed_builtin_tools: ["Read", "Write"],
+      allowed_dag_tools: ["get_graph_context", "handoff"],
+    });
+
+    workflow.spec.nodes.execute.allowed_builtin_tools.reverse();
+    workflow.spec.nodes.execute.allowed_dag_tools.reverse();
+    expect(compileWorkflowSource(YAML.stringify(workflow)).canonical_hash).toBe(result.canonical_hash);
+  });
+
+  it("rejects duplicate or unknown built-in tool names", () => {
+    for (const allowedBuiltinTools of [["Write", "Write"], ["Write", "UnknownTool"]]) {
+      const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
+      workflow.spec.nodes.execute.allowed_builtin_tools = allowedBuiltinTools;
+      const result = compileWorkflowSource(YAML.stringify(workflow));
+      expect(result.valid).toBe(false);
+      expect(result.diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "DAG_SCHEMA_INVALID_FIELD" }),
+      ]));
+    }
+  });
+
+  it("requires output-producing agents to retain the handoff DAG tool", () => {
+    const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
+    workflow.spec.nodes.execute.allowed_dag_tools = ["get_graph_context"];
+
+    const result = compileWorkflowSource(YAML.stringify(workflow));
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "DAG_SEMANTIC_HANDOFF_TOOL_REQUIRED",
+      path: "/spec/nodes/execute/allowed_dag_tools",
+    }));
+  });
+
   it("accepts bounded conditional contract invariants", () => {
     const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
     workflow.spec.contracts.Result = {
@@ -193,7 +236,7 @@ describe("WorkflowSpec v1", () => {
     const result = compileWorkflowSource(YAML.stringify(workflow));
 
     expect(result.valid, result.diagnostics.map((item) => item.message).join("\n")).toBe(true);
-    expect(result.canonical?.compiler_version).toBe("3");
+    expect(result.canonical?.compiler_version).toBe("4");
     expect(result.canonical?.artifacts).toEqual([
       {
         name: "evidence.tar.gz",

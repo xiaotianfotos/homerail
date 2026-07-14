@@ -627,7 +627,7 @@ const quorum: DAGPatternDefinition = {
 
 const sparring: DAGPatternDefinition = {
   id: "sparring",
-  version: "1.1.0",
+  version: "1.2.0",
   name: "Sparring",
   summary: "A breaker creates a concrete challenge, a builder addresses it, and a fresh verifier settles the result.",
   intent: "Separate adversarial discovery from repair so neither role grades its own output.",
@@ -692,10 +692,10 @@ const sparring: DAGPatternDefinition = {
         verifier: { system: "From fresh context, inspect input:challenge, input:repair, and the Manager-owned input:check. Never execute test_command yourself and do not use Bash, Read, Write, or any tool except handoff. If challenge.test_command and repair.test_command are identical, check.ok is true, and check.exit_code is 0, immediately call handoff on verdict with exactly {verdict:'pass',evidence:string}; otherwise hand off exactly {verdict:'fail',evidence:string}. Do not add fields, answer with text, or modify files." },
       },
       nodes: {
-        break: { kind: "agent", agent: "breaker", workspace_access: { writable_paths: ["{{protected_path}}"], readonly_paths: ["{{writable_path}}"] }, inputs: { target: { contract: "Target" } }, outputs: { challenge: { contract: "Challenge" } } },
-        build: { kind: "agent", agent: "builder", workspace_access: { writable_paths: ["{{writable_path}}"], readonly_paths: ["{{protected_path}}"] }, inputs: { challenge: { contract: "Challenge" } }, outputs: { repaired: { contract: "Repair" } } },
+        break: { kind: "agent", agent: "breaker", allowed_builtin_tools: ["Write"], allowed_dag_tools: ["handoff"], workspace_access: { writable_paths: ["{{protected_path}}"], readonly_paths: ["{{writable_path}}"] }, inputs: { target: { contract: "Target" } }, outputs: { challenge: { contract: "Challenge" } } },
+        build: { kind: "agent", agent: "builder", allowed_builtin_tools: ["Write"], allowed_dag_tools: ["handoff"], workspace_access: { writable_paths: ["{{writable_path}}"], readonly_paths: ["{{protected_path}}"] }, inputs: { challenge: { contract: "Challenge" } }, outputs: { repaired: { contract: "Repair" } } },
         deterministic_check: { kind: "command", inputs: { challenge: { contract: "Challenge" }, repair: { contract: "Repair" } }, outputs: { passed: {}, failed: {} }, config: { input: "challenge", command_field: "test_command", cwd: "$run_workspace", timeout_ms: 120000, success_port: "passed", failure_port: "failed", parse_stdout: "text" } },
-        verify: { kind: "agent", agent: "verifier", workspace_access: { writable_paths: [], readonly_paths: ["{{protected_path}}", "{{writable_path}}"] }, inputs: { challenge: { contract: "Challenge" }, repair: { contract: "Repair" }, check: {} }, outputs: { verdict: { contract: "Verdict" } } },
+        verify: { kind: "agent", agent: "verifier", allowed_builtin_tools: [], allowed_dag_tools: ["handoff"], workspace_access: { writable_paths: [], readonly_paths: ["{{protected_path}}", "{{writable_path}}"] }, inputs: { challenge: { contract: "Challenge" }, repair: { contract: "Repair" }, check: {} }, outputs: { verdict: { contract: "Verdict" } } },
         verdict_gate: { kind: "condition", inputs: { verdict: { contract: "Verdict" } }, outputs: { passed: { contract: "Verdict" }, disputed: { contract: "Verdict" } }, config: { field: "verdict", routes: { pass: "passed", fail: "disputed" }, default: "disputed" } },
         done: { kind: "terminal", outcome: "success", inputs: { result: { contract: "Verdict" } } },
         check_dispute: { kind: "terminal", outcome: "failure", inputs: { result: {} } },
