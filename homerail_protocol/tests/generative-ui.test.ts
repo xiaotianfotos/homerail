@@ -54,6 +54,29 @@ function taskNode(id = "current-task"): GenerativeUiNodeV1 {
   };
 }
 
+function legacyGeneratedViewNode(): GenerativeUiNodeV1 {
+  return {
+    ir_version: GENERATIVE_UI_IR_VERSION,
+    id: "legacy-generated-view",
+    kind: "com.homerail.core/generated_view",
+    kind_version: 1,
+    owner: { id: "com.homerail.core", version: "0.1.8" },
+    surface: GenerativeUiSurface.RESULT,
+    importance: GenerativeUiImportance.PRIMARY,
+    content: { data: { title: "Persisted ViewSpec" } },
+    view: {
+      view_version: 1,
+      root: {
+        id: "root",
+        type: "heading",
+        text: { path: "/data/title" },
+        level: 2,
+      },
+    },
+    fallback: { title: "Persisted ViewSpec" },
+  };
+}
+
 function document(): GenerativeUiDocumentV1 {
   return createGenerativeUiDocument({
     document_id: "voice-session-1-ui",
@@ -95,6 +118,54 @@ describe("Generative UI semantic protocol", () => {
       value: taskNode(),
       errors: [],
     });
+  });
+
+  it("keeps ViewSpec read-compatible only for generated_view@1", () => {
+    const legacy = legacyGeneratedViewNode();
+    expect(validateGenerativeUiNode(legacy).valid).toBe(true);
+
+    const viewOnV2 = structuredClone(legacy);
+    viewOnV2.kind_version = 2;
+    expect(validateGenerativeUiNode(viewOnV2).errors).toContainEqual(expect.objectContaining({
+      keyword: "legacyViewSpecVersion",
+    }));
+
+    const a2uiOnV1 = structuredClone(legacy);
+    delete a2uiOnV1.view;
+    a2uiOnV1.a2ui = {
+      version: "v1.0",
+      catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
+      components: [{ id: "root", component: "Text", text: "Native A2UI" }],
+    };
+    expect(validateGenerativeUiNode(a2uiOnV1).errors).toContainEqual(expect.objectContaining({
+      keyword: "nativeA2uiVersion",
+    }));
+
+    const conflicting = structuredClone(legacy);
+    conflicting.a2ui = a2uiOnV1.a2ui;
+    expect(validateGenerativeUiNode(conflicting).errors).toContainEqual(expect.objectContaining({
+      keyword: "presentationConflict",
+    }));
+  });
+
+  it("rejects patches that set ViewSpec and A2UI together", () => {
+    const patch = transaction({
+      operations: [{
+        op: "patch",
+        node_id: "legacy-generated-view",
+        changes: {
+          view: legacyGeneratedViewNode().view,
+          a2ui: {
+            version: "v1.0",
+            catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
+            components: [{ id: "root", component: "Text", text: "Native A2UI" }],
+          },
+        },
+      }],
+    });
+    expect(validateGenerativeUiTransaction(patch).errors).toContainEqual(expect.objectContaining({
+      keyword: "presentationConflict",
+    }));
   });
 
   it("rejects renderer-specific fields, executable actions, and missing fallbacks", () => {

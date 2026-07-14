@@ -31,6 +31,7 @@ import {
   HOMERAIL_A2UI_MAX_SOURCE_ITEMS,
   HOMERAIL_A2UI_VERSION,
 } from "./a2ui.js";
+import { HOMERAIL_VIEW_SPEC_VERSION } from "./view-spec.js";
 
 const opaqueId = {
   type: "string",
@@ -64,6 +65,147 @@ const semanticKind = {
 const irVersion = { const: GENERATIVE_UI_IR_VERSION } as const;
 const surface = { type: "string", enum: Object.values(GenerativeUiSurface) } as const;
 const importance = { type: "string", enum: Object.values(GenerativeUiImportance) } as const;
+const viewPointer = {
+  type: "string",
+  maxLength: 500,
+  pattern: "^(?:/(?:[^~/]|~[01])*)*$",
+} as const;
+const viewValueSchema = {
+  $id: "homerail-view-value-v1",
+  oneOf: [
+    {
+      type: "object",
+      properties: { literal: { type: ["string", "number", "boolean"] } },
+      required: ["literal"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        path: viewPointer,
+        format: { type: "string", enum: ["text", "number", "percent", "datetime", "duration", "status", "tone"] },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        item_path: viewPointer,
+        format: { type: "string", enum: ["text", "number", "percent", "datetime", "duration", "status", "tone"] },
+      },
+      required: ["item_path"],
+      additionalProperties: false,
+    },
+  ],
+} as const;
+const viewToneSchema = {
+  oneOf: [
+    { type: "string", enum: ["neutral", "info", "positive", "warning", "critical"] },
+    { $ref: "homerail-view-value-v1" },
+  ],
+} as const;
+const viewPredicateSchema = {
+  type: "object",
+  properties: {
+    path: viewPointer,
+    item_path: viewPointer,
+    operator: { type: "string", enum: ["exists", "not_empty", "equals", "not_equals", "gt", "gte", "lt", "lte"] },
+    value: { type: ["string", "number", "boolean"] },
+  },
+  required: ["operator"],
+  additionalProperties: false,
+} as const;
+const viewTableColumnSchema = {
+  type: "object",
+  properties: {
+    id: identifier,
+    label: { type: "string", minLength: 1, maxLength: 80 },
+    path: viewPointer,
+    format: { type: "string", enum: ["text", "number", "percent", "datetime", "duration", "status", "tone"] },
+  },
+  required: ["id", "label", "path"],
+  additionalProperties: false,
+} as const;
+
+/** Historical closed primitive vocabulary for persisted generated_view@1 nodes. */
+export const homerailViewNodeSchema = {
+  $id: "homerail-view-node-v1",
+  type: "object",
+  properties: {
+    id: identifier,
+    type: { type: "string", enum: [
+      "stack", "grid", "section", "heading", "text", "markdown", "icon", "badge", "divider",
+      "metric", "progress", "list", "table", "timeline", "bar_chart", "dag", "action", "disclosure", "link", "artifact", "repeat",
+    ] },
+    span: { type: "integer", minimum: 1, maximum: 3 },
+    when: viewPredicateSchema,
+    children: { type: "array", minItems: 1, maxItems: 24, items: { $ref: "homerail-view-node-v1" } },
+    item: { $ref: "homerail-view-node-v1" },
+    gap: { type: "string", enum: ["none", "xs", "sm", "md", "lg"] },
+    align: { type: "string", enum: ["start", "center", "end", "stretch"] },
+    columns: {
+      oneOf: [
+        {
+          type: "object",
+          properties: {
+            default: { type: "integer", minimum: 1, maximum: 3 },
+            compact: { type: "integer", minimum: 1, maximum: 2 },
+          },
+          required: ["default"],
+          additionalProperties: false,
+        },
+        { type: "array", minItems: 1, maxItems: 8, items: viewTableColumnSchema },
+      ],
+    },
+    title: { $ref: "homerail-view-value-v1" },
+    text: { $ref: "homerail-view-value-v1" },
+    label: { $ref: "homerail-view-value-v1" },
+    value: { $ref: "homerail-view-value-v1" },
+    unit: { $ref: "homerail-view-value-v1" },
+    uri: { $ref: "homerail-view-value-v1" },
+    description: { $ref: "homerail-view-value-v1" },
+    alt: { $ref: "homerail-view-value-v1" },
+    kind: { type: "string", enum: ["image", "html", "file"] },
+    layout: { type: "string", enum: ["fluid", "portrait"] },
+    tone: viewToneSchema,
+    level: { type: "integer", minimum: 1, maximum: 3 },
+    max_lines: { type: "integer", minimum: 1, maximum: 24 },
+    name: { type: "string", enum: [
+      "activity", "alert", "check", "clock", "database", "external-link", "file", "git", "monitor",
+      "pause", "play", "search", "server", "settings", "shield", "sparkles", "user", "x",
+    ] },
+    source: viewPointer,
+    max_items: { type: "integer", minimum: 1, maximum: 50 },
+    item_title_path: viewPointer,
+    item_detail_path: viewPointer,
+    item_badge_path: viewPointer,
+    item_status_path: viewPointer,
+    item_time_path: viewPointer,
+    item_label_path: viewPointer,
+    item_value_path: viewPointer,
+    item_tone_path: viewPointer,
+    item_id_path: viewPointer,
+    item_progress_path: viewPointer,
+    item_depends_on_path: viewPointer,
+    action_id: identifier,
+    style: { type: "string", enum: ["primary", "secondary", "danger"] },
+    open: { type: "boolean" },
+  },
+  required: ["id", "type"],
+  additionalProperties: false,
+} as const;
+
+export const homerailViewSpecSchema = {
+  $id: "homerail-view-spec-v1",
+  type: "object",
+  properties: {
+    view_version: { const: HOMERAIL_VIEW_SPEC_VERSION },
+    root: { $ref: "homerail-view-node-v1" },
+  },
+  required: ["view_version", "root"],
+  additionalProperties: false,
+} as const;
 const a2uiPath = {
   type: "string",
   maxLength: 500,
@@ -876,6 +1018,7 @@ const nodeProperties = {
   importance,
   status: statusSchema,
   content: { type: "object", maxProperties: 128, additionalProperties: true },
+  view: { $ref: "homerail-view-spec-v1" },
   a2ui: { $ref: "homerail-a2ui-surface-v1" },
   presentation: presentationSchema,
   lifecycle: lifecycleSchema,
@@ -955,6 +1098,7 @@ const patchSchema = {
     importance,
     status: statusSchema,
     content: { type: "object", maxProperties: 128, additionalProperties: true },
+    view: { $ref: "homerail-view-spec-v1" },
     a2ui: { $ref: "homerail-a2ui-surface-v1" },
     presentation: presentationSchema,
     lifecycle: lifecycleSchema,
@@ -1170,6 +1314,9 @@ export const generativeUiInteractionEventSchema = {
 } as const;
 
 export const generativeUiSchemas: Record<string, Record<string, unknown>> = {
+  "homerail-view-value-v1": viewValueSchema as Record<string, unknown>,
+  "homerail-view-node-v1": homerailViewNodeSchema as Record<string, unknown>,
+  "homerail-view-spec-v1": homerailViewSpecSchema as Record<string, unknown>,
   "homerail-a2ui-data-binding-v1": homerailA2uiDataBindingSchema as Record<string, unknown>,
   "homerail-a2ui-function-call-v1": homerailA2uiFunctionCallSchema as Record<string, unknown>,
   "homerail-a2ui-dynamic-value-v1": homerailA2uiDynamicValueSchema as Record<string, unknown>,

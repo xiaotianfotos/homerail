@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "id": "com.homerail.core",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "name": "HomeRail Core Generative UI",
   "publisher": {
     "id": "com.homerail",
@@ -204,19 +204,36 @@
     },
     {
       "kind": "com.homerail.core/generated_view",
-      "current_version": 1,
-      "versions": [{
-        "version": 1,
-        "content_schema": "generated-view-content-v1",
-        "allowed_surfaces": ["task", "execution", "result", "ambient"],
-        "default_surface": "result",
-        "default_variant": "detail",
-        "max_content_bytes": 131072,
-        "preferred_visuals": ["a2ui", "dashboard", "table", "timeline", "chart", "dag"],
-        "fallback": "portable_required",
-        "actions": []
-      }],
-      "migrations": []
+      "current_version": 2,
+      "versions": [
+        {
+          "version": 1,
+          "content_schema": "generated-view-content-v1",
+          "allowed_surfaces": ["task", "execution", "result", "ambient"],
+          "default_surface": "result",
+          "default_variant": "detail",
+          "max_content_bytes": 131072,
+          "preferred_visuals": ["view_spec", "dashboard", "table", "timeline", "chart", "dag"],
+          "fallback": "portable_required",
+          "actions": []
+        },
+        {
+          "version": 2,
+          "content_schema": "generated-view-content-v1",
+          "allowed_surfaces": ["task", "execution", "result", "ambient"],
+          "default_surface": "result",
+          "default_variant": "detail",
+          "max_content_bytes": 131072,
+          "preferred_visuals": ["a2ui", "dashboard", "table", "timeline", "chart", "dag"],
+          "fallback": "portable_required",
+          "actions": []
+        }
+      ],
+      "migrations": [{
+        "from": 1,
+        "to": 2,
+        "file": "migrations/generated-view-content-1-2.json"
+      }]
     }
   ],
   "tools": [
@@ -337,9 +354,20 @@
       "fallback": { "type": "portable" }
     },
     {
-      "id": "core-generated-view",
+      "id": "core-generated-view-v1",
       "kind": "com.homerail.core/generated_view",
       "kind_version": 1,
+      "renderer_api": 1,
+      "mode": "builtin",
+      "surfaces": ["task", "execution", "result", "ambient"],
+      "devices": ["phone", "desktop", "tv"],
+      "source": { "type": "builtin", "id": "view-spec" },
+      "fallback": { "type": "portable" }
+    },
+    {
+      "id": "core-generated-view",
+      "kind": "com.homerail.core/generated_view",
+      "kind_version": 2,
       "renderer_api": 1,
       "mode": "builtin",
       "surfaces": ["task", "execution", "result", "ambient"],

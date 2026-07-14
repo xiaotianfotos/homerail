@@ -25,6 +25,33 @@ const corePackage = () => path.join(repoRoot(), "plugins", "builtin", "core-gene
 const prCloseoutPackage = () => path.join(repoRoot(), "plugins", "builtin", "pr-closeout");
 const topicPackage = () => path.join(repoRoot(), "plugins", "builtin", "topic-outline");
 
+function writeAccidentalA2uiV1Core(root: string): string {
+  const packageRoot = path.join(root, "core-generative-ui-0.1.7");
+  fs.cpSync(corePackage(), packageRoot, { recursive: true });
+  const manifestFile = path.join(packageRoot, "homerail.plugin.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")) as HomerailPluginManifestV1;
+  manifest.version = "0.1.7";
+
+  const generatedView = manifest.kinds.find((kind) => kind.kind === "com.homerail.core/generated_view");
+  const a2uiVersion = generatedView?.versions.find((version) => version.version === 2);
+  if (!generatedView || !a2uiVersion) throw new Error("Current Core package does not declare A2UI v2");
+  generatedView.current_version = 1;
+  generatedView.versions = [{ ...a2uiVersion, version: 1 }];
+  generatedView.migrations = [];
+  manifest.renderers = manifest.renderers
+    .filter((renderer) => renderer.kind !== generatedView.kind || renderer.id === "core-generated-view")
+    .map((renderer) => renderer.id === "core-generated-view"
+      ? { ...renderer, kind_version: 1 }
+      : renderer);
+
+  const projectorFile = path.join(packageRoot, "ui", "projectors", "generated-view.v1.json");
+  const projector = JSON.parse(fs.readFileSync(projectorFile, "utf8")) as Record<string, unknown>;
+  projector.kind_version = 1;
+  fs.writeFileSync(projectorFile, JSON.stringify(projector, null, 2));
+  fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
+  return packageRoot;
+}
+
 function writeMinimalPlugin(root: string, id = "com.example.notes", version = "1.0.0"): string {
   const packageRoot = path.join(root, `${id}-${version}`);
   fs.mkdirSync(path.join(packageRoot, "skills", "notes"), { recursive: true });
@@ -144,7 +171,7 @@ describe("HomeRail plugin archive and activation registry", () => {
     expect(second).toEqual(first);
     expect(first).toMatchObject({
       descriptor_version: 1,
-      manifest: { id: CORE_PLUGIN_ID, version: "0.1.7" },
+      manifest: { id: CORE_PLUGIN_ID, version: "0.1.8" },
       skills: [{ id: "voice-generative-ui" }],
     });
     expect(first.schemas.map((schema) => schema.id)).toEqual([
@@ -158,6 +185,40 @@ describe("HomeRail plugin archive and activation registry", () => {
       source: { type: "builtin", id: "a2ui" },
     }));
     expect(first.package_digest).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("keeps the accidental builtin Core 0.1.7 generated_view v1 package readable", () => {
+    const options = {
+      source: "builtin" as const,
+      trusted_builtin_ids: new Set([CORE_PLUGIN_ID]),
+      builtin_renderer_ids: M3_BUILTIN_RENDERER_IDS,
+    };
+    const legacyA2ui = loadPluginPackage(writeAccidentalA2uiV1Core(tmpHome), options);
+    syncPluginPackage({
+      descriptor: legacyA2ui,
+      source: "builtin",
+      locked: true,
+      default_enabled: true,
+    });
+    const current = loadPluginPackage(corePackage(), options);
+    syncPluginPackage({
+      descriptor: current,
+      source: "builtin",
+      locked: true,
+      default_enabled: true,
+    });
+
+    const registry = new GenerativeUiKindRegistry();
+    expect(registry.getDefinition({
+      owner: { id: CORE_PLUGIN_ID, version: "0.1.7" },
+      kind: "com.homerail.core/generated_view",
+      kind_version: 1,
+    })).toBeDefined();
+    expect(registry.compositionMetadata().filter((kind) => kind.kind === "com.homerail.core/generated_view"))
+      .toEqual([expect.objectContaining({ kind_version: 2 })]);
+    expect(registry.uiProjection().kinds
+      .filter((kind) => kind.kind === "com.homerail.core/generated_view")
+      .map((kind) => kind.kind_version)).toEqual([1, 2]);
   });
 
   it("rejects symlink escapes and non-local schema references", () => {

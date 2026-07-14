@@ -56,7 +56,7 @@ interface LegacyKindMapping {
   preferred_visual: string;
 }
 
-const CORE_OWNER: GenerativeUiPluginRef = { id: "com.homerail.core", version: "0.1.7" };
+const CORE_OWNER: GenerativeUiPluginRef = { id: "com.homerail.core", version: "0.1.8" };
 const CONTENT_OWNER: GenerativeUiPluginRef = { id: "com.homerail.content", version: "0.1.0" };
 const PRESENTATION_OWNER: GenerativeUiPluginRef = { id: "com.homerail.presentation", version: "0.1.0" };
 const LEGACY_OWNER: GenerativeUiPluginRef = { id: "com.homerail.legacy", version: "0.1.0" };

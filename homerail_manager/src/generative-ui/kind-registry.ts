@@ -16,9 +16,15 @@ import {
   type HomerailPluginUiProjectionV1,
   validateHomerailPluginUiProjection,
 } from "homerail-protocol";
-import { getPluginRegistryState, listPluginPackages } from "../persistence/plugins.js";
+import {
+  getPluginRegistryState,
+  listPluginPackages,
+  type PluginPackageSource,
+} from "../persistence/plugins.js";
+import { getDbPath } from "../config/env.js";
 import { pluginJsonDigest } from "../plugins/descriptor.js";
 import { ensureBuiltinPluginsSynced } from "../plugins/registry.js";
+import { rebindLegacyCoreGeneratedViewOwners } from "./legacy-generated-view-migration.js";
 import type { GenerativeUiKindCompositionMetadataV1 } from "./surface-composer.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,6 +35,7 @@ interface KindDefinition {
   plugin_version: string;
   manifest_digest: string;
   enabled: boolean;
+  writable: boolean;
   kind: string;
   kind_version: number;
   schema_id: string;
@@ -42,6 +49,41 @@ interface KindDefinition {
   action_intents: Set<string>;
   validate: ValidateFunction;
   semantic_digest: string;
+}
+
+interface SemanticDigestOwner {
+  plugin_version: string;
+  source: PluginPackageSource;
+}
+
+const LEGACY_CORE_GENERATED_VIEW_PACKAGE_VERSIONS = new Set([
+  "0.1.0",
+  "0.1.1",
+  "0.1.2",
+  "0.1.3",
+  "0.1.4",
+  "0.1.5",
+  "0.1.6",
+  "0.1.7",
+  "0.1.8",
+]);
+
+function isKnownLegacyGeneratedViewVersionCollision(input: {
+  plugin_id: string;
+  kind: string;
+  kind_version: number;
+  previous: SemanticDigestOwner;
+  current: SemanticDigestOwner;
+}): boolean {
+  return input.plugin_id === "com.homerail.core"
+    && input.kind === "com.homerail.core/generated_view"
+    && input.kind_version === 1
+    && input.previous.source === "builtin"
+    && input.current.source === "builtin"
+    && LEGACY_CORE_GENERATED_VIEW_PACKAGE_VERSIONS.has(input.previous.plugin_version)
+    && LEGACY_CORE_GENERATED_VIEW_PACKAGE_VERSIONS.has(input.current.plugin_version)
+    && input.previous.plugin_version !== input.current.plugin_version
+    && (input.previous.plugin_version === "0.1.7" || input.current.plugin_version === "0.1.7");
 }
 
 function exactKey(pluginId: string, pluginVersion: string, kind: string, kindVersion: number): string {
@@ -110,6 +152,7 @@ export class GenerativeUiKindRegistry {
     this.fingerprint = registry.fingerprint;
     const activeByPlugin = new Map(registry.plugins.map((plugin) => [plugin.plugin_id, plugin]));
     const semanticDigests = new Map<string, string>();
+    const semanticDigestOwners = new Map<string, SemanticDigestOwner>();
 
     for (const pluginPackage of listPluginPackages()) {
       const { manifest } = pluginPackage.descriptor;
@@ -142,15 +185,41 @@ export class GenerativeUiKindRegistry {
           });
           const stableKey = semanticKey(manifest.id, kind.kind, version.version);
           const previousDigest = semanticDigests.get(stableKey);
+          const previousOwner = semanticDigestOwners.get(stableKey);
+          let updateCanonicalDigest = true;
           if (previousDigest && previousDigest !== semanticDigest) {
-            throw new Error(`Kind version drift across plugin packages: ${kind.kind}@${version.version}`);
+            const currentOwner = {
+              plugin_version: manifest.version,
+              source: pluginPackage.source,
+            } satisfies SemanticDigestOwner;
+            if (!previousOwner || !isKnownLegacyGeneratedViewVersionCollision({
+              plugin_id: manifest.id,
+              kind: kind.kind,
+              kind_version: version.version,
+              previous: previousOwner,
+              current: currentOwner,
+            })) {
+              throw new Error(`Kind version drift across plugin packages: ${kind.kind}@${version.version}`);
+            }
+
+            // Core 0.1.7 briefly reused generated_view@1 for A2UI. Keep that
+            // archived package readable, but never let its digest become the
+            // canonical v1 ViewSpec semantic contract.
+            updateCanonicalDigest = manifest.version !== "0.1.7";
           }
-          semanticDigests.set(stableKey, semanticDigest);
+          if (updateCanonicalDigest) {
+            semanticDigests.set(stableKey, semanticDigest);
+            semanticDigestOwners.set(stableKey, {
+              plugin_version: manifest.version,
+              source: pluginPackage.source,
+            });
+          }
           const definition: KindDefinition = {
             plugin_id: manifest.id,
             plugin_version: manifest.version,
             manifest_digest: pluginPackage.descriptor.manifest_digest,
             enabled,
+            writable: enabled && version.version === kind.current_version,
             kind: kind.kind,
             kind_version: version.version,
             schema_id: version.content_schema,
@@ -283,6 +352,14 @@ export class GenerativeUiKindRegistry {
         });
         return;
       }
+      if (!definition.writable) {
+        errors.push({
+          path: `/operations/${index}`,
+          message: `historical kind version is read-only: ${node.kind}@${node.kind_version}`,
+          keyword: "kindVersionReadOnly",
+        });
+        return;
+      }
       const actorPlugin = transaction.actor.plugin;
       if (transaction.actor.type === GenerativeUiActorType.PLUGIN) {
         if (
@@ -310,7 +387,7 @@ export class GenerativeUiKindRegistry {
 
   compositionMetadata(): GenerativeUiKindCompositionMetadataV1[] {
     return this.#activeDefinitions
-      .filter((definition) => definition.enabled)
+      .filter((definition) => definition.writable)
       .map((definition) => ({
         kind: definition.kind,
         kind_version: definition.kind_version,
@@ -350,12 +427,24 @@ export class GenerativeUiKindRegistry {
 }
 
 let cachedRegistry: GenerativeUiKindRegistry | undefined;
+const migratedRegistryStates = new Set<string>();
 
 export function getGenerativeUiKindRegistry(): GenerativeUiKindRegistry {
   ensureBuiltinPluginsSynced();
   const state = getPluginRegistryState();
   if (!cachedRegistry || cachedRegistry.fingerprint !== state.fingerprint) {
     cachedRegistry = new GenerativeUiKindRegistry();
+  }
+  const migrationKey = `${getDbPath()}\0${state.fingerprint}`;
+  if (!migratedRegistryStates.has(migrationKey)) {
+    const core = state.plugins.find((plugin) => plugin.plugin_id === "com.homerail.core");
+    if (core) {
+      rebindLegacyCoreGeneratedViewOwners({
+        active_plugin_version: core.plugin_version,
+        validate_kind: cachedRegistry.validateHistoricalNode,
+      });
+    }
+    migratedRegistryStates.add(migrationKey);
   }
   return cachedRegistry;
 }

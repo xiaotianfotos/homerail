@@ -1,0 +1,1 @@
+{"from":1,"migration_version":1,"operations":[{"op":"remove","path":"/data/__homerail_view_spec_v1"}],"to":2,"type":"declarative_kind_content"}

@@ -9,6 +9,7 @@ import {
 } from "homerail-protocol";
 import {
   buildHrpArchive,
+  parseHomerailKindMigrationV1,
   runPluginFixtureMatrix,
   scanPluginSource,
   sourceFilesForPack,
@@ -26,7 +27,7 @@ describe("Core generated A2UI capability", () => {
     expect(snapshot.valid).toBe(true);
     expect(snapshot.issues.filter(issue => issue.severity === "error")).toEqual([]);
     expect(snapshot.manifest.id).toBe("com.homerail.core");
-    expect(snapshot.manifest.version).toBe("0.1.7");
+    expect(snapshot.manifest.version).toBe("0.1.8");
     expect(snapshot.manifest.tools.find(tool => tool.id === "upsert_generated_view"))
       .toMatchObject({
         description: expect.stringContaining("canvas_size 1x1, 1x2, 2x2, or 3x3"),
@@ -61,9 +62,23 @@ describe("Core generated A2UI capability", () => {
       },
       required: expect.arrayContaining(["canvas_size"]),
     });
-    expect(snapshot.manifest.kinds.find(kind => kind.kind === "com.homerail.core/generated_view")).toBeDefined();
+    expect(snapshot.manifest.kinds.find(kind => kind.kind === "com.homerail.core/generated_view"))
+      .toMatchObject({
+        current_version: 2,
+        versions: [
+          { version: 1, preferred_visuals: expect.arrayContaining(["view_spec"]) },
+          { version: 2, preferred_visuals: expect.arrayContaining(["a2ui"]) },
+        ],
+        migrations: [{ from: 1, to: 2, file: "migrations/generated-view-content-1-2.json" }],
+      });
+    expect(snapshot.manifest.renderers.find(renderer => renderer.id === "core-generated-view-v1"))
+      .toMatchObject({ kind_version: 1, source: { type: "builtin", id: "view-spec" } });
     expect(snapshot.manifest.renderers.find(renderer => renderer.id === "core-generated-view"))
-      .toMatchObject({ source: { type: "builtin", id: "a2ui" } });
+      .toMatchObject({ kind_version: 2, source: { type: "builtin", id: "a2ui" } });
+    expect(parseHomerailKindMigrationV1(
+      snapshot.files.get("migrations/generated-view-content-1-2.json")!,
+      { from: 1, to: 2 },
+    )).toMatchObject({ migration_version: 1, type: "declarative_kind_content" });
 
     const matrix = runPluginFixtureMatrix(root);
     expect(matrix.valid).toBe(true);
@@ -81,7 +96,7 @@ describe("Core generated A2UI capability", () => {
 
     const fixture = JSON.parse(fs.readFileSync(path.join(root, "fixtures/generated-view.json"), "utf8"));
     const projector = JSON.parse(snapshot.files.get("ui/projectors/generated-view.v1.json")!.toString("utf8"));
-    expect(projector).toMatchObject({ a2ui_pointer: "/a2ui" });
+    expect(projector).toMatchObject({ kind_version: 2, a2ui_pointer: "/a2ui" });
     expect(projector).not.toHaveProperty("view_pointer");
     const projected = applyHomerailDirectUiProjection({
       projection: projector,

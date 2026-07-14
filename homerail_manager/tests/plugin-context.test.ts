@@ -4,7 +4,11 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   GENERATIVE_UI_IR_VERSION,
+  GenerativeUiActorType,
+  createGenerativeUiDocument,
+  type GenerativeUiNodeV1,
   type GenerativeUiStoredNodeV1,
+  type GenerativeUiTransactionV1,
 } from "homerail-protocol";
 import { GenerativeUiKindRegistry } from "../src/generative-ui/kind-registry.js";
 import { closeDb } from "../src/persistence/db.js";
@@ -21,7 +25,7 @@ function coreNode(): GenerativeUiStoredNodeV1 {
     id: "memo",
     kind: "com.homerail.core/task_summary",
     kind_version: 1,
-    owner: { id: "com.homerail.core", version: "0.1.7" },
+    owner: { id: "com.homerail.core", version: "0.1.8" },
     surface: "task",
     importance: "primary",
     content: {
@@ -31,6 +35,20 @@ function coreNode(): GenerativeUiStoredNodeV1 {
     fallback: { title: "Current task" },
     revision: 1,
     updated_at: "2026-07-11T12:00:00.000Z",
+  };
+}
+
+function generatedViewNode(kindVersion: 1 | 2): GenerativeUiNodeV1 {
+  return {
+    ir_version: GENERATIVE_UI_IR_VERSION,
+    id: `generated-view-${kindVersion}`,
+    kind: "com.homerail.core/generated_view",
+    kind_version: kindVersion,
+    owner: { id: "com.homerail.core", version: "0.1.8" },
+    surface: "result",
+    importance: "primary",
+    content: { data: { title: "Generated view" } },
+    fallback: { title: "Generated view" },
   };
 }
 
@@ -61,7 +79,7 @@ describe("Plugin Context and Kind Registry", () => {
       context_version: 1,
       registry_revision: 3,
       enabled_plugins: [
-        { id: "com.homerail.core", version: "0.1.7" },
+        { id: "com.homerail.core", version: "0.1.8" },
         { id: "com.homerail.pr-closeout", version: "1.0.0" },
         { id: "com.homerail.topic-outline", version: "1.0.0" },
       ],
@@ -115,7 +133,7 @@ describe("Plugin Context and Kind Registry", () => {
     expect(skill).toMatchObject({
       descriptor: {
         plugin_id: "com.homerail.core",
-        plugin_version: "0.1.7",
+        plugin_version: "0.1.8",
         local_id: "voice-generative-ui",
       },
     });
@@ -142,6 +160,9 @@ describe("Plugin Context and Kind Registry", () => {
       kind: "com.homerail.topic-outline/outline",
       kind_version: 1,
     })]));
+    expect(registry.compositionMetadata().filter((entry) => (
+      entry.kind === "com.homerail.core/generated_view"
+    ))).toEqual([expect.objectContaining({ kind_version: 2 })]);
     expect(registry.uiProjection()).toMatchObject({
       registry_revision: 3,
       kinds: expect.arrayContaining([expect.objectContaining({
@@ -159,6 +180,31 @@ describe("Plugin Context and Kind Registry", () => {
         enabled: true,
       })]),
     });
+    expect(registry.uiProjection().kinds.filter((entry) => (
+      entry.kind === "com.homerail.core/generated_view"
+    )).map((entry) => entry.kind_version)).toEqual([1, 2]);
+    expect(registry.uiProjection().renderers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ renderer_id: "core-generated-view-v1", kind_version: 1 }),
+      expect.objectContaining({ renderer_id: "core-generated-view", kind_version: 2 }),
+    ]));
+
+    const document = createGenerativeUiDocument({
+      document_id: "kind-write-policy",
+      scope: { type: "voice_session", id: "kind-write-policy" },
+      created_at: "2026-07-14T08:00:00.000Z",
+    });
+    const transaction = (node: GenerativeUiNodeV1): GenerativeUiTransactionV1 => ({
+      ir_version: GENERATIVE_UI_IR_VERSION,
+      transaction_id: `kind-write-${node.kind_version}`,
+      document_id: document.document_id,
+      base_revision: document.revision,
+      actor: { type: GenerativeUiActorType.SYSTEM, id: "kind-write-policy" },
+      operations: [{ op: "put", node }],
+      created_at: "2026-07-14T08:01:00.000Z",
+    });
+    expect(registry.authorizeNewTransaction(transaction(generatedViewNode(1)), document))
+      .toContainEqual(expect.objectContaining({ keyword: "kindVersionReadOnly" }));
+    expect(registry.authorizeNewTransaction(transaction(generatedViewNode(2)), document)).toEqual([]);
 
     setPluginEnabled("com.homerail.topic-outline", false);
     const disabled = new GenerativeUiKindRegistry();

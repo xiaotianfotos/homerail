@@ -2,7 +2,7 @@
   "projection_version": 1,
   "type": "direct_ui_node",
   "kind": "com.homerail.core/generated_view",
-  "kind_version": 1,
+  "kind_version": 2,
   "node_id_pointer": "/id",
   "content_pointer": "/content",
   "a2ui_pointer": "/a2ui",

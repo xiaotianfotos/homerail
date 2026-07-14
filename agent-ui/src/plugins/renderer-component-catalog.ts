@@ -3,6 +3,7 @@ import VoiceDynamicWidget from '@/components/agent/VoiceDynamicWidget.vue'
 import TopicOutlineRenderer from './builtin/topic-outline/TopicOutlineRenderer.vue'
 import PrCloseoutRenderer from './builtin/pr-closeout/PrCloseoutRenderer.vue'
 import A2uiRenderer from '@/components/generative-ui/A2uiRenderer.vue'
+import ViewSpecRenderer from '@/components/generative-ui/ViewSpecRenderer.vue'
 import { adaptLegacyWidgetRenderer } from '@/generative-ui/legacy-widget-adapter'
 import type { GenerativeUiRendererMode } from '@/generative-ui/renderer-registry'
 
@@ -26,6 +27,10 @@ const catalog = new Map<string, HomerailBuiltinRendererComponentV1>([
   }],
   ['a2ui', {
     component: A2uiRenderer,
+    mode: 'specialized',
+  }],
+  ['view-spec', {
+    component: ViewSpecRenderer,
     mode: 'specialized',
   }],
 ])

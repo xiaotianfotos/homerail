@@ -20,7 +20,7 @@ function document(nodeCount = 10): GenerativeUiDocumentV1 {
       id: `com.homerail.core:block-${index}`,
       kind: "com.homerail.core/generated_view",
       kind_version: 1,
-      owner: { id: "com.homerail.core", version: "0.1.7" },
+      owner: { id: "com.homerail.core", version: "0.1.8" },
       surface: "result" as const,
       importance: "primary" as const,
       content: { data: { index, detail: `Block ${index}` } },

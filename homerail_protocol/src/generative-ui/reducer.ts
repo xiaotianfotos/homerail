@@ -87,6 +87,7 @@ function unsetOptionalFields(
     if (field === "lifecycle") delete node.lifecycle;
     if (field === "actions") delete node.actions;
     if (field === "provenance") delete node.provenance;
+    if (field === "view") delete node.view;
     if (field === "a2ui") delete node.a2ui;
   }
 }

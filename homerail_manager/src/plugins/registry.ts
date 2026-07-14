@@ -25,6 +25,7 @@ export const M3_BUILTIN_RENDERER_IDS: ReadonlySet<string> = new Set([
   "pr-closeout",
   "topic-outline",
   "a2ui",
+  "view-spec",
 ]);
 
 /** Temporary migration allowlist. Ordinary data-only plugins cannot target the

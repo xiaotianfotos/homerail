@@ -4,6 +4,7 @@
  */
 
 import type { HomerailA2uiSurfaceV1 } from "./a2ui.js";
+import type { HomerailViewSpecV1 } from "./view-spec.js";
 
 export const GENERATIVE_UI_IR_VERSION = 1 as const;
 export type GenerativeUiIrVersion = typeof GENERATIVE_UI_IR_VERSION;
@@ -140,6 +141,7 @@ export const GenerativeUiPatchUnsetField = {
   LIFECYCLE: "lifecycle",
   ACTIONS: "actions",
   PROVENANCE: "provenance",
+  VIEW: "view",
   A2UI: "a2ui",
 } as const;
 export type GenerativeUiPatchUnsetField =
@@ -225,6 +227,8 @@ export interface GenerativeUiNodeV1<
   importance: GenerativeUiImportance;
   status?: GenerativeUiStatusV1;
   content: TContent;
+  /** @deprecated Read-only compatibility for persisted generated_view@1 nodes. */
+  view?: HomerailViewSpecV1;
   /** Direct native A2UI presentation. The host owns surfaceId through this node's id. */
   a2ui?: HomerailA2uiSurfaceV1;
   presentation?: GenerativeUiPresentationHintV1;
@@ -260,6 +264,8 @@ export interface GenerativeUiNodePatchV1 {
   importance?: GenerativeUiImportance;
   status?: GenerativeUiStatusV1;
   content?: Record<string, unknown>;
+  /** @deprecated Read-only compatibility for persisted generated_view@1 transactions. */
+  view?: HomerailViewSpecV1;
   a2ui?: HomerailA2uiSurfaceV1;
   presentation?: GenerativeUiPresentationHintV1;
   lifecycle?: GenerativeUiLifecycleV1;

@@ -11,7 +11,7 @@ export const CORE_GENERATIVE_UI_COMPOSITION_METADATA: readonly GenerativeUiKindC
   { kind: "com.homerail.core/metric_set", kind_version: 1, allowed_surfaces: ["ambient", "result"], default_variant: "glance", allow_critical: true },
   { kind: "com.homerail.core/artifact", kind_version: 1, allowed_surfaces: ["result"], default_variant: "summary", allow_critical: true },
   { kind: "com.homerail.core/confirmation", kind_version: 1, allowed_surfaces: ["task"], default_variant: "summary", allow_critical: true },
-  { kind: "com.homerail.core/generated_view", kind_version: 1, allowed_surfaces: ["task", "execution", "result", "ambient"], default_variant: "detail", allow_critical: true },
+  { kind: "com.homerail.core/generated_view", kind_version: 2, allowed_surfaces: ["task", "execution", "result", "ambient"], default_variant: "detail", allow_critical: true },
   { kind: "com.homerail.content/topic_outline", kind_version: 1, allowed_surfaces: ["task"], default_variant: "detail" },
   { kind: "com.homerail.content/xiaohongshu_note", kind_version: 1, allowed_surfaces: ["result"], default_variant: "detail" },
   { kind: "com.homerail.presentation/slide_deck", kind_version: 1, allowed_surfaces: ["result"], default_variant: "detail" },

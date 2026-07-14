@@ -35,6 +35,15 @@ import {
   type HomerailA2uiSemanticOptionsV1,
   type HomerailA2uiSurfaceV1,
 } from "./a2ui.js";
+import {
+  HOMERAIL_VIEW_SPEC_MAX_BYTES,
+  analyzeHomerailViewSpecSemantics,
+  type HomerailViewSpecV1,
+} from "./view-spec.js";
+
+const CORE_GENERATED_VIEW_KIND = "com.homerail.core/generated_view";
+const LEGACY_VIEW_SPEC_KIND_VERSION = 1;
+const NATIVE_A2UI_KIND_VERSION = 2;
 
 // Ajv publishes CommonJS-compatible types under NodeNext. Resolve its runtime
 // constructor without changing validation semantics.
@@ -109,6 +118,7 @@ function validate<T>(schemaName: string, value: unknown): GenerativeUiValidation
 }
 
 function jsonLimitsForSchema(schemaName: string): Partial<GenerativeUiJsonValueLimits> {
+  if (schemaName === "homerail-view-spec-v1") return { max_bytes: HOMERAIL_VIEW_SPEC_MAX_BYTES };
   if (schemaName === "homerail-a2ui-surface-v1") return { max_bytes: HOMERAIL_A2UI_MAX_BYTES };
   if (schemaName === "generative-ui-document") return { max_bytes: GENERATIVE_UI_MAX_DOCUMENT_BYTES };
   if (schemaName === "generative-ui-transaction") return { max_bytes: GENERATIVE_UI_MAX_TRANSACTION_BYTES };
@@ -214,7 +224,46 @@ function nodeSemanticErrors(
     });
   }
   errors.push(...actionSemanticErrors(node.actions, `${path}/actions`));
+  if (node.view && node.a2ui) {
+    errors.push({
+      path,
+      message: "a node cannot contain both legacy ViewSpec and native A2UI presentation",
+      keyword: "presentationConflict",
+    });
+  }
+  if (node.view) {
+    if (node.kind !== CORE_GENERATED_VIEW_KIND || node.kind_version !== LEGACY_VIEW_SPEC_KIND_VERSION) {
+      errors.push({
+        path: `${path}/view`,
+        message: "legacy ViewSpec is supported only for com.homerail.core/generated_view@1",
+        keyword: "legacyViewSpecVersion",
+      });
+    }
+    const viewAnalysis = analyzeGenerativeUiJsonValue(node.view, {
+      path: `${path}/view`,
+      limits: { max_bytes: HOMERAIL_VIEW_SPEC_MAX_BYTES },
+    });
+    if (!viewAnalysis.valid) {
+      errors.push({
+        path: viewAnalysis.error?.path || `${path}/view`,
+        message: viewAnalysis.error?.message || `view exceeds ${HOMERAIL_VIEW_SPEC_MAX_BYTES} bytes`,
+        keyword: viewAnalysis.error?.keyword || "maxPayloadBytes",
+      });
+    } else {
+      errors.push(...analyzeHomerailViewSpecSemantics(node.view, {
+        action_ids: new Set((node.actions ?? []).map((action) => action.id)),
+        path: `${path}/view`,
+      }));
+    }
+  }
   if (node.a2ui) {
+    if (node.kind === CORE_GENERATED_VIEW_KIND && node.kind_version !== NATIVE_A2UI_KIND_VERSION) {
+      errors.push({
+        path: `${path}/a2ui`,
+        message: "native A2UI presentation for com.homerail.core/generated_view requires kind version 2",
+        keyword: "nativeA2uiVersion",
+      });
+    }
     const a2uiAnalysis = analyzeGenerativeUiJsonValue(node.a2ui, {
       path: `${path}/a2ui`,
       limits: { max_bytes: HOMERAIL_A2UI_MAX_BYTES },
@@ -263,6 +312,21 @@ function timestampError(path: string, value: string): GenerativeUiValidationErro
 
 export function resetGenerativeUiValidator(): void {
   validator = undefined;
+}
+
+export function validateHomerailViewSpec(
+  value: unknown,
+  options: { action_ids?: ReadonlySet<string> } = {},
+): GenerativeUiValidationResult<HomerailViewSpecV1> {
+  const validation = validate<HomerailViewSpecV1>("homerail-view-spec-v1", value);
+  if (!validation.value) return validation;
+  const analysis = analyzeGenerativeUiJsonValue(validation.value, {
+    limits: { max_bytes: HOMERAIL_VIEW_SPEC_MAX_BYTES },
+  });
+  if (!analysis.valid) {
+    return { valid: false, errors: [analysis.error ?? { path: "", message: "ViewSpec exceeds its budget", keyword: "maxPayloadBytes" }] };
+  }
+  return withSemanticErrors(validation, analyzeHomerailViewSpecSemantics(validation.value, options));
 }
 
 export function validateHomerailA2uiSurface(
@@ -353,6 +417,33 @@ export function validateGenerativeUiTransaction(
       const changesPath = `/operations/${index}/changes`;
       if (operation.changes.content) {
         errors.push(...contentSemanticErrors(operation.changes.content, `${changesPath}/content`));
+      }
+      if (operation.changes.view) {
+        const viewAnalysis = analyzeGenerativeUiJsonValue(operation.changes.view, {
+          path: `${changesPath}/view`,
+          limits: { max_bytes: HOMERAIL_VIEW_SPEC_MAX_BYTES },
+        });
+        if (!viewAnalysis.valid) {
+          errors.push({
+            path: viewAnalysis.error?.path || `${changesPath}/view`,
+            message: viewAnalysis.error?.message || `view exceeds ${HOMERAIL_VIEW_SPEC_MAX_BYTES} bytes`,
+            keyword: viewAnalysis.error?.keyword || "maxPayloadBytes",
+          });
+        } else {
+          errors.push(...analyzeHomerailViewSpecSemantics(operation.changes.view, {
+            ...(operation.changes.actions
+              ? { action_ids: new Set(operation.changes.actions.map((action) => action.id)) }
+              : {}),
+            path: `${changesPath}/view`,
+          }));
+        }
+      }
+      if (operation.changes.view && operation.changes.a2ui) {
+        errors.push({
+          path: changesPath,
+          message: "a patch cannot set both legacy ViewSpec and native A2UI presentation",
+          keyword: "presentationConflict",
+        });
       }
       if (operation.changes.a2ui) {
         const a2uiAnalysis = analyzeGenerativeUiJsonValue(operation.changes.a2ui, {
