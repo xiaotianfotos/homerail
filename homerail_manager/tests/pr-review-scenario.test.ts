@@ -106,6 +106,9 @@ describe("PR Review scenario assets", () => {
       threshold: 2,
       field: "vote",
     });
+    expect(nodes.find((node) => node.id === "coverage_vote")?.outputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "voted", contract: "CoverageVote" }),
+    ]));
     expect(nodes.find((node) => node.id === "quorum_result")?.config).toMatchObject({
       mode: "any",
       field: "passed",
@@ -140,8 +143,13 @@ describe("PR Review scenario assets", () => {
     expect(agents.preparer?.system).toContain('"repository_path":"/workspace/repository"');
     expect(agents.preparer?.system).toContain("base_clone_url");
     expect(agents.preparer?.system).toContain("head_clone_url");
+    expect(agents.preparer?.system).toContain("Manager contract validation already guarantees");
+    expect(agents.preparer?.system).toContain("Never create /workspace/repository.git");
+    expect(agents.preparer?.system).toContain("never claim a required field is missing after using it");
+    expect(agents.preparer?.system).toContain("Do not use git verify-commit");
     expect(agents.preparer?.system).not.toContain("https://github.com/<repo>.git");
     expect(agents.preparer?.system).not.toContain('"status":"ready"');
+    expect(result.canonical?.policies?.max_corrections_per_node).toBe(5);
     expect(nodes.find((node) => node.id === "synthesize")?.inputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "context" }),
     ]));
@@ -467,7 +475,7 @@ describe("PR Review scenario assets", () => {
       voter: "false_positive", vote: "reject", confidence: "medium", evidence: "one concern", finding_verdicts: [],
     });
     handoffActiveRun("pr-review-runtime", "coverage_vote", "voted", {
-      voter: "coverage", vote: "accept", confidence: "high", evidence: "all scopes present", finding_verdicts: [],
+      voter: "coverage", vote: "accept", confidence: "high", evidence: "all scopes present",
     });
     expect(executor.tick("pr-review-runtime")).toBeGreaterThan(0);
     expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("refine");

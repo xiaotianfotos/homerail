@@ -162,6 +162,7 @@ interface VoiceWorkspace {
     id: string;
     role: "user" | "assistant" | "system";
     text: string;
+    spoken_text?: string;
     created_at: string;
     channel?: "final" | "commentary";
     kind?: "message" | "error";
@@ -847,8 +848,17 @@ function appendConversation(
   text: string,
   channel: "final" | "commentary" = "final",
   kind: "message" | "error" = "message",
+  spokenText?: string,
 ) {
-  workspace.conversation.push({ id: generateId("msg-"), role, text, channel, kind, created_at: now() });
+  workspace.conversation.push({
+    id: generateId("msg-"),
+    role,
+    text,
+    ...(spokenText !== undefined ? { spoken_text: spokenText } : {}),
+    channel,
+    kind,
+    created_at: now(),
+  });
   workspace.conversation = workspace.conversation.slice(-80);
 }
 
@@ -1535,11 +1545,12 @@ async function submitVoiceWorkspaceToManagerAgent(
       let streamResult: Awaited<ReturnType<typeof runManagerAgentTurn>> | undefined;
       for await (const event of runManagerAgentTurnStream(turnInput, options)) {
         if (event.type === "commentary") {
-          const text = shortText(String(event.text || "").trim(), 120);
+          const text = String(event.text || "").trim();
           if (!text) continue;
-          appendConversation(workspace, "assistant", text, "commentary");
+          const spokenText = shortText(text, 120);
+          appendConversation(workspace, "assistant", text, "commentary", "message", spokenText);
           realtimeHooks.streamedCommentaryTexts?.add(text);
-          realtimeHooks.onSpeech({ id: generateId("speech-"), channel: "commentary", text });
+          realtimeHooks.onSpeech({ id: generateId("speech-"), channel: "commentary", text: spokenText });
         } else if (event.type === "result") {
           streamResult = event.result;
         }
@@ -1575,13 +1586,14 @@ async function submitVoiceWorkspaceToManagerAgent(
   const surface = objectValue(result.voice_surface);
   const surfaceCommentary = Array.isArray(surface?.commentary_texts) ? surface.commentary_texts : [];
   const alreadyStreamed = realtimeHooks?.streamedCommentaryTexts ?? new Set<string>();
-  const commentaryTexts = [
+  const commentaryMessages = [
     ...(Array.isArray(result.commentary_texts) ? result.commentary_texts : []),
     ...surfaceCommentary,
   ]
-    .map((item) => shortText(String(item || "").trim(), 120))
+    .map((item) => String(item || "").trim())
     .filter((item) => item && !alreadyStreamed.has(item))
-    .slice(0, 6);
+    .slice(0, 6)
+    .map((text) => ({ text, spokenText: shortText(text, 120) }));
   const agentErrors = Array.isArray(result.agent_errors)
     ? result.agent_errors.map((item) => shortText(String(item || "").trim(), 500)).filter(Boolean).slice(0, 10)
     : [];
@@ -1619,14 +1631,21 @@ async function submitVoiceWorkspaceToManagerAgent(
   // Manager 执行状态只写 progress_brief/manager_run_id，不在这里程序化插入 status widget。
   removeWidget(workspace, "manager-run");
   removeWidget(workspace, "manager-agent-blocker");
-  for (const commentary of commentaryTexts) {
-    appendConversation(workspace, "assistant", commentary, "commentary");
+  for (const commentary of commentaryMessages) {
+    appendConversation(
+      workspace,
+      "assistant",
+      commentary.text,
+      "commentary",
+      "message",
+      commentary.spokenText,
+    );
   }
-  appendConversation(workspace, "assistant", spoken);
+  appendConversation(workspace, "assistant", reply, "final", "message", spoken);
   return {
     spoken_text: spoken,
     suggested_action: null,
-    commentary_texts: commentaryTexts,
+    commentary_texts: commentaryMessages.map((item) => item.spokenText),
     manager: {
       text: reply,
       session_id: workspace.manager_session_id ?? null,
@@ -2223,7 +2242,14 @@ export function voiceAgentBootstrapHandler(
         const priority = body.priority === "high" || body.priority === "low" ? body.priority : "normal";
         const spoken = typeof body.spoken_text === "string" && body.spoken_text.trim() ? body.spoken_text.trim() : title;
         workspace.progress_brief = { status: priority === "high" ? "blocked" : "running", short_text: spoken, updated_at: now() };
-        appendConversation(workspace, "assistant", msg ? `${spoken}\n${msg}` : spoken);
+        appendConversation(
+          workspace,
+          "assistant",
+          msg ? `${spoken}\n${msg}` : spoken,
+          "final",
+          "message",
+          spoken,
+        );
         ok(res, "Voice notification queued", { workspace: saveWorkspace(workspace), spoken_text: spoken, voice_events: voiceEvents(spoken) });
       })
       .catch((err) => badRequest(res, err instanceof Error ? err.message : "Invalid JSON body"));

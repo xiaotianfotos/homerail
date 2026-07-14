@@ -4,8 +4,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LIVE_TASK="${HOMERAIL_LIVE_TASK:-patterns}"
 RUNNER_BASE="${HOMERAIL_RUNNER_BASE:-$HOME/.homerail-runners}"
-HOME_BASE="${HOMERAIL_LIVE_HOME_BASE:-$RUNNER_BASE/homerail_home}"
-ARTIFACT_BASE="${HOMERAIL_LIVE_ARTIFACTS:-$RUNNER_BASE/artifacts}"
+HOME_ROOT="${HOMERAIL_LIVE_HOME_BASE:-$RUNNER_BASE/homerail_home}"
+ARTIFACT_ROOT="${HOMERAIL_LIVE_ARTIFACTS:-$RUNNER_BASE/artifacts}"
 PREFERRED_MANAGER_PORT="${HOMERAIL_MANAGER_PORT:-}"
 MODEL_BASE_URL="${HOMERAIL_PATTERN_MODEL_BASE_URL:-}"
 MODEL_NAME="${HOMERAIL_PATTERN_MODEL:-qwen3.6}"
@@ -15,6 +15,26 @@ MODEL_PROTOCOL="${HOMERAIL_PATTERN_MODEL_PROTOCOL:-anthropic_compatible}"
 AGENT_TYPE="${HOMERAIL_PATTERN_AGENT_TYPE:-claude-sdk}"
 RUN_KEY="${HOMERAIL_LIVE_RUN_KEY:-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}}"
 RUN_KEY="$(printf '%s' "$RUN_KEY" | tr -c 'A-Za-z0-9_.-' '-')"
+LIVE_SLOT_INPUT="${HOMERAIL_LIVE_SLOT:-}"
+LIVE_SLOT="$(printf '%s' "${LIVE_SLOT_INPUT:-legacy}" | tr -c 'A-Za-z0-9_.-' '-')"
+LIVE_RUN_LABEL="org.homerail.live_run"
+if [ -n "$LIVE_SLOT_INPUT" ]; then
+  # Old checkout scripts globally delete the legacy label, so explicit slots use
+  # a versioned label that remains safe during the migration.
+  LIVE_RUN_LABEL="org.homerail.live_run_v2"
+fi
+
+case "$LIVE_SLOT" in
+  ""|.|..)
+    echo "HOMERAIL_LIVE_SLOT must contain a safe runner slot name." >&2
+    exit 1
+    ;;
+esac
+
+export HOMERAIL_LIVE_SLOT="$LIVE_SLOT"
+HOME_BASE="$HOME_ROOT/slots/$LIVE_SLOT"
+ARTIFACT_BASE="$ARTIFACT_ROOT/slots/$LIVE_SLOT"
+SLOT_BASE="$RUNNER_BASE/slots/$LIVE_SLOT"
 
 case "$LIVE_TASK" in
   patterns|pr-review) ;;
@@ -53,9 +73,9 @@ fi
 PERSISTENT_ARTIFACT_DIR="$ARTIFACT_BASE/$RUN_KEY"
 REPORT_PATH="$PERSISTENT_ARTIFACT_DIR/dag-patterns-live.json"
 UPLOAD_REPORT_PATH="${HOMERAIL_LIVE_REPORT_PATH:-$REPO_ROOT/artifacts/dag-patterns-live.json}"
-LOCK_FILE="$RUNNER_BASE/dag-patterns-live.lock"
+LOCK_FILE="$SLOT_BASE/dag-patterns-live.lock"
 
-mkdir -p "$RUNNER_BASE" "$HOME_BASE" "$PERSISTENT_ARTIFACT_DIR" "$(dirname "$UPLOAD_REPORT_PATH")"
+mkdir -p "$RUNNER_BASE" "$SLOT_BASE" "$HOME_BASE" "$PERSISTENT_ARTIFACT_DIR" "$(dirname "$UPLOAD_REPORT_PATH")"
 exec 9>"$LOCK_FILE"
 if ! flock -w 60 9; then
   echo "Another HomeRail live validation is already running on this runner." >&2
@@ -67,14 +87,16 @@ mkdir -p "$HOMERAIL_HOME"
 cleanup() {
   local exit_code=$?
   set +e
+  flock -u 8 2>/dev/null || true
+  exec 8>&-
   if [ -x "$REPO_ROOT/homerail_cli/dist/cli.js" ] || [ -f "$REPO_ROOT/homerail_cli/dist/cli.js" ]; then
     node "$REPO_ROOT/homerail_cli/dist/cli.js" runtime stop >/dev/null 2>&1
   fi
-  mapfile -t containers < <(docker ps -aq --filter "label=org.homerail.live_run=$RUN_KEY" 2>/dev/null)
+  mapfile -t containers < <(docker ps -aq --filter "label=$LIVE_RUN_LABEL=$RUN_KEY" 2>/dev/null)
   if [ "${#containers[@]}" -gt 0 ]; then
     docker rm -f "${containers[@]}" >/dev/null 2>&1
   fi
-  mapfile -t images < <(docker images --filter "label=org.homerail.live_run=$RUN_KEY" --format "{{.ID}}" | sort -u)
+  mapfile -t images < <(docker images --filter "label=$LIVE_RUN_LABEL=$RUN_KEY" --format "{{.ID}}" | sort -u)
   if [ "${#images[@]}" -gt 0 ]; then
     docker image rm -f "${images[@]}" >/dev/null 2>&1
   fi
@@ -208,11 +230,18 @@ fi
 
 echo "Building isolated worker image $HOMERAIL_WORKER_IMAGE"
 docker build \
-  --label "org.homerail.live_run=$RUN_KEY" \
+  --label "$LIVE_RUN_LABEL=$RUN_KEY" \
+  --label "org.homerail.live_slot=$LIVE_SLOT" \
   -t "$HOMERAIL_WORKER_IMAGE" \
   -f "$REPO_ROOT/homerail_worker/Dockerfile" \
   "$REPO_ROOT"
 
+PORT_LOCK_FILE="$RUNNER_BASE/manager-port-allocation.lock"
+exec 8>"$PORT_LOCK_FILE"
+if ! flock -w 60 8; then
+  echo "Could not acquire the Manager port allocation lock." >&2
+  exit 1
+fi
 if ! MANAGER_PORT="$(select_manager_port "$PREFERRED_MANAGER_PORT")"; then
   echo "No free Runner Manager port is available in the 20000-29999 range." >&2
   exit 1
@@ -226,6 +255,8 @@ else
 fi
 
 node "$REPO_ROOT/homerail_cli/dist/cli.js" start --host 0.0.0.0 --no-build-worker-image
+flock -u 8
+exec 8>&-
 SETTING_ID="$(node "$REPO_ROOT/scripts/configure-live-pattern-model.mjs")"
 
 if [ "$LIVE_TASK" = "pr-review" ]; then
@@ -259,6 +290,18 @@ if [ "$LIVE_TASK" = "pr-review" ]; then
     node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (!value.run_id) process.exit(1); process.stdout.write(String(value.run_id))' \
       "$command_path"
   )"
+  REVIEW_STATUS="$(
+    node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(value.status ?? "unknown"))' \
+      "$command_path"
+  )"
+  if [ "$REVIEW_STATUS" != "completed" ]; then
+    node "$REPO_ROOT/homerail_cli/dist/cli.js" dag quick "$REVIEW_RUN_ID" --events 50 \
+      >"$REVIEW_ARTIFACT_DIR/dag-quick.txt" 2>&1 || true
+    node "$REPO_ROOT/homerail_cli/dist/cli.js" dag chats "$REVIEW_RUN_ID" --tools 20 --raw-tools \
+      >"$REVIEW_ARTIFACT_DIR/dag-chats.txt" 2>&1 || true
+    node "$REPO_ROOT/homerail_cli/dist/cli.js" dag handoffs "$REVIEW_RUN_ID" --content-limit 2000 \
+      >"$REVIEW_ARTIFACT_DIR/dag-handoffs.txt" 2>&1 || true
+  fi
   node "$REPO_ROOT/homerail_cli/dist/cli.js" dag artifact "$REVIEW_RUN_ID" pr-review.json \
     --output "$REVIEW_ARTIFACT_DIR/pr-review.json"
   node "$REPO_ROOT/homerail_cli/dist/cli.js" dag artifact "$REVIEW_RUN_ID" pr-review.md \

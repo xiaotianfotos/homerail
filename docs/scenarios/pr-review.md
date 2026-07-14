@@ -90,6 +90,14 @@ created by the trusted maintainer. This avoids running untrusted fork content on
 the `.112` runner. Maintainers can use `workflow_dispatch` for an explicit
 review after evaluating that boundary.
 
+PR Review jobs require a dedicated self-hosted runner with the
+`homerail-pr-review` label. Live catalog validation continues to use the
+`homerail-live` label. When both runners share one host, the bootstrap derives a
+separate state, artifact, and cleanup slot from `runner.name`; Manager port
+selection is serialized only until each isolated Manager is healthy. Do not put
+both custom labels on one runner, because that would allow the two jobs to queue
+on the same worker instead of running concurrently.
+
 Runner repository configuration:
 
 - `HOMERAIL_PATTERN_MODEL_BASE_URL`: the Qwen3.6 Anthropic-compatible endpoint;

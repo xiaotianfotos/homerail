@@ -207,6 +207,73 @@ spec:
     expect(getActiveRun("run-auto-handoff-contract")?.dagRun.nodeStates.get("start")).toBe("FAILED");
   });
 
+  it("settles pending descendants when a contracted auto-handoff failure leaves no runnable work", () => {
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: correction-stalled-descendant, name: Correction Stalled Descendant }
+spec:
+  contracts:
+    Text: { type: string }
+  agents:
+    worker: { system: Return text. }
+  nodes:
+    seed:
+      kind: agent
+      agent: worker
+      outputs:
+        report: { contract: Text }
+    voter:
+      kind: agent
+      agent: worker
+      inputs:
+        report: { contract: Text }
+      outputs:
+        voted: { contract: Text }
+    finalize:
+      kind: agent
+      agent: worker
+      inputs:
+        report: { contract: Text }
+        vote: { contract: Text }
+      outputs:
+        done: { contract: Text }
+    terminal:
+      kind: terminal
+      outcome: success
+      inputs:
+        result: { contract: Text }
+  edges:
+    - { from: seed.report, to: voter.report }
+    - { from: seed.report, to: finalize.report }
+    - { from: voter.voted, to: finalize.vote }
+    - { from: finalize.done, to: terminal.result }
+  policies:
+    max_corrections_per_node: 0
+`);
+    parsed.meta.agents!.worker!.agent_type = "deterministic";
+    createActiveRun("run-auto-handoff-stalled-descendant", parsed);
+    const dispatcher = new FlakyDispatcher({ status: "dispatched", targetType: "fake", targetId: "worker" });
+
+    expect(dispatchReadyNodes("run-auto-handoff-stalled-descendant", dispatcher)).toBe(1);
+    handoffActiveRun("run-auto-handoff-stalled-descendant", "seed", "report", "context");
+    expect(dispatchReadyNodes("run-auto-handoff-stalled-descendant", dispatcher)).toBe(1);
+    expect(requestNodeCorrection(
+      "run-auto-handoff-stalled-descendant",
+      "voter",
+      "invalid vote",
+    ).status).toBe("exhausted");
+
+    const run = autoHandoffAfterCorrectionExhausted(
+      "run-auto-handoff-stalled-descendant",
+      "voter",
+      "invalid vote",
+    );
+    expect(run?.status).toBe("failed");
+    expect(run?.dagRun.nodeStates.get("voter")).toBe("FAILED");
+    expect(run?.dagRun.nodeStates.get("finalize")).toBe("SKIPPED");
+  });
+
   it("retries retryable dispatch failures once before marking the node running", () => {
     const parsed = parseDAGYaml(correctionYaml());
     createActiveRun("run-dispatch-retry", parsed);

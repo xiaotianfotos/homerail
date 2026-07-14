@@ -9,6 +9,7 @@ export interface VoiceConversationSpeechCandidate {
   role?: string | null
   kind?: string | null
   text?: string | null
+  spoken_text?: string | null
 }
 
 export const VOICE_SPEECH_EVENT_KEY_TTL_MS = 60_000
@@ -20,7 +21,20 @@ export function normalizeVoiceSpeechTextForKey(text: string | null | undefined):
 export function isVoiceConversationMessageSpeakable(
   message: VoiceConversationSpeechCandidate,
 ): boolean {
-  return message.role === 'assistant' && message.kind !== 'error' && Boolean(message.text?.trim())
+  return (
+    message.role === 'assistant' &&
+    message.kind !== 'error' &&
+    Boolean(voiceConversationMessageSpeechText(message))
+  )
+}
+
+export function voiceConversationMessageSpeechText(
+  message: VoiceConversationSpeechCandidate,
+): string {
+  if (message.spoken_text !== undefined && message.spoken_text !== null) {
+    return message.spoken_text.trim()
+  }
+  return message.text?.trim() || ''
 }
 
 export function createVoiceSpeechEventKey(event: VoiceSpeechFingerprintInput): string {

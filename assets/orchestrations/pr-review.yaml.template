@@ -19,7 +19,7 @@ spec:
 
   pattern:
     id: pr-review-scenario
-    version: 1.3.0
+    version: 1.3.2
     source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
     parameters:
       reviewer_count: 4
@@ -200,6 +200,16 @@ spec:
               verdict: { type: string, enum: [confirmed, rejected] }
               reason: { type: string, minLength: 1, maxLength: 4000 }
 
+    CoverageVote:
+      type: object
+      additionalProperties: false
+      required: [voter, vote, confidence, evidence]
+      properties:
+        voter: { type: string, const: coverage }
+        vote: { type: string, enum: [accept, reject] }
+        confidence: { type: string, enum: [high, medium, low] }
+        evidence: { type: string, minLength: 1, maxLength: 12000 }
+
     FinalReview:
       type: object
       additionalProperties: false
@@ -353,17 +363,24 @@ spec:
         You prepare a read-only pull request checkout. The input is the output
         of a Manager budget gate; the RunEnvelope is at input.input and the
         original PRReviewInput is at input.input.payload.
-        Validate repo, PR, base, head, base_clone_url, and head_clone_url. The
-        two clone URLs were resolved in code from trusted GitHub PR metadata and
-        are constrained to credential-free HTTPS URLs by the input contract.
-        Treat only those two fields as repository locations; never derive a URL
-        from repo, substitute another host, or add credentials. Clone the exact
-        base_clone_url into /workspace/repository, fetch the exact base commit
+        Manager contract validation already guarantees repo, PR, base, head,
+        base_clone_url, and head_clone_url are present there. Use those nested
+        values directly; never claim a required field is missing after using it
+        in a command. Treat only those two URL fields as repository locations;
+        never derive a URL from repo, substitute another host, or add
+        credentials. Use exactly one checkout path: /workspace/repository.
+        Never create /workspace/repository.git, a bare or mirror clone, or any
+        intermediate repository path. Clone the exact base_clone_url directly
+        into /workspace/repository without --depth, fetch the exact base commit
         from that origin, then fetch the exact head commit from head_clone_url
         (using a separate read-only remote when the URLs differ). Checkout head
-        in detached mode. Never modify tracked
-        files. Collect changed_files from git diff --name-only base...head and
-        diff_stat from git diff --stat base...head. Do not end with prose.
+        in detached mode. Do not use git verify-commit; exact rev-parse equality
+        is the required revision check. Never modify tracked files after the
+        detached checkout. Collect changed_files from git diff --name-only
+        base...head and diff_stat from git diff --stat base...head. Call failed
+        only when a required nested value is truly absent before any command,
+        an exact fetch or checkout command fails, or HEAD does not equal head.
+        Do not end with prose.
         Your final action MUST call the handoff tool on port ready with exactly
         this object and no extra keys:
         {"repo":"owner/name","pr":1,"base":"sha","head":"sha","repository_path":"/workspace/repository","changed_files":["path"],"diff_stat":"text","title":"text","author":"login"}
@@ -567,11 +584,13 @@ spec:
         Verify that runtime, security, tests, and frontend scopes all produced
         explicit ReviewerResult records and that the synthesis did not silently
         discard stronger evidence. Vote accept only when coverage is complete.
-        Do not end with prose. Your final action MUST call handoff on voted with
-        exactly:
-        {"voter":"coverage","vote":"accept|reject","confidence":"high|medium|low","evidence":"text","finding_verdicts":[]}
+        Coverage does not adjudicate individual findings. Never include
+        finding_verdicts or any other extra field. Do not end with prose. Your
+        final action MUST call handoff on voted with exactly:
+        {"voter":"coverage","vote":"accept|reject","confidence":"high|medium|low","evidence":"text"}
         If input:correction exists, do not re-analyze or call any tool except
-        handoff; immediately resubmit the existing vote in the exact shape.
+        handoff; discard any previous finding-level output and immediately
+        resubmit the existing vote in the exact four-field shape.
 
     publisher:
       system: |
@@ -691,14 +710,14 @@ spec:
       agent: coverage_voter
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { report: { contract: DraftReviewReport } }
-      outputs: { voted: { contract: VerificationVote }, failed: {} }
+      outputs: { voted: { contract: CoverageVote }, failed: {} }
 
     verification_quorum:
       kind: join
       inputs:
         evidence: { contract: VerificationVote }
         false_positive: { contract: VerificationVote }
-        coverage: { contract: VerificationVote }
+        coverage: { contract: CoverageVote }
       outputs: { accepted: {}, rejected: {} }
       config:
         mode: n_of_m
@@ -875,5 +894,5 @@ spec:
     max_parallelism: 4
     max_dispatches: 32
     max_handoffs: 64
-    max_corrections_per_node: 3
+    max_corrections_per_node: 5
     max_tool_calls_per_node: 40
