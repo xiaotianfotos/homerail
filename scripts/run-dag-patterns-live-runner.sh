@@ -284,6 +284,18 @@ if [ "$LIVE_TASK" = "pr-review" ]; then
     node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (!value.run_id) process.exit(1); process.stdout.write(String(value.run_id))' \
       "$command_path"
   )"
+  REVIEW_STATUS="$(
+    node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(value.status ?? "unknown"))' \
+      "$command_path"
+  )"
+  if [ "$REVIEW_STATUS" != "completed" ]; then
+    node "$REPO_ROOT/homerail_cli/dist/cli.js" dag quick "$REVIEW_RUN_ID" --events 50 \
+      >"$REVIEW_ARTIFACT_DIR/dag-quick.txt" 2>&1 || true
+    node "$REPO_ROOT/homerail_cli/dist/cli.js" dag chats "$REVIEW_RUN_ID" --tools 20 --raw-tools \
+      >"$REVIEW_ARTIFACT_DIR/dag-chats.txt" 2>&1 || true
+    node "$REPO_ROOT/homerail_cli/dist/cli.js" dag handoffs "$REVIEW_RUN_ID" --content-limit 2000 \
+      >"$REVIEW_ARTIFACT_DIR/dag-handoffs.txt" 2>&1 || true
+  fi
   node "$REPO_ROOT/homerail_cli/dist/cli.js" dag artifact "$REVIEW_RUN_ID" pr-review.json \
     --output "$REVIEW_ARTIFACT_DIR/pr-review.json"
   node "$REPO_ROOT/homerail_cli/dist/cli.js" dag artifact "$REVIEW_RUN_ID" pr-review.md \

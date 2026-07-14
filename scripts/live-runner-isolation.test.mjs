@@ -23,6 +23,7 @@ test("routes live jobs to isolated runner slots and serializes only Manager port
   assert.match(runner, /LIVE_RUN_LABEL="org\.homerail\.live_run_v2"/);
   assert.match(runner, /--label "\$LIVE_RUN_LABEL=\$RUN_KEY"/);
   assert.match(runner, /manager-port-allocation\.lock/);
+  assert.match(runner, /dag chats "\$REVIEW_RUN_ID" --tools 20 --raw-tools/);
 
   const acquire = runner.indexOf('flock -w 60 8');
   const start = runner.indexOf('cli.js" start --host');
@@ -112,6 +113,13 @@ esac
   assert.equal(fs.existsSync(runB), true);
   assert.equal(fs.existsSync(legacyRun), true);
   let removals = fs.readFileSync(dockerLog, "utf8").split("\n").filter((line) => /^(rm -f|image rm -f)/.test(line));
+  assert.deepEqual(removals, ["rm -f container-a", "image rm -f image-a"]);
+
+  fs.mkdirSync(runA, { recursive: true });
+  fs.writeFileSync(dockerLog, "");
+  runCleanup({ HOMERAIL_LIVE_SLOT: "slot-a", HOMERAIL_CLEANUP_LOCK_HELD: "1" });
+  assert.equal(fs.existsSync(runA), false);
+  removals = fs.readFileSync(dockerLog, "utf8").split("\n").filter((line) => /^(rm -f|image rm -f)/.test(line));
   assert.deepEqual(removals, ["rm -f container-a", "image rm -f image-a"]);
 
   fs.writeFileSync(dockerLog, "");
