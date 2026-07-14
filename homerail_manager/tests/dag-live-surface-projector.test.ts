@@ -12,6 +12,7 @@ import {
   DagLiveSurfaceProjectionError,
   getDagLiveSurfaceDocument,
   getDagLiveSurfaceProjection,
+  isDagLiveSurfaceProjectionNode,
   listDagLiveSurfaceProjections,
   listDagLiveSurfaceQueue,
   projectDagActivityJournalEntry,
@@ -96,25 +97,46 @@ describe("DAG Live Surface Projector", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("upgrades v20 to v21 once and validates its ownership indexes on restart", () => {
+  it("upgrades v20 through v22 once and validates its ownership indexes on restart", () => {
     getDb().exec(`
       DROP TABLE dag_surface_projection_controls;
       DROP TABLE dag_surface_projection_queue;
       DROP TABLE dag_surface_projections;
       DROP INDEX idx_dag_actors_projection_identity;
-      DELETE FROM schema_migrations WHERE version = 21;
+      DELETE FROM schema_migrations WHERE version IN (21, 22);
     `);
     closeDb();
 
     const migrated = getDb();
-    expect(migrated.prepare("SELECT version FROM schema_migrations WHERE version = 21").get())
-      .toEqual({ version: 21 });
+    expect(migrated.prepare("SELECT version FROM schema_migrations WHERE version IN (21, 22) ORDER BY version").all())
+      .toEqual([{ version: 21 }, { version: 22 }]);
     expect(migrated.prepare("PRAGMA index_list(dag_actors)").all()).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "idx_dag_actors_projection_identity", unique: 1 }),
     ]));
     closeDb();
-    expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 21").get())
-      .toEqual({ count: 1 });
+    expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version IN (21, 22)").get())
+      .toEqual({ count: 2 });
+  });
+
+  it("upgrades an existing v21 database with projection identity triggers", () => {
+    getDb().exec(`
+      DROP TRIGGER trg_dag_surface_projection_queue_journal_identity;
+      DROP TRIGGER trg_dag_surface_projection_queue_identity_immutable;
+      DELETE FROM schema_migrations WHERE version = 22;
+    `);
+    closeDb();
+
+    const migrated = getDb();
+    expect(migrated.prepare("SELECT version FROM schema_migrations WHERE version = 22").get())
+      .toEqual({ version: 22 });
+    expect(migrated.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'trigger' AND name LIKE 'trg_dag_surface_projection_queue_%'
+      ORDER BY name
+    `).all()).toEqual([
+      { name: "trg_dag_surface_projection_queue_identity_immutable" },
+      { name: "trg_dag_surface_projection_queue_journal_identity" },
+    ]);
   });
 
   it("fails closed when a v21 marker points at an unbounded transaction index", () => {
@@ -126,6 +148,29 @@ describe("DAG Live Surface Projector", () => {
     closeDb();
     expect(() => getDb()).toThrow(
       "Schema migration 21 is incomplete: index idx_dag_surface_projection_queue_transaction_id is missing or invalid",
+    );
+  });
+
+  it("fails closed when the projection queue journal-identity trigger is missing", () => {
+    getDb().exec("DROP TRIGGER trg_dag_surface_projection_queue_journal_identity");
+    closeDb();
+    expect(() => getDb()).toThrow(
+      "Schema migration 22 is incomplete: trigger trg_dag_surface_projection_queue_journal_identity is missing or invalid",
+    );
+  });
+
+  it("fails closed when a projection trigger name is occupied by a no-op definition", () => {
+    getDb().exec(`
+      DROP TRIGGER trg_dag_surface_projection_queue_journal_identity;
+      CREATE TRIGGER trg_dag_surface_projection_queue_journal_identity
+        BEFORE INSERT ON dag_surface_projection_queue
+        BEGIN
+          SELECT COUNT(*) FROM dag_activity_events;
+        END;
+    `);
+    closeDb();
+    expect(() => getDb()).toThrow(
+      "Schema migration 22 is incomplete: trigger trg_dag_surface_projection_queue_journal_identity is missing or invalid",
     );
   });
 
@@ -248,6 +293,48 @@ describe("DAG Live Surface Projector", () => {
     expect(listDagLiveSurfaceQueue({ run_id: runId })).toEqual([]);
   });
 
+  it("binds every projection queue row to the exact immutable journal identity", () => {
+    const runId = "queue-identity";
+    ensureRunDir(runId);
+    register(runId, "alpha");
+    register(runId, "beta");
+    const entry = appendDagActivityEvent(activity({ run_id: runId, actor_id: "alpha", sequence: 1 }));
+    const insert = getDb().prepare(`
+      INSERT INTO dag_surface_projection_queue(
+        journal_seq, event_id, run_id, actor_id, node_id, surface_id,
+        generation, activity_sequence, status, transaction_id,
+        surface_revision, queued_at, applied_at, failure_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL, NULL)
+    `);
+
+    expect(() => insert.run(
+      entry.seq,
+      entry.event.event_id,
+      runId,
+      "beta",
+      "beta",
+      "surface:beta",
+      1,
+      1,
+      entry.received_at,
+    )).toThrow("projection queue journal identity mismatch");
+
+    insert.run(
+      entry.seq,
+      entry.event.event_id,
+      runId,
+      "alpha",
+      "alpha",
+      "surface:alpha",
+      1,
+      1,
+      entry.received_at,
+    );
+    expect(() => getDb().prepare(`
+      UPDATE dag_surface_projection_queue SET actor_id = 'beta' WHERE journal_seq = ?
+    `).run(entry.seq)).toThrow("projection queue identity is immutable");
+  });
+
   it("commits the A2UI transaction and queue cursor atomically", () => {
     const runId = "atomic-commit";
     ensureRunDir(runId);
@@ -294,6 +381,50 @@ describe("DAG Live Surface Projector", () => {
     expect(JSON.stringify(getDagLiveSurfaceDocument(runId))).toBe(firstSnapshot);
     expect(getDb().prepare("SELECT COUNT(*) AS count FROM generative_ui_transactions").get())
       .toEqual(firstTransactions);
+    expect(recoverDagLiveSurfaceProjections()).toEqual({ runs: [], projected_events: 0, failed: [] });
+  });
+
+  it("ignores legacy journal rows without a registered logical actor during startup recovery", () => {
+    const runId = "legacy-journal-only";
+    ensureRunDir(runId);
+    appendDagActivityEvent(activity({ run_id: runId, actor_id: "worker", sequence: 1 }));
+    closeDb();
+
+    expect(recoverDagLiveSurfaceProjections()).toEqual({ runs: [], projected_events: 0, failed: [] });
+    expect(listDagLiveSurfaceQueue({ run_id: runId })).toEqual([]);
+  });
+
+  it("continues recovery after a poison row so later valid actor activity is not starved", () => {
+    const runId = "poison-then-valid";
+    ensureRunDir(runId);
+    register(runId, "worker");
+    appendDagActivityEvent(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 1,
+      generation: 2,
+      event_id: "future-generation",
+    }));
+    appendDagActivityEvent(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 1,
+      generation: 1,
+      event_id: "current-generation",
+      type: "started",
+    }));
+    closeDb();
+
+    expect(recoverDagLiveSurfaceProjections()).toMatchObject({
+      runs: [runId],
+      projected_events: 1,
+      failed: [{ run_id: runId, event_id: "future-generation" }],
+    });
+    expect(getDagLiveSurfaceProjection(runId, "worker")).toMatchObject({
+      generation: 1,
+      last_activity_sequence: 1,
+      surface_revision: 1,
+    });
   });
 
   it("uses a fixed bounded A2UI catalog while retaining only recent findings", () => {
@@ -310,15 +441,24 @@ describe("DAG Live Surface Projector", () => {
         components: Array.from({ length: 200 }, (_, index) => ({ id: `untrusted-${index}` })),
       },
     }));
+    const largeText = "汉🚀\u0000".repeat(700);
     for (let sequence = 2; sequence <= 13; sequence += 1) {
       appendAndProject(activity({
         run_id: runId,
         actor_id: "worker",
         sequence,
         type: "finding",
-        payload: { title: `Finding ${sequence}`, detail: "bounded detail" },
+        payload: { title: `Finding ${sequence} ${largeText}`, detail: largeText },
       }));
     }
+
+    expect(appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 14,
+      type: "progress",
+      payload: { message: "continued after large findings", progress: 75 },
+    }))).toMatchObject({ applied_count: 1, queue: { status: "applied" } });
 
     const document = getDagLiveSurfaceDocument(runId)!;
     const node = document.nodes[0]!;
@@ -326,6 +466,82 @@ describe("DAG Live Surface Projector", () => {
     expect(node.a2ui?.components.map((component) => component.id)).not.toContain("untrusted-1");
     expect((node.content.data as { findings: unknown[] }).findings).toHaveLength(8);
     expect(JSON.stringify(node.content)).not.toContain("untrusted-199");
+    expect(Buffer.byteLength(JSON.stringify(node.content), "utf8")).toBeLessThanOrEqual(32 * 1024);
+    expect(listDagLiveSurfaceQueue({ run_id: runId }).every((entry) => entry.status === "applied")).toBe(true);
+  });
+
+  it("accepts a trusted control immediately after an actor generation advances", () => {
+    const runId = "generation-control";
+    ensureRunDir(runId);
+    register(runId, "worker");
+    appendAndProject(activity({ run_id: runId, actor_id: "worker", sequence: 1, type: "started" }));
+    expect(appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 3,
+      payload: { message: "old generation gap" },
+    }))).toMatchObject({ applied_count: 0, queue: { status: "pending" } });
+    const actor = getDagActor(runId, "worker")!;
+    advanceDagActorGeneration({
+      run_id: runId,
+      actor_id: "worker",
+      expected_generation: actor.generation,
+      expected_version: actor.version,
+    });
+
+    expect(controlDagLiveSurface({
+      control_id: "generation-two-focus",
+      run_id: runId,
+      actor_id: "worker",
+      operation: "focused",
+      expected_surface_revision: 1,
+      created_at: 0,
+    })).toMatchObject({
+      projection: { generation: 2, surface_revision: 2, visibility_state: "focused" },
+    });
+    expect(contentData(runId, "worker")).toMatchObject({
+      actor: { id: "worker", generation: 2 },
+      state: { surface_revision: 2, visibility: "focused" },
+    });
+    expect(listDagLiveSurfaceQueue({ run_id: runId })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        activity_sequence: 3,
+        status: "stale",
+        applied_at: expect.any(Number),
+        queued_at: expect.any(Number),
+      }),
+    ]));
+    const stale = listDagLiveSurfaceQueue({ run_id: runId })
+      .find((entry) => entry.activity_sequence === 3)!;
+    expect(stale.applied_at).toBeGreaterThanOrEqual(stale.queued_at);
+  });
+
+  it("keeps a valid surface visible across a non-visual generation transition", () => {
+    const runId = "non-visual-generation";
+    ensureRunDir(runId);
+    register(runId, "worker");
+    appendAndProject(activity({ run_id: runId, actor_id: "worker", sequence: 1, type: "started" }));
+    const actor = getDagActor(runId, "worker")!;
+    advanceDagActorGeneration({
+      run_id: runId,
+      actor_id: "worker",
+      expected_generation: actor.generation,
+      expected_version: actor.version,
+    });
+    expect(appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 1,
+      generation: 2,
+      type: "tool_used",
+      payload: { tool: "search" },
+    }))).toMatchObject({ applied_count: 1, queue: { status: "applied" } });
+
+    const projection = getDagLiveSurfaceProjection(runId, "worker")!;
+    const node = getDagLiveSurfaceDocument(runId)!.nodes[0]!;
+    expect(projection).toMatchObject({ generation: 2, visibility_state: "visible" });
+    expect(contentData(runId, "worker")).toMatchObject({ actor: { generation: 1 } });
+    expect(isDagLiveSurfaceProjectionNode(node, projection)).toBe(true);
   });
 
   it("focuses and removes a surface through revision-checked idempotent controls", () => {

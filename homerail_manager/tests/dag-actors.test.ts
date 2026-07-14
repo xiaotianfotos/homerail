@@ -115,7 +115,7 @@ describe("durable DAG logical actors and command inbox", () => {
       DROP INDEX idx_dag_actors_projection_identity;
       DROP TABLE dag_actor_commands;
       DROP TABLE dag_actors;
-      DELETE FROM schema_migrations WHERE version IN (20, 21, 23);
+      DELETE FROM schema_migrations WHERE version IN (20, 21, 22, 23);
     `);
     closeDb();
 

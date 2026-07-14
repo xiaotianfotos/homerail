@@ -1154,7 +1154,6 @@ function validateDagLiveSurfaceSchemaV21(db: SqliteDatabase): void {
       );
     }
   };
-
   requireNamedIndex(
     "dag_actors",
     "idx_dag_actors_projection_identity",
@@ -1264,6 +1263,64 @@ function validateDagLiveSurfaceSchemaV21(db: SqliteDatabase): void {
   )) {
     throw new Error("Schema migration 21 is incomplete: projection queue journal constraint is missing");
   }
+}
+
+const DAG_SURFACE_QUEUE_JOURNAL_IDENTITY_TRIGGER_V22 = `
+  CREATE TRIGGER trg_dag_surface_projection_queue_journal_identity
+    BEFORE INSERT ON dag_surface_projection_queue
+    WHEN NOT EXISTS (
+      SELECT 1
+      FROM dag_activity_events e
+      WHERE e.seq = NEW.journal_seq
+        AND e.event_id = NEW.event_id
+        AND e.run_id = NEW.run_id
+        AND e.actor_id = NEW.actor_id
+        AND e.node_id = NEW.node_id
+        AND e.generation = NEW.generation
+        AND e.activity_sequence = NEW.activity_sequence
+        AND (e.surface_id IS NULL OR e.surface_id = NEW.surface_id)
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'projection queue journal identity mismatch');
+    END
+`;
+
+const DAG_SURFACE_QUEUE_IMMUTABLE_IDENTITY_TRIGGER_V22 = `
+  CREATE TRIGGER trg_dag_surface_projection_queue_identity_immutable
+    BEFORE UPDATE OF journal_seq, event_id, run_id, actor_id, node_id,
+      surface_id, generation, activity_sequence
+    ON dag_surface_projection_queue
+    BEGIN
+      SELECT RAISE(ABORT, 'projection queue identity is immutable');
+    END
+`;
+
+function normalizedSchemaSql(sql: string): string {
+  return sql.replace(/\s+/g, " ").trim().replace(/;$/, "").toLowerCase();
+}
+
+function validateDagLiveSurfaceQueueTriggersV22(db: SqliteDatabase): void {
+  const requireTrigger = (name: string, expectedSql: string): void => {
+    const trigger = db.prepare(`
+      SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = ?
+    `).get(name) as { tbl_name: string; sql: string | null } | undefined;
+    if (
+      !trigger
+      || trigger.tbl_name !== "dag_surface_projection_queue"
+      || !trigger.sql
+      || normalizedSchemaSql(trigger.sql) !== normalizedSchemaSql(expectedSql)
+    ) {
+      throw new Error(`Schema migration 22 is incomplete: trigger ${name} is missing or invalid`);
+    }
+  };
+  requireTrigger(
+    "trg_dag_surface_projection_queue_journal_identity",
+    DAG_SURFACE_QUEUE_JOURNAL_IDENTITY_TRIGGER_V22,
+  );
+  requireTrigger(
+    "trg_dag_surface_projection_queue_identity_immutable",
+    DAG_SURFACE_QUEUE_IMMUTABLE_IDENTITY_TRIGGER_V22,
+  );
 }
 
 function validateGenerativeUiSchemaV3(db: SqliteDatabase): void {
@@ -2708,7 +2765,6 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_surface_projection_queue_transaction_id
         ON dag_surface_projection_queue(transaction_id)
         WHERE transaction_id IS NOT NULL;
-
       CREATE TABLE IF NOT EXISTS dag_surface_projection_controls (
         control_id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL,
@@ -2730,6 +2786,14 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         ON dag_surface_projection_controls(run_id, actor_id, created_at, control_id);
     `),
     validate: validateDagLiveSurfaceSchemaV21,
+  },
+  {
+    version: 22,
+    up: (db) => db.exec([
+      DAG_SURFACE_QUEUE_JOURNAL_IDENTITY_TRIGGER_V22,
+      DAG_SURFACE_QUEUE_IMMUTABLE_IDENTITY_TRIGGER_V22,
+    ].map((sql) => `${sql.replace("CREATE TRIGGER", "CREATE TRIGGER IF NOT EXISTS")};`).join("\n")),
+    validate: validateDagLiveSurfaceQueueTriggersV22,
   },
   {
     version: 23,

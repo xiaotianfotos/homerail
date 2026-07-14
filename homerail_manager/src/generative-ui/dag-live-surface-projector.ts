@@ -17,10 +17,7 @@ import {
   type GenerativeUiStoredNodeV1,
   type HomerailA2uiSurfaceV1,
 } from "homerail-protocol";
-import {
-  listDagActivityEvents,
-  type DagActivityJournalEntry,
-} from "../persistence/dag-activity-journal.js";
+import type { DagActivityJournalEntry } from "../persistence/dag-activity-journal.js";
 import {
   getDagActor,
   type DagActorRecord,
@@ -34,7 +31,7 @@ const GENERATED_VIEW_KIND = "com.homerail.core/generated_view";
 const GENERATED_VIEW_KIND_VERSION = 2;
 const PROJECTOR_ID = "dag-live-surface-projector";
 const PROJECTOR_DATA_VERSION = 1;
-const MAX_PROJECTED_STRING_LENGTH = 2_048;
+const MAX_PROJECTED_STRING_BYTES = 1_024;
 const MAX_PROJECTED_FINDINGS = 8;
 const MAX_PROJECTED_CONTENT_BYTES = 32 * 1024;
 const MAX_FOCUS_UNTIL = 8_640_000_000_000_000;
@@ -152,6 +149,15 @@ interface QueueRow {
 
 interface QueuedActivityRow extends QueueRow {
   received_at: number;
+  event_json: string;
+}
+
+interface RecoverableActivityRow {
+  seq: number;
+  received_at: number;
+  event_id: string;
+  run_id: string;
+  actor_id: string;
   event_json: string;
 }
 
@@ -403,15 +409,16 @@ function advanceProjectionGeneration(
   if (projection.generation === actor.generation) return projection;
 
   const staleCursor = getDb().prepare(`
-    SELECT COALESCE(MAX(journal_seq), 0) AS cursor
+    SELECT COALESCE(MAX(journal_seq), 0) AS cursor, COALESCE(MAX(queued_at), 0) AS queued_at
     FROM dag_surface_projection_queue
     WHERE run_id = ? AND actor_id = ? AND status = 'pending' AND generation < ?
-  `).get(actor.run_id, actor.actor_id, actor.generation) as { cursor: number };
+  `).get(actor.run_id, actor.actor_id, actor.generation) as { cursor: number; queued_at: number };
+  const transitionAt = Math.max(timestamp, Number(staleCursor.queued_at));
   getDb().prepare(`
     UPDATE dag_surface_projection_queue
     SET status = 'stale', applied_at = ?
     WHERE run_id = ? AND actor_id = ? AND status = 'pending' AND generation < ?
-  `).run(timestamp, actor.run_id, actor.actor_id, actor.generation);
+  `).run(transitionAt, actor.run_id, actor.actor_id, actor.generation);
   const changed = getDb().prepare(`
     UPDATE dag_surface_projections
     SET generation = ?, last_activity_sequence = 0,
@@ -420,7 +427,7 @@ function advanceProjectionGeneration(
   `).run(
     actor.generation,
     Number(staleCursor.cursor),
-    timestamp,
+    transitionAt,
     actor.run_id,
     actor.actor_id,
     projection.generation,
@@ -529,9 +536,22 @@ function boundedString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim();
   if (!normalized) return undefined;
-  return normalized.length <= MAX_PROJECTED_STRING_LENGTH
-    ? normalized
-    : `${normalized.slice(0, MAX_PROJECTED_STRING_LENGTH - 1)}…`;
+  if (Buffer.byteLength(JSON.stringify(normalized), "utf8") <= MAX_PROJECTED_STRING_BYTES) {
+    return normalized;
+  }
+  const characters = [...normalized];
+  let low = 0;
+  let high = characters.length;
+  while (low < high) {
+    const midpoint = Math.ceil((low + high) / 2);
+    const candidate = `${characters.slice(0, midpoint).join("")}…`;
+    if (Buffer.byteLength(JSON.stringify(candidate), "utf8") <= MAX_PROJECTED_STRING_BYTES) {
+      low = midpoint;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+  return `${characters.slice(0, low).join("")}…`;
 }
 
 function firstString(payload: DagActivityEventV1["payload"], keys: readonly string[]): string | undefined {
@@ -596,6 +616,20 @@ function assertOwnedNode(node: GenerativeUiStoredNodeV1, projection: DagLiveSurf
       "identity_mismatch",
       `A2UI node ${projection.surface_id} is not owned by actor ${projection.run_id}/${projection.actor_id}`,
     );
+  }
+}
+
+/** Verify that a canonical A2UI node is the active projector-owned surface for this actor. */
+export function isDagLiveSurfaceProjectionNode(
+  node: GenerativeUiStoredNodeV1,
+  projection: DagLiveSurfaceProjectionRecord,
+): boolean {
+  if (projection.visibility_state === "removed") return false;
+  try {
+    assertOwnedNode(node, projection);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -680,6 +714,12 @@ function buildProjectedNode(input: {
     findings: boundedFindings,
   };
   const content = { data };
+  while (
+    data.findings.length > 1
+    && Buffer.byteLength(JSON.stringify(content), "utf8") > MAX_PROJECTED_CONTENT_BYTES
+  ) {
+    data.findings.shift();
+  }
   if (Buffer.byteLength(JSON.stringify(content), "utf8") > MAX_PROJECTED_CONTENT_BYTES) {
     throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Projected DAG live surface content exceeds its budget");
   }
@@ -1005,6 +1045,7 @@ function visibilityContent(
 ): Record<string, unknown> {
   assertOwnedNode(node, projection);
   const data = projectedDataFromNode(node)!;
+  data.actor.generation = projection.generation;
   data.state.visibility = visibility;
   data.state.surface_revision = nextRevision;
   if (focusedUntil === undefined) delete data.state.focused_until;
@@ -1065,7 +1106,8 @@ export function controlDagLiveSurface(input: {
   return getDb().transaction((): DagLiveSurfaceControlResult => {
     const actor = getDagActor(normalized.run_id, normalized.actor_id);
     if (!actor) throw new Error(`Unknown DAG actor: ${normalized.run_id}/${normalized.actor_id}`);
-    const projection = requireProjection(normalized.run_id, normalized.actor_id);
+    let projection = requireProjection(normalized.run_id, normalized.actor_id);
+    projection = advanceProjectionGeneration(projection, actor, normalized.created_at);
     if (
       projection.node_id !== actor.node_id
       || projection.surface_id !== actor.surface_id
@@ -1121,7 +1163,7 @@ export function controlDagLiveSurface(input: {
     const visibility: DagLiveSurfaceVisibilityState = normalized.operation === "focused" ? "focused" : "removed";
     const updated = getDb().prepare(`
       UPDATE dag_surface_projections
-      SET surface_revision = ?, visibility_state = ?, focused_until = ?, updated_at = ?
+      SET surface_revision = ?, visibility_state = ?, focused_until = ?, updated_at = MAX(updated_at, ?)
       WHERE run_id = ? AND actor_id = ? AND generation = ? AND surface_revision = ?
     `).run(
       nextRevision,
@@ -1165,31 +1207,78 @@ export function controlDagLiveSurface(input: {
   }).immediate();
 }
 
-/** Replay journal history into missing/pending projections without trusting process memory. */
+function recoverableRunIds(): string[] {
+  return (getDb().prepare(`
+    SELECT DISTINCT e.run_id
+    FROM dag_activity_events e
+    JOIN dag_actors a
+      ON a.run_id = e.run_id AND a.actor_id = e.actor_id AND a.node_id = e.node_id
+      AND (e.surface_id IS NULL OR e.surface_id = a.surface_id)
+    LEFT JOIN dag_surface_projection_queue q ON q.journal_seq = e.seq
+    WHERE q.journal_seq IS NULL OR q.status = 'pending'
+    ORDER BY e.run_id
+  `).all() as Array<{ run_id: string }>).map((row) => row.run_id);
+}
+
+function recoverableActivityPage(runId: string, afterSeq: number): RecoverableActivityRow[] {
+  return getDb().prepare(`
+    SELECT e.seq, e.received_at, e.event_id, e.run_id, e.actor_id, e.event_json
+    FROM dag_activity_events e
+    JOIN dag_actors a
+      ON a.run_id = e.run_id AND a.actor_id = e.actor_id AND a.node_id = e.node_id
+      AND (e.surface_id IS NULL OR e.surface_id = a.surface_id)
+    LEFT JOIN dag_surface_projection_queue q ON q.journal_seq = e.seq
+    WHERE e.run_id = ? AND e.seq > ?
+      AND (q.journal_seq IS NULL OR q.status = 'pending')
+    ORDER BY e.seq
+    LIMIT 500
+  `).all(runId, afterSeq) as RecoverableActivityRow[];
+}
+
+function recoveryEntry(row: RecoverableActivityRow): DagActivityJournalEntry {
+  const value = parseJsonRow<unknown>(row.event_json);
+  const validation = validateDagActivityEventV1(value);
+  if (!validation.valid) {
+    throw new DagLiveSurfaceProjectionError(
+      "projection_state_conflict",
+      `Activity Journal contains invalid event ${row.event_id}`,
+    );
+  }
+  return {
+    seq: Number(row.seq),
+    received_at: Number(row.received_at),
+    event: value as DagActivityEventV1,
+  };
+}
+
+/** Replay only missing/pending actor events without rescanning settled history. */
 export function recoverDagLiveSurfaceProjections(runId?: string): DagLiveSurfaceRecoveryResult {
-  const runIds = runId === undefined
-    ? (getDb().prepare("SELECT DISTINCT run_id FROM dag_activity_events ORDER BY run_id").all() as Array<{ run_id: string }>)
-      .map((row) => row.run_id)
-    : [assertIdentifier(runId, "run_id")];
+  const runIds = runId === undefined ? recoverableRunIds() : [assertIdentifier(runId, "run_id")];
   const result: DagLiveSurfaceRecoveryResult = { runs: runIds, projected_events: 0, failed: [] };
+  const failedActors = new Set<string>();
   for (const currentRunId of runIds) {
     let afterSeq = 0;
     while (true) {
-      const page = listDagActivityEvents({ run_id: currentRunId, after_seq: afterSeq, limit: 500 });
-      for (const entry of page.events) {
+      const page = recoverableActivityPage(currentRunId, afterSeq);
+      if (page.length === 0) break;
+      for (const row of page) {
         try {
-          const projected = projectDagActivityJournalEntry(entry);
+          const projected = projectDagActivityJournalEntry(recoveryEntry(row));
           result.projected_events += projected.applied_count;
         } catch (error) {
-          result.failed.push({
-            run_id: currentRunId,
-            event_id: entry.event.event_id,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          const actorKey = `${currentRunId}\u0000${row.actor_id}`;
+          if (!failedActors.has(actorKey)) {
+            failedActors.add(actorKey);
+            result.failed.push({
+              run_id: currentRunId,
+              event_id: row.event_id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       }
-      afterSeq = page.next_after_seq;
-      if (!page.has_more) break;
+      afterSeq = Number(page.at(-1)!.seq);
+      if (page.length < 500) break;
     }
   }
   return result;

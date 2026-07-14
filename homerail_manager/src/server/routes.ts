@@ -30,6 +30,7 @@ import { listDagActorCommands, type DagActorCommandStatus } from "../persistence
 import { listDagRunRounds } from "../persistence/dag-run-rounds.js";
 import {
   getDagLiveSurfaceDocument,
+  isDagLiveSurfaceProjectionNode,
   listDagLiveSurfaceProjections,
 } from "../generative-ui/dag-live-surface-projector.js";
 
@@ -642,10 +643,20 @@ export function inspectionRoutesHandler(
       return true;
     }
     const projections = listDagLiveSurfaceProjections(runId);
+    const projectionBySurface = new Map(projections.map((projection) => [projection.surface_id, projection]));
+    const document = getDagLiveSurfaceDocument(runId);
     _ok(res, `Live surfaces retrieved (${projections.length} actors)`, {
       run_id: runId,
       projections,
-      document: getDagLiveSurfaceDocument(runId) ?? null,
+      document: document
+        ? {
+            ...document,
+            nodes: document.nodes.filter((node) => {
+              const projection = projectionBySurface.get(node.id);
+              return projection !== undefined && isDagLiveSurfaceProjectionNode(node, projection);
+            }),
+          }
+        : null,
     });
     return true;
   }

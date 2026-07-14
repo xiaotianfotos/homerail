@@ -3,7 +3,12 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { DagActivityEventV1 } from "homerail-protocol";
+import { GenerativeUiActorType, type DagActivityEventV1 } from "homerail-protocol";
+import {
+  controlDagLiveSurface,
+  getDagLiveSurfaceDocument,
+} from "../src/generative-ui/dag-live-surface-projector.js";
+import { persistentGenerativeUiDocumentService } from "../src/generative-ui/shadow-service.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import { appendDagActivityEvent } from "../src/persistence/dag-activity-journal.js";
 import { ensureRunDir } from "../src/persistence/store.js";
@@ -246,6 +251,22 @@ nodes:
       roundId: built.envelope.sessionId,
     });
 
+    const scope = { type: "run" as const, id: "run-live-surface" };
+    const canonical = getDagLiveSurfaceDocument("run-live-surface")!;
+    const { revision: _revision, updated_at: _updatedAt, ...projectedNode } = canonical.nodes[0]!;
+    expect(persistentGenerativeUiDocumentService.apply({
+      ir_version: 1,
+      transaction_id: "seed-unrelated-canonical-node",
+      document_id: canonical.document_id,
+      base_revision: canonical.revision,
+      actor: { type: GenerativeUiActorType.SYSTEM, id: "route-boundary-test" },
+      operations: [{
+        op: "put",
+        node: { ...structuredClone(projectedNode), id: "unrelated-canonical-node" },
+      }],
+      created_at: new Date().toISOString(),
+    }, scope)).toMatchObject({ status: "applied" });
+
     server = createServer(0, undefined, undefined, false, { autoDetectCodex: false });
     const baseUrl = `http://127.0.0.1:${await listen(server)}`;
     const response = await fetch(`${baseUrl}/api/runs/run-live-surface/live-surfaces`);
@@ -262,6 +283,32 @@ nodes:
       scope: { type: "run", id: "run-live-surface" },
       nodes: [{ id: "surface-research", a2ui: expect.any(Object) }],
     });
+    expect(body.data.document.nodes.map((node) => node.id)).not.toContain("unrelated-canonical-node");
+
+    expect(controlDagLiveSurface({
+      control_id: "remove-route-surface",
+      run_id: "run-live-surface",
+      actor_id: "researcher",
+      operation: "removed",
+      expected_surface_revision: 1,
+    })).toMatchObject({ projection: { visibility_state: "removed" } });
+    const removedDocument = getDagLiveSurfaceDocument("run-live-surface")!;
+    expect(persistentGenerativeUiDocumentService.apply({
+      ir_version: 1,
+      transaction_id: "reuse-removed-surface-id",
+      document_id: removedDocument.document_id,
+      base_revision: removedDocument.revision,
+      actor: { type: GenerativeUiActorType.SYSTEM, id: "unrelated-producer" },
+      operations: [{
+        op: "put",
+        node: { ...structuredClone(projectedNode), id: "surface-research" },
+      }],
+      created_at: new Date().toISOString(),
+    }, scope)).toMatchObject({ status: "applied" });
+    const reusedResponse = await fetch(`${baseUrl}/api/runs/run-live-surface/live-surfaces`);
+    const reused = await reusedResponse.json() as typeof body;
+    expect(reusedResponse.status).toBe(200);
+    expect(reused.data.document.nodes).toEqual([]);
   });
 
   it("replays bounded activity pages by run and actor", async () => {
