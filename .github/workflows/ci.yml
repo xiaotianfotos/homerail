@@ -208,6 +208,8 @@ jobs:
         run: npm run build:packages
 
       - name: Run isolated live DAG pattern validation
+        env:
+          HOMERAIL_LIVE_SLOT: ${{ runner.name }}
         run: npm run validate:dag-patterns-runner
 
       - name: Upload validation evidence

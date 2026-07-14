@@ -4,8 +4,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LIVE_TASK="${HOMERAIL_LIVE_TASK:-patterns}"
 RUNNER_BASE="${HOMERAIL_RUNNER_BASE:-$HOME/.homerail-runners}"
-HOME_BASE="${HOMERAIL_LIVE_HOME_BASE:-$RUNNER_BASE/homerail_home}"
-ARTIFACT_BASE="${HOMERAIL_LIVE_ARTIFACTS:-$RUNNER_BASE/artifacts}"
+HOME_ROOT="${HOMERAIL_LIVE_HOME_BASE:-$RUNNER_BASE/homerail_home}"
+ARTIFACT_ROOT="${HOMERAIL_LIVE_ARTIFACTS:-$RUNNER_BASE/artifacts}"
 PREFERRED_MANAGER_PORT="${HOMERAIL_MANAGER_PORT:-}"
 MODEL_BASE_URL="${HOMERAIL_PATTERN_MODEL_BASE_URL:-}"
 MODEL_NAME="${HOMERAIL_PATTERN_MODEL:-qwen3.6}"
@@ -15,6 +15,19 @@ MODEL_PROTOCOL="${HOMERAIL_PATTERN_MODEL_PROTOCOL:-anthropic_compatible}"
 AGENT_TYPE="${HOMERAIL_PATTERN_AGENT_TYPE:-claude-sdk}"
 RUN_KEY="${HOMERAIL_LIVE_RUN_KEY:-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}}"
 RUN_KEY="$(printf '%s' "$RUN_KEY" | tr -c 'A-Za-z0-9_.-' '-')"
+LIVE_SLOT="$(printf '%s' "${HOMERAIL_LIVE_SLOT:-legacy}" | tr -c 'A-Za-z0-9_.-' '-')"
+
+case "$LIVE_SLOT" in
+  ""|.|..)
+    echo "HOMERAIL_LIVE_SLOT must contain a safe runner slot name." >&2
+    exit 1
+    ;;
+esac
+
+export HOMERAIL_LIVE_SLOT="$LIVE_SLOT"
+HOME_BASE="$HOME_ROOT/slots/$LIVE_SLOT"
+ARTIFACT_BASE="$ARTIFACT_ROOT/slots/$LIVE_SLOT"
+SLOT_BASE="$RUNNER_BASE/slots/$LIVE_SLOT"
 
 case "$LIVE_TASK" in
   patterns|pr-review) ;;
@@ -49,9 +62,9 @@ fi
 PERSISTENT_ARTIFACT_DIR="$ARTIFACT_BASE/$RUN_KEY"
 REPORT_PATH="$PERSISTENT_ARTIFACT_DIR/dag-patterns-live.json"
 UPLOAD_REPORT_PATH="${HOMERAIL_LIVE_REPORT_PATH:-$REPO_ROOT/artifacts/dag-patterns-live.json}"
-LOCK_FILE="$RUNNER_BASE/dag-patterns-live.lock"
+LOCK_FILE="$SLOT_BASE/dag-patterns-live.lock"
 
-mkdir -p "$RUNNER_BASE" "$HOME_BASE" "$PERSISTENT_ARTIFACT_DIR" "$(dirname "$UPLOAD_REPORT_PATH")"
+mkdir -p "$RUNNER_BASE" "$SLOT_BASE" "$HOME_BASE" "$PERSISTENT_ARTIFACT_DIR" "$(dirname "$UPLOAD_REPORT_PATH")"
 exec 9>"$LOCK_FILE"
 if ! flock -w 60 9; then
   echo "Another HomeRail live validation is already running on this runner." >&2
@@ -205,10 +218,17 @@ fi
 echo "Building isolated worker image $HOMERAIL_WORKER_IMAGE"
 docker build \
   --label "org.homerail.live_run=$RUN_KEY" \
+  --label "org.homerail.live_slot=$LIVE_SLOT" \
   -t "$HOMERAIL_WORKER_IMAGE" \
   -f "$REPO_ROOT/homerail_worker/Dockerfile" \
   "$REPO_ROOT"
 
+PORT_LOCK_FILE="$RUNNER_BASE/manager-port-allocation.lock"
+exec 8>"$PORT_LOCK_FILE"
+if ! flock -w 60 8; then
+  echo "Could not acquire the Manager port allocation lock." >&2
+  exit 1
+fi
 if ! MANAGER_PORT="$(select_manager_port "$PREFERRED_MANAGER_PORT")"; then
   echo "No free Runner Manager port is available in the 20000-29999 range." >&2
   exit 1
@@ -222,6 +242,8 @@ else
 fi
 
 node "$REPO_ROOT/homerail_cli/dist/cli.js" start --host 0.0.0.0 --no-build-worker-image
+flock -u 8
+exec 8>&-
 SETTING_ID="$(node "$REPO_ROOT/scripts/configure-live-pattern-model.mjs")"
 
 if [ "$LIVE_TASK" = "pr-review" ]; then

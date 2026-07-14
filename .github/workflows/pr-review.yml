@@ -37,7 +37,7 @@ jobs:
       (github.event.pull_request.draft == false &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.actor == 'xiaotianfotos')
-    runs-on: [self-hosted, Linux, X64, homerail-live]
+    runs-on: [self-hosted, Linux, X64, homerail-pr-review]
     timeout-minutes: 90
     env:
       HOMERAIL_GITHUB_API_BASE_URL: ${{ github.api_url }}
@@ -103,6 +103,7 @@ jobs:
       - name: Run HomeRail PR Review DAG
         id: review
         env:
+          HOMERAIL_LIVE_SLOT: ${{ runner.name }}
           HOMERAIL_PR_REVIEW_INPUT: ${{ steps.input.outputs.json }}
           HOMERAIL_PR_REVIEW_ARTIFACT_DIR: ${{ github.workspace }}/artifacts/pr-review
         run: bash scripts/run-pr-review-live-runner.sh

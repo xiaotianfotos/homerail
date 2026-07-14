@@ -8,7 +8,7 @@
     "install:all": "npm --prefix homerail_protocol ci && npm --prefix homerail_manager ci && npm --prefix homerail_node ci && npm --prefix homerail_worker ci && npm --prefix homerail_cli ci && npm --prefix agent-ui ci",
     "build:packages": "npm --prefix homerail_protocol run build && npm --prefix homerail_manager run build && npm --prefix homerail_node run build && npm --prefix homerail_worker run build && npm --prefix homerail_cli run build && npm --prefix agent-ui run build",
     "build": "npm run build:packages",
-    "test:live-validator": "node --test scripts/dag-pattern-live-contracts.test.mjs",
+    "test:live-validator": "node --test scripts/dag-pattern-live-contracts.test.mjs scripts/live-runner-isolation.test.mjs",
     "test:packages": "npm --prefix homerail_protocol test && npm --prefix homerail_manager test && npm --prefix homerail_node test && npm --prefix homerail_worker test && npm --prefix homerail_cli test && npm --prefix agent-ui test && npm run test:live-validator",
     "test": "npm run build:packages && npm run test:packages",
     "typecheck": "npm --prefix homerail_protocol run typecheck && npm --prefix homerail_manager run typecheck && npm --prefix homerail_node run typecheck && npm --prefix homerail_worker run typecheck && npm --prefix homerail_cli run typecheck && npm --prefix agent-ui run typecheck",
