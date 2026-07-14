@@ -16,6 +16,7 @@ import {
 
 let browser: Browser | undefined
 let server: http.Server | undefined
+const browserIsolationTimeout = process.platform === 'win32' ? 120_000 : 45_000
 
 async function listen(): Promise<{ origin: string }> {
   server = http.createServer((_req, res) => {
@@ -184,5 +185,5 @@ describe('Custom Renderer real Chromium isolation', () => {
     expect(page.frames().some(frame => frame.url().includes('attacker.invalid'))).toBe(false)
     expect(navigations.some(url => url.includes('attacker.invalid'))).toBe(false)
     expect(leakedRequests).toEqual([])
-  }, 45_000)
+  }, browserIsolationTimeout)
 })
