@@ -80,7 +80,7 @@ describe("Manager Agent skill discovery", () => {
   afterEach(() => {
     if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
     else process.env.HOMERAIL_HOME = oldHome;
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it("installs missing built-in skills as links under HOMERAIL_HOME", () => {
