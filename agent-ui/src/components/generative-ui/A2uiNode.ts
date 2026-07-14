@@ -562,7 +562,7 @@ function renderNode(
   }
   if (component.component === 'HrGrid') {
     const columns: Record<string, unknown> = isA2uiRecord(component.columns) ? component.columns : {}
-    const compactColumns = boundedInteger(columns.compact, 1, 1, 2)
+    const compactColumns = boundedInteger(columns.compact, 1, 1, 3)
     return h('div', nodeAttrs({
       'data-gap': GAP_VALUES.has(String(component.gap)) ? component.gap : 'md',
       'data-align': ALIGN_VALUES.has(String(component.align)) ? component.align : 'stretch',

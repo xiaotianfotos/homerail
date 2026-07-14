@@ -245,7 +245,7 @@ export type HomerailA2uiFormatV1 = "text" | "number" | "percent" | "datetime" | 
 export interface HomerailA2uiGridComponentV1 extends A2uiComponentCommonV1 {
   component: "HrGrid";
   children: A2uiChildListV1;
-  columns: { default: 1 | 2 | 3; compact: 1 | 2 };
+  columns: { default: 1 | 2 | 3; compact: 1 | 2 | 3 };
   gap?: HomerailA2uiGapV1;
   align?: HomerailA2uiAlignV1;
 }

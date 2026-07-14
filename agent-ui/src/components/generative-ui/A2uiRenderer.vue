@@ -364,6 +364,12 @@ const rootScope = computed(() => ({ value: dataModel.value, key: 'root' }))
 .hr-a2ui__node[data-gap='md'] { gap: var(--hr-a2ui-gap-md); }
 .hr-a2ui__node[data-gap='lg'] { gap: var(--hr-a2ui-gap-lg); }
 .hr-a2ui__grid-item { display: grid; min-width: 0; }
+.hr-a2ui__grid[data-compact-columns='3'] .hr-a2ui__image[data-variant='smallFeature'] {
+  width: 100%;
+  height: auto;
+  max-height: 92px;
+  aspect-ratio: 1;
+}
 
 .hr-a2ui__section {
   display: grid;
@@ -571,7 +577,7 @@ div.hr-a2ui__artifact { display: grid; min-height: 220px; grid-template-rows: mi
 .homerail-a2ui[data-viewport='compact'] .hr-a2ui__text h3 { font-size: 18px; }
 .homerail-a2ui[data-viewport='compact'] .hr-a2ui__step { grid-template-columns: 32px minmax(0, 1fr); gap: 8px; }
 .homerail-a2ui[data-viewport='compact'] .hr-a2ui__step-rail > span { width: 27px; height: 27px; }
-.homerail-a2ui[data-viewport='compact'] .hr-a2ui__image[data-variant='smallFeature'] { height: 82px; }
+.homerail-a2ui[data-viewport='compact'] .hr-a2ui__grid[data-compact-columns='3'] .hr-a2ui__image[data-variant='smallFeature'] { max-height: 82px; }
 
 @media (max-width: 520px) {
   .hr-a2ui__modal-backdrop { padding: 10px; place-items: end stretch; }

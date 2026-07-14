@@ -259,7 +259,7 @@ describe('A2uiRenderer', () => {
 
   it('marks compact mobile output, evaluates disclosure.open, and expands details with the host', () => {
     const mounted = mount(surface([
-      { id: 'root', component: 'HrGrid', children: ['cell'], columns: { default: 3, compact: 2 } },
+      { id: 'root', component: 'HrGrid', children: ['cell'], columns: { default: 3, compact: 3 } },
       { id: 'cell', component: 'HrGridItem', child: 'details', span: 2 },
       { id: 'details', component: 'HrDisclosure', title: 'Evidence', open: { path: '/open' }, children: ['text'] },
       { id: 'text', component: 'Text', text: 'Full evidence' },
@@ -270,7 +270,8 @@ describe('A2uiRenderer', () => {
     expect(mounted.querySelector('.homerail-a2ui')?.getAttribute('data-device')).toBe('phone')
     expect(mounted.querySelector('.homerail-a2ui')?.getAttribute('data-viewport')).toBe('compact')
     expect(mounted.querySelector('.homerail-a2ui')?.getAttribute('data-expanded')).toBe('true')
-    expect(mounted.querySelector('.hr-a2ui__grid')?.getAttribute('data-compact-columns')).toBe('2')
+    expect(mounted.querySelector('.hr-a2ui__grid')?.getAttribute('data-compact-columns')).toBe('3')
+    expect(rendererSource).toContain(".hr-a2ui__grid[data-compact-columns='3'] .hr-a2ui__image[data-variant='smallFeature']")
     expect(mounted.querySelector<HTMLDetailsElement>('.hr-a2ui__disclosure')?.open).toBe(true)
   })
 

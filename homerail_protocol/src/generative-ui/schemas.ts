@@ -502,7 +502,7 @@ const gridColumnsSchema = {
   type: "object",
   properties: {
     default: { type: "integer", minimum: 1, maximum: 3 },
-    compact: { type: "integer", minimum: 1, maximum: 2 },
+    compact: { type: "integer", minimum: 1, maximum: 3 },
   },
   required: ["default", "compact"],
   additionalProperties: false,
