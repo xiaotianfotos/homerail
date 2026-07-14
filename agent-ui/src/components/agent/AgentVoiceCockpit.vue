@@ -4897,10 +4897,11 @@ function summarizeTask(value: string): string {
         </div>
         <section
           class="voice-stage relative m-6 flex min-h-0 flex-col overflow-hidden rounded-[28px] p-6"
+          :class="{ 'voice-stage--status-active': Boolean(processingText) }"
         >
           <div
             v-if="processingText"
-            class="voice-stage__status absolute right-5 top-5 z-10 rounded-full border border-white/10 bg-black/35 px-3 py-1.5 text-xs text-white/60 backdrop-blur"
+            class="voice-stage__status pointer-events-none absolute right-5 top-5 z-10 rounded-full border border-white/10 bg-black/35 px-3 py-1.5 text-xs text-white/60 backdrop-blur"
           >
             {{ processingText }}
           </div>
@@ -6306,6 +6307,14 @@ function summarizeTask(value: string): string {
 .voice-cockpit--phone-portrait .voice-stage__status {
   top: 12px;
   right: 12px;
+  max-width: calc(100% - 28px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-cockpit--phone-portrait .voice-stage--status-active .voice-stage__content {
+  padding-top: 44px;
 }
 
 .voice-cockpit--phone-portrait .voice-stage__content {
