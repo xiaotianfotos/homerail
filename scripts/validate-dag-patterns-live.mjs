@@ -39,6 +39,7 @@ const outputPath = option("--output", "");
 const requestedPatterns = repeatedOption("--pattern");
 const approvalToken = process.env.HOMERAIL_DAG_APPROVAL_TOKEN ?? "";
 const mutationToken = process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? approvalToken;
+const managerAdminToken = process.env.HOMERAIL_MANAGER_ADMIN_TOKEN ?? "";
 const agentType = process.env.HOMERAIL_PATTERN_AGENT_TYPE ?? "claude-sdk";
 
 if (!settingId) {
@@ -59,6 +60,9 @@ async function request(pathname, init) {
     ...init,
     headers: {
       ...(init?.headers ?? {}),
+      ...(managerAdminToken && init?.method && init.method !== "GET"
+        ? { Authorization: `Bearer ${managerAdminToken}` }
+        : {}),
       ...(mutationToken && init?.method && init.method !== "GET"
         ? { "X-Homerail-Dag-Token": mutationToken }
         : {}),
