@@ -64,12 +64,16 @@ submit a GitHub review, approve a PR, or merge code.
 ## CI Adapter
 
 `.github/workflows/pr-review.yml` is intentionally thin. It converts GitHub
-event fields into the public CLI input, calls `hr dag run-template ... --wait`,
+event fields into the public CLI input, then uses the shared isolated live-runner
+bootstrap to build and start the checked-out Manager and Worker revision. The
+runner registers its Qwen3.6 setting, calls `hr dag run-template ... --wait`,
 downloads the two declared artifacts through the generic run-artifact commands,
 uploads them as CI evidence, and copies `pr-review.md` into the GitHub Check
-summary. Workflow contracts, per-finding verification, and the deterministic
-quorum remain authoritative; the adapter does not reconstruct a report from
-raw handoffs.
+summary. Running the checked-out revision keeps the template, compiler, runtime,
+and Worker protocol at the same commit instead of sending a new template to a
+stale long-lived Manager. Workflow contracts, per-finding verification, and the
+deterministic quorum remain authoritative; the adapter does not reconstruct a
+report from raw handoffs.
 The review step uses `continue-on-error`, so findings or an inconclusive run do
 not block merging.
 
@@ -78,12 +82,15 @@ created by the trusted maintainer. This avoids running untrusted fork content on
 the `.112` runner. Maintainers can use `workflow_dispatch` for an explicit
 review after evaluating that boundary.
 
-Required repository configuration:
+Runner repository configuration:
 
-- `HOMERAIL_PR_REVIEW_MANAGER_URL`: the isolated Manager URL reachable from the
-  self-hosted runner;
-- `HOMERAIL_DAG_MUTATION_TOKEN`: the Manager mutation token;
-- `HOMERAIL_PR_REVIEW_PROFILE`: optional DB runtime profile id.
+- `HOMERAIL_PATTERN_MODEL_BASE_URL`: the Qwen3.6 Anthropic-compatible endpoint;
+- `HOMERAIL_LIVE_RUNNER_BASE`: optional persistent root for locks and diagnostic
+  logs;
+- `HOMERAIL_LIVE_MANAGER_PORT`: optional preferred isolated Manager port. The
+  bootstrap selects another free port if it is occupied;
+- `HOMERAIL_DAG_MUTATION_TOKEN`: optional Manager mutation token. A random token
+  is generated inside the isolated run when this secret is absent.
 
 The GitHub Actions adapter supplies `github.api_url` as
 `HOMERAIL_GITHUB_API_BASE_URL`, so credential-free-accessible GitHub Enterprise

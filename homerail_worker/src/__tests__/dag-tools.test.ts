@@ -43,6 +43,7 @@ describe("DAG tools", () => {
 
       expect(result.content).toHaveLength(1);
       const ctx = JSON.parse((result.content as any)[0].text);
+      expect(ctx.run_id).toBe("run-1");
       expect(ctx.node_id).toBe("coder");
       expect(ctx.available_ports).toEqual(["done"]);
       expect(ctx.graph_nodes).toEqual(["triage", "coder", "tester"]);

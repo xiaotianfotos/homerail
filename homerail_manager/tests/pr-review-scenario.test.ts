@@ -115,6 +115,10 @@ describe("PR Review scenario assets", () => {
     });
     expect(nodes.filter((node) => node.agent === "refiner")).toHaveLength(1);
     expect(nodes.filter((node) => node.agent === "publisher")).toHaveLength(1);
+    expect(nodes.find((node) => node.agent === "publisher")?.config).toMatchObject({
+      allowed_builtin_tools: [],
+      allowed_dag_tools: ["get_graph_context", "handoff"],
+    });
     const agents = parseWorkflowSource(source).meta.agents ?? {};
     for (const agentId of [
       "preparer",
@@ -211,6 +215,8 @@ describe("PR Review scenario assets", () => {
 
   it("keeps the GitHub adapter thin, advisory, and off untrusted fork PRs", () => {
     const workflow = fs.readFileSync(path.resolve(process.cwd(), "..", ".github", "workflows", "pr-review.yml"), "utf8");
+    const runner = fs.readFileSync(path.resolve(process.cwd(), "..", "scripts", "run-dag-patterns-live-runner.sh"), "utf8");
+    const reviewRunner = fs.readFileSync(path.resolve(process.cwd(), "..", "scripts", "run-pr-review-live-runner.sh"), "utf8");
     const parsed = parseYaml(workflow) as { jobs: { review: { env: Record<string, string>; steps: Array<{ name: string; env?: Record<string, string> }> } } };
     expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("workflow_dispatch:");
@@ -218,15 +224,23 @@ describe("PR Review scenario assets", () => {
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(workflow).toContain("continue-on-error: true");
     expect(workflow.match(/continue-on-error: true/g)).toHaveLength(2);
-    expect(workflow).toContain("dag run-template pr-review");
-    expect(workflow).toContain('dag artifact "$RUN_ID" pr-review.json');
-    expect(workflow).toContain('dag artifact "$RUN_ID" pr-review.md');
+    expect(workflow).toContain("bash scripts/run-pr-review-live-runner.sh");
+    expect(workflow).toContain("npm run build:packages");
+    expect(workflow).toContain("HOMERAIL_PATTERN_MODEL: qwen3.6");
+    expect(workflow).not.toContain("HOMERAIL_PR_REVIEW_MANAGER_URL");
+    expect(runner).toContain("dag run-template pr-review");
+    expect(runner).toContain('dag artifact "$REVIEW_RUN_ID" pr-review.json');
+    expect(runner).toContain('dag artifact "$REVIEW_RUN_ID" pr-review.md');
+    expect(runner).toContain('--setting-id "$SETTING_ID"');
+    expect(reviewRunner).toContain("HOMERAIL_LIVE_TASK=pr-review");
     expect(workflow).not.toContain("--output-dir");
     expect(workflow).toContain("$GITHUB_STEP_SUMMARY");
     expect(parsed.jobs.review.env.HOMERAIL_GITHUB_API_BASE_URL).toBe("${{ github.api_url }}");
+    expect(parsed.jobs.review.env.HOMERAIL_PATTERN_MODEL_BASE_URL).toBe("${{ secrets.HOMERAIL_PATTERN_MODEL_BASE_URL }}");
     expect(parsed.jobs.review.env).not.toHaveProperty("HOMERAIL_HOME");
-    expect(parsed.jobs.review.steps.find((step) => step.name === "Run HomeRail PR Review DAG")?.env?.HOMERAIL_HOME)
-      .toBe("${{ runner.temp }}/homerail-pr-review-cli-${{ github.run_id }}");
+    expect(parsed.jobs.review.env).not.toHaveProperty("HOMERAIL_MANAGER_URL");
+    expect(parsed.jobs.review.steps.find((step) => step.name === "Run HomeRail PR Review DAG")?.env)
+      .not.toHaveProperty("HOMERAIL_HOME");
   });
 
   it("keeps PR closeout manual, thin, isolated, and unable to merge", () => {

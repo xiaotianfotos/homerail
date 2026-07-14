@@ -19,7 +19,7 @@ spec:
 
   pattern:
     id: pr-review-scenario
-    version: 1.1.0
+    version: 1.2.0
     source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
     parameters:
       reviewer_count: 4
@@ -526,6 +526,9 @@ spec:
       system: |
         Publish the supplied DraftReviewReport. input.quorum is a merge wrapper;
         the authoritative verifier quorum is exactly input.quorum.values[0].
+        Your first action MUST call get_graph_context and copy its run_id into
+        the Markdown HomeRail run id field. Never invent, omit, or replace it
+        with an unavailable placeholder.
         Copy passed, successes, total, and threshold from that inner object, not
         from the outer merge wrapper. Publish without
         changing findings. The persisted handoff is materialized by Manager as
@@ -680,6 +683,8 @@ spec:
     publish:
       kind: agent
       agent: publisher
+      allowed_builtin_tools: []
+      allowed_dag_tools: [get_graph_context, handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs:
         report: { contract: DraftReviewReport }

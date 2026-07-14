@@ -267,6 +267,7 @@ export interface EdgeRef {
 
 /** @version 0.1.0 */
 export interface GraphContext {
+  run_id: string;
   node_id: string;
   predecessors: EdgeRef[];
   successors: EdgeRef[];

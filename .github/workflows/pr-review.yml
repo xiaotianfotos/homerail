@@ -38,12 +38,19 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.actor == 'xiaotianfotos')
     runs-on: [self-hosted, Linux, X64, homerail-live]
-    timeout-minutes: 60
+    timeout-minutes: 90
     continue-on-error: true
     env:
-      HOMERAIL_ASSET_DIR: ""
       HOMERAIL_GITHUB_API_BASE_URL: ${{ github.api_url }}
-      HOMERAIL_MANAGER_URL: ${{ secrets.HOMERAIL_PR_REVIEW_MANAGER_URL }}
+      HOMERAIL_RUNNER_BASE: ${{ secrets.HOMERAIL_LIVE_RUNNER_BASE }}
+      HOMERAIL_MANAGER_PORT: ${{ secrets.HOMERAIL_LIVE_MANAGER_PORT }}
+      HOMERAIL_LIVE_WORKER_IMAGE_PREFIX: homerail-worker:pr-review
+      HOMERAIL_LIVE_RUN_KEY: pr-review-${{ github.run_id }}-${{ github.run_attempt }}
+      HOMERAIL_WAKE_MODEL: "1"
+      HOMERAIL_PATTERN_MODEL: qwen3.6
+      HOMERAIL_PATTERN_MODEL_BASE_URL: ${{ secrets.HOMERAIL_PATTERN_MODEL_BASE_URL }}
+      HOMERAIL_PATTERN_MODEL_PROTOCOL: anthropic_compatible
+      HOMERAIL_PATTERN_AGENT_TYPE: claude-sdk
       HOMERAIL_DAG_MUTATION_TOKEN: ${{ secrets.HOMERAIL_DAG_MUTATION_TOKEN }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -57,12 +64,11 @@ jobs:
         with:
           node-version: 24
 
-      - name: Build HomeRail CLI
-        run: |
-          npm --prefix homerail_protocol ci
-          npm --prefix homerail_cli ci
-          npm --prefix homerail_protocol run build
-          npm --prefix homerail_cli run build
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Build current HomeRail runtime
+        run: npm run build:packages
 
       - name: Resolve immutable review input
         id: input
@@ -99,17 +105,9 @@ jobs:
         id: review
         continue-on-error: true
         env:
-          HOMERAIL_HOME: ${{ runner.temp }}/homerail-pr-review-cli-${{ github.run_id }}
-          REVIEW_INPUT: ${{ steps.input.outputs.json }}
-          REVIEW_PROFILE: ${{ secrets.HOMERAIL_PR_REVIEW_PROFILE }}
-        run: |
-          mkdir -p artifacts/pr-review
-          args=(dag run-template pr-review --input "$REVIEW_INPUT" --wait --timeout 3300)
-          if [ -n "$REVIEW_PROFILE" ]; then args+=(--profile "$REVIEW_PROFILE"); fi
-          node homerail_cli/dist/cli.js --json "${args[@]}" > artifacts/pr-review/command.json
-          RUN_ID="$(node -e 'const fs=require("fs"); console.log(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).run_id)' artifacts/pr-review/command.json)"
-          node homerail_cli/dist/cli.js dag artifact "$RUN_ID" pr-review.json --output artifacts/pr-review/pr-review.json
-          node homerail_cli/dist/cli.js dag artifact "$RUN_ID" pr-review.md --output artifacts/pr-review/pr-review.md
+          HOMERAIL_PR_REVIEW_INPUT: ${{ steps.input.outputs.json }}
+          HOMERAIL_PR_REVIEW_ARTIFACT_DIR: ${{ github.workspace }}/artifacts/pr-review
+        run: bash scripts/run-pr-review-live-runner.sh
 
       - name: Publish non-blocking Check summary
         if: always()
