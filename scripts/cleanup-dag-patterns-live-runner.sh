@@ -16,8 +16,14 @@ container_ids_for_scope() {
   fi
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    label="$(docker container inspect --format '{{ index .Config.Labels "org.homerail.live_slot" }}' "$id" 2>/dev/null || true)"
-    { [ -z "$label" ] || [ "$label" = "<no value>" ]; } && printf '%s\n' "$id"
+    if ! label="$(
+      docker container inspect \
+        --format '{{with index .Config.Labels "org.homerail.live_slot"}}{{.}}{{end}}' \
+        "$id" 2>/dev/null
+    )"; then
+      continue
+    fi
+    [ -z "$label" ] && printf '%s\n' "$id"
   done < <(docker ps -aq --filter "label=org.homerail.live_run")
 }
 
@@ -29,8 +35,14 @@ image_ids_for_scope() {
   fi
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    label="$(docker image inspect --format '{{ index .Config.Labels "org.homerail.live_slot" }}' "$id" 2>/dev/null || true)"
-    { [ -z "$label" ] || [ "$label" = "<no value>" ]; } && printf '%s\n' "$id"
+    if ! label="$(
+      docker image inspect \
+        --format '{{with index .Config.Labels "org.homerail.live_slot"}}{{.}}{{end}}' \
+        "$id" 2>/dev/null
+    )"; then
+      continue
+    fi
+    [ -z "$label" ] && printf '%s\n' "$id"
   done < <(docker images --filter "label=org.homerail.live_run" --format "{{.ID}}" | sort -u)
 }
 

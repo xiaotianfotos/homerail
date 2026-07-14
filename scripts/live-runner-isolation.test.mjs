@@ -53,14 +53,14 @@ case "\${1:-}" in
     case "$*" in
       *live_slot=slot-a*) echo container-a ;;
       *live_slot=slot-b*) echo container-b ;;
-      *live_run*) printf '%s\\n' container-legacy container-a container-b ;;
+      *live_run*) printf '%s\\n' container-legacy container-a container-b container-inspect-error ;;
     esac
     ;;
   images)
     case "$*" in
       *live_slot=slot-a*) echo image-a ;;
       *live_slot=slot-b*) echo image-b ;;
-      *live_run*) printf '%s\\n' image-legacy image-a image-b ;;
+      *live_run*) printf '%s\\n' image-legacy image-a image-b image-inspect-error ;;
     esac
     ;;
   container)
@@ -68,7 +68,8 @@ case "\${1:-}" in
     case "$id" in
       container-a) echo slot-a ;;
       container-b) echo slot-b ;;
-      container-legacy) echo '<no value>' ;;
+      container-legacy) ;;
+      container-inspect-error) exit 42 ;;
     esac
     ;;
   image)
@@ -77,7 +78,8 @@ case "\${1:-}" in
       case "$id" in
         image-a) echo slot-a ;;
         image-b) echo slot-b ;;
-        image-legacy) echo '<no value>' ;;
+        image-legacy) ;;
+        image-inspect-error) exit 42 ;;
       esac
     fi
     ;;
@@ -127,7 +129,15 @@ esac
   removals = fs.readFileSync(dockerLog, "utf8").split("\n").filter((line) => /^(rm -f|image rm -f)/.test(line));
   assert.ok(removals.includes("rm -f container-legacy"));
   assert.ok(removals.includes("image rm -f image-legacy"));
-  assert.ok(removals.every((line) => !line.includes("container-b") && !line.includes("image-b")));
+  assert.ok(
+    removals.every(
+      (line) =>
+        !line.includes("container-b") &&
+        !line.includes("image-b") &&
+        !line.includes("container-inspect-error") &&
+        !line.includes("image-inspect-error"),
+    ),
+  );
 
   if (lockHolder.exitCode === null) {
     lockHolder.kill("SIGTERM");
