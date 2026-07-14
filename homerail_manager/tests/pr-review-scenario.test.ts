@@ -50,13 +50,17 @@ function passingReviewReport(): Record<string, unknown> {
   };
 }
 
-function installPrepareCommandStub(parsed: ReturnType<typeof parseWorkflowSource>): void {
+function installPrepareCommandStub(
+  parsed: ReturnType<typeof parseWorkflowSource>,
+  options: { diffTruncated?: boolean } = {},
+): void {
   const prepare = parsed.graph.nodes.find((node) => node.node_id === "prepare");
   if (!prepare?.gateway_config) throw new Error("prepare command node is missing");
+  const diffTruncated = options.diffTruncated ?? false;
   prepare.gateway_config.command = [
     "node",
     "-e",
-    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const i=JSON.parse(s),r=Array.isArray(i.request)?i.request.at(-1):undefined,p=r?.input?.payload;if(!p)throw new Error('missing request');process.stdout.write(JSON.stringify({repo:p.repo,pr:p.pr,base:p.base,head:p.head,repository_path:'/workspace/repository',changed_files:['src/run.ts'],diff_stat:'1 file changed',diff_patch:'diff --git a/src/run.ts b/src/run.ts',diff_truncated:false}))})",
+    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const i=JSON.parse(s),r=Array.isArray(i.request)?i.request.at(-1):undefined,p=r?.input?.payload;if(!p)throw new Error('missing request');process.stdout.write(JSON.stringify({repo:p.repo,pr:p.pr,base:p.base,head:p.head,repository_path:'/workspace/repository',changed_files:['src/run.ts'],diff_stat:'1 file changed',diff_patch:'diff --git a/src/run.ts b/src/run.ts',diff_truncated:" + JSON.stringify(diffTruncated) + "}))})",
   ];
 }
 
@@ -190,6 +194,25 @@ describe("PR Review scenario assets", () => {
     ]) {
       expect(agents[agentId]?.system).toMatch(/final action MUST\s+call\s+(?:the\s+)?handoff/);
     }
+    for (const agentId of [
+      "runtime_reviewer",
+      "security_reviewer",
+      "test_reviewer",
+      "frontend_reviewer",
+      "evidence_voter",
+      "false_positive_voter",
+    ]) {
+      expect(agents[agentId]?.system).toContain("diff_truncated");
+    }
+    for (const agentId of [
+      "runtime_reviewer",
+      "synthesizer",
+      "evidence_voter",
+      "false_positive_voter",
+    ]) {
+      expect(agents[agentId]?.system).toMatch(/GitHub\s+Enterprise/);
+      expect(agents[agentId]?.system).toContain("clone_url");
+    }
     const prepare = nodes.find((node) => node.id === "prepare");
     expect(prepare).toMatchObject({
       kind: "command",
@@ -206,6 +229,7 @@ describe("PR Review scenario assets", () => {
     const prepareCode = String((prepare?.config?.command as unknown[] | undefined)?.[2]);
     expect(prepareCode).toContain("base_clone_url");
     expect(prepareCode).toContain("head_clone_url");
+    expect(prepareCode).toContain("[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+\\.git$");
     expect(prepareCode).toContain("credential.helper=");
     expect(prepareCode).toContain("GIT_CONFIG_NOSYSTEM");
     expect(prepareCode).toContain("protocol.file.allow=never");
@@ -231,6 +255,17 @@ describe("PR Review scenario assets", () => {
       diff_stat: "1 file changed",
       diff_patch: "diff --git a/src/run.ts b/src/run.ts",
       diff_truncated: false,
+    })).toMatchObject({ valid: true });
+    expect(validateJsonContract(contracts.ReviewContext, {
+      repo: "xiaotianfotos/homerail",
+      pr: 25,
+      base: "a".repeat(40),
+      head: "b".repeat(40),
+      repository_path: "/workspace/repository",
+      changed_files: ["src/run.ts"],
+      diff_stat: "1 file changed",
+      diff_patch: "diff --git a/src/run.ts b/src/run.ts\n... truncated",
+      diff_truncated: true,
     })).toMatchObject({ valid: true });
     const finalReview = {
       report: passingReviewReport(),
@@ -292,6 +327,10 @@ describe("PR Review scenario assets", () => {
       budget_key: "pr-review:enterprise/homerail:2026-07-13",
     };
     expect(validateJsonContract(inputContract, reviewInput)).toMatchObject({ valid: true });
+    expect(validateJsonContract(inputContract, {
+      ...reviewInput,
+      base_clone_url: "https://github.example/git/enterprise/homerail.git",
+    })).toMatchObject({ valid: false });
     expect(validateJsonContract(inputContract, {
       ...reviewInput,
       base_clone_url: "https://token@github.example/enterprise/homerail.git",
@@ -580,6 +619,97 @@ describe("PR Review scenario assets", () => {
       .toMatchObject({ report: { status: "pass" }, quorum: { passed: true, successes: 2 } });
     expect(fs.readFileSync(getRunArtifactBlobPath("pr-review-runtime", "pr-review.md")!, "utf8"))
       .toBe("# HomeRail PR Review\n\n**HomeRail Run ID:** `pr-review-runtime`\n\nNo actionable findings.\n");
+  });
+
+  it("fails verification closed when the deterministic diff evidence is truncated", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "..", "assets", "orchestrations", "pr-review.yaml.template"),
+      "utf8",
+    );
+    const parsed = parseWorkflowSource(source);
+    for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    installPrepareCommandStub(parsed, { diffTruncated: true });
+    const dispatcher = new FakeDAGDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    const runId = "pr-review-truncated-evidence";
+    const input = {
+      trigger_id: "manual",
+      trigger_type: "manual",
+      fire_key: "manual:xiaotianfotos/homerail#25:truncated",
+      payload: {
+        repo: "xiaotianfotos/homerail",
+        pr: 25,
+        base: "a".repeat(40),
+        head: "b".repeat(40),
+        base_clone_url: "https://github.com/xiaotianfotos/homerail.git",
+        head_clone_url: "https://github.com/xiaotianfotos/homerail.git",
+        expected_usage: 8,
+        budget_key: "pr-review:xiaotianfotos/homerail:truncated",
+      },
+    };
+    executor.createRun(runId, parsed, JSON.stringify(input));
+    expect(executor.tick(runId)).toBeGreaterThan(0);
+    expect(loadRunSnapshot(runId)?.handoffs.find(
+      (handoff) => handoff.fromNode === "prepare" && handoff.port === "ready",
+    )?.content).toMatchObject({ diff_truncated: true });
+    expect(dispatcher.dispatched.map((envelope) => envelope.nodeId).sort()).toEqual([
+      "frontend_review",
+      "runtime_review",
+      "security_review",
+      "test_review",
+    ]);
+
+    for (const reviewer of ["runtime", "security", "test", "frontend"] as const) {
+      failActiveRun(runId, `${reviewer}_review`, "bounded diff_patch was truncated");
+    }
+    expect(executor.tick(runId)).toBeGreaterThan(0);
+    expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("synthesize");
+
+    const reviewerResults = (["runtime", "security", "tests", "frontend"] as const).map((reviewer) => ({
+      reviewer,
+      status: "failed",
+      summary: `${reviewer} reviewer refused truncated diff evidence`,
+      findings: [],
+    }));
+    handoffActiveRun(runId, "synthesize", "drafted", {
+      ...passingReviewReport(),
+      status: "inconclusive",
+      confidence: "low",
+      summary: "The deterministic diff evidence was truncated.",
+      reviewer_results: reviewerResults,
+    });
+    expect(executor.tick(runId)).toBe(3);
+    handoffActiveRun(runId, "evidence_vote", "voted", {
+      voter: "evidence",
+      vote: "reject",
+      confidence: "high",
+      evidence: "diff_truncated=true",
+      finding_verdicts: [],
+    });
+    handoffActiveRun(runId, "false_positive_vote", "voted", {
+      voter: "false_positive",
+      vote: "reject",
+      confidence: "high",
+      evidence: "diff_truncated=true",
+      finding_verdicts: [],
+    });
+    handoffActiveRun(runId, "coverage_vote", "voted", {
+      voter: "coverage",
+      vote: "reject",
+      confidence: "high",
+      evidence: "all four reviewers failed closed on truncated evidence",
+    });
+    expect(executor.tick(runId)).toBeGreaterThan(0);
+    expect(loadRunSnapshot(runId)?.handoffs.find(
+      (handoff) => handoff.fromNode === "verification_quorum" && handoff.port === "rejected",
+    )?.content).toMatchObject({
+      passed: false,
+      successes: 0,
+      failures: 3,
+      total: 3,
+      threshold: 2,
+    });
+    expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("refine");
   });
 
   it("normalizes a reviewer failure and continues to synthesis", () => {

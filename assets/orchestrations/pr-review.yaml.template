@@ -19,7 +19,7 @@ spec:
 
   pattern:
     id: pr-review-scenario
-    version: 1.6.0
+    version: 1.6.1
     source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
     parameters:
       reviewer_count: 4
@@ -378,6 +378,11 @@ spec:
         a synchronous function with no await/yield cannot interleave with a
         second request in the same process; do not claim a race without an
         actual async yield, worker/thread, child process, or external writer.
+        This scenario consumes GitHub Pulls API clone_url values and its input
+        contract intentionally permits exactly credential-free
+        https://host/owner/repository.git paths; a non-github.com host covers
+        GitHub Enterprise. Lack of GitLab subgroup paths or arbitrary URL
+        prefixes is outside this GitHub PR scenario, not a runtime defect.
         Every finding
         needs file, precise line when known, evidence, recommendation,
         severity, and confidence. Do not end with prose. Your final action MUST
@@ -492,7 +497,11 @@ spec:
         concurrency claim when the alleged critical section is fully synchronous
         and contains no yield. Reject frontend claims based only on hypothetical
         narrow viewports or valid value normalization without a reproduced wrong
-        result. Every retained finding
+        result. This GitHub PR scenario intentionally validates Pulls API
+        clone_url values as https://host/owner/repository.git, including GitHub
+        Enterprise hosts; reject requests for GitLab subgroup paths or arbitrary
+        URL prefixes as out of scope.
+        Every retained finding
         must have a precise line.
         Set status=findings when
         actionable_count is positive, pass when it is zero, and inconclusive
@@ -545,7 +554,11 @@ spec:
         persisted consequence. Reject same-process races whose entire critical
         section is synchronous with no yield, and frontend claims that provide
         no reproducible viewport, dimensions, failing test, or wrong persisted
-        value. A rejected finding is a successful verifier correction, not a
+        value. Reject a claim that GitLab subgroup paths or arbitrary clone URL
+        prefixes must be supported: this GitHub PR scenario's input contract
+        intentionally accepts Pulls API clone_url values in
+        https://host/owner/repository.git form, including GitHub Enterprise
+        hosts. A rejected finding is a successful verifier correction, not a
         reason to reject the whole report. Vote accept when every retained
         finding has a grounded confirmed or rejected verdict, all four
         reviewer_results have status complete, report identity matches
@@ -578,7 +591,11 @@ spec:
         regression. A synchronous same-process Node critical section does not
         interleave with another request unless it yields. A frontend concern
         stated only as "may overflow" or "may confuse" is speculative without
-        reproduction evidence. Produce one finding_verdicts entry for every retained
+        reproduction evidence. Reject a claim that GitLab subgroup paths or
+        arbitrary clone URL prefixes must be supported: this GitHub PR
+        scenario intentionally accepts Pulls API clone_url values in
+        https://host/owner/repository.git form, including GitHub Enterprise
+        hosts. Produce one finding_verdicts entry for every retained
         finding, copying title, file, and line exactly. A materially contradicted
         finding receives verdict rejected; that correction does not reject the
         whole report. Vote accept when every finding has a grounded confirmed or

@@ -29,8 +29,10 @@ metadata.
 ## Execution
 
 1. Manager atomically reserves the declared usage budget.
-2. A deterministic Manager command validates the credential-free HTTPS clone
-   URLs, clones both exact revisions into the isolated run workspace, verifies
+2. A deterministic Manager command validates the credential-free GitHub API
+   HTTPS clone URLs (`https://host/owner/repository.git`, including GitHub
+   Enterprise hosts), clones both exact revisions into the isolated run
+   workspace, verifies
    `HEAD`, and computes the changed-file list, short diff summary, and a bounded
    high-context patch. Git runs with credential helpers, prompts, hooks, and
    local/ext protocols disabled; no model tool call is involved in checkout or
