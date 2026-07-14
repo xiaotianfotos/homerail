@@ -30,13 +30,21 @@ export interface NodeRuntimeAttestationPublicIdentity {
   public_key: string;
 }
 
+function assertPosixPrivateOwnership(stat: fs.Stats, subject: "key" | "parent"): void {
+  if (typeof process.getuid !== "function") return;
+  const label = subject === "key" ? "Node attestation key" : "Node attestation key parent";
+  if ((stat.mode & 0o077) !== 0) {
+    throw new Error(`${label} must not be group/world accessible`);
+  }
+  if (stat.uid !== process.getuid()) {
+    throw new Error(`${label} is owned by another user`);
+  }
+}
+
 function assertSecureFile(file: string): fs.Stats {
   const stat = fs.lstatSync(file);
   if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("Node attestation key must be a regular file");
-  if ((stat.mode & 0o077) !== 0) throw new Error("Node attestation key must not be group/world accessible");
-  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
-    throw new Error("Node attestation key is owned by another user");
-  }
+  assertPosixPrivateOwnership(stat, "key");
   if (stat.size < 1 || stat.size > MAX_KEY_BYTES) throw new Error("Node attestation key size is invalid");
   return stat;
 }
@@ -45,10 +53,7 @@ function ensureSecureParent(parent: string): void {
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
   const stat = fs.lstatSync(parent);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Node attestation key parent must be a real directory");
-  if ((stat.mode & 0o077) !== 0) throw new Error("Node attestation key parent must not be group/world accessible");
-  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
-    throw new Error("Node attestation key parent is owned by another user");
-  }
+  assertPosixPrivateOwnership(stat, "parent");
 }
 
 export function nodeRuntimeAttestationKeyPath(
