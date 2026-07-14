@@ -157,9 +157,25 @@ export interface AgentStorageRetentionInfo {
   cleanup_supported: boolean
   cleanup_tracked_gap: boolean
   cleanup_next_action: string
+  workspace_retention: WorkspaceRetentionSettings
   export_supported: boolean
   export_tracked_gap: boolean
   export_next_action: string
+}
+
+export interface WorkspaceRetentionSettings {
+  enabled: boolean
+  success_days: number
+  failure_days: number
+}
+
+export interface WorkspaceCleanupReport {
+  dry_run: boolean
+  scanned: number
+  eligible: number
+  removed: number
+  skipped: number
+  failed: number
 }
 
 export interface AgentRuntimeStatus {
@@ -631,6 +647,25 @@ export const agentSettingsApi = {
    */
   async getStorageInfo(): Promise<AgentStorageRetentionInfo> {
     const res = await http.get<AgentStorageRetentionInfo>('/api/settings/storage-info')
+    return res.data
+  },
+
+  async updateWorkspaceRetention(
+    settings: WorkspaceRetentionSettings,
+  ): Promise<WorkspaceRetentionSettings> {
+    const res = await http.post<WorkspaceRetentionSettings>(
+      '/api/settings/workspace-retention',
+      settings,
+    )
+    return res.data
+  },
+
+  async cleanupRunWorkspaces(dryRun = true): Promise<WorkspaceCleanupReport> {
+    const res = await http.post<WorkspaceCleanupReport>(
+      '/api/dag/workspaces/cleanup',
+      { dry_run: dryRun },
+      { timeout: 0 },
+    )
     return res.data
   },
 

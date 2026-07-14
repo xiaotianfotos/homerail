@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createVoiceSpeechEventKey,
   hasRecentVoiceSpeechEvent,
+  isVoiceConversationMessageSpeakable,
   normalizeVoiceSpeechTextForKey,
   pruneVoiceSpeechEventKeys,
   rememberVoiceSpeechEvent,
@@ -40,5 +41,18 @@ describe('voice speech queue helpers', () => {
     expect(hasRecentVoiceSpeechEvent(seen, { channel: 'final', text: '旧消息' }, 10_050, 100)).toBe(true)
     pruneVoiceSpeechEventKeys(seen, 10_101, 100)
     expect(hasRecentVoiceSpeechEvent(seen, { channel: 'final', text: '旧消息' }, 10_101, 100)).toBe(false)
+  })
+
+  it('never sends structured execution errors to TTS', () => {
+    expect(isVoiceConversationMessageSpeakable({
+      role: 'assistant',
+      kind: 'error',
+      text: '主 Agent 执行失败：provider rejected the credential',
+    })).toBe(false)
+    expect(isVoiceConversationMessageSpeakable({
+      role: 'assistant',
+      kind: 'message',
+      text: '任务已经完成。',
+    })).toBe(true)
   })
 })

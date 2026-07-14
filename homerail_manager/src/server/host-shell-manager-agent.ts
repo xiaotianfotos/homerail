@@ -22,10 +22,37 @@ export interface HostShellManagerAgent {
   processName: string;
 }
 
+interface HostShellHealth {
+  fingerprint: string;
+  processId: number | null;
+  projectId: string | null;
+  workerId: string;
+}
+
+interface PersistedHostShellProcess {
+  version: 1;
+  pid: number;
+  port: number;
+  fingerprint: string;
+  processName: string;
+  workerId: string;
+  projectId: string | null;
+}
+
+interface RunningHostShellProcess {
+  process?: ChildProcess;
+  processId: number;
+  fingerprint: string;
+  projectId?: string;
+  stateFile: string;
+  url: string;
+}
+
 const HOST_AGENT_PORT_BASE = 59000;
 const HOST_AGENT_PORT_SPAN = 5000;
 
-const running = new Map<string, { process: ChildProcess; fingerprint: string }>();
+const running = new Map<string, RunningHostShellProcess>();
+const starting = new Map<string, Promise<HostShellManagerAgent>>();
 
 export function managerAgentWorkerControlEnv(
   source: NodeJS.ProcessEnv | Record<string, string> = process.env,
@@ -59,6 +86,50 @@ function hostPort(projectId?: string): number {
 
 function baseUrl(projectId?: string): string {
   return `http://127.0.0.1:${hostPort(projectId)}`;
+}
+
+function runtimeStatePath(projectId?: string): string {
+  const dir = path.join(getDataRoot(), "manager-agents-host", canonicalProjectId(projectId));
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, "runtime.json");
+}
+
+function readRuntimeStateFile(file: string): PersistedHostShellProcess | undefined {
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<PersistedHostShellProcess>;
+    if (
+      raw.version !== 1 ||
+      !Number.isSafeInteger(raw.pid) || Number(raw.pid) <= 0 ||
+      !Number.isSafeInteger(raw.port) || Number(raw.port) <= 0 ||
+      typeof raw.fingerprint !== "string" || !raw.fingerprint ||
+      typeof raw.processName !== "string" || !raw.processName ||
+      typeof raw.workerId !== "string" || !raw.workerId ||
+      !(typeof raw.projectId === "string" || raw.projectId === null)
+    ) {
+      return undefined;
+    }
+    return raw as PersistedHostShellProcess;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeRuntimeState(file: string, state: PersistedHostShellProcess): void {
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+  fs.renameSync(temp, file);
+}
+
+function removeRuntimeState(file: string, expected?: Pick<PersistedHostShellProcess, "pid" | "fingerprint">): void {
+  if (expected) {
+    const current = readRuntimeStateFile(file);
+    if (!current || current.pid !== expected.pid || current.fingerprint !== expected.fingerprint) return;
+  }
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    // Best-effort cleanup; a later ensure can reconcile the stale record.
+  }
 }
 
 function runtimeRoot(): string {
@@ -187,16 +258,35 @@ function hostFingerprint(input: {
 
 export const _hostShellWorkerEntryFingerprintForTest = workerEntryFingerprint;
 
-async function health(url: string, fingerprint?: string): Promise<boolean> {
+async function healthDetails(url: string): Promise<HostShellHealth | undefined> {
   try {
     const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3_000) });
-    if (!res.ok) return false;
+    if (!res.ok) return undefined;
     const data = await res.json() as Record<string, unknown>;
-    if (data.status !== "running" || data.service !== "manager-agent") return false;
-    return fingerprint ? data.fingerprint === fingerprint : true;
+    if (
+      data.status !== "running" ||
+      data.service !== "manager-agent" ||
+      typeof data.fingerprint !== "string" ||
+      typeof data.worker_id !== "string"
+    ) {
+      return undefined;
+    }
+    return {
+      fingerprint: data.fingerprint,
+      processId: typeof data.process_id === "number" && Number.isSafeInteger(data.process_id)
+        ? data.process_id
+        : null,
+      projectId: typeof data.project_id === "string" ? data.project_id : null,
+      workerId: data.worker_id,
+    };
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+async function health(url: string, fingerprint?: string): Promise<boolean> {
+  const details = await healthDetails(url);
+  return Boolean(details && (!fingerprint || details.fingerprint === fingerprint));
 }
 
 async function waitForHealth(url: string, fingerprint: string, timeoutMs: number): Promise<boolean> {
@@ -216,16 +306,90 @@ function enrichPathForGitBash(shellPath: string, env: NodeJS.ProcessEnv): string
   return [binDir, usrBin, env.PATH ?? ""].filter(Boolean).join(path.delimiter);
 }
 
-function stopProcess(record?: { process: ChildProcess }): void {
-  if (!record?.process || record.process.killed) return;
+function processIsRunning(pid: number): boolean {
   try {
-    record.process.kill();
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stopProcess(record?: RunningHostShellProcess): void {
+  if (!record) return;
+  if (record.process && !record.process.killed) {
+    try {
+      record.process.kill("SIGTERM");
+      return;
+    } catch {
+      // Fall through to the persisted PID.
+    }
+  }
+  if (!processIsRunning(record.processId)) return;
+  try {
+    process.kill(record.processId, "SIGTERM");
   } catch {
     // Best-effort.
   }
 }
 
-export async function ensureHostShellManagerAgent(
+async function waitForFingerprintToStop(url: string, fingerprint: string, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const current = await healthDetails(url);
+    if (!current || current.fingerprint !== fingerprint) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+async function waitForProcessToStop(pid: number, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    if (!processIsRunning(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+function stateMatchesHealth(
+  state: PersistedHostShellProcess,
+  observed: HostShellHealth,
+  projectId: string | undefined,
+): boolean {
+  return state.port === hostPort(projectId) &&
+    state.processName === processName(projectId) &&
+    state.workerId === workerId(projectId) &&
+    state.projectId === (projectId ?? null) &&
+    state.fingerprint === observed.fingerprint &&
+    observed.workerId === state.workerId &&
+    observed.projectId === state.projectId &&
+    (observed.processId === null || observed.processId === state.pid);
+}
+
+function healthMatchesProject(observed: HostShellHealth, projectId: string | undefined): boolean {
+  return observed.workerId === workerId(projectId) && observed.projectId === (projectId ?? null);
+}
+
+async function stopPersistedProcess(
+  projectId: string | undefined,
+  url: string,
+  stateFile: string,
+  state: PersistedHostShellProcess,
+  observed: HostShellHealth,
+): Promise<boolean> {
+  if (!stateMatchesHealth(state, observed, projectId)) return false;
+  stopProcess({ processId: state.pid, fingerprint: state.fingerprint, projectId, stateFile, url });
+  const [healthStopped, processStopped] = await Promise.all([
+    waitForFingerprintToStop(url, state.fingerprint),
+    waitForProcessToStop(state.pid),
+  ]);
+  const stopped = healthStopped && processStopped;
+  if (stopped) removeRuntimeState(stateFile, state);
+  return stopped;
+}
+
+async function ensureHostShellManagerAgentInternal(
   projectId: string | undefined,
   options: HostShellManagerAgentOptions,
 ): Promise<HostShellManagerAgent> {
@@ -239,6 +403,7 @@ export async function ensureHostShellManagerAgent(
   const processCwd = projectWorkspace ?? prepareHostWorkspace(projectId);
   const resolvedManagerRestUrl = managerRestUrl(options);
   const url = baseUrl(projectId);
+  const stateFile = runtimeStatePath(projectId);
   const env: Record<string, string> = {
     ...managerAgentWorkerControlEnv(options.env ?? {}) as Record<string, string>,
     MANAGER_AGENT_MODE: "1",
@@ -264,15 +429,50 @@ export async function ensureHostShellManagerAgent(
   env.HOMERAIL_MANAGER_AGENT_FINGERPRINT = fingerprint;
 
   const existing = running.get(name);
-  if (existing && existing.fingerprint === fingerprint && !existing.process.killed && await health(url, fingerprint)) {
-    return { processId: existing.process.pid ?? null, baseUrl: url, workerId: workerId(projectId), processName: name };
+  if (
+    existing &&
+    existing.fingerprint === fingerprint &&
+    (!existing.process || !existing.process.killed) &&
+    await health(url, fingerprint)
+  ) {
+    return { processId: existing.processId, baseUrl: url, workerId: workerId(projectId), processName: name };
   }
-  if (!existing && await health(url, fingerprint)) {
-    return { processId: null, baseUrl: url, workerId: workerId(projectId), processName: name };
+  const observed = await healthDetails(url);
+  const persisted = readRuntimeStateFile(stateFile);
+  if (!existing && observed?.fingerprint === fingerprint && healthMatchesProject(observed, projectId)) {
+    const processId = persisted && stateMatchesHealth(persisted, observed, projectId) ? persisted.pid : observed.processId;
+    if (processId) {
+      const adoptedState: PersistedHostShellProcess = {
+        version: 1,
+        pid: processId,
+        port: hostPort(projectId),
+        fingerprint,
+        processName: name,
+        workerId: workerId(projectId),
+        projectId: projectId ?? null,
+      };
+      writeRuntimeState(stateFile, adoptedState);
+      running.set(name, { processId, fingerprint, projectId, stateFile, url });
+    }
+    return { processId: processId ?? null, baseUrl: url, workerId: workerId(projectId), processName: name };
   }
   if (existing) {
     stopProcess(existing);
     running.delete(name);
+    const [healthStopped, processStopped] = await Promise.all([
+      waitForFingerprintToStop(url, existing.fingerprint),
+      waitForProcessToStop(existing.processId),
+    ]);
+    if (!healthStopped || !processStopped) {
+      throw new Error(`Host-shell Manager Agent process ${existing.processId} did not stop`);
+    }
+    removeRuntimeState(stateFile, { pid: existing.processId, fingerprint: existing.fingerprint });
+  } else if (observed) {
+    if (!persisted || !await stopPersistedProcess(projectId, url, stateFile, persisted, observed)) {
+      throw new Error(
+        `Host-shell Manager Agent port ${hostPort(projectId)} is occupied by an unmanaged or stale process`,
+      );
+    }
   }
 
   const logDir = path.join(getDataRoot(), "logs");
@@ -294,16 +494,81 @@ export async function ensureHostShellManagerAgent(
   fs.closeSync(out);
   fs.closeSync(err);
   child.unref();
-  running.set(name, { process: child, fingerprint });
+  if (!child.pid) {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // Best-effort.
+    }
+    throw new Error("Host-shell Manager Agent process did not expose a PID");
+  }
+  const state: PersistedHostShellProcess = {
+    version: 1,
+    pid: child.pid,
+    port: hostPort(projectId),
+    fingerprint,
+    processName: name,
+    workerId: workerId(projectId),
+    projectId: projectId ?? null,
+  };
+  running.set(name, { process: child, processId: child.pid, fingerprint, projectId, stateFile, url });
+  try {
+    writeRuntimeState(stateFile, state);
+  } catch (err) {
+    stopProcess(running.get(name));
+    running.delete(name);
+    throw err;
+  }
+  child.once("exit", () => {
+    if (running.get(name)?.process === child) running.delete(name);
+    removeRuntimeState(stateFile, state);
+  });
 
   const healthy = await waitForHealth(url, fingerprint, options.healthTimeoutMs ?? options.startTimeoutMs ?? 15_000);
   if (!healthy) {
-    stopProcess({ process: child });
+    stopProcess({ process: child, processId: child.pid, fingerprint, projectId, stateFile, url });
     running.delete(name);
+    removeRuntimeState(stateFile, state);
     throw new Error("Host-shell Manager Agent did not become healthy");
   }
 
   return { processId: child.pid ?? null, baseUrl: url, workerId: workerId(projectId), processName: name };
+}
+
+export async function ensureHostShellManagerAgent(
+  projectId: string | undefined,
+  options: HostShellManagerAgentOptions,
+): Promise<HostShellManagerAgent> {
+  const name = processName(projectId);
+  const inflight = starting.get(name);
+  if (inflight) return inflight;
+  const promise = ensureHostShellManagerAgentInternal(projectId, options);
+  starting.set(name, promise);
+  try {
+    return await promise;
+  } finally {
+    if (starting.get(name) === promise) starting.delete(name);
+  }
+}
+
+export async function shutdownHostShellManagerAgents(): Promise<void> {
+  const entries = [...running.values()];
+  running.clear();
+  await Promise.all(entries.map(async (record) => {
+    stopProcess(record);
+    const [healthStopped, processStopped] = await Promise.all([
+      waitForFingerprintToStop(record.url, record.fingerprint, 2_000),
+      waitForProcessToStop(record.processId, 2_000),
+    ]);
+    if (healthStopped && processStopped) {
+      removeRuntimeState(record.stateFile, { pid: record.processId, fingerprint: record.fingerprint });
+    }
+  }));
+}
+
+export function _forgetHostShellManagerAgentsForTest(): void {
+  running.clear();
+  starting.clear();
 }
 
 export async function forwardChatToHostShellManagerAgent(

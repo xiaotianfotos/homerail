@@ -28,6 +28,10 @@ vi.mock('./settings/ModelSettings.vue', () => ({
   default: { template: '<section data-testid="mock-model-settings" />' }
 }))
 
+vi.mock('./settings/StorageRetentionSettings.vue', () => ({
+  default: { template: '<section data-testid="mock-storage-retention-settings" />' }
+}))
+
 vi.mock('@/api/agent', () => ({
   listProjects: vi.fn(() => Promise.resolve({ data: { projects: [] } })),
   listProjectStorages: vi.fn(() => Promise.resolve({ data: { storages: [] } })),

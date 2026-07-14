@@ -160,6 +160,18 @@ class ManagerAgentObjectiveUnsatisfiedError extends Error {
   }
 }
 
+class ManagerAgentExecutionError extends Error {
+  readonly statusCode = 502;
+  readonly data: Record<string, unknown>;
+
+  constructor(errors: string[], data: Record<string, unknown>) {
+    super(errors.at(-1) || "Manager Agent harness execution failed");
+    this.name = "ManagerAgentExecutionError";
+    this.data = { code: "agent_execution_failed", errors, ...data };
+    Object.setPrototypeOf(this, ManagerAgentExecutionError.prototype);
+  }
+}
+
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
@@ -1184,6 +1196,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
   const toolCalls: ToolTrace[] = [];
   const toolResults: ToolResultTrace[] = [];
   const texts: string[] = [];
+  const agentErrors: string[] = [];
   const responseMode = body.response_mode === "voice" ? "voice" : "chat";
   const requiredToolCalls = normalizeRequiredToolCalls(body.required_tool_calls);
   const pluginContext = body.plugin_context;
@@ -1237,7 +1250,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
           is_error: event.is_error,
         });
       } else if (event.type === "error") {
-        texts.push(`[ERROR] ${event.message}`);
+        agentErrors.push(event.message);
       }
     }
   } finally {
@@ -1247,6 +1260,13 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
   }
   if (timedOut && !state.objectiveToolCalls.some((item) => item.success)) {
     throw new ManagerAgentTurnTimeoutError(turnTimeoutMs, {
+      observed_tool_calls: toolCalls.map((item) => item.name),
+      objective_tool_calls: state.objectiveToolCalls,
+      run_ids: state.createdRunIds,
+    });
+  }
+  if (agentErrors.length > 0 && !state.objectiveToolCalls.some((item) => item.success)) {
+    throw new ManagerAgentExecutionError(agentErrors, {
       observed_tool_calls: toolCalls.map((item) => item.name),
       objective_tool_calls: state.objectiveToolCalls,
       run_ids: state.createdRunIds,
@@ -1321,6 +1341,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     },
     tool_calls: toolCalls,
     tool_results: toolResults,
+    ...(agentErrors.length ? { agent_errors: agentErrors } : {}),
     commentary_texts: state.voiceSurface.commentaryTexts,
     project_id: body.project_id ?? process.env.PROJECT_ID ?? null,
     plugin_context: pluginContext ? {
@@ -1341,6 +1362,7 @@ export function startManagerAgentServer(port = Number(process.env.MANAGER_AGENT_
         worker_id: process.env.WORKER_ID || process.env.HOMERAIL_WORKER_ID || null,
         project_id: process.env.PROJECT_ID || null,
         fingerprint: process.env.HOMERAIL_MANAGER_AGENT_FINGERPRINT || null,
+        process_id: process.pid,
       });
       return;
     }
@@ -1366,6 +1388,10 @@ export function startManagerAgentServer(port = Number(process.env.MANAGER_AGENT_
             return;
           }
           if (err instanceof ManagerAgentObjectiveUnsatisfiedError) {
+            json(res, err.statusCode, { error: err.message, data: err.data });
+            return;
+          }
+          if (err instanceof ManagerAgentExecutionError) {
             json(res, err.statusCode, { error: err.message, data: err.data });
             return;
           }

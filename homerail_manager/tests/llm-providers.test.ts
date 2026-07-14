@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   _clearAllSettings,
+  createSetting,
   findActiveClaudeSdkCompatibleSetting,
   findActiveSetting,
+  listProviders,
   listSettings,
   resolveClaudeSdkBaseUrlForSetting,
   updateSetting,
@@ -41,6 +43,47 @@ describe("custom LLM providers", () => {
     process.env.HOMERAIL_HOME = tmpHome;
     _clearAllSettings();
     server = createServer(0, undefined, undefined, false);
+  });
+
+  it("separates Kimi CN and international credentials and migrates the legacy Coding Plan", () => {
+    const providers = listProviders();
+    const kimiCn = providers.find((provider) => provider.id === "kimi_cn");
+    const kimiInternational = providers.find((provider) => provider.id === "kimi");
+
+    expect(kimiCn).toMatchObject({
+      name: "Kimi / Moonshot CN",
+      base_url: "https://api.moonshot.cn/v1",
+    });
+    expect(kimiCn?.endpoints).toContainEqual(expect.objectContaining({
+      id: "kimi_cn_api",
+      base_url: "https://api.moonshot.cn/v1",
+      default_model: "kimi-k2.7-code",
+    }));
+    expect(kimiCn?.endpoints).toContainEqual(expect.objectContaining({
+      id: "kimi_coding_plan",
+      base_url: "https://api.kimi.com/coding/v1",
+      default_model: "kimi-for-coding",
+    }));
+    expect(kimiInternational).toMatchObject({
+      name: "Kimi / Moonshot",
+      base_url: "https://api.moonshot.ai/v1",
+    });
+    expect(kimiInternational?.endpoints).toHaveLength(1);
+
+    const migrated = createSetting({
+      provider_id: "kimi",
+      endpoint_id: "kimi_coding_plan",
+      model_name: "kimi-k2.7-code",
+      api_key: "pk-legacy-kimi-coding-plan",
+      is_active: true,
+      is_default: true,
+    });
+    expect(migrated).toMatchObject({
+      provider_id: "kimi_cn",
+      endpoint_id: "kimi_coding_plan",
+      model_name: "kimi-for-coding",
+      base_url: "https://api.kimi.com/coding/v1",
+    });
   });
 
   afterEach(async () => {

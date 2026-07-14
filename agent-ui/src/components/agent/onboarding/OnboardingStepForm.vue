@@ -342,7 +342,7 @@ async function submitPreset(): Promise<LLMSetting | undefined> {
   const caps = selectedCapabilityFlags(ep, mp)
 
   // 同 credential/endpoint 的模型共用一个 key；不同计费方式不互相复用。
-  const submitApiKey = selectedCredentialHasKey.value ? '__reuse_existing__' : apiKey.value.trim()
+  const reuseExistingApiKey = selectedCredentialHasKey.value
 
   const displayName = `${cred.provider.name} ${capabilityLabel(props.capability)}`
 
@@ -370,7 +370,9 @@ async function submitPreset(): Promise<LLMSetting | undefined> {
     tts_voice: ep.tts_voice,
     tts_format: ep.tts_format,
     tts_sample_rate: ep.tts_sample_rate,
-    api_key: submitApiKey,
+    ...(reuseExistingApiKey
+      ? { reuse_existing_api_key: true }
+      : { api_key: apiKey.value.trim() }),
     is_default: props.capability === 'supports_llm',
     is_active: true,
     ...caps,
@@ -399,20 +401,8 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
     supports_video_input: false,
   }
 
-  const res = await agentSettingsApi.createLLMSetting({
-    provider_id: pid,
-    model_name: model,
-    models: [model],
-    display_name: displayName,
-    endpoint_id: `${pid}_custom`,
-    endpoint_name: 'custom',
-    plan_type: 'custom',
-    protocol,
-    auth_type: 'bearer',
-    base_url: baseUrl,
-    // LLM 同时填 chat_completions_base_url；ASR/TTS 后端只用 base_url
-    chat_completions_base_url: props.capability === 'supports_llm' ? baseUrl : undefined,
-    voice_adapter: props.capability === 'supports_llm' ? 'custom' : 'openai_audio',
+  const voiceAdapter = props.capability === 'supports_llm' ? 'custom' as const : 'openai_audio' as const
+  const voiceUrls = {
     ...(props.capability === 'supports_tts'
       ? {
           tts_http_url: voiceEndpoint(baseUrl, 'audio/speech'),
@@ -427,6 +417,39 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
             .replace(/^https:/, 'wss:'),
         }
       : {}),
+  }
+
+  const providerPayload = {
+    name: pname,
+    default_model: model,
+    base_url: baseUrl,
+    chat_completions_base_url: props.capability === 'supports_llm' ? baseUrl : undefined,
+    voice_adapter: voiceAdapter,
+    status: 'active' as const,
+    ...voiceUrls,
+    ...caps,
+  }
+  if (props.providers.some(provider => provider.id === pid)) {
+    await agentSettingsApi.updateProvider(pid, providerPayload)
+  } else {
+    await agentSettingsApi.createProvider({ id: pid, ...providerPayload })
+  }
+
+  const res = await agentSettingsApi.createLLMSetting({
+    provider_id: pid,
+    model_name: model,
+    models: [model],
+    display_name: displayName,
+    endpoint_id: `${pid}_custom`,
+    endpoint_name: 'custom',
+    plan_type: 'custom',
+    protocol,
+    auth_type: 'bearer',
+    base_url: baseUrl,
+    // LLM 同时填 chat_completions_base_url；ASR/TTS 后端只用 base_url
+    chat_completions_base_url: props.capability === 'supports_llm' ? baseUrl : undefined,
+    voice_adapter: voiceAdapter,
+    ...voiceUrls,
     // TTS 音色（后端 TTS payload 会带上）
     ...(props.capability === 'supports_tts' && f.voice.trim() ? { tts_voice: f.voice.trim() } : {}),
     // 本地服务通常无需 Key，留空则传占位（api_key 字段后端必填）

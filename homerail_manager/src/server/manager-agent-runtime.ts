@@ -9,6 +9,7 @@ import {
   forwardChatToHostShellManagerAgent,
 } from "./host-shell-manager-agent.js";
 import {
+  HostCodexManagerAgentExecutionError,
   loadVoiceSystemContract,
   runHostCodexManagerAgentTurn,
   runHostCodexManagerAgentTurnStream,
@@ -461,7 +462,11 @@ async function runManagerAgentTurnOnce(
         "manager_chat_error",
         err instanceof Error ? err.message : String(err),
         runtimePlacement,
-        { worker_id: "host-codex", project_id: input.project_id ?? null },
+        {
+          worker_id: "host-codex",
+          project_id: input.project_id ?? null,
+          ...(err instanceof HostCodexManagerAgentExecutionError ? err.data : {}),
+        },
       );
     }
   }
@@ -678,7 +683,11 @@ export async function* runManagerAgentTurnStream(
       "manager_chat_error",
       err instanceof Error ? err.message : String(err),
       runtimePlacement,
-      { worker_id: "host-codex", project_id: input.project_id ?? null },
+      {
+        worker_id: "host-codex",
+        project_id: input.project_id ?? null,
+        ...(err instanceof HostCodexManagerAgentExecutionError ? err.data : {}),
+      },
     );
   } finally {
     if (lease.lease_id && !continuationAcknowledged) {

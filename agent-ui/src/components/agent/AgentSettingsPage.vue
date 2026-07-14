@@ -23,6 +23,7 @@ import {
 } from 'lucide-vue-next'
 import ModelSettings from './settings/ModelSettings.vue'
 import GeneralSettings from './settings/GeneralSettings.vue'
+import StorageRetentionSettings from './settings/StorageRetentionSettings.vue'
 import {
   listProjects,
   listProjectStorages,
@@ -30,7 +31,6 @@ import {
   agentSettingsApi,
   type AgentRuntimeStatus,
   type AgentWorkspaceSettings,
-  type AgentStorageRetentionInfo,
   type LLMSetting,
   type GitServer,
   type MCPServer,
@@ -155,7 +155,6 @@ const orchestrationTemplates = ref<OrchestrationTemplate[]>([])
 const orchestrationTemplatesError = ref<string | null>(null)
 const runtimeStatus = ref<AgentRuntimeStatus | null>(null)
 const workspaceSettings = ref<AgentWorkspaceSettings | null>(null)
-const storageInfo = ref<AgentStorageRetentionInfo | null>(null)
 const voiceSettings = ref<VoiceSettings | null>(null)
 const voiceAgentConfig = ref<VoiceAgentConfig | null>(null)
 const codexModels = ref<CodexModel[]>([])
@@ -773,7 +772,6 @@ async function refreshAll(): Promise<void> {
       orchestrationTemplateRes,
       runtimeStatusRes,
       workspaceSettingsRes,
-      storageInfoRes,
     ] = await Promise.all([
       listProjects({ limit: 200 }).catch(() => null),
       hiddenSettingsTabs.has('nodes') ? Promise.resolve(null) : listNodes().catch(() => null),
@@ -792,7 +790,6 @@ async function refreshAll(): Promise<void> {
       hiddenSettingsTabs.has('memory') ? Promise.resolve(null) : loadOrchestrationTemplates(),
       agentSettingsApi.getRuntimeStatus().catch(() => null),
       agentSettingsApi.getWorkspaceSettings().catch(() => null),
-      hiddenSettingsTabs.has('memory') ? Promise.resolve(null) : agentSettingsApi.getStorageInfo().catch(() => null),
     ])
 
     projects.value = projectRes?.data?.projects ?? []
@@ -811,7 +808,6 @@ async function refreshAll(): Promise<void> {
     codexModels.value = codexModelRes?.data?.models ?? []
     runtimeStatus.value = runtimeStatusRes ?? null
     workspaceSettings.value = workspaceSettingsRes ?? null
-    storageInfo.value = storageInfoRes ?? null
     if (voiceRes?.data) {
       voiceSettings.value = voiceRes.data
       voiceForm.value = {
@@ -1517,7 +1513,10 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <GeneralSettings v-if="activeTab === 'general'" />
+        <template v-if="activeTab === 'general'">
+          <GeneralSettings />
+          <StorageRetentionSettings />
+        </template>
 
         <section v-if="activeTab === 'workspace'" data-testid="agent-settings-section-workspace" class="mt-10 space-y-6">
           <div class="grid gap-3 sm:grid-cols-3">
@@ -2203,37 +2202,6 @@ onUnmounted(() => {
                 <Network class="h-4 w-4" />
                 打开完整图谱
               </button>
-            </div>
-          </div>
-          <div class="rounded-lg border border-white/10 bg-[#252525] p-4" data-testid="agent-settings-storage-info">
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <h2 class="font-semibold">Storage & Retention</h2>
-                <p class="mt-1 text-xs text-gray-500">持久化运行数据、会话和证据的存储位置与保留状态。</p>
-              </div>
-              <span v-if="storageInfo" class="rounded-full bg-emerald-500/10 px-2 py-1 text-xs text-emerald-200">已连接</span>
-              <span v-else class="rounded-full bg-yellow-500/10 px-2 py-1 text-xs text-yellow-200">加载中...</span>
-            </div>
-            <div v-if="storageInfo" class="mt-4 space-y-3">
-              <div class="grid gap-3 sm:grid-cols-3">
-                <div class="rounded-md bg-[#1e1e1e] p-3">
-                  <div class="text-xs text-gray-500">Data Root</div>
-                  <div class="mt-1 break-all font-mono text-sm">{{ storageInfo.data_root }}</div>
-                </div>
-                <div class="rounded-md bg-[#1e1e1e] p-3">
-                  <div class="text-xs text-gray-500">Runs</div>
-                  <div class="mt-1 text-lg font-semibold">{{ storageInfo.runs_count }}</div>
-                </div>
-                <div class="rounded-md bg-[#1e1e1e] p-3">
-                  <div class="text-xs text-gray-500">Sessions Dir</div>
-                  <div class="mt-1 break-all font-mono text-sm">{{ storageInfo.sessions_dir }}</div>
-                </div>
-              </div>
-              <div class="flex flex-wrap gap-2 text-xs">
-                <span v-if="storageInfo.retention_supported" class="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">retention: supported</span>
-                <span v-if="storageInfo.cleanup_tracked_gap" class="rounded-full bg-yellow-500/10 px-2 py-1 text-yellow-200" data-testid="agent-settings-storage-tracked-gap-cleanup">{{ storageInfo.cleanup_next_action }}</span>
-                <span v-if="storageInfo.export_tracked_gap" class="rounded-full bg-yellow-500/10 px-2 py-1 text-yellow-200" data-testid="agent-settings-storage-tracked-gap-export">{{ storageInfo.export_next_action }}</span>
-              </div>
             </div>
           </div>
           <div class="grid gap-4 lg:grid-cols-[1fr_1fr]">

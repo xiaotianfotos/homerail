@@ -17,6 +17,7 @@ import {
   parseArkVoicePacket,
 } from "../src/server/ark-voice.js";
 import {
+  _setHostCodexAgentEventRunnerForTest,
   _setHostCodexManagerAgentRunnerForTest,
   _setHostCodexManagerAgentStreamRunnerForTest,
   type HostCodexManagerAgentInput,
@@ -113,6 +114,7 @@ describe("voice bootstrap routes", () => {
     _clearStoredVoiceSettings();
     _clearAllSettings();
     _clearNodes();
+    _setHostCodexAgentEventRunnerForTest();
     _setHostCodexManagerAgentRunnerForTest();
     _setHostCodexManagerAgentStreamRunnerForTest();
     await close(server);
@@ -441,19 +443,27 @@ describe("voice bootstrap routes", () => {
           progress_brief: { status: string };
           debug_events: Array<{ code: string }>;
           widgets: Array<{ id: string }>;
+          conversation: Array<{ role: string; text: string; kind?: string }>;
         };
+        voice_events: Array<{ channel: string; text: string }>;
       };
     };
 
     expect(turn.status).toBe(200);
     expect(turnBody.success).toBe(true);
     expect(turnBody.data.suggested_action).toBeNull();
-    expect(turnBody.data.spoken_text).toContain("主 Agent 执行入口不可用");
+    expect(turnBody.data.spoken_text).toBe("");
+    expect(turnBody.data.voice_events).toEqual([]);
     expect(turnBody.data.workspace.pending_confirmations).toHaveLength(0);
     expect(turnBody.data.workspace.progress_brief.status).toBe("error");
     expect(turnBody.data.workspace.debug_events).toContainEqual(expect.objectContaining({ code: "manager_agent_unavailable" }));
     expect(turnBody.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-agent-blocker" }));
     expect(turnBody.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
+    expect(turnBody.data.workspace.conversation).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      kind: "error",
+      text: expect.stringContaining("主 Agent 执行入口不可用"),
+    }));
 
     const titledList = await fetch(`http://127.0.0.1:${port}/api/voice-agent/sessions?project_id=p1&limit=5`);
     const titledListBody = await titledList.json() as { data: { sessions: Array<{ session_id: string; title?: string | null }> } };
@@ -480,7 +490,7 @@ describe("voice bootstrap routes", () => {
     const confirmBody = await confirm.json() as { success: boolean; data: { spoken_text: string; manager: { code?: string } } };
     expect(confirm.status).toBe(200);
     expect(confirmBody.success).toBe(true);
-    expect(confirmBody.data.spoken_text).toContain("主 Agent 执行入口不可用");
+    expect(confirmBody.data.spoken_text).toBe("");
     expect(confirmBody.data.manager.code).toBe("manager_agent_unavailable");
   });
 
@@ -1384,12 +1394,23 @@ describe("voice bootstrap routes", () => {
       body: JSON.stringify({ text: "请回复收到，别执行任何操作。" }),
     });
     const streamText = await stream.text();
+    const streamEvents = streamText.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
     const row = getDb()
       .prepare("SELECT status, message_count FROM sessions WHERE session_id = ?")
       .get(createdBody.data.session_id) as { status: string; message_count: number };
 
     expect(stream.status).toBe(200);
     expect(streamText).toContain("主 Agent 执行失败");
+    expect(streamEvents).not.toContainEqual(expect.objectContaining({ type: "speech" }));
+    expect(streamEvents).toContainEqual(expect.objectContaining({ type: "done", spoken_text: "" }));
+    expect(streamEvents).toContainEqual(expect.objectContaining({
+      type: "workspace",
+      workspace: expect.objectContaining({
+        conversation: expect.arrayContaining([
+          expect.objectContaining({ kind: "error", text: expect.stringContaining("主 Agent 执行失败") }),
+        ]),
+      }),
+    }));
     expect(streamText).not.toContain("Invalid session status: error");
     expect(row.status).toBe("failed");
     expect(row.message_count).toBe(2);
@@ -1936,6 +1957,7 @@ describe("voice bootstrap routes", () => {
       objective: { required: false, satisfied: true, tool_calls: [{ name: "create_and_run", success: true }] },
       tool_calls: [{ id: "tool-1", name: "create_and_run", input: { yamlPath: "assets/orchestrations/test.yaml" } }],
       tool_results: [{ tool_use_id: "tool-1", content: "ok" }],
+      agent_errors: ["harness stream ended after the run was created"],
       commentary_texts: ["正在调用 Manager tools。"],
       worker_id: "host-codex",
       container_name: null,
@@ -1971,7 +1993,7 @@ describe("voice bootstrap routes", () => {
           debug_events: Array<{ code: string }>;
           progress_brief: { status: string };
         };
-        manager: { code?: string; run_ids?: string[]; text?: string };
+        manager: { code?: string; run_ids?: string[]; text?: string; agent_errors?: string[] };
       };
     };
 
@@ -1980,6 +2002,7 @@ describe("voice bootstrap routes", () => {
     expect(body.data.suggested_action).toBeNull();
     expect(body.data.manager.code).toBeUndefined();
     expect(body.data.manager.run_ids).toEqual(["run-host-codex"]);
+    expect(body.data.manager.agent_errors).toEqual(["harness stream ended after the run was created"]);
     expect(body.data.workspace.task_draft).toBeNull();
     expect(body.data.workspace.pending_confirmations).toHaveLength(0);
     expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
@@ -1988,8 +2011,58 @@ describe("voice bootstrap routes", () => {
       channel: "commentary",
     }));
     expect(body.data.workspace.progress_brief.status).toBe("done");
+    expect(body.data.workspace.debug_events).toContainEqual(expect.objectContaining({ code: "manager_agent_warning" }));
     expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
     expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-agent-blocker" }));
+  });
+
+  it("renders host Codex harness failures as silent error messages", async () => {
+    _setHostCodexAgentEventRunnerForTest(async function* () {
+      yield { type: "error", message: "provider rejected the configured credential" };
+      yield { type: "done" };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5", reasoning_effort: "low" }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "hello" }),
+    });
+    const body = await turn.json() as {
+      data: {
+        spoken_text: string;
+        voice_events: Array<{ channel: string; text: string }>;
+        manager: { code?: string; error?: string };
+        workspace: {
+          progress_brief: { status: string };
+          conversation: Array<{ role: string; kind?: string; text: string }>;
+        };
+      };
+    };
+
+    expect(turn.status).toBe(200);
+    expect(body.data.spoken_text).toBe("");
+    expect(body.data.voice_events).toEqual([]);
+    expect(body.data.manager.code).toBe("manager_chat_error");
+    expect(body.data.workspace.progress_brief.status).toBe("error");
+    expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      kind: "error",
+      text: expect.stringContaining("主 Agent 执行失败"),
+    }));
+    expect(JSON.stringify(body)).not.toContain("[ERROR]");
   });
 
   it("routes non-Codex voice turns through the same Manager Agent container path", async () => {

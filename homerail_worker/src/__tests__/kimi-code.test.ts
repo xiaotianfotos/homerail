@@ -282,6 +282,7 @@ describe("KimiCodeAdapter", () => {
       });
 
       expect(config).toContain('default_model = "kimi-for-coding"');
+      expect(config).toContain('default_thinking = true');
       expect(config).toContain('default_provider = "kimi-fast"');
       expect(config).toContain('[providers."kimi-fast"]');
       expect(config).toContain('type = "kimi"');
@@ -290,6 +291,20 @@ describe("KimiCodeAdapter", () => {
       expect(config).toContain('[models."kimi-for-coding"]');
       expect(config).toContain('provider = "kimi-fast"');
       expect(config).toContain('max_context_size = 128000');
+      expect(config).toContain('capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]');
+    });
+
+    it("does not force always-thinking capabilities for unrelated custom models", () => {
+      const config = adapter.buildKimiConfig({
+        ...ctx,
+        provider: "custom-openai",
+        model: "custom-chat-model",
+        apiKey: "pk-test-secret",
+        baseUrl: "https://example.com/v1",
+      });
+
+      expect(config).not.toContain("default_thinking");
+      expect(config).not.toContain("always_thinking");
     });
   });
 

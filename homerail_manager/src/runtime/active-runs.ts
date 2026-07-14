@@ -64,6 +64,7 @@ import {
   updateDagState,
   type DagApprovalRecord,
 } from "../persistence/dag-runtime-primitives.js";
+import type { RunWorkspaceRetention } from "../persistence/types.js";
 
 export interface InjectResult {
   runId: string;
@@ -91,6 +92,7 @@ export interface ActiveRun {
   nodeCount?: number;
   agents?: Record<string, DAGAgentConfig>;
   workspace?: Record<string, unknown>;
+  workspaceRetention?: RunWorkspaceRetention;
   scorecard?: ScorecardPolicyConfig;
   pattern?: DAGPatternInstanceMeta;
   dagRun: DAGRun;
@@ -671,6 +673,7 @@ export function restoreActiveRun(
       ? { ...metadata.agents }
       : undefined,
     workspace: metadata.workspace ? { ...metadata.workspace } : undefined,
+    workspaceRetention: metadata.workspaceRetention ? { ...metadata.workspaceRetention } : undefined,
     scorecard: metadata.scorecard ? { ...metadata.scorecard } : undefined,
     pattern: metadata.pattern
       ? { ...metadata.pattern, parameters: { ...(metadata.pattern.parameters ?? {}) } }

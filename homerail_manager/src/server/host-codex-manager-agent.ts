@@ -183,8 +183,26 @@ export type HostCodexManagerAgentStreamRunner = (
   input: HostCodexManagerAgentInput,
 ) => AsyncIterable<HostCodexManagerAgentStreamEvent>;
 
+export class HostCodexManagerAgentExecutionError extends Error {
+  readonly data: Record<string, unknown>;
+
+  constructor(errors: string[], data: Record<string, unknown>) {
+    super(errors.at(-1) || "Host Codex Manager Agent execution failed");
+    this.name = "HostCodexManagerAgentExecutionError";
+    this.data = { code: "agent_execution_failed", errors, ...data };
+    Object.setPrototypeOf(this, HostCodexManagerAgentExecutionError.prototype);
+  }
+}
+
+type HostCodexAgentEventRunner = (
+  prompt: string,
+  tools: ToolDefinition[],
+  context: AgentRunContext,
+) => AsyncIterable<AgentEvent>;
+
 let hostRunnerOverride: HostCodexManagerAgentRunner | undefined;
 let hostStreamRunnerOverride: HostCodexManagerAgentStreamRunner | undefined;
+let hostAgentEventRunnerOverride: HostCodexAgentEventRunner | undefined;
 
 export function _setHostCodexManagerAgentRunnerForTest(runner?: HostCodexManagerAgentRunner): void {
   hostRunnerOverride = runner;
@@ -192,6 +210,10 @@ export function _setHostCodexManagerAgentRunnerForTest(runner?: HostCodexManager
 
 export function _setHostCodexManagerAgentStreamRunnerForTest(runner?: HostCodexManagerAgentStreamRunner): void {
   hostStreamRunnerOverride = runner;
+}
+
+export function _setHostCodexAgentEventRunnerForTest(runner?: HostCodexAgentEventRunner): void {
+  hostAgentEventRunnerOverride = runner;
 }
 
 export function _buildCodexAppServerArgsForTest(): string[] {
@@ -1480,6 +1502,7 @@ function buildHostCodexManagerAgentResult(
   commentaryTexts: string[],
   toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }>,
   toolResults: Array<{ tool_use_id: string; content: string; is_error?: boolean }>,
+  agentErrors: string[],
 ): Record<string, unknown> {
   const config = input.agent_config;
   const finalText = state.finalNotes.at(-1) || compactDeltas(texts) || "Manager Agent turn completed.";
@@ -1530,6 +1553,7 @@ function buildHostCodexManagerAgentResult(
     },
     tool_calls: toolCalls,
     tool_results: toolResults,
+    ...(agentErrors.length ? { agent_errors: agentErrors } : {}),
     commentary_texts: commentary,
     project_id: input.project_id ?? config.project_id ?? null,
     worker_id: "host-codex",
@@ -1562,35 +1586,42 @@ async function* runHostCodexManagerAgentTurnEvents(
   const toolResults: Array<{ tool_use_id: string; content: string; is_error?: boolean }> = [];
   const texts: string[] = [];
   const commentaryTexts: string[] = [];
+  const agentErrors: string[] = [];
   let emittedVoiceSurfaceCommentaryCount = 0;
   const abortController = new AbortController();
   const turnTimeoutMs = managerAgentTurnTimeoutMs();
   const timeout = turnTimeoutMs > 0 ? setTimeout(() => abortController.abort(), turnTimeoutMs) : undefined;
   timeout?.unref?.();
-  const adapter = new HostCodexAppServerAdapter();
+  const prompt = buildPrompt(
+    input.history,
+    message,
+    input.continue_chat !== false,
+    input.canvas_context,
+  );
+  const tools = createManagerTools(
+    state,
+    responseMode,
+    input.plugin_context,
+    input.plugin_tool_turn_token,
+    input.canvas_context,
+    input.manager_skills,
+  );
+  const context: AgentRunContext = {
+    systemPrompt: systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, input.manager_skills),
+    provider: config.provider_name || undefined,
+    model: config.model || "codex",
+    apiKey: config.api_key || "",
+    baseUrl: config.base_url || "",
+    workspace,
+    abortSignal: abortController.signal,
+    reasoning_effort: config.reasoning_effort,
+    service_tier: config.service_tier,
+  };
+  const eventStream = hostAgentEventRunnerOverride
+    ? hostAgentEventRunnerOverride(prompt, tools, context)
+    : new HostCodexAppServerAdapter().run(prompt, tools, context);
   try {
-    for await (const event of adapter.run(
-      buildPrompt(input.history, message, input.continue_chat !== false, input.canvas_context),
-      createManagerTools(
-        state,
-        responseMode,
-        input.plugin_context,
-        input.plugin_tool_turn_token,
-        input.canvas_context,
-        input.manager_skills,
-      ),
-      {
-        systemPrompt: systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, input.manager_skills),
-        provider: config.provider_name || undefined,
-        model: config.model || "codex",
-        apiKey: config.api_key || "",
-        baseUrl: config.base_url || "",
-        workspace,
-        abortSignal: abortController.signal,
-        reasoning_effort: config.reasoning_effort,
-        service_tier: config.service_tier,
-      },
-    )) {
+    for await (const event of eventStream) {
       if (event.type === "text") {
         texts.push(event.text);
       } else if (event.type === "thinking") {
@@ -1605,11 +1636,18 @@ async function* runHostCodexManagerAgentTurnEvents(
           yield { type: "commentary", text, source: "voice_surface" };
         }
       } else if (event.type === "error") {
-        texts.push(`[ERROR] ${event.message}`);
+        agentErrors.push(event.message);
       }
     }
   } finally {
     if (timeout) clearTimeout(timeout);
+  }
+  if (agentErrors.length > 0 && !state.objectiveToolCalls.some((item) => item.success)) {
+    throw new HostCodexManagerAgentExecutionError(agentErrors, {
+      observed_tool_calls: toolCalls.map((item) => item.name),
+      objective_tool_calls: state.objectiveToolCalls,
+      run_ids: state.createdRunIds,
+    });
   }
   const remainingSurfaceCommentary = state.voiceSurface.commentaryTexts.slice(emittedVoiceSurfaceCommentaryCount);
   for (const text of remainingSurfaceCommentary) {
@@ -1627,6 +1665,7 @@ async function* runHostCodexManagerAgentTurnEvents(
       commentaryTexts,
       toolCalls,
       toolResults,
+      agentErrors,
     ),
   };
 }

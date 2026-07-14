@@ -55,6 +55,7 @@ export interface VoiceConversationMessage {
   text: string
   created_at: string
   channel?: 'final' | 'commentary'
+  kind?: 'message' | 'error'
 }
 
 export interface VoiceDebugEvent {

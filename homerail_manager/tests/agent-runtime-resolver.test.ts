@@ -86,8 +86,8 @@ describe("agent runtime resolver", () => {
 
     for (const resolved of [manager, dag]) {
       expect(resolved).toMatchObject({
-        provider_name: "kimi",
-        model: "kimi-k2.7-code",
+        provider_name: "kimi_cn",
+        model: "kimi-for-coding",
         api_key: "pk-test-kimi",
         base_url: "https://api.kimi.com/coding/v1",
         protocol: "openai_compatible",
@@ -113,8 +113,8 @@ describe("agent runtime resolver", () => {
     const resolved = resolveAgentRuntimeConfig({ surface: "dag" });
 
     expect(resolved).toMatchObject({
-      provider_name: "kimi",
-      model: "kimi-k2.7-code",
+      provider_name: "kimi_cn",
+      model: "kimi-for-coding",
       api_key: "pk-test-kimi",
       base_url: "https://api.kimi.com/coding/v1",
       protocol: "openai_compatible",
@@ -143,8 +143,8 @@ describe("agent runtime resolver", () => {
     });
 
     expect(resolved).toMatchObject({
-      provider_name: "kimi",
-      model: "kimi-k2.7-code",
+      provider_name: "kimi_cn",
+      model: "kimi-for-coding",
       api_key: "pk-test-kimi",
       base_url: "https://api.kimi.com/coding",
       protocol: "anthropic_compatible",

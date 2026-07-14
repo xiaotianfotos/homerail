@@ -161,6 +161,36 @@ class DeltaTextAgent implements AgentClient {
   }
 }
 
+class ErrorAgent implements AgentClient {
+  async *run(): AsyncIterable<AgentEvent> {
+    yield { type: "error", message: "provider rejected the configured credential" };
+    yield { type: "done" };
+  }
+}
+
+class ObjectiveSuccessWithErrorAgent implements AgentClient {
+  async *run(
+    _prompt: string,
+    tools: DagToolDefinition[],
+    _context: AgentRunContext,
+  ): AsyncIterable<AgentEvent> {
+    const tool = tools.find((item) => item.name === "create_and_run");
+    if (!tool) throw new Error("create_and_run tool missing");
+    const input = { workflow_id: "public-two-node-template", profile: "offline-deterministic" };
+    yield { type: "tool_use", id: "tool-1", name: "create_and_run", input };
+    const result = await tool.handler(input);
+    yield {
+      type: "tool_result",
+      tool_use_id: "tool-1",
+      content: result.content.map((item) => item.text).join(""),
+      is_error: result.is_error,
+    };
+    yield { type: "text", text: "started" };
+    yield { type: "error", message: "harness stream ended after the run was created" };
+    yield { type: "done" };
+  }
+}
+
 class ListOrchestrationsAgent implements AgentClient {
   observed = "";
 
@@ -282,6 +312,31 @@ describe("manager-agent server", () => {
     for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("reports the host process identity used for lifecycle recovery", async () => {
+    vi.stubEnv("HOMERAIL_MANAGER_AGENT_FINGERPRINT", "fingerprint-test");
+    vi.stubEnv("HOMERAIL_WORKER_ID", "manager-agent-host-project-test");
+    vi.stubEnv("PROJECT_ID", "project-test");
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        status: "running",
+        service: "manager-agent",
+        fingerprint: "fingerprint-test",
+        process_id: process.pid,
+        project_id: "project-test",
+        worker_id: "manager-agent-host-project-test",
+      });
+    } finally {
+      await close(server);
+    }
+  });
+
   it("does not use regex guards to force objective tools for action-oriented DAG requests", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
     tmpDirs.push(workspace);
@@ -396,6 +451,86 @@ describe("manager-agent server", () => {
       expect(response.status).toBe(200);
       expect(body.text).toBe("你好，我可以帮你启动 DAG。");
       expect(body.text).not.toContain("\n");
+    } finally {
+      await close(server);
+      await close(managerApi);
+    }
+  });
+
+  it("returns harness failures as structured errors instead of assistant text", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    registerAgentBackend("manager-agent-error-test", () => new ErrorAgent());
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "hello",
+          agent_config: { agent_type: "manager-agent-error-test", model: "test-model" },
+        }),
+      });
+      const body = await response.json() as { error?: string; data?: Record<string, unknown> };
+
+      expect(response.status).toBe(502);
+      expect(body.error).toBe("provider rejected the configured credential");
+      expect(body.data).toMatchObject({
+        code: "agent_execution_failed",
+        errors: ["provider rejected the configured credential"],
+        observed_tool_calls: [],
+        run_ids: [],
+      });
+      expect(JSON.stringify(body)).not.toContain("[ERROR]");
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("preserves harness errors as non-spoken diagnostics after an objective succeeds", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    registerAgentBackend("manager-agent-partial-error-test", () => new ObjectiveSuccessWithErrorAgent());
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const managerApi = makeManagerApiServer();
+    const managerPort = await listen(managerApi);
+    vi.stubEnv("MANAGER_REST_URL", `http://127.0.0.1:${managerPort}/api`);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "start a DAG",
+          response_mode: "voice",
+          agent_config: { agent_type: "manager-agent-partial-error-test", model: "test-model" },
+        }),
+      });
+      const body = await response.json() as {
+        text?: string;
+        spoken_text?: string;
+        agent_errors?: string[];
+        run_ids?: string[];
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.text).toBe("started");
+      expect(body.spoken_text).toBe("started");
+      expect(body.run_ids).toEqual(["run-test-123"]);
+      expect(body.agent_errors).toEqual(["harness stream ended after the run was created"]);
+      expect(JSON.stringify(body)).not.toContain("[ERROR]");
     } finally {
       await close(server);
       await close(managerApi);

@@ -5,6 +5,7 @@ import { recoverAllActiveRuns } from "./runtime/active-runs.js";
 import { recoverStaleVoiceSessions } from "./server/voice-session-registry.js";
 import { markRecoveryComplete } from "./health/index.js";
 import { cleanupPluginPackageStaging, recoverPluginPackageTrash } from "./plugins/package-lifecycle.js";
+import { shutdownHostShellManagerAgents } from "./server/host-shell-manager-agent.js";
 
 initEventLogging();
 
@@ -35,3 +36,17 @@ server.listen(port, host, () => {
     console.error(`plugin recovery: restored=${pluginTrashRecovery.restored} removed=${pluginTrashRecovery.removed} quarantined=${pluginTrashRecovery.quarantined} uninstall package(s)`);
   }
 });
+
+let shuttingDown = false;
+function shutdown(): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const forcedExit = setTimeout(() => process.exit(1), 5_000);
+  forcedExit.unref();
+  void shutdownHostShellManagerAgents().finally(() => {
+    server.close(() => process.exit(0));
+  });
+}
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

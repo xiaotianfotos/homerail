@@ -39,6 +39,12 @@ export interface PersistedGraphData {
   edges: PersistedGraphEdge[];
 }
 
+export interface RunWorkspaceRetention {
+  pinned: boolean;
+  updatedAt: number;
+  cleanedAt?: number;
+}
+
 export interface PersistedRunMetadata {
   runId: string;
   workflowId?: string;
@@ -53,6 +59,7 @@ export interface PersistedRunMetadata {
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;
+  workspaceRetention?: RunWorkspaceRetention;
   scorecard?: ScorecardPolicyConfig;
   pattern?: DAGPatternInstanceMeta;
   createdAt: number;

@@ -30,6 +30,8 @@ export type {
   AgentRuntimeStatus,
   AgentWorkspaceSettings,
   AgentStorageRetentionInfo,
+  WorkspaceRetentionSettings,
+  WorkspaceCleanupReport,
   VoiceUiRulesAsset,
   VoiceSettings,
   VoiceTtsOutputChannel,

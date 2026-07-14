@@ -7,6 +7,7 @@ import type {
   PersistedRunSnapshot,
   PersistedGraphData,
   NodeUsageRecord,
+  RunWorkspaceRetention,
 } from "./types.js";
 import type { DAGGraphData, DAGPatternInstanceMeta, ScorecardPolicyConfig } from "../orchestration/graph.js";
 import { DAG_EVENT_TYPES, subscribe, type DAGEventPayload } from "../events/bus.js";
@@ -31,6 +32,7 @@ interface SerializableRun {
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;
+  workspaceRetention?: RunWorkspaceRetention;
   scorecard?: ScorecardPolicyConfig;
   pattern?: DAGPatternInstanceMeta;
   createdAt: number;
@@ -203,6 +205,7 @@ export function serializeRunMetadata(run: SerializableRun): PersistedRunMetadata
     nodeCount: run.nodeCount,
     agents: run.agents,
     workspace: run.workspace,
+    workspaceRetention: run.workspaceRetention,
     scorecard: run.scorecard,
     pattern: run.pattern,
     createdAt: run.createdAt,
