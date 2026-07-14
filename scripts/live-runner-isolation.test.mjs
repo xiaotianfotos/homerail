@@ -32,6 +32,31 @@ test("routes live jobs to isolated runner slots and serializes only Manager port
   assert.ok(release > start, "port lock must be released after Manager binds its port");
 });
 
+test("cleanup fails closed when a custom home omits the matching runner root", { skip: process.platform !== "linux" }, (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-live-runner-config-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const customHome = path.join(root, "custom-home");
+  const sentinel = path.join(customHome, "slots", "slot-a", "run-active", "sentinel");
+  fs.mkdirSync(path.dirname(sentinel), { recursive: true });
+  fs.writeFileSync(sentinel, "active");
+
+  const result = spawnSync("bash", [cleanupScript], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      HOME: path.join(root, "default-home"),
+      HOMERAIL_RUNNER_BASE: "",
+      HOMERAIL_LIVE_HOME_BASE: customHome,
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /HOMERAIL_RUNNER_BASE is required/);
+  assert.equal(fs.readFileSync(sentinel, "utf8"), "active");
+});
+
 test("cleanup removes only one unlocked live runner slot", { skip: process.platform !== "linux" }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-live-runner-test-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

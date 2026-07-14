@@ -4,6 +4,11 @@ set -euo pipefail
 RUNNER_BASE="${HOMERAIL_RUNNER_BASE:-$HOME/.homerail-runners}"
 HOME_ROOT="${HOMERAIL_LIVE_HOME_BASE:-$RUNNER_BASE/homerail_home}"
 
+if [ -n "${HOMERAIL_LIVE_HOME_BASE:-}" ] && [ -z "${HOMERAIL_RUNNER_BASE:-}" ]; then
+  echo "HOMERAIL_RUNNER_BASE is required when HOMERAIL_LIVE_HOME_BASE is configured." >&2
+  exit 1
+fi
+
 sanitize_slot() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '-'
 }
