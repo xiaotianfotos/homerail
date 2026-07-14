@@ -36,6 +36,10 @@ if [ -z "${HOMERAIL_DAG_MUTATION_TOKEN:-}" ]; then
   HOMERAIL_DAG_MUTATION_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
   export HOMERAIL_DAG_MUTATION_TOKEN
 fi
+if [ -z "${HOMERAIL_MANAGER_ADMIN_TOKEN:-}" ]; then
+  HOMERAIL_MANAGER_ADMIN_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  export HOMERAIL_MANAGER_ADMIN_TOKEN
+fi
 PERSISTENT_ARTIFACT_DIR="$ARTIFACT_BASE/$RUN_KEY"
 REPORT_PATH="$PERSISTENT_ARTIFACT_DIR/dag-patterns-live.json"
 UPLOAD_REPORT_PATH="${HOMERAIL_LIVE_REPORT_PATH:-$REPO_ROOT/artifacts/dag-patterns-live.json}"
