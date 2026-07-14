@@ -94,7 +94,7 @@ The TypeScript runtime API exposes registration, binding CAS, generation advance
 - **Logical actors and inbox (#38):** this registry and durable command control plane.
 - **Multi-round execution (#39):** create new `round_id` values while continuing the actor-generation sequence.
 - **Lease and cold recovery (#40):** increment `generation` when ownership changes and reject stale writes for live projection while retaining them for audit.
-- **Projector (#41):** consume journal events and produce A2UI transactions. It must not edit journal rows.
+- **Projector (#41):** the [Live Surface Projector](./dag-live-surface-projector.md) consumes journal events, orders them per actor generation, and produces revision-checked native A2UI transactions without editing journal rows.
 - **Live UI (#42):** subscribe to projected state, not raw Worker output.
 - **Supervisor and intervention (#43-#44):** read the same journal and issue commands through the control plane, never by rewriting activity history.
 - **End-to-end proof (#45):** verify multiple actors, live projection, recovery, and release as one scenario.

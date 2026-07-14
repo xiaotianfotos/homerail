@@ -206,6 +206,64 @@ nodes:
     })).toThrow("surface identity does not match");
   });
 
+  it("projects a registered actor stream into the run live-surface read API", async () => {
+    const dag = parseDAGYaml(`
+name: activity-live-surface
+workflow_id: activity-live-surface
+agents:
+  worker:
+    agent_type: deterministic
+    system: HANDOFF port=done content=ok
+nodes:
+  research:
+    agent: worker
+    extra:
+      agent_runtime:
+        actor_id: researcher
+        surface_id: surface-research
+    outputs:
+      done:
+        to: ""
+`);
+    createActiveRun("run-live-surface", dag);
+    const built = buildCurrentDispatchEnvelope("run-live-surface", "research");
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    ingestDagActivityStream({
+      event: "dag_activity",
+      activity: event({
+        event_id: "live-surface-started",
+        run_id: "run-live-surface",
+        round_id: built.envelope.sessionId,
+        node_id: "research",
+        actor_id: "researcher",
+        surface_id: "surface-research",
+        type: "started",
+      }),
+    }, {
+      runId: "run-live-surface",
+      nodeId: "research",
+      roundId: built.envelope.sessionId,
+    });
+
+    server = createServer(0, undefined, undefined, false, { autoDetectCodex: false });
+    const baseUrl = `http://127.0.0.1:${await listen(server)}`;
+    const response = await fetch(`${baseUrl}/api/runs/run-live-surface/live-surfaces`);
+    const body = await response.json() as {
+      success: boolean;
+      data: {
+        projections: Array<{ actor_id: string; surface_revision: number }>;
+        document: { scope: { type: string; id: string }; nodes: Array<{ id: string; a2ui?: unknown }> };
+      };
+    };
+    expect(response.status).toBe(200);
+    expect(body.data.projections).toMatchObject([{ actor_id: "researcher", surface_revision: 1 }]);
+    expect(body.data.document).toMatchObject({
+      scope: { type: "run", id: "run-live-surface" },
+      nodes: [{ id: "surface-research", a2ui: expect.any(Object) }],
+    });
+  });
+
   it("replays bounded activity pages by run and actor", async () => {
     appendDagActivityEvent(event({ event_id: "research-1", actor_id: "researcher", sequence: 1 }));
     appendDagActivityEvent(event({ event_id: "writer-1", actor_id: "writer", sequence: 1 }));
