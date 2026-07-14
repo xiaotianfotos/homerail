@@ -369,6 +369,10 @@ spec:
         in a command. Treat only those two URL fields as repository locations;
         never derive a URL from repo, substitute another host, or add
         credentials. Use exactly one checkout path: /workspace/repository.
+        Never persist, copy, or summarize the input into a file. Do not create
+        scratch, metadata, report, or helper files anywhere in /workspace; all
+        filesystem writes must be git clone, fetch, or checkout state contained
+        under /workspace/repository.
         Never create /workspace/repository.git, a bare or mirror clone, or any
         intermediate repository path. Clone the exact base_clone_url directly
         into /workspace/repository without --depth, fetch the exact base commit
@@ -634,6 +638,8 @@ spec:
     prepare:
       kind: agent
       agent: preparer
+      allowed_builtin_tools: [Bash, Read, Grep, Glob]
+      allowed_dag_tools: [handoff]
       workspace_access:
         writable_paths: [repository]
         readonly_paths: []
