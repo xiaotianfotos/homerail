@@ -39,7 +39,6 @@ jobs:
        github.actor == 'xiaotianfotos')
     runs-on: [self-hosted, Linux, X64, homerail-live]
     timeout-minutes: 90
-    continue-on-error: true
     env:
       HOMERAIL_GITHUB_API_BASE_URL: ${{ github.api_url }}
       HOMERAIL_RUNNER_BASE: ${{ secrets.HOMERAIL_LIVE_RUNNER_BASE }}
@@ -103,13 +102,12 @@ jobs:
 
       - name: Run HomeRail PR Review DAG
         id: review
-        continue-on-error: true
         env:
           HOMERAIL_PR_REVIEW_INPUT: ${{ steps.input.outputs.json }}
           HOMERAIL_PR_REVIEW_ARTIFACT_DIR: ${{ github.workspace }}/artifacts/pr-review
         run: bash scripts/run-pr-review-live-runner.sh
 
-      - name: Publish non-blocking Check summary
+      - name: Publish Check summary
         if: always()
         env:
           STEP_OUTCOME: ${{ steps.review.outcome }}
@@ -123,7 +121,7 @@ jobs:
               echo "Result: infrastructure error"
               echo "Command outcome: $STEP_OUTCOME"
               echo
-              echo 'No review conclusion was produced. This advisory check does not block merging.'
+              echo 'No review conclusion was produced. Inspect the failed DAG step and uploaded diagnostics.'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

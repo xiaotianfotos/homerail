@@ -43,9 +43,11 @@ metadata.
 7. A branch-merge join normalizes either quorum outcome into one path. A
    refiner removes findings specifically rejected by an evidence or
    false-positive verdict and recomputes the report.
-8. A publisher persists the final handoff and Manager materializes the declared
-   Markdown and JSON artifacts. Failed quorum produces an `inconclusive` report
-   instead of a false clean result.
+8. The refiner persists the final structured report and quorum as JSON. A small
+   publisher renders only Markdown plus the exact runtime id, avoiding a second
+   model-generated copy of the full report. Manager materializes both declared
+   artifacts. Failed quorum produces an `inconclusive` report instead of a
+   false clean result.
 
 ## Outputs
 
@@ -74,8 +76,14 @@ and Worker protocol at the same commit instead of sending a new template to a
 stale long-lived Manager. Workflow contracts, per-finding verification, and the
 deterministic quorum remain authoritative; the adapter does not reconstruct a
 report from raw handoffs.
-The review step uses `continue-on-error`, so findings or an inconclusive run do
-not block merging.
+The adapter verifies that the run reached the terminal state implied by quorum,
+both artifacts are structured and non-empty, the quorum is 2-of-3, and Markdown
+contains the exact HomeRail run id and report identity. A valid rejected quorum
+is retained as `cancelled` plus `inconclusive`; infrastructure or
+artifact-integrity failures fail the check instead of being hidden behind an
+advisory success. Whether that check blocks merging is a repository
+branch-protection decision; findings and a valid inconclusive result are still
+complete diagnostic outputs.
 
 Automatic self-hosted execution is restricted to non-draft, same-repository PRs
 created by the trusted maintainer. This avoids running untrusted fork content on

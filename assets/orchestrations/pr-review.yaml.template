@@ -19,7 +19,7 @@ spec:
 
   pattern:
     id: pr-review-scenario
-    version: 1.2.0
+    version: 1.3.0
     source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
     parameters:
       reviewer_count: 4
@@ -200,10 +200,10 @@ spec:
               verdict: { type: string, enum: [confirmed, rejected] }
               reason: { type: string, minLength: 1, maxLength: 4000 }
 
-    PublishedReview:
+    FinalReview:
       type: object
       additionalProperties: false
-      required: [report, markdown, quorum]
+      required: [report, quorum]
       properties:
         report:
           type: object
@@ -227,7 +227,6 @@ spec:
               minItems: 4
               maxItems: 4
               items: { type: object }
-        markdown: { type: string, minLength: 1, maxLength: 100000 }
         quorum:
           type: object
           additionalProperties: false
@@ -281,11 +280,61 @@ spec:
                 properties:
                   status: { const: inconclusive }
 
+    PublishedReview:
+      type: object
+      additionalProperties: false
+      required: [run_id, markdown, quorum]
+      properties:
+        run_id: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$' }
+        markdown:
+          type: string
+          minLength: 1
+          maxLength: 100000
+          pattern: 'HomeRail Run ID:\*\* `[A-Za-z0-9][A-Za-z0-9._-]{0,199}`'
+        quorum:
+          type: object
+          additionalProperties: false
+          required: [passed, successes, total, threshold]
+          properties:
+            passed: { type: boolean }
+            successes: { type: integer, minimum: 0, maximum: 3 }
+            total: { type: integer, const: 3 }
+            threshold: { type: integer, const: 2 }
+      allOf:
+        - if:
+            properties:
+              quorum:
+                type: object
+                required: [successes]
+                properties:
+                  successes: { type: integer, maximum: 1 }
+          then:
+            properties:
+              quorum:
+                type: object
+                required: [passed]
+                properties:
+                  passed: { const: false }
+        - if:
+            properties:
+              quorum:
+                type: object
+                required: [successes]
+                properties:
+                  successes: { type: integer, minimum: 2 }
+          then:
+            properties:
+              quorum:
+                type: object
+                required: [passed]
+                properties:
+                  passed: { const: true }
+
   artifacts:
     - name: pr-review.json
-      source: { type: handoff, node: publish, port: published }
+      source: { type: handoff, node: refine, port: finalized }
       media_type: application/json
-      contract: PublishedReview
+      contract: FinalReview
       required: true
       publish: always
     - name: pr-review.md
@@ -449,19 +498,21 @@ spec:
         input.report is the synthesized DraftReviewReport and input.verification
         is a merge wrapper whose input.verification.values[0] is the original
         deterministic 2-of-3 quorum payload containing all three verifier values.
-        Produce the final accepted report. Preserve repo, pr, base, and head
-        exactly. Apply concrete verifier corrections: when a verifier identifies
-        a specific retained finding as disproven, pre-existing, stylistic, or
-        unsupported, remove that finding. For evidence and false_positive,
-        finding_verdicts is authoritative: remove every matching finding whose
-        verdict is rejected, matching title, file, and line exactly. Do not
-        remove findings merely because a voter gives a general reject without a
-        matching finding verdict. Recompute
-        actionable_count, status, confidence, and summary. Preserve all four
-        reviewer_results as independent raw evidence. Never add new findings,
-        edit files, or end with prose. Your final action MUST call handoff on
-        refined with exactly these top-level keys and no others:
-        {"repo":"owner/name","pr":1,"base":"sha","head":"sha","status":"pass|findings|inconclusive","confidence":"high|medium|low","summary":"text","actionable_count":0,"findings":[],"reviewer_results":[]}
+        Produce one FinalReview object. Copy passed, successes, total, and
+        threshold from that inner quorum payload. Preserve repo, pr, base, and
+        head exactly. Apply concrete verifier corrections: when a verifier
+        identifies a specific retained finding as disproven, pre-existing,
+        stylistic, or unsupported, remove that finding. For evidence and
+        false_positive, finding_verdicts is authoritative: remove every matching
+        finding whose verdict is rejected, matching title, file, and line
+        exactly. Do not remove findings merely because a voter gives a general
+        reject without a matching finding verdict. Recompute actionable_count,
+        status, confidence, and summary. When quorum.passed is false, report.status
+        MUST be inconclusive. Preserve all four reviewer_results as independent
+        raw evidence. Never add new findings, edit files, or end with prose. Your
+        final action MUST call handoff on finalized with exactly these top-level
+        keys and no others:
+        {"report":{"repo":"owner/name","pr":1,"base":"sha","head":"sha","status":"pass|findings|inconclusive","confidence":"high|medium|low","summary":"text","actionable_count":0,"findings":[],"reviewer_results":[]},"quorum":{"passed":true,"successes":2,"total":3,"threshold":2}}
         If input:correction exists, do not re-analyze or call any tool except
         handoff; immediately resubmit the existing result in the exact shape.
 
@@ -524,25 +575,24 @@ spec:
 
     publisher:
       system: |
-        Publish the supplied DraftReviewReport. input.quorum is a merge wrapper;
-        the authoritative verifier quorum is exactly input.quorum.values[0].
+        Render input.review, which is the authoritative FinalReview. Do not copy
+        its full report into the handoff.
         Your first action MUST call get_graph_context and copy its run_id into
-        the Markdown HomeRail run id field. Never invent, omit, or replace it
-        with an unavailable placeholder.
-        Copy passed, successes, total, and threshold from that inner object, not
-        from the outer merge wrapper. Publish without
-        changing findings. The persisted handoff is materialized by Manager as
-        the declared pr-review.json and pr-review.md artifacts. Do not call Bash,
-        Write, Edit, or MultiEdit. Markdown must include
+        both the top-level run_id field and the Markdown `HomeRail Run ID` field.
+        Copy the exact returned value; never emit `${run_id}`, invent, omit, or
+        replace it with an unavailable placeholder. Copy quorum unchanged
+        from input.review.quorum. The structured pr-review.json artifact has
+        already been persisted from the refiner handoff; this node materializes
+        pr-review.md. Do not call Bash, Write, Edit, or MultiEdit. Markdown must include
         result, confidence, actionable finding count, repo, PR, base, head,
         findings with file and line, reviewer summaries, quorum result, and the
-        HomeRail run id available in runtime context. When the inner quorum
-        passed is false, set report.status to inconclusive. Never create commits,
-        comments, approvals, or merges. If the quorum failed, change
-        report.status to inconclusive and explain that verification did not
-        reach consensus. Do not end with prose. Your final action MUST call
-        handoff on published with exactly this shape and no extra keys:
-        {"report":{},"markdown":"text","quorum":{"passed":true,"successes":2,"total":3,"threshold":2}}
+        exact HomeRail run id. If quorum failed, explain that verification did
+        not reach consensus. Never create commits, comments, approvals, or
+        merges. Do not end with prose. Your final action MUST call handoff on
+        published with port set to `published` and content set to exactly this
+        object with no extra keys. `run_id`, `markdown`, and `quorum` belong
+        inside content; never place them beside content as tool arguments:
+        {"run_id":"0123456789abcdef01234567","markdown":"# HomeRail PR Review\n\n**HomeRail Run ID:** `0123456789abcdef01234567`","quorum":{"passed":true,"successes":2,"total":3,"threshold":2}}
         If input:correction exists, do not re-analyze or call any tool except
         handoff; immediately resubmit the existing publication in the exact shape.
 
@@ -678,7 +728,7 @@ spec:
       inputs:
         report: { contract: DraftReviewReport }
         verification: {}
-      outputs: { refined: { contract: DraftReviewReport }, failed: {} }
+      outputs: { finalized: { contract: FinalReview }, failed: {} }
 
     publish:
       kind: agent
@@ -687,8 +737,7 @@ spec:
       allowed_dag_tools: [get_graph_context, handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs:
-        report: { contract: DraftReviewReport }
-        quorum: {}
+        review: { contract: FinalReview }
       outputs: { published: { contract: PublishedReview }, failed: {} }
 
     publication_outcome:
@@ -813,8 +862,7 @@ spec:
     - { from: verification_quorum.accepted, to: quorum_result.accepted }
     - { from: verification_quorum.rejected, to: quorum_result.rejected }
     - { from: quorum_result.decided, to: refine.verification }
-    - { from: quorum_result.decided, to: publish.quorum }
-    - { from: refine.refined, to: publish.report }
+    - { from: refine.finalized, to: publish.review }
     - { from: refine.failed, to: refinement_failed.result, condition: on_failure }
     - { from: publish.published, to: publication_outcome.result }
     - { from: publication_outcome.accepted, to: done.result }

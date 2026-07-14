@@ -915,7 +915,7 @@ function _correctionPrompt(
     `Declared output ports for this node: ${declaredPorts}.`,
     "Treat that error as authoritative. Preserve required field names and JSON array/object/number types exactly.",
     "Reuse completed evidence when it is available in the original inputs or current workspace.",
-    "If this fresh correction session cannot see the failed attempt's evidence, repeat only the investigation needed to reconstruct it using actual tools.",
+    "Correction mode permits only the handoff tool. Do not repeat investigation, file changes, or other side effects.",
     "Never print a pseudo-tool call as prose, XML, or JSON. Invoke the SDK tool itself.",
     "Finish by calling the handoff tool exactly once with one declared output port and contract-valid content. Do not end with prose.",
   ].join("\n");

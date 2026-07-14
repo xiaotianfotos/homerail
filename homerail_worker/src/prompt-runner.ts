@@ -212,6 +212,7 @@ export async function runPrompt(
     ? [
         "DAG CONTRACT CORRECTION MODE.",
         "The previous turn did not produce a contract-valid handoff.",
+        `The active DAG run_id is ${job.runId}. Copy it exactly when the output contract requires it.`,
         "Your only permitted action is one call to the handoff tool.",
         "Do not emit prose or tool-like markup. Do not call, describe, or simulate any other tool.",
         "Use the correction message and original inputs to preserve completed work and satisfy the exact output schema.",

@@ -26,6 +26,7 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
       "根据当前阶段选择正确的输出端口（port），提供交接内容（content）。",
     input_schema: {
       type: "object",
+      additionalProperties: false,
       properties: {
         port: {
           type: "string",
@@ -33,7 +34,9 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
           description: "输出端口名（必须是系统提示中列出的可用端口之一）",
         },
         content: {
-          description: "交接内容（JSON 值，任意类型）",
+          description:
+            "完整交接内容（JSON 值，任意类型）。输出契约要求的所有字段都必须放在 content 内；" +
+            "除 port、content 和可选 summary 外，不要把契约字段放在工具参数顶层。",
         },
         summary: {
           type: "string",
@@ -43,10 +46,6 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
       required: ["port", "content"],
     },
     handler: async (args: Record<string, unknown>) => {
-      const port = String(args.port ?? "");
-      const content = normalizeHandoffContent(args.content ?? "");
-      const summary = String(args.summary ?? "");
-
       if (state.yielded) {
         return {
           content: [
@@ -58,6 +57,23 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
           is_error: true,
         };
       }
+      const unexpectedKeys = Object.keys(args).filter((key) => !["port", "content", "summary"].includes(key));
+      if (unexpectedKeys.length > 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text:
+                `无效的 handoff 参数: ${unexpectedKeys.join(", ")}。` +
+                "输出契约字段必须全部放入 content 对象；工具参数顶层只允许 port、content 和可选 summary。请修正后重新调用 handoff。",
+            },
+          ],
+          is_error: true,
+        };
+      }
+      const port = String(args.port ?? "");
+      const content = normalizeHandoffContent(args.content ?? "");
+      const summary = String(args.summary ?? "");
 
       // Validate port
       if (!state.availablePorts.includes(port)) {

@@ -143,6 +143,7 @@ describe("prompt runner", () => {
     expect(observedTools).toEqual(["handoff"]);
     expect(observedContext?.handoffOnly).toBe(true);
     expect(observedContext?.systemPrompt).toContain("DAG CONTRACT CORRECTION MODE");
+    expect(observedContext?.systemPrompt).toContain("The active DAG run_id is run-correction-only");
     expect(observedContext?.systemPrompt).toContain("Original reviewer instructions");
     expect(terminalMessages.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
       type: "response",

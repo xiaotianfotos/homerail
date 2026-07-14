@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
@@ -83,8 +84,8 @@ describe("PR Review scenario assets", () => {
     expect(result.canonical?.artifacts).toEqual([
       expect.objectContaining({
         name: "pr-review.json",
-        source: { type: "handoff", node: "publish", port: "published" },
-        contract: "PublishedReview",
+        source: { type: "handoff", node: "refine", port: "finalized" },
+        contract: "FinalReview",
       }),
       expect.objectContaining({
         name: "pr-review.md",
@@ -144,38 +145,53 @@ describe("PR Review scenario assets", () => {
       expect.objectContaining({ name: "context" }),
     ]));
 
-    const publishedContract = parseWorkflowSource(source).meta.contracts?.PublishedReview;
-    const publication = {
+    const contracts = parseWorkflowSource(source).meta.contracts ?? {};
+    const finalReview = {
       report: passingReviewReport(),
-      markdown: "# Review",
       quorum: { passed: true, successes: 2, total: 3, threshold: 2 },
     };
-    expect(validateJsonContract(publishedContract, publication)).toMatchObject({ valid: true });
-    expect(validateJsonContract(publishedContract, {
-      ...publication,
+    expect(validateJsonContract(contracts.FinalReview, finalReview)).toMatchObject({ valid: true });
+    expect(validateJsonContract(contracts.FinalReview, {
+      ...finalReview,
       quorum: { passed: true, successes: 1, total: 3, threshold: 2 },
     })).toMatchObject({ valid: false });
-    expect(validateJsonContract(publishedContract, {
-      ...publication,
+    expect(validateJsonContract(contracts.FinalReview, {
+      ...finalReview,
       quorum: { passed: false, successes: 2, total: 3, threshold: 2 },
     })).toMatchObject({ valid: false });
-    expect(validateJsonContract(publishedContract, {
-      ...publication,
+    expect(validateJsonContract(contracts.FinalReview, {
+      ...finalReview,
       quorum: { passed: false, successes: 1, total: 3, threshold: 2 },
     })).toMatchObject({ valid: false });
-    expect(validateJsonContract(publishedContract, {
-      ...publication,
+    expect(validateJsonContract(contracts.FinalReview, {
+      ...finalReview,
       report: { status: "inconclusive" },
       quorum: { passed: false, successes: 1, total: 3, threshold: 2 },
     })).toMatchObject({ valid: false });
-    expect(validateJsonContract(publishedContract, {
-      ...publication,
+    expect(validateJsonContract(contracts.FinalReview, {
+      ...finalReview,
       report: { ...passingReviewReport(), status: "inconclusive" },
       quorum: { passed: false, successes: 1, total: 3, threshold: 2 },
     })).toMatchObject({ valid: true });
-    expect(validateJsonContract(publishedContract, {
-      ...publication,
+    expect(validateJsonContract(contracts.FinalReview, {
+      ...finalReview,
       report: { status: "pass" },
+    })).toMatchObject({ valid: false });
+
+    const publication = {
+      run_id: "a".repeat(24),
+      markdown: `# Review\n\n**HomeRail Run ID:** \`${"a".repeat(24)}\``,
+      quorum: { passed: true, successes: 2, total: 3, threshold: 2 },
+    };
+    expect(validateJsonContract(contracts.PublishedReview, publication)).toMatchObject({ valid: true });
+    expect(validateJsonContract(contracts.PublishedReview, {
+      ...publication,
+      run_id: "${run_id}",
+      markdown: "# Review\n\n**HomeRail Run ID:** `${run_id}`",
+    })).toMatchObject({ valid: false });
+    expect(validateJsonContract(contracts.PublishedReview, {
+      ...publication,
+      quorum: { passed: true, successes: 1, total: 3, threshold: 2 },
     })).toMatchObject({ valid: false });
 
     const inputContract = parseWorkflowSource(source).meta.contracts?.PRReviewInput;
@@ -213,7 +229,7 @@ describe("PR Review scenario assets", () => {
     expect(text).toContain("pr-review.yaml.template");
   });
 
-  it("keeps the GitHub adapter thin, advisory, and off untrusted fork PRs", () => {
+  it("keeps the GitHub adapter thin, truthful, and off untrusted fork PRs", () => {
     const workflow = fs.readFileSync(path.resolve(process.cwd(), "..", ".github", "workflows", "pr-review.yml"), "utf8");
     const runner = fs.readFileSync(path.resolve(process.cwd(), "..", "scripts", "run-dag-patterns-live-runner.sh"), "utf8");
     const reviewRunner = fs.readFileSync(path.resolve(process.cwd(), "..", "scripts", "run-pr-review-live-runner.sh"), "utf8");
@@ -222,8 +238,7 @@ describe("PR Review scenario assets", () => {
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).not.toContain("pull_request_target:");
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
-    expect(workflow).toContain("continue-on-error: true");
-    expect(workflow.match(/continue-on-error: true/g)).toHaveLength(2);
+    expect(workflow).not.toContain("continue-on-error: true");
     expect(workflow).toContain("bash scripts/run-pr-review-live-runner.sh");
     expect(workflow).toContain("npm run build:packages");
     expect(workflow).toContain("HOMERAIL_PATTERN_MODEL: qwen3.6");
@@ -241,6 +256,59 @@ describe("PR Review scenario assets", () => {
     expect(parsed.jobs.review.env).not.toHaveProperty("HOMERAIL_MANAGER_URL");
     expect(parsed.jobs.review.steps.find((step) => step.name === "Run HomeRail PR Review DAG")?.env)
       .not.toHaveProperty("HOMERAIL_HOME");
+  });
+
+  it("validates completed and inconclusive CI artifacts without hiding infrastructure failures", () => {
+    const validator = path.resolve(process.cwd(), "..", "scripts", "validate-pr-review-artifacts.mjs");
+    const dir = path.join(tmpHome, "artifact-validator");
+    fs.mkdirSync(dir, { recursive: true });
+    const commandPath = path.join(dir, "command.json");
+    const reportPath = path.join(dir, "pr-review.json");
+    const markdownPath = path.join(dir, "pr-review.md");
+    const runId = "a".repeat(24);
+    const artifacts = [
+      { name: "pr-review.json", status: "ready" },
+      { name: "pr-review.md", status: "ready" },
+    ];
+    const runValidator = (
+      status: string,
+      report: Record<string, unknown>,
+      quorum: Record<string, unknown>,
+      markdown = [
+        "# Review",
+        `**HomeRail Run ID:** \`${runId}\``,
+        `Repo: ${report.repo}`,
+        `Base: ${report.base}`,
+        `Head: ${report.head}`,
+        `Status: ${report.status}`,
+        "Quorum result",
+      ].join("\n\n"),
+    ) => {
+      fs.writeFileSync(commandPath, JSON.stringify({ run_id: runId, status, artifacts }));
+      fs.writeFileSync(reportPath, JSON.stringify({ report, quorum }));
+      fs.writeFileSync(markdownPath, markdown);
+      return spawnSync(process.execPath, [validator, commandPath, reportPath, markdownPath], { encoding: "utf8" });
+    };
+
+    expect(runValidator(
+      "completed",
+      passingReviewReport(),
+      { passed: true, successes: 2, total: 3, threshold: 2 },
+    ).status).toBe(0);
+    expect(runValidator(
+      "cancelled",
+      { ...passingReviewReport(), status: "inconclusive" },
+      { passed: false, successes: 1, total: 3, threshold: 2 },
+    ).status).toBe(0);
+
+    const invalid = runValidator(
+      "completed",
+      passingReviewReport(),
+      { passed: true, successes: 2, total: 3, threshold: 2 },
+      "# Review\n\n**HomeRail Run ID:** `${run_id}`",
+    );
+    expect(invalid.status).toBe(1);
+    expect(invalid.stderr).toContain("does not contain the exact HomeRail run_id field");
   });
 
   it("keeps PR closeout manual, thin, isolated, and unable to merge", () => {
@@ -326,13 +394,17 @@ describe("PR Review scenario assets", () => {
     expect(executor.tick("pr-review-runtime")).toBeGreaterThan(0);
     expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("refine");
 
-    handoffActiveRun("pr-review-runtime", "refine", "refined", report);
+    const finalReview = {
+      report,
+      quorum: { passed: true, successes: 2, total: 3, threshold: 2 },
+    };
+    handoffActiveRun("pr-review-runtime", "refine", "finalized", finalReview);
     expect(executor.tick("pr-review-runtime")).toBeGreaterThan(0);
     expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("publish");
 
     handoffActiveRun("pr-review-runtime", "publish", "published", {
-      report,
-      markdown: "# HomeRail PR Review\n\nNo actionable findings.",
+      run_id: "pr-review-runtime",
+      markdown: "# HomeRail PR Review\n\n**HomeRail Run ID:** `pr-review-runtime`\n\nNo actionable findings.",
       quorum: { passed: true, successes: 2, total: 3, threshold: 2 },
     });
     executor.tick("pr-review-runtime");
@@ -350,6 +422,6 @@ describe("PR Review scenario assets", () => {
     expect(JSON.parse(fs.readFileSync(getRunArtifactBlobPath("pr-review-runtime", "pr-review.json")!, "utf8")))
       .toMatchObject({ report: { status: "pass" }, quorum: { passed: true, successes: 2 } });
     expect(fs.readFileSync(getRunArtifactBlobPath("pr-review-runtime", "pr-review.md")!, "utf8"))
-      .toBe("# HomeRail PR Review\n\nNo actionable findings.\n");
+      .toBe("# HomeRail PR Review\n\n**HomeRail Run ID:** `pr-review-runtime`\n\nNo actionable findings.\n");
   });
 });

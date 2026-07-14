@@ -261,6 +261,10 @@ if [ "$LIVE_TASK" = "pr-review" ]; then
     --output "$REVIEW_ARTIFACT_DIR/pr-review.md"
   test -s "$REVIEW_ARTIFACT_DIR/pr-review.json"
   test -s "$REVIEW_ARTIFACT_DIR/pr-review.md"
+  node "$REPO_ROOT/scripts/validate-pr-review-artifacts.mjs" \
+    "$command_path" \
+    "$REVIEW_ARTIFACT_DIR/pr-review.json" \
+    "$REVIEW_ARTIFACT_DIR/pr-review.md"
   echo "HomeRail PR Review artifacts: $REVIEW_ARTIFACT_DIR"
   exit 0
 fi
