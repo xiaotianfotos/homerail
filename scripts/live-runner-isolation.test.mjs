@@ -86,6 +86,11 @@ case "\${1:-}" in
       esac
     fi
     ;;
+  rm)
+    if [ "\${FAIL_SLOT_A:-0}" = "1" ] && [[ "$*" == *container-a* ]]; then
+      exit 42
+    fi
+    ;;
 esac
 `;
   const dockerPath = path.join(fakeBin, "docker");
@@ -99,13 +104,14 @@ esac
     HOMERAIL_LIVE_HOME_BASE: homeRoot,
     HOMERAIL_CLEANUP_LOCK_HELD: "0",
   };
-  const runCleanup = (extraEnv = {}) => {
+  const runCleanup = (extraEnv = {}, expectedStatus = 0) => {
     const result = spawnSync("bash", [cleanupScript], {
       cwd: repoRoot,
       env: { ...baseEnv, HOMERAIL_LIVE_SLOT: "", ...extraEnv },
       encoding: "utf8",
     });
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, expectedStatus, result.stderr);
+    return result;
   };
 
   runCleanup({ HOMERAIL_LIVE_SLOT: "slot-a" });
@@ -155,6 +161,17 @@ esac
   }
   runCleanup();
   assert.equal(fs.existsSync(runB), false);
+  removals = fs.readFileSync(dockerLog, "utf8").split("\n").filter((line) => /^(rm -f|image rm -f)/.test(line));
+  assert.ok(removals.includes("rm -f container-b"));
+  assert.ok(removals.includes("image rm -f image-b"));
+
+  fs.mkdirSync(runA, { recursive: true });
+  fs.mkdirSync(runB, { recursive: true });
+  fs.writeFileSync(dockerLog, "");
+  const failedCleanup = runCleanup({ FAIL_SLOT_A: "1" }, 1);
+  assert.match(failedCleanup.stderr, /Cleanup failed for live runner slot slot-a/);
+  assert.equal(fs.existsSync(runA), false);
+  assert.equal(fs.existsSync(runB), false, "a failed slot must not prevent later slot cleanup");
   removals = fs.readFileSync(dockerLog, "utf8").split("\n").filter((line) => /^(rm -f|image rm -f)/.test(line));
   assert.ok(removals.includes("rm -f container-b"));
   assert.ok(removals.includes("image rm -f image-b"));

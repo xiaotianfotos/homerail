@@ -139,8 +139,13 @@ describe("PR Review scenario assets", () => {
     expect(agents.preparer?.system).toContain('"repository_path":"/workspace/repository"');
     expect(agents.preparer?.system).toContain("base_clone_url");
     expect(agents.preparer?.system).toContain("head_clone_url");
+    expect(agents.preparer?.system).toContain("Manager contract validation already guarantees");
+    expect(agents.preparer?.system).toContain("Never create /workspace/repository.git");
+    expect(agents.preparer?.system).toContain("never claim a required field is missing after using it");
+    expect(agents.preparer?.system).toContain("Do not use git verify-commit");
     expect(agents.preparer?.system).not.toContain("https://github.com/<repo>.git");
     expect(agents.preparer?.system).not.toContain('"status":"ready"');
+    expect(result.canonical?.policies?.max_corrections_per_node).toBe(5);
     expect(nodes.find((node) => node.id === "synthesize")?.inputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "context" }),
     ]));
