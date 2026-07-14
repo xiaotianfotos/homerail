@@ -19,7 +19,7 @@ spec:
 
   pattern:
     id: pr-review-scenario
-    version: 1.3.2
+    version: 1.4.0
     source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
     parameters:
       reviewer_count: 4
@@ -649,30 +649,126 @@ spec:
     runtime_review:
       kind: agent
       agent: runtime_reviewer
+      allowed_builtin_tools: [Bash, Read, Grep, Glob]
+      allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { context: { contract: ReviewContext } }
       outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+
+    normalize_runtime_review:
+      kind: command
+      depends_on: [runtime_review]
+      inputs:
+        success: { contract: ReviewerResult }
+        failure: {}
+      outputs: { reviewed: { contract: ReviewerResult } }
+      config:
+        command:
+          - node
+          - -e
+          - >-
+            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),success=last(input,'success');if(success&&typeof success==='object'&&success.reviewer===reviewer&&(success.status==='complete'||success.status==='failed')){process.stdout.write(JSON.stringify(success));return}const candidate=success??last(input,'failure'),raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a contract-valid handoff'),failure=raw.slice(0,2048);process.stdout.write(JSON.stringify({reviewer,status:'failed',summary:reviewer+' reviewer failed before producing a contract-valid result: '+failure,findings:[]}))});
+          - runtime
+        stdin_field: "$inputs"
+        timeout_ms: 10000
+        capture_limit: 12000
+        success_port: reviewed
+        failure_port: reviewed
+        parse_stdout: json
+        result_payload: value
 
     security_review:
       kind: agent
       agent: security_reviewer
+      allowed_builtin_tools: [Bash, Read, Grep, Glob]
+      allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { context: { contract: ReviewContext } }
       outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+
+    normalize_security_review:
+      kind: command
+      depends_on: [security_review]
+      inputs:
+        success: { contract: ReviewerResult }
+        failure: {}
+      outputs: { reviewed: { contract: ReviewerResult } }
+      config:
+        command:
+          - node
+          - -e
+          - >-
+            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),success=last(input,'success');if(success&&typeof success==='object'&&success.reviewer===reviewer&&(success.status==='complete'||success.status==='failed')){process.stdout.write(JSON.stringify(success));return}const candidate=success??last(input,'failure'),raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a contract-valid handoff'),failure=raw.slice(0,2048);process.stdout.write(JSON.stringify({reviewer,status:'failed',summary:reviewer+' reviewer failed before producing a contract-valid result: '+failure,findings:[]}))});
+          - security
+        stdin_field: "$inputs"
+        timeout_ms: 10000
+        capture_limit: 12000
+        success_port: reviewed
+        failure_port: reviewed
+        parse_stdout: json
+        result_payload: value
 
     test_review:
       kind: agent
       agent: test_reviewer
+      allowed_builtin_tools: [Bash, Read, Grep, Glob]
+      allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { context: { contract: ReviewContext } }
       outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
 
+    normalize_test_review:
+      kind: command
+      depends_on: [test_review]
+      inputs:
+        success: { contract: ReviewerResult }
+        failure: {}
+      outputs: { reviewed: { contract: ReviewerResult } }
+      config:
+        command:
+          - node
+          - -e
+          - >-
+            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),success=last(input,'success');if(success&&typeof success==='object'&&success.reviewer===reviewer&&(success.status==='complete'||success.status==='failed')){process.stdout.write(JSON.stringify(success));return}const candidate=success??last(input,'failure'),raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a contract-valid handoff'),failure=raw.slice(0,2048);process.stdout.write(JSON.stringify({reviewer,status:'failed',summary:reviewer+' reviewer failed before producing a contract-valid result: '+failure,findings:[]}))});
+          - tests
+        stdin_field: "$inputs"
+        timeout_ms: 10000
+        capture_limit: 12000
+        success_port: reviewed
+        failure_port: reviewed
+        parse_stdout: json
+        result_payload: value
+
     frontend_review:
       kind: agent
       agent: frontend_reviewer
+      allowed_builtin_tools: [Bash, Read, Grep, Glob]
+      allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { context: { contract: ReviewContext } }
       outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+
+    normalize_frontend_review:
+      kind: command
+      depends_on: [frontend_review]
+      inputs:
+        success: { contract: ReviewerResult }
+        failure: {}
+      outputs: { reviewed: { contract: ReviewerResult } }
+      config:
+        command:
+          - node
+          - -e
+          - >-
+            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),success=last(input,'success');if(success&&typeof success==='object'&&success.reviewer===reviewer&&(success.status==='complete'||success.status==='failed')){process.stdout.write(JSON.stringify(success));return}const candidate=success??last(input,'failure'),raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a contract-valid handoff'),failure=raw.slice(0,2048);process.stdout.write(JSON.stringify({reviewer,status:'failed',summary:reviewer+' reviewer failed before producing a contract-valid result: '+failure,findings:[]}))});
+          - frontend
+        stdin_field: "$inputs"
+        timeout_ms: 10000
+        capture_limit: 12000
+        success_port: reviewed
+        failure_port: reviewed
+        parse_stdout: json
+        result_payload: value
 
     collect_reviews:
       kind: join
@@ -685,13 +781,15 @@ spec:
       config:
         mode: all
         field: status
-        success_values: [complete]
+        success_values: [complete, failed]
         passed_port: complete
         failed_port: failed
 
     synthesize:
       kind: agent
       agent: synthesizer
+      allowed_builtin_tools: []
+      allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs:
         context: { contract: ReviewContext }
@@ -701,6 +799,8 @@ spec:
     evidence_vote:
       kind: agent
       agent: evidence_voter
+      allowed_builtin_tools: [Bash, Read, Grep, Glob]
+      allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { report: { contract: DraftReviewReport } }
       outputs: { voted: { contract: VerificationVote }, failed: {} }
@@ -708,6 +808,8 @@ spec:
     false_positive_vote:
       kind: agent
       agent: false_positive_voter
+      allowed_builtin_tools: [Bash, Read, Grep, Glob]
+      allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { report: { contract: DraftReviewReport } }
       outputs: { voted: { contract: VerificationVote }, failed: {} }
@@ -715,6 +817,8 @@ spec:
     coverage_vote:
       kind: agent
       agent: coverage_voter
+      allowed_builtin_tools: []
+      allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { report: { contract: DraftReviewReport } }
       outputs: { voted: { contract: CoverageVote }, failed: {} }
@@ -750,6 +854,8 @@ spec:
     refine:
       kind: agent
       agent: refiner
+      allowed_builtin_tools: []
+      allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs:
         report: { contract: DraftReviewReport }
@@ -799,26 +905,6 @@ spec:
       outcome: failure
       inputs: { result: {} }
 
-    runtime_review_failed:
-      kind: terminal
-      outcome: failure
-      inputs: { result: {} }
-
-    security_review_failed:
-      kind: terminal
-      outcome: failure
-      inputs: { result: {} }
-
-    test_review_failed:
-      kind: terminal
-      outcome: failure
-      inputs: { result: {} }
-
-    frontend_review_failed:
-      kind: terminal
-      outcome: failure
-      inputs: { result: {} }
-
     review_collection_failed:
       kind: terminal
       outcome: failure
@@ -863,14 +949,18 @@ spec:
     - { from: prepare.ready, to: test_review.context }
     - { from: prepare.ready, to: frontend_review.context }
     - { from: prepare.failed, to: preparation_failed.result, condition: on_failure }
-    - { from: runtime_review.reviewed, to: collect_reviews.runtime }
-    - { from: security_review.reviewed, to: collect_reviews.security }
-    - { from: test_review.reviewed, to: collect_reviews.tests }
-    - { from: frontend_review.reviewed, to: collect_reviews.frontend }
-    - { from: runtime_review.failed, to: runtime_review_failed.result, condition: on_failure }
-    - { from: security_review.failed, to: security_review_failed.result, condition: on_failure }
-    - { from: test_review.failed, to: test_review_failed.result, condition: on_failure }
-    - { from: frontend_review.failed, to: frontend_review_failed.result, condition: on_failure }
+    - { from: runtime_review.reviewed, to: normalize_runtime_review.success }
+    - { from: runtime_review.failed, to: normalize_runtime_review.failure, condition: on_failure }
+    - { from: security_review.reviewed, to: normalize_security_review.success }
+    - { from: security_review.failed, to: normalize_security_review.failure, condition: on_failure }
+    - { from: test_review.reviewed, to: normalize_test_review.success }
+    - { from: test_review.failed, to: normalize_test_review.failure, condition: on_failure }
+    - { from: frontend_review.reviewed, to: normalize_frontend_review.success }
+    - { from: frontend_review.failed, to: normalize_frontend_review.failure, condition: on_failure }
+    - { from: normalize_runtime_review.reviewed, to: collect_reviews.runtime }
+    - { from: normalize_security_review.reviewed, to: collect_reviews.security }
+    - { from: normalize_test_review.reviewed, to: collect_reviews.tests }
+    - { from: normalize_frontend_review.reviewed, to: collect_reviews.frontend }
     - { from: collect_reviews.complete, to: synthesize.reviews }
     - { from: prepare.ready, to: synthesize.context }
     - { from: collect_reviews.failed, to: review_collection_failed.result, condition: on_failure }

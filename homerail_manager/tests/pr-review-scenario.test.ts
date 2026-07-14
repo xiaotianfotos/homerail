@@ -16,6 +16,7 @@ import { loadRunSnapshot } from "../src/persistence/store.js";
 import { getRunArtifactBlobPath } from "../src/persistence/run-artifacts.js";
 import {
   _clearActiveRuns,
+  failActiveRun,
   getActiveRun,
   handoffActiveRun,
 } from "../src/runtime/active-runs.js";
@@ -52,13 +53,16 @@ function passingReviewReport(): Record<string, unknown> {
 describe("PR Review scenario assets", () => {
   let oldHome: string | undefined;
   let oldAssetDir: string | undefined;
+  let oldCommandAllowlist: string | undefined;
   let tmpHome: string;
 
   beforeEach(() => {
     oldHome = process.env.HOMERAIL_HOME;
     oldAssetDir = process.env.HOMERAIL_ASSET_DIR;
+    oldCommandAllowlist = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-pr-review-scenario-"));
     process.env.HOMERAIL_HOME = tmpHome;
+    process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST = "node";
     delete process.env.HOMERAIL_ASSET_DIR;
     closeDb();
     _clearActiveRuns();
@@ -71,6 +75,8 @@ describe("PR Review scenario assets", () => {
     else process.env.HOMERAIL_HOME = oldHome;
     if (oldAssetDir === undefined) delete process.env.HOMERAIL_ASSET_DIR;
     else process.env.HOMERAIL_ASSET_DIR = oldAssetDir;
+    if (oldCommandAllowlist === undefined) delete process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
+    else process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST = oldCommandAllowlist;
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
@@ -95,12 +101,35 @@ describe("PR Review scenario assets", () => {
       }),
     ]);
     const nodes = result.canonical?.nodes ?? [];
-    expect(nodes.filter((node) => node.id.endsWith("_review")).map((node) => node.id).sort()).toEqual([
+    expect(nodes.filter((node) => node.id.endsWith("_review") && !node.id.startsWith("normalize_"))
+      .map((node) => node.id).sort()).toEqual([
       "frontend_review",
       "runtime_review",
       "security_review",
       "test_review",
     ]);
+    for (const reviewer of ["runtime", "security", "test", "frontend"]) {
+      expect(nodes.find((node) => node.id === `${reviewer}_review`)?.config).toMatchObject({
+        allowed_builtin_tools: ["Bash", "Glob", "Grep", "Read"],
+        allowed_dag_tools: ["handoff"],
+      });
+      expect(nodes.find((node) => node.id === `normalize_${reviewer}_review`)).toMatchObject({
+        kind: "command",
+        depends_on: [`${reviewer}_review`],
+        outputs: [expect.objectContaining({ name: "reviewed", contract: "ReviewerResult" })],
+        config: expect.objectContaining({
+          success_port: "reviewed",
+          failure_port: "reviewed",
+          parse_stdout: "json",
+          result_payload: "value",
+        }),
+      });
+    }
+    expect(nodes.find((node) => node.id === "collect_reviews")?.config).toMatchObject({
+      mode: "all",
+      field: "status",
+      success_values: ["complete", "failed"],
+    });
     expect(nodes.find((node) => node.id === "verification_quorum")?.config).toMatchObject({
       mode: "n_of_m",
       threshold: 2,
@@ -516,5 +545,75 @@ describe("PR Review scenario assets", () => {
       .toMatchObject({ report: { status: "pass" }, quorum: { passed: true, successes: 2 } });
     expect(fs.readFileSync(getRunArtifactBlobPath("pr-review-runtime", "pr-review.md")!, "utf8"))
       .toBe("# HomeRail PR Review\n\n**HomeRail Run ID:** `pr-review-runtime`\n\nNo actionable findings.\n");
+  });
+
+  it("normalizes a reviewer failure and continues to synthesis", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "..", "assets", "orchestrations", "pr-review.yaml.template"),
+      "utf8",
+    );
+    const parsed = parseWorkflowSource(source);
+    for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    const dispatcher = new FakeDAGDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    const input = {
+      trigger_id: "manual",
+      trigger_type: "manual",
+      fire_key: "manual:xiaotianfotos/homerail#25:reviewer-failure",
+      payload: {
+        repo: "xiaotianfotos/homerail",
+        pr: 25,
+        base: "a".repeat(40),
+        head: "b".repeat(40),
+        base_clone_url: "https://github.com/xiaotianfotos/homerail.git",
+        head_clone_url: "https://github.com/xiaotianfotos/homerail.git",
+        expected_usage: 8,
+        budget_key: "pr-review:xiaotianfotos/homerail:reviewer-failure",
+      },
+    };
+    executor.createRun("pr-review-reviewer-failure", parsed, JSON.stringify(input));
+    executor.tick("pr-review-reviewer-failure");
+    handoffActiveRun("pr-review-reviewer-failure", "prepare", "ready", {
+      repo: "xiaotianfotos/homerail",
+      pr: 25,
+      base: "a".repeat(40),
+      head: "b".repeat(40),
+      repository_path: "/workspace/repository",
+      changed_files: ["src/run.ts"],
+      diff_stat: "1 file changed",
+    });
+    executor.tick("pr-review-reviewer-failure");
+
+    for (const category of ["runtime", "tests", "frontend"] as const) {
+      handoffActiveRun(
+        "pr-review-reviewer-failure",
+        `${category === "tests" ? "test" : category}_review`,
+        "reviewed",
+        {
+          reviewer: category,
+          status: "complete",
+          summary: `${category} review complete`,
+          findings: [],
+        },
+      );
+    }
+    failActiveRun(
+      "pr-review-reviewer-failure",
+      "security_review",
+      "agent ended without DAG handoff after correction exhaustion",
+    );
+    expect(executor.tick("pr-review-reviewer-failure")).toBeGreaterThan(0);
+    expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("synthesize");
+
+    const normalized = loadRunSnapshot("pr-review-reviewer-failure")?.handoffs.find((handoff) =>
+      handoff.fromNode === "normalize_security_review" && handoff.port === "reviewed"
+    );
+    expect(normalized?.content).toMatchObject({
+      reviewer: "security",
+      status: "failed",
+      findings: [],
+    });
+    expect(String((normalized?.content as { summary?: unknown } | undefined)?.summary))
+      .toContain("agent ended without DAG handoff after correction exhaustion");
   });
 });

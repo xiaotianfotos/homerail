@@ -33,17 +33,22 @@ metadata.
    workspace.
 3. Runtime, security, tests, and frontend reviewers inspect the same exact diff
    independently and in parallel. Their Docker workspace mount is read-only;
-   only the preparer receives a writable workspace.
-4. A synthesizer preserves all reviewer results and deduplicates findings.
-5. Evidence, false-positive, and coverage voters independently validate the
+   only the preparer receives a writable workspace. Each reviewer is restricted
+   to read-only built-in tools plus the `handoff` DAG tool.
+4. A deterministic normalizer preserves every valid reviewer result. If a
+   reviewer exhausts contract correction without a handoff, the normalizer
+   emits a `status: failed` ReviewerResult with grounded runtime evidence so the
+   DAG produces an honest inconclusive artifact instead of stalling.
+5. A synthesizer preserves all reviewer results and deduplicates findings.
+6. Evidence, false-positive, and coverage voters independently validate the
    draft report. Evidence and false-positive voters produce a machine-readable
    verdict for every retained finding.
-6. A deterministic two-of-three join decides whether verification reached
+7. A deterministic two-of-three join decides whether verification reached
    quorum.
-7. A branch-merge join normalizes either quorum outcome into one path. A
+8. A branch-merge join normalizes either quorum outcome into one path. A
    refiner removes findings specifically rejected by an evidence or
    false-positive verdict and recomputes the report.
-8. The refiner persists the final structured report and quorum as JSON. A small
+9. The refiner persists the final structured report and quorum as JSON. A small
    publisher renders only Markdown plus the exact runtime id, avoiding a second
    model-generated copy of the full report. Manager materializes both declared
    artifacts. Failed quorum produces an `inconclusive` report instead of a
@@ -53,7 +58,7 @@ metadata.
 
 - `pr-review.json`
 - `pr-review.md`
-- four independent reviewer handoffs
+- four normalized independent reviewer results
 - three independent verification votes
 - per-finding evidence and false-positive verdicts
 - deterministic quorum payload
