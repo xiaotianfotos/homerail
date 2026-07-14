@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  matchingManagerAgentSkillViewToolDefinition,
   managerAgentSkillViewToolDefinitions,
   managerAgentSkillViewToolName,
   materializeManagerAgentSkillViewInput,
@@ -91,5 +92,22 @@ describe("Manager Agent Skill view templates", () => {
       canvas_size: "3x3",
       data: { title: "Anubis", value: 4 },
     })).toThrow(/invalid/i);
+  });
+
+  it("detects raw generated-view data already owned by a loaded template", () => {
+    const definitions = managerAgentSkillViewToolDefinitions([
+      { id: "palquery", content: "Loaded Skill", view_templates: [template] },
+    ]);
+    const match = matchingManagerAgentSkillViewToolDefinition(definitions, {
+      id: "pal-profile-anubis",
+      canvas_size: "3x3",
+      content: { data: { title: "Anubis", value: 4 } },
+      a2ui: { version: "v1.0" },
+    });
+    expect(match?.name).toBe(managerAgentSkillViewToolName("palquery", "profile"));
+    expect(matchingManagerAgentSkillViewToolDefinition(definitions, {
+      id: "custom-view",
+      content: { data: { title: "Custom", body: "Not a profile" } },
+    })).toBeUndefined();
   });
 });

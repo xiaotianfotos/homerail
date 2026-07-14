@@ -110,6 +110,30 @@ describe('A2uiRenderer', () => {
     expect([...mounted.querySelectorAll('[data-a2ui-id="position"]')].map(element => element.textContent?.trim())).toEqual(['1', '2'])
   })
 
+  it('renders connected rich steps with template-relative content', () => {
+    const mounted = mount(surface([
+      { id: 'root', component: 'List', children: { path: '/steps', componentId: 'step' }, direction: 'vertical' },
+      {
+        id: 'step', component: 'HrStep', index: { call: '@index', args: { offset: 1 } },
+        label: { path: 'label' }, detail: { path: 'result' }, tone: { path: 'tone' }, child: 'body',
+      },
+      { id: 'body', component: 'Text', text: { path: 'body' } },
+    ]), {
+      steps: [
+        { label: 'First generation', result: 'Nightwing', tone: 'info', body: 'Parent A + helper' },
+        { label: 'Second generation', result: 'Anubis', tone: 'positive', body: 'Child + helper' },
+      ],
+    })
+
+    const steps = [...mounted.querySelectorAll<HTMLElement>('.hr-a2ui__step')]
+    expect(steps).toHaveLength(2)
+    expect(steps[0]?.querySelector('.hr-a2ui__step-rail')?.textContent).toBe('1')
+    expect(steps[1]?.querySelector('.hr-a2ui__step-rail')?.textContent).toBe('2')
+    expect(steps[1]?.querySelector('header')?.textContent).toContain('Anubis')
+    expect(steps[1]?.dataset.tone).toBe('positive')
+    expect(rendererSource).toContain('.hr-a2ui__step-rail::after')
+  })
+
   it('renders camelCase Metric, Table, DAG, and passive Artifact components', async () => {
     const mounted = mount(surface([
       { id: 'root', component: 'Column', children: ['metric', 'table', 'dag', 'source', 'remote', 'image', 'html'] },

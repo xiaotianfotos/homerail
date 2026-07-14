@@ -27,6 +27,7 @@ import {
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
   managerAgentSkillViewToolDefinitions,
+  matchingManagerAgentSkillViewToolDefinition,
   materializeManagerAgentSkillViewInput,
   mergeManagerAgentPluginSkillCatalog,
   executeHomerailPluginTool,
@@ -1462,8 +1463,16 @@ export function createManagerTools(state: {
   const generatedViewDescriptor = responseMode === "voice"
     ? pluginContext?.tools.find((tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view")
     : undefined;
+  const skillViewDefinitions = managerAgentSkillViewToolDefinitions(managerSkills ?? []);
+  const rejectMatchingRawSkillView = (args: Record<string, unknown>): void => {
+    const definition = matchingManagerAgentSkillViewToolDefinition(skillViewDefinitions, args);
+    if (!definition) return;
+    throw new Error(
+      `Generated view data matches loaded Skill template '${definition.template.id}'. Use ${definition.name} so HomeRail preserves the trusted layout.`,
+    );
+  };
   if (generatedViewDescriptor) {
-    for (const definition of managerAgentSkillViewToolDefinitions(managerSkills ?? [])) {
+    for (const definition of skillViewDefinitions) {
       if (tools.some((tool) => tool.name === definition.name)) {
         throw new Error(`Skill view Tool collides with an existing Tool: ${definition.name}`);
       }
@@ -1490,6 +1499,9 @@ export function createManagerTools(state: {
       description: descriptor.description,
       input_schema: structuredClone(descriptor.input_schema),
       async handler(args, context) {
+        if (descriptor.qualified_id === "com.homerail.core:upsert_generated_view") {
+          rejectMatchingRawSkillView(args);
+        }
         return invokePluginTool(descriptor, args, context);
       },
     });
@@ -1516,11 +1528,13 @@ export function createManagerTools(state: {
       description: `Update the currently selected HomeRail Block (${selectedNode.id}) in place. Do not provide an id; HomeRail injects the selected stable id. Omit a2ui to preserve the existing A2UI surface, or provide a2ui to change its presentation. Use the regular generated-view Tool only for an independently useful new Block.`,
       input_schema: inputSchema,
       async handler(args, context) {
-        return invokePluginTool(selectedViewDescriptor, {
+        const input = {
           ...args,
           id: selectedNode.id,
           ...(args.a2ui === undefined && selectedNode.a2ui ? { a2ui: selectedNode.a2ui } : {}),
-        }, context);
+        };
+        rejectMatchingRawSkillView(input);
+        return invokePluginTool(selectedViewDescriptor, input, context);
       },
     });
   }

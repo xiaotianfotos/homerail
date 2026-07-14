@@ -130,6 +130,43 @@ function requireTool(tools: ComparableTool[], name: string): ComparableTool {
   return tool;
 }
 
+function visualManagerSkill(): ManagerAgentPromptSkill {
+  return {
+    id: "visual-skill",
+    content: "Use the profile template for compact answers.",
+    view_templates: [{
+      id: "profile",
+      description: "Show a compact entity profile.",
+      data_schema: {
+        type: "object",
+        properties: {
+          title: { type: "string", minLength: 1, maxLength: 200 },
+          value: { type: "number" },
+        },
+        required: ["title", "value"],
+        additionalProperties: false,
+      },
+      a2ui: {
+        version: "v1.0",
+        catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
+        components: [{
+          id: "root",
+          component: "HrMetric",
+          label: { path: "/data/title" },
+          value: { path: "/data/value" },
+        }],
+      },
+      defaults: {
+        surface: "result",
+        importance: "primary",
+        density: "summary",
+        canvas_size: "1x1",
+        persistence: "session",
+      },
+    }],
+  };
+}
+
 describe.each<ManagerAgentResponseMode>(["chat", "voice"])(
   "Manager Agent %s tool catalog parity",
   (responseMode) => {
@@ -176,40 +213,7 @@ describe("Manager Agent deterministic result envelope parity", () => {
 
   it("builds and executes the same validated Skill A2UI Tool in both voice harnesses", async () => {
     const context = assemblePluginTurnContext(undefined, { modality: "voice" });
-    const managerSkills: ManagerAgentPromptSkill[] = [{
-      id: "visual-skill",
-      content: "Use the profile template for compact answers.",
-      view_templates: [{
-        id: "profile",
-        description: "Show a compact entity profile.",
-        data_schema: {
-          type: "object",
-          properties: {
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            value: { type: "number" },
-          },
-          required: ["title", "value"],
-          additionalProperties: false,
-        },
-        a2ui: {
-          version: "v1.0",
-          catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
-          components: [{
-            id: "root",
-            component: "HrMetric",
-            label: { path: "/data/title" },
-            value: { path: "/data/value" },
-          }],
-        },
-        defaults: {
-          surface: "result",
-          importance: "primary",
-          density: "summary",
-          canvas_size: "1x1",
-          persistence: "session",
-        },
-      }],
-    }];
+    const managerSkills = [visualManagerSkill()];
     const { hostTools, workerTools } = createHarnessTools(
       "voice",
       context,
@@ -224,6 +228,29 @@ describe("Manager Agent deterministic result envelope parity", () => {
 
     const input = { id: "profile-one", data: { title: "Profile", value: 4 } };
     expect(await hostSkillTools[0].handler(input)).toEqual(await workerSkillTools[0].handler(input));
+  });
+
+  it("rejects raw generated-view submissions already owned by a loaded Skill template", async () => {
+    const context = assemblePluginTurnContext(undefined, { modality: "voice" });
+    const { hostTools, workerTools } = createHarnessTools(
+      "voice",
+      context,
+      undefined,
+      undefined,
+      [visualManagerSkill()],
+    );
+    const generatedViewTool = context.tools.find(
+      (tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view",
+    )!.wire_id;
+    const rawInput = {
+      id: "profile-one",
+      content: { data: { title: "Profile", value: 4 } },
+    };
+    for (const tools of [hostTools, workerTools]) {
+      await expect(requireTool(tools, generatedViewTool).handler(rawInput)).rejects.toThrow(
+        /Use skill_view_visual-skill_profile_/,
+      );
+    }
   });
 
   it("keeps side-effect-free Host Codex and Worker handlers compatible", async () => {

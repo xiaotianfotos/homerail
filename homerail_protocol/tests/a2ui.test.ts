@@ -25,7 +25,7 @@ function surface(): HomerailA2uiSurfaceV1 {
     catalogId: HOMERAIL_A2UI_CATALOG_ID,
     surfaceProperties: { agentDisplayName: "Release agent" },
     components: [
-      { id: "root", component: "Column", children: ["title", "metrics", "checks"] },
+      { id: "root", component: "Column", children: ["title", "metrics", "checks", "step"] },
       {
         id: "title",
         component: "Text",
@@ -49,6 +49,15 @@ function surface(): HomerailA2uiSurfaceV1 {
         itemTitlePath: "/label",
         itemDetailPath: "/detail",
         itemStatusPath: "/status",
+      },
+      {
+        id: "step",
+        component: "HrStep",
+        index: 1,
+        label: "Prepare release",
+        detail: "Verified sequence",
+        tone: "info",
+        child: "passed",
       },
     ],
   };

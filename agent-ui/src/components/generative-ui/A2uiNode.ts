@@ -601,6 +601,20 @@ function renderNode(
       ]),
     ])
   }
+  if (component.component === 'HrStep') {
+    const index = text(component.index, runtime, scope) || String((scope.index ?? 0) + 1)
+    const detail = text(component.detail, runtime, scope)
+    return h('article', nodeAttrs({ 'data-tone': tone(component.tone, runtime, scope) }), [
+      h('div', { class: 'hr-a2ui__step-rail', 'aria-hidden': true }, [h('span', index)]),
+      h('div', { class: 'hr-a2ui__step-content' }, [
+        h('header', [
+          h('strong', text(component.label, runtime, scope)),
+          detail ? h('small', detail) : null,
+        ]),
+        child(component.child),
+      ]),
+    ])
+  }
   if (component.component === 'HrList') {
     return h('ul', nodeAttrs(), sourceItems(component, runtime, scope).map((item, index) => {
       const itemTone = a2uiTone(readA2uiItemPointer(item, component.itemStatusPath))

@@ -79,7 +79,7 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
       if (skill.view_templates?.length) {
         lines.push(
           "",
-          "Validated Skill visual templates are available as skill_view_* Tools. Prefer the matching template Tool so the model supplies business data while HomeRail preserves the layout:",
+          "Validated Skill visual templates are available as skill_view_* Tools. When one matches the requested result, you must call that template Tool and must not recreate its layout with the raw generated-view Tool:",
           ...skill.view_templates.map((template) => `- ${template.id}: ${template.description}`),
         );
       }

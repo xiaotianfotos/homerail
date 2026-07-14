@@ -124,7 +124,7 @@ export function managerAgentSkillViewToolDefinitions(
           template.description,
           "Provide semantic data only; HomeRail owns the layout. data.title is used as the Block title.",
           "HomeRail A2UI formatString accepts only ${/absolute/pointer} and template-relative ${pointer} interpolation; escape a literal opener as \\${. Nested functions and other expressions are rejected.",
-          "Reuse the current selected Block id for follow-up updates. Prefer this Tool over the raw generated-view Tool when this template matches.",
+          "Reuse the current selected Block id for follow-up updates. When this schema matches, use this Tool; the raw generated-view Tool rejects matching data so HomeRail can preserve this layout.",
         ].join(" "),
         input_schema: templateToolInputSchema(template),
         skill_id: skill.id,
@@ -133,6 +133,31 @@ export function managerAgentSkillViewToolDefinitions(
     }
   }
   return definitions;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+/**
+ * Detects when a raw generated-view submission is carrying data already owned
+ * by a loaded Skill template. Callers can reject that raw submission and make
+ * the model use the trusted template Tool instead of recreating its layout.
+ */
+export function matchingManagerAgentSkillViewToolDefinition(
+  definitions: readonly ManagerAgentSkillViewToolDefinitionV1[],
+  generatedViewInput: Record<string, unknown>,
+): ManagerAgentSkillViewToolDefinitionV1 | undefined {
+  const content = record(generatedViewInput.content);
+  const data = record(content?.data);
+  const id = typeof generatedViewInput.id === "string" ? generatedViewInput.id.trim() : "";
+  if (!id || !data) return undefined;
+  const candidate = { id, data };
+  return definitions.find((definition) =>
+    validateHomerailPluginToolInput(definition.input_schema, candidate).valid
+  );
 }
 
 function validationMessage(errors: Array<{ path?: string; message?: string }>): string {

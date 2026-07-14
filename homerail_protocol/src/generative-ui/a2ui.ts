@@ -284,6 +284,15 @@ export interface HomerailA2uiProgressComponentV1 extends A2uiComponentCommonV1 {
   tone?: HomerailA2uiToneV1;
 }
 
+export interface HomerailA2uiStepComponentV1 extends A2uiComponentCommonV1 {
+  component: "HrStep";
+  index: A2uiDynamicValueV1;
+  label: A2uiDynamicStringV1;
+  detail?: A2uiDynamicStringV1;
+  tone?: HomerailA2uiToneV1;
+  child: string;
+}
+
 interface HomerailA2uiSourceComponentV1 extends A2uiComponentCommonV1 {
   source: A2uiDataBindingV1;
   maxItems?: number;
@@ -389,6 +398,7 @@ export type HomerailA2uiCatalogComponentV1 =
   | HomerailA2uiMetricComponentV1
   | HomerailA2uiStatusBadgeComponentV1
   | HomerailA2uiProgressComponentV1
+  | HomerailA2uiStepComponentV1
   | HomerailA2uiListComponentV1
   | HomerailA2uiTableComponentV1
   | HomerailA2uiTimelineComponentV1
@@ -554,6 +564,7 @@ function childEdges(component: A2uiComponentV1, index: number): ComponentEdge[] 
     case "Card":
     case "Button":
     case "HrGridItem":
+    case "HrStep":
       return [{ id: component.child, path: `${base}/child`, template: false }];
     case "Tabs":
       return component.tabs.map((tab, tabIndex) => ({
@@ -952,6 +963,12 @@ export function analyzeHomerailA2uiSurfaceSemantics(
       case "HrProgress":
         validateDynamic(component.label, `${base}/label`, scope);
         validateDynamic(component.value, `${base}/value`, scope);
+        validateDynamic(component.tone, `${base}/tone`, scope);
+        break;
+      case "HrStep":
+        validateDynamic(component.index, `${base}/index`, scope);
+        validateDynamic(component.label, `${base}/label`, scope);
+        validateDynamic(component.detail, `${base}/detail`, scope);
         validateDynamic(component.tone, `${base}/tone`, scope);
         break;
       case "HrList":

@@ -44,8 +44,8 @@
                   "Text", "Image", "Icon", "Video", "AudioPlayer", "Row", "Column", "List",
                   "Card", "Tabs", "Modal", "Divider", "Button", "TextField", "CheckBox",
                   "ChoicePicker", "Slider", "DateTimeInput", "HrGrid", "HrGridItem", "HrSection",
-                  "HrMetric", "HrStatusBadge", "HrProgress", "HrList", "HrTable", "HrTimeline",
-                  "HrBarChart", "HrDag", "HrDisclosure", "HrLink", "HrArtifact", "HrIf"
+                  "HrMetric", "HrStatusBadge", "HrProgress", "HrStep", "HrList", "HrTable",
+                  "HrTimeline", "HrBarChart", "HrDag", "HrDisclosure", "HrLink", "HrArtifact", "HrIf"
                 ]
               }
             },

@@ -551,6 +551,13 @@ const homerailComponentSchemas = [
     value: dynamicNumberRef,
     tone: a2uiTone,
   }, ["value"]),
+  componentSchema("HrStep", {
+    index: dynamicValueRef,
+    label: dynamicStringRef,
+    detail: dynamicStringRef,
+    tone: a2uiTone,
+    child: identifier,
+  }, ["index", "label", "child"]),
   componentSchema("HrList", {
     ...sourceProperties,
     itemTitlePath: a2uiItemPointer,
@@ -615,6 +622,7 @@ const componentDescriptions: Readonly<Record<string, string>> = {
   HrMetric: "A compact label, value, and optional unit for scannable facts.",
   HrStatusBadge: "A short status label using HomeRail semantic tones.",
   HrProgress: "A bounded zero-to-one-hundred progress indicator.",
+  HrStep: "One ordered step with a connected marker and arbitrary rich child content.",
   HrList: "A dense data-bound list rendered without expanding a component template.",
   HrTable: "A compact data-bound table with typed column formatting.",
   HrTimeline: "A chronological data-bound sequence of events or steps.",
