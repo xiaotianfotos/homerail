@@ -612,8 +612,10 @@ describe("built-in DAG patterns", () => {
       additionalProperties: false,
       required: ["test_command", "evidence"],
     });
+    expect(pattern.parsed.meta.agents.builder?.system).toContain("input:target");
     expect(pattern.parsed.meta.agents.builder?.system).toContain("input:challenge.test_command");
     expect(pattern.parsed.meta.agents.builder?.system).toContain("input:correction");
+    expect(pattern.parsed.meta.agents.builder?.system).toContain("do not assume the prior file write succeeded");
     expect(pattern.parsed.meta.agents.builder?.system).toContain("fix_applied");
     expect(pattern.parsed.meta.agents.verifier?.system).toContain("Manager-owned input:check");
     expect(pattern.parsed.meta.agents.verifier?.system).toContain("check.ok is true");
@@ -624,6 +626,9 @@ describe("built-in DAG patterns", () => {
     expect(builder?.extra?.agent_runtime).toMatchObject({
       allowed_builtin_tools: ["Write"],
       allowed_dag_tools: ["handoff"],
+    });
+    expect(builder?.extra?.workflow_spec_v1).toMatchObject({
+      input_contracts: { target: "Target", challenge: "Challenge" },
     });
     expect(verifier?.extra?.agent_runtime).toMatchObject({
       allowed_builtin_tools: [],

@@ -628,7 +628,7 @@ const quorum: DAGPatternDefinition = {
 
 const sparring: DAGPatternDefinition = {
   id: "sparring",
-  version: "1.2.0",
+  version: "1.2.1",
   name: "Sparring",
   summary: "A breaker creates a concrete challenge, a builder addresses it, and a fresh verifier settles the result.",
   intent: "Separate adversarial discovery from repair so neither role grades its own output.",
@@ -689,12 +689,12 @@ const sparring: DAGPatternDefinition = {
       },
       agents: {
         breaker: { system: "Create the smallest reproducible challenge under {{protected_path}} that satisfies the supplied task. Your final action must call handoff on challenge with content shaped exactly as {artifact_path: string, test_command: string[], evidence: string}. Copy any supplied test_command exactly. If input:correction is present, do not call Write, Read, Bash, or any other tool except handoff; immediately hand off the existing challenge. Do not rename fields, add fields, scaffold unrelated files, repeatedly refine the artifact, or fix implementation code." },
-        builder: { system: "Read input:challenge as one object. Make the smallest requested fix only under {{writable_path}}. Your final action must call handoff on repaired with content shaped exactly as {test_command: string[], evidence: string}. Set test_command to the exact input:challenge.test_command array. If input:correction is present, the previous attempt already performed the file work: do not call Write, Read, Bash, or any other tool except handoff; immediately hand off the existing result. Never use alternate fields such as fix_applied or test_result. The breaker artifact is read-only and must never be weakened, deleted, or replaced." },
+        builder: { system: "Read input:target and input:challenge as the complete repair request. Make the smallest requested fix only under {{writable_path}} and do not claim success unless the required Write call succeeded. Your final action must call handoff on repaired with content shaped exactly as {test_command: string[], evidence: string}. Set test_command to the exact input:challenge.test_command array. If input:correction is present, correct the handoff shape but do not assume the prior file write succeeded; repeat the smallest idempotent Write required by input:target and input:challenge before handoff when necessary. Never use alternate fields such as fix_applied or test_result. The breaker artifact is read-only and must never be weakened, deleted, or replaced." },
         verifier: { system: "From fresh context, inspect input:challenge, input:repair, and the Manager-owned input:check. Never execute test_command yourself and do not use Bash, Read, Write, or any tool except handoff. If challenge.test_command and repair.test_command are identical, check.ok is true, and check.exit_code is 0, immediately call handoff on verdict with exactly {verdict:'pass',evidence:string}; otherwise hand off exactly {verdict:'fail',evidence:string}. Do not add fields, answer with text, or modify files." },
       },
       nodes: {
         break: { kind: "agent", agent: "breaker", allowed_builtin_tools: ["Write"], allowed_dag_tools: ["handoff"], workspace_access: { writable_paths: ["{{protected_path}}"], readonly_paths: ["{{writable_path}}"] }, inputs: { target: { contract: "Target" } }, outputs: { challenge: { contract: "Challenge" } } },
-        build: { kind: "agent", agent: "builder", allowed_builtin_tools: ["Write"], allowed_dag_tools: ["handoff"], workspace_access: { writable_paths: ["{{writable_path}}"], readonly_paths: ["{{protected_path}}"] }, inputs: { challenge: { contract: "Challenge" } }, outputs: { repaired: { contract: "Repair" } } },
+        build: { kind: "agent", agent: "builder", allowed_builtin_tools: ["Write"], allowed_dag_tools: ["handoff"], workspace_access: { writable_paths: ["{{writable_path}}"], readonly_paths: ["{{protected_path}}"] }, inputs: { target: { contract: "Target" }, challenge: { contract: "Challenge" } }, outputs: { repaired: { contract: "Repair" } } },
         deterministic_check: { kind: "command", inputs: { challenge: { contract: "Challenge" }, repair: { contract: "Repair" } }, outputs: { passed: {}, failed: {} }, config: { input: "challenge", command_field: "test_command", cwd: "$run_workspace", timeout_ms: 120000, success_port: "passed", failure_port: "failed", parse_stdout: "text" } },
         verify: { kind: "agent", agent: "verifier", allowed_builtin_tools: [], allowed_dag_tools: ["handoff"], workspace_access: { writable_paths: [], readonly_paths: ["{{protected_path}}", "{{writable_path}}"] }, inputs: { challenge: { contract: "Challenge" }, repair: { contract: "Repair" }, check: {} }, outputs: { verdict: { contract: "Verdict" } } },
         verdict_gate: { kind: "condition", inputs: { verdict: { contract: "Verdict" } }, outputs: { passed: { contract: "Verdict" }, disputed: { contract: "Verdict" } }, config: { field: "verdict", routes: { pass: "passed", fail: "disputed" }, default: "disputed" } },
@@ -704,6 +704,7 @@ const sparring: DAGPatternDefinition = {
       },
       edges: [
         { from: "$run.input", to: "break.target" },
+        { from: "$run.input", to: "build.target" },
         { from: "break.challenge", to: "build.challenge" },
         { from: "break.challenge", to: "deterministic_check.challenge" },
         { from: "break.challenge", to: "verify.challenge" },

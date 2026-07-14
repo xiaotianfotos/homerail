@@ -1,0 +1,2 @@
+# HRP migration files are byte-verified canonical JSON.
+plugins/**/migrations/*.json text eol=lf

@@ -147,6 +147,8 @@ describe("PR Review scenario assets", () => {
     expect(agents.preparer?.system).toContain("Never create /workspace/repository.git");
     expect(agents.preparer?.system).toContain("never claim a required field is missing after using it");
     expect(agents.preparer?.system).toContain("Do not use git verify-commit");
+    expect(agents.preparer?.system).toContain("git diff --shortstat");
+    expect(agents.preparer?.system).toContain("Never put the per-file --stat output in diff_stat");
     expect(agents.preparer?.system).not.toContain("https://github.com/<repo>.git");
     expect(agents.preparer?.system).not.toContain('"status":"ready"');
     expect(result.canonical?.policies?.max_corrections_per_node).toBe(5);

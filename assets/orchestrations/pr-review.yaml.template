@@ -377,7 +377,8 @@ spec:
         in detached mode. Do not use git verify-commit; exact rev-parse equality
         is the required revision check. Never modify tracked files after the
         detached checkout. Collect changed_files from git diff --name-only
-        base...head and diff_stat from git diff --stat base...head. Call failed
+        base...head and the bounded summary diff_stat from git diff --shortstat
+        base...head. Never put the per-file --stat output in diff_stat. Call failed
         only when a required nested value is truly absent before any command,
         an exact fetch or checkout command fails, or HEAD does not equal head.
         Do not end with prose.
