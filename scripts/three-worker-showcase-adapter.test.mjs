@@ -63,3 +63,14 @@ test('the visual harness renders the real accepted run identity', () => {
   assert.match(visual, /run_id=\$\{encodeURIComponent\(snapshot\.run_id\)\}/)
   assert.doesNotMatch(visual, /run_id=run%3Avisual/)
 })
+
+test('the live validator consumes supervision cursors through the authenticated mutation boundary', () => {
+  const validator = read('scripts/validate-three-worker-showcase.mjs')
+  const start = validator.indexOf('async function fetchSupervisionDigest')
+  const end = validator.indexOf('\nfunction compactRound', start)
+  const supervision = validator.slice(start, end)
+
+  assert.match(supervision, /\/supervision`,\s*\{\s*method: "POST"/)
+  assert.match(supervision, /body: JSON\.stringify\(\{ consumer_id: consumerId, max_milestones: 12 \}\)/)
+  assert.doesNotMatch(supervision, /supervision\?consumer_id=/)
+})

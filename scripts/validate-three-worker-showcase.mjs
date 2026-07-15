@@ -624,7 +624,11 @@ async function fetchSupervisionDigest(runId, consumerLabel) {
   let previousFingerprint = "";
   while (true) {
     const page = await request(
-      `/api/runs/${encodeURIComponent(runId)}/supervision?consumer_id=${encodeURIComponent(consumerId)}&max_milestones=12`,
+      `/api/runs/${encodeURIComponent(runId)}/supervision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ consumer_id: consumerId, max_milestones: 12 }),
+      },
     );
     pages.push(page);
     const digest = page.milestone_digest;
