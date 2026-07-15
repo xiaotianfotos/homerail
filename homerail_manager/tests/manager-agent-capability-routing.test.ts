@@ -64,6 +64,7 @@ vi.mock("../src/server/host-shell-manager-agent.js", () => ({
 
 vi.mock("../src/server/host-codex-manager-agent.js", () => ({
   HostCodexManagerAgentExecutionError: class extends Error {},
+  HostCodexManagerAgentObjectiveUnsatisfiedError: class extends Error {},
   loadVoiceSystemContract: () => ({ prompt: "voice test", source: "test" }),
   runHostCodexManagerAgentTurn: async (input: Record<string, unknown>) => {
     captured.host.push(structuredClone(input));
