@@ -71,37 +71,39 @@ function setupRun(
 ): void {
   const roundId = round.round_id ?? "round-0001";
   ensureRunDir(runId);
-  for (const actorId of actorIds) {
-    registerDagActor({
+  getDb().transaction(() => {
+    for (const actorId of actorIds) {
+      registerDagActor({
+        run_id: runId,
+        actor_id: actorId,
+        node_id: `node-${actorId}`,
+        role: `${actorId} specialist`,
+        surface_id: `surface:${actorId}`,
+      });
+      acquireDagActorLease({
+        run_id: runId,
+        actor_id: actorId,
+        target_type: "worker",
+        target_id: `private-worker-${actorId}`,
+        now: BASE_TIME,
+      });
+    }
+    createInitialDagRunRound({
       run_id: runId,
-      actor_id: actorId,
-      node_id: `node-${actorId}`,
-      role: `${actorId} specialist`,
-      surface_id: `surface:${actorId}`,
+      round_id: roundId,
+      target_actor_ids: actorIds,
+      ...(round.status ? { status: round.status } : {}),
+      ...(round.await_node_id ? { await_node_id: round.await_node_id } : {}),
+      opened_at: BASE_TIME,
+      ...(round.closed_at === undefined ? {} : { closed_at: round.closed_at }),
     });
-    acquireDagActorLease({
-      run_id: runId,
-      actor_id: actorId,
-      target_type: "worker",
-      target_id: `private-worker-${actorId}`,
-      now: BASE_TIME,
-    });
-  }
-  createInitialDagRunRound({
-    run_id: runId,
-    round_id: roundId,
-    target_actor_ids: actorIds,
-    ...(round.status ? { status: round.status } : {}),
-    ...(round.await_node_id ? { await_node_id: round.await_node_id } : {}),
-    opened_at: BASE_TIME,
-    ...(round.closed_at === undefined ? {} : { closed_at: round.closed_at }),
-  });
-  for (const actorId of actorIds) {
-    append(
-      { run_id: runId, actor_id: actorId, sequence: 1, type: "started", round_id: roundId },
-      round.project_started !== false,
-    );
-  }
+    for (const actorId of actorIds) {
+      append(
+        { run_id: runId, actor_id: actorId, sequence: 1, type: "started", round_id: roundId },
+        round.project_started !== false,
+      );
+    }
+  }).immediate();
 }
 
 async function listen(server: http.Server): Promise<number> {
@@ -330,9 +332,11 @@ describe("DAG Manager Supervisor", () => {
     const runId = "supervisor-bounded-actors";
     const actorIds = Array.from({ length: 65 }, (_, index) => `actor-${String(index + 1).padStart(2, "0")}`);
     setupRun(runId, actorIds, { project_started: false });
-    for (const actorId of actorIds) {
-      append({ run_id: runId, actor_id: actorId, sequence: 2, type: "completed" });
-    }
+    getDb().transaction(() => {
+      for (const actorId of actorIds) {
+        append({ run_id: runId, actor_id: actorId, sequence: 2, type: "completed" });
+      }
+    }).immediate();
 
     const snapshot = getDagSupervisionSnapshot({ run_id: runId, consumer_id: "actor-bound-reader" });
     expect(snapshot).toMatchObject({ actor_count: 65, actors_truncated: true });
