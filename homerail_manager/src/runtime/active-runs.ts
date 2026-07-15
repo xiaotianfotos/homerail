@@ -50,6 +50,7 @@ import type {
   PersistedGraphData,
   PersistedRunMetadata,
 } from "../persistence/types.js";
+import { dbTransaction } from "../persistence/db.js";
 import {
   getDagSessionIndex,
   upsertDagSessionIndex,
@@ -314,6 +315,33 @@ function _logicalActorModelProfile(run: ActiveRun, node: DAGGraphNode): Record<s
   };
 }
 
+function _assertLogicalActorIdentities(nodes: readonly DAGGraphNode[]): void {
+  const actorOwners = new Map<string, string>();
+  const surfaceOwners = new Map<string, string>();
+  for (const node of nodes) {
+    if (_isGatewayNode(node)) continue;
+    const actorId = _logicalActorId(node);
+    const actorOwner = actorOwners.get(actorId);
+    if (actorOwner) {
+      throw new DagActorConflictError(
+        "actor_identity_conflict",
+        `DAG actor ${actorId} is configured for both nodes ${actorOwner} and ${node.node_id}`,
+      );
+    }
+    actorOwners.set(actorId, node.node_id);
+
+    const surfaceId = _logicalActorSurface(node, actorId);
+    const surfaceOwner = surfaceOwners.get(surfaceId);
+    if (surfaceOwner) {
+      throw new DagActorConflictError(
+        "actor_identity_conflict",
+        `DAG surface ${surfaceId} is configured for both nodes ${surfaceOwner} and ${node.node_id}`,
+      );
+    }
+    surfaceOwners.set(surfaceId, node.node_id);
+  }
+}
+
 function _ensureLogicalActor(run: ActiveRun, node: DAGGraphNode): DagActorRecord {
   const existing = getDagActorByNode(run.runId, node.node_id);
   if (existing) return existing;
@@ -330,6 +358,7 @@ function _ensureLogicalActor(run: ActiveRun, node: DAGGraphNode): DagActorRecord
 }
 
 function _registerLogicalActors(run: ActiveRun): void {
+  _assertLogicalActorIdentities(run.dagRun.graph.nodes);
   for (const node of run.dagRun.graph.nodes) {
     if (!_isGatewayNode(node)) _ensureLogicalActor(run, node);
   }
@@ -541,8 +570,11 @@ export function createActiveRun(
     nodeIndex: _buildNodeIndex(parsedDAG.graph.nodes),
     nodeSessions: new Map(),
   };
-  writeRunMetadata(runId, serializeRunMetadata(run));
-  _registerLogicalActors(run);
+  _assertLogicalActorIdentities(run.dagRun.graph.nodes);
+  dbTransaction(() => {
+    writeRunMetadata(runId, serializeRunMetadata(run));
+    _registerLogicalActors(run);
+  });
   store.set(runId, run);
   emit("dag:run_created", {
     runId,
@@ -1508,6 +1540,7 @@ export function appendRunNode(
     edges: [...run.dagRun.graph.edges, ...afterEdges, ...outputEdges],
   };
   assertGraphValid(nextGraph);
+  _assertLogicalActorIdentities(nextGraph.nodes);
 
   run.dagRun.graph.nodes.push(node);
   run.dagRun.graph.edges.push(...afterEdges, ...outputEdges);

@@ -24,6 +24,7 @@ import {
   _clearActiveRuns,
   buildCurrentDispatchEnvelope,
   createActiveRun,
+  getActiveRun,
   recoverAllActiveRuns,
 } from "../src/runtime/active-runs.js";
 
@@ -50,6 +51,36 @@ function createCommand(overrides: Partial<Parameters<typeof createDagActorComman
     payload: { instruction: "Find three primary sources" },
     ...overrides,
   });
+}
+
+function twoActorDag(secondActorId: string, secondSurfaceId: string) {
+  return parseDAGYaml(`
+name: logical-actor-identity
+workflow_id: logical-actor-identity
+agents:
+  worker:
+    agent_type: deterministic
+    system: HANDOFF port=done content=ok
+nodes:
+  first:
+    agent: worker
+    extra:
+      agent_runtime:
+        actor_id: shared
+        surface_id: surface-first
+    outputs:
+      done:
+        to: ""
+  second:
+    agent: worker
+    extra:
+      agent_runtime:
+        actor_id: ${secondActorId}
+        surface_id: ${secondSurfaceId}
+    outputs:
+      done:
+        to: ""
+`);
 }
 
 describe("durable DAG logical actors and command inbox", () => {
@@ -259,6 +290,30 @@ nodes:
       },
     });
     expect(listDagActors("runtime-run")).toHaveLength(3);
+  });
+
+  it.each([
+    ["actor", "shared", "surface-second", "DAG actor shared is configured for both nodes"],
+    ["surface", "second", "surface-first", "DAG surface surface-first is configured for both nodes"],
+  ])("rejects duplicate %s ownership before persisting a run", (_kind, actorId, surfaceId, message) => {
+    const runId = `duplicate-${_kind}-run`;
+    expect(() => createActiveRun(runId, twoActorDag(actorId, surfaceId))).toThrow(message);
+
+    expect(getActiveRun(runId)).toBeUndefined();
+    expect(getDb().prepare("SELECT run_id FROM dag_runs WHERE run_id = ?").get(runId)).toBeUndefined();
+    expect(listDagActors(runId)).toEqual([]);
+  });
+
+  it("rolls back the run and previously registered actors when actor persistence fails", () => {
+    const runId = "actor-registration-rollback";
+    const dag = twoActorDag("second", "surface-second");
+    const secondRuntime = dag.graph.nodes[1]?.extra?.agent_runtime as Record<string, unknown>;
+    secondRuntime.role = "x".repeat(257);
+
+    expect(() => createActiveRun(runId, dag)).toThrow("role must be between 1 and 256 characters");
+    expect(getActiveRun(runId)).toBeUndefined();
+    expect(getDb().prepare("SELECT run_id FROM dag_runs WHERE run_id = ?").get(runId)).toBeUndefined();
+    expect(listDagActors(runId)).toEqual([]);
   });
 
   it("persists a command before immediate delivery and retains it when the actor is offline", async () => {
