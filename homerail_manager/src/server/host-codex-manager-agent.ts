@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { ensureDefaultWorkspacePath, getHomerailHome } from "../config/env.js";
-import { resolveAssetRoot } from "../assets/root.js";
+import { resolveAssetDirectory } from "../assets/root.js";
 import { codexBinaryNotFoundMessage, resolveCodexBinary } from "./codex-binary.js";
 import {
   readWidgetFile,
@@ -25,6 +25,7 @@ import {
   defaultPrReviewBudgetKey,
   isFullGitRevision,
   managerAgentDagCommandResult,
+  managerAgentDagContextPrompt,
   managerAgentToolSpec,
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
@@ -46,6 +47,7 @@ import {
   type ManagerAgentToolName,
   type ManagerAgentReasoningEffort,
   type ManagerAgentPromptSkill,
+  type ManagerAgentDagContextV1,
   type GenerativeUiCanvasContextV1,
   type HomerailPluginTurnContextV1,
   type HomerailPluginToolExecutionEnvelopeV1,
@@ -174,6 +176,7 @@ export interface HostCodexManagerAgentInput {
   continue_chat?: boolean;
   history?: Array<{ role?: string; content?: string; timestamp?: string }>;
   canvas_context?: GenerativeUiCanvasContextV1;
+  dag_context?: ManagerAgentDagContextV1;
   required_tool_calls?: string[];
   agent_config: ManagerAgentRuntimeConfig;
   managerRestUrl?: string | (() => string);
@@ -855,8 +858,7 @@ export function createManagerTools(state: {
     {
       ...managerAgentToolSpec("list_orchestrations"),
       async handler() {
-        const resolution = resolveAssetRoot();
-        const dir = path.join(resolution.assetRoot, "orchestrations");
+        const dir = resolveAssetDirectory("orchestrations");
         const files = fs.existsSync(dir)
           ? fs.readdirSync(dir).filter((name) =>
             name.endsWith(".yaml") ||
@@ -1968,6 +1970,7 @@ function buildPrompt(
   message: string,
   continueChat: boolean,
   canvasContext?: GenerativeUiCanvasContextV1,
+  dagContext?: ManagerAgentDagContextV1,
 ): string {
   const normalizedHistory = continueChat && Array.isArray(history)
     ? history
@@ -1989,6 +1992,8 @@ function buildPrompt(
       JSON.stringify(canvasContext),
     ].join("\n"));
   }
+  const dagContextPrompt = managerAgentDagContextPrompt(dagContext);
+  if (dagContextPrompt) sections.push(dagContextPrompt);
   sections.push(`New user message:\n${message}`);
   return sections.join("\n\n");
 }
@@ -1998,12 +2003,14 @@ export function _buildManagerAgentPromptForTest(input: {
   message: string;
   continue_chat?: boolean;
   canvas_context?: GenerativeUiCanvasContextV1;
+  dag_context?: ManagerAgentDagContextV1;
 }): string {
   return buildPrompt(
     input.history,
     input.message,
     input.continue_chat !== false,
     input.canvas_context,
+    input.dag_context,
   );
 }
 
@@ -2167,6 +2174,7 @@ async function* runHostCodexManagerAgentTurnEvents(
     message,
     input.continue_chat !== false,
     input.canvas_context,
+    input.dag_context,
   );
   const tools = createManagerTools(
     state,

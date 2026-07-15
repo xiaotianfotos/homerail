@@ -2045,6 +2045,89 @@ describe("voice bootstrap routes", () => {
     expect(upstreamCalls[0][0]).toBe("https://api.xiaomimimo.com/v1/chat/completions");
   });
 
+  it("emulates realtime ASR for an OpenAI-compatible batch-only setting", async () => {
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    upsertProvider({
+      id: "batch-asr-test",
+      name: "Batch ASR Test",
+      default_model: "qwen3-asr-realtime",
+      base_url: "http://voice.test/v1",
+      voice_adapter: "openai_audio",
+      asr_async_url: "http://voice.test/v1/audio/transcriptions",
+      supports_llm: false,
+      supports_asr: true,
+      supports_audio_input: true,
+    });
+    const setting = createSetting({
+      provider_id: "batch-asr-test",
+      model_name: "qwen3-asr-realtime",
+      api_key: "local-no-key",
+      base_url: "http://voice.test/v1",
+      voice_adapter: "openai_audio",
+      asr_async_url: "http://voice.test/v1/audio/transcriptions",
+      supports_llm: false,
+      supports_asr: true,
+      supports_audio_input: true,
+    });
+    await fetch(`${baseUrl}/api/voice`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asr_llm_setting_id: setting.id }),
+    });
+
+    const originalFetch = globalThis.fetch;
+    const upstreamCalls: Array<[string, RequestInit | undefined]> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      if (url.startsWith(baseUrl)) return originalFetch(input, init);
+      upstreamCalls.push([url, init]);
+      return new Response(JSON.stringify({ text: "批量转写成功" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/voice/asr/realtime`);
+    const done = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out waiting for ASR done")), 5_000);
+      ws.on("open", () => {
+        ws.send(Buffer.from([0, 0, 12, 0, 24, 0, 12, 0]));
+        ws.send(JSON.stringify({ type: "finish" }));
+      });
+      ws.on("message", (data) => {
+        const event = JSON.parse(data.toString()) as Record<string, unknown>;
+        if (event.type === "error") {
+          clearTimeout(timer);
+          reject(new Error(String(event.error)));
+        }
+        if (event.type === "transcription.done") {
+          clearTimeout(timer);
+          resolve(event);
+        }
+      });
+      ws.on("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    }).finally(() => ws.close());
+
+    expect(done).toMatchObject({
+      type: "transcription.done",
+      strategy: "emulated_batch",
+      text: "批量转写成功",
+      transcript: "批量转写成功",
+    });
+    expect(upstreamCalls).toHaveLength(1);
+    expect(upstreamCalls[0][0]).toBe("http://voice.test/v1/audio/transcriptions");
+    expect(upstreamCalls[0][1]?.body).toBeInstanceOf(FormData);
+    expect((upstreamCalls[0][1]?.body as FormData).get("model")).toBe("qwen3-asr-realtime");
+  });
+
   it("routes codex_appserver voice turns through the real Manager Agent handoff", async () => {
     _setHostCodexManagerAgentRunnerForTest(async (input) => ({
       text: `host codex handled: ${input.message}`,
@@ -2331,6 +2414,71 @@ describe("voice bootstrap routes", () => {
     } finally {
       await fakeNode.close();
     }
+  });
+
+  it("passes the attached DAG run into later Manager follow-up turns", async () => {
+    const seenDagContexts: Array<HostCodexManagerAgentInput["dag_context"]> = [];
+    let call = 0;
+    _setHostCodexManagerAgentRunnerForTest(async (input) => {
+      call += 1;
+      seenDagContexts.push(input.dag_context);
+      const runIds = call === 1 ? ["run-palquery-supervised"] : [];
+      return {
+        text: call === 1 ? "三个面板已就绪。" : "配种公式已原位更新。",
+        spoken_text: call === 1 ? "三个面板已就绪。" : "配种公式已原位更新。",
+        session_id: input.session_id || "host-session-dag-context",
+        run_id: runIds[0] ?? null,
+        run_ids: runIds,
+        objective: { required: false, satisfied: true, tool_calls: [] },
+        tool_calls: [],
+        tool_results: [],
+        commentary_texts: [],
+        voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
+        worker_id: "host-codex",
+        container_name: null,
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.5",
+        reasoning_effort: "low",
+      }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+
+    for (const text of [
+      "启动三个 Worker。",
+      "配种公式只保留前两组，其他面板保持不变。",
+    ]) {
+      const response = await fetch(
+        `${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        },
+      );
+      expect(response.status).toBe(200);
+    }
+
+    expect(seenDagContexts).toEqual([
+      undefined,
+      {
+        context_version: 1,
+        current_run_id: "run-palquery-supervised",
+        attached_run_ids: ["run-palquery-supervised"],
+      },
+    ]);
   });
 
   it("does not hard-code capability answers when codex_appserver is enabled", async () => {

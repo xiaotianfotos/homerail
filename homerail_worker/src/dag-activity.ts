@@ -7,6 +7,8 @@ import type {
 } from "homerail-protocol";
 import { DAG_ACTIVITY_EVENT_SCHEMA_VERSION, redactTelemetry } from "homerail-protocol";
 
+const MAX_COMPLETED_ACTIVITY_ITEMS = 8;
+
 export interface DagActivityEmitter {
   emit(type: DagActivityType, payload?: Record<string, unknown>): DagActivityEventV1;
   currentSequence(): number;
@@ -20,6 +22,15 @@ function normalizedActivitySummary(value: unknown): string | undefined {
   return summary || undefined;
 }
 
+function normalizedActivityItems(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map(normalizedActivitySummary)
+    .filter((item): item is string => item !== undefined)
+    .slice(0, MAX_COMPLETED_ACTIVITY_ITEMS);
+  return items.length > 0 ? items : undefined;
+}
+
 export function completedActivityPayloadForHandoff(
   handoff: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -27,8 +38,12 @@ export function completedActivityPayloadForHandoff(
   const contentSummary = content && typeof content === "object" && !Array.isArray(content)
     ? (content as Record<string, unknown>).summary
     : undefined;
+  const contentItems = content && typeof content === "object" && !Array.isArray(content)
+    ? (content as Record<string, unknown>).items
+    : undefined;
   const summary = normalizedActivitySummary(contentSummary)
     ?? normalizedActivitySummary(handoff.summary);
+  const items = normalizedActivityItems(contentItems);
   const port = typeof handoff.port === "string"
     ? handoff.port
     : typeof handoff.from_port === "string"
@@ -37,6 +52,7 @@ export function completedActivityPayloadForHandoff(
   return {
     ...(port ? { port } : {}),
     ...(summary ? { summary } : {}),
+    ...(items ? { items } : {}),
   };
 }
 

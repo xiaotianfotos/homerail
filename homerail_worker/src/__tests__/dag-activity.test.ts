@@ -22,10 +22,32 @@ describe("DAG activity emitter", () => {
       summary: "fallback summary",
       content: {
         summary: "Verified route; api_key=sk-secretsecret1234",
+        items: [
+          "step one",
+          "step two api_key=sk-anothersecret1234",
+          "",
+          3,
+        ],
       },
     })).toEqual({
       port: "report",
       summary: "Verified route; api_key=***REDACTED***",
+      items: ["step one", "step two api_key=***REDACTED***"],
+    });
+  });
+
+  it("bounds completion items without exposing arbitrary handoff content", () => {
+    expect(completedActivityPayloadForHandoff({
+      port: "report",
+      content: {
+        summary: "ready",
+        items: Array.from({ length: 10 }, (_, index) => `item ${index + 1}`),
+        private_details: "not telemetry",
+      },
+    })).toEqual({
+      port: "report",
+      summary: "ready",
+      items: Array.from({ length: 8 }, (_, index) => `item ${index + 1}`),
     });
   });
 

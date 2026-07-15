@@ -12,7 +12,11 @@ import {
   normalizeManagerAgentHarness,
   normalizeManagerAgentRuntimeAgentType,
 } from "../src/manager-agent.js";
-import { buildManagerAgentSystemPrompt } from "../src/manager-agent-prompt.js";
+import {
+  buildManagerAgentSystemPrompt,
+  managerAgentDagContextPrompt,
+  normalizeManagerAgentDagContext,
+} from "../src/manager-agent-prompt.js";
 import {
   MANAGER_AGENT_COMMON_TOOL_NAMES,
   MANAGER_AGENT_COMMON_VOICE_TOOL_NAMES,
@@ -68,6 +72,38 @@ describe("Manager Agent required tool objective", () => {
     expect(prompt).toContain("runtime verifies successful tool completion");
     expect(prompt).not.toMatch(/game|showcase|three-worker/i);
     expect(managerAgentRequiredToolObjectivePrompt(undefined)).toBe("");
+  });
+});
+
+describe("Manager Agent DAG context", () => {
+  it("renders a bounded trusted current-run hint for Actor follow-ups", () => {
+    const context = normalizeManagerAgentDagContext({
+      context_version: 1,
+      current_run_id: "run-current",
+      attached_run_ids: [
+        ...Array.from({ length: 20 }, (_, index) => `run-${index + 1}`),
+        "run-current",
+      ],
+    });
+
+    expect(context?.attached_run_ids).toHaveLength(16);
+    expect(context?.attached_run_ids.at(-1)).toBe("run-current");
+    const prompt = managerAgentDagContextPrompt(context);
+    expect(prompt).toContain("authoritative read-only runtime data");
+    expect(prompt).toContain('"current_run_id":"run-current"');
+    expect(prompt).toContain("first call get_dag_supervision");
+    expect(prompt).toContain("send_dag_actor_command");
+    expect(prompt).toContain("keep sibling Actors unchanged");
+    expect(prompt).toContain("Do not create a replacement generated-view Block");
+  });
+
+  it("omits invalid or empty DAG context", () => {
+    expect(normalizeManagerAgentDagContext({
+      context_version: 1,
+      current_run_id: "\nunsafe",
+      attached_run_ids: [],
+    })).toBeUndefined();
+    expect(managerAgentDagContextPrompt(undefined)).toBe("");
   });
 });
 

@@ -1001,10 +1001,15 @@ function _resolveAsrRealtimeRuntime(): {
   const apiKey = setting?.api_key ?? process.env.HOMERAIL_MIMO_API_KEY ?? "";
   const explicitRealtimeUrl = _stringField(setting?.asr_realtime_url) ??
     _stringField(settings.asr_realtime_url);
+  const hasExternalRealtimeUrl = Boolean(
+    explicitRealtimeUrl && !explicitRealtimeUrl.startsWith("/api/"),
+  );
   const strategy: AsrRealtimeStrategy = isArkVoiceSetting(setting)
     ? "ark_voice"
     : _isMimoApiAsr({ baseUrl, model })
       ? "emulated_batch"
+      : !hasExternalRealtimeUrl
+        ? "emulated_batch"
       : "native_realtime";
   return {
     realtimeUrl: explicitRealtimeUrl && !explicitRealtimeUrl.startsWith("/api/")
@@ -1037,12 +1042,21 @@ function _setupEmulatedAsrSession(client: WebSocket, runtime: ReturnType<typeof 
         strategy: runtime.strategy,
       });
       const audioDataUrl = _pcm16ChunksToWavDataUrl(audioChunks);
+      const settingId = runtime.setting?.id;
       const text = isArkVoiceSetting(runtime.setting)
         ? (await transcribeArkAsr(arkVoiceRuntimeFromSetting(runtime.setting, "asr"), audioDataUrl)).text
-        : _extractTranscript(await _transcribeMimoApiAsr({
-          audio_data_url: audioDataUrl,
-          mode: "asr",
-        }));
+        : _extractTranscript(
+          _isMimoApiAsr(runtime)
+            ? await _transcribeMimoApiAsr({
+              audio_data_url: audioDataUrl,
+              mode: "asr",
+            })
+            : await _transcribeOpenAiCompatibleAsr({
+              audio_data_url: audioDataUrl,
+              mode: "asr",
+              asr_llm_setting_id: settingId,
+            }),
+        );
       _sendWsJson(client, {
         type: "transcription.done",
         strategy: runtime.strategy,

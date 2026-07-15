@@ -127,4 +127,21 @@ describe("Generative UI canvas turn context", () => {
     expect(prompt).toContain('"document_id":"canvas-one"');
     expect(prompt.endsWith("New user message:\n深入第二条")).toBe(true);
   });
+
+  it("keeps attached DAG context separate from canvas data and before the user message", () => {
+    const prompt = _buildManagerAgentPromptForTest({
+      message: "只更新配种公式，其他面板不变",
+      dag_context: {
+        context_version: 1,
+        current_run_id: "run-palquery",
+        attached_run_ids: ["run-palquery"],
+      },
+    });
+
+    expect(prompt).toContain("Current HomeRail DAG context");
+    expect(prompt).toContain('"current_run_id":"run-palquery"');
+    expect(prompt).toContain("first call get_dag_supervision");
+    expect(prompt).toContain("keep sibling Actors unchanged");
+    expect(prompt.endsWith("New user message:\n只更新配种公式，其他面板不变")).toBe(true);
+  });
 });

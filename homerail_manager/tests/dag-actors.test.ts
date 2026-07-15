@@ -299,6 +299,32 @@ nodes:
     expect(listDagActors("runtime-run")).toHaveLength(3);
   });
 
+  it("uses a node description as the default human-readable actor role", () => {
+    const dag = parseDAGYaml(`
+name: actor-display-role
+workflow_id: actor-display-role
+agents:
+  worker:
+    agent_type: deterministic
+    system: HANDOFF port=done content=ok
+nodes:
+  profile:
+    description: 基础资料
+    agent: worker
+    outputs:
+      done:
+        to: ""
+`);
+
+    createActiveRun("actor-display-role-run", dag);
+
+    expect(listDagActors("actor-display-role-run")).toContainEqual(expect.objectContaining({
+      actor_id: "profile",
+      node_id: "profile",
+      role: "基础资料",
+    }));
+  });
+
   it.each([
     ["actor", "shared", "surface-second", "DAG actor shared is configured for both nodes"],
     ["surface", "second", "surface-first", "DAG surface surface-first is configured for both nodes"],

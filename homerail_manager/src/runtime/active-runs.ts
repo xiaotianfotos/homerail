@@ -436,7 +436,11 @@ function _logicalActorId(node: DAGGraphNode): string {
 }
 
 function _logicalActorRole(node: DAGGraphNode): string {
-  return _runtimeString(node, "role") ?? node.agent ?? node.name ?? node.node_id;
+  return _runtimeString(node, "role")
+    ?? (typeof node.description === "string" && node.description.trim() ? node.description.trim() : undefined)
+    ?? node.agent
+    ?? node.name
+    ?? node.node_id;
 }
 
 function _logicalActorSurface(node: DAGGraphNode, actorId: string): string {

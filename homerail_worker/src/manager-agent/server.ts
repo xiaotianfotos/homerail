@@ -20,6 +20,7 @@ import {
   defaultPrReviewBudgetKey,
   isFullGitRevision,
   managerAgentDagCommandResult,
+  managerAgentDagContextPrompt,
   managerAgentToolSpec,
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
@@ -42,6 +43,7 @@ import {
   type ManagerAgentWidgetFileToolResult,
   type ManagerAgentToolName,
   type ManagerAgentPromptSkill,
+  type ManagerAgentDagContextV1,
   type ResolvedPrCloseoutInput,
   type GenerativeUiCanvasContextV1,
   type HomerailPluginTurnContextV1,
@@ -73,6 +75,7 @@ interface ChatRequest {
   required_tool_calls?: string[];
   history?: Array<{ role?: string; content?: string; timestamp?: string }>;
   canvas_context?: GenerativeUiCanvasContextV1;
+  dag_context?: ManagerAgentDagContextV1;
   agent_config?: ManagerAgentConfig;
   voice_ui_rules?: { prompt?: string; hash?: string; sources?: string[] };
   voice_system_contract?: { prompt?: string; source?: string };
@@ -1660,6 +1663,7 @@ function buildPrompt(
   message: string,
   continueChat: boolean,
   canvasContext?: GenerativeUiCanvasContextV1,
+  dagContext?: ManagerAgentDagContextV1,
 ): string {
   const history = continueChat
     ? session.messages.slice(-12).map((m) => `${m.role}: ${m.content}`).join("\n")
@@ -1674,6 +1678,8 @@ function buildPrompt(
       JSON.stringify(canvasContext),
     ].join("\n"));
   }
+  const dagContextPrompt = managerAgentDagContextPrompt(dagContext);
+  if (dagContextPrompt) sections.push(dagContextPrompt);
   sections.push(`New user message:\n${message}`);
   return sections.join("\n\n");
 }
@@ -1758,7 +1764,11 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     abortSignal: abortController.signal,
   };
   try {
-    for await (const event of agent.run(buildPrompt(session, message, continueChat, body.canvas_context), tools, context)) {
+    for await (const event of agent.run(
+      buildPrompt(session, message, continueChat, body.canvas_context, body.dag_context),
+      tools,
+      context,
+    )) {
       if (event.type === "text") {
         texts.push(event.text);
       } else if (event.type === "tool_use") {

@@ -55,6 +55,7 @@ function activity(input: {
   sequence: number;
   type?: DagActivityEventV1["type"];
   generation?: number;
+  round_id?: string;
   node_id?: string;
   surface_id?: string;
   event_id?: string;
@@ -64,7 +65,7 @@ function activity(input: {
     schema_version: DAG_ACTIVITY_EVENT_SCHEMA_VERSION,
     event_id: input.event_id ?? `${input.run_id}-${input.actor_id}-g${input.generation ?? 1}-s${input.sequence}`,
     run_id: input.run_id,
-    round_id: `round-${input.generation ?? 1}`,
+    round_id: input.round_id ?? `round-${input.generation ?? 1}`,
     node_id: input.node_id ?? input.actor_id,
     actor_id: input.actor_id,
     generation: input.generation ?? 1,
@@ -511,6 +512,100 @@ describe("DAG Live Surface Projector", () => {
     expect(JSON.stringify(node.content)).not.toContain("untrusted-199");
     expect(Buffer.byteLength(JSON.stringify(node.content), "utf8")).toBeLessThanOrEqual(32 * 1024);
     expect(listDagLiveSurfaceQueue({ run_id: runId }).every((entry) => entry.status === "applied")).toBe(true);
+  });
+
+  it("replaces visible findings when the same Actor enters a new round", () => {
+    const runId = "replace-round-findings";
+    ensureRunDir(runId);
+    register(runId, "worker");
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 1,
+      round_id: "round-0001",
+      type: "started",
+      payload: { message: "first round" },
+    }));
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 2,
+      round_id: "round-0001",
+      type: "finding",
+      payload: { message: "old visible finding" },
+    }));
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 3,
+      round_id: "round-0002",
+      type: "started",
+      payload: { message: "second round" },
+    }));
+
+    expect(contentData(runId, "worker")).toMatchObject({
+      state: { round_id: "round-0002" },
+      findings: [],
+    });
+
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 4,
+      round_id: "round-0002",
+      type: "finding",
+      payload: { message: "new visible finding" },
+    }));
+    const document = getDagLiveSurfaceDocument(runId)!;
+    expect(document.nodes).toHaveLength(1);
+    expect(document.nodes[0]?.id).toBe("surface:worker");
+    expect(contentData(runId, "worker")).toMatchObject({
+      state: { round_id: "round-0002" },
+      findings: [{ title: "new visible finding" }],
+    });
+    expect(JSON.stringify(contentData(runId, "worker"))).not.toContain("old visible finding");
+  });
+
+  it("uses contract-valid completion items as the authoritative visible result", () => {
+    const runId = "completion-items";
+    ensureRunDir(runId);
+    register(runId, "worker");
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 1,
+      round_id: "round-0001",
+      type: "started",
+      payload: { message: "working" },
+    }));
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 2,
+      round_id: "round-0001",
+      type: "finding",
+      payload: { message: "draft result" },
+    }));
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "worker",
+      sequence: 3,
+      round_id: "round-0001",
+      type: "completed",
+      payload: {
+        summary: "final result",
+        items: ["final item one", "final item two"],
+      },
+    }));
+
+    expect(contentData(runId, "worker")).toMatchObject({
+      state: { activity: "completed", summary: "final result", round_id: "round-0001" },
+      findings: [
+        { title: "final item one", sequence: 3 },
+        { title: "final item two", sequence: 3 },
+      ],
+    });
+    expect(JSON.stringify(contentData(runId, "worker"))).not.toContain("draft result");
   });
 
   it("supersedes one Actor generation in place while retaining its old evidence", () => {

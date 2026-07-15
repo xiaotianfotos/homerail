@@ -40,6 +40,7 @@ import {
   normalizeManagerAgentHarness,
   type GenerativeUiNodeV1,
   type HomerailPluginTurnContextV1,
+  type ManagerAgentDagContextV1,
 } from "homerail-protocol";
 import {
   listWidgetFileTypes,
@@ -660,6 +661,17 @@ function workspaceRunIds(workspace: VoiceWorkspace): string[] {
     ...(workspace.manager_run_id ? [workspace.manager_run_id] : []),
   ].map((item) => String(item || "").trim()).filter(Boolean);
   return Array.from(new Set(values));
+}
+
+function workspaceDagContext(workspace: VoiceWorkspace): ManagerAgentDagContextV1 | undefined {
+  const attachedRunIds = workspaceRunIds(workspace).slice(-16);
+  const currentRunId = attachedRunIds.at(-1);
+  if (!currentRunId) return undefined;
+  return {
+    context_version: 1,
+    current_run_id: currentRunId,
+    attached_run_ids: attachedRunIds,
+  };
 }
 
 function syncWorkspaceRunIds(workspace: VoiceWorkspace, runIds: string[]): void {
@@ -1533,6 +1545,7 @@ async function submitVoiceWorkspaceToManagerAgent(
       response_mode: "voice",
       generative_ui_mode: generativeUiMode,
       canvas_context: canvasContext,
+      dag_context: workspaceDagContext(workspace),
       history: managerAgentHistory(workspace),
       agent_config: agentConfig,
       voice_ui_rules: voiceUiRules,

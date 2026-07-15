@@ -36,6 +36,7 @@ import {
   managerAgentRuntimePlacementForHarness,
   normalizeManagerAgentHarness,
   type GenerativeUiCanvasContextV1,
+  type ManagerAgentDagContextV1,
   type ManagerAgentRuntimePlacement,
   type HomerailPluginTurnContextV1,
   type ManagerAgentSkillViewTemplateV1,
@@ -74,6 +75,8 @@ export interface RunManagerAgentTurnInput {
   generative_ui_mode?: GenerativeUiMode;
   /** Bounded authoritative canvas state assembled by Manager for this turn. */
   canvas_context?: GenerativeUiCanvasContextV1;
+  /** Bounded trusted DAG runs attached to the current HomeRail session. */
+  dag_context?: ManagerAgentDagContextV1;
   history?: Array<{ role?: string; content?: string; timestamp?: string }>;
   required_tool_calls?: string[];
   agent_config: ManagerAgentRuntimeConfig;
@@ -443,6 +446,7 @@ async function runManagerAgentTurnOnce(
         continue_chat: input.continue_chat,
         history: input.history,
         canvas_context: input.canvas_context,
+        dag_context: input.dag_context,
         required_tool_calls: input.required_tool_calls,
         agent_config: input.agent_config,
         managerRestUrl: options?.managerRestUrl,
@@ -510,6 +514,7 @@ async function runManagerAgentTurnOnce(
         generative_ui_mode: input.generative_ui_mode,
         history: input.history,
         canvas_context: input.canvas_context,
+        dag_context: input.dag_context,
         required_tool_calls: input.required_tool_calls,
         agent_config: input.agent_config,
         voice_ui_rules: input.voice_ui_rules,
@@ -558,6 +563,7 @@ async function runManagerAgentTurnOnce(
       generative_ui_mode: input.generative_ui_mode,
       history: input.history,
       canvas_context: input.canvas_context,
+      dag_context: input.dag_context,
       required_tool_calls: input.required_tool_calls,
       agent_config: input.agent_config,
       voice_ui_rules: input.voice_ui_rules,
@@ -656,6 +662,7 @@ export async function* runManagerAgentTurnStream(
       continue_chat: input.continue_chat,
       history: input.history,
       canvas_context: input.canvas_context,
+      dag_context: input.dag_context,
       required_tool_calls: input.required_tool_calls,
       agent_config: input.agent_config,
       managerRestUrl: options?.managerRestUrl,
