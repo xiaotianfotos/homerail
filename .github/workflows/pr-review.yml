@@ -1,8 +1,6 @@
 name: HomeRail PR Review
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       repo:
@@ -26,17 +24,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: homerail-pr-review-${{ github.event.pull_request.number || inputs.pr }}
+  group: homerail-pr-review-${{ inputs.pr }}
   cancel-in-progress: true
 
 jobs:
   review:
     name: HomeRail PR Review
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.draft == false &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor == 'xiaotianfotos')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64, homerail-pr-review]
     timeout-minutes: 90
     env:
@@ -130,7 +124,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pr-review-${{ github.event.pull_request.number || inputs.pr }}-${{ github.run_id }}
+          name: pr-review-${{ inputs.pr }}-${{ github.run_id }}
           path: artifacts/pr-review/
           if-no-files-found: warn
           retention-days: 14
