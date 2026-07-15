@@ -20,7 +20,7 @@ const ACTOR_STATES = new Set([
   "cancelled",
 ]);
 const LEASE_STATES = new Set(["leased", "dormant", "retired"]);
-const REQUIRED_ACTIVITY_TYPES = ["started", "progress", "finding", "completed"];
+const REQUIRED_ACTIVITY_TYPES = ["started", "progress", "completed"];
 const MILESTONE_TYPES = new Set(["finding", "blocked", "completed", "failed"]);
 const FORBIDDEN_REPORT_KEY = /^(?:authorization|authorization_token|api_key|apikey|base_url|container_id|credential|credentials|cwd|docker_node_id|home|manager_admin_token|manager_host|manager_url|mutation_token|password|physical_id|private_machine_config|secret|source_path|state_token|target_id|target_type|token|worker_id|workspace|workspace_path)$/i;
 const FORBIDDEN_REPORT_KEY_PART = /(?:^|_)(?:access_token|admin_token|api_key|approval_token|auth_token|credential|mutation_token|password|private_key|refresh_token|secret)(?:$|_)/i;
@@ -621,6 +621,13 @@ export function activityRoundFailures(entries, expectedActorIds, roundId, genera
     ]));
     for (const type of REQUIRED_ACTIVITY_TYPES) {
       if (counts[type] < 1) failures.push(`${actorId} has no ${type} activity in ${roundId}`);
+    }
+    const hasResultActivity = events.some((event) => event.type === "finding")
+      || events.some((event) => event.type === "completed"
+        && typeof event.payload?.summary === "string"
+        && event.payload.summary.trim().length > 0);
+    if (!hasResultActivity) {
+      failures.push(`${actorId} has no finding or result-bearing completed activity in ${roundId}`);
     }
     const finalTerminal = events.filter((event) => event.type === "completed" || event.type === "failed").at(-1);
     if (finalTerminal?.type !== "completed") failures.push(`${actorId} did not finish with completed activity in ${roundId}`);

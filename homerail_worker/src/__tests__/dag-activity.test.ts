@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DagActivityEventV1, DagNodeConfig } from "homerail-protocol";
-import { createDagActivityEmitter } from "../dag-activity.js";
+import { completedActivityPayloadForHandoff, createDagActivityEmitter } from "../dag-activity.js";
 import { createDagTools, createDagToolsState } from "../dag-tools/index.js";
 
 function config(overrides: Partial<DagNodeConfig> = {}): DagNodeConfig {
@@ -16,6 +16,27 @@ function config(overrides: Partial<DagNodeConfig> = {}): DagNodeConfig {
 }
 
 describe("DAG activity emitter", () => {
+  it("projects a redacted contract summary into successful completion activity", () => {
+    expect(completedActivityPayloadForHandoff({
+      port: "report",
+      summary: "fallback summary",
+      content: {
+        summary: "Verified route; api_key=sk-secretsecret1234",
+      },
+    })).toEqual({
+      port: "report",
+      summary: "Verified route; api_key=***REDACTED***",
+    });
+  });
+
+  it("falls back to the handoff summary without exposing arbitrary content", () => {
+    expect(completedActivityPayloadForHandoff({
+      from_port: "done",
+      content: { result: "private model output" },
+      summary: "  concise result  ",
+    })).toEqual({ port: "done", summary: "concise result" });
+  });
+
   it("preserves actor identity and continues a supplied generation sequence", () => {
     const events: DagActivityEventV1[] = [];
     const emitter = createDagActivityEmitter(config({

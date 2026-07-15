@@ -13,11 +13,11 @@ import {
   unsafeReportPaths,
 } from "./three-worker-showcase-contracts.mjs";
 
-function activity(actorId, type, receivedAt, roundId = "round-1") {
+function activity(actorId, type, receivedAt, roundId = "round-1", payload = {}) {
   return {
     seq: receivedAt,
     received_at: receivedAt,
-    event: { actor_id: actorId, round_id: roundId, type },
+    event: { actor_id: actorId, round_id: roundId, type, payload },
   };
 }
 
@@ -85,6 +85,21 @@ test("accepts a corrected Actor attempt when its final terminal activity complet
   assert.match(
     activityRoundFailures(entries, ["goal_scout"], "round-1").join("; "),
     /did not finish with completed activity/,
+  );
+});
+
+test("accepts a result-bearing completion when a real model skips explicit finding activity", () => {
+  const entries = [
+    activity("goal_scout", "started", 10),
+    activity("goal_scout", "progress", 20),
+    activity("goal_scout", "completed", 30, "round-1", { summary: "Verified shortest route" }),
+  ];
+
+  assert.deepEqual(activityRoundFailures(entries, ["goal_scout"], "round-1"), []);
+  entries[2].event.payload = {};
+  assert.match(
+    activityRoundFailures(entries, ["goal_scout"], "round-1").join("; "),
+    /no finding or result-bearing completed activity/,
   );
 });
 

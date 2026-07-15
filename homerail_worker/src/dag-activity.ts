@@ -5,11 +5,39 @@ import type {
   DagActivityType,
   DagNodeConfig,
 } from "homerail-protocol";
-import { DAG_ACTIVITY_EVENT_SCHEMA_VERSION } from "homerail-protocol";
+import { DAG_ACTIVITY_EVENT_SCHEMA_VERSION, redactTelemetry } from "homerail-protocol";
 
 export interface DagActivityEmitter {
   emit(type: DagActivityType, payload?: Record<string, unknown>): DagActivityEventV1;
   currentSequence(): number;
+}
+
+function normalizedActivitySummary(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const redacted = redactTelemetry(value);
+  if (typeof redacted !== "string") return undefined;
+  const summary = redacted.trim();
+  return summary || undefined;
+}
+
+export function completedActivityPayloadForHandoff(
+  handoff: Record<string, unknown>,
+): Record<string, unknown> {
+  const content = handoff.content;
+  const contentSummary = content && typeof content === "object" && !Array.isArray(content)
+    ? (content as Record<string, unknown>).summary
+    : undefined;
+  const summary = normalizedActivitySummary(contentSummary)
+    ?? normalizedActivitySummary(handoff.summary);
+  const port = typeof handoff.port === "string"
+    ? handoff.port
+    : typeof handoff.from_port === "string"
+      ? handoff.from_port
+      : undefined;
+  return {
+    ...(port ? { port } : {}),
+    ...(summary ? { summary } : {}),
+  };
 }
 
 export function createDagActivityEmitter(
