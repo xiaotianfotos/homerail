@@ -310,6 +310,9 @@ export function mutationRoutesHandler(
           tool_calls: Array.isArray(result.tool_calls) ? result.tool_calls : [],
           tool_results: Array.isArray(result.tool_results) ? result.tool_results : [],
           agent_errors: Array.isArray(result.agent_errors) ? result.agent_errors : [],
+          objective: result.objective && typeof result.objective === "object" && !Array.isArray(result.objective)
+            ? result.objective
+            : null,
           run_id: runId,
           run_ids: Array.isArray(result.run_ids) ? result.run_ids : runId ? [runId] : [],
           session_id: sessionId,

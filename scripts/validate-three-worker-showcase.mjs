@@ -218,7 +218,29 @@ function requiredToolCall(turn, toolName) {
   const calls = (Array.isArray(turn?.tool_calls) ? turn.tool_calls : [])
     .filter((call) => call?.name === toolName);
   if (calls.length !== 1) {
-    throw new Error(`Manager must call ${toolName} exactly once; observed ${calls.length}`);
+    const objective = turn?.objective && typeof turn.objective === "object" && !Array.isArray(turn.objective)
+      ? turn.objective
+      : {};
+    const agentConfig = turn?.manager_agent_config
+      && typeof turn.manager_agent_config === "object"
+      && !Array.isArray(turn.manager_agent_config)
+      ? turn.manager_agent_config
+      : {};
+    const diagnostic = {
+      runtime_placement: typeof turn?.runtime_placement === "string" ? turn.runtime_placement : null,
+      agent_type: typeof agentConfig.agent_type === "string" ? agentConfig.agent_type : null,
+      objective_required: objective.required === true,
+      objective_satisfied: objective.satisfied === true,
+      required_tool_calls: Array.isArray(objective.required_tool_calls)
+        ? objective.required_tool_calls.filter((item) => typeof item === "string")
+        : [],
+      observed_tool_calls: Array.isArray(turn?.tool_calls)
+        ? turn.tool_calls.map((call) => call?.name).filter((name) => typeof name === "string")
+        : [],
+    };
+    throw new Error(
+      `Manager must call ${toolName} exactly once; observed ${calls.length}; diagnostic=${canonicalJson(diagnostic)}`,
+    );
   }
   if (!calls[0]?.input || typeof calls[0].input !== "object" || Array.isArray(calls[0].input)) {
     throw new Error(`Manager ${toolName} call is missing a structured input`);

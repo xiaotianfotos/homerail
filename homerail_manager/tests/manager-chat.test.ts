@@ -167,7 +167,12 @@ describe("/api/manager/chat", () => {
         session_id: body.session_id,
         run_id: "run-container-123",
         run_ids: ["run-container-123"],
-        objective: { required: false, satisfied: true, tool_calls: [{ name: "create_and_run", success: true }] },
+        objective: {
+          required: true,
+          required_tool_calls: ["create_and_run"],
+          satisfied: true,
+          tool_calls: [{ name: "create_and_run", success: true }],
+        },
         tool_calls: [{ id: "tool-1", name: "create_and_run", input: { yamlPath: "assets/orchestrations/test.yaml" } }],
         tool_results: [{ tool_use_id: "tool-1", content: "ok" }],
       };
@@ -208,6 +213,7 @@ describe("/api/manager/chat", () => {
         body: JSON.stringify({
           message: "启动一个非 Codex Manager Agent 验证",
           project_id: projectId,
+          required_tool_calls: ["create_and_run"],
         }),
       });
       const body = await response.json() as {
@@ -219,6 +225,7 @@ describe("/api/manager/chat", () => {
           worker_id: string;
           container_name: string;
           tool_calls: Array<{ name: string }>;
+          objective: { required: boolean; required_tool_calls: string[]; satisfied: boolean };
           manager_agent_config: { agent_type: string; provider_name: string; model: string; base_url: string };
         };
       };
@@ -231,6 +238,11 @@ describe("/api/manager/chat", () => {
       expect(body.data.worker_id).toBe("manager-agent-container-test");
       expect(body.data.container_name).toBe(`homerail-manager-agent-${projectId}`);
       expect(body.data.tool_calls).toContainEqual(expect.objectContaining({ name: "create_and_run" }));
+      expect(body.data.objective).toMatchObject({
+        required: true,
+        required_tool_calls: ["create_and_run"],
+        satisfied: true,
+      });
       expect(body.data.manager_agent_config).toMatchObject({
         agent_type: "claude-sdk",
         provider_name: "qwen36",
@@ -241,6 +253,7 @@ describe("/api/manager/chat", () => {
       expect(observedChatBodies[0]).toMatchObject({
         message: "启动一个非 Codex Manager Agent 验证",
         project_id: projectId,
+        required_tool_calls: ["create_and_run"],
         agent_config: {
           agent_type: "claude-sdk",
           provider_name: "qwen36",
