@@ -9,6 +9,8 @@ import { runPrompt } from "./prompt-runner.js";
 import type { PromptJob } from "./prompt-runner.js";
 import {
   DAG_TRANSPORT_FENCE_CAPABILITY,
+  DAG_TRANSPORT_FENCE_V1_CAPABILITY,
+  type DagActorCheckpointV1,
   type AgentBuiltinToolName,
   type DagAdvisorConfig,
   type DagAgentToolName,
@@ -37,6 +39,7 @@ const CONFIGURED_CAPABILITIES = (process.env.HOMERAIL_WORKER_CAPABILITIES ?? "")
   .filter((capability) => capability.length > 0);
 const CAPABILITIES = Array.from(new Set([
   ...CONFIGURED_CAPABILITIES,
+  DAG_TRANSPORT_FENCE_V1_CAPABILITY,
   DAG_TRANSPORT_FENCE_CAPABILITY,
 ]));
 
@@ -123,6 +126,9 @@ client.on("task", async (msg) => {
     hasManagerEnvelope: Boolean(envelope),
   });
   const checkpointResume = envelope ? parseCheckpointResume(envelope.checkpointResume) : undefined;
+  const actorCheckpoint = envelope?.actorCheckpoint && typeof envelope.actorCheckpoint === "object"
+    ? envelope.actorCheckpoint as DagActorCheckpointV1
+    : undefined;
   const activity = envelope?.activity && typeof envelope.activity === "object"
     ? envelope.activity as Record<string, unknown>
     : undefined;
@@ -153,6 +159,7 @@ client.on("task", async (msg) => {
         round_id: typeof activity?.roundId === "string" ? activity.roundId : undefined,
         actor_id: typeof activity?.actorId === "string" ? activity.actorId : undefined,
         generation: typeof activity?.generation === "number" ? activity.generation : undefined,
+        lease_generation: typeof activity?.leaseGeneration === "number" ? activity.leaseGeneration : undefined,
         command_id: typeof activity?.commandId === "string" ? activity.commandId : undefined,
         surface_id: typeof activity?.surfaceId === "string" ? activity.surfaceId : undefined,
         activity_sequence_start: typeof activity?.sequenceStart === "number" ? activity.sequenceStart : 0,
@@ -192,6 +199,7 @@ client.on("task", async (msg) => {
     llmApiKey: apiKey,
     llmBaseUrl: baseUrl,
     checkpointResume,
+    actorCheckpoint,
   };
 
   const abortController = new AbortController();

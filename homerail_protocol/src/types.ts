@@ -456,10 +456,15 @@ export const DAG_AGENT_TOOL_NAMES = [
 
 export type DagAgentToolName = (typeof DAG_AGENT_TOOL_NAMES)[number];
 
-/** Versioned Worker capability for round-aware terminal transport. @version 0.1.0 */
-export const DAG_TRANSPORT_FENCE_PROTOCOL_VERSION = 1 as const;
-export const DAG_TRANSPORT_FENCE_CAPABILITY = "dag-transport-fence-v1" as const;
-export const DAG_TRANSPORT_FENCE_SCHEMA_ID = "dag-transport-fence-v1" as const;
+/** Legacy round-aware terminal transport retained for schema compatibility. */
+export const DAG_TRANSPORT_FENCE_V1_PROTOCOL_VERSION = 1 as const;
+export const DAG_TRANSPORT_FENCE_V1_CAPABILITY = "dag-transport-fence-v1" as const;
+export const DAG_TRANSPORT_FENCE_V1_SCHEMA_ID = "dag-transport-fence-v1" as const;
+
+/** Worker transport fence that also binds every report to a physical lease. */
+export const DAG_TRANSPORT_FENCE_PROTOCOL_VERSION = 2 as const;
+export const DAG_TRANSPORT_FENCE_CAPABILITY = "dag-transport-fence-v2" as const;
+export const DAG_TRANSPORT_FENCE_SCHEMA_ID = "dag-transport-fence-v2" as const;
 export const DAG_NODE_ERROR_SCHEMA_ID = "dag-node-error" as const;
 
 /** Optional on round-one wire messages; required by Manager for later rounds. */
@@ -467,6 +472,7 @@ export interface DagTransportFenceMetadata {
   round_id?: string;
   actor_id?: string;
   generation?: number;
+  lease_generation?: number;
   command_id?: string;
 }
 
@@ -475,6 +481,30 @@ export interface DagTransportFenceV1 {
   actor_id: string;
   generation: number;
   command_id: string;
+}
+
+export interface DagTransportFenceV2 {
+  round_id: string;
+  actor_id: string;
+  generation: number;
+  lease_generation: number;
+  command_id?: string;
+}
+
+/** Provider-neutral state used to rebuild an actor on another Worker. */
+export interface DagActorCheckpointV1 {
+  schema_version: 1;
+  objective: string;
+  confirmed_conclusions: string[];
+  unresolved_items: string[];
+  key_event_refs: string[];
+  artifact_refs: string[];
+  workspace_ref?: string;
+  surface_binding: string;
+  context_summary: string;
+  round_id: string;
+  actor_generation: number;
+  captured_at: number;
 }
 
 export interface DagNodeErrorData extends DagTransportFenceMetadata {
@@ -510,6 +540,7 @@ export interface DagNodeConfig {
   round_id?: string;
   actor_id?: string;
   generation?: number;
+  lease_generation?: number;
   command_id?: string;
   surface_id?: string;
   /** Last persisted activity sequence; the next emitted event starts after this value. */

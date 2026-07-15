@@ -149,6 +149,6 @@ describe("plugin publisher trust persistence", () => {
     expect(listPluginPublisherTrustEvents()).toHaveLength(1);
     expect(getDb().prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
-    ).get()).toEqual({ version: 23 });
+    ).get()).toEqual({ version: 24 });
   });
 });

@@ -35,6 +35,9 @@ const CLEARABLE_TABLES = new Set([
   "dag_handoffs",
   "dag_artifacts",
   "dag_run_rounds",
+  "dag_actor_provisioned_workers",
+  "dag_actor_checkpoints",
+  "dag_actor_runtimes",
   "dag_actor_commands",
   "dag_actors",
   "dag_activity_events",
@@ -668,7 +671,7 @@ function validateDagActorSchemaV20(db: SqliteDatabase): void {
   }
 }
 
-function compactSchemaSql(db: SqliteDatabase, type: "table" | "index", name: string): string {
+function compactSchemaSql(db: SqliteDatabase, type: "table" | "index" | "trigger", name: string): string {
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = ? AND name = ?")
     .get(type, name) as { sql: string | null } | undefined;
   return row?.sql?.toLowerCase().replace(/\s+/g, "") ?? "";
@@ -839,6 +842,204 @@ function validateDagRunRoundSchemaV23(db: SqliteDatabase): void {
   validateDagActorSchemaV20(db);
   if (!dagActorCommandsSupportsCancelled(db)) {
     throw new Error("Schema migration 23 is incomplete: dag_actor_commands does not support cancelled commands");
+  }
+}
+
+function validateDagActorLeaseSchemaV24(db: SqliteDatabase): void {
+  const expectedTables = {
+    dag_actor_runtimes: [
+      ["run_id", "TEXT", 1, 1, null],
+      ["actor_id", "TEXT", 1, 2, null],
+      ["state", "TEXT", 1, 0, null],
+      ["lease_generation", "INTEGER", 1, 0, "0"],
+      ["target_type", "TEXT", 0, 0, null],
+      ["target_id", "TEXT", 0, 0, null],
+      ["idle_deadline", "INTEGER", 0, 0, null],
+      ["pinned", "INTEGER", 1, 0, "0"],
+      ["retained_until", "INTEGER", 0, 0, null],
+      ["state_changed_at", "INTEGER", 1, 0, null],
+      ["created_at", "INTEGER", 1, 0, null],
+      ["updated_at", "INTEGER", 1, 0, null],
+      ["version", "INTEGER", 1, 0, "1"],
+    ],
+    dag_actor_checkpoints: [
+      ["run_id", "TEXT", 1, 1, null],
+      ["actor_id", "TEXT", 1, 2, null],
+      ["checkpoint_version", "INTEGER", 1, 3, null],
+      ["schema_version", "INTEGER", 1, 0, null],
+      ["actor_generation", "INTEGER", 1, 0, null],
+      ["round_id", "TEXT", 1, 0, null],
+      ["captured_at", "INTEGER", 1, 0, null],
+      ["checkpoint_sha256", "TEXT", 1, 0, null],
+      ["checkpoint_json", "TEXT", 1, 0, null],
+      ["created_at", "INTEGER", 1, 0, null],
+    ],
+    dag_actor_provisioned_workers: [
+      ["run_id", "TEXT", 1, 1, null],
+      ["actor_id", "TEXT", 1, 2, null],
+      ["lease_generation", "INTEGER", 1, 3, null],
+      ["worker_id", "TEXT", 1, 4, null],
+      ["node_id", "TEXT", 1, 0, null],
+      ["container_id", "TEXT", 1, 0, null],
+      ["docker_node_id", "TEXT", 1, 0, null],
+      ["status", "TEXT", 1, 0, null],
+      ["registered_at", "INTEGER", 1, 0, null],
+      ["updated_at", "INTEGER", 1, 0, null],
+      ["release_requested_at", "INTEGER", 0, 0, null],
+      ["terminal_at", "INTEGER", 0, 0, null],
+      ["failure_json", "TEXT", 0, 0, null],
+      ["version", "INTEGER", 1, 0, "1"],
+    ],
+  } as const;
+
+  for (const [table, expectedColumns] of Object.entries(expectedTables)) {
+    if (!hasTable(db, table)) {
+      throw new Error(`Schema migration 24 is incomplete: missing table ${table}`);
+    }
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+      type: string;
+      notnull: number;
+      dflt_value: string | number | null;
+      pk: number;
+    }>;
+    if (columns.length !== expectedColumns.length) {
+      throw new Error(`Schema migration 24 is incomplete: ${table} has invalid columns`);
+    }
+    for (const [position, [name, type, notnull, pk, defaultValue]] of expectedColumns.entries()) {
+      const column = columns[position];
+      if (
+        column.name !== name
+        || column.type.toUpperCase() !== type
+        || column.notnull !== notnull
+        || column.pk !== pk
+        || (column.dflt_value === null ? null : String(column.dflt_value)) !== defaultValue
+      ) {
+        throw new Error(`Schema migration 24 is incomplete: ${table} column ${name} is invalid`);
+      }
+    }
+  }
+
+  const tableFragments: Record<string, readonly string[]> = {
+    dag_actor_runtimes: [
+      "statein('leased','dormant','retired')",
+      "check(lease_generation>=0)",
+      "check(pinnedin(0,1))",
+      "check(version>=1)",
+      "updated_at>=created_at",
+      "state_changed_at>=created_at",
+      "state_changed_at<=updated_at",
+      "state='leased'andlease_generation>=1",
+      "target_typeisnotnull",
+      "target_idisnotnull",
+      "idle_deadlineisnotnull",
+      "idle_deadline>=state_changed_at",
+      "retained_untilisnull",
+      "statein('dormant','retired')",
+      "target_typeisnull",
+      "target_idisnull",
+      "idle_deadlineisnull",
+      "retained_untilisnotnull",
+      "retained_until>=updated_at",
+    ],
+    dag_actor_checkpoints: [
+      "check(checkpoint_version>=1)",
+      "check(schema_version=1)",
+      "check(actor_generation>=1)",
+      "check(captured_at>=0)",
+      "length(checkpoint_sha256)=64",
+      "checkpoint_sha256notglob'*[^0-9a-f]*'",
+      "length(checkpoint_json)between2and262144",
+      "check(created_at>=0)",
+    ],
+    dag_actor_provisioned_workers: [
+      "check(lease_generation>=1)",
+      "statusin('active','releasing','released','failed')",
+      "check(version>=1)",
+      "updated_at>=registered_at",
+      "release_requested_atisnullorrelease_requested_at>=registered_at",
+      "terminal_atisnullorterminal_at>=registered_at",
+      "status='active'andrelease_requested_atisnullandterminal_atisnullandfailure_jsonisnull",
+      "status='releasing'andrelease_requested_atisnotnullandterminal_atisnullandfailure_jsonisnull",
+      "status='released'andrelease_requested_atisnotnullandterminal_atisnotnullandfailure_jsonisnull",
+      "status='failed'andterminal_atisnotnullandfailure_jsonisnotnull",
+    ],
+  };
+  for (const [table, fragments] of Object.entries(tableFragments)) {
+    const sql = compactSchemaSql(db, "table", table);
+    if (fragments.some((fragment) => !sql.includes(fragment))) {
+      throw new Error(`Schema migration 24 is incomplete: ${table} constraints are invalid`);
+    }
+  }
+
+  const expectedIndexes = [
+    ["dag_actor_runtimes", "idx_dag_actor_runtimes_expired", 0, 1, ["idle_deadline", "run_id", "actor_id"]],
+    ["dag_actor_runtimes", "idx_dag_actor_runtimes_retention", 0, 1, ["retained_until", "run_id", "actor_id"]],
+    ["dag_actor_checkpoints", "idx_dag_actor_checkpoints_generation", 0, 0, ["run_id", "actor_id", "actor_generation", "checkpoint_version"]],
+    ["dag_actor_provisioned_workers", "idx_dag_actor_provisioned_workers_container", 1, 0, ["container_id"]],
+    ["dag_actor_provisioned_workers", "idx_dag_actor_provisioned_workers_restart", 0, 0, ["status", "docker_node_id", "updated_at", "run_id", "actor_id"]],
+    ["dag_actor_provisioned_workers", "idx_dag_actor_provisioned_workers_current", 1, 1, ["run_id", "actor_id", "lease_generation"]],
+  ] as const;
+  for (const [table, name, unique, partial, expectedColumns] of expectedIndexes) {
+    const index = (db.prepare(`PRAGMA index_list(${table})`).all() as Array<{
+      name: string;
+      unique: number;
+      partial: number;
+    }>).find((entry) => entry.name === name);
+    if (index?.unique !== unique || index.partial !== partial) {
+      throw new Error(`Schema migration 24 is incomplete: index ${name} is missing or invalid`);
+    }
+    const actualColumns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{
+      seqno: number;
+      name: string;
+    }>).sort((left, right) => left.seqno - right.seqno).map((entry) => entry.name);
+    if (
+      actualColumns.length !== expectedColumns.length
+      || actualColumns.some((column, position) => column !== expectedColumns[position])
+    ) {
+      throw new Error(`Schema migration 24 is incomplete: index ${name} has invalid columns`);
+    }
+  }
+  const indexPredicates: Record<string, string> = {
+    idx_dag_actor_runtimes_expired: "wherestate='leased'andpinned=0",
+    idx_dag_actor_runtimes_retention: "wherestatein('dormant','retired')andpinned=0",
+    idx_dag_actor_provisioned_workers_current: "wherestatusin('active','releasing')",
+  };
+  for (const [name, predicate] of Object.entries(indexPredicates)) {
+    if (!compactSchemaSql(db, "index", name).includes(predicate)) {
+      throw new Error(`Schema migration 24 is incomplete: index ${name} predicate is invalid`);
+    }
+  }
+
+  for (const table of Object.keys(expectedTables)) {
+    const foreignKeys = (db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+      id: number;
+      seq: number;
+      table: string;
+      from: string;
+      to: string;
+      on_update: string;
+      on_delete: string;
+    }>).sort((left, right) => left.seq - right.seq);
+    if (
+      foreignKeys.length !== 2
+      || foreignKeys[0].id !== foreignKeys[1].id
+      || foreignKeys[0].table !== "dag_actors"
+      || foreignKeys[1].table !== "dag_actors"
+      || foreignKeys[0].from !== "run_id"
+      || foreignKeys[0].to !== "run_id"
+      || foreignKeys[1].from !== "actor_id"
+      || foreignKeys[1].to !== "actor_id"
+      || foreignKeys.some((entry) => entry.on_update.toUpperCase() !== "RESTRICT")
+      || foreignKeys.some((entry) => entry.on_delete.toUpperCase() !== "CASCADE")
+    ) {
+      throw new Error(`Schema migration 24 is incomplete: ${table} actor ownership constraint is invalid`);
+    }
+  }
+
+  const checkpointTrigger = compactSchemaSql(db, "trigger", "trg_dag_actor_checkpoints_no_update");
+  if (!checkpointTrigger.includes("beforeupdateondag_actor_checkpoints") || !checkpointTrigger.includes("raise(abort,'dagactorcheckpointsareappend-only')")) {
+    throw new Error("Schema migration 24 is incomplete: checkpoint append-only trigger is missing or invalid");
   }
 }
 
@@ -2252,6 +2453,119 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       `);
     },
     validate: validateDagRunRoundSchemaV23,
+  },
+  {
+    version: 24,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_actor_runtimes (
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('leased', 'dormant', 'retired')),
+        lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(lease_generation >= 0),
+        target_type TEXT,
+        target_id TEXT,
+        idle_deadline INTEGER,
+        pinned INTEGER NOT NULL DEFAULT 0 CHECK(pinned IN (0, 1)),
+        retained_until INTEGER,
+        state_changed_at INTEGER NOT NULL CHECK(state_changed_at >= 0),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        updated_at INTEGER NOT NULL CHECK(updated_at >= created_at),
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        PRIMARY KEY(run_id, actor_id),
+        CHECK(state_changed_at >= created_at AND state_changed_at <= updated_at),
+        CHECK(
+          (
+            state = 'leased'
+            AND lease_generation >= 1
+            AND target_type IS NOT NULL
+            AND length(target_type) BETWEEN 1 AND 64
+            AND target_id IS NOT NULL
+            AND length(target_id) BETWEEN 1 AND 512
+            AND idle_deadline IS NOT NULL
+            AND idle_deadline >= state_changed_at
+            AND retained_until IS NULL
+          )
+          OR (
+            state IN ('dormant', 'retired')
+            AND target_type IS NULL
+            AND target_id IS NULL
+            AND idle_deadline IS NULL
+            AND retained_until IS NOT NULL
+            AND retained_until >= updated_at
+          )
+        ),
+        FOREIGN KEY(run_id, actor_id) REFERENCES dag_actors(run_id, actor_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_runtimes_expired
+        ON dag_actor_runtimes(idle_deadline, run_id, actor_id)
+        WHERE state = 'leased' AND pinned = 0;
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_runtimes_retention
+        ON dag_actor_runtimes(retained_until, run_id, actor_id)
+        WHERE state IN ('dormant', 'retired') AND pinned = 0;
+
+      CREATE TABLE IF NOT EXISTS dag_actor_checkpoints (
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        checkpoint_version INTEGER NOT NULL CHECK(checkpoint_version >= 1),
+        schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+        actor_generation INTEGER NOT NULL CHECK(actor_generation >= 1),
+        round_id TEXT NOT NULL CHECK(length(round_id) BETWEEN 1 AND 256),
+        captured_at INTEGER NOT NULL CHECK(captured_at >= 0),
+        checkpoint_sha256 TEXT NOT NULL CHECK(
+          length(checkpoint_sha256) = 64
+          AND checkpoint_sha256 NOT GLOB '*[^0-9a-f]*'
+        ),
+        checkpoint_json TEXT NOT NULL CHECK(length(checkpoint_json) BETWEEN 2 AND 262144),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        PRIMARY KEY(run_id, actor_id, checkpoint_version),
+        FOREIGN KEY(run_id, actor_id) REFERENCES dag_actors(run_id, actor_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_checkpoints_generation
+        ON dag_actor_checkpoints(run_id, actor_id, actor_generation, checkpoint_version);
+      CREATE TRIGGER IF NOT EXISTS trg_dag_actor_checkpoints_no_update
+      BEFORE UPDATE ON dag_actor_checkpoints
+      BEGIN
+        SELECT RAISE(ABORT, 'DAG actor checkpoints are append-only');
+      END;
+
+      CREATE TABLE IF NOT EXISTS dag_actor_provisioned_workers (
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        lease_generation INTEGER NOT NULL CHECK(lease_generation >= 1),
+        worker_id TEXT NOT NULL CHECK(length(worker_id) BETWEEN 1 AND 256),
+        node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 256),
+        container_id TEXT NOT NULL CHECK(length(container_id) BETWEEN 1 AND 512),
+        docker_node_id TEXT NOT NULL CHECK(length(docker_node_id) BETWEEN 1 AND 256),
+        status TEXT NOT NULL CHECK(status IN ('active', 'releasing', 'released', 'failed')),
+        registered_at INTEGER NOT NULL CHECK(registered_at >= 0),
+        updated_at INTEGER NOT NULL CHECK(updated_at >= registered_at),
+        release_requested_at INTEGER CHECK(
+          release_requested_at IS NULL OR release_requested_at >= registered_at
+        ),
+        terminal_at INTEGER CHECK(terminal_at IS NULL OR terminal_at >= registered_at),
+        failure_json TEXT CHECK(failure_json IS NULL OR length(failure_json) BETWEEN 2 AND 65536),
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        PRIMARY KEY(run_id, actor_id, lease_generation, worker_id),
+        CHECK(
+          (status = 'active' AND release_requested_at IS NULL AND terminal_at IS NULL AND failure_json IS NULL)
+          OR (status = 'releasing' AND release_requested_at IS NOT NULL AND terminal_at IS NULL AND failure_json IS NULL)
+          OR (status = 'released' AND release_requested_at IS NOT NULL AND terminal_at IS NOT NULL AND failure_json IS NULL)
+          OR (status = 'failed' AND terminal_at IS NOT NULL AND failure_json IS NOT NULL)
+        ),
+        FOREIGN KEY(run_id, actor_id) REFERENCES dag_actors(run_id, actor_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_provisioned_workers_container
+        ON dag_actor_provisioned_workers(container_id);
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_provisioned_workers_restart
+        ON dag_actor_provisioned_workers(status, docker_node_id, updated_at, run_id, actor_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_provisioned_workers_current
+        ON dag_actor_provisioned_workers(run_id, actor_id, lease_generation)
+        WHERE status IN ('active', 'releasing');
+    `),
+    validate: validateDagActorLeaseSchemaV24,
   },
 ];
 

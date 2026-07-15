@@ -47,6 +47,7 @@ import { readOrCreateControlPlaneToken } from "../persistence/control-plane-secr
 import { startWorkspaceCleanupScheduler } from "../runtime/workspace-retention.js";
 import { runArtifactRoutesHandler } from "./run-artifacts.js";
 import { startRunArtifactService } from "../runtime/run-artifact-service.js";
+import { startDagActorLeaseReaper } from "../runtime/dag-actor-lease-reaper.js";
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -271,6 +272,7 @@ export function createServer(
   const stopTriggerScheduler = startDagTriggerScheduler(changeOrchestrator);
   const stopWorkspaceCleanupScheduler = startWorkspaceCleanupScheduler();
   const stopRunArtifactService = startRunArtifactService();
+  const stopDagActorLeaseReaper = startDagActorLeaseReaper();
 
   server = http.createServer((req, res) => {
     setCorsHeaders(res);
@@ -399,6 +401,7 @@ export function createServer(
   server.once("close", stopTriggerScheduler);
   server.once("close", stopWorkspaceCleanupScheduler);
   server.once("close", stopRunArtifactService);
+  server.once("close", stopDagActorLeaseReaper);
 
   const workerWebsocketOptions: WorkerWebSocketOptions = {
     ...wsOptions,

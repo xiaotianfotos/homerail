@@ -8,6 +8,9 @@ import {
   DAG_TRANSPORT_FENCE_CAPABILITY,
   DAG_TRANSPORT_FENCE_PROTOCOL_VERSION,
   DAG_TRANSPORT_FENCE_SCHEMA_ID,
+  DAG_TRANSPORT_FENCE_V1_CAPABILITY,
+  DAG_TRANSPORT_FENCE_V1_PROTOCOL_VERSION,
+  DAG_TRANSPORT_FENCE_V1_SCHEMA_ID,
   type DagActivityEventV1,
   type DagNodeErrorMessage,
   validateDagActivityEventV1,
@@ -24,6 +27,7 @@ function activity(overrides: Partial<DagActivityEventV1> = {}): DagActivityEvent
     node_id: "worker-01",
     actor_id: "researcher",
     generation: 1,
+    lease_generation: 3,
     surface_id: "surface-news",
     sequence: 1,
     timestamp: 1_784_000_000_000,
@@ -56,6 +60,10 @@ describe("Worker Activity Event V1", () => {
     delete event.surface_id;
 
     expect(validateMessage(event, DAG_ACTIVITY_EVENT_V1_SCHEMA_ID).valid).toBe(true);
+  });
+
+  it("rejects an invalid physical lease generation", () => {
+    expect(validateDagActivityEventV1(activity({ lease_generation: 0 }))).toMatchObject({ valid: false });
   });
 
   it("exposes report_activity as a DAG agent tool", () => {
@@ -111,6 +119,7 @@ describe("DAG activity routing metadata", () => {
     round_id: "round-02",
     actor_id: "researcher",
     generation: 2,
+    lease_generation: 3,
     command_id: "command-02",
     surface_id: "surface-news",
     activity_sequence_start: 41,
@@ -125,6 +134,7 @@ describe("DAG activity routing metadata", () => {
     ["round_id", ""],
     ["actor_id", ""],
     ["generation", 0],
+    ["lease_generation", 0],
     ["command_id", ""],
     ["surface_id", ""],
     ["activity_sequence_start", -1],
@@ -146,23 +156,35 @@ describe("DAG terminal transport fence", () => {
       round_id: "round-02",
       actor_id: "researcher",
       generation: 2,
+      lease_generation: 3,
       command_id: "command-02",
     },
   };
 
   it("exports an explicit versioned Worker capability", () => {
-    expect(DAG_TRANSPORT_FENCE_PROTOCOL_VERSION).toBe(1);
-    expect(DAG_TRANSPORT_FENCE_CAPABILITY).toBe("dag-transport-fence-v1");
+    expect(DAG_TRANSPORT_FENCE_PROTOCOL_VERSION).toBe(2);
+    expect(DAG_TRANSPORT_FENCE_CAPABILITY).toBe("dag-transport-fence-v2");
     expect(DAG_TRANSPORT_FENCE_SCHEMA_ID).toBe(DAG_TRANSPORT_FENCE_CAPABILITY);
+    expect(DAG_TRANSPORT_FENCE_V1_PROTOCOL_VERSION).toBe(1);
+    expect(DAG_TRANSPORT_FENCE_V1_CAPABILITY).toBe("dag-transport-fence-v1");
+    expect(DAG_TRANSPORT_FENCE_V1_SCHEMA_ID).toBe(DAG_TRANSPORT_FENCE_V1_CAPABILITY);
+    expect(allSchemas[DAG_TRANSPORT_FENCE_V1_SCHEMA_ID]).toBeDefined();
     expect(allSchemas[DAG_TRANSPORT_FENCE_SCHEMA_ID]).toBeDefined();
     expect(allSchemas[DAG_NODE_ERROR_SCHEMA_ID]).toBeDefined();
   });
 
-  it("validates a complete v1 fence and fenced node_error", () => {
+  it("validates complete v1 and lease-fenced v2 envelopes", () => {
     expect(validateMessage({
       round_id: "round-02",
       actor_id: "researcher",
       generation: 2,
+      command_id: "command-02",
+    }, DAG_TRANSPORT_FENCE_V1_SCHEMA_ID).valid).toBe(true);
+    expect(validateMessage({
+      round_id: "round-02",
+      actor_id: "researcher",
+      generation: 2,
+      lease_generation: 3,
       command_id: "command-02",
     }, DAG_TRANSPORT_FENCE_SCHEMA_ID).valid).toBe(true);
     expect(validateMessage(fencedError, DAG_NODE_ERROR_SCHEMA_ID).valid).toBe(true);
@@ -181,6 +203,7 @@ describe("DAG terminal transport fence", () => {
       round_id: "round-02",
       actor_id: "researcher",
       generation: 2,
+      lease_generation: 0,
     }, DAG_TRANSPORT_FENCE_SCHEMA_ID).valid).toBe(false);
   });
 });

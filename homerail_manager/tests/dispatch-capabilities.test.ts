@@ -15,7 +15,8 @@ import { createSetting, upsertProvider } from "../src/persistence/llm-settings.j
 import { listDagActorCommands } from "../src/persistence/dag-actors.js";
 import { appendSessionTranscriptForTest, loadSessionTranscript } from "../src/persistence/dag-session-files.js";
 import { _clearAllPersistence } from "../src/persistence/store.js";
-import { closeDb } from "../src/persistence/db.js";
+import { closeDb, getDb } from "../src/persistence/db.js";
+import { getDagActorLease } from "../src/persistence/dag-actor-leases.js";
 import {
   _clearActiveRuns,
   checkpointResumeActiveRun,
@@ -46,6 +47,12 @@ function makeEnvelope(overrides: Partial<DispatchEnvelope> = {}): DispatchEnvelo
     workflowId: "deployment-diagnosis",
     workflowName: "Deployment Diagnosis",
     image: "homerail-worker:latest",
+    activity: {
+      roundId: "round-0001",
+      actorId: "diagnose",
+      generation: 1,
+      surfaceId: "surface:diagnose",
+    },
     ...overrides,
   };
 }
@@ -75,6 +82,19 @@ describe("DAG node capability requirements", () => {
     _clearWorkers();
     _clearNodes();
     _clearListeners();
+    createActiveRun("run-capabilities", parseDAGYaml(`
+name: dispatch-capabilities-fixture
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  diagnose:
+    agent: worker
+    outputs:
+      done: { to: "" }
+`));
+    // Direct adapter tests exercise transport without keeping an in-memory run,
+    // while preserving the durable actor identity required by lease binding.
+    _clearActiveRuns();
   });
 
   it("normalizes public Kimi Code backend aliases", () => {
@@ -156,6 +176,52 @@ nodes:
     });
     expect(genericSocket.send).not.toHaveBeenCalled();
     expect(hostSocket.send).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(String(hostSocket.send.mock.calls[0]?.[0])) as {
+      envelope: DispatchEnvelope;
+    };
+    expect(sent.envelope.activity).toMatchObject({
+      actorId: "diagnose",
+      leaseGeneration: 1,
+    });
+  });
+
+  it("does not retry a prompt that was sent before chat persistence failed", () => {
+    const socket = makeSocket();
+    registerWorker({
+      worker_id: "post-send-worker",
+      project_id: "p1",
+      socket,
+      status: "idle",
+      capabilities: [],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+    getDb().exec(`
+      CREATE TRIGGER fail_post_send_chat
+      BEFORE INSERT ON dag_chats
+      BEGIN
+        SELECT RAISE(ABORT, 'forced post-send chat failure');
+      END;
+    `);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(new WsDispatchAdapter({ provisioner: false }).dispatch(makeEnvelope())).toMatchObject({
+        status: "dispatched",
+        targetType: "worker",
+        targetId: "post-send-worker",
+      });
+      expect(socket.send).toHaveBeenCalledTimes(1);
+      expect(getDagActorLease({ run_id: "run-capabilities", actor_id: "diagnose" })).toMatchObject({
+        state: "leased",
+        target_type: "worker",
+        target_id: "post-send-worker",
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("prompt was sent but chat persistence failed"));
+    } finally {
+      warn.mockRestore();
+      getDb().exec("DROP TRIGGER IF EXISTS fail_post_send_chat");
+    }
   });
 
   it("reuses the previous online worker for a hot multi-round actor", () => {
@@ -281,7 +347,7 @@ nodes:
     expect(nodeSocket.send).not.toHaveBeenCalled();
   });
 
-  it("keeps an offline node READY and retries after a node registers", async () => {
+  it("keeps an offline node READY and retries after a compatible worker registers", async () => {
     createActiveRun("run-offline-node-reconnect", parseDAGYaml(`
 name: offline-node-reconnect
 workflow_id: offline-node-reconnect
@@ -298,24 +364,23 @@ nodes:
     expect(getActiveRun("run-offline-node-reconnect")).toMatchObject({ status: "active" });
     expect(getActiveRun("run-offline-node-reconnect")?.dagRun.nodeStates.get("diagnose")).toBe("READY");
 
-    const nodeSocket = makeSocket();
-    registerNode({
-      node_id: "late-node",
+    const workerSocket = makeSocket();
+    registerWorker({
+      worker_id: "late-worker",
       project_id: "p1",
-      socket: nodeSocket,
-      status: "connected",
-      capabilities: [],
+      socket: workerSocket,
+      status: "idle",
+      capabilities: [DAG_TRANSPORT_FENCE_CAPABILITY],
       registered_at: Date.now(),
       last_heartbeat: Date.now(),
-      pending_requests: new Map(),
     });
 
     await vi.waitFor(
-      () => expect(nodeSocket.send).toHaveBeenCalledTimes(1),
+      () => expect(workerSocket.send).toHaveBeenCalledTimes(1),
       { timeout: 2_500 },
     );
     expect(getActiveRun("run-offline-node-reconnect")?.dagRun.nodeStates.get("diagnose")).toBe("RUNNING");
-    expect(JSON.parse(String(nodeSocket.send.mock.calls[0]?.[0]))).toMatchObject({
+    expect(JSON.parse(String(workerSocket.send.mock.calls[0]?.[0]))).toMatchObject({
       type: "prompt",
       envelope: { runId: "run-offline-node-reconnect", nodeId: "diagnose" },
     });
@@ -353,7 +418,7 @@ nodes:
       project_id: "p1",
       socket: firstWorkerSocket,
       status: "idle",
-      capabilities: [],
+      capabilities: [DAG_TRANSPORT_FENCE_CAPABILITY],
       registered_at: Date.now(),
       last_heartbeat: Date.now(),
     });
@@ -371,7 +436,7 @@ nodes:
       project_id: "p1",
       socket: secondWorkerSocket,
       status: "idle",
-      capabilities: [],
+      capabilities: [DAG_TRANSPORT_FENCE_CAPABILITY],
       registered_at: Date.now(),
       last_heartbeat: Date.now(),
     });
@@ -546,26 +611,30 @@ nodes:
     outputs: { done: { to: "" } }
 `));
 
-    const provisionedWorkerId = "provisioned-run-provisioned-capability-mismatch-diagnose";
+    let provisionedWorkerId: string | undefined;
     const incompatibleSocket = makeSocket();
     const provisioningCompleted = waitForProvisioningCompleted(runId);
     const adapter = new WsDispatchAdapter({
       managerBaseUrl: "http://127.0.0.1:19191",
       provisioner: {
-        createFn: async () => ({ status: "success", resource_data: { id: "container-incompatible" } }),
+        createFn: async (_nodeId, _workspaceId, opts) => {
+          provisionedWorkerId = opts.env?.HOMERAIL_WORKER_ID;
+          return { status: "success", resource_data: { id: "container-incompatible" } };
+        },
         startFn: async () => {
+          if (!provisionedWorkerId) throw new Error("missing provisioned worker id");
           registerWorker({
             worker_id: provisionedWorkerId,
             project_id: "p1",
             socket: incompatibleSocket,
             status: "idle",
-            capabilities: [],
+            capabilities: [DAG_TRANSPORT_FENCE_CAPABILITY],
             registered_at: Date.now(),
             last_heartbeat: Date.now(),
           });
           return { status: "success" };
         },
-        runtimeStatusFn: async () => ({ worker_ids: [provisionedWorkerId] }),
+        runtimeStatusFn: async () => ({ worker_ids: provisionedWorkerId ? [provisionedWorkerId] : [] }),
       },
     });
 
@@ -584,7 +653,7 @@ nodes:
       project_id: "p1",
       socket: compatibleSocket,
       status: "idle",
-      capabilities: ["browser"],
+      capabilities: ["browser", DAG_TRANSPORT_FENCE_CAPABILITY],
       registered_at: Date.now(),
       last_heartbeat: Date.now(),
     });
@@ -625,26 +694,30 @@ nodes:
     outputs: { done: { to: "" } }
 `));
 
-    const workerId = "provisioned-run-provisioning-dispatch-budget-diagnose";
+    let workerId: string | undefined;
     const workerSocket = makeSocket();
     const provisioningCompleted = waitForProvisioningCompleted(runId);
     const adapter = new WsDispatchAdapter({
       managerBaseUrl: "http://127.0.0.1:19191",
       provisioner: {
-        createFn: async () => ({ status: "success", resource_data: { id: "container-budget" } }),
+        createFn: async (_nodeId, _workspaceId, opts) => {
+          workerId = opts.env?.HOMERAIL_WORKER_ID;
+          return { status: "success", resource_data: { id: "container-budget" } };
+        },
         startFn: async () => {
+          if (!workerId) throw new Error("missing provisioned worker id");
           registerWorker({
             worker_id: workerId,
             project_id: "p1",
             socket: workerSocket,
             status: "idle",
-            capabilities: [],
+            capabilities: [DAG_TRANSPORT_FENCE_CAPABILITY],
             registered_at: Date.now(),
             last_heartbeat: Date.now(),
           });
           return { status: "success" };
         },
-        runtimeStatusFn: async () => ({ worker_ids: [workerId] }),
+        runtimeStatusFn: async () => ({ worker_ids: workerId ? [workerId] : [] }),
       },
     });
 
@@ -725,14 +798,18 @@ nodes:
       last_heartbeat: Date.now(),
       pending_requests: new Map(),
     });
-    const workerId = "provisioned-run-provisioned-round-two-delivery-actor";
+    let workerId: string | undefined;
     const workerSocket = makeSocket();
     const provisioningCompleted = waitForProvisioningCompleted(runId);
     const adapter = new WsDispatchAdapter({
       managerBaseUrl: "http://127.0.0.1:19191",
       provisioner: {
-        createFn: async () => ({ status: "success", resource_data: { id: "container-round-two" } }),
+        createFn: async (_nodeId, _workspaceId, opts) => {
+          workerId = opts.env?.HOMERAIL_WORKER_ID;
+          return { status: "success", resource_data: { id: "container-round-two" } };
+        },
         startFn: async () => {
+          if (!workerId) throw new Error("missing provisioned worker id");
           registerWorker({
             worker_id: workerId,
             project_id: "p1",
@@ -744,7 +821,7 @@ nodes:
           });
           return { status: "success" };
         },
-        runtimeStatusFn: async () => ({ worker_ids: [workerId] }),
+        runtimeStatusFn: async () => ({ worker_ids: workerId ? [workerId] : [] }),
       },
     });
 
@@ -816,7 +893,7 @@ nodes:
     });
 
     const workerSocket = makeSocket();
-    const workerId = "provisioned-run-provisioning-resume-diagnose";
+    let workerId: string | undefined;
     let resolveCreate: ((value: { status: "success"; resource_data: { id: string } }) => void) | undefined;
     const createStarted = vi.fn();
     const createPromise = new Promise<{ status: "success"; resource_data: { id: string } }>((resolve) => {
@@ -825,24 +902,26 @@ nodes:
     const adapter = new WsDispatchAdapter({
       managerBaseUrl: "http://127.0.0.1:19191",
       provisioner: {
-        createFn: async () => {
+        createFn: async (_nodeId, _workspaceId, opts) => {
+          workerId = opts.env?.HOMERAIL_WORKER_ID;
           createStarted();
           return createPromise;
         },
         startFn: async () => {
+          if (!workerId) throw new Error("missing provisioned worker id");
           registerWorker({
             worker_id: workerId,
             project_id: "p1",
             socket: workerSocket,
             status: "idle",
-            capabilities: [],
+            capabilities: [DAG_TRANSPORT_FENCE_CAPABILITY],
             registered_at: Date.now(),
             last_heartbeat: Date.now(),
           });
           return { status: "success" };
         },
         runtimeStatusFn: async () => ({
-          worker_ids: [workerId],
+          worker_ids: workerId ? [workerId] : [],
         }),
       },
     });

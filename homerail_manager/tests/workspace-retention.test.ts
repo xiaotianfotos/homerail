@@ -9,6 +9,7 @@ import {
   registerProvisionedWorker,
 } from "../src/orchestration/provisioned-cleanup.js";
 import { loadRunMetadata, writeRunMetadata } from "../src/persistence/store.js";
+import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
 import {
   DEFAULT_WORKSPACE_RETENTION_SETTINGS,
   loadWorkspaceRetentionSettings,
@@ -258,10 +259,29 @@ nodes:
   it("protects workspaces while provisioned worker cleanup is pending", async () => {
     const now = Date.now();
     const runId = "worker-cleanup-pending";
+    createActiveRun(runId, parseDAGYaml(`
+name: retention-worker-cleanup-pending
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  worker-node:
+    agent: worker
+    outputs:
+      done: { to: "" }
+`));
+    const lease = acquireDagActorLease({
+      run_id: runId,
+      actor_id: "worker-node",
+      target_type: "worker",
+      target_id: "worker-1",
+    });
+    _clearActiveRuns();
     const workspace = addRun(runId, "completed", now - 8 * DAY_MS);
     registerProvisionedWorker({
       runId,
       nodeId: "worker-node",
+      actorId: "worker-node",
+      leaseGeneration: lease.lease_generation,
       workerId: "worker-1",
       containerId: "container-1",
       dockerNodeId: "docker-node-1",

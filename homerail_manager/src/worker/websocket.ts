@@ -74,6 +74,16 @@ function objectData(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function transportPayload(data: Record<string, unknown>): Record<string, unknown> {
+  const runId = streamRunId(data);
+  const nodeId = streamNodeId(data);
+  return {
+    ...data,
+    ...(runId === undefined ? {} : { runId }),
+    ...(nodeId === undefined ? {} : { nodeId }),
+  };
+}
+
 function dagActivityRoundContext(data: Record<string, unknown>, runId: string): string {
   const run = getActiveRun(runId);
   if (!run) throw new Error(`DAG activity run ${runId} is not active`);
@@ -141,6 +151,50 @@ function mirrorSessionTranscript(
   } catch {
     // Best-effort mirror; websocket handling and DB chat remain authoritative.
   }
+}
+
+function isCurrentDagTransport(
+  workerId: string,
+  messageType: string,
+  data: Record<string, unknown>,
+  explicitSessionId?: string,
+): boolean {
+  const payload = transportPayload(data);
+  const assessment = assessDagTransportFence(payload, {
+    targetType: "worker",
+    targetId: workerId,
+  });
+  if (assessment.status === "current") return true;
+
+  const runId = assessment.status === "malformed_payload" ? streamRunId(data) : assessment.runId;
+  const nodeId = assessment.status === "malformed_payload" ? streamNodeId(data) : assessment.nodeId;
+  const disposition = assessment.status === "ignored" ? assessment.disposition : assessment.status;
+  const reason = assessment.status === "unknown_run"
+    ? `unknown run ${assessment.runId}`
+    : assessment.reason;
+  const sessionId = explicitSessionId ?? dataSessionId(data);
+  emit("dag:stale_lease_ignored", {
+    runId,
+    nodeId,
+    source: "worker",
+    sourceId: workerId,
+    messageType,
+    disposition,
+    reason,
+  });
+  mirrorSessionTranscript(
+    workerId,
+    `stale_lease_${messageType}_ignored`,
+    runId,
+    nodeId,
+    sessionId,
+    {
+      disposition,
+      reason,
+      lease_generation: typeof data.lease_generation === "number" ? data.lease_generation : undefined,
+    },
+  );
+  return false;
 }
 
 export interface WorkerWebSocketOptions {
@@ -320,6 +374,7 @@ export function setupWorkerWebSocket(
         }
 
         if (msg.type === "content") {
+          if (!isCurrentDagTransport(worker_id, "content", msg.data)) return;
           if (shouldIgnoreStaleSession(worker_id, "content", msg.data)) return;
           const runId = streamRunId(msg.data);
           const nodeId = streamNodeId(msg.data);
@@ -338,6 +393,7 @@ export function setupWorkerWebSocket(
 
         if (msg.type === "response") {
           const responseData = objectData(msg.data);
+          if (responseData && !isCurrentDagTransport(worker_id, "response", responseData, msg.session_id)) return;
           if (responseData && shouldIgnoreStaleSession(worker_id, "response", responseData, msg.session_id)) return;
           const responseSessionId = msg.session_id ?? dataSessionId(responseData);
 
@@ -371,7 +427,7 @@ export function setupWorkerWebSocket(
             return;
           }
 
-          const result = applyResponseHandoff(msg.data);
+          const result = applyResponseHandoff(msg.data, { targetType: "worker", targetId: worker_id });
           if (result.status === "handoff_applied") {
             appendChatEntry(result.runId, result.nodeId, {
               role: "worker",
@@ -397,6 +453,29 @@ export function setupWorkerWebSocket(
             });
             options.onHandoffApplied?.(result.runId);
           } else {
+            if (
+              result.status === "handoff_ignored"
+              && result.reason.startsWith("DAG_TRANSPORT_LEASE_")
+            ) {
+              emit("dag:stale_lease_ignored", {
+                runId: result.runId,
+                nodeId: result.nodeId,
+                source: "worker",
+                sourceId: worker_id,
+                messageType: "response",
+                disposition: result.disposition,
+                reason: result.reason,
+              });
+              mirrorSessionTranscript(
+                worker_id,
+                "stale_lease_response_ignored",
+                result.runId,
+                result.nodeId,
+                responseSessionId,
+                { disposition: result.disposition, reason: result.reason },
+              );
+              return;
+            }
             const reason = result.status === "malformed_payload"
               ? result.reason
               : result.status === "unknown_run"
@@ -431,6 +510,14 @@ export function setupWorkerWebSocket(
         if (msg.type === "stream") {
           const runId = streamRunId(msg.data);
           const nodeId = streamNodeId(msg.data);
+          const messageType = msg.data.event === "dag_activity"
+            ? "dag_activity"
+            : msg.data.event === "usage"
+              ? "usage"
+              : "stream";
+          if (!isCurrentDagTransport(worker_id, messageType, msg.data)) {
+            return;
+          }
           if (msg.data.event === "dag_activity") {
             try {
               if (!runId || !nodeId) throw new Error("DAG activity transport identity is missing");
@@ -502,36 +589,12 @@ export function setupWorkerWebSocket(
 
         if (msg.type === "node_error") {
           const rawData = objectData(objectData(rawMessage)?.data) ?? msg.data;
+          if (!isCurrentDagTransport(worker_id, "node_error", rawData, msg.data.session_id)) return;
           if (shouldIgnoreStaleSession(worker_id, "node_error", {
             runId: msg.data.runId,
             nodeId: msg.data.nodeId,
             session_id: msg.data.session_id,
           })) return;
-          const assessment = assessDagTransportFence(rawData);
-          if (assessment.status !== "current") {
-            const runId = assessment.status === "malformed_payload" ? msg.data.runId : assessment.runId;
-            const nodeId = assessment.status === "malformed_payload" ? msg.data.nodeId : assessment.nodeId;
-            const disposition = assessment.status === "ignored" ? assessment.disposition : assessment.status;
-            const reason = assessment.status === "unknown_run"
-              ? `unknown run ${assessment.runId}`
-              : assessment.reason;
-            emit("dag:response_handoff_failed", {
-              runId,
-              nodeId,
-              reason: `node_error ${disposition} ignored: ${reason}`,
-              source: "worker",
-              sourceId: worker_id,
-            });
-            mirrorSessionTranscript(
-              worker_id,
-              `node_error_${disposition}_ignored`,
-              runId,
-              nodeId,
-              msg.data.session_id,
-              { disposition, reason, payload: rawData },
-            );
-            return;
-          }
           appendChatEntry(msg.data.runId, msg.data.nodeId, {
             role: "worker",
             type: "response",
@@ -554,6 +617,12 @@ export function setupWorkerWebSocket(
           if (run?.status === "active") {
             options.onHandoffApplied?.(msg.data.runId);
           }
+          return;
+        }
+
+        if (msg.type === "SESSION_END") {
+          if (!isCurrentDagTransport(worker_id, "session_end", msg.data, msg.data.session_id)) return;
+          if (shouldIgnoreStaleSession(worker_id, "session_end", msg.data, msg.data.session_id)) return;
           return;
         }
 

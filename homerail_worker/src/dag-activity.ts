@@ -40,6 +40,7 @@ export function createDagActivityEmitter(
         node_id: config.node_id,
         actor_id: actorId,
         generation,
+        ...(config.lease_generation !== undefined ? { lease_generation: config.lease_generation } : {}),
         ...(surfaceId ? { surface_id: surfaceId } : {}),
         sequence,
         timestamp: Date.now(),

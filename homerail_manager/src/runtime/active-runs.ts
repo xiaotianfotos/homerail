@@ -102,6 +102,15 @@ import {
   updateDagActorBinding,
   type DagActorRecord,
 } from "../persistence/dag-actors.js";
+import {
+  acquireDagActorLease,
+  ensureDagActorLease,
+  getDagActorLease,
+  getLatestDagActorCheckpoint,
+  retireDagActorLease,
+  writeDagActorCheckpoint,
+} from "../persistence/dag-actor-leases.js";
+import { buildRunActorCheckpoints } from "./dag-actor-checkpoint-builder.js";
 
 export interface InjectResult {
   runId: string;
@@ -160,6 +169,7 @@ export interface HandoffTransportFence {
   roundId?: string;
   actorId?: string;
   generation?: number;
+  leaseGeneration?: number;
   commandId?: string;
 }
 
@@ -1347,6 +1357,29 @@ function _persistTerminalRun(
       run_id: run.runId,
       reason: { status, message: `run ${status}` },
     });
+    const leaseRetiredAt = Date.now();
+    for (const actor of listDagActors(run.runId)) {
+      const current = getDagActorLease({ run_id: run.runId, actor_id: actor.actor_id })
+        ?? ensureDagActorLease({
+          run_id: run.runId,
+          actor_id: actor.actor_id,
+          now: leaseRetiredAt,
+        });
+      if (current.state === "retired") continue;
+      retireDagActorLease({
+        run_id: run.runId,
+        actor_id: actor.actor_id,
+        expected_version: current.version,
+        ...(current.state === "leased"
+          ? {
+              lease_generation: current.lease_generation,
+              target_type: current.target_type!,
+              target_id: current.target_id!,
+            }
+          : {}),
+        now: leaseRetiredAt,
+      });
+    }
     writeRunMetadata(run.runId, serializeRunMetadata(run));
   }).immediate();
 }
@@ -1824,25 +1857,41 @@ function _validateHandoffTransportFence(
   if (!actor) throw new Error(`DAG_HANDOFF_ACTOR_FENCE_MISSING ${run.runId}/${fromNode}`);
   const requiresDurableFence = run.currentRound.ordinal > 1;
   if (!fence.roundId) {
-    if (requiresDurableFence) {
-      throw new Error(`DAG_HANDOFF_ROUND_FENCE_MISSING ${run.runId}/${fromNode}`);
-    }
-    return undefined;
+    throw new Error(`DAG_HANDOFF_ROUND_FENCE_MISSING ${run.runId}/${fromNode}`);
   }
   if (fence.roundId !== run.currentRound.round_id) {
     throw new Error(
       `DAG_HANDOFF_ROUND_CONFLICT ${run.runId}/${fromNode}: received ${fence.roundId}, current ${run.currentRound.round_id}`,
     );
   }
-  if (fence.actorId !== undefined && fence.actorId !== actor.actor_id) {
+  if (!fence.actorId) {
+    throw new Error(`DAG_HANDOFF_ACTOR_FENCE_MISSING ${run.runId}/${fromNode}`);
+  }
+  if (fence.actorId !== actor.actor_id) {
     throw new Error(`DAG_HANDOFF_ACTOR_CONFLICT ${run.runId}/${fromNode}`);
   }
-  if (fence.generation !== undefined && fence.generation !== actor.generation) {
+  if (fence.generation === undefined) {
+    throw new Error(`DAG_HANDOFF_GENERATION_FENCE_MISSING ${run.runId}/${fromNode}`);
+  }
+  if (fence.generation !== actor.generation) {
     throw new Error(
       `DAG_HANDOFF_GENERATION_CONFLICT ${run.runId}/${fromNode}: received ${String(fence.generation)}, current ${actor.generation}`,
     );
   }
-  if (requiresDurableFence && (!fence.actorId || fence.generation === undefined || !fence.commandId)) {
+  if (fence.leaseGeneration === undefined) {
+    throw new Error(`DAG_HANDOFF_LEASE_FENCE_MISSING ${run.runId}/${fromNode}`);
+  }
+  const lease = getDagActorLease({ run_id: run.runId, actor_id: actor.actor_id });
+  if (
+    !lease
+    || lease.state !== "leased"
+    || lease.lease_generation !== fence.leaseGeneration
+  ) {
+    throw new Error(
+      `DAG_HANDOFF_LEASE_CONFLICT ${run.runId}/${fromNode}: received ${String(fence.leaseGeneration)}, current ${lease?.state === "leased" ? lease.lease_generation : "none"}`,
+    );
+  }
+  if (requiresDurableFence && !fence.commandId) {
     throw new Error(`DAG_HANDOFF_COMMAND_FENCE_MISSING ${run.runId}/${fromNode}`);
   }
   if (!fence.commandId) return undefined;
@@ -2758,6 +2807,11 @@ function _startAwaitCommand(run: ActiveRun, node: DAGGraphNode): boolean {
   const before = _snapshotNodeStates(run);
   const previousRound = structuredClone(run.currentRound);
   const now = Date.now();
+  const actorCheckpoints = buildRunActorCheckpoints({
+    runId: run.runId,
+    roundId: previousRound.round_id,
+    capturedAt: now,
+  });
   const expiresAt = config.expires_after_ms === undefined
     ? undefined
     : now + Math.max(1_000, Math.floor(config.expires_after_ms));
@@ -2779,6 +2833,32 @@ function _startAwaitCommand(run: ActiveRun, node: DAGGraphNode): boolean {
         closed_at: now,
         expires_at: expiresAt,
       });
+      for (const { actor, checkpoint } of actorCheckpoints) {
+        writeDagActorCheckpoint({
+          run_id: run.runId,
+          actor_id: actor.actor_id,
+          checkpoint,
+          now,
+        });
+        const lease = getDagActorLease({
+          run_id: run.runId,
+          actor_id: actor.actor_id,
+        }) ?? ensureDagActorLease({
+          run_id: run.runId,
+          actor_id: actor.actor_id,
+          now,
+        });
+        if (lease.state === "leased") {
+          acquireDagActorLease({
+            run_id: run.runId,
+            actor_id: actor.actor_id,
+            target_type: lease.target_type!,
+            target_id: lease.target_id!,
+            expected_version: lease.version,
+            now,
+          });
+        }
+      }
       writeRunMetadata(run.runId, serializeRunMetadata(run));
     }).immediate();
   } catch (error) {
@@ -2800,6 +2880,19 @@ function _startAwaitCommand(run: ActiveRun, node: DAGGraphNode): boolean {
     awaitNodeId: node.node_id,
     expiresAt,
   });
+  for (const { actor } of actorCheckpoints) {
+    const checkpoint = getLatestDagActorCheckpoint({
+      run_id: run.runId,
+      actor_id: actor.actor_id,
+    });
+    if (!checkpoint) continue;
+    emit("dag:actor_checkpoint_saved", {
+      runId: run.runId,
+      actorId: actor.actor_id,
+      checkpointVersion: checkpoint.checkpoint_version,
+      checkpointSha256: checkpoint.checkpoint_sha256,
+    });
+  }
   return true;
 }
 
@@ -3208,9 +3301,7 @@ function _requiredDispatchCapabilities(
     const normalized = capability.trim();
     if (normalized) required.add(normalized);
   }
-  if (run.currentRound.ordinal > 1) {
-    required.add(DAG_TRANSPORT_FENCE_CAPABILITY);
-  }
+  required.add(DAG_TRANSPORT_FENCE_CAPABILITY);
   return required.size > 0 ? Array.from(required) : undefined;
 }
 
@@ -3243,6 +3334,10 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
   const actorId = actor.actor_id;
   const generation = actor.generation;
   const surfaceId = actor.surface_id;
+  const actorCheckpoint = getLatestDagActorCheckpoint({
+    run_id: run.runId,
+    actor_id: actorId,
+  })?.checkpoint;
   const roundCommand = listDagActorCommands({
     run_id: run.runId,
     actor_id: actorId,
@@ -3273,6 +3368,7 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
             attempt: nodeSession.attempt,
           }
         : undefined,
+      ...(actorCheckpoint ? { actorCheckpoint } : {}),
       workflowId: run.workflowId,
       workflowName: run.workflowName,
       workspace: run.workspace,

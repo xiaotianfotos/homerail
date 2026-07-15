@@ -14,6 +14,7 @@ import { _clearDagMessageRouter } from "../src/orchestration/dag-message-router.
 import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { closeDb } from "../src/persistence/db.js";
 import { listDagActivityEvents } from "../src/persistence/dag-activity-journal.js";
+import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
 import { appendSessionTranscriptForTest, loadSessionTranscript } from "../src/persistence/dag-session-files.js";
 import { _clearAllPersistence, loadRunSnapshot } from "../src/persistence/store.js";
 import {
@@ -28,9 +29,24 @@ import {
 class CaptureDispatcher implements DAGDispatcher {
   readonly dispatched: DispatchEnvelope[] = [];
 
+  constructor(private readonly targetId = "worker-a") {}
+
   dispatch(envelope: DispatchEnvelope): DispatchResult {
-    this.dispatched.push(envelope);
-    return { status: "dispatched", targetType: "fake", targetId: "fake" };
+    if (!envelope.activity) throw new Error("test dispatch is missing actor identity");
+    const lease = acquireDagActorLease({
+      run_id: envelope.runId,
+      actor_id: envelope.activity.actorId,
+      target_type: "worker",
+      target_id: this.targetId,
+    });
+    this.dispatched.push({
+      ...envelope,
+      activity: {
+        ...envelope.activity,
+        leaseGeneration: lease.lease_generation,
+      },
+    });
+    return { status: "dispatched", targetType: "worker", targetId: this.targetId };
   }
 }
 
@@ -130,7 +146,8 @@ describe("worker websocket node session filtering", () => {
     createActiveRun("run-ws-stale", simpleDag());
     const dispatcher = new CaptureDispatcher();
     expect(dispatchReadyNodes("run-ws-stale", dispatcher)).toBe(1);
-    const parentSessionId = dispatcher.dispatched[0].sessionId!;
+    const firstEnvelope = dispatcher.dispatched[0];
+    const parentSessionId = firstEnvelope.sessionId!;
     appendSessionTranscriptForTest(parentSessionId, [
       { uuid: "ws-entry-1", type: "text", runId: "run-ws-stale", nodeId: "work", content: "before resume" },
     ]);
@@ -138,7 +155,10 @@ describe("worker websocket node session filtering", () => {
       instruction: "Resume with marker WS_RESUME_MARKER.",
     });
     expect(resume.status).toBe("scheduled");
-    const currentSessionId = getCurrentNodeSession("run-ws-stale", "work")!.sessionId;
+    expect(dispatchReadyNodes("run-ws-stale", dispatcher)).toBe(1);
+    const currentEnvelope = dispatcher.dispatched[1];
+    const currentSessionId = currentEnvelope.sessionId!;
+    const activity = currentEnvelope.activity!;
 
     const staleEvents: unknown[] = [];
     subscribe("dag:stale_session_ignored", (payload) => staleEvents.push(payload));
@@ -169,6 +189,10 @@ describe("worker websocket node session filtering", () => {
         port: "done",
         content,
         session_id: sessionId,
+        round_id: activity.roundId,
+        actor_id: activity.actorId,
+        generation: activity.generation,
+        lease_generation: activity.leaseGeneration,
       },
     });
 
@@ -191,7 +215,9 @@ describe("worker websocket node session filtering", () => {
     createActiveRun("run-ws-exact", exactHandoffDag());
     const dispatcher = new CaptureDispatcher();
     expect(dispatchReadyNodes("run-ws-exact", dispatcher)).toBe(1);
-    const sessionId = dispatcher.dispatched[0].sessionId!;
+    const envelope = dispatcher.dispatched[0];
+    const sessionId = envelope.sessionId!;
+    const activity = envelope.activity!;
     const exact = {
       api_key: "sk-authoritative-secret-123456",
       long: "x".repeat(5000),
@@ -218,6 +244,10 @@ describe("worker websocket node session filtering", () => {
         port: "done",
         content: exact,
         session_id: sessionId,
+        round_id: activity.roundId,
+        actor_id: activity.actorId,
+        generation: activity.generation,
+        lease_generation: activity.leaseGeneration,
       },
     }));
     await delay(20);
@@ -236,10 +266,11 @@ describe("worker websocket node session filtering", () => {
 
   it("rejects stale-round activity before it reaches the journal or chat evidence", async () => {
     createActiveRun("run-ws-activity", simpleDag());
-    const dispatcher = new CaptureDispatcher();
+    const dispatcher = new CaptureDispatcher("worker-activity");
     expect(dispatchReadyNodes("run-ws-activity", dispatcher)).toBe(1);
     const sessionId = dispatcher.dispatched[0].sessionId!;
     const roundId = dispatcher.dispatched[0].activity!.roundId;
+    const leaseGeneration = dispatcher.dispatched[0].activity!.leaseGeneration;
     recordDispatch("run-ws-activity", "work", "worker", "worker-activity");
 
     const staleEvents: unknown[] = [];
@@ -261,6 +292,7 @@ describe("worker websocket node session filtering", () => {
       node_id: "work",
       actor_id: "work",
       generation: 1,
+      lease_generation: leaseGeneration,
       sequence: 1,
       timestamp: Date.now(),
       type: "finding",
@@ -281,6 +313,7 @@ describe("worker websocket node session filtering", () => {
         round_id: "stale-round",
         actor_id: "work",
         generation: 1,
+        lease_generation: leaseGeneration,
       },
     });
     ws.send(stream);
@@ -314,6 +347,7 @@ describe("worker websocket node session filtering", () => {
         round_id: roundId,
         actor_id: "work",
         generation: 1,
+        lease_generation: leaseGeneration,
       },
     }));
     await delay(20);
@@ -324,10 +358,11 @@ describe("worker websocket node session filtering", () => {
 
   it("rejects activity from a worker that does not own the current dispatch", async () => {
     createActiveRun("run-ws-source-bound", simpleDag());
-    const dispatcher = new CaptureDispatcher();
+    const dispatcher = new CaptureDispatcher("worker-owner");
     expect(dispatchReadyNodes("run-ws-source-bound", dispatcher)).toBe(1);
     const sessionId = dispatcher.dispatched[0].sessionId!;
     const roundId = dispatcher.dispatched[0].activity!.roundId;
+    const leaseGeneration = dispatcher.dispatched[0].activity!.leaseGeneration;
     recordDispatch("run-ws-source-bound", "work", "worker", "worker-owner");
 
     server = http.createServer();
@@ -348,6 +383,7 @@ describe("worker websocket node session filtering", () => {
         round_id: roundId,
         actor_id: "work",
         generation: 1,
+        lease_generation: leaseGeneration,
         activity: {
           schema_version: 1,
           event_id: "spoofed-source-activity",
@@ -356,6 +392,7 @@ describe("worker websocket node session filtering", () => {
           node_id: "work",
           actor_id: "work",
           generation: 1,
+          lease_generation: leaseGeneration,
           sequence: 1,
           timestamp: Date.now(),
           type: "finding",
@@ -369,12 +406,14 @@ describe("worker websocket node session filtering", () => {
     ws.close();
   });
 
-  it("accepts legacy session-based activity during the first round", async () => {
+  it("rejects legacy first-round activity without a physical lease fence", async () => {
     createActiveRun("run-ws-legacy-activity", simpleDag());
-    const dispatcher = new CaptureDispatcher();
+    const dispatcher = new CaptureDispatcher("worker-legacy-activity");
     expect(dispatchReadyNodes("run-ws-legacy-activity", dispatcher)).toBe(1);
     const sessionId = dispatcher.dispatched[0].sessionId!;
     recordDispatch("run-ws-legacy-activity", "work", "worker", "worker-legacy-activity");
+    const staleLeaseEvents: unknown[] = [];
+    subscribe("dag:stale_lease_ignored", (payload) => staleLeaseEvents.push(payload));
 
     server = http.createServer();
     setupWorkerWebSocket(server, { registrationTimeoutMs: 500, pingIntervalMs: 5_000 });
@@ -409,8 +448,8 @@ describe("worker websocket node session filtering", () => {
     }));
     await delay(20);
 
-    expect(listDagActivityEvents({ run_id: "run-ws-legacy-activity" }).events)
-      .toMatchObject([{ event: { event_id: "legacy-first-round-activity", round_id: sessionId } }]);
+    expect(listDagActivityEvents({ run_id: "run-ws-legacy-activity" }).events).toEqual([]);
+    expect(staleLeaseEvents).toHaveLength(1);
     ws.close();
   });
 
@@ -418,7 +457,8 @@ describe("worker websocket node session filtering", () => {
     createActiveRun("run-ws-message-stale", simpleDag());
     const dispatcher = new CaptureDispatcher();
     expect(dispatchReadyNodes("run-ws-message-stale", dispatcher)).toBe(1);
-    const parentSessionId = dispatcher.dispatched[0].sessionId!;
+    const firstEnvelope = dispatcher.dispatched[0];
+    const parentSessionId = firstEnvelope.sessionId!;
     appendSessionTranscriptForTest(parentSessionId, [
       { uuid: "ws-message-entry-1", type: "text", runId: "run-ws-message-stale", nodeId: "work", content: "before resume" },
     ]);
@@ -426,7 +466,10 @@ describe("worker websocket node session filtering", () => {
       instruction: "Resume with marker WS_MESSAGE_RESUME_MARKER.",
     });
     expect(resume.status).toBe("scheduled");
-    const currentSessionId = getCurrentNodeSession("run-ws-message-stale", "work")!.sessionId;
+    expect(dispatchReadyNodes("run-ws-message-stale", dispatcher)).toBe(1);
+    const currentEnvelope = dispatcher.dispatched[1];
+    const currentSessionId = currentEnvelope.sessionId!;
+    const activity = currentEnvelope.activity!;
 
     const staleEvents: unknown[] = [];
     const sentEvents: unknown[] = [];
@@ -456,6 +499,10 @@ describe("worker websocket node session filtering", () => {
         to_node: "other",
         content,
         session_id: sessionId,
+        round_id: activity.roundId,
+        actor_id: activity.actorId,
+        generation: activity.generation,
+        lease_generation: activity.leaseGeneration,
       },
     });
     const receiveMessage = (sessionId: string) => ({
@@ -466,6 +513,10 @@ describe("worker websocket node session filtering", () => {
         run_id: "run-ws-message-stale",
         from_node: "work",
         session_id: sessionId,
+        round_id: activity.roundId,
+        actor_id: activity.actorId,
+        generation: activity.generation,
+        lease_generation: activity.leaseGeneration,
       },
     });
 

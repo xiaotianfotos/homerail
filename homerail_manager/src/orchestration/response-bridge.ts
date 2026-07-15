@@ -1,5 +1,6 @@
 import type { DagTransportFenceMetadata } from "homerail-protocol";
 import { getDagActorByNode, getDagActorCommand } from "../persistence/dag-actors.js";
+import { acquireDagActorLease, assessDagActorLease } from "../persistence/dag-actor-leases.js";
 import { getActiveRun, handoffActiveRun } from "../runtime/active-runs.js";
 
 export type TransportFenceDisposition = "stale" | "duplicate" | "invalid";
@@ -15,6 +16,11 @@ export type TransportFenceAssessment =
       reason: string;
     }
   | { status: "malformed_payload"; reason: string };
+
+export interface DagTransportFenceSource {
+  targetType: "worker" | "node";
+  targetId: string;
+}
 
 export type ResponseBridgeResult =
   | { status: "handoff_applied"; runId: string; nodeId: string; port: string }
@@ -43,6 +49,13 @@ function transportMetadataError(obj: Record<string, unknown>): string | undefine
   )) {
     return "generation must be a positive safe integer";
   }
+  if (
+    typeof obj.lease_generation !== "number"
+    || !Number.isSafeInteger(obj.lease_generation)
+    || obj.lease_generation < 1
+  ) {
+    return "lease_generation must be a positive safe integer";
+  }
   return undefined;
 }
 
@@ -59,7 +72,10 @@ function ignored(
  * Resolve terminal transport identity without mutating the active run. Fence
  * conflicts are ignored here so they can never enter correction/failure paths.
  */
-export function assessDagTransportFence(payload: unknown): TransportFenceAssessment {
+export function assessDagTransportFence(
+  payload: unknown,
+  source: DagTransportFenceSource,
+): TransportFenceAssessment {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return { status: "malformed_payload", reason: "payload is not an object" };
   }
@@ -85,26 +101,52 @@ export function assessDagTransportFence(payload: unknown): TransportFenceAssessm
   const roundId = typeof obj.round_id === "string" ? obj.round_id : undefined;
   const actorId = typeof obj.actor_id === "string" ? obj.actor_id : undefined;
   const generation = typeof obj.generation === "number" ? obj.generation : undefined;
+  const leaseGeneration = obj.lease_generation as number;
   const commandId = typeof obj.command_id === "string" ? obj.command_id : undefined;
   const currentRoundId = run.currentRound.round_id;
   const requiresDurableFence = run.currentRound.ordinal > 1;
 
+  const leaseInput = {
+    run_id: runId,
+    actor_id: actor.actor_id,
+    lease_generation: leaseGeneration,
+    target_type: source.targetType,
+    target_id: source.targetId,
+  };
+  let lease = assessDagActorLease(leaseInput);
+  if (!lease.current && lease.reason === "expired" && run.status === "active" && lease.lease) {
+    try {
+      acquireDagActorLease({
+        run_id: runId,
+        actor_id: actor.actor_id,
+        target_type: source.targetType,
+        target_id: source.targetId,
+        expected_version: lease.lease.version,
+      });
+      lease = assessDagActorLease(leaseInput);
+    } catch {
+      // A concurrent renewal, reassignment, or release owns the current lease.
+      // The authoritative re-assessment below remains fail-closed.
+      lease = assessDagActorLease(leaseInput);
+    }
+  }
+  if (!lease.current) {
+    const disposition = lease.reason === "target_mismatch" ? "invalid" : "stale";
+    return ignored(
+      disposition,
+      runId,
+      nodeId,
+      `DAG_TRANSPORT_LEASE_${lease.reason.toUpperCase()} ${runId}/${nodeId}`,
+    );
+  }
+
   if (!roundId) {
-    if (requiresDurableFence) {
-      return ignored(
-        "stale",
-        runId,
-        nodeId,
-        `DAG_TRANSPORT_ROUND_FENCE_MISSING ${runId}/${nodeId}: current ${currentRoundId}`,
-      );
-    }
-    if (run.dagRun.handoffedNodes.has(nodeId)) {
-      return ignored("duplicate", runId, nodeId, `DAG_TRANSPORT_HANDOFF_DUPLICATE ${runId}/${nodeId}`);
-    }
-    if (run.status !== "active") {
-      return ignored("stale", runId, nodeId, `DAG_TRANSPORT_RUN_NOT_ACTIVE ${runId}: ${run.status}`);
-    }
-    return { status: "current", runId, nodeId };
+    return ignored(
+      "invalid",
+      runId,
+      nodeId,
+      `DAG_TRANSPORT_ROUND_FENCE_MISSING ${runId}/${nodeId}: current ${currentRoundId}`,
+    );
   }
 
   if (roundId !== currentRoundId) {
@@ -158,8 +200,15 @@ export function assessDagTransportFence(payload: unknown): TransportFenceAssessm
   if (run.status !== "active") {
     return ignored("stale", runId, nodeId, `DAG_TRANSPORT_RUN_NOT_ACTIVE ${runId}: ${run.status}`);
   }
-  if (requiresDurableFence && (!actorId || generation === undefined || !commandId)) {
-    return ignored("invalid", runId, nodeId, `DAG_TRANSPORT_COMMAND_FENCE_MISSING ${runId}/${nodeId}`);
+  if (!actorId || generation === undefined || (requiresDurableFence && !commandId)) {
+    return ignored(
+      "invalid",
+      runId,
+      nodeId,
+      requiresDurableFence
+        ? `DAG_TRANSPORT_COMMAND_FENCE_MISSING ${runId}/${nodeId}`
+        : `DAG_TRANSPORT_FENCE_MISSING ${runId}/${nodeId}`,
+    );
   }
 
   return {
@@ -169,11 +218,15 @@ export function assessDagTransportFence(payload: unknown): TransportFenceAssessm
     round_id: roundId,
     ...(actorId === undefined ? {} : { actor_id: actorId }),
     ...(generation === undefined ? {} : { generation }),
+    lease_generation: leaseGeneration,
     ...(commandId === undefined ? {} : { command_id: commandId }),
   };
 }
 
-export function applyResponseHandoff(payload: unknown): ResponseBridgeResult {
+export function applyResponseHandoff(
+  payload: unknown,
+  source: DagTransportFenceSource,
+): ResponseBridgeResult {
   if (typeof payload !== "object" || payload === null) {
     return {
       status: "malformed_payload",
@@ -204,7 +257,7 @@ export function applyResponseHandoff(payload: unknown): ResponseBridgeResult {
     };
   }
 
-  const assessment = assessDagTransportFence(obj);
+  const assessment = assessDagTransportFence(obj, source);
   if (assessment.status === "malformed_payload") return assessment;
   if (assessment.status === "unknown_run") {
     return { status: "unknown_run", runId: assessment.runId };
@@ -226,6 +279,7 @@ export function applyResponseHandoff(payload: unknown): ResponseBridgeResult {
       ...(typeof obj.round_id === "string" ? { roundId: obj.round_id } : {}),
       ...(typeof obj.actor_id === "string" ? { actorId: obj.actor_id } : {}),
       ...(typeof obj.generation === "number" ? { generation: obj.generation } : {}),
+      ...(typeof obj.lease_generation === "number" ? { leaseGeneration: obj.lease_generation } : {}),
       ...(typeof obj.command_id === "string" ? { commandId: obj.command_id } : {}),
     });
   } catch (error) {

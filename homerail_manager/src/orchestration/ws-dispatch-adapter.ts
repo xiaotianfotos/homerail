@@ -3,6 +3,7 @@ import type {
   DispatchEnvelope,
   DispatchResult,
 } from "./dag-dispatcher.js";
+import { randomUUID } from "node:crypto";
 import { getAllWorkers } from "../worker/registry.js";
 import { getAllNodes, isDockerCapableNode } from "../node/registry.js";
 import { emit } from "../events/bus.js";
@@ -17,6 +18,7 @@ import {
   isProvisioning,
 } from "./dispatch-tracker.js";
 import {
+  deprovisionWorkerContainer,
   provisionWorkerContainer,
   type ProvisionerOptions,
 } from "../node/worker-provisioner.js";
@@ -30,7 +32,16 @@ import {
   recordNodeDispatchRetry,
 } from "../runtime/active-runs.js";
 import { getPort } from "../config/env.js";
-import { registerProvisionedWorker } from "./provisioned-cleanup.js";
+import {
+  deprovisionProvisionedWorker,
+  registerProvisionedWorker,
+  type ProvisionedWorkerEntry,
+} from "./provisioned-cleanup.js";
+import {
+  acquireDagActorLease,
+  releaseDagActorLease,
+  type DagActorLeaseRecord,
+} from "../persistence/dag-actor-leases.js";
 import { normalizeManagerAgentRuntimeAgentType, redactTelemetry } from "homerail-protocol";
 import WebSocket from "ws";
 
@@ -385,47 +396,137 @@ export class WsDispatchAdapter implements DAGDispatcher {
     nodeId: string,
     socket: WebSocket,
   ): void {
-    const message = JSON.stringify({ type: "prompt", envelope });
-    socket.send(message);
-    emit("dag:ws_dispatched", {
-      runId: envelope.runId,
-      nodeId: envelope.nodeId,
-      targetType: "node",
-      targetId: nodeId,
-    });
-    appendChatEntry(envelope.runId, envelope.nodeId, {
-      role: "manager",
-      type: "prompt",
-      targetId: nodeId,
-      content: redactDispatchEnvelope(envelope),
-      timestamp: Date.now(),
-    });
-    mirrorDispatchPrompt(envelope, "node", nodeId);
-    recordDispatch(envelope.runId, envelope.nodeId, "node", nodeId);
+    const bound = this._bindEnvelopeToTarget(envelope, "node", nodeId);
+    try {
+      socket.send(JSON.stringify({ type: "prompt", envelope: bound.envelope }));
+    } catch (error) {
+      this._releaseFailedDispatchLease(bound.lease);
+      throw error;
+    }
+    this._recordPostSend(bound.envelope, "node", nodeId);
   }
 
   private _dispatchToWorker(
     envelope: DispatchEnvelope,
     workerId: string,
     socket: WebSocket,
+    preboundLease?: DagActorLeaseRecord,
+  ): DispatchEnvelope {
+    const bound = preboundLease
+      ? { envelope, lease: preboundLease }
+      : this._bindEnvelopeToTarget(envelope, "worker", workerId);
+    if (
+      preboundLease
+      && envelope.activity?.leaseGeneration !== preboundLease.lease_generation
+    ) {
+      throw new Error(`DAG dispatch ${envelope.runId}/${envelope.nodeId} has a mismatched prebound lease`);
+    }
+    try {
+      socket.send(JSON.stringify({ type: "prompt", envelope: bound.envelope }));
+    } catch (error) {
+      this._releaseFailedDispatchLease(bound.lease);
+      throw error;
+    }
+    this._recordPostSend(bound.envelope, "worker", workerId);
+    return bound.envelope;
+  }
+
+  private _recordPostSend(
+    envelope: DispatchEnvelope,
+    targetType: "worker" | "node",
+    targetId: string,
   ): void {
-    const message = JSON.stringify({ type: "prompt", envelope });
-    socket.send(message);
-    emit("dag:ws_dispatched", {
+    try {
+      emit("dag:ws_dispatched", {
+        runId: envelope.runId,
+        nodeId: envelope.nodeId,
+        targetType,
+        targetId,
+      });
+    } catch (error) {
+      this._warnPostSendFailure(envelope, "event emission", error);
+    }
+    try {
+      appendChatEntry(envelope.runId, envelope.nodeId, {
+        role: "manager",
+        type: "prompt",
+        targetId,
+        content: redactDispatchEnvelope(envelope),
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      this._warnPostSendFailure(envelope, "chat persistence", error);
+    }
+    mirrorDispatchPrompt(envelope, targetType, targetId);
+    try {
+      recordDispatch(envelope.runId, envelope.nodeId, targetType, targetId);
+    } catch (error) {
+      this._warnPostSendFailure(envelope, "dispatch tracking", error);
+    }
+  }
+
+  private _warnPostSendFailure(envelope: DispatchEnvelope, operation: string, error: unknown): void {
+    console.warn(
+      `[homerail_manager] DAG prompt was sent but ${operation} failed for ${envelope.runId}/${envelope.nodeId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  private _bindEnvelopeToTarget(
+    envelope: DispatchEnvelope,
+    targetType: "worker" | "node",
+    targetId: string,
+  ): { envelope: DispatchEnvelope; lease: DagActorLeaseRecord } {
+    if (!envelope.activity) {
+      throw new Error(`DAG dispatch ${envelope.runId}/${envelope.nodeId} is missing actor activity identity`);
+    }
+    const lease = acquireDagActorLease({
+      run_id: envelope.runId,
+      actor_id: envelope.activity.actorId,
+      target_type: targetType,
+      target_id: targetId,
+    });
+    const boundEnvelope: DispatchEnvelope = {
+      ...envelope,
+      activity: {
+        ...envelope.activity,
+        leaseGeneration: lease.lease_generation,
+      },
+    };
+    emit("dag:actor_lease_acquired", {
       runId: envelope.runId,
       nodeId: envelope.nodeId,
-      targetType: "worker",
-      targetId: workerId,
+      actorId: envelope.activity.actorId,
+      leaseGeneration: lease.lease_generation,
+      targetType,
+      targetId,
+      idleDeadline: lease.idle_deadline,
     });
-    appendChatEntry(envelope.runId, envelope.nodeId, {
-      role: "manager",
-      type: "prompt",
-      targetId: workerId,
-      content: redactDispatchEnvelope(envelope),
-      timestamp: Date.now(),
-    });
-    mirrorDispatchPrompt(envelope, "worker", workerId);
-    recordDispatch(envelope.runId, envelope.nodeId, "worker", workerId);
+    return { envelope: boundEnvelope, lease };
+  }
+
+  private _releaseFailedDispatchLease(lease: DagActorLeaseRecord): void {
+    if (lease.state !== "leased") return;
+    try {
+      const released = releaseDagActorLease({
+        run_id: lease.run_id,
+        actor_id: lease.actor_id,
+        lease_generation: lease.lease_generation,
+        target_type: lease.target_type!,
+        target_id: lease.target_id!,
+        expected_version: lease.version,
+      });
+      emit("dag:actor_lease_released", {
+        runId: lease.run_id,
+        actorId: lease.actor_id,
+        leaseGeneration: lease.lease_generation,
+        reason: "dispatch_send_failed",
+        retainedUntil: released.retained_until,
+      });
+    } catch (error) {
+      console.warn(
+        `[homerail_manager] failed to release DAG actor lease after dispatch send failure: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private _startProvisioning(
@@ -442,7 +543,9 @@ export class WsDispatchAdapter implements DAGDispatcher {
     });
 
     const workspaceId = envelope.runId;
-    const workerId = sanitizeProvisionedWorkerToken(`provisioned-${envelope.runId}-${envelope.nodeId}`);
+    const workerId = sanitizeProvisionedWorkerToken(
+      `provisioned-${envelope.runId}-${envelope.nodeId}-${randomUUID()}`,
+    );
     const agentBackend = normalizeAgentBackend(envelope.agentConfig.agent_type);
     const provisionerOpts: ProvisionerOptions = {
       ...this.provisionerOpts,
@@ -492,13 +595,36 @@ export class WsDispatchAdapter implements DAGDispatcher {
     containerId: string,
     dockerNodeId: string,
   ): void {
-    registerProvisionedWorker({
-      runId: envelope.runId,
-      nodeId: envelope.nodeId,
-      workerId,
-      containerId,
-      dockerNodeId,
-    });
+    const currentEnvelope = buildCurrentDispatchEnvelope(envelope.runId, envelope.nodeId);
+    if (!currentEnvelope.ok) {
+      recordDispatchFailed(envelope.runId, envelope.nodeId);
+      this._cleanupUnregisteredProvisionedContainer(envelope, workerId, containerId, dockerNodeId);
+      this._failProvisioning(envelope, currentEnvelope.reason);
+      return;
+    }
+    let leasedEnvelope: DispatchEnvelope;
+    let lease: DagActorLeaseRecord | undefined;
+    let provisionedEntry: ProvisionedWorkerEntry | undefined;
+    try {
+      const bound = this._bindEnvelopeToTarget(currentEnvelope.envelope, "worker", workerId);
+      leasedEnvelope = bound.envelope;
+      lease = bound.lease;
+      provisionedEntry = registerProvisionedWorker({
+        runId: envelope.runId,
+        nodeId: envelope.nodeId,
+        actorId: bound.envelope.activity!.actorId,
+        leaseGeneration: bound.lease.lease_generation,
+        workerId,
+        containerId,
+        dockerNodeId,
+      });
+    } catch (error) {
+      recordDispatchFailed(envelope.runId, envelope.nodeId);
+      if (lease) this._releaseFailedDispatchLease(lease);
+      this._cleanupUnregisteredProvisionedContainer(envelope, workerId, containerId, dockerNodeId);
+      this._failProvisioning(envelope, error instanceof Error ? error.message : String(error));
+      return;
+    }
     emit("dag:provisioning_completed", {
       runId: envelope.runId,
       nodeId: envelope.nodeId,
@@ -506,44 +632,78 @@ export class WsDispatchAdapter implements DAGDispatcher {
       containerId,
     });
 
-    const currentEnvelope = buildCurrentDispatchEnvelope(envelope.runId, envelope.nodeId);
-    if (!currentEnvelope.ok) {
-      recordDispatchFailed(envelope.runId, envelope.nodeId);
-      this._failProvisioning(envelope, currentEnvelope.reason);
-      return;
-    }
-
     // Find the newly registered worker and dispatch
     const workers = getAllWorkers();
     const newWorker = workers.find(
       (w) => w.worker_id === workerId && w.socket.readyState === WebSocket.OPEN,
     );
     if (newWorker) {
-      if (!hasCapabilities(newWorker.capabilities, currentEnvelope.envelope.requiredCapabilities)) {
-        clearDispatchTarget(currentEnvelope.envelope.runId, currentEnvelope.envelope.nodeId);
+      if (!hasCapabilities(newWorker.capabilities, leasedEnvelope.requiredCapabilities)) {
+        clearDispatchTarget(leasedEnvelope.runId, leasedEnvelope.nodeId);
+        if (provisionedEntry) void deprovisionProvisionedWorker(provisionedEntry);
+        if (lease) this._releaseFailedDispatchLease(lease);
         this._deferOfflineDispatch(
-          currentEnvelope.envelope,
-          `provisioned worker ${workerId} does not satisfy required capabilities: ${requiredCapabilitiesText(currentEnvelope.envelope.requiredCapabilities)}`,
+          leasedEnvelope,
+          `provisioned worker ${workerId} does not satisfy required capabilities: ${requiredCapabilitiesText(leasedEnvelope.requiredCapabilities)}`,
         );
         return;
       }
       if (!recordProvisionedNodeDispatchAttempt(
-        currentEnvelope.envelope.runId,
-        currentEnvelope.envelope.nodeId,
+        leasedEnvelope.runId,
+        leasedEnvelope.nodeId,
       )) {
+        if (provisionedEntry) void deprovisionProvisionedWorker(provisionedEntry);
+        if (lease) this._releaseFailedDispatchLease(lease);
         return;
       }
-      this._dispatchToWorker(currentEnvelope.envelope, workerId, newWorker.socket);
-      if (!markNodeDispatched(currentEnvelope.envelope.runId, currentEnvelope.envelope.nodeId)) {
-        recordDispatchFailed(currentEnvelope.envelope.runId, currentEnvelope.envelope.nodeId);
-        this._failProvisioning(currentEnvelope.envelope, `node ${currentEnvelope.envelope.nodeId} was not READY after worker provisioning`);
+      try {
+        this._dispatchToWorker(leasedEnvelope, workerId, newWorker.socket, lease);
+      } catch (error) {
+        if (provisionedEntry) void deprovisionProvisionedWorker(provisionedEntry);
+        this._failProvisioning(leasedEnvelope, error instanceof Error ? error.message : String(error));
+        return;
+      }
+      if (!markNodeDispatched(leasedEnvelope.runId, leasedEnvelope.nodeId)) {
+        recordDispatchFailed(leasedEnvelope.runId, leasedEnvelope.nodeId);
+        this._failProvisioning(leasedEnvelope, `node ${leasedEnvelope.nodeId} was not READY after worker provisioning`);
         return;
       }
     } else {
       // Worker registered but socket not ready — mark failed
       recordDispatchFailed(envelope.runId, envelope.nodeId);
+      if (provisionedEntry) void deprovisionProvisionedWorker(provisionedEntry);
+      if (lease) this._releaseFailedDispatchLease(lease);
       this._failProvisioning(envelope, `worker ${workerId} registered but socket not open`);
     }
+  }
+
+  private _cleanupUnregisteredProvisionedContainer(
+    envelope: DispatchEnvelope,
+    workerId: string,
+    containerId: string,
+    dockerNodeId: string,
+  ): void {
+    emit("dag:cleanup_requested", { runId: envelope.runId, workerCount: 1 });
+    void deprovisionWorkerContainer(dockerNodeId, containerId, this.provisionerOpts)
+      .then((result) => {
+        emit("dag:cleanup_completed", {
+          runId: envelope.runId,
+          workerId,
+          nodeId: envelope.nodeId,
+          containerId,
+          stopped: result.stopped,
+          removed: result.removed,
+        });
+      })
+      .catch((error) => {
+        emit("dag:cleanup_failed", {
+          runId: envelope.runId,
+          workerId,
+          nodeId: envelope.nodeId,
+          containerId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   private _onProvisioningFailure(

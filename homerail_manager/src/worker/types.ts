@@ -37,6 +37,11 @@ export interface ContentMessage {
     run_id?: string;
     node_id?: string;
     session_id?: string;
+    round_id?: string;
+    actor_id?: string;
+    generation?: number;
+    lease_generation?: number;
+    command_id?: string;
   };
 }
 
@@ -52,11 +57,30 @@ export interface NodeErrorMessage {
     nodeId: string;
     message: string;
     session_id?: string;
+    round_id?: string;
+    actor_id?: string;
+    generation?: number;
+    lease_generation?: number;
+    command_id?: string;
   };
 }
 
 export interface PongMessage {
   type: "pong";
+}
+
+export interface SessionEndMessage {
+  type: "SESSION_END";
+  data: {
+    run_id: string;
+    node_id: string;
+    session_id: string;
+    round_id?: string;
+    actor_id?: string;
+    generation?: number;
+    lease_generation?: number;
+    command_id?: string;
+  };
 }
 
 export type IncomingWorkerMessage =
@@ -69,6 +93,7 @@ export type IncomingWorkerMessage =
   | ContentMessage
   | ManagerCommandMessage
   | NodeErrorMessage
+  | SessionEndMessage
   | PongMessage;
 
 export interface PingMessage {
@@ -157,6 +182,11 @@ export function parseIncomingMessage(raw: unknown): IncomingWorkerMessage | null
           run_id: typeof data.run_id === "string" ? data.run_id : undefined,
           node_id: typeof data.node_id === "string" ? data.node_id : undefined,
           session_id: typeof data.session_id === "string" ? data.session_id : undefined,
+          round_id: typeof data.round_id === "string" ? data.round_id : undefined,
+          actor_id: typeof data.actor_id === "string" ? data.actor_id : undefined,
+          generation: typeof data.generation === "number" ? data.generation : undefined,
+          lease_generation: typeof data.lease_generation === "number" ? data.lease_generation : undefined,
+          command_id: typeof data.command_id === "string" ? data.command_id : undefined,
         },
       };
     }
@@ -179,6 +209,31 @@ export function parseIncomingMessage(raw: unknown): IncomingWorkerMessage | null
           nodeId: data.nodeId,
           message: data.message,
           session_id: typeof data.session_id === "string" ? data.session_id : undefined,
+          round_id: typeof data.round_id === "string" ? data.round_id : undefined,
+          actor_id: typeof data.actor_id === "string" ? data.actor_id : undefined,
+          generation: typeof data.generation === "number" ? data.generation : undefined,
+          lease_generation: typeof data.lease_generation === "number" ? data.lease_generation : undefined,
+          command_id: typeof data.command_id === "string" ? data.command_id : undefined,
+        },
+      };
+    }
+    case "SESSION_END": {
+      if (typeof obj.data !== "object" || obj.data === null || Array.isArray(obj.data)) return null;
+      const data = obj.data as Record<string, unknown>;
+      if (typeof data.run_id !== "string" || typeof data.node_id !== "string" || typeof data.session_id !== "string") {
+        return null;
+      }
+      return {
+        type: "SESSION_END",
+        data: {
+          run_id: data.run_id,
+          node_id: data.node_id,
+          session_id: data.session_id,
+          round_id: typeof data.round_id === "string" ? data.round_id : undefined,
+          actor_id: typeof data.actor_id === "string" ? data.actor_id : undefined,
+          generation: typeof data.generation === "number" ? data.generation : undefined,
+          lease_generation: typeof data.lease_generation === "number" ? data.lease_generation : undefined,
+          command_id: typeof data.command_id === "string" ? data.command_id : undefined,
         },
       };
     }

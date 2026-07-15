@@ -190,6 +190,7 @@ describe("PersistentGenerativeUiDocumentService", () => {
       .toEqual([
         ...Array.from({ length: 20 }, (_, index) => ({ version: index + 1 })),
         { version: 23 },
+        { version: 24 },
       ]);
     expect(getDb().prepare("SELECT data FROM voice_agent_sessions WHERE session_id = ?").get("legacy-v2"))
       .toEqual({ data: legacyPayload });
@@ -275,6 +276,7 @@ describe("PersistentGenerativeUiDocumentService", () => {
       .toEqual([
         ...Array.from({ length: 20 }, (_, index) => ({ version: index + 1 })),
         { version: 23 },
+        { version: 24 },
       ]);
     expect(getDb().prepare(`
       SELECT name FROM sqlite_master

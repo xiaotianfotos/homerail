@@ -271,6 +271,7 @@ describe("prompt runner", () => {
           round_id: "round-0002",
           actor_id: "actor-coder",
           generation: 3,
+          lease_generation: 8,
           command_id: "command-2",
         }),
       },
@@ -291,6 +292,7 @@ describe("prompt runner", () => {
         round_id: "round-0002",
         actor_id: "actor-coder",
         generation: 3,
+        lease_generation: 8,
         command_id: "command-2",
       },
     }]);
@@ -616,6 +618,54 @@ describe("prompt runner", () => {
     }
   });
 
+  it.each(["checkpoint-claude-adapter", "checkpoint-codex-adapter"])(
+    "injects the same provider-neutral checkpoint before %s execution",
+    async (backend) => {
+      let observedPrompt = "";
+      const mockAgent: AgentClient = {
+        run(prompt) {
+          observedPrompt = prompt;
+          return (async function* () {
+            yield { type: "done" as const };
+          })();
+        },
+      };
+      registerAgentBackend(backend, () => mockAgent);
+
+      await runPrompt(
+        {
+          task: "Continue with the new command",
+          sender: "test",
+          runId: `run-${backend}`,
+          dagConfig: makeConfig(),
+          actorCheckpoint: {
+            schema_version: 1,
+            objective: "Research the selected topic",
+            confirmed_conclusions: ["Primary source A is current"],
+            unresolved_items: ["Verify source B"],
+            key_event_refs: ["event-7"],
+            artifact_refs: ["brief:artifact-1"],
+            workspace_ref: "project-1",
+            surface_binding: "surface-research",
+            context_summary: "{\"last_step\":\"source A verified\"}",
+            round_id: "round-0001",
+            actor_generation: 1,
+            captured_at: 1_784_000_000_000,
+          },
+        },
+        {
+          wsSend: () => {},
+          agentBackend: backend,
+        },
+      );
+
+      expect(observedPrompt).toContain("HomeRail portable actor checkpoint");
+      expect(observedPrompt).toContain("Primary source A is current");
+      expect(observedPrompt).toContain("Verify source B");
+      expect(observedPrompt).toContain("## Current round input\nContinue with the new command");
+    },
+  );
+
   it("reports a node error when no LLM base URL is configured", async () => {
     delete process.env.LLM_BASE_URL;
     const mockAgent: AgentClient = {
@@ -739,6 +789,7 @@ describe("prompt runner", () => {
           round_id: "round-0002",
           actor_id: "actor-live",
           generation: 4,
+          lease_generation: 9,
           command_id: "command-live-2",
         },
         systemPrompt: "  HANDOFF port=done content=Source Issue: #847\n\nArtifact: ok",
@@ -761,6 +812,7 @@ describe("prompt runner", () => {
       round_id: "round-0002",
       actor_id: "actor-live",
       generation: 4,
+      lease_generation: 9,
       command_id: "command-live-2",
       content: "Source Issue: #847\n\nArtifact: ok",
     });
@@ -772,6 +824,7 @@ describe("prompt runner", () => {
         round_id: "round-0002",
         actor_id: "actor-live",
         generation: 4,
+        lease_generation: 9,
         command_id: "command-live-2",
       });
     }
@@ -784,6 +837,10 @@ describe("prompt runner", () => {
       "completed",
     ]);
     expect(activities.map((activity) => activity.sequence)).toEqual([1, 2, 3, 4]);
+    expect(activities.every((activity) => activity.lease_generation === 9)).toBe(true);
+    expect(parsed.find((message) => message.type === "SESSION_END")?.data).toMatchObject({
+      lease_generation: 9,
+    });
     expect(parsed.map((msg) => msg.type)).toContain("SESSION_END");
   });
 });

@@ -11,6 +11,7 @@ import { _clearAllDispatches } from "../src/orchestration/dispatch-tracker.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { closeDb } from "../src/persistence/db.js";
 import { listDagActorCommands } from "../src/persistence/dag-actors.js";
+import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
 import { _clearAllPersistence, loadRunMetadata } from "../src/persistence/store.js";
 import { _clearNodes } from "../src/node/registry.js";
 import {
@@ -27,7 +28,20 @@ class CapturingDispatcher implements DAGDispatcher {
   readonly dispatched: DispatchEnvelope[] = [];
 
   dispatch(envelope: DispatchEnvelope): DispatchResult {
-    this.dispatched.push(structuredClone(envelope));
+    if (!envelope.activity) throw new Error("test dispatch is missing actor identity");
+    const lease = acquireDagActorLease({
+      run_id: envelope.runId,
+      actor_id: envelope.activity.actorId,
+      target_type: "worker",
+      target_id: "worker-hot",
+    });
+    this.dispatched.push(structuredClone({
+      ...envelope,
+      activity: {
+        ...envelope.activity,
+        leaseGeneration: lease.lease_generation,
+      },
+    }));
     return { status: "dispatched", targetType: "fake", targetId: "worker-hot" };
   }
 }
@@ -244,6 +258,7 @@ describe("multi-round DAG HTTP API", () => {
       roundId: "round-0002",
       actorId: "researcher",
       generation: 1,
+      leaseGeneration: dispatcher.dispatched.at(-1)!.activity!.leaseGeneration,
       commandId: "command-http-round-2",
     });
     expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);

@@ -22,6 +22,7 @@ describe("DAG activity emitter", () => {
       actor_id: "research-actor",
       round_id: "round-2",
       generation: 3,
+      lease_generation: 7,
       surface_id: "surface-news",
       activity_sequence_start: 7,
     }), "run-1", (event) => events.push(event));
@@ -37,6 +38,7 @@ describe("DAG activity emitter", () => {
       node_id: "researcher",
       actor_id: "research-actor",
       generation: 3,
+      lease_generation: 7,
       surface_id: "surface-news",
       sequence: 8,
       type: "started",

@@ -10,6 +10,10 @@ export type DAGEventType =
   | "dag:node_dispatch_retry"
   | "dag:checkpoint_resume"
   | "dag:stale_session_ignored"
+  | "dag:stale_lease_ignored"
+  | "dag:actor_lease_acquired"
+  | "dag:actor_lease_released"
+  | "dag:actor_checkpoint_saved"
   | "dag:gateway_executed"
   | "dag:worker_manager_command_requested"
   | "dag:manager_command_received"
@@ -78,6 +82,10 @@ export const DAG_EVENT_TYPES: DAGEventType[] = [
   "dag:node_dispatch_retry",
   "dag:checkpoint_resume",
   "dag:stale_session_ignored",
+  "dag:stale_lease_ignored",
+  "dag:actor_lease_acquired",
+  "dag:actor_lease_released",
+  "dag:actor_checkpoint_saved",
   "dag:gateway_executed",
   "dag:worker_manager_command_requested",
   "dag:manager_command_received",

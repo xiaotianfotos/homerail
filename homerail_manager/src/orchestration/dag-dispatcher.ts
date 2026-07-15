@@ -1,5 +1,11 @@
 import type { DAGAgentConfig, DAGEdge } from "./graph.js";
-import type { AgentBuiltinToolName, DagAdvisorConfig, DagAgentToolName, DagWorkspaceAccess } from "homerail-protocol";
+import type {
+  AgentBuiltinToolName,
+  DagActorCheckpointV1,
+  DagAdvisorConfig,
+  DagAgentToolName,
+  DagWorkspaceAccess,
+} from "homerail-protocol";
 
 export interface DispatchEnvelope {
   runId: string;
@@ -15,6 +21,8 @@ export interface DispatchEnvelope {
     instruction: string;
     attempt: number;
   };
+  /** Durable provider-neutral context used when the physical Worker changes. */
+  actorCheckpoint?: DagActorCheckpointV1;
   workflowId?: string;
   workflowName?: string;
   workspace?: Record<string, unknown>;
@@ -29,6 +37,8 @@ export interface DispatchEnvelope {
     roundId: string;
     actorId: string;
     generation: number;
+    /** Physical Worker binding generation, assigned by the dispatch adapter. */
+    leaseGeneration?: number;
     commandId?: string;
     surfaceId?: string;
     sequenceStart: number;

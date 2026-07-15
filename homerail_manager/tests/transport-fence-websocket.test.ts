@@ -13,11 +13,12 @@ import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { _clearNodes } from "../src/node/registry.js";
 import { setupNodeWebSocket } from "../src/node/websocket.js";
-import { listDagActivityEvents } from "../src/persistence/dag-activity-journal.js";
 import { listDagActorCommands } from "../src/persistence/dag-actors.js";
-import { closeDb } from "../src/persistence/db.js";
+import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
+import { closeDb, getDb } from "../src/persistence/db.js";
 import { loadSessionTranscript } from "../src/persistence/dag-session-files.js";
-import { _clearAllPersistence } from "../src/persistence/store.js";
+import { _clearAllPersistence, loadNodeUsages } from "../src/persistence/store.js";
+import { listDagActivityEvents } from "../src/persistence/dag-activity-journal.js";
 import {
   _clearActiveRuns,
   createActiveRun,
@@ -180,10 +181,16 @@ describe("round-aware terminal websocket transport", () => {
       const correctionEvents: unknown[] = [];
       const auditEvents: unknown[] = [];
       subscribe("dag:node_correction_requested", (payload) => correctionEvents.push(payload));
-      subscribe("dag:response_handoff_failed", (payload) => auditEvents.push(payload));
+      subscribe("dag:stale_lease_ignored", (payload) => auditEvents.push(payload));
       let applied = 0;
-      const { server, ws } = await openTransport(sourceType, runId, () => {
+      const { server, ws, sourceId } = await openTransport(sourceType, runId, () => {
         applied += 1;
+      });
+      const lease = acquireDagActorLease({
+        run_id: runId,
+        actor_id: "researcher",
+        target_type: sourceType,
+        target_id: sourceId,
       });
 
       const response = (roundId: string, content: string) => ({
@@ -200,6 +207,7 @@ describe("round-aware terminal websocket transport", () => {
           round_id: roundId,
           actor_id: "researcher",
           generation: 1,
+          lease_generation: lease.lease_generation,
           command_id: commandId,
           content,
           summary: content,
@@ -215,6 +223,7 @@ describe("round-aware terminal websocket transport", () => {
           round_id: roundId,
           actor_id: "researcher",
           generation: 1,
+          lease_generation: lease.lease_generation,
           command_id: commandId,
         },
       });
@@ -250,9 +259,8 @@ describe("round-aware terminal websocket transport", () => {
         expect(JSON.stringify(auditEvents)).toContain("DAG_TRANSPORT_COMMAND_DUPLICATE");
 
         const transcript = JSON.stringify(loadSessionTranscript(sessionId));
-        expect(transcript).toContain("handoff_stale_ignored");
-        expect(transcript).toContain("node_error_stale_ignored");
-        expect(transcript).toContain("handoff_duplicate_ignored");
+        expect(transcript).toContain("stale_lease_response_ignored");
+        expect(transcript).toContain("stale_lease_node_error_ignored");
       } finally {
         ws.terminate();
         await closeServer(server);
@@ -266,8 +274,14 @@ describe("round-aware terminal websocket transport", () => {
     const correctionEvents: unknown[] = [];
     subscribe("dag:node_correction_requested", (payload) => correctionEvents.push(payload));
     let applied = 0;
-    const { server, ws } = await openTransport(sourceType, runId, () => {
+    const { server, ws, sourceId } = await openTransport(sourceType, runId, () => {
       applied += 1;
+    });
+    const lease = acquireDagActorLease({
+      run_id: runId,
+      actor_id: "researcher",
+      target_type: sourceType,
+      target_id: sourceId,
     });
 
     try {
@@ -281,6 +295,7 @@ describe("round-aware terminal websocket transport", () => {
           round_id: "round-0002",
           actor_id: "researcher",
           generation: 1,
+          lease_generation: lease.lease_generation,
           command_id: `${runId}-command-2`,
         },
       }));
@@ -341,4 +356,208 @@ describe("round-aware terminal websocket transport", () => {
       }
     },
   );
+
+  it.each(["worker", "node"] as const)(
+    "isolates stale %s content, stream, activity, response, and error reports",
+    async (sourceType) => {
+      const runId = `run-${sourceType}-stale-lease-reports`;
+      const envelope = startRoundTwo(runId);
+      const sessionId = envelope.sessionId!;
+      const auditEvents: unknown[] = [];
+      const correctionEvents: unknown[] = [];
+      let applied = 0;
+      subscribe("dag:stale_lease_ignored", (payload) => auditEvents.push(payload));
+      subscribe("dag:node_correction_requested", (payload) => correctionEvents.push(payload));
+      const { server, ws, sourceId } = await openTransport(sourceType, runId, () => {
+        applied += 1;
+      });
+      const staleLease = acquireDagActorLease({
+        run_id: runId,
+        actor_id: "researcher",
+        target_type: sourceType,
+        target_id: sourceId,
+      });
+      const reboundLease = acquireDagActorLease({
+        run_id: runId,
+        actor_id: "researcher",
+        target_type: sourceType,
+        target_id: `${sourceId}-replacement`,
+      });
+      const fence = {
+        round_id: "round-0002",
+        actor_id: "researcher",
+        generation: 1,
+        lease_generation: staleLease.lease_generation,
+        command_id: `${runId}-command-2`,
+      };
+      const chatsBefore = getDb().prepare("SELECT COUNT(*) AS count FROM dag_chats WHERE run_id = ?")
+        .get(runId) as { count: number };
+
+      try {
+        ws.send(JSON.stringify({
+          type: "content",
+          data: {
+            text: "token=plain-secret-value",
+            run_id: runId,
+            node_id: "actor",
+            session_id: sessionId,
+            ...fence,
+          },
+        }));
+        ws.send(JSON.stringify({
+          type: "stream",
+          data: {
+            event: "tool_call",
+            run_id: runId,
+            node_id: "actor",
+            session_id: sessionId,
+            ...fence,
+          },
+        }));
+        ws.send(JSON.stringify({
+          type: "stream",
+          data: {
+            event: "dag_activity",
+            run_id: runId,
+            node_id: "actor",
+            session_id: sessionId,
+            ...fence,
+            activity: {
+              schema_version: 1,
+              event_id: `${runId}-stale-activity`,
+              run_id: runId,
+              round_id: "round-0002",
+              node_id: "actor",
+              actor_id: "researcher",
+              generation: 1,
+              lease_generation: staleLease.lease_generation,
+              sequence: 1,
+              type: "started",
+              timestamp: Date.now(),
+            },
+          },
+        }));
+        ws.send(JSON.stringify({
+          type: "response",
+          session_id: sessionId,
+          data: {
+            type: "node_handoff",
+            runId,
+            nodeId: "actor",
+            port: "summary",
+            session_id: sessionId,
+            ...fence,
+            content: "late handoff",
+          },
+        }));
+        ws.send(JSON.stringify({
+          type: "node_error",
+          data: {
+            runId,
+            nodeId: "actor",
+            message: "late error",
+            session_id: sessionId,
+            ...fence,
+          },
+        }));
+        // A source that has learned the new generation must still be rejected
+        // when it is no longer the leased physical target.
+        ws.send(JSON.stringify({
+          type: "content",
+          data: {
+            text: "forged source",
+            run_id: runId,
+            node_id: "actor",
+            session_id: sessionId,
+            ...fence,
+            lease_generation: reboundLease.lease_generation,
+          },
+        }));
+        await delay(50);
+
+        expect(getDb().prepare("SELECT COUNT(*) AS count FROM dag_chats WHERE run_id = ?").get(runId))
+          .toEqual(chatsBefore);
+        expect(loadNodeUsages(runId)).toEqual([]);
+        expect(listDagActivityEvents({ run_id: runId })).toMatchObject({ events: [] });
+        expect(getActiveRun(runId)?.dagRun.nodeStates.get("actor")).toBe("RUNNING");
+        expect(correctionEvents).toEqual([]);
+        expect(applied).toBe(0);
+        expect(auditEvents).toHaveLength(6);
+        expect(JSON.stringify(auditEvents)).toContain("DAG_TRANSPORT_LEASE_GENERATION_MISMATCH");
+        expect(JSON.stringify(auditEvents)).toContain("DAG_TRANSPORT_LEASE_TARGET_MISMATCH");
+        const transcript = JSON.stringify(loadSessionTranscript(sessionId));
+        expect(transcript).toContain("stale_lease_content_ignored");
+        expect(transcript).toContain("stale_lease_stream_ignored");
+        expect(transcript).toContain("stale_lease_dag_activity_ignored");
+        expect(transcript).toContain("stale_lease_response_ignored");
+        expect(transcript).toContain("stale_lease_node_error_ignored");
+        expect(transcript).not.toContain("plain-secret-value");
+      } finally {
+        ws.terminate();
+        await closeServer(server);
+      }
+    },
+  );
+
+  it("isolates stale worker usage and session-end reports", async () => {
+    const runId = "run-worker-stale-lease-usage-session-end";
+    const envelope = startRoundTwo(runId);
+    const sessionId = envelope.sessionId!;
+    const auditEvents: unknown[] = [];
+    subscribe("dag:stale_lease_ignored", (payload) => auditEvents.push(payload));
+    const { server, ws, sourceId } = await openTransport("worker", runId, () => undefined);
+    const staleLease = acquireDagActorLease({
+      run_id: runId,
+      actor_id: "researcher",
+      target_type: "worker",
+      target_id: sourceId,
+    });
+    acquireDagActorLease({
+      run_id: runId,
+      actor_id: "researcher",
+      target_type: "worker",
+      target_id: `${sourceId}-replacement`,
+    });
+    const fence = {
+      round_id: "round-0002",
+      actor_id: "researcher",
+      generation: 1,
+      lease_generation: staleLease.lease_generation,
+      command_id: `${runId}-command-2`,
+    };
+
+    try {
+      ws.send(JSON.stringify({
+        type: "stream",
+        data: {
+          event: "usage",
+          run_id: runId,
+          node_id: "actor",
+          session_id: sessionId,
+          usage: { input_tokens: 101, output_tokens: 23 },
+          ...fence,
+        },
+      }));
+      ws.send(JSON.stringify({
+        type: "SESSION_END",
+        data: {
+          run_id: runId,
+          node_id: "actor",
+          session_id: sessionId,
+          ...fence,
+        },
+      }));
+      await delay(50);
+
+      expect(loadNodeUsages(runId)).toEqual([]);
+      expect(getActiveRun(runId)?.dagRun.nodeStates.get("actor")).toBe("RUNNING");
+      expect(auditEvents).toHaveLength(2);
+      const transcript = JSON.stringify(loadSessionTranscript(sessionId));
+      expect(transcript).toContain("stale_lease_usage_ignored");
+      expect(transcript).toContain("stale_lease_session_end_ignored");
+    } finally {
+      ws.terminate();
+      await closeServer(server);
+    }
+  });
 });

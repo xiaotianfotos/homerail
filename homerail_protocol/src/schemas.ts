@@ -12,6 +12,8 @@ import {
   DAG_NODE_ERROR_SCHEMA_ID,
   DAG_TRANSPORT_FENCE_SCHEMA_ID,
   DAG_TRANSPORT_FENCE_PROTOCOL_VERSION,
+  DAG_TRANSPORT_FENCE_V1_PROTOCOL_VERSION,
+  DAG_TRANSPORT_FENCE_V1_SCHEMA_ID,
 } from "./types.js";
 
 // ── DAG Tool Schemas ─────────────────────────────────────────────
@@ -207,6 +209,7 @@ export const dagNodeConfigSchema = {
     round_id: { type: "string", minLength: 1, maxLength: 256 },
     actor_id: { type: "string", minLength: 1, maxLength: 256 },
     generation: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    lease_generation: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
     command_id: { type: "string", minLength: 1, maxLength: 256 },
     surface_id: { type: "string", minLength: 1, maxLength: 256 },
     activity_sequence_start: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
@@ -219,14 +222,24 @@ const dagTransportFenceProperties = {
   round_id: { type: "string", minLength: 1, maxLength: 256 },
   actor_id: { type: "string", minLength: 1, maxLength: 256 },
   generation: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+  lease_generation: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
   command_id: { type: "string", minLength: 1, maxLength: 256 },
 };
 
 export const dagTransportFenceV1Schema = {
-  $id: DAG_TRANSPORT_FENCE_SCHEMA_ID,
+  $id: DAG_TRANSPORT_FENCE_V1_SCHEMA_ID,
   type: "object",
   properties: dagTransportFenceProperties,
   required: ["round_id", "actor_id", "generation", "command_id"],
+  additionalProperties: false,
+  version: DAG_TRANSPORT_FENCE_V1_PROTOCOL_VERSION,
+};
+
+export const dagTransportFenceV2Schema = {
+  $id: DAG_TRANSPORT_FENCE_SCHEMA_ID,
+  type: "object",
+  properties: dagTransportFenceProperties,
+  required: ["round_id", "actor_id", "generation", "lease_generation"],
   additionalProperties: false,
   version: DAG_TRANSPORT_FENCE_PROTOCOL_VERSION,
 };
@@ -442,7 +455,8 @@ export const allSchemas: Record<string, Record<string, unknown>> = {
   ...generativeUiSchemas,
   ...homerailPluginSchemas,
   "dag-activity-event-v1": dagActivityEventV1Schema as Record<string, unknown>,
-  [DAG_TRANSPORT_FENCE_SCHEMA_ID]: dagTransportFenceV1Schema as Record<string, unknown>,
+  [DAG_TRANSPORT_FENCE_V1_SCHEMA_ID]: dagTransportFenceV1Schema as Record<string, unknown>,
+  [DAG_TRANSPORT_FENCE_SCHEMA_ID]: dagTransportFenceV2Schema as Record<string, unknown>,
   [DAG_NODE_ERROR_SCHEMA_ID]: dagNodeErrorSchema as Record<string, unknown>,
   "handoff-request": handoffRequestSchema as Record<string, unknown>,
   "handoff-response": handoffResponseSchema as Record<string, unknown>,

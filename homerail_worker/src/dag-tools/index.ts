@@ -35,6 +35,7 @@ export interface DagToolsState {
   roundId?: string;
   actorId?: string;
   generation?: number;
+  leaseGeneration?: number;
   commandId?: string;
   graphNodes: string[];
   availablePorts: string[];
@@ -92,6 +93,7 @@ export function createDagToolsState(
     roundId: config.round_id,
     actorId: config.actor_id,
     generation: config.generation,
+    leaseGeneration: config.lease_generation,
     commandId: config.command_id,
     graphNodes: config.graph_nodes,
     availablePorts: [...ports].sort(),

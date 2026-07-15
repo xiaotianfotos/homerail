@@ -4,7 +4,12 @@
  * @version 0.1.0
  */
 
-import { normalizeManagerAgentRuntimeAgentType, type DagAdvisorConfig, type DagNodeConfig } from "homerail-protocol";
+import {
+  normalizeManagerAgentRuntimeAgentType,
+  type DagActorCheckpointV1,
+  type DagAdvisorConfig,
+  type DagNodeConfig,
+} from "homerail-protocol";
 import { createAgentClient } from "./agent/factory.js";
 import type { AgentEvent, AgentRunContext, AgentUsage } from "./agent/types.js";
 import { createDagTools, createDagToolsState, deliverInbox } from "./dag-tools/index.js";
@@ -32,6 +37,7 @@ export interface PromptJob {
     instruction: string;
     attempt: number;
   };
+  actorCheckpoint?: DagActorCheckpointV1;
 }
 
 export interface PromptRunnerDeps {
@@ -135,6 +141,16 @@ export async function runPrompt(
 ): Promise<void> {
   const { wsSend, agentBackend, auditDir } = deps;
   const sessionId = job.dagConfig.session_id ?? job.runId;
+  const effectiveTask = job.actorCheckpoint
+    ? [
+        "## HomeRail portable actor checkpoint",
+        "Continue the same logical actor and objective from this durable checkpoint.",
+        "Treat only recorded conclusions as confirmed. This contains no hidden reasoning or provider session state.",
+        JSON.stringify(job.actorCheckpoint),
+        "## Current round input",
+        job.task,
+      ].join("\n")
+    : job.task;
 
   function appendSessionTranscript(type: string, content?: unknown, metadata?: Record<string, unknown>): void {
     try {
@@ -158,7 +174,7 @@ export async function runPrompt(
       sessionId,
       runId: job.runId,
       nodeId: job.dagConfig.node_id,
-      messages: [{ role: "user", content: job.task }],
+      messages: [{ role: "user", content: effectiveTask }],
       toolCallState: { inFlight: false },
       agentConfig: {
         provider: job.llmProvider,
@@ -243,9 +259,9 @@ export async function runPrompt(
     node_id: job.dagConfig.node_id,
     run_id: job.runId,
     sender: job.sender,
-    task_preview: job.task.slice(0, 500),
+    task_preview: effectiveTask.slice(0, 500),
   });
-  appendSessionTranscript("prompt_start", { task_preview: job.task.slice(0, 500) });
+  appendSessionTranscript("prompt_start", { task_preview: effectiveTask.slice(0, 500) });
 
   // Stream content via WS
   function sendContent(text: string) {
@@ -258,6 +274,11 @@ export async function runPrompt(
           run_id: job.runId,
           node_id: job.dagConfig.node_id,
           session_id: job.dagConfig.session_id ?? job.runId,
+          ...(job.dagConfig.round_id !== undefined ? { round_id: job.dagConfig.round_id } : {}),
+          ...(job.dagConfig.actor_id !== undefined ? { actor_id: job.dagConfig.actor_id } : {}),
+          ...(job.dagConfig.generation !== undefined ? { generation: job.dagConfig.generation } : {}),
+          ...(job.dagConfig.lease_generation !== undefined ? { lease_generation: job.dagConfig.lease_generation } : {}),
+          ...(job.dagConfig.command_id !== undefined ? { command_id: job.dagConfig.command_id } : {}),
         },
       }),
     );
@@ -277,6 +298,7 @@ export async function runPrompt(
           ...(job.dagConfig.round_id !== undefined ? { round_id: job.dagConfig.round_id } : {}),
           ...(job.dagConfig.actor_id !== undefined ? { actor_id: job.dagConfig.actor_id } : {}),
           ...(job.dagConfig.generation !== undefined ? { generation: job.dagConfig.generation } : {}),
+          ...(job.dagConfig.lease_generation !== undefined ? { lease_generation: job.dagConfig.lease_generation } : {}),
           ...(job.dagConfig.command_id !== undefined ? { command_id: job.dagConfig.command_id } : {}),
         },
       }),
@@ -329,7 +351,7 @@ export async function runPrompt(
         sessionId,
         runId: job.runId,
         nodeId: job.dagConfig.node_id,
-        messages: [{ role: "user", content: job.task }],
+        messages: [{ role: "user", content: effectiveTask }],
         toolCallState: { inFlight: false },
         agentConfig: redactAgentContext(context),
         timestamp: Date.now(),
@@ -338,7 +360,7 @@ export async function runPrompt(
       // Best-effort.
     }
     let errorMessage: string | null = null;
-    for await (const event of agent.run(job.task, dagTools, context)) {
+    for await (const event of agent.run(effectiveTask, dagTools, context)) {
       switch (event.type) {
         case "text":
           sendContent(event.text);
@@ -533,6 +555,11 @@ export async function runPrompt(
         session_id: job.dagConfig.session_id ?? job.runId,
         run_id: job.runId,
         node_id: job.dagConfig.node_id,
+        ...(job.dagConfig.round_id !== undefined ? { round_id: job.dagConfig.round_id } : {}),
+        ...(job.dagConfig.actor_id !== undefined ? { actor_id: job.dagConfig.actor_id } : {}),
+        ...(job.dagConfig.generation !== undefined ? { generation: job.dagConfig.generation } : {}),
+        ...(job.dagConfig.lease_generation !== undefined ? { lease_generation: job.dagConfig.lease_generation } : {}),
+        ...(job.dagConfig.command_id !== undefined ? { command_id: job.dagConfig.command_id } : {}),
       },
     }),
   );
@@ -559,6 +586,7 @@ export async function runPrompt(
       ...(job.dagConfig.round_id !== undefined ? { round_id: job.dagConfig.round_id } : {}),
       ...(job.dagConfig.actor_id !== undefined ? { actor_id: job.dagConfig.actor_id } : {}),
       ...(job.dagConfig.generation !== undefined ? { generation: job.dagConfig.generation } : {}),
+      ...(job.dagConfig.lease_generation !== undefined ? { lease_generation: job.dagConfig.lease_generation } : {}),
       ...(job.dagConfig.command_id !== undefined ? { command_id: job.dagConfig.command_id } : {}),
     };
     sendTerminalMessage(JSON.stringify({ type: "node_error", data }));

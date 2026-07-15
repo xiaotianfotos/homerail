@@ -13,6 +13,11 @@ import {
 } from "../src/orchestration/workflow-spec-v1.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { listDagActors, listDagActorCommands } from "../src/persistence/dag-actors.js";
+import {
+  acquireDagActorLease,
+  getDagActorLease,
+  getLatestDagActorCheckpoint,
+} from "../src/persistence/dag-actor-leases.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import { listDagRunRounds } from "../src/persistence/dag-run-rounds.js";
 import {
@@ -39,10 +44,24 @@ import {
 
 class RepeatableDispatcher implements DAGDispatcher {
   readonly dispatched: DispatchEnvelope[] = [];
+  targetId = "worker-hot";
 
   dispatch(envelope: DispatchEnvelope): DispatchResult {
-    this.dispatched.push(structuredClone(envelope));
-    return { status: "dispatched", targetType: "fake", targetId: "worker-hot" };
+    if (!envelope.activity) throw new Error("test dispatch is missing actor identity");
+    const lease = acquireDagActorLease({
+      run_id: envelope.runId,
+      actor_id: envelope.activity.actorId,
+      target_type: "worker",
+      target_id: this.targetId,
+    });
+    this.dispatched.push(structuredClone({
+      ...envelope,
+      activity: {
+        ...envelope.activity,
+        leaseGeneration: lease.lease_generation,
+      },
+    }));
+    return { status: "dispatched", targetType: "fake", targetId: this.targetId };
   }
 }
 
@@ -251,7 +270,7 @@ describe("durable multi-round DAG runtime", () => {
       generation: 1,
       surfaceId: "actor:actor",
     });
-    expect(firstEnvelope.requiredCapabilities).toBeUndefined();
+    expect(firstEnvelope.requiredCapabilities).toEqual([DAG_TRANSPORT_FENCE_CAPABILITY]);
     handoffActiveRun(runId, "actor", "summary", { result: "round one" });
     expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
     expect(getActiveRun(runId)).toMatchObject({
@@ -363,6 +382,24 @@ nodes:
       generation: 1,
       surfaceId: "surface-research",
     });
+    expect(() => handoffActiveRun(runId, "actor", "summary", "missing round", {
+      transport: true,
+      actorId: "researcher",
+      generation: 1,
+      leaseGeneration: firstEnvelope.activity!.leaseGeneration,
+    })).toThrow("DAG_HANDOFF_ROUND_FENCE_MISSING");
+    expect(() => handoffActiveRun(runId, "actor", "summary", "missing actor", {
+      transport: true,
+      roundId: "round-0001",
+      generation: 1,
+      leaseGeneration: firstEnvelope.activity!.leaseGeneration,
+    })).toThrow("DAG_HANDOFF_ACTOR_FENCE_MISSING");
+    expect(() => handoffActiveRun(runId, "actor", "summary", "missing generation", {
+      transport: true,
+      roundId: "round-0001",
+      actorId: "researcher",
+      leaseGeneration: firstEnvelope.activity!.leaseGeneration,
+    })).toThrow("DAG_HANDOFF_GENERATION_FENCE_MISSING");
     handoffActiveRun(runId, "actor", "summary", { result: "round one" });
     expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
     expect(getActiveRun(runId)).toMatchObject({
@@ -371,6 +408,16 @@ nodes:
     });
     expect(getActiveRunCount()).toBe(0);
     expect(getWaitingRunCount()).toBe(1);
+    expect(getLatestDagActorCheckpoint({ run_id: runId, actor_id: "researcher" })).toMatchObject({
+      checkpoint_version: 1,
+      checkpoint: {
+        schema_version: 1,
+        round_id: "round-0001",
+        actor_generation: 1,
+        surface_binding: "surface-research",
+        confirmed_conclusions: expect.arrayContaining([expect.stringContaining("round one")]),
+      },
+    });
 
     const commandRequest = {
       expected_round_id: "round-0001",
@@ -381,6 +428,7 @@ nodes:
         payload: { task: "continue" },
       }],
     };
+    dispatcher.targetId = "worker-replacement";
     const resumed = resumeWaitingActiveRun(runId, commandRequest);
     expect(resumed).toMatchObject({
       previousRoundId: "round-0001",
@@ -400,8 +448,15 @@ nodes:
         roundId: "round-0002",
         actorId: "researcher",
         generation: 1,
+        leaseGeneration: 2,
         commandId: "command-round-2",
         surfaceId: "surface-research",
+      },
+      actorCheckpoint: {
+        schema_version: 1,
+        round_id: "round-0001",
+        actor_generation: 1,
+        surface_binding: "surface-research",
       },
       inputs: {
         command: [{
@@ -413,12 +468,27 @@ nodes:
       },
     });
     expect(listDagActorCommands({ run_id: runId })[0]?.status).toBe("delivered");
+    expect(getDagActorLease({ run_id: runId, actor_id: "researcher" })).toMatchObject({
+      state: "leased",
+      lease_generation: 2,
+      target_id: "worker-replacement",
+    });
+
+    expect(() => handoffActiveRun(runId, "actor", "summary", "stale worker", {
+      transport: true,
+      roundId: "round-0002",
+      actorId: "researcher",
+      generation: 1,
+      leaseGeneration: firstEnvelope.activity!.leaseGeneration,
+      commandId: "command-round-2",
+    })).toThrow("DAG_HANDOFF_LEASE_CONFLICT");
 
     expect(() => handoffActiveRun(runId, "actor", "summary", "late", {
       transport: true,
       roundId: "round-0001",
       actorId: "researcher",
       generation: 1,
+      leaseGeneration: secondEnvelope.activity!.leaseGeneration,
       commandId: "command-round-2",
     })).toThrow("DAG_HANDOFF_ROUND_CONFLICT");
     handoffActiveRun(runId, "actor", "summary", { result: "round two" }, {
@@ -426,6 +496,7 @@ nodes:
       roundId: "round-0002",
       actorId: "researcher",
       generation: 1,
+      leaseGeneration: secondEnvelope.activity!.leaseGeneration,
       commandId: "command-round-2",
     });
     expect(listDagActorCommands({ run_id: runId })[0]?.status).toBe("acknowledged");
@@ -457,8 +528,28 @@ nodes:
       expected_round_id: "round-0002",
       commands: [{ actor_id: "researcher", command_id: "command-round-3", payload: "one more" }],
     });
+    dispatcher.targetId = "worker-after-manager-restart";
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(dispatcher.dispatched.at(-1)).toMatchObject({
+      activity: {
+        roundId: "round-0003",
+        actorId: "researcher",
+        leaseGeneration: 3,
+        commandId: "command-round-3",
+      },
+      actorCheckpoint: {
+        schema_version: 1,
+        round_id: "round-0002",
+        actor_generation: 1,
+        surface_binding: "surface-research",
+      },
+    });
     cancelActiveRun(runId);
     expect(getActiveRun(runId)?.status).toBe("cancelled");
+    expect(getDagActorLease({ run_id: runId, actor_id: "researcher" })).toMatchObject({
+      state: "retired",
+      lease_generation: 3,
+    });
     expect(listDagActorCommands({ run_id: runId }).find((command) => command.command_id === "command-round-3"))
       .toMatchObject({ status: "cancelled" });
     expect(listDagRunRounds(runId).map((round) => [round.round_id, round.status])).toEqual([
@@ -530,11 +621,13 @@ nodes:
       commands: [{ actor_id: "actor_a", command_id: "command-a2", payload: "refresh A" }],
     });
     expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    const roundTwoEnvelope = dispatcher.dispatched.at(-1)!;
     handoffActiveRun(runId, "actor_a", "result", { ok: true, label: "A2" }, {
       transport: true,
       roundId: "round-0002",
       actorId: "actor_a",
       generation: 1,
+      leaseGeneration: roundTwoEnvelope.activity!.leaseGeneration,
       commandId: "command-a2",
     });
     expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
@@ -613,6 +706,7 @@ nodes:
       commands: [{ actor_id: "researcher", command_id: "atomic-command", payload: "continue" }],
     });
     dispatchReadyNodes(runId, dispatcher);
+    const roundTwoEnvelope = dispatcher.dispatched.at(-1)!;
 
     getDb().exec(`
       CREATE TRIGGER fail_atomic_handoff_metadata
@@ -627,6 +721,7 @@ nodes:
       roundId: "round-0002",
       actorId: "researcher",
       generation: 1,
+      leaseGeneration: roundTwoEnvelope.activity!.leaseGeneration,
       commandId: "atomic-command",
     })).toThrow("forced metadata failure");
 
@@ -643,6 +738,7 @@ nodes:
       roundId: "round-0002",
       actorId: "researcher",
       generation: 1,
+      leaseGeneration: roundTwoEnvelope.activity!.leaseGeneration,
       commandId: "atomic-command",
     });
     expect(listDagActorCommands({ run_id: runId })).toContainEqual(expect.objectContaining({

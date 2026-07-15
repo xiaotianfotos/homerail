@@ -41,6 +41,11 @@ export interface ContentMessage {
     run_id?: string;
     node_id?: string;
     session_id?: string;
+    round_id?: string;
+    actor_id?: string;
+    generation?: number;
+    lease_generation?: number;
+    command_id?: string;
   };
 }
 
@@ -55,6 +60,11 @@ export interface NodeErrorMessage {
     nodeId: string;
     message: string;
     session_id?: string;
+    round_id?: string;
+    actor_id?: string;
+    generation?: number;
+    lease_generation?: number;
+    command_id?: string;
   };
 }
 
@@ -164,6 +174,11 @@ export function parseIncomingNodeMessage(raw: unknown): IncomingNodeMessage | nu
           run_id: typeof data.run_id === "string" ? data.run_id : undefined,
           node_id: typeof data.node_id === "string" ? data.node_id : undefined,
           session_id: typeof data.session_id === "string" ? data.session_id : undefined,
+          round_id: typeof data.round_id === "string" ? data.round_id : undefined,
+          actor_id: typeof data.actor_id === "string" ? data.actor_id : undefined,
+          generation: typeof data.generation === "number" ? data.generation : undefined,
+          lease_generation: typeof data.lease_generation === "number" ? data.lease_generation : undefined,
+          command_id: typeof data.command_id === "string" ? data.command_id : undefined,
         },
       };
     }
@@ -180,6 +195,11 @@ export function parseIncomingNodeMessage(raw: unknown): IncomingNodeMessage | nu
           nodeId: data.nodeId,
           message: data.message,
           session_id: typeof data.session_id === "string" ? data.session_id : undefined,
+          round_id: typeof data.round_id === "string" ? data.round_id : undefined,
+          actor_id: typeof data.actor_id === "string" ? data.actor_id : undefined,
+          generation: typeof data.generation === "number" ? data.generation : undefined,
+          lease_generation: typeof data.lease_generation === "number" ? data.lease_generation : undefined,
+          command_id: typeof data.command_id === "string" ? data.command_id : undefined,
         },
       };
     }

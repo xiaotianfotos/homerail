@@ -10,6 +10,7 @@ import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
 import {
   deriveWorkflowConcurrencyPolicy,
   releaseWorkflowRunReservation,
@@ -388,11 +389,18 @@ timer:
       dispatched: 1,
     });
     expect(firstResume.deduplicated).toBeUndefined();
+    const lease = acquireDagActorLease({
+      run_id: runId,
+      actor_id: "actor",
+      target_type: "worker",
+      target_id: "fake-dispatcher",
+    });
     handoffActiveRun(runId, "actor", "summary", { result: "round two" }, {
       transport: true,
       roundId: "round-0002",
       actorId: "actor",
       generation: 1,
+      leaseGeneration: lease.lease_generation,
       commandId: "resume-retry-command",
     });
     expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);

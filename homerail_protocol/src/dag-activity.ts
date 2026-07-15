@@ -37,6 +37,8 @@ export interface DagActivityEventV1 {
   node_id: string;
   actor_id: string;
   generation: number;
+  /** Physical Worker lease generation; required by transport-fence v2. */
+  lease_generation?: number;
   surface_id?: string;
   sequence: number;
   /** Unix epoch milliseconds assigned at the activity source. */
@@ -83,6 +85,7 @@ export const dagActivityEventV1Schema = {
     node_id: identifierSchema,
     actor_id: identifierSchema,
     generation: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    lease_generation: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
     surface_id: identifierSchema,
     sequence: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
     timestamp: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },

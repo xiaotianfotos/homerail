@@ -101,6 +101,7 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
         ...(state.roundId !== undefined ? { round_id: state.roundId } : {}),
         ...(state.actorId !== undefined ? { actor_id: state.actorId } : {}),
         ...(state.generation !== undefined ? { generation: state.generation } : {}),
+        ...(state.leaseGeneration !== undefined ? { lease_generation: state.leaseGeneration } : {}),
         ...(state.commandId !== undefined ? { command_id: state.commandId } : {}),
         content,
         summary,
