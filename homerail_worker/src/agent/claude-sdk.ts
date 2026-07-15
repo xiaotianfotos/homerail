@@ -194,6 +194,7 @@ export class ClaudeSdkAdapter implements AgentClient {
     let timeout: NodeJS.Timeout | null = null;
     let stderrTail = "";
     let externalAbortHandler: (() => void) | null = null;
+    let handoffStopRequested = false;
     const appendStderr = (chunk: string): void => {
       stderrTail = `${stderrTail}${chunk}`.slice(-4000);
     };
@@ -230,16 +231,14 @@ export class ClaudeSdkAdapter implements AgentClient {
       if (this.maxTurns !== null) {
         options.maxTurns = this.maxTurns;
       }
-      const abortController = this.queryTimeoutMs > 0 || context.abortSignal ? new AbortController() : null;
-      if (abortController) {
-        options.abortController = abortController;
-        if (context.abortSignal) {
-          externalAbortHandler = () => abortController.abort();
-          if (context.abortSignal.aborted) {
-            abortController.abort();
-          } else {
-            context.abortSignal.addEventListener("abort", externalAbortHandler, { once: true });
-          }
+      const abortController = new AbortController();
+      options.abortController = abortController;
+      if (context.abortSignal) {
+        externalAbortHandler = () => abortController.abort();
+        if (context.abortSignal.aborted) {
+          abortController.abort();
+        } else {
+          context.abortSignal.addEventListener("abort", externalAbortHandler, { once: true });
         }
       }
 
@@ -259,6 +258,12 @@ export class ClaudeSdkAdapter implements AgentClient {
           sdk.tool(t.name, t.description, jsonSchemaObjectToZodRawShape(t.input_schema), async (args, extra) => {
             const toolCallId = sdkToolCallId(extra);
             const res = await t.handler(args, toolCallId ? { tool_call_id: toolCallId } : undefined);
+            if (t.name === "handoff" && res.is_error !== true) {
+              handoffStopRequested = true;
+              // Return the MCP result before closing a provider stream that may
+              // otherwise wait forever after a successful terminal handoff.
+              setImmediate(() => abortController.abort());
+            }
             return {
               content: [{ type: "text" as const, text: res.content.map((c) => c.text).join("") }],
               isError: res.is_error,
@@ -306,7 +311,7 @@ export class ClaudeSdkAdapter implements AgentClient {
         },
       };
 
-      if (abortController && this.queryTimeoutMs > 0) {
+      if (this.queryTimeoutMs > 0) {
         timeout = setTimeout(() => abortController.abort(), this.queryTimeoutMs);
       }
 
@@ -395,24 +400,35 @@ export class ClaudeSdkAdapter implements AgentClient {
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      yield {
-        type: "debug",
-        source: "claude-sdk",
-        message: "query_error",
-        data: {
-          error: msg,
-          stderr_tail: stderrTail.trim().slice(-2000) || null,
-          timeout_configured_ms: this.queryTimeoutMs > 0 ? this.queryTimeoutMs : null,
-        },
-      };
-      if (isClaudeSdkTransportError(err)) {
-        yield { type: "error", message: `Claude SDK transport error: ${msg}` };
-      } else if (msg.includes("429") || msg.includes("rate")) {
-        yield { type: "error", message: `Rate limited: ${msg}` };
-      } else if (msg.includes("401") || msg.includes("403")) {
-        yield { type: "error", message: `Auth failure: ${msg}` };
+      if (handoffStopRequested) {
+        yield {
+          type: "debug",
+          source: "claude-sdk",
+          message: "query_stopped_after_handoff",
+          data: {
+            stderr_tail: stderrTail.trim().slice(-2000) || null,
+          },
+        };
       } else {
-        yield { type: "error", message: `Claude SDK error: ${msg}` };
+        yield {
+          type: "debug",
+          source: "claude-sdk",
+          message: "query_error",
+          data: {
+            error: msg,
+            stderr_tail: stderrTail.trim().slice(-2000) || null,
+            timeout_configured_ms: this.queryTimeoutMs > 0 ? this.queryTimeoutMs : null,
+          },
+        };
+        if (isClaudeSdkTransportError(err)) {
+          yield { type: "error", message: `Claude SDK transport error: ${msg}` };
+        } else if (msg.includes("429") || msg.includes("rate")) {
+          yield { type: "error", message: `Rate limited: ${msg}` };
+        } else if (msg.includes("401") || msg.includes("403")) {
+          yield { type: "error", message: `Auth failure: ${msg}` };
+        } else {
+          yield { type: "error", message: `Claude SDK error: ${msg}` };
+        }
       }
     } finally {
       if (timeout) clearTimeout(timeout);
