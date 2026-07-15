@@ -17,6 +17,7 @@
     "asrUnconfigured": "未配置 ASR",
     "asrModelUnconfigured": "未配置 ASR 模型",
     "ttsUnconfigured": "未配置 TTS",
+    "edgeTts": "Microsoft Edge（在線、無需 Key）",
     "omniUnconfigured": "未配置 Omni 模型",
     "saving": "保存中",
     "noAvailableCodex": "當前賬號沒有可用的 Codex 模型",

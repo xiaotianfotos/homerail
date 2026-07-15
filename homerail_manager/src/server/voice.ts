@@ -14,6 +14,12 @@ import {
   synthesizeArkTtsHttp,
   transcribeArkAsr,
 } from "./ark-voice.js";
+import {
+  BUILTIN_EDGE_TTS_MODEL,
+  DEFAULT_EDGE_TTS_VOICE,
+  EdgeTtsInputError,
+  synthesizeEdgeTts,
+} from "./edge-tts.js";
 
 interface BaseResponse {
   success: boolean;
@@ -197,6 +203,9 @@ function _resolveTtsSetting(settings?: Record<string, unknown>): LLMSetting | un
     const setting = getSetting(settingId);
     if (setting?.is_active && setting.supports_tts) return setting;
   }
+  if (!settingId && _stringField(settings?.tts_model) === BUILTIN_EDGE_TTS_MODEL) {
+    return undefined;
+  }
   return _findActiveCapabilitySetting("supports_tts");
 }
 
@@ -206,6 +215,7 @@ function _resolveLlmSettingForDefaults(): LLMSetting | undefined {
 }
 
 function _defaultTtsVoiceFor(runtime: { baseUrl: string; model: string }): string {
+  if (runtime.model === BUILTIN_EDGE_TTS_MODEL) return DEFAULT_EDGE_TTS_VOICE;
   return _isMimoTts(runtime) ? DEFAULT_MIMO_TTS_VOICE : DEFAULT_OPENAI_TTS_VOICE;
 }
 
@@ -213,6 +223,7 @@ function _isGenericDefaultTtsVoice(voice: string | undefined): boolean {
   return !voice ||
     voice === DEFAULT_MIMO_TTS_VOICE ||
     voice === DEFAULT_OPENAI_TTS_VOICE ||
+    voice === DEFAULT_EDGE_TTS_VOICE ||
     voice === LEGACY_ARK_TTS_DEFAULT_VOICE;
 }
 
@@ -231,7 +242,7 @@ function _defaultVoiceSettings() {
   const llmSetting = _resolveLlmSettingForDefaults();
   const ttsSetting = _resolveTtsSetting();
   const ttsBaseUrl = ttsSetting?.base_url ?? (ttsSetting ? _providerBaseUrl(ttsSetting.provider_id) : undefined) ?? "";
-  const ttsModel = ttsSetting?.model_name ?? "";
+  const ttsModel = ttsSetting?.model_name ?? BUILTIN_EDGE_TTS_MODEL;
   return {
     recognition_mode: "asr",
     omni_base_url: "",
@@ -250,9 +261,7 @@ function _defaultVoiceSettings() {
     tts_base_url: ttsBaseUrl,
     tts_model: ttsModel,
     tts_llm_setting_id: ttsSetting?.id ?? "",
-    tts_voice: ttsModel
-      ? _defaultTtsVoiceForSetting(ttsSetting, { baseUrl: ttsBaseUrl, model: ttsModel })
-      : DEFAULT_MIMO_TTS_VOICE,
+    tts_voice: _defaultTtsVoiceForSetting(ttsSetting, { baseUrl: ttsBaseUrl, model: ttsModel }),
     tts_speed: null,
     tts_token_set: Boolean(ttsSetting?.api_key || process.env.HOMERAIL_TTS_API_KEY),
     tts_stream: false,
@@ -284,6 +293,7 @@ function _voiceSettingsWithCapabilityDefaults(settings?: Record<string, unknown>
   const ttsSetting = _resolveTtsSetting(data);
   const hasStoredTtsSettingId = Boolean(_stringField(settings?.tts_llm_setting_id));
   const storedTtsModel = _stringField(settings?.tts_model);
+  const hasStoredTtsRuntime = hasStoredTtsSettingId || Boolean(storedTtsModel);
   const shouldApplyTtsSetting = Boolean(ttsSetting) &&
     (!hasStoredSettings || hasStoredTtsSettingId || !storedTtsModel || !storedTtsModel.toLowerCase().includes("tts"));
   if (ttsSetting && shouldApplyTtsSetting) {
@@ -297,8 +307,17 @@ function _voiceSettingsWithCapabilityDefaults(settings?: Record<string, unknown>
         model: String(data.tts_model ?? ""),
       });
     }
+  } else if (!ttsSetting && !hasStoredTtsRuntime) {
+    data.tts_base_url = "";
+    data.tts_model = BUILTIN_EDGE_TTS_MODEL;
+    data.tts_llm_setting_id = "";
+    data.tts_voice = DEFAULT_EDGE_TTS_VOICE;
+    data.tts_speed = null;
+    data.tts_stream = false;
   }
-  data.tts_token_set = Boolean(ttsSetting?.api_key || process.env.HOMERAIL_TTS_API_KEY);
+  data.tts_token_set = _stringField(data.tts_model) === BUILTIN_EDGE_TTS_MODEL
+    ? false
+    : Boolean(ttsSetting?.api_key || process.env.HOMERAIL_TTS_API_KEY);
   data.tts_output_channels = _normalizeTtsOutputChannels(data.tts_output_channels);
   delete data.omni_token;
   delete data.llm_token;
@@ -352,6 +371,16 @@ function _mergeVoiceSettingsUpdate(body: Record<string, unknown>): Record<string
         model: nextTtsSetting.model_name,
       });
     }
+  }
+  if (
+    _stringField(merged.tts_model) === BUILTIN_EDGE_TTS_MODEL &&
+    !_stringField(merged.tts_llm_setting_id)
+  ) {
+    merged.tts_base_url = "";
+    merged.tts_llm_setting_id = "";
+    merged.tts_voice = DEFAULT_EDGE_TTS_VOICE;
+    merged.tts_speed = null;
+    merged.tts_stream = false;
   }
   for (const field of ["omni_token", "llm_token", "asr_token", "tts_token"]) {
     delete merged[field];
@@ -622,6 +651,10 @@ function _isMimoTts(runtime: { baseUrl: string; model: string }): boolean {
     || (runtime.baseUrl.includes("xiaomimimo.com") && runtime.model.includes("tts"));
 }
 
+function _isBuiltinEdgeTts(runtime: { model: string; setting?: LLMSetting }): boolean {
+  return !runtime.setting && runtime.model === BUILTIN_EDGE_TTS_MODEL;
+}
+
 function _resolveTtsRuntime(settings?: Record<string, unknown>): {
   baseUrl: string;
   model: string;
@@ -799,14 +832,27 @@ export function voiceRoutesHandler(
     _readJsonBody(req)
       .then(async (body) => {
         const runtime = _resolveTtsRuntime(_loadVoiceSettings());
+        const speechBody = body as VoiceSpeechBody;
+        if (_isBuiltinEdgeTts(runtime)) {
+          const text = _stringField(speechBody.text);
+          if (!text) throw new EdgeTtsInputError("Missing required field: text");
+          const audio = await synthesizeEdgeTts({
+            text,
+            voice: _stringField(speechBody.voice) ?? runtime.voice,
+            speed: typeof speechBody.speed === "number" ? speechBody.speed : runtime.speed,
+          });
+          res.writeHead(200, { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" });
+          res.end(audio);
+          return;
+        }
         const configuredSpeechUrl = _stringField(runtime.setting?.tts_http_url);
         if (!runtime.apiKey) throw new Error("Missing TTS API key");
         if (isArkVoiceSetting(runtime.setting)) {
-          const text = _stringField((body as VoiceSpeechBody).text);
+          const text = _stringField(speechBody.text);
           if (!text) throw new Error("Missing required field: text");
           const result = await synthesizeArkTtsHttp(arkVoiceRuntimeFromSetting(runtime.setting, "tts"), {
             text,
-            voice: _stringField((body as VoiceSpeechBody).voice) ?? runtime.voice,
+            voice: _stringField(speechBody.voice) ?? runtime.voice,
           });
           res.writeHead(200, {
             "Content-Type": result.contentType,
@@ -815,7 +861,7 @@ export function voiceRoutesHandler(
           res.end(result.audio);
           return;
         }
-        const payload = _buildTtsPayload(runtime, body as VoiceSpeechBody);
+        const payload = _buildTtsPayload(runtime, speechBody);
         if (_isMimoTts(runtime)) {
           const data = await _requestJson(runtime.baseUrl, "/v1/chat/completions", runtime.apiKey, payload);
           const audio = _extractMimoAudio(data);
@@ -855,7 +901,7 @@ export function voiceRoutesHandler(
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
-        if (message.startsWith("Missing required field")) {
+        if (err instanceof EdgeTtsInputError || message.startsWith("Missing required field")) {
           _badRequest(res, message);
           return;
         }

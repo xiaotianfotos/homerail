@@ -102,6 +102,11 @@ import {
   isAndroidTvShell,
   isMobileVoiceUserAgent
 } from '@/utils/voice-host-platform'
+import {
+  BUILTIN_EDGE_TTS_OPTION_ID,
+  builtinEdgeTtsUpdate,
+  isBuiltinEdgeTtsSettings
+} from '@/components/agent/builtin-tts'
 import { createVoiceMediaStream } from '@/utils/voice-audio-input'
 import {
   NATIVE_GAMEPAD_ANALOG_EVENT,
@@ -573,6 +578,7 @@ const selectedAsrModelId = computed(() => {
 })
 const selectedTtsModelId = computed(() => {
   if (!voiceSettings.value) return ''
+  if (isBuiltinEdgeTtsSettings(voiceSettings.value)) return BUILTIN_EDGE_TTS_OPTION_ID
   if (voiceSettings.value.tts_llm_setting_id) return voiceSettings.value.tts_llm_setting_id
   return (
     ttsModelOptions.value.find(setting => setting.model_name === voiceSettings.value?.tts_model)
@@ -653,6 +659,9 @@ const asrModelLabel = computed(() => {
   return modelSettingLabel(setting, asrModelOptions.value) || voiceSettings.value?.asr_model || t('voice.model.asrUnconfigured')
 })
 const ttsModelLabel = computed(() => {
+  if (selectedTtsModelId.value === BUILTIN_EDGE_TTS_OPTION_ID) {
+    return t('voice.model.edgeTts')
+  }
   const setting = ttsModelOptions.value.find(item => item.id === selectedTtsModelId.value)
   return modelSettingLabel(setting, ttsModelOptions.value) || voiceSettings.value?.tts_model || t('voice.model.ttsUnconfigured')
 })
@@ -2557,7 +2566,11 @@ function ttsDefaultsFor(setting: {
   if (isQwen3Tts(setting.model_name)) {
     return { tts_voice: 'serena', tts_speed: null, tts_stream: false }
   }
-  return {}
+  return {
+    tts_voice: setting.tts_voice || 'alloy',
+    tts_speed: null,
+    tts_stream: false
+  }
 }
 
 async function changeOmniModel(event: Event): Promise<void> {
@@ -2816,17 +2829,24 @@ async function changeAsrModel(event: Event): Promise<void> {
 async function changeTtsModel(event: Event): Promise<void> {
   const settingId = (event.target as HTMLSelectElement).value
   const setting = ttsModelOptions.value.find(item => item.id === settingId)
-  if (!voiceSettings.value || !setting || settingId === selectedTtsModelId.value) return
+  if (
+    !voiceSettings.value ||
+    settingId === selectedTtsModelId.value ||
+    (settingId !== BUILTIN_EDGE_TTS_OPTION_ID && !setting)
+  ) return
   ttsSaving.value = true
   voiceConfigError.value = ''
   try {
+    const ttsUpdate = settingId === BUILTIN_EDGE_TTS_OPTION_ID
+      ? builtinEdgeTtsUpdate()
+      : {
+          tts_base_url: setting!.provider_base_url || voiceSettings.value.tts_base_url,
+          tts_model: setting!.model_name,
+          tts_llm_setting_id: setting!.id,
+          ...ttsDefaultsFor(setting!)
+        }
     const res = await updateVoiceSettings(
-      voiceSettingsPayload({
-        tts_base_url: setting.provider_base_url || voiceSettings.value.tts_base_url,
-        tts_model: setting.model_name,
-        tts_llm_setting_id: setting.id,
-        ...ttsDefaultsFor(setting)
-      })!
+      voiceSettingsPayload(ttsUpdate)!
     )
     voiceSettings.value = res.data
   } catch (err: any) {
@@ -4827,12 +4847,22 @@ function summarizeTask(value: string): string {
               </span>
               <select
                 :value="selectedTtsModelId"
-                :disabled="asrLoading || ttsSaving || !voiceSettings || !ttsModelOptions.length"
+                :disabled="asrLoading || ttsSaving || !voiceSettings"
                 :title="t('voice.model.tts')"
                 @change="changeTtsModel"
               >
-                <option v-if="!ttsModelOptions.length" value="" class="bg-[#111315] text-white">
+                <option
+                  v-if="selectedTtsModelId === '' && voiceSettings?.tts_model"
+                  value=""
+                  class="bg-[#111315] text-white"
+                >
                   {{ voiceSettings?.tts_model || t('voice.model.ttsUnconfigured') }}
+                </option>
+                <option
+                  :value="BUILTIN_EDGE_TTS_OPTION_ID"
+                  class="bg-[#111315] text-white"
+                >
+                  {{ t('voice.model.edgeTts') }}
                 </option>
                 <option
                   v-for="setting in ttsModelOptions"
