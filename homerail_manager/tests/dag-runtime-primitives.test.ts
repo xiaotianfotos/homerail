@@ -388,6 +388,7 @@ edges:
     handoffActiveRun("ratchet-runtime-run", "improve", "changed", { measure_command: measureCommand, rollback_command: rollbackCommand });
 
     expect(executor.tick("ratchet-runtime-run")).toBeGreaterThan(0);
+    expect(getActiveRun("ratchet-runtime-run")?.dagRun.handoffedNodes.has("improve")).toBe(false);
     if (getActiveRun("ratchet-runtime-run")?.dagRun.nodeStates.get("improve") === "READY") {
       expect(executor.tick("ratchet-runtime-run")).toBeGreaterThan(0);
     }

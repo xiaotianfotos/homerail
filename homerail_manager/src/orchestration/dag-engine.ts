@@ -275,6 +275,7 @@ function _wakeLoopSource(run: DAGRun, nodeId: string): void {
         mailbox.set(port, [values[values.length - 1]]);
       }
     }
+    run.handoffedNodes.delete(nodeId);
     run.nodeStates.set(nodeId, "READY");
   }
 }
@@ -332,6 +333,7 @@ function _wakeLoopGatewayReceiver(run: DAGRun, fromNode: string, nodeId: string)
       }
     }
     if (state !== "READY") {
+      run.handoffedNodes.delete(nodeId);
       run.nodeStates.set(nodeId, "READY");
     }
   }
