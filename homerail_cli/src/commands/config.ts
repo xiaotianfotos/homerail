@@ -171,15 +171,10 @@ async function runConfigWizard(_globalOpts: GlobalOpts): Promise<void> {
     const projectId = await promptText(rl, "Project ID", next.node?.projectId || "p1");
     const nodeId = await promptText(rl, "Node ID", next.node?.nodeId || "local-docker-node");
     const provider = await promptChoice(rl, "Node provider", ["docker-cli", "docker-api", "mock"], next.node?.provider || "docker-cli");
-    const capsDefault = (next.node?.capabilities && next.node.capabilities.length > 0)
-      ? next.node.capabilities.join(",")
-      : provider;
-    const capabilities = await promptText(rl, "Node capabilities (comma separated)", capsDefault);
     next.node = {
       projectId,
       nodeId,
       provider,
-      capabilities: capabilities.split(",").map((c) => c.trim()).filter(Boolean),
     };
 
     next.ui = next.ui ?? {};

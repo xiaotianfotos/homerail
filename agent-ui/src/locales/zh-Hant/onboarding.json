@@ -17,7 +17,7 @@
   "runtime": {
     "ready": "主 Agent 運行時已就緒",
     "currentHarness": "當前 Harness：{harness}",
-    "notReady": "主 Agent 運行時未就緒。模型憑證在這裏配置，本機依賴和 Docker 授權請到環境檢查頁處理。",
+    "notReady": "主 Agent 運行時未就緒。模型憑證在這裏配置，本機依賴和 Docker 存取請到環境檢查頁處理。",
     "existing": "已有主 Agent 配置",
     "switching": "切換中...",
     "use": "使用",
@@ -25,21 +25,26 @@
     "nextAvailable": "可以進入下一步"
   },
   "environmentCheck": {
-    "description": "確認本機運行依賴和 Docker 工作區授權",
+    "description": "確認本機運行依賴和 Docker 工作區存取",
     "hostNotRequired": "當前 Manager Agent 不需要 Git Bash host-shell 環境",
     "gitBashReadyPath": "Git Bash 已就緒：{path}",
     "gitBashReady": "Git Bash host-shell 環境已就緒",
     "gitBashRequired": "請安裝 Git Bash，並確認 packaged shell 包內 worker 運行文件可用",
-    "checkingDocker": "正在檢查 Docker 工作區授權...",
-    "dockerReady": "Docker 工作區授權已確認",
+    "checkingDocker": "正在檢查 Docker 工作區存取...",
+    "dockerReady": "Docker 工作區存取已確認",
     "dockerSharePath": "請確認 Docker Desktop 已允許共享 {path}",
     "dockerShareHomeRail": "請確認 Docker Desktop 已允許共享 HomeRail 工作區",
+    "dockerInstallRequired": "未偵測到可用的 Docker。請安裝並啟動 Docker 後重新檢查。",
+    "dockerStartRequired": "Docker 已安裝但未執行。請啟動 Docker 後重新檢查。",
+    "dockerPermissionRequired": "目前使用者無法存取 Docker。請授予 Docker 存取權限後重新檢查。",
+    "dockerCheckFailed": "Docker 工作區檢查失敗：{error}",
     "passed": "已通過",
     "needsAttention": "需處理",
-    "dockerTitle": "Docker 工作區授權",
-    "checkTitle": "檢查 Docker 工作區授權",
+    "dockerTitle": "Docker 工作區存取",
+    "checkTitle": "檢查 Docker 工作區存取",
     "checking": "檢查中",
-    "check": "檢查"
+    "check": "檢查",
+    "recheck": "重新檢查"
   },
   "actions": {
     "skipTts": "跳過 TTS",

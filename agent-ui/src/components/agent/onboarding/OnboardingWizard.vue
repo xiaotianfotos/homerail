@@ -11,7 +11,7 @@
  * （其判断已并入 needsOnboarding），所以这里不需要直接操作麦克风。
  */
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Sparkles, ArrowRight, Terminal, Mic, Volume2, X, FolderCheck, RefreshCw } from 'lucide-vue-next'
 import { useAgentStore } from '@/stores/agent-store'
@@ -23,6 +23,7 @@ import { isKimiProviderId } from '@/lib/model-runtime'
 import type { Provider } from '@/api/types/orchestration-v2.types'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
 import OnboardingStepForm from './OnboardingStepForm.vue'
+import { dockerWorkspaceGuidance } from './docker-workspace-status'
 
 const props = withDefaults(defineProps<{
   manualDebug?: boolean
@@ -46,11 +47,13 @@ const dockerProbeResult = ref<DockerWorkspaceProbeResult | null>(null)
 const applyingExistingAgentId = ref<string | null>(null)
 
 onMounted(async () => {
-  await Promise.all([
-    refresh(),
-    loadProviders(),
-    loadExistingSettings(),
-  ])
+  const providersPromise = loadProviders()
+  const settingsPromise = loadExistingSettings()
+  await refresh()
+  const dockerProbePromise = status.value.dockerWorkspace?.required
+    ? checkDockerWorkspace()
+    : Promise.resolve()
+  await Promise.all([providersPromise, settingsPromise, dockerProbePromise])
   // 初始推进到第一个未完成阶段（例如 Codex 已可用时直接跳到 ASR）
   if (!props.manualDebug) advanceIfDone()
 })
@@ -198,7 +201,15 @@ const environmentNeedsAttention = computed(() => !hostShellReady.value || (docke
 const dockerWorkspaceMessage = computed(() => {
   if (dockerProbeRunning.value) return t('onboarding.environmentCheck.checkingDocker')
   if (dockerProbeResult.value?.available) return t('onboarding.environmentCheck.dockerReady')
-  if (dockerProbeResult.value?.error) return dockerProbeResult.value.error
+  const guidance = dockerWorkspaceGuidance(dockerProbeResult.value)
+  if (guidance === 'install') return t('onboarding.environmentCheck.dockerInstallRequired')
+  if (guidance === 'start') return t('onboarding.environmentCheck.dockerStartRequired')
+  if (guidance === 'permission') return t('onboarding.environmentCheck.dockerPermissionRequired')
+  if (dockerProbeResult.value?.error) {
+    return t('onboarding.environmentCheck.dockerCheckFailed', {
+      error: dockerProbeResult.value.error,
+    })
+  }
   return dockerWorkspaceHostPath.value
     ? t('onboarding.environmentCheck.dockerSharePath', { path: dockerWorkspaceHostPath.value })
     : t('onboarding.environmentCheck.dockerShareHomeRail')
@@ -256,6 +267,15 @@ async function checkDockerWorkspace(): Promise<void> {
     dockerProbeRunning.value = false
   }
 }
+
+function ensureDockerWorkspaceChecked(): void {
+  if (!dockerWorkspaceRequired.value || dockerProbeRunning.value || dockerProbeResult.value) return
+  void checkDockerWorkspace()
+}
+
+watch(activePane, (pane) => {
+  if (pane === 'environment') ensureDockerWorkspaceChecked()
+})
 </script>
 
 <template>
@@ -403,7 +423,7 @@ async function checkDockerWorkspace(): Promise<void> {
             <em>{{ t('onboarding.environmentCheck.description') }}</em>
           </div>
 
-          <div class="onboarding-wizard__docker-check">
+          <div v-if="hostShellRequired" class="onboarding-wizard__docker-check">
             <Terminal :class="cn('h-5 w-5', hostShellReady ? 'text-emerald-400' : 'text-cyan-300')" />
             <div class="onboarding-wizard__docker-check-copy">
               <div class="onboarding-wizard__docker-check-title">Git Bash / host-shell</div>
@@ -420,7 +440,14 @@ async function checkDockerWorkspace(): Promise<void> {
               <div class="onboarding-wizard__docker-check-title">{{ t('onboarding.environmentCheck.dockerTitle') }}</div>
               <div class="onboarding-wizard__docker-check-hint">{{ dockerWorkspaceMessage }}</div>
             </div>
+            <span
+              v-if="dockerWorkspaceReady"
+              class="onboarding-wizard__check-pill onboarding-wizard__check-pill--ready"
+            >
+              {{ t('onboarding.environmentCheck.passed') }}
+            </span>
             <button
+              v-else
               type="button"
               class="onboarding-wizard__docker-check-button"
               :disabled="dockerProbeRunning"
@@ -428,7 +455,13 @@ async function checkDockerWorkspace(): Promise<void> {
               @click="checkDockerWorkspace"
             >
               <RefreshCw :class="cn('h-3.5 w-3.5', dockerProbeRunning && 'animate-spin')" />
-              <span>{{ dockerProbeRunning ? t('onboarding.environmentCheck.checking') : t('onboarding.environmentCheck.check') }}</span>
+              <span>{{
+                dockerProbeRunning
+                  ? t('onboarding.environmentCheck.checking')
+                  : dockerProbeResult
+                    ? t('onboarding.environmentCheck.recheck')
+                    : t('onboarding.environmentCheck.check')
+              }}</span>
             </button>
           </div>
 

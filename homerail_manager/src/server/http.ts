@@ -259,6 +259,11 @@ export function createServer(
           image: process.env.HOMERAIL_MANAGER_AGENT_IMAGE || workerImage,
           env: resolveManagerAgentRuntimeEnv(),
           extraHosts: resolveManagerWorkerExtraHosts(),
+          localManagerUrl: () => {
+            const addr = server?.address();
+            const actualPort = typeof addr === "object" && addr ? addr.port : port;
+            return `http://127.0.0.1:${actualPort}`;
+          },
           managerRestUrl: () => {
             const addr = server?.address();
             const actualPort = typeof addr === "object" && addr ? addr.port : port;
