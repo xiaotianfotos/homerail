@@ -103,9 +103,11 @@ jobs:
         env:
           HOMERAIL_HOME: ${{ runner.temp }}/homerail-ci
           # Windows filesystem and process startup contention makes parallel
-          # Vitest files prone to unrelated short-test timeouts. Keep the
-          # per-test timeout strict and serialize files on this runner only.
+          # Vitest files and SQLite-heavy tests prone to unrelated short-test
+          # timeouts. Serialize files and retain bounded Windows-only margins.
           VITEST_MAX_WORKERS: "1"
+          VITEST_TEST_TIMEOUT: "15000"
+          VITEST_HOOK_TIMEOUT: "30000"
         run: npm run ci
 
   agent-ui-coverage:
