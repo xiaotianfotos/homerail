@@ -13,6 +13,7 @@ import {
 import type { AgentEvent, AgentRunContext, DagToolDefinition } from "../agent/types.js";
 import {
   buildManagerAgentSystemPrompt,
+  canonicalManagerAgentToolCallName,
   createManagerAgentWidgetFileTools,
   DEFAULT_PR_REVIEW_EXPECTED_USAGE,
   DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
@@ -213,13 +214,6 @@ function compactDeltas(parts: string[]): string {
   return parts.join("").trim();
 }
 
-function canonicalToolCallName(value: string): string {
-  const name = value.trim();
-  if (!name.startsWith("mcp__")) return name;
-  const parts = name.split("__").filter(Boolean);
-  return parts.length >= 3 ? parts.at(-1)! : name;
-}
-
 function successfulToolCallNames(
   objectiveToolCalls: Array<{ name: string; success: boolean }>,
   toolCalls: ToolTrace[],
@@ -228,7 +222,7 @@ function successfulToolCallNames(
   const successful = new Set(
     objectiveToolCalls
       .filter((item) => item.success)
-      .map((item) => canonicalToolCallName(item.name)),
+      .map((item) => canonicalManagerAgentToolCallName(item.name)),
   );
   const successfulResultIds = new Set(
     toolResults
@@ -236,7 +230,7 @@ function successfulToolCallNames(
       .map((result) => result.tool_use_id),
   );
   for (const call of toolCalls) {
-    if (successfulResultIds.has(call.id)) successful.add(canonicalToolCallName(call.name));
+    if (successfulResultIds.has(call.id)) successful.add(canonicalManagerAgentToolCallName(call.name));
   }
   return successful;
 }

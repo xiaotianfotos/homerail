@@ -193,7 +193,7 @@ export function normalizeManagerAgentRequiredToolCalls(value: unknown): string[]
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(
     value
-      .map((item) => typeof item === "string" ? item.trim() : "")
+      .map(canonicalManagerAgentToolCallName)
       .filter(Boolean),
   ));
 }

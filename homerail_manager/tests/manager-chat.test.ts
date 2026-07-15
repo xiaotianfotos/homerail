@@ -1132,7 +1132,8 @@ describe("/api/manager/chat", () => {
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data.tool_calls).toContainEqual(expect.objectContaining({
-      name: "mcp__homerail-tools__list_orchestrations",
+      name: "list_orchestrations",
+      runtime_name: "mcp__homerail-tools__list_orchestrations",
     }));
   });
 
@@ -1255,7 +1256,7 @@ describe("/api/manager/chat", () => {
     expect(response.status).toBe(503);
     expect(body.success).toBe(false);
     expect(body.data).toMatchObject({
-      code: "manager_objective_unsatisfied",
+      code: "required_tool_calls_unsatisfied",
       required_tool_calls: ["start_supervised_dag"],
       missing_tool_calls: ["start_supervised_dag"],
       observed_tool_calls: [],

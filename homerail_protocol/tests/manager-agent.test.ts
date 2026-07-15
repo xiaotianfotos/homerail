@@ -54,6 +54,7 @@ describe("Manager Agent required tool objective", () => {
     expect(normalizeManagerAgentRequiredToolCalls([
       " start_supervised_dag ",
       "focus_dag_actor",
+      "mcp__dag-tools__focus_dag_actor",
       "start_supervised_dag",
       "",
       null,
