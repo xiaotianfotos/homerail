@@ -115,6 +115,95 @@ export function unsafeReportPaths(value) {
   ));
 }
 
+function diagnosticError(value) {
+  return isObject(value) && typeof value.diagnostic_error === "string"
+    ? value.diagnostic_error
+    : undefined;
+}
+
+function compactDiagnosticEvents(snapshot) {
+  const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+  return events.slice(-100).map((event) => {
+    const details = isObject(event?.details) ? event.details : {};
+    return {
+      event_type: event?.event_type ?? event?.type ?? "unknown",
+      ...(typeof event?.node_id === "string" && event.node_id ? { node_id: event.node_id } : {}),
+      ...(typeof details.port === "string" ? { port: details.port } : {}),
+      ...(typeof details.gatewayType === "string" ? { gateway_type: details.gatewayType } : {}),
+      ...(typeof details.status === "string" ? { status: details.status } : {}),
+    };
+  });
+}
+
+function compactDiagnosticCounters(counters) {
+  if (!isObject(counters)) return {};
+  return Object.fromEntries([
+    "dispatches",
+    "handoffs",
+    "edge_traversals",
+    "corrections",
+    "advisor_calls",
+    "dispatch_retries",
+    "gateway_iterations",
+  ].filter((key) => counters[key] !== undefined).map((key) => [key, counters[key]]));
+}
+
+export function unexpectedTerminalDiagnostic(input) {
+  const status = isObject(input?.status) ? input.status : {};
+  const rounds = Array.isArray(input?.rounds?.rounds) ? input.rounds.rounds : [];
+  const handoffs = Array.isArray(input?.handoffs?.handoffs) ? input.handoffs.handoffs : [];
+  const surfaces = isObject(input?.surfaces) ? input.surfaces : {};
+  const surfaceStates = Array.isArray(surfaces.surface_states) ? surfaces.surface_states : [];
+  const activities = Array.isArray(input?.activities) ? input.activities : [];
+  const activityTypes = {};
+  for (const activity of activities) {
+    const actorId = typeof activity?.actor_id === "string" ? activity.actor_id : "unknown";
+    const type = typeof activity?.type === "string" ? activity.type : "unknown";
+    activityTypes[actorId] ??= {};
+    activityTypes[actorId][type] = (activityTypes[actorId][type] ?? 0) + 1;
+  }
+  const diagnostics = {
+    status: status.status ?? "unknown",
+    current_round: isObject(status.current_round)
+      ? {
+          round_id: status.current_round.round_id,
+          ordinal: status.current_round.ordinal,
+          status: status.current_round.status,
+          await_node_id: status.current_round.await_node_id,
+        }
+      : null,
+    node_states: isObject(status.node_states) ? { ...status.node_states } : {},
+    counters: compactDiagnosticCounters(status.counters),
+    rounds: rounds.map((round) => ({
+      round_id: round?.round_id,
+      ordinal: round?.ordinal,
+      status: round?.status,
+      await_node_id: round?.await_node_id,
+    })),
+    handoffs: handoffs.map((handoff) => ({
+      round_id: handoff?.roundId ?? handoff?.round_id,
+      from_node: handoff?.fromNode ?? handoff?.from_node,
+      port: handoff?.port,
+    })),
+    actors: actorSnapshotEvidence(input?.actors),
+    surfaces: surfaceStates.map((surface) => ({
+      actor_id: surface?.actor_id,
+      generation_state: surface?.generation_state,
+      superseded_count: surface?.superseded_count,
+    })),
+    activity_counts: activityTypes,
+    events: compactDiagnosticEvents(input?.events),
+  };
+  const requestErrors = Object.fromEntries(
+    Object.entries(input ?? {})
+      .map(([key, value]) => [key, diagnosticError(value)])
+      .filter(([, value]) => value !== undefined),
+  );
+  return Object.keys(requestErrors).length > 0
+    ? { ...diagnostics, request_errors: requestErrors }
+    : diagnostics;
+}
+
 function exactIdFailures(actual, expected, label) {
   const failures = [];
   const normalized = actual.filter((entry) => typeof entry === "string").slice().sort();

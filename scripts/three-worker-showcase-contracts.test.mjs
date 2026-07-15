@@ -8,6 +8,7 @@ import {
   dispatchGroupFailures,
   physicalWorkerLifecycleEvidence,
   sanitizeForReport,
+  unexpectedTerminalDiagnostic,
   unsafeReportPaths,
 } from "./three-worker-showcase-contracts.mjs";
 
@@ -132,4 +133,61 @@ test("sanitizes credentials and private paths from acceptance evidence", () => {
   assert.deepEqual(unsafeReportPaths(sanitized), []);
   assert.equal(sanitized.nested.safe, "visible");
   assert.doesNotMatch(JSON.stringify(sanitized), /sk-private|secret-token|private-worker|\/Users\/example/);
+});
+
+test("captures terminal graph diagnostics without model content or physical identities", () => {
+  const diagnostic = unexpectedTerminalDiagnostic({
+    status: {
+      status: "completed",
+      current_round: { round_id: "round-1", ordinal: 1, status: "completed" },
+      node_states: { goal_scout: "COMPLETED", collect_round: "SKIPPED", wait_for_command: "SKIPPED" },
+      counters: {
+        dispatches: 3,
+        handoffs: 3,
+        gateway_results: { collect_round: ["private model response"] },
+      },
+    },
+    rounds: { rounds: [{ round_id: "round-1", ordinal: 1, status: "completed" }] },
+    handoffs: {
+      handoffs: [{
+        roundId: "round-1",
+        fromNode: "goal_scout",
+        port: "done",
+        content: "private model response",
+      }],
+    },
+    actors: {
+      actors: [{
+        actor_id: "goal_scout",
+        role: "Goal Scout",
+        actor_state: "completed",
+        activity_state: "completed",
+        visibility_state: "visible",
+        round_targeted: true,
+        lease: { state: "leased", pinned: false, idle_deadline: 100 },
+        worker_id: "private-worker",
+      }],
+    },
+    surfaces: {
+      surface_states: [{ actor_id: "goal_scout", generation_state: "current", superseded_count: 0 }],
+    },
+    activities: [{ actor_id: "goal_scout", type: "finding", detail: "private finding" }],
+    events: {
+      events: [{
+        event_type: "handoff",
+        node_id: "goal_scout",
+        details: { port: "done", api_key: "sk-private-value", content: "private event content" },
+      }],
+      raw_events: [{ payload: { workerId: "private-worker" } }],
+    },
+  });
+  const sanitized = sanitizeForReport(diagnostic);
+
+  assert.equal(sanitized.status, "completed");
+  assert.equal(sanitized.handoffs[0].port, "done");
+  assert.equal(sanitized.events[0].port, "done");
+  assert.deepEqual(sanitized.activity_counts, { goal_scout: { finding: 1 } });
+  assert.equal(sanitized.counters.gateway_results, undefined);
+  assert.deepEqual(unsafeReportPaths(sanitized), []);
+  assert.doesNotMatch(JSON.stringify(sanitized), /private model|private event|private finding|private-worker|sk-private/);
 });

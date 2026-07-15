@@ -38,6 +38,7 @@ import {
   surfaceHistoryFailures,
   surfaceSnapshotEvidence,
   unchangedSurfaceFailures,
+  unexpectedTerminalDiagnostic,
   unsafeReportPaths,
   waitingRoundFailures,
 } from "./three-worker-showcase-contracts.mjs";
@@ -437,7 +438,38 @@ function assertNotStalled(label, stalledForMs) {
   }
 }
 
-async function waitForWaiting(runId, label) {
+async function diagnosticRequest(pathname) {
+  try {
+    return await request(pathname);
+  } catch (error) {
+    return {
+      diagnostic_error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function captureUnexpectedTerminal(runId, status) {
+  const runPath = `/api/runs/${encodeURIComponent(runId)}`;
+  const [rounds, handoffs, actors, surfaces, activities, events] = await Promise.all([
+    diagnosticRequest(`${runPath}/rounds`),
+    diagnosticRequest(`${runPath}/handoffs`),
+    diagnosticRequest(`${runPath}/actors`),
+    diagnosticRequest(`${runPath}/live-surfaces`),
+    diagnosticRequest(`${runPath}/activities?after_seq=0&limit=500`),
+    diagnosticRequest(`${runPath}/events`),
+  ]);
+  return unexpectedTerminalDiagnostic({
+    status,
+    rounds,
+    handoffs,
+    actors,
+    surfaces,
+    activities: Array.isArray(activities?.events) ? activities.events : activities,
+    events,
+  });
+}
+
+async function waitForWaiting(runId, label, report) {
   let progress;
   let nextLogAt = 0;
   while (true) {
@@ -445,7 +477,13 @@ async function waitForWaiting(runId, label) {
     const observedAt = Date.now();
     progress = observeRunProgress(progress, status, observedAt);
     if (status.status === "waiting") return status;
-    if (TERMINAL_STATUSES.has(status.status)) throw new Error(`${label} reached unexpected terminal status ${status.status}`);
+    if (TERMINAL_STATUSES.has(status.status)) {
+      report.terminal_diagnostics.push({
+        label,
+        evidence: await captureUnexpectedTerminal(runId, status),
+      });
+      throw new Error(`${label} reached unexpected terminal status ${status.status}`);
+    }
     const stalledForMs = observedAt - progress.last_progress_at;
     assertNotStalled(label, stalledForMs);
     if (observedAt >= nextLogAt) {
@@ -892,7 +930,7 @@ async function preparePhase(report, settingId, invocationPhase) {
   };
   console.log(`showcase: started run ${runId}`);
 
-  await waitForWaiting(runId, "initial three-actor round");
+  await waitForWaiting(runId, "initial three-actor round", report);
   const initial = await captureWaitingEvidence({
     run_id: runId,
     setting_id: settingId,
@@ -943,7 +981,7 @@ async function preparePhase(report, settingId, invocationPhase) {
     surface_snapshot: liveSurfaceForReport(pre.surfaces),
   };
 
-  await waitForWaiting(runId, "post-intervention round");
+  await waitForWaiting(runId, "post-intervention round", report);
   const post = await captureWaitingEvidence({
     run_id: runId,
     setting_id: settingId,
@@ -993,7 +1031,7 @@ async function preparePhase(report, settingId, invocationPhase) {
     post.raw.status.current_round.round_id,
     "the pre-restart coordinated refresh",
   );
-  await waitForWaiting(runId, "Manager batch continuation round");
+  await waitForWaiting(runId, "Manager batch continuation round", report);
   const coordinated = await captureWaitingEvidence({
     run_id: runId,
     setting_id: settingId,
@@ -1393,6 +1431,7 @@ const report = {
   model_dispatch_evidence: {},
   surface_digests: [],
   surface_snapshot: null,
+  terminal_diagnostics: [],
   failures: [],
   passed: false,
 };
