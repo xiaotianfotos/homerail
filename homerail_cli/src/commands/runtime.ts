@@ -1568,7 +1568,7 @@ async function waitForNode(client: HomeRailClient, nodeId: string): Promise<void
   throw new Error(`Node did not connect: ${nodeId}`);
 }
 
-async function waitForPidExit(pid: number, timeoutMs = 5_000): Promise<void> {
+async function waitForPidExit(pid: number, timeoutMs = 10_000): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     if (!pidIsRunning(pid)) return;

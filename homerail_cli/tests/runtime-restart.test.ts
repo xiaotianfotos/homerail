@@ -22,6 +22,7 @@ const ENV_KEYS = [
   "HOMERAIL_MANAGER_PORT",
   "HOMERAIL_MANAGER_HOST",
   "HOMERAIL_MANAGER_PUBLIC_URL",
+  "HOMERAIL_TEST_MANAGER_SHUTDOWN_DELAY_MS",
 ] as const;
 
 let tempHome: string;
@@ -136,6 +137,37 @@ describe("runtime restart --manager-only", () => {
       });
     },
   );
+
+  it("waits past the Manager five-second forced-shutdown boundary", async () => {
+    process.env.HOMERAIL_TEST_MANAGER_SHUTDOWN_DELAY_MS = "5200";
+    const oldManagerPid = await startDummyManager();
+    writeManagerState(oldManagerPid, "missing");
+    startKeeper("node");
+    startKeeper("ui-https");
+    startKeeper("worker");
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const program = createProgram();
+    await program.parseAsync([
+      "node",
+      "homerail",
+      "--json",
+      "runtime",
+      "restart",
+      "--manager-only",
+      "--no-build-worker-image",
+    ]);
+
+    const output = logSpy.mock.calls.map(([line]) => String(line));
+    expect(output).toHaveLength(1);
+    const status = JSON.parse(output[0]) as { managerPid: number; managerPidRunning: boolean };
+    children.push({ pid: status.managerPid } as ChildProcess);
+
+    expect(status.managerPid).not.toBe(oldManagerPid);
+    expect(status.managerPidRunning).toBe(true);
+    expect(isRunning(oldManagerPid)).toBe(false);
+    expect(process.exitCode).toBe(0);
+  }, 15_000);
 
   it("keeps the existing full restart stop semantics by default", async () => {
     const nodePid = startKeeper("node");
@@ -331,7 +363,8 @@ const server = http.createServer((request, response) => {
 });
 
 server.listen(port, host);
-process.on("SIGTERM", () => process.exit(0));
+const shutdownDelayMs = Number(process.env.HOMERAIL_TEST_MANAGER_SHUTDOWN_DELAY_MS || 0);
+process.on("SIGTERM", () => setTimeout(() => process.exit(0), shutdownDelayMs));
 process.on("SIGINT", () => process.exit(0));
 `;
 }
