@@ -931,17 +931,11 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   send_dag_actor_command: {
     name: "send_dag_actor_command",
-    description: "Send one legacy fenced command to a stable actor_id, or atomically send between 1 and 128 commands in one request; every batch item contains actor_id and payload. Always require expected_round_id and never accept or expose transient Worker or container IDs.",
+    description: "Atomically send between 1 and 128 commands in one request; even a single Actor uses a one-item commands array. Every item contains stable actor_id and payload. Always require expected_round_id and never accept or expose transient Worker or container IDs.",
     input_schema: {
       type: "object",
       properties: {
         run_id: {
-          type: "string",
-          minLength: 1,
-          maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
-          pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
-        },
-        actor_id: {
           type: "string",
           minLength: 1,
           maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
@@ -953,13 +947,6 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
           maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
           pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
         },
-        idempotency_key: {
-          type: "string",
-          minLength: 1,
-          maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
-          pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
-        },
-        payload: {},
         commands: {
           type: "array",
           minItems: 1,
@@ -980,25 +967,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
           },
         },
       },
-      required: ["run_id", "expected_round_id"],
-      oneOf: [
-        {
-          properties: { actor_id: {}, idempotency_key: {}, payload: {} },
-          required: ["actor_id", "idempotency_key", "payload"],
-          not: { properties: { commands: {} }, required: ["commands"] },
-        },
-        {
-          properties: { commands: {} },
-          required: ["commands"],
-          not: {
-            anyOf: [
-              { properties: { actor_id: {} }, required: ["actor_id"] },
-              { properties: { idempotency_key: {} }, required: ["idempotency_key"] },
-              { properties: { payload: {} }, required: ["payload"] },
-            ],
-          },
-        },
-      ],
+      required: ["run_id", "expected_round_id", "commands"],
       additionalProperties: false,
     },
   },

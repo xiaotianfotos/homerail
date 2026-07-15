@@ -286,25 +286,12 @@ describe("Manager Agent harness contract", () => {
             maxLength: 256,
             pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
           },
-          actor_id: {
-            type: "string",
-            minLength: 1,
-            maxLength: 256,
-            pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
-          },
           expected_round_id: {
             type: "string",
             minLength: 1,
             maxLength: 256,
             pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
           },
-          idempotency_key: {
-            type: "string",
-            minLength: 1,
-            maxLength: 256,
-            pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
-          },
-          payload: {},
           commands: {
             type: "array",
             minItems: 1,
@@ -325,25 +312,7 @@ describe("Manager Agent harness contract", () => {
             },
           },
         },
-        required: ["run_id", "expected_round_id"],
-        oneOf: [
-          {
-            properties: { actor_id: {}, idempotency_key: {}, payload: {} },
-            required: ["actor_id", "idempotency_key", "payload"],
-            not: { properties: { commands: {} }, required: ["commands"] },
-          },
-          {
-            properties: { commands: {} },
-            required: ["commands"],
-            not: {
-              anyOf: [
-                { properties: { actor_id: {} }, required: ["actor_id"] },
-                { properties: { idempotency_key: {} }, required: ["idempotency_key"] },
-                { properties: { payload: {} }, required: ["payload"] },
-              ],
-            },
-          },
-        ],
+        required: ["run_id", "expected_round_id", "commands"],
         additionalProperties: false,
       },
       focus_dag_actor: {
@@ -387,7 +356,7 @@ describe("Manager Agent harness contract", () => {
     expect(intervention.description).toContain("Never infer physical execution targets");
   });
 
-  it("accepts strict legacy and atomic batch DAG Actor command schemas", () => {
+  it("exposes only the atomic batch DAG Actor command schema to models", () => {
     const validate = new Ajv({ strict: true }).compile(
       managerAgentToolSpec("send_dag_actor_command").input_schema,
     );
@@ -407,7 +376,7 @@ describe("Manager Agent harness contract", () => {
       ],
     };
 
-    expect(validate(legacy)).toBe(true);
+    expect(validate(legacy)).toBe(false);
     expect(validate(batch)).toBe(true);
     expect(validate({
       ...batch,
