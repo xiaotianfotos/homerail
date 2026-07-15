@@ -107,6 +107,20 @@ describe("Manager Agent signed turn envelope", () => {
       method: "GET",
       pathname: "/api/runs/run-one/supervision",
     })).toBe(false);
+    for (const [method, pathname] of [
+      ["POST", "/api/runs/run-one/actors/goal-scout/interventions"],
+      ["POST", "/api/runs/run-one/cancel"],
+      ["POST", "/api/runs/run-one/commands"],
+      ["POST", "/api/runs/run-one/complete"],
+      ["POST", "/api/runs/run-one/focus"],
+    ] as const) {
+      expect(authority.authorizeApiRequest({ credential, method, pathname })).toBe(true);
+    }
+    expect(authority.authorizeApiRequest({
+      credential,
+      method: "POST",
+      pathname: "/api/runs/run-one/unscoped-mutation",
+    })).toBe(false);
   });
 });
 
