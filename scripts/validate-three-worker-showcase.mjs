@@ -346,7 +346,7 @@ async function startShowcaseThroughManager(settingId) {
   const turn = await managerChat({
     setting_id: settingId,
     required_tool: "start_supervised_dag",
-    message: `Start the public ${SHOWCASE_WORKFLOW_ID} workflow in supervised mode with profile ${profileId} for this request, "${SHOWCASE_PROMPT}"; call start_supervised_dag exactly once, do not instantiate or substitute another workflow, and reply briefly after it starts.`,
+    message: `Call start_supervised_dag exactly once with this JSON input: ${canonicalJson(expectedInput)}; start only that explicitly selected public workflow in supervised mode, do not instantiate or substitute another workflow, and reply briefly after it starts.`,
   });
   const input = turn.call.input;
   const selectedWorkflowId = input.workflow_id ?? input.workflowId;
