@@ -27,6 +27,7 @@ import {
   matchingManagerAgentSkillViewToolDefinition,
   materializeManagerAgentSkillViewInput,
   mergeManagerAgentPluginSkillCatalog,
+  normalizeManagerAgentDagActorCommandInput,
   normalizeManagerAgentDagActorInterventionInput,
   normalizeManagerAgentRequiredToolCalls,
   executeHomerailPluginTool,
@@ -1192,24 +1193,13 @@ export function createManagerTools(state: {
     {
       ...managerAgentToolSpec("send_dag_actor_command"),
       async handler(args) {
-        const runId = String(args.run_id ?? "").trim();
-        const actorId = String(args.actor_id ?? "").trim();
-        const expectedRoundId = String(args.expected_round_id ?? "").trim();
-        const idempotencyKey = String(args.idempotency_key ?? "").trim();
-        if (!runId || !actorId || !expectedRoundId || !idempotencyKey) {
-          throw new Error("send_dag_actor_command requires run_id, actor_id, expected_round_id, and idempotency_key");
-        }
-        if (!("payload" in args)) throw new Error("send_dag_actor_command requires payload");
+        const input = normalizeManagerAgentDagActorCommandInput(args);
         try {
-          const body = await requestManager(`/runs/${encodeURIComponent(runId)}/commands`, {
+          const body = await requestManager(`/runs/${encodeURIComponent(input.run_id)}/commands`, {
             method: "POST",
             body: JSON.stringify({
-              expected_round_id: expectedRoundId,
-              commands: [{
-                actor_id: actorId,
-                payload: args.payload,
-                idempotency_key: idempotencyKey,
-              }],
+              expected_round_id: input.expected_round_id,
+              commands: input.commands,
             }),
           });
           const result = managerAgentDagCommandResult(body);

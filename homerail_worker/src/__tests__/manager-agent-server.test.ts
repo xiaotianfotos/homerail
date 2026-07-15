@@ -1298,7 +1298,8 @@ describe("manager-agent server", () => {
         idempotency_key: "intervention-research-2",
         checkpoint_version: 3,
       }));
-      results.push(await requireManagerTool(tools, "send_dag_actor_command").handler({
+      const commandTool = requireManagerTool(tools, "send_dag_actor_command");
+      await expect(commandTool.handler({
         run_id: runId,
         actor_id: "research",
         expected_round_id: "round-0001",
@@ -1307,6 +1308,15 @@ describe("manager-agent server", () => {
         worker_id: "worker-forbidden",
         container_id: "container-forbidden",
         generation: 99,
+      })).rejects.toThrow(/does not accept additional properties/);
+      results.push(await commandTool.handler({
+        run_id: runId,
+        expected_round_id: "round-0001",
+        commands: [
+          { actor_id: "research", payload: { instruction: "continue with source validation" } },
+          { actor_id: "review", payload: { instruction: "continue with independent review" } },
+          { actor_id: "report", payload: { instruction: "continue with final synthesis" } },
+        ],
       }));
       results.push(await requireManagerTool(tools, "focus_dag_actor").handler({
         run_id: runId,
@@ -1360,11 +1370,11 @@ describe("manager-agent server", () => {
           query: {},
           body: {
             expected_round_id: "round-0001",
-            commands: [{
-              actor_id: "research",
-              payload: { instruction: "continue with source validation" },
-              idempotency_key: "command-research-2",
-            }],
+            commands: [
+              { actor_id: "research", payload: { instruction: "continue with source validation" } },
+              { actor_id: "review", payload: { instruction: "continue with independent review" } },
+              { actor_id: "report", payload: { instruction: "continue with final synthesis" } },
+            ],
           },
         },
         {
