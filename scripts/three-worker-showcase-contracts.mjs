@@ -622,7 +622,8 @@ export function activityRoundFailures(entries, expectedActorIds, roundId, genera
     for (const type of REQUIRED_ACTIVITY_TYPES) {
       if (counts[type] < 1) failures.push(`${actorId} has no ${type} activity in ${roundId}`);
     }
-    if (events.some((event) => event.type === "failed")) failures.push(`${actorId} emitted failed activity in ${roundId}`);
+    const finalTerminal = events.filter((event) => event.type === "completed" || event.type === "failed").at(-1);
+    if (finalTerminal?.type !== "completed") failures.push(`${actorId} did not finish with completed activity in ${roundId}`);
     if (!events.some((event) => MILESTONE_TYPES.has(event.type))) {
       failures.push(`${actorId} has no milestone activity in ${roundId}`);
     }

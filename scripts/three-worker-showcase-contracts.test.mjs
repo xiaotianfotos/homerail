@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   EXPECTED_ACTOR_IDS,
   activityConcurrencyEvidence,
+  activityRoundFailures,
   coldResumeGroupFailures,
   dispatchGroupFailures,
   physicalWorkerLifecycleEvidence,
@@ -68,6 +69,23 @@ test("rejects a serial Actor execution", () => {
 
   assert.match(result.failures.join("; "), /did not overlap/);
   assert.equal(result.evidence.all_started_before_first_terminal, false);
+});
+
+test("accepts a corrected Actor attempt when its final terminal activity completed", () => {
+  const entries = [
+    activity("goal_scout", "started", 10),
+    activity("goal_scout", "progress", 20),
+    activity("goal_scout", "finding", 30),
+    activity("goal_scout", "failed", 40),
+    activity("goal_scout", "completed", 50),
+  ];
+
+  assert.deepEqual(activityRoundFailures(entries, ["goal_scout"], "round-1"), []);
+  entries.push(activity("goal_scout", "failed", 60));
+  assert.match(
+    activityRoundFailures(entries, ["goal_scout"], "round-1").join("; "),
+    /did not finish with completed activity/,
+  );
 });
 
 test("proves physical allocation, idle cleanup, and reprovision without leaking identities", () => {
