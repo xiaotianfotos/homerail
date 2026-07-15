@@ -24,7 +24,12 @@ import {
 import type { DAGAgentConfig, DAGArtifactDeclaration, DAGEdge, DAGGatewayConfig, DAGGraphNode, DAGOutputRoute, DAGPatternInstanceMeta, ParsedDAG, ScorecardPolicyConfig } from "../orchestration/graph.js";
 import { _normalizeOutputsToEdges } from "../orchestration/yaml-loader.js";
 import { assertGraphValid } from "../orchestration/graph-validator.js";
-import { findDispatchTarget } from "../orchestration/dispatch-tracker.js";
+import {
+  clearDispatchTarget,
+  excludeCurrentDispatchTarget,
+  findDispatchTarget,
+  type DispatchTarget,
+} from "../orchestration/dispatch-tracker.js";
 import { deprovisionProvisionedForRun } from "../orchestration/provisioned-cleanup.js";
 import { getWorker } from "../worker/registry.js";
 import { getNode } from "../node/registry.js";
@@ -93,6 +98,7 @@ import {
   claimDagActorCommand,
   createDagActorCommand,
   DagActorConflictError,
+  getDagActor,
   getDagActorCommand,
   getDagActorByNode,
   listDagActors,
@@ -105,12 +111,28 @@ import {
 import {
   acquireDagActorLease,
   ensureDagActorLease,
+  getDagActorCheckpoint,
   getDagActorLease,
   getLatestDagActorCheckpoint,
+  releaseDagActorLease,
   retireDagActorLease,
   writeDagActorCheckpoint,
 } from "../persistence/dag-actor-leases.js";
-import { buildRunActorCheckpoints } from "./dag-actor-checkpoint-builder.js";
+import {
+  createDagActorIntervention,
+  DagActorInterventionConflictError,
+  failDagActorIntervention,
+  findDagActorInterventionByKey,
+  getDagActorIntervention,
+  listDagActorInterventions,
+  markDagActorInterventionApplying,
+  completeDagActorIntervention,
+  type DagActorInterventionOperation,
+  type DagActorInterventionRecord,
+} from "../persistence/dag-actor-interventions.js";
+import { supersedeDagLiveSurfaceForIntervention } from "../generative-ui/dag-live-surface-projector.js";
+import { buildDagActorCheckpoint, buildRunActorCheckpoints } from "./dag-actor-checkpoint-builder.js";
+import { getDagActorControlState, type DagActorControlStateName } from "./dag-actor-control-state.js";
 
 export interface InjectResult {
   runId: string;
@@ -122,6 +144,48 @@ export interface InjectResult {
   deliveryTargetType?: "worker" | "node";
   deliveryTargetId?: string;
   deliveryGap?: string;
+}
+
+export interface InterveneDagActorRequest {
+  actor_id: string;
+  operation: DagActorInterventionOperation;
+  expected_state_token: string;
+  idempotency_key: string;
+  instruction?: string;
+  checkpoint_version?: number;
+}
+
+export interface InterveneDagActorResult {
+  intervention_id: string;
+  run_id: string;
+  actor_id: string;
+  operation: DagActorInterventionOperation;
+  status: DagActorInterventionRecord["status"];
+  actor_state: DagActorControlStateName;
+  state_token: string;
+  deduplicated: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export class DagActorInterventionRuntimeError extends Error {
+  constructor(
+    public readonly code:
+      | "run_not_active"
+      | "actor_not_found"
+      | "state_token_conflict"
+      | "intervention_recovery_failed",
+    message: string,
+  ) {
+    super(message);
+    this.name = "DagActorInterventionRuntimeError";
+  }
+}
+
+export interface DagActorInterventionRecoverySummary {
+  applied: string[];
+  failed: string[];
+  skipped: string[];
 }
 
 export interface ActiveRun {
@@ -862,8 +926,14 @@ function _rebuildDagRunFromPersisted(metadata: PersistedRunMetadata, graphData: 
 }
 
 function _applyOrphanedNodeDemotion(run: ActiveRun): string[] {
+  const interventionProtectedNodeIds = new Set(
+    listDagActorInterventions({ run_id: run.runId, limit: 500 })
+      .filter((intervention) => intervention.status === "queued" || intervention.status === "applying")
+      .map((intervention) => getDagActor(run.runId, intervention.actor_id)?.node_id)
+      .filter((nodeId): nodeId is string => Boolean(nodeId)),
+  );
   const demotedFromRunning = Array.from(run.dagRun.nodeStates.entries())
-    .filter(([, state]) => state === "RUNNING")
+    .filter(([nodeId, state]) => state === "RUNNING" && !interventionProtectedNodeIds.has(nodeId))
     .map(([nodeId]) => nodeId);
 
   // Apply RUNNING→FAILED demotion: mark sessions and emit the standard
@@ -2284,6 +2354,365 @@ export function injectActiveRun(
   return result;
 }
 
+function _interventionId(runId: string, actorId: string, idempotencyKey: string): string {
+  return `intervention-${createHash("sha256")
+    .update(`${runId}\0${actorId}\0${idempotencyKey}`)
+    .digest("hex")}`;
+}
+
+function _interventionInstruction(intervention: DagActorInterventionRecord): string {
+  if (intervention.instruction) return intervention.instruction;
+  switch (intervention.operation) {
+    case "retry": return "Retry the same objective from the durable actor checkpoint.";
+    case "reassign": return "Continue the same objective from the durable actor checkpoint on another available executor.";
+    case "checkpoint_fork": return "Continue the same objective from the selected durable actor checkpoint.";
+    case "interrupt": return "Stop the current attempt and retain its durable evidence.";
+    case "cancel": return "Cancel this actor branch and retain its durable evidence.";
+  }
+}
+
+function _interventionResult(
+  intervention: DagActorInterventionRecord,
+  deduplicated: boolean,
+): InterveneDagActorResult {
+  const control = getDagActorControlState(intervention.run_id, intervention.actor_id);
+  return {
+    intervention_id: intervention.intervention_id,
+    run_id: intervention.run_id,
+    actor_id: intervention.actor_id,
+    operation: intervention.operation,
+    status: intervention.status,
+    actor_state: control.actor_state,
+    state_token: control.state_token,
+    deduplicated,
+    created_at: intervention.created_at,
+    updated_at: intervention.completed_at ?? intervention.started_at ?? intervention.created_at,
+  };
+}
+
+function _sendInterventionInterrupt(
+  target: DispatchTarget | undefined,
+  runId: string,
+  nodeId: string,
+  intervention: DagActorInterventionRecord,
+): void {
+  if (target?.state !== "dispatched" || !target.targetType || !target.targetId) return;
+  const registryEntry = target.targetType === "worker"
+    ? getWorker(target.targetId)
+    : getNode(target.targetId);
+  const socket = registryEntry?.socket;
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  try {
+    socket.send(JSON.stringify({
+      type: "inject",
+      data: {
+        runId,
+        nodeId,
+        mode: "interrupt",
+        instruction: _interventionInstruction(intervention),
+      },
+    }));
+  } catch (error) {
+    console.warn(
+      `[homerail_manager] failed to interrupt previous DAG actor attempt: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function _releaseActorLeaseForIntervention(
+  actor: DagActorRecord,
+  operation: DagActorInterventionOperation,
+  now: number,
+): void {
+  const lease = getDagActorLease({ run_id: actor.run_id, actor_id: actor.actor_id });
+  if (!lease) return;
+  let current = lease;
+  if (current.state === "leased") {
+    current = releaseDagActorLease({
+      run_id: current.run_id,
+      actor_id: current.actor_id,
+      lease_generation: current.lease_generation,
+      target_type: current.target_type!,
+      target_id: current.target_id!,
+      expected_version: current.version,
+      now,
+    });
+  }
+  if (operation === "cancel" && current.state !== "retired") {
+    retireDagActorLease({
+      run_id: current.run_id,
+      actor_id: current.actor_id,
+      expected_version: current.version,
+      now,
+    });
+  }
+}
+
+function _applyPersistedDagActorIntervention(
+  requested: DagActorInterventionRecord,
+): DagActorInterventionRecord {
+  if (requested.status === "applied" || requested.status === "failed") return requested;
+  const run = store.get(requested.run_id);
+  if (!run || run.status !== "active") {
+    throw new DagActorInterventionRuntimeError(
+      "run_not_active",
+      `DAG run ${requested.run_id} is not active for actor intervention`,
+    );
+  }
+  const actor = getDagActor(requested.run_id, requested.actor_id);
+  if (!actor) {
+    throw new DagActorInterventionRuntimeError(
+      "actor_not_found",
+      `Unknown DAG actor: ${requested.run_id}/${requested.actor_id}`,
+    );
+  }
+  if (
+    actor.generation !== requested.expected_actor_generation
+    || actor.version !== requested.expected_actor_version
+  ) {
+    throw new DagActorInterventionConflictError(
+      actor.generation !== requested.expected_actor_generation
+        ? "actor_generation_conflict"
+        : "actor_version_conflict",
+      `DAG actor ${requested.run_id}/${requested.actor_id} changed before the queued intervention could apply`,
+    );
+  }
+
+  const applying = requested.status === "queued"
+    ? markDagActorInterventionApplying({
+        intervention_id: requested.intervention_id,
+        from_generation: actor.generation,
+      }).intervention
+    : requested;
+  const before = _snapshotMutableRun(run);
+  const beforeStates = _snapshotNodeStates(run);
+  const oldTarget = findDispatchTarget(run.runId, actor.node_id);
+  const now = Math.max(Date.now(), applying.created_at, actor.updated_at);
+
+  let completed: DagActorInterventionRecord;
+  try {
+    completed = getDb().transaction(() => {
+      const current = getDagActor(applying.run_id, applying.actor_id);
+      if (!current) throw new Error(`Unknown DAG actor: ${applying.run_id}/${applying.actor_id}`);
+      if (
+        current.generation !== applying.expected_actor_generation
+        || current.version !== applying.expected_actor_version
+      ) {
+        throw new DagActorInterventionConflictError(
+          current.generation !== applying.expected_actor_generation
+            ? "actor_generation_conflict"
+            : "actor_version_conflict",
+          `DAG actor ${applying.run_id}/${applying.actor_id} changed while applying intervention`,
+        );
+      }
+
+      const checkpoint = applying.operation === "checkpoint_fork"
+        ? getDagActorCheckpoint({
+            run_id: current.run_id,
+            actor_id: current.actor_id,
+            checkpoint_version: applying.checkpoint_version!,
+          })
+        : writeDagActorCheckpoint({
+            run_id: current.run_id,
+            actor_id: current.actor_id,
+            checkpoint: buildDagActorCheckpoint({
+              runId: run.runId,
+              actor: current,
+              roundId: run.currentRound.round_id,
+              capturedAt: now,
+            }),
+            expected_checkpoint_version: getLatestDagActorCheckpoint({
+              run_id: current.run_id,
+              actor_id: current.actor_id,
+            })?.checkpoint_version ?? 0,
+            now,
+          });
+      if (!checkpoint) {
+        throw new Error(
+          `Portable checkpoint ${applying.checkpoint_version} is unavailable for actor ${applying.actor_id}`,
+        );
+      }
+
+      cancelUnclaimedDagActorCommands({
+        run_id: current.run_id,
+        actor_id: current.actor_id,
+        completed_at: now,
+        reason: { code: "actor_intervention", operation: applying.operation },
+      });
+      _releaseActorLeaseForIntervention(current, applying.operation, now);
+
+      const nextSession: NodeSessionState = {
+        sessionId: _newSessionId(run.runId, current.node_id),
+        attempt: current.attempt + 1,
+        ...(current.session_id ? { parentSessionId: current.session_id } : {}),
+        resumeInstruction: _interventionInstruction(applying),
+        status: applying.operation === "interrupt" || applying.operation === "cancel"
+          ? "cancelled"
+          : "active",
+      };
+      const nextActor = advanceDagActorGeneration({
+        run_id: current.run_id,
+        actor_id: current.actor_id,
+        expected_generation: current.generation,
+        expected_version: current.version,
+        session_id: nextSession.sessionId,
+        attempt: nextSession.attempt,
+        checkpoint_ref: `portable:${checkpoint.checkpoint_version}`,
+      });
+      _persistNodeSession(run, nextActor.node_id, nextSession);
+
+      if (applying.operation === "interrupt" || applying.operation === "cancel") {
+        failNode(run.dagRun, nextActor.node_id, {
+          code: "actor_intervention",
+          operation: applying.operation,
+        });
+        run.dagRun.nodeStates.set(nextActor.node_id, "CANCELLED");
+      } else {
+        _resetActorBranchForIntervention({
+          run,
+          actor: nextActor,
+          intervention_id: applying.intervention_id,
+          operation: applying.operation,
+          instruction: _interventionInstruction(applying),
+        });
+      }
+
+      supersedeDagLiveSurfaceForIntervention({
+        run_id: run.runId,
+        actor_id: nextActor.actor_id,
+        intervention_id: applying.intervention_id,
+        created_at: now,
+      });
+      writeRunMetadata(run.runId, serializeRunMetadata(run));
+      return completeDagActorIntervention({
+        intervention_id: applying.intervention_id,
+        from_generation: current.generation,
+        to_generation: nextActor.generation,
+        resulting_actor_version: nextActor.version,
+        completed_at: now,
+      }).intervention;
+    }).immediate();
+  } catch (error) {
+    _restoreMutableRun(run, before);
+    try {
+      failDagActorIntervention({
+        intervention_id: applying.intervention_id,
+        failure: { message: error instanceof Error ? error.message : String(error) },
+      });
+    } catch {
+      // Preserve the original failure; a concurrent recovery may have completed the intervention.
+    }
+    throw error;
+  }
+
+  if (completed.operation === "reassign") excludeCurrentDispatchTarget(run.runId, actor.node_id);
+  else clearDispatchTarget(run.runId, actor.node_id);
+  _sendInterventionInterrupt(oldTarget, run.runId, actor.node_id, completed);
+  _emitNodeStateChanges(run, beforeStates);
+  emit("dag:actor_intervention_applied", {
+    runId: run.runId,
+    actorId: actor.actor_id,
+    operation: completed.operation,
+    interventionId: completed.intervention_id,
+  });
+  return completed;
+}
+
+/** Queue and apply a branch-local Actor intervention without exposing physical execution identity. */
+export function interveneActiveRunActor(
+  runId: string,
+  request: InterveneDagActorRequest,
+): InterveneDagActorResult {
+  const existing = findDagActorInterventionByKey({
+    run_id: runId,
+    actor_id: request.actor_id,
+    idempotency_key: request.idempotency_key,
+  });
+  if (existing) {
+    const verified = createDagActorIntervention({
+      intervention_id: existing.intervention_id,
+      run_id: existing.run_id,
+      actor_id: existing.actor_id,
+      operation: request.operation,
+      instruction: request.instruction,
+      expected_actor_generation: existing.expected_actor_generation,
+      expected_actor_version: existing.expected_actor_version,
+      idempotency_key: request.idempotency_key,
+      checkpoint_version: request.checkpoint_version,
+    }).intervention;
+    const current = verified.status === "queued" || verified.status === "applying"
+      ? _applyPersistedDagActorIntervention(verified)
+      : verified;
+    return _interventionResult(current, true);
+  }
+
+  const run = store.get(runId);
+  if (!run || run.status !== "active") {
+    throw new DagActorInterventionRuntimeError("run_not_active", `DAG run ${runId} is not active`);
+  }
+  const actor = getDagActor(runId, request.actor_id);
+  if (!actor) {
+    throw new DagActorInterventionRuntimeError("actor_not_found", `Unknown DAG actor: ${runId}/${request.actor_id}`);
+  }
+  const control = getDagActorControlState(runId, actor.actor_id);
+  if (control.state_token !== request.expected_state_token.trim()) {
+    throw new DagActorInterventionRuntimeError(
+      "state_token_conflict",
+      `DAG actor ${runId}/${actor.actor_id} state changed before intervention`,
+    );
+  }
+  const queued = createDagActorIntervention({
+    intervention_id: _interventionId(runId, actor.actor_id, request.idempotency_key),
+    run_id: runId,
+    actor_id: actor.actor_id,
+    operation: request.operation,
+    instruction: request.instruction,
+    expected_actor_generation: actor.generation,
+    expected_actor_version: actor.version,
+    idempotency_key: request.idempotency_key,
+    checkpoint_version: request.checkpoint_version,
+  });
+  const applied = _applyPersistedDagActorIntervention(queued.intervention);
+  return _interventionResult(applied, queued.deduplicated);
+}
+
+/** Resume interventions durably queued before a Manager crash. */
+export function recoverDagActorInterventions(): DagActorInterventionRecoverySummary {
+  const summary: DagActorInterventionRecoverySummary = { applied: [], failed: [], skipped: [] };
+  const rows = getDb().prepare(`
+    SELECT intervention_id, run_id FROM dag_actor_interventions
+    WHERE status IN ('queued', 'applying')
+    ORDER BY created_at, intervention_id
+  `).all() as Array<{ intervention_id: string; run_id: string }>;
+  for (const row of rows) {
+    if (!store.has(row.run_id)) {
+      summary.skipped.push(row.intervention_id);
+      continue;
+    }
+    try {
+      const record = getDagActorIntervention(row.intervention_id);
+      if (!record) {
+        summary.skipped.push(row.intervention_id);
+        continue;
+      }
+      const applied = _applyPersistedDagActorIntervention(record);
+      if (applied.status === "applied") summary.applied.push(applied.intervention_id);
+      else summary.failed.push(applied.intervention_id);
+    } catch (error) {
+      try {
+        failDagActorIntervention({
+          intervention_id: row.intervention_id,
+          failure: { message: error instanceof Error ? error.message : String(error) },
+        });
+      } catch {
+        // The apply path may already have recorded a bounded failure.
+      }
+      summary.failed.push(row.intervention_id);
+    }
+  }
+  return summary;
+}
+
 function _nodeInputs(
   run: DAGRun,
   nodeId: string,
@@ -2368,6 +2797,58 @@ function _roundCarryoverInputs(
     carryover.set(edge.to_node, inputs);
   }
   return carryover;
+}
+
+function _branchInterventionResetNodeIds(run: ActiveRun, actorNodeId: string): string[] {
+  const reset = new Set([actorNodeId]);
+  const queue = [actorNodeId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const edge of run.dagRun.graph.edges) {
+      if (edge.from_node !== current || !edge.to_node || reset.has(edge.to_node)) continue;
+      const target = run.dagRun.graph.nodes.find((node) => node.node_id === edge.to_node);
+      if (!target || !_isGatewayNode(target)) continue;
+      reset.add(target.node_id);
+      queue.push(target.node_id);
+    }
+  }
+  return Array.from(reset).sort();
+}
+
+function _resetActorBranchForIntervention(input: {
+  run: ActiveRun;
+  actor: DagActorRecord;
+  intervention_id: string;
+  operation: string;
+  instruction: string;
+}): { resetNodeIds: string[]; readyNodeIds: string[] } {
+  const resetNodeIds = _branchInterventionResetNodeIds(input.run, input.actor.node_id);
+  const resetSet = new Set(resetNodeIds);
+  const carryover = _roundCarryoverInputs(input.run, resetSet);
+  const previousMailbox = input.run.dagRun.mailboxes.get(input.actor.node_id);
+  if (previousMailbox) {
+    const actorCarryover = carryover.get(input.actor.node_id) ?? [];
+    for (const [port, values] of previousMailbox.entries()) {
+      if (port === "intervention" || port === "checkpoint_resume") continue;
+      for (const value of values) {
+        actorCarryover.push({ fromNode: "__previous_actor_input__", port, value });
+      }
+    }
+    if (actorCarryover.length > 0) carryover.set(input.actor.node_id, actorCarryover);
+  }
+  const reset = resetNodesForRound(input.run.dagRun, {
+    resetNodeIds,
+    carryoverInputs: carryover,
+    commandInputs: new Map([[input.actor.node_id, {
+      port: "intervention",
+      value: {
+        intervention_id: input.intervention_id,
+        operation: input.operation,
+        instruction: input.instruction,
+      },
+    }]]),
+  });
+  return { resetNodeIds, readyNodeIds: reset.readyNodes };
 }
 
 function _firstInputValue(inputs: Record<string, unknown[]>): unknown {
@@ -3334,15 +3815,27 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
   const actorId = actor.actor_id;
   const generation = actor.generation;
   const surfaceId = actor.surface_id;
-  const actorCheckpoint = getLatestDagActorCheckpoint({
-    run_id: run.runId,
-    actor_id: actorId,
-  })?.checkpoint;
+  const requestedCheckpointVersion = actor.checkpoint_ref?.match(/^portable:(\d+)$/)?.[1];
+  const actorCheckpointRecord = requestedCheckpointVersion
+    ? getDagActorCheckpoint({
+        run_id: run.runId,
+        actor_id: actorId,
+        checkpoint_version: Number(requestedCheckpointVersion),
+      })
+    : getLatestDagActorCheckpoint({ run_id: run.runId, actor_id: actorId });
+  if (requestedCheckpointVersion && !actorCheckpointRecord) {
+    return { ok: false, reason: `portable checkpoint ${requestedCheckpointVersion} is unavailable for actor ${actorId}` };
+  }
+  const actorCheckpoint = actorCheckpointRecord?.checkpoint;
   const roundCommand = listDagActorCommands({
     run_id: run.runId,
     actor_id: actorId,
     round_id: run.currentRound.round_id,
-  }).find((command) => command.status !== "cancelled" && command.status !== "failed");
+  }).find((command) =>
+    command.target_generation === generation
+    && command.status !== "cancelled"
+    && command.status !== "failed"
+  );
   const dispatchInputs = nodeSession.resumeInstruction
     ? { ...inputs, checkpoint_resume: [nodeSession.resumeInstruction] }
     : inputs;

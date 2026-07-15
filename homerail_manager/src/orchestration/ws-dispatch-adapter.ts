@@ -11,6 +11,7 @@ import { appendChatEntry } from "../persistence/store.js";
 import { appendSessionTranscriptEntry } from "../persistence/dag-session-files.js";
 import {
   findDispatchTarget,
+  findDispatchExclusion,
   clearDispatchTarget,
   recordDispatch,
   recordProvisioning,
@@ -308,8 +309,11 @@ export class WsDispatchAdapter implements DAGDispatcher {
       };
     }
 
-    const openWorkers = getAllWorkers().filter((candidate) => candidate.socket.readyState === WebSocket.OPEN);
-    const openNodes = getAllNodes().filter((candidate) => candidate.socket.readyState === WebSocket.OPEN);
+    const excluded = findDispatchExclusion(envelope.runId, envelope.nodeId);
+    const openNodes = getAllNodes().filter((candidate) =>
+      candidate.socket.readyState === WebSocket.OPEN
+      && !(excluded?.targetType === "node" && excluded.targetId === candidate.node_id)
+    );
     // Try to find a Docker-capable node for provisioning.
     if (this.provisionerOpts) {
       const dockerNode = openNodes.find(
@@ -360,10 +364,12 @@ export class WsDispatchAdapter implements DAGDispatcher {
   ):
     | { worker_id: string; socket: WebSocket }
     | undefined {
+    const excluded = findDispatchExclusion(envelope.runId, envelope.nodeId);
     const workers = getAllWorkers().filter(
       (w) =>
         w.socket.readyState === WebSocket.OPEN &&
-        hasCapabilities(w.capabilities, envelope.requiredCapabilities),
+        hasCapabilities(w.capabilities, envelope.requiredCapabilities) &&
+        !(excluded?.targetType === "worker" && excluded.targetId === w.worker_id),
     );
     if (workers.length === 0) return undefined;
 

@@ -22,7 +22,10 @@ import {
   deduplicateWaitingActiveRunResume,
   decideActiveRunApproval,
   injectActiveRun,
+  interveneActiveRunActor,
   resumeWaitingActiveRun,
+  type InterveneDagActorRequest,
+  type InterveneDagActorResult,
   type ResumeWaitingRunRequest,
 } from "../runtime/active-runs.js";
 import type { DagApprovalRecord } from "../persistence/dag-runtime-primitives.js";
@@ -75,6 +78,10 @@ export interface InjectRunResponse {
   delivery_target_type?: "worker" | "node";
   delivery_target_id?: string;
   delivery_gap?: string;
+}
+
+export interface InterveneActorResponse extends InterveneDagActorResult {
+  redispatched: boolean;
 }
 
 export interface ResumeRunResponse {
@@ -447,6 +454,14 @@ export class ChangeOrchestrator {
       delivery_target_type: result.deliveryTargetType,
       delivery_target_id: result.deliveryTargetId,
       delivery_gap: result.deliveryGap,
+    };
+  }
+
+  interveneActor(runId: string, request: InterveneDagActorRequest): InterveneActorResponse {
+    const result = interveneActiveRunActor(runId, request);
+    return {
+      ...result,
+      redispatched: this.graphExecutor.tick(runId) > 0,
     };
   }
 

@@ -618,14 +618,18 @@ export async function deliverDagActorCommand(input: {
 export function cancelUnclaimedDagActorCommands(runId: string, completedAt?: number): DagActorCommandRecord[];
 export function cancelUnclaimedDagActorCommands(input: {
   run_id: string;
+  actor_id?: string;
   completed_at?: number;
   reason?: unknown;
 }): DagActorCommandRecord[];
 export function cancelUnclaimedDagActorCommands(
-  input: string | { run_id: string; completed_at?: number; reason?: unknown },
+  input: string | { run_id: string; actor_id?: string; completed_at?: number; reason?: unknown },
   requestedCompletedAt?: number,
 ): DagActorCommandRecord[] {
   const runId = assertIdentifier(typeof input === "string" ? input : input.run_id, "run_id");
+  const actorId = typeof input === "string" || input.actor_id === undefined
+    ? undefined
+    : assertIdentifier(input.actor_id, "actor_id");
   const completedAt = typeof input === "string"
     ? requestedCompletedAt ?? Date.now()
     : input.completed_at ?? Date.now();
@@ -641,9 +645,9 @@ export function cancelUnclaimedDagActorCommands(
   return db.transaction(() => {
     const candidates = db.prepare(`
       SELECT * FROM dag_actor_commands
-      WHERE run_id = ? AND status IN ('pending', 'delivered')
+      WHERE run_id = ? AND (? IS NULL OR actor_id = ?) AND status IN ('pending', 'delivered')
       ORDER BY created_at, command_id
-    `).all(runId) as DagActorCommandRow[];
+    `).all(runId, actorId ?? null, actorId ?? null) as DagActorCommandRow[];
     if (candidates.length === 0) return [];
     if (candidates.some((command) => completedAt < Number(command.created_at))) {
       throw new Error("completed_at must not precede command creation");
@@ -653,12 +657,12 @@ export function cancelUnclaimedDagActorCommands(
         status = 'cancelled',
         completed_at = ?,
         failure_json = ?
-      WHERE run_id = ? AND status IN ('pending', 'delivered')
-    `).run(completedAt, reasonJson, runId);
+      WHERE run_id = ? AND (? IS NULL OR actor_id = ?) AND status IN ('pending', 'delivered')
+    `).run(completedAt, reasonJson, runId, actorId ?? null, actorId ?? null);
     if (changed.changes !== candidates.length) {
       throw new DagActorConflictError(
         "command_status_conflict",
-        `Unclaimed DAG actor commands for run ${runId} changed concurrently`,
+        `Unclaimed DAG actor commands for ${actorId ? `actor ${runId}/${actorId}` : `run ${runId}`} changed concurrently`,
       );
     }
     return candidates.map((candidate) => requireCommand(candidate.command_id));

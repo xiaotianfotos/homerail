@@ -403,6 +403,30 @@ nodes:
     })).toThrowError(expect.objectContaining<DagActorConflictError>({ code: "command_status_conflict" }));
   });
 
+  it("cancels unclaimed commands for only the intervened actor", () => {
+    registerActor();
+    registerActor({
+      actor_id: "writer",
+      node_id: "writer-node",
+      role: "write",
+      surface_id: "surface-writer",
+    });
+    createCommand();
+    createCommand({
+      command_id: "writer-command",
+      actor_id: "writer",
+      idempotency_key: "writer-round-1",
+    });
+
+    expect(cancelUnclaimedDagActorCommands({
+      run_id: "run-1",
+      actor_id: "researcher",
+      reason: { operation: "retry" },
+    }).map((command) => command.command_id)).toEqual(["command-1"]);
+    expect(getDagActorCommand("command-1")?.status).toBe("cancelled");
+    expect(getDagActorCommand("writer-command")?.status).toBe("pending");
+  });
+
   it("allows only the current generation to claim and complete a command", () => {
     const actor = registerActor().actor;
     const generationTwo = advanceDagActorGeneration({

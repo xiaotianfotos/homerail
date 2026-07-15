@@ -9,6 +9,7 @@ import {
   DagActorLeaseConflictError,
   deleteExpiredDagActorRuntime,
   ensureDagActorLease,
+  getDagActorCheckpoint,
   getDagActorLease,
   getLatestDagActorCheckpoint,
   listDagProvisionedWorkers,
@@ -78,10 +79,28 @@ describe("DAG actor lease persistence", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
+  it("reads an exact portable checkpoint version without changing the latest pointer", () => {
+    const first = writeDagActorCheckpoint({ run_id: "run-1", actor_id: "researcher", checkpoint: checkpoint(), now: 100 });
+    const second = writeDagActorCheckpoint({
+      run_id: "run-1",
+      actor_id: "researcher",
+      checkpoint: checkpoint({ captured_at: 110, context_summary: "Second checkpoint" }),
+      expected_checkpoint_version: 1,
+      now: 120,
+    });
+
+    expect(getDagActorCheckpoint({ run_id: "run-1", actor_id: "researcher", checkpoint_version: 1 }))
+      .toEqual(first);
+    expect(getLatestDagActorCheckpoint({ run_id: "run-1", actor_id: "researcher" }))
+      .toEqual(second);
+    expect(getDagActorCheckpoint({ run_id: "run-1", actor_id: "researcher", checkpoint_version: 99 }))
+      .toBeUndefined();
+  });
+
   it("creates and revalidates the strict actor lease schema on a fresh database", () => {
     const db = getDb();
     expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 25 });
+      .toEqual({ version: 26 });
     expect(db.prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name IN (

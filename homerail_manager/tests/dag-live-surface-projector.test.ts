@@ -13,15 +13,22 @@ import {
   getDagLiveSurfaceDocument,
   getDagLiveSurfaceProjection,
   isDagLiveSurfaceProjectionNode,
+  listDagLiveSurfaceGenerationHistory,
   listDagLiveSurfaceProjections,
   listDagLiveSurfaceQueue,
   projectDagActivityJournalEntry,
   recoverDagLiveSurfaceProjections,
+  supersedeDagLiveSurfaceForIntervention,
 } from "../src/generative-ui/dag-live-surface-projector.js";
 import {
   appendDagActivityEvent,
   type DagActivityJournalEntry,
 } from "../src/persistence/dag-activity-journal.js";
+import {
+  createDagActorIntervention,
+  markDagActorInterventionApplying,
+  type DagActorInterventionOperation,
+} from "../src/persistence/dag-actor-interventions.js";
 import {
   advanceDagActorGeneration,
   getDagActor,
@@ -71,6 +78,40 @@ function activity(input: {
 
 function appendAndProject(event: DagActivityEventV1): ReturnType<typeof projectDagActivityJournalEntry> {
   return projectDagActivityJournalEntry(appendDagActivityEvent(event));
+}
+
+function advanceForIntervention(input: {
+  run_id: string;
+  actor_id: string;
+  intervention_id: string;
+  operation?: DagActorInterventionOperation;
+  instruction?: string;
+}): void {
+  const actor = getDagActor(input.run_id, input.actor_id)!;
+  const operation = input.operation ?? "retry";
+  createDagActorIntervention({
+    intervention_id: input.intervention_id,
+    run_id: input.run_id,
+    actor_id: input.actor_id,
+    operation,
+    ...(input.instruction === undefined ? {} : { instruction: input.instruction }),
+    expected_actor_generation: actor.generation,
+    expected_actor_version: actor.version,
+    idempotency_key: `key:${input.intervention_id}`,
+    ...(operation === "checkpoint_fork" ? { checkpoint_version: 1 } : {}),
+    created_at: BASE_TIME + 100,
+  });
+  markDagActorInterventionApplying({
+    intervention_id: input.intervention_id,
+    from_generation: actor.generation,
+    started_at: BASE_TIME + 101,
+  });
+  advanceDagActorGeneration({
+    run_id: input.run_id,
+    actor_id: input.actor_id,
+    expected_generation: actor.generation,
+    expected_version: actor.version,
+  });
 }
 
 function contentData(runId: string, actorId: string): Record<string, unknown> {
@@ -468,6 +509,273 @@ describe("DAG Live Surface Projector", () => {
     expect(JSON.stringify(node.content)).not.toContain("untrusted-199");
     expect(Buffer.byteLength(JSON.stringify(node.content), "utf8")).toBeLessThanOrEqual(32 * 1024);
     expect(listDagLiveSurfaceQueue({ run_id: runId }).every((entry) => entry.status === "applied")).toBe(true);
+  });
+
+  it("supersedes one Actor generation in place while retaining its old evidence", () => {
+    const runId = "intervention-supersession";
+    ensureRunDir(runId);
+    register(runId, "alpha");
+    register(runId, "beta");
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "alpha",
+      sequence: 1,
+      type: "started",
+      payload: { title: "Alpha task", message: "alpha started" },
+    }));
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "alpha",
+      sequence: 2,
+      type: "finding",
+      payload: { title: "Old evidence", detail: "keep this audit evidence" },
+    }));
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "beta",
+      sequence: 1,
+      type: "started",
+      payload: { title: "Beta task", message: "beta remains unchanged" },
+    }));
+    expect(appendAndProject(activity({
+      run_id: runId,
+      actor_id: "alpha",
+      sequence: 4,
+      payload: { message: "old queued progress" },
+    }))).toMatchObject({ applied_count: 0, queue: { status: "pending" } });
+    const before = getDagLiveSurfaceDocument(runId)!;
+    const alphaBefore = before.nodes.find((node) => node.id === "surface:alpha")!;
+    const betaBefore = before.nodes.find((node) => node.id === "surface:beta")!;
+    const alphaProjectionBefore = getDagLiveSurfaceProjection(runId, "alpha")!;
+
+    advanceForIntervention({
+      run_id: runId,
+      actor_id: "alpha",
+      intervention_id: "retry-alpha",
+      instruction: "Retry with token=do-not-expose and verify the result",
+    });
+    const transitioned = supersedeDagLiveSurfaceForIntervention({
+      run_id: runId,
+      actor_id: "alpha",
+      intervention_id: "retry-alpha",
+      created_at: BASE_TIME + 200,
+    });
+
+    expect(transitioned).toMatchObject({
+      deduplicated: false,
+      operation: "retry",
+      from_generation: 1,
+      to_generation: 2,
+      projection: {
+        generation: 2,
+        surface_id: "surface:alpha",
+        surface_revision: alphaProjectionBefore.surface_revision + 1,
+        visibility_state: "focused",
+        focused_until: BASE_TIME + 15_200,
+      },
+      snapshot: {
+        generation: 1,
+        superseded_by_generation: 2,
+        intervention_id: "retry-alpha",
+        node_revision: alphaBefore.revision,
+        document_revision: before.revision,
+      },
+    });
+    const after = getDagLiveSurfaceDocument(runId)!;
+    const alphaAfter = after.nodes.find((node) => node.id === "surface:alpha")!;
+    const betaAfter = after.nodes.find((node) => node.id === "surface:beta")!;
+    expect(after.nodes).toHaveLength(2);
+    expect(after.revision).toBe(before.revision + 1);
+    expect(alphaAfter.id).toBe(alphaBefore.id);
+    expect(alphaAfter.revision).toBe(alphaBefore.revision + 1);
+    expect(betaAfter).toEqual(betaBefore);
+    expect(alphaAfter.content.data).toMatchObject({
+      actor: { id: "alpha", generation: 2 },
+      state: {
+        activity: "started",
+        visibility: "focused",
+        surface_revision: alphaProjectionBefore.surface_revision + 1,
+        focused_until: BASE_TIME + 15_200,
+      },
+      intervention: {
+        intervention_id: "retry-alpha",
+        operation: "retry",
+        generation_state: "current",
+        supersedes_generation: 1,
+        generation: 2,
+      },
+      findings: [],
+    });
+    expect(JSON.stringify(alphaAfter.content)).not.toContain("do-not-expose");
+
+    const history = listDagLiveSurfaceGenerationHistory({ run_id: runId, actor_id: "alpha" });
+    expect(history).toHaveLength(1);
+    const oldNode = history[0]!.node_snapshot as typeof alphaBefore;
+    expect(oldNode.id).toBe(alphaBefore.id);
+    expect(oldNode.content.data).toMatchObject({
+      actor: { id: "alpha", generation: 1 },
+      findings: [{ title: "Old evidence", detail: "keep this audit evidence" }],
+    });
+    expect(listDagLiveSurfaceGenerationHistory({ run_id: runId, actor_id: "beta" })).toEqual([]);
+    expect(listDagLiveSurfaceQueue({ run_id: runId, actor_id: "alpha" })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ generation: 1, activity_sequence: 4, status: "stale" }),
+    ]));
+
+    const repeated = supersedeDagLiveSurfaceForIntervention({
+      run_id: runId,
+      actor_id: "alpha",
+      intervention_id: "retry-alpha",
+      created_at: BASE_TIME + 999,
+    });
+    expect(repeated).toMatchObject({ deduplicated: true, projection: { surface_revision: 3 } });
+    expect(getDagLiveSurfaceDocument(runId)).toEqual(after);
+    expect(listDagLiveSurfaceGenerationHistory({ run_id: runId, actor_id: "alpha" })).toHaveLength(1);
+
+    appendAndProject(activity({
+      run_id: runId,
+      actor_id: "alpha",
+      generation: 2,
+      sequence: 1,
+      payload: { message: "new attempt is running", progress: 20 },
+    }));
+    expect(contentData(runId, "alpha")).toMatchObject({
+      actor: { generation: 2 },
+      state: { summary: "new attempt is running" },
+      intervention: {
+        intervention_id: "retry-alpha",
+        operation: "retry",
+        generation_state: "current",
+        generation: 2,
+      },
+    });
+  });
+
+  it("creates a current-generation placeholder without inventing old history when no node exists", () => {
+    const runId = "intervention-placeholder";
+    ensureRunDir(runId);
+    register(runId, "worker");
+    advanceForIntervention({
+      run_id: runId,
+      actor_id: "worker",
+      intervention_id: "cancel-before-output",
+      operation: "cancel",
+    });
+
+    const transitioned = supersedeDagLiveSurfaceForIntervention({
+      run_id: runId,
+      actor_id: "worker",
+      intervention_id: "cancel-before-output",
+      created_at: BASE_TIME + 300,
+    });
+    expect(transitioned.snapshot).toBeUndefined();
+    expect(transitioned).toMatchObject({
+      deduplicated: false,
+      operation: "cancel",
+      from_generation: 1,
+      to_generation: 2,
+      projection: {
+        generation: 2,
+        surface_id: "surface:worker",
+        surface_revision: 1,
+        visibility_state: "focused",
+      },
+    });
+    const document = getDagLiveSurfaceDocument(runId)!;
+    expect(document).toMatchObject({
+      revision: 1,
+      nodes: [{
+        id: "surface:worker",
+        revision: 1,
+        status: { phase: "cancelled", label: "Cancelled" },
+        content: {
+          data: {
+            actor: { id: "worker", generation: 2 },
+            state: { activity: "blocked", visibility: "focused" },
+            intervention: {
+              intervention_id: "cancel-before-output",
+              operation: "cancel",
+              generation_state: "current",
+              supersedes_generation: 1,
+              generation: 2,
+            },
+            findings: [],
+          },
+        },
+      }],
+    });
+    expect(listDagLiveSurfaceGenerationHistory({ run_id: runId, actor_id: "worker" })).toEqual([]);
+    expect(supersedeDagLiveSurfaceForIntervention({
+      run_id: runId,
+      actor_id: "worker",
+      intervention_id: "cancel-before-output",
+    })).toMatchObject({ deduplicated: true, projection: { surface_revision: 1 } });
+  });
+
+  it("fails closed if the durable Actor has not advanced to the intervention generation", () => {
+    const runId = "intervention-generation-conflict";
+    ensureRunDir(runId);
+    register(runId, "worker");
+    const actor = getDagActor(runId, "worker")!;
+    createDagActorIntervention({
+      intervention_id: "retry-too-early",
+      run_id: runId,
+      actor_id: "worker",
+      operation: "retry",
+      expected_actor_generation: actor.generation,
+      expected_actor_version: actor.version,
+      idempotency_key: "retry-too-early",
+    });
+    markDagActorInterventionApplying({
+      intervention_id: "retry-too-early",
+      from_generation: actor.generation,
+    });
+
+    expect(() => supersedeDagLiveSurfaceForIntervention({
+      run_id: runId,
+      actor_id: "worker",
+      intervention_id: "retry-too-early",
+    })).toThrowError(expect.objectContaining<DagLiveSurfaceProjectionError>({ code: "generation_conflict" }));
+    expect(getDagLiveSurfaceDocument(runId)).toBeUndefined();
+    expect(listDagLiveSurfaceGenerationHistory({ run_id: runId, actor_id: "worker" })).toEqual([]);
+  });
+
+  it("rolls back the snapshot and A2UI patch together when projection bookkeeping fails", () => {
+    const runId = "intervention-atomicity";
+    ensureRunDir(runId);
+    register(runId, "worker");
+    appendAndProject(activity({ run_id: runId, actor_id: "worker", sequence: 1, type: "started" }));
+    const before = getDagLiveSurfaceDocument(runId)!;
+    advanceForIntervention({
+      run_id: runId,
+      actor_id: "worker",
+      intervention_id: "retry-atomically",
+    });
+    getDb().exec(`
+      CREATE TRIGGER reject_intervention_projection_commit
+      BEFORE UPDATE OF surface_revision ON dag_surface_projections
+      WHEN NEW.surface_revision > OLD.surface_revision
+      BEGIN
+        SELECT RAISE(ABORT, 'forced intervention bookkeeping failure');
+      END
+    `);
+
+    expect(() => supersedeDagLiveSurfaceForIntervention({
+      run_id: runId,
+      actor_id: "worker",
+      intervention_id: "retry-atomically",
+    })).toThrow("forced intervention bookkeeping failure");
+    expect(getDagLiveSurfaceDocument(runId)).toEqual(before);
+    expect(getDagLiveSurfaceProjection(runId, "worker")).toMatchObject({ generation: 1, surface_revision: 1 });
+    expect(listDagLiveSurfaceGenerationHistory({ run_id: runId, actor_id: "worker" })).toEqual([]);
+
+    getDb().exec("DROP TRIGGER reject_intervention_projection_commit");
+    const transitioned = getDb().transaction(() => supersedeDagLiveSurfaceForIntervention({
+      run_id: runId,
+      actor_id: "worker",
+      intervention_id: "retry-atomically",
+    })).immediate();
+    expect(transitioned).toMatchObject({ deduplicated: false, projection: { generation: 2, surface_revision: 2 } });
+    expect(listDagLiveSurfaceGenerationHistory({ run_id: runId, actor_id: "worker" })).toHaveLength(1);
   });
 
   it("accepts a trusted control immediately after an actor generation advances", () => {

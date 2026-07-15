@@ -93,7 +93,91 @@ export function dagTaskCanvasSnapshotVersion(snapshot: DagLiveSurfaceSnapshot): 
       projection.visibility_state,
       projection.focused_until ?? '',
     ].join(':')),
+    ...(snapshot.surface_states ?? []).map(state => [
+      state.actor_id,
+      state.surface_id,
+      state.superseded_count,
+      state.latest_intervention?.operation ?? '',
+      state.latest_intervention?.status ?? '',
+      state.latest_intervention?.created_at ?? '',
+    ].join(':')),
   ].join('|')
+}
+
+function projectionVersion(projection: DagLiveSurfaceSnapshot['projections'][number]): string {
+  return [
+    projection.run_id,
+    projection.actor_id,
+    projection.node_id,
+    projection.surface_id,
+    projection.document_id,
+    projection.generation,
+    projection.last_activity_sequence,
+    projection.journal_cursor,
+    projection.surface_revision,
+    projection.activity_state,
+    projection.visibility_state,
+    projection.last_event_id ?? '',
+    projection.focused_until ?? '',
+    projection.created_at,
+    projection.updated_at,
+  ].join(':')
+}
+
+function surfaceStateVersion(state: NonNullable<DagLiveSurfaceSnapshot['surface_states']>[number]): string {
+  return [
+    state.actor_id,
+    state.surface_id,
+    state.generation_state,
+    state.superseded_count,
+    state.latest_intervention?.intervention_id ?? '',
+    state.latest_intervention?.operation ?? '',
+    state.latest_intervention?.status ?? '',
+    state.latest_intervention?.created_at ?? '',
+  ].join(':')
+}
+
+/** Keep unaffected cards referentially stable while one Actor changes generation. */
+export function reconcileDagTaskCanvasSnapshot(
+  previous: DagLiveSurfaceSnapshot | null,
+  next: DagLiveSurfaceSnapshot,
+): DagLiveSurfaceSnapshot {
+  if (!previous || previous.run_id !== next.run_id) return next
+
+  const previousProjections = new Map(previous.projections.map(item => [item.actor_id, item]))
+  const projections = next.projections.map((item) => {
+    const prior = previousProjections.get(item.actor_id)
+    return prior && projectionVersion(prior) === projectionVersion(item) ? prior : item
+  })
+
+  const previousStates = new Map((previous.surface_states ?? []).map(item => [item.actor_id, item]))
+  const surfaceStates = (next.surface_states ?? []).map((item) => {
+    const prior = previousStates.get(item.actor_id)
+    return prior && surfaceStateVersion(prior) === surfaceStateVersion(item) ? prior : item
+  })
+
+  let document = next.document
+  if (
+    previous.document
+    && document
+    && previous.document.document_id === document.document_id
+  ) {
+    const previousNodes = new Map(previous.document.nodes.map(node => [node.id, node]))
+    document = {
+      ...document,
+      nodes: document.nodes.map((node) => {
+        const prior = previousNodes.get(node.id)
+        return prior && prior.revision === node.revision ? prior : node
+      }),
+    }
+  }
+
+  return {
+    ...next,
+    projections,
+    surface_states: surfaceStates,
+    document,
+  }
 }
 
 export function dagTaskCanvasSelectionStorageKey(runId: string): string {

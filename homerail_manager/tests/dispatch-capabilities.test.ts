@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAG_TRANSPORT_FENCE_CAPABILITY } from "homerail-protocol";
 
 import type { DispatchEnvelope } from "../src/orchestration/dag-dispatcher.js";
-import { _clearAllDispatches, recordDispatch, recordProvisioning } from "../src/orchestration/dispatch-tracker.js";
+import {
+  _clearAllDispatches,
+  excludeCurrentDispatchTarget,
+  recordDispatch,
+  recordProvisioning,
+} from "../src/orchestration/dispatch-tracker.js";
 import { normalizeAgentBackend, WsDispatchAdapter } from "../src/orchestration/ws-dispatch-adapter.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { _clearListeners, subscribe } from "../src/events/bus.js";
@@ -264,6 +269,43 @@ nodes:
     });
     expect(hotSocket.send).toHaveBeenCalledTimes(1);
     expect(otherSocket.send).not.toHaveBeenCalled();
+  });
+
+  it("reassigns an actor without allowing the next dispatch to reuse its previous Worker", () => {
+    const replacementSocket = makeSocket();
+    const previousSocket = makeSocket();
+    registerWorker({
+      worker_id: "replacement-worker",
+      project_id: "p1",
+      socket: replacementSocket,
+      status: "idle",
+      capabilities: ["browser"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+    registerWorker({
+      worker_id: "previous-worker",
+      project_id: "p1",
+      socket: previousSocket,
+      status: "idle",
+      capabilities: ["browser"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+    recordDispatch("run-capabilities", "diagnose", "worker", "previous-worker");
+    excludeCurrentDispatchTarget("run-capabilities", "diagnose");
+
+    const result = new WsDispatchAdapter({ provisioner: false }).dispatch(
+      makeEnvelope({ requiredCapabilities: ["browser"] }),
+    );
+
+    expect(result).toMatchObject({
+      status: "dispatched",
+      targetType: "worker",
+      targetId: "replacement-worker",
+    });
+    expect(replacementSocket.send).toHaveBeenCalledTimes(1);
+    expect(previousSocket.send).not.toHaveBeenCalled();
   });
 
   it("mirrors dispatched prompts into the manager-side session store", () => {

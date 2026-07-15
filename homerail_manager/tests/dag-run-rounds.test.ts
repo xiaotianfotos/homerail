@@ -135,7 +135,14 @@ describe("DAG run round persistence", () => {
 
     const migrated = getDb();
     expect(migrated.prepare("SELECT version FROM schema_migrations WHERE version >= 21 ORDER BY version").all())
-      .toEqual([{ version: 21 }, { version: 22 }, { version: 23 }, { version: 24 }, { version: 25 }]);
+      .toEqual([
+        { version: 21 },
+        { version: 22 },
+        { version: 23 },
+        { version: 24 },
+        { version: 25 },
+        { version: 26 },
+      ]);
     expect(migrated.prepare("SELECT * FROM dag_actor_commands ORDER BY command_id").all())
       .toEqual(expectedRows);
     expect(migrated.prepare("PRAGMA foreign_key_check").all()).toEqual([]);

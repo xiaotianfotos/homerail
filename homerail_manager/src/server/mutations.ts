@@ -29,6 +29,8 @@ import {
   focusDagSupervisorActor,
   getDagSupervisionSnapshot,
 } from "../runtime/dag-manager-supervisor.js";
+import { DagActorInterventionConflictError } from "../persistence/dag-actor-interventions.js";
+import { DagActorInterventionRuntimeError } from "../runtime/active-runs.js";
 
 interface BaseResponse {
   success: boolean;
@@ -68,6 +70,10 @@ function _unavailable(res: http.ServerResponse, message: string, data?: unknown)
 
 function _created(res: http.ServerResponse, message: string, data: unknown) {
   json(res, 201, { success: true, message, data });
+}
+
+function _accepted(res: http.ServerResponse, message: string, data: unknown) {
+  json(res, 202, { success: true, message, data });
 }
 
 function _runCreationError(res: http.ServerResponse, error: unknown): void {
@@ -501,6 +507,73 @@ export function mutationRoutesHandler(
       else if (message.includes("conflict") || message.includes("reused with different input")) {
         json(res, 409, { success: false, message, error: message });
       } else _badRequest(res, message);
+    });
+    return true;
+  }
+
+  // POST /api/runs/:run_id/actors/:actor_id/interventions
+  const actorInterventionMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/([^/]+)\/interventions$/);
+  if (actorInterventionMatch && req.method === "POST") {
+    const runId = decodeURIComponent(actorInterventionMatch[1]);
+    const actorId = decodeURIComponent(actorInterventionMatch[2]);
+    void _readJsonBody(req).then((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("request body must be an object");
+      const body = raw as Record<string, unknown>;
+      const allowed = new Set([
+        "operation",
+        "instruction",
+        "expected_state_token",
+        "idempotency_key",
+        "checkpoint_version",
+      ]);
+      const unknown = Object.keys(body).filter((key) => !allowed.has(key));
+      if (unknown.length > 0) throw new Error(`unsupported intervention fields: ${unknown.sort().join(", ")}`);
+      const operation = typeof body.operation === "string" ? body.operation.trim() : "";
+      if (!["interrupt", "cancel", "retry", "reassign", "checkpoint_fork"].includes(operation)) {
+        throw new Error("operation must be interrupt, cancel, retry, reassign, or checkpoint_fork");
+      }
+      const expectedStateToken = typeof body.expected_state_token === "string"
+        ? body.expected_state_token.trim()
+        : "";
+      const idempotencyKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
+      if (!expectedStateToken) throw new Error("expected_state_token is required");
+      if (!idempotencyKey) throw new Error("idempotency_key is required");
+      const instruction = typeof body.instruction === "string" ? body.instruction : undefined;
+      const checkpointVersion = body.checkpoint_version === undefined
+        ? undefined
+        : Number(body.checkpoint_version);
+      if (checkpointVersion !== undefined && (!Number.isSafeInteger(checkpointVersion) || checkpointVersion < 1)) {
+        throw new Error("checkpoint_version must be a positive integer");
+      }
+      const result = changeOrchestrator.interveneActor(runId, {
+        actor_id: actorId,
+        operation: operation as "interrupt" | "cancel" | "retry" | "reassign" | "checkpoint_fork",
+        expected_state_token: expectedStateToken,
+        idempotency_key: idempotencyKey,
+        ...(instruction === undefined ? {} : { instruction }),
+        ...(checkpointVersion === undefined ? {} : { checkpoint_version: checkpointVersion }),
+      });
+      if (result.deduplicated) _ok(res, "DAG Actor intervention already applied", result);
+      else _accepted(res, "DAG Actor intervention applied", result);
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        (error instanceof DagActorInterventionRuntimeError
+          && error.code === "actor_not_found")
+        || message.includes("Unknown DAG actor")
+        || message.includes("Run not found")
+      ) {
+        _notFound(res, message);
+      } else if (
+        error instanceof DagActorInterventionConflictError
+        || error instanceof DagActorInterventionRuntimeError
+        || message.includes("conflict")
+        || message.includes("not active")
+      ) {
+        json(res, 409, { success: false, message, error: message });
+      } else {
+        _badRequest(res, message);
+      }
     });
     return true;
   }

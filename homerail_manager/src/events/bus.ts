@@ -14,6 +14,7 @@ export type DAGEventType =
   | "dag:actor_lease_acquired"
   | "dag:actor_lease_released"
   | "dag:actor_checkpoint_saved"
+  | "dag:actor_intervention_applied"
   | "dag:gateway_executed"
   | "dag:worker_manager_command_requested"
   | "dag:manager_command_received"
@@ -86,6 +87,7 @@ export const DAG_EVENT_TYPES: DAGEventType[] = [
   "dag:actor_lease_acquired",
   "dag:actor_lease_released",
   "dag:actor_checkpoint_saved",
+  "dag:actor_intervention_applied",
   "dag:gateway_executed",
   "dag:worker_manager_command_requested",
   "dag:manager_command_received",

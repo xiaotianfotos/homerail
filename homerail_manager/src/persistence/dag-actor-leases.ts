@@ -958,6 +958,21 @@ export function getLatestDagActorCheckpoint(input: {
   return row ? checkpointFromRow(row) : undefined;
 }
 
+export function getDagActorCheckpoint(input: {
+  run_id: string;
+  actor_id: string;
+  checkpoint_version: number;
+}): DagActorCheckpointRecord | undefined {
+  const runId = assertBoundedString(input.run_id, "run_id", 256);
+  const actorId = assertBoundedString(input.actor_id, "actor_id", 256);
+  const checkpointVersion = assertPositiveSafeInteger(input.checkpoint_version, "checkpoint_version");
+  const row = getDb().prepare(`
+    SELECT * FROM dag_actor_checkpoints
+    WHERE run_id = ? AND actor_id = ? AND checkpoint_version = ?
+  `).get(runId, actorId, checkpointVersion) as DagActorCheckpointRow | undefined;
+  return row ? checkpointFromRow(row) : undefined;
+}
+
 export function deleteExpiredDagActorRuntime(input: {
   run_id: string;
   actor_id: string;

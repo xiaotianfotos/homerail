@@ -87,7 +87,33 @@ A Worker may claim a pending command directly after reconnect, so an unavailable
 5. allow only the claiming generation to acknowledge or fail the command;
 6. redact and size-bound model profiles, command payloads, and failure details before storage.
 
-The TypeScript runtime API exposes registration, binding CAS, generation advancement, command creation/listing/delivery/claim/ack/fail, and bounded reads. Manager LLM tools, long-lived waiting runs, Worker release, and A2UI writes remain follow-up responsibilities.
+The TypeScript runtime API exposes registration, binding CAS, generation advancement, command creation/listing/delivery/claim/ack/fail, and bounded reads.
+
+## Branch-local Intervention
+
+`dag_actor_interventions` is a second durable Inbox for operator corrections. It is separate from activity history because a user command is intent, not evidence that work happened. `intervene_dag_actor` and the matching HTTP endpoint accept only stable `run_id` and `actor_id` identities plus an actor state token. Physical Worker, node, container, lease, and socket identifiers never enter the public contract.
+
+Five operations share one generation transition:
+
+| Operation | Runtime effect |
+| --- | --- |
+| `retry` | Capture the current portable checkpoint, stop the old attempt, and make the same actor branch ready with a new generation. |
+| `reassign` | Apply `retry` semantics while excluding the previous physical execution target from the immediate redispatch. |
+| `checkpoint_fork` | Start the new generation from an explicitly selected immutable checkpoint version. |
+| `interrupt` | Stop the current branch attempt while retaining its checkpoint and projected evidence for a later decision. |
+| `cancel` | Cancel the branch and retire its lease so it cannot be dispatched again accidentally. |
+
+The write path enforces this order:
+
+1. verify the actor state token and idempotency key;
+2. commit a `queued` intervention row before changing runtime state;
+3. transition the row to `applying` and atomically capture/select the checkpoint, release the old lease, advance actor generation, reset only the affected branch, supersede its projected Surface, and mark the intervention `applied`;
+4. reject old-generation activity and handoffs through the existing generation and lease fences;
+5. redispatch only a branch that remains runnable.
+
+An exact idempotent retry returns the original result even when the caller still holds the old state token. Reusing the identity for different content or submitting a new command with a stale token returns a conflict. Startup recovery protects Actors with `queued` or `applying` interventions from ordinary orphaned-node demotion, then replays their Inbox after logical runs have been restored.
+
+`dag_surface_generation_snapshots` stores the previous A2UI node as append-only audit evidence. The current generation keeps the same stable `surface_id`, receives a new revision, focuses briefly, and starts with fresh findings. Other Actors and their node revisions do not change. The UI fetches historical generations only when a card is expanded and renders them read-only.
 
 ## Follow-up Boundaries
 

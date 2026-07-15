@@ -31,6 +31,7 @@ import {
   matchingManagerAgentSkillViewToolDefinition,
   materializeManagerAgentSkillViewInput,
   mergeManagerAgentPluginSkillCatalog,
+  normalizeManagerAgentDagActorInterventionInput,
   executeHomerailPluginTool,
   homerailPluginTurnContextDigestInput,
   resolvePrCloseout,
@@ -1304,6 +1305,30 @@ export function createManagerTools(state: {
           }
         }
         return { content: [{ type: "text", text: short(body, 40000) }] };
+      },
+    },
+    {
+      ...managerAgentToolSpec("intervene_dag_actor"),
+      async handler(args) {
+        const input = normalizeManagerAgentDagActorInterventionInput(args);
+        const body = await requestManager(
+          state.restUrl,
+          `/runs/${encodeURIComponent(input.run_id)}/actors/${encodeURIComponent(input.actor_id)}/interventions`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              operation: input.operation,
+              ...(input.instruction === undefined ? {} : { instruction: input.instruction }),
+              expected_state_token: input.expected_state_token,
+              idempotency_key: input.idempotency_key,
+              ...(input.checkpoint_version === undefined
+                ? {}
+                : { checkpoint_version: input.checkpoint_version }),
+            }),
+          },
+        );
+        state.objectiveToolCalls.push({ name: "intervene_dag_actor", success: true });
+        return { content: [{ type: "text", text: short(body, 20000) }] };
       },
     },
     {

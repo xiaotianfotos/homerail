@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type {
   GenerativeUiCanvasSize,
@@ -32,6 +32,7 @@ import type {
   GenerativeUiPreviewRequestV1,
 } from '@/generative-ui/types'
 import type { GenerativeUiLifecycleMotion } from '@/generative-ui/motion-profiles'
+import type { GenerativeUiGenerationContext } from '@/generative-ui/generation-history'
 import GenerativeUiFallbackRenderer from './GenerativeUiFallbackRenderer.vue'
 import DeclarativeRenderer from './DeclarativeRenderer.vue'
 import CustomRendererSandbox from './CustomRendererSandbox.vue'
@@ -69,6 +70,7 @@ const props = withDefaults(defineProps<{
   motionProfile?: GenerativeUiMotionProfile
   attentionDurationMs?: number
   lifecycleMotion?: GenerativeUiLifecycleMotion
+  generation?: GenerativeUiGenerationContext
 }>(), {
   interactive: true,
   actionMode: 'emit',
@@ -89,14 +91,23 @@ const emit = defineEmits<{
   (event: 'open-preview', payload: GenerativeUiPreviewRequestV1): void
   (event: 'renderer-error', payload: { node_id: string; message: string }): void
   (event: 'select', payload: { node_id: string }): void
+  (event: 'request-generation-history', payload: { node_id: string }): void
 }>()
 
 const { t } = useI18n()
 const registry = computed(() => props.registry ?? emptyGenerativeUiRendererRegistry)
 const actionRegistry = computed(() => props.actionRegistry ?? emptyGenerativeUiActionRegistry)
-const availableActions = computed(() => actionRegistry.value.availableFor(props.node))
+const selectedHistoryKey = ref<string | null>(null)
+const selectedHistory = computed(() => (
+  props.generation?.history.find(entry => entry.key === selectedHistoryKey.value)
+))
+const viewingHistory = computed(() => Boolean(selectedHistory.value))
+const displayNode = computed(() => selectedHistory.value?.node ?? props.node)
+const availableActions = computed(() => (
+  viewingHistory.value ? [] : actionRegistry.value.availableFor(props.node)
+))
 const resolution = computed(() => registry.value.resolve(
-  props.node,
+  displayNode.value,
   props.placement.surface,
   props.context.device,
 ))
@@ -119,7 +130,7 @@ function initialInlineRendererActionState(): InlineRendererActionState {
   if (resolution.value.mode === 'custom') return { ready: false, names: new Set() }
   return {
     ready: true,
-    names: props.node.a2ui ? scanA2uiActionNames(props.node.a2ui) : new Set(),
+    names: displayNode.value.a2ui ? scanA2uiActionNames(displayNode.value.a2ui) : new Set(),
   }
 }
 const inlineRendererActions = ref<InlineRendererActionState>(initialInlineRendererActionState())
@@ -129,6 +140,7 @@ const supplementaryActions = computed(() => inlineRendererActions.value.ready
 const customRendererFailure = ref<string>()
 const expanded = ref(false)
 const collapsed = ref(false)
+const bodyElement = ref<HTMLElement | null>(null)
 const unavailable = computed(() => resolution.value.mode === 'unavailable' || Boolean(customRendererFailure.value))
 const fallbackReason = computed(() => (
   customRendererFailure.value
@@ -138,7 +150,7 @@ const fallbackReason = computed(() => (
     : undefined
 ))
 const resolutionName = computed(() => resolution.value.mode)
-const resetKey = computed(() => `${props.node.id}:${props.node.revision}:${resolutionName.value}`)
+const resetKey = computed(() => `${displayNode.value.id}:${displayNode.value.revision}:${resolutionName.value}`)
 const actionStates = ref<Record<string, ActionUiState>>({})
 const actionPollGenerations = new Map<string, number>()
 let unmounted = false
@@ -149,7 +161,54 @@ watch(resetKey, () => {
 })
 watch(expanded, value => {
   document.body.classList.toggle('generative-ui-node-expanded', value)
+  if (!value) {
+    selectedHistoryKey.value = null
+    return
+  }
+  if (props.generation?.superseded_count) {
+    emit('request-generation-history', { node_id: props.node.id })
+  }
 })
+
+watch(
+  () => props.generation?.superseded_count ?? 0,
+  (count, previous) => {
+    if (expanded.value && count > previous) {
+      emit('request-generation-history', { node_id: props.node.id })
+    }
+  },
+)
+
+watch(
+  () => props.generation?.history.map(entry => entry.key).join('|') ?? '',
+  () => {
+    if (selectedHistoryKey.value && !selectedHistory.value) selectedHistoryKey.value = null
+  },
+)
+
+function interventionOperationLabel(): string {
+  const operation = props.generation?.latest_intervention?.operation
+  return operation ? t(`voice.generativeUi.generations.operations.${operation}`) : ''
+}
+
+function interventionStatusLabel(): string {
+  const status = props.generation?.latest_intervention?.status
+  return status ? t(`voice.generativeUi.generations.statuses.${status}`) : ''
+}
+
+function requestHistory(): void {
+  emit('request-generation-history', { node_id: props.node.id })
+}
+
+function selectHistory(key: string | null): void {
+  selectedHistoryKey.value = key
+  void nextTick(() => {
+    const body = bodyElement.value
+    if (!body) return
+    if (typeof body.scrollTo === 'function') body.scrollTo({ top: 0, behavior: 'auto' })
+    else body.scrollTop = 0
+  })
+}
 
 function toggleExpanded(): void {
   if (!expanded.value && collapsed.value) collapsed.value = false
@@ -446,6 +505,8 @@ function acceptInlineRendererActions(names: string[]): void {
     :data-collapsed="collapsed ? 'true' : 'false'"
     :data-lifecycle-motion="lifecycleMotion"
     :data-status-phase="node.status?.phase || 'unknown'"
+    :data-generation-state="viewingHistory ? 'superseded' : generation ? 'current' : undefined"
+    :data-superseded-count="generation?.superseded_count"
     :style="{ '--generative-ui-attention-duration': `${attentionDurationMs}ms` }"
     :aria-selected="selected"
     tabindex="0"
@@ -454,6 +515,15 @@ function acceptInlineRendererActions(names: string[]): void {
     @keydown.esc.stop="expanded = false"
   >
     <div class="generative-ui-node-host__toolbar">
+      <div v-if="generation" class="generative-ui-node-host__generation-badges" aria-live="polite">
+        <span data-generation-badge="current">{{ t('voice.generativeUi.generations.current') }}</span>
+        <span v-if="generation.superseded_count" data-generation-badge="superseded">
+          {{ t('voice.generativeUi.generations.supersededCount', { count: generation.superseded_count }) }}
+        </span>
+        <span v-if="generation.latest_intervention" data-generation-badge="intervention">
+          {{ interventionOperationLabel() }} · {{ interventionStatusLabel() }}
+        </span>
+      </div>
       <button
         type="button"
         class="generative-ui-node-host__tool generative-ui-node-host__minimize"
@@ -477,7 +547,51 @@ function acceptInlineRendererActions(names: string[]): void {
         <Maximize2 v-else :size="18" aria-hidden="true" />
       </button>
     </div>
-    <div v-if="!collapsed" class="generative-ui-node-host__body">
+    <div v-if="!collapsed" ref="bodyElement" class="generative-ui-node-host__body">
+      <div
+        v-if="expanded && generation?.superseded_count"
+        class="generative-ui-node-host__history-switcher"
+        data-generation-history
+        @click.stop
+      >
+        <div class="generative-ui-node-host__history-tabs" role="tablist" :aria-label="t('voice.generativeUi.generations.history')">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="!viewingHistory"
+            :data-history-selected="!viewingHistory ? 'true' : 'false'"
+            @click="selectHistory(null)"
+          >
+            {{ t('voice.generativeUi.generations.current') }}
+          </button>
+          <button
+            v-for="(entry, index) in generation.history"
+            :key="entry.key"
+            type="button"
+            role="tab"
+            :aria-selected="selectedHistoryKey === entry.key"
+            :data-history-selected="selectedHistoryKey === entry.key ? 'true' : 'false'"
+            @click="selectHistory(entry.key)"
+          >
+            {{ t('voice.generativeUi.generations.supersededItem', { index: index + 1 }) }}
+          </button>
+        </div>
+        <span v-if="generation.history_loading" class="generative-ui-node-host__history-status" role="status">
+          {{ t('voice.generativeUi.generations.loading') }}
+        </span>
+        <button
+          v-else-if="generation.history_error"
+          type="button"
+          class="generative-ui-node-host__history-retry"
+          @click="requestHistory"
+        >
+          {{ t('voice.generativeUi.generations.retry') }}
+        </button>
+      </div>
+      <div v-if="viewingHistory" class="generative-ui-node-host__historical-banner" role="status">
+        <strong>{{ t('voice.generativeUi.generations.superseded') }}</strong>
+        <span>{{ t('voice.generativeUi.generations.readOnly') }}</span>
+      </div>
       <RendererErrorBoundary
       v-if="registeredComponent"
       :reset-key="resetKey"
@@ -485,7 +599,7 @@ function acceptInlineRendererActions(names: string[]): void {
     >
       <component
         :is="registeredComponent"
-        :node="node"
+        :node="displayNode"
         :placement="placement"
         :context="context"
         :expanded="expanded"
@@ -494,7 +608,7 @@ function acceptInlineRendererActions(names: string[]): void {
         @surface-actions="acceptInlineRendererActions"
       />
       <template #fallback="{ error }">
-        <GenerativeUiFallbackRenderer :node="node" unavailable :reason="error" />
+        <GenerativeUiFallbackRenderer :node="displayNode" unavailable :reason="error" />
       </template>
     </RendererErrorBoundary>
       <RendererErrorBoundary
@@ -502,9 +616,9 @@ function acceptInlineRendererActions(names: string[]): void {
       :reset-key="resetKey"
       @renderer-error="reportRendererError"
     >
-      <DeclarativeRenderer :node="node" :document="declarativeDocument" />
+      <DeclarativeRenderer :node="displayNode" :document="declarativeDocument" />
       <template #fallback="{ error }">
-        <GenerativeUiFallbackRenderer :node="node" unavailable :reason="error" />
+        <GenerativeUiFallbackRenderer :node="displayNode" unavailable :reason="error" />
       </template>
     </RendererErrorBoundary>
       <RendererErrorBoundary
@@ -513,7 +627,7 @@ function acceptInlineRendererActions(names: string[]): void {
       @renderer-error="reportRendererError"
     >
       <CustomRendererSandbox
-        :node="node"
+        :node="displayNode"
         :placement="placement"
         :context="context"
         :expanded="expanded"
@@ -526,18 +640,18 @@ function acceptInlineRendererActions(names: string[]): void {
         @renderer-error="reportRendererError"
       />
       <template #fallback="{ error }">
-        <GenerativeUiFallbackRenderer :node="node" unavailable :reason="error" />
+        <GenerativeUiFallbackRenderer :node="displayNode" unavailable :reason="error" />
       </template>
     </RendererErrorBoundary>
       <GenerativeUiFallbackRenderer
       v-else
-      :node="node"
+      :node="displayNode"
       :unavailable="unavailable"
       :reason="fallbackReason"
     />
 
       <nav
-      v-if="interactive !== false && actionMode !== 'disabled' && supplementaryActions.length"
+      v-if="!viewingHistory && interactive !== false && actionMode !== 'disabled' && supplementaryActions.length"
       class="generative-ui-node-host__actions"
       aria-label="Actions"
     >
@@ -738,6 +852,108 @@ function acceptInlineRendererActions(names: string[]): void {
   justify-content: flex-end;
   gap: 6px;
   padding: 8px 10px 4px;
+}
+
+.generative-ui-node-host__generation-badges {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  overflow: hidden;
+}
+
+.generative-ui-node-host__generation-badges span {
+  max-width: min(220px, 34cqw);
+  flex: 0 1 auto;
+  overflow: hidden;
+  border: 1px solid rgba(116, 228, 227, 0.18);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: rgba(218, 245, 243, 0.68);
+  background: rgba(10, 31, 33, 0.72);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generative-ui-node-host__generation-badges span[data-generation-badge='current'] {
+  border-color: rgba(74, 222, 128, 0.26);
+  color: rgba(187, 247, 208, 0.9);
+  background: rgba(22, 101, 52, 0.16);
+}
+
+.generative-ui-node-host__generation-badges span[data-generation-badge='superseded'] {
+  border-color: rgba(250, 204, 21, 0.24);
+  color: rgba(254, 240, 138, 0.82);
+  background: rgba(113, 63, 18, 0.14);
+}
+
+.generative-ui-node-host__history-switcher {
+  position: sticky;
+  top: -4px;
+  z-index: 4;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -4px 0 14px;
+  border-bottom: 1px solid rgba(116, 228, 227, 0.13);
+  background: rgba(9, 19, 22, 0.96);
+  padding: 8px 0 10px;
+}
+
+.generative-ui-node-host__history-tabs {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.generative-ui-node-host__history-tabs button,
+.generative-ui-node-host__history-retry {
+  min-height: 32px;
+  border: 1px solid rgba(116, 228, 227, 0.18);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: rgba(218, 245, 243, 0.7);
+  background: rgba(8, 28, 31, 0.7);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.generative-ui-node-host__history-tabs button[data-history-selected='true'] {
+  border-color: rgba(116, 228, 227, 0.52);
+  color: #efffff;
+  background: rgba(38, 151, 145, 0.2);
+}
+
+.generative-ui-node-host__history-status {
+  flex: 0 0 auto;
+  color: rgba(218, 245, 243, 0.58);
+  font-size: 12px;
+}
+
+.generative-ui-node-host__historical-banner {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 12px;
+  border-left: 3px solid rgba(250, 204, 21, 0.64);
+  background: rgba(113, 63, 18, 0.12);
+  padding: 8px 10px;
+  color: rgba(254, 240, 138, 0.74);
+  font-size: 12px;
+}
+
+.generative-ui-node-host__historical-banner strong {
+  color: rgba(254, 249, 195, 0.94);
 }
 
 .generative-ui-node-host__tool {
@@ -987,6 +1203,19 @@ function acceptInlineRendererActions(names: string[]): void {
 
   .generative-ui-node-host__body {
     padding: 2px 14px 16px;
+  }
+
+  .generative-ui-node-host__toolbar {
+    padding-inline: 8px;
+  }
+
+  .generative-ui-node-host__generation-badges span[data-generation-badge='intervention'] {
+    display: none;
+  }
+
+  .generative-ui-node-host__history-switcher {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

@@ -12,6 +12,7 @@ const SUPERVISOR_TOOL_NAMES = [
   "start_supervised_dag",
   "list_dag_actors",
   "get_dag_supervision",
+  "intervene_dag_actor",
   "send_dag_actor_command",
   "focus_dag_actor",
   "cancel_dag_run",
@@ -1240,9 +1241,17 @@ describe("manager-agent server", () => {
           input_schema: tool.input_schema,
         }).toEqual(managerAgentToolSpec(name));
         expect(tool.input_schema).toMatchObject({ additionalProperties: false });
-        expect(JSON.stringify(tool.input_schema)).not.toContain("worker_id");
-        expect(JSON.stringify(tool.input_schema)).not.toContain("container_id");
-        expect(JSON.stringify(tool.input_schema)).not.toContain("generation");
+        const schema = JSON.stringify(tool.input_schema);
+        for (const forbidden of [
+          "node_id",
+          "worker_id",
+          "container_id",
+          "session_id",
+          "lease_id",
+          "generation",
+          "revision",
+          "target_id",
+        ]) expect(schema).not.toContain(forbidden);
       }
     }
   });
@@ -1270,6 +1279,24 @@ describe("manager-agent server", () => {
       results.push(await requireManagerTool(tools, "get_dag_supervision").handler({
         run_id: runId,
         max_milestones: 5,
+      }));
+      const interventionTool = requireManagerTool(tools, "intervene_dag_actor");
+      await expect(interventionTool.handler({
+        run_id: runId,
+        actor_id: "research /?#",
+        operation: "retry",
+        expected_state_token: "a".repeat(64),
+        idempotency_key: "intervention-research-2",
+        node_id: "forbidden-node",
+      })).rejects.toThrow(/does not accept additional properties: node_id/);
+      results.push(await interventionTool.handler({
+        run_id: runId,
+        actor_id: "research /?#",
+        operation: "checkpoint_fork",
+        instruction: "Resume from the verified checkpoint with the corrected constraint.",
+        expected_state_token: "a".repeat(64),
+        idempotency_key: "intervention-research-2",
+        checkpoint_version: 3,
       }));
       results.push(await requireManagerTool(tools, "send_dag_actor_command").handler({
         run_id: runId,
@@ -1317,6 +1344,18 @@ describe("manager-agent server", () => {
         },
         {
           method: "POST",
+          pathname: `/api/runs/${encodedRunId}/actors/research%20%2F%3F%23/interventions`,
+          query: {},
+          body: {
+            operation: "checkpoint_fork",
+            instruction: "Resume from the verified checkpoint with the corrected constraint.",
+            expected_state_token: "a".repeat(64),
+            idempotency_key: "intervention-research-2",
+            checkpoint_version: 3,
+          },
+        },
+        {
+          method: "POST",
           pathname: `/api/runs/${encodedRunId}/commands`,
           query: {},
           body: {
@@ -1349,6 +1388,7 @@ describe("manager-agent server", () => {
       expect(state.createdRunIds).toEqual(["run-supervised-123"]);
       expect(state.objectiveToolCalls).toEqual([
         { name: "start_supervised_dag", success: true },
+        { name: "intervene_dag_actor", success: true },
         { name: "send_dag_actor_command", success: true },
         { name: "focus_dag_actor", success: true },
         { name: "cancel_dag_run", success: true },

@@ -1,7 +1,7 @@
 import { createServer } from "./server/http.js";
 import { getHost, getPort } from "./config/env.js";
 import { initEventLogging } from "./persistence/store.js";
-import { recoverAllActiveRuns } from "./runtime/active-runs.js";
+import { recoverAllActiveRuns, recoverDagActorInterventions } from "./runtime/active-runs.js";
 import { recoverStaleVoiceSessions } from "./server/voice-session-registry.js";
 import { markRecoveryComplete } from "./health/index.js";
 import { cleanupPluginPackageStaging, recoverPluginPackageTrash } from "./plugins/package-lifecycle.js";
@@ -18,6 +18,9 @@ const server = createServer(port);
 // the server accepts traffic. The first-worker hook (wired in createServer)
 // re-dispatches their READY nodes once a worker reconnects.
 const recovery = recoverAllActiveRuns();
+// Intervention Inbox rows are replayed only after their logical runs and
+// Actors exist again. Applying is transactionally idempotent.
+const interventionRecovery = recoverDagActorInterventions();
 // Logical actors are restored before Activity Journal replay. The projector
 // can therefore re-establish exact ownership and drain any crash-pending gaps.
 const surfaceRecovery = recoverDagLiveSurfaceProjections();
@@ -35,6 +38,11 @@ server.listen(port, host, () => {
   console.error(
     `live surface recovery: projected=${surfaceRecovery.projected_events} failed=${surfaceRecovery.failed.length}`,
   );
+  if (interventionRecovery.applied.length || interventionRecovery.failed.length || interventionRecovery.skipped.length) {
+    console.error(
+      `actor intervention recovery: applied=${interventionRecovery.applied.length} failed=${interventionRecovery.failed.length} skipped=${interventionRecovery.skipped.length}`,
+    );
+  }
   if (voiceRecovery.recovered.length) {
     console.error(`voice recovery: reset ${voiceRecovery.recovered.length} stale session(s)`);
   }

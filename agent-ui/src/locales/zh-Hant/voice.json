@@ -307,6 +307,29 @@
     "collapse": "退出放大",
     "minimize": "收起內容",
     "restore": "恢復內容",
+    "generations": {
+      "current": "目前",
+      "superseded": "已替代",
+      "supersededCount": "已替代 {count}",
+      "supersededItem": "已替代 {index}",
+      "history": "內容歷史",
+      "readOnly": "歷史內容唯讀",
+      "loading": "正在讀取歷史…",
+      "retry": "重試讀取",
+      "operations": {
+        "interrupt": "中斷",
+        "cancel": "取消",
+        "retry": "重試",
+        "reassign": "改派",
+        "checkpoint_fork": "從檢查點繼續"
+      },
+      "statuses": {
+        "queued": "已排隊",
+        "applying": "處理中",
+        "applied": "已完成",
+        "failed": "失敗"
+      }
+    },
     "actions": {
       "submitting": "正在提交操作…",
       "statusUnknown": "操作狀態需要刷新",

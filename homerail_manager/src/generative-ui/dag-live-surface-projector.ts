@@ -19,6 +19,13 @@ import {
 } from "homerail-protocol";
 import type { DagActivityJournalEntry } from "../persistence/dag-activity-journal.js";
 import {
+  createDagSurfaceGenerationSnapshot,
+  getDagActorIntervention,
+  listDagSurfaceGenerationSnapshots,
+  type DagActorInterventionOperation,
+  type DagSurfaceGenerationSnapshotRecord,
+} from "../persistence/dag-actor-interventions.js";
+import {
   getDagActor,
   type DagActorRecord,
 } from "../persistence/dag-actors.js";
@@ -35,6 +42,7 @@ const MAX_PROJECTED_STRING_BYTES = 1_024;
 const MAX_PROJECTED_FINDINGS = 8;
 const MAX_PROJECTED_CONTENT_BYTES = 32 * 1024;
 const MAX_FOCUS_UNTIL = 8_640_000_000_000_000;
+const INTERVENTION_FOCUS_DURATION_MS = 15_000;
 
 export type DagLiveSurfaceActivityState = Exclude<DagActivityType, "tool_used">;
 export type DagLiveSurfaceVisibilityState = "visible" | "focused" | "removed";
@@ -99,6 +107,17 @@ export interface DagLiveSurfaceControlRecord {
   committed_surface_revision: number;
   focused_until?: number;
   created_at: number;
+}
+
+export interface DagLiveSurfaceSupersessionResult {
+  projection: DagLiveSurfaceProjectionRecord;
+  intervention_id: string;
+  operation: DagActorInterventionOperation;
+  from_generation: number;
+  to_generation: number;
+  transaction_id: string;
+  snapshot?: DagSurfaceGenerationSnapshotRecord;
+  deduplicated: boolean;
 }
 
 export interface DagLiveSurfaceRecoveryResult {
@@ -218,6 +237,15 @@ interface ProjectedData {
     surface_revision: number;
     focused_until?: number;
   };
+  intervention?: {
+    intervention_id: string;
+    operation: DagActorInterventionOperation;
+    generation_state: "current";
+    supersedes_generation: number;
+    generation: number;
+    summary: string;
+    created_at: number;
+  };
   findings: ProjectedFinding[];
 }
 
@@ -329,7 +357,7 @@ function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex");
 }
 
-function transactionId(kind: "activity" | "control", id: string): string {
+function transactionId(kind: "activity" | "control" | "intervention", id: string): string {
   return `dag-live-surface-${kind}-${createHash("sha256").update(id).digest("hex")}`;
 }
 
@@ -722,6 +750,9 @@ function buildProjectedNode(input: {
         ? { focused_until: input.projection.focused_until }
         : {}),
     },
+    ...(previous?.intervention?.generation === input.event.generation
+      ? { intervention: previous.intervention }
+      : {}),
     findings: boundedFindings,
   };
   const content = { data };
@@ -1022,6 +1053,456 @@ export function getDagLiveSurfaceDocument(runId: string): GenerativeUiDocumentV1
   return projection
     ? persistentGenerativeUiDocumentService.get(projection.document_id, scopeFor(normalizedRunId))
     : undefined;
+}
+
+function interventionPresentation(operation: DagActorInterventionOperation): {
+  activity: DagLiveSurfaceActivityState;
+  label: string;
+  summary: string;
+  tone: ProjectedData["state"]["tone"];
+  phase: GenerativeUiPhase;
+} {
+  switch (operation) {
+    case "retry":
+      return {
+        activity: "started",
+        label: "Retrying",
+        summary: "Retry requested. Continuing with a new attempt.",
+        tone: "info",
+        phase: GenerativeUiPhase.RUNNING,
+      };
+    case "reassign":
+      return {
+        activity: "started",
+        label: "Reassigned",
+        summary: "Reassigned. Continuing with a new attempt.",
+        tone: "info",
+        phase: GenerativeUiPhase.RUNNING,
+      };
+    case "checkpoint_fork":
+      return {
+        activity: "started",
+        label: "Resuming",
+        summary: "Resuming from the selected checkpoint.",
+        tone: "info",
+        phase: GenerativeUiPhase.RUNNING,
+      };
+    case "interrupt":
+      return {
+        activity: "blocked",
+        label: "Interrupted",
+        summary: "Interrupted. Waiting for further direction.",
+        tone: "warning",
+        phase: GenerativeUiPhase.WAITING,
+      };
+    case "cancel":
+      return {
+        activity: "blocked",
+        label: "Cancelled",
+        summary: "Cancelled. Work is stopped.",
+        tone: "warning",
+        phase: GenerativeUiPhase.CANCELLED,
+      };
+  }
+}
+
+function interventionSummary(instruction: string | undefined, fallback: string): string {
+  if (instruction === undefined) return fallback;
+  const redacted = redactTelemetry(instruction);
+  return boundedString(redacted) ?? fallback;
+}
+
+function isMatchingInterventionNode(input: {
+  node: GenerativeUiStoredNodeV1;
+  projection: DagLiveSurfaceProjectionRecord;
+  intervention_id: string;
+  operation: DagActorInterventionOperation;
+  from_generation: number;
+  to_generation: number;
+}): boolean {
+  assertOwnedNode(input.node, input.projection);
+  const data = projectedDataFromNode(input.node);
+  return data?.actor.generation === input.to_generation
+    && data.state.surface_revision === input.projection.surface_revision
+    && data.intervention?.intervention_id === input.intervention_id
+    && data.intervention.operation === input.operation
+    && data.intervention.generation_state === "current"
+    && data.intervention.supersedes_generation === input.from_generation
+    && data.intervention.generation === input.to_generation;
+}
+
+function buildInterventionNode(input: {
+  actor: DagActorRecord;
+  projection: DagLiveSurfaceProjectionRecord;
+  existing?: GenerativeUiStoredNodeV1;
+  intervention_id: string;
+  operation: DagActorInterventionOperation;
+  from_generation: number;
+  summary: string;
+  created_at: number;
+  focused_until: number;
+}): { node: GenerativeUiNodeV1; activity: DagLiveSurfaceActivityState } {
+  if (input.existing) assertOwnedNode(input.existing, input.projection);
+  const previous = projectedDataFromNode(input.existing);
+  const presentation = interventionPresentation(input.operation);
+  const surfaceRevision = input.projection.surface_revision + 1;
+  const title = previous?.title ?? input.actor.role;
+  const data: ProjectedData = {
+    projector: { id: PROJECTOR_ID, version: PROJECTOR_DATA_VERSION },
+    actor: {
+      id: input.actor.actor_id,
+      role: input.actor.role,
+      node_id: input.actor.node_id,
+      generation: input.actor.generation,
+    },
+    title,
+    state: {
+      activity: presentation.activity,
+      visibility: "focused",
+      label: presentation.label,
+      summary: input.summary,
+      tone: presentation.tone,
+      progress: presentation.phase === GenerativeUiPhase.RUNNING ? 0 : previous?.state.progress ?? 0,
+      event_id: input.intervention_id,
+      round_id: previous?.state.round_id ?? `intervention:${input.intervention_id}`,
+      sequence: 0,
+      updated_at: input.created_at,
+      surface_revision: surfaceRevision,
+      focused_until: input.focused_until,
+    },
+    intervention: {
+      intervention_id: input.intervention_id,
+      operation: input.operation,
+      generation_state: "current",
+      supersedes_generation: input.from_generation,
+      generation: input.actor.generation,
+      summary: input.summary,
+      created_at: input.created_at,
+    },
+    findings: [],
+  };
+  const content = { data };
+  if (Buffer.byteLength(JSON.stringify(content), "utf8") > MAX_PROJECTED_CONTENT_BYTES) {
+    throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Intervention DAG live surface content exceeds its budget");
+  }
+
+  return {
+    activity: presentation.activity,
+    node: {
+      ir_version: GENERATIVE_UI_IR_VERSION,
+      id: input.projection.surface_id,
+      kind: GENERATED_VIEW_KIND,
+      kind_version: GENERATED_VIEW_KIND_VERSION,
+      owner: input.existing?.owner ?? { id: CORE_PLUGIN_ID, version: activeCoreVersion() },
+      surface: GenerativeUiSurface.EXECUTION,
+      importance: GenerativeUiImportance.CRITICAL,
+      status: {
+        phase: presentation.phase,
+        label: presentation.label,
+        progress: data.state.progress,
+      },
+      content,
+      a2ui: structuredClone(LIVE_SURFACE_A2UI),
+      presentation: { density: "summary" },
+      lifecycle: { persistence: "session", removable: true },
+      fallback: { title, summary: input.summary },
+      provenance: {
+        actor: "agent",
+        actor_id: input.actor.actor_id,
+        run_id: input.actor.run_id,
+      },
+    },
+  };
+}
+
+/**
+ * Move one stable Actor surface from generation N to N+1 after the durable
+ * Actor row has already advanced. The old stored node is snapshotted before
+ * the fixed-id A2UI node is patched, and both writes share one DB transaction.
+ */
+export function supersedeDagLiveSurfaceForIntervention(input: {
+  run_id: string;
+  actor_id: string;
+  intervention_id: string;
+  operation?: DagActorInterventionOperation;
+  instruction?: string;
+  from_generation?: number;
+  to_generation?: number;
+  created_at?: number;
+}): DagLiveSurfaceSupersessionResult {
+  const normalized = {
+    run_id: assertIdentifier(input.run_id, "run_id"),
+    actor_id: assertIdentifier(input.actor_id, "actor_id"),
+    intervention_id: assertIdentifier(input.intervention_id, "intervention_id"),
+    ...(input.operation === undefined ? {} : { operation: input.operation }),
+    ...(input.instruction === undefined ? {} : { instruction: input.instruction.replace(/\s+/g, " ").trim() }),
+    ...(input.from_generation === undefined
+      ? {}
+      : { from_generation: assertNonNegativeSafeInteger(input.from_generation, "from_generation") }),
+    ...(input.to_generation === undefined
+      ? {}
+      : { to_generation: assertNonNegativeSafeInteger(input.to_generation, "to_generation") }),
+    created_at: input.created_at === undefined
+      ? Date.now()
+      : assertNonNegativeSafeInteger(input.created_at, "created_at"),
+  };
+  if (normalized.created_at > MAX_FOCUS_UNTIL) {
+    throw new Error("created_at is outside the supported timestamp range");
+  }
+
+  return getDb().transaction((): DagLiveSurfaceSupersessionResult => {
+    const intervention = getDagActorIntervention(normalized.intervention_id);
+    if (!intervention) throw new Error(`Unknown DAG actor intervention: ${normalized.intervention_id}`);
+    if (intervention.run_id !== normalized.run_id || intervention.actor_id !== normalized.actor_id) {
+      throw new DagLiveSurfaceProjectionError(
+        "identity_mismatch",
+        `DAG actor intervention ${normalized.intervention_id} belongs to a different Actor`,
+      );
+    }
+    if (normalized.operation !== undefined && normalized.operation !== intervention.operation) {
+      throw new DagLiveSurfaceProjectionError(
+        "identity_mismatch",
+        `DAG actor intervention ${normalized.intervention_id} operation does not match durable state`,
+      );
+    }
+    if (
+      intervention.instruction !== undefined
+      && normalized.instruction !== undefined
+      && normalized.instruction !== intervention.instruction
+    ) {
+      throw new DagLiveSurfaceProjectionError(
+        "identity_mismatch",
+        `DAG actor intervention ${normalized.intervention_id} instruction does not match durable state`,
+      );
+    }
+    if (intervention.status !== "applying" && intervention.status !== "applied") {
+      throw new DagLiveSurfaceProjectionError(
+        "projection_state_conflict",
+        `DAG actor intervention ${normalized.intervention_id} is ${intervention.status}, not applying`,
+      );
+    }
+    const fromGeneration = intervention.from_generation;
+    if (fromGeneration === undefined || intervention.expected_actor_generation !== fromGeneration) {
+      throw new DagLiveSurfaceProjectionError(
+        "generation_conflict",
+        `DAG actor intervention ${normalized.intervention_id} has no valid source generation`,
+      );
+    }
+    const toGeneration = fromGeneration + 1;
+    if (
+      (normalized.from_generation !== undefined && normalized.from_generation !== fromGeneration)
+      || (normalized.to_generation !== undefined && normalized.to_generation !== toGeneration)
+    ) {
+      throw new DagLiveSurfaceProjectionError(
+        "generation_conflict",
+        `DAG actor intervention ${normalized.intervention_id} generation does not match durable state`,
+      );
+    }
+    if (intervention.to_generation !== undefined && intervention.to_generation !== toGeneration) {
+      throw new DagLiveSurfaceProjectionError(
+        "generation_conflict",
+        `DAG actor intervention ${normalized.intervention_id} completed at a different generation`,
+      );
+    }
+    const actor = getDagActor(normalized.run_id, normalized.actor_id);
+    if (!actor) throw new Error(`Unknown DAG actor: ${normalized.run_id}/${normalized.actor_id}`);
+    if (actor.generation !== toGeneration) {
+      throw new DagLiveSurfaceProjectionError(
+        "generation_conflict",
+        `DAG actor ${normalized.run_id}/${normalized.actor_id} generation is ${actor.generation}, expected ${toGeneration}`,
+      );
+    }
+
+    let projection = getProjectionRow(normalized.run_id, normalized.actor_id)
+      ? requireProjection(normalized.run_id, normalized.actor_id)
+      : ensureProjection(actor, normalized.created_at);
+    if (
+      projection.node_id !== actor.node_id
+      || projection.surface_id !== actor.surface_id
+    ) {
+      throw new DagLiveSurfaceProjectionError(
+        "identity_mismatch",
+        "DAG live surface no longer matches its logical Actor",
+      );
+    }
+    if (projection.generation !== fromGeneration && projection.generation !== toGeneration) {
+      throw new DagLiveSurfaceProjectionError(
+        "generation_conflict",
+        `DAG live surface generation is ${projection.generation}, expected ${fromGeneration} or ${toGeneration}`,
+      );
+    }
+
+    const scope = scopeFor(normalized.run_id);
+    const document = persistentGenerativeUiDocumentService.get(projection.document_id, scope);
+    if (!document) throw new Error(`A2UI document not found: ${projection.document_id}`);
+    const existing = document.nodes.find((candidate) => candidate.id === projection.surface_id);
+    const txId = transactionId("intervention", normalized.intervention_id);
+    if (
+      projection.generation === toGeneration
+      && existing
+      && isMatchingInterventionNode({
+        node: existing,
+        projection,
+        intervention_id: normalized.intervention_id,
+        operation: intervention.operation,
+        from_generation: fromGeneration,
+        to_generation: toGeneration,
+      })
+    ) {
+      const snapshot = listDagSurfaceGenerationSnapshots({
+        run_id: normalized.run_id,
+        actor_id: normalized.actor_id,
+        limit: 1,
+      }).find((candidate) => (
+        candidate.generation === fromGeneration
+        && candidate.intervention_id === normalized.intervention_id
+      ));
+      return {
+        projection,
+        intervention_id: normalized.intervention_id,
+        operation: intervention.operation,
+        from_generation: fromGeneration,
+        to_generation: toGeneration,
+        transaction_id: txId,
+        ...(snapshot ? { snapshot } : {}),
+        deduplicated: true,
+      };
+    }
+
+    let snapshot: DagSurfaceGenerationSnapshotRecord | undefined;
+    if (existing) {
+      assertOwnedNode(existing, projection);
+      const previous = projectedDataFromNode(existing)!;
+      if (previous.actor.generation !== fromGeneration) {
+        throw new DagLiveSurfaceProjectionError(
+          "generation_conflict",
+          `A2UI surface generation is ${previous.actor.generation}, expected ${fromGeneration}`,
+        );
+      }
+      snapshot = createDagSurfaceGenerationSnapshot({
+        run_id: actor.run_id,
+        actor_id: actor.actor_id,
+        generation: fromGeneration,
+        node_id: actor.node_id,
+        surface_id: actor.surface_id,
+        document_id: projection.document_id,
+        node_revision: existing.revision,
+        document_revision: document.revision,
+        surface_revision: projection.surface_revision,
+        activity_state: projection.activity_state,
+        visibility_state: projection.visibility_state,
+        ...(projection.last_event_id === undefined ? {} : { last_event_id: projection.last_event_id }),
+        node_snapshot: existing,
+        superseded_by_generation: toGeneration,
+        intervention_id: normalized.intervention_id,
+        created_at: normalized.created_at,
+      }).snapshot;
+    }
+
+    projection = advanceProjectionGeneration(projection, actor, normalized.created_at);
+    const focusedUntil = Math.min(MAX_FOCUS_UNTIL, normalized.created_at + INTERVENTION_FOCUS_DURATION_MS);
+    const presentation = interventionPresentation(intervention.operation);
+    const summary = interventionSummary(
+      normalized.instruction ?? intervention.instruction,
+      presentation.summary,
+    );
+    const projected = buildInterventionNode({
+      actor,
+      projection,
+      ...(existing ? { existing } : {}),
+      intervention_id: normalized.intervention_id,
+      operation: intervention.operation,
+      from_generation: fromGeneration,
+      summary,
+      created_at: normalized.created_at,
+      focused_until: focusedUntil,
+    });
+    const operation = existing
+      ? {
+          op: "patch" as const,
+          node_id: existing.id,
+          if_revision: existing.revision,
+          changes: {
+            surface: projected.node.surface,
+            importance: projected.node.importance,
+            status: projected.node.status,
+            content: projected.node.content,
+            a2ui: projected.node.a2ui,
+            presentation: projected.node.presentation,
+            lifecycle: projected.node.lifecycle,
+            fallback: projected.node.fallback,
+            provenance: projected.node.provenance,
+          },
+        }
+      : { op: "put" as const, node: projected.node };
+    const result = persistentGenerativeUiDocumentService.apply({
+      ir_version: GENERATIVE_UI_IR_VERSION,
+      transaction_id: txId,
+      document_id: document.document_id,
+      base_revision: document.revision,
+      actor: { type: GenerativeUiActorType.SYSTEM, id: PROJECTOR_ID },
+      operations: [operation],
+      created_at: new Date(normalized.created_at).toISOString(),
+    }, scope);
+    if (result.status === "conflict") {
+      throw new DagLiveSurfaceProjectionError(
+        "a2ui_revision_conflict",
+        `A2UI surface changed before intervention ${normalized.intervention_id} could commit`,
+      );
+    }
+    if (result.status !== "applied") {
+      throw new DagLiveSurfaceProjectionError(
+        "a2ui_rejected",
+        `A2UI intervention transaction ${txId} was ${result.status}: ${JSON.stringify(result.errors ?? [])}`,
+      );
+    }
+
+    const nextSurfaceRevision = projection.surface_revision + 1;
+    const updated = getDb().prepare(`
+      UPDATE dag_surface_projections
+      SET generation = ?, last_activity_sequence = 0, surface_revision = ?,
+          activity_state = ?, visibility_state = 'focused', last_event_id = ?,
+          focused_until = ?, updated_at = MAX(updated_at, ?)
+      WHERE run_id = ? AND actor_id = ? AND generation = ? AND surface_revision = ?
+    `).run(
+      toGeneration,
+      nextSurfaceRevision,
+      projected.activity,
+      normalized.intervention_id,
+      focusedUntil,
+      normalized.created_at,
+      normalized.run_id,
+      normalized.actor_id,
+      projection.generation,
+      projection.surface_revision,
+    );
+    if (updated.changes !== 1) {
+      throw new DagLiveSurfaceProjectionError(
+        "surface_revision_conflict",
+        "DAG live surface changed before intervention bookkeeping",
+      );
+    }
+
+    return {
+      projection: requireProjection(normalized.run_id, normalized.actor_id),
+      intervention_id: normalized.intervention_id,
+      operation: intervention.operation,
+      from_generation: fromGeneration,
+      to_generation: toGeneration,
+      transaction_id: txId,
+      ...(snapshot ? { snapshot } : {}),
+      deduplicated: false,
+    };
+  }).immediate();
+}
+
+/** Full append-only Actor generation history for trusted Manager-side consumers. */
+export function listDagLiveSurfaceGenerationHistory(input: {
+  run_id: string;
+  actor_id: string;
+  limit?: number;
+}): DagSurfaceGenerationSnapshotRecord[] {
+  return listDagSurfaceGenerationSnapshots(input);
 }
 
 function controlDigest(input: {

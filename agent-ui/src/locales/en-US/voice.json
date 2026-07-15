@@ -307,6 +307,29 @@
     "collapse": "Exit expanded view",
     "minimize": "Collapse content",
     "restore": "Restore content",
+    "generations": {
+      "current": "Current",
+      "superseded": "Superseded",
+      "supersededCount": "Superseded {count}",
+      "supersededItem": "Superseded {index}",
+      "history": "Content history",
+      "readOnly": "Historical content is read-only",
+      "loading": "Loading history…",
+      "retry": "Retry history",
+      "operations": {
+        "interrupt": "Interrupt",
+        "cancel": "Cancel",
+        "retry": "Retry",
+        "reassign": "Reassign",
+        "checkpoint_fork": "Resume checkpoint"
+      },
+      "statuses": {
+        "queued": "Queued",
+        "applying": "Applying",
+        "applied": "Applied",
+        "failed": "Failed"
+      }
+    },
     "actions": {
       "submitting": "Submitting action…",
       "statusUnknown": "Action status needs refresh",

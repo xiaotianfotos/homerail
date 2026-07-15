@@ -13,12 +13,18 @@ import {
   type DagActivityJournalEntry,
 } from "../persistence/dag-activity-journal.js";
 import { listDagActorCommands, listDagActors } from "../persistence/dag-actors.js";
+import {
+  listDagActorInterventions,
+  type DagActorInterventionOperation,
+  type DagActorInterventionStatus,
+} from "../persistence/dag-actor-interventions.js";
 import { getDagState, updateDagState } from "../persistence/dag-runtime-primitives.js";
 import { getCurrentDagRunRound, listDagRunRounds, type DagRunRoundRecord } from "../persistence/dag-run-rounds.js";
 import { loadRunMetadata } from "../persistence/store.js";
+import { getDagActorControlState, type DagActorControlStateName } from "./dag-actor-control-state.js";
 
-const SUPERVISOR_CURSOR_NAMESPACE = "manager_supervisor_cursor_v1";
-const SUPERVISOR_CURSOR_SCHEMA_VERSION = 1;
+const SUPERVISOR_CURSOR_NAMESPACE = "manager_supervisor_cursor_v2";
+const SUPERVISOR_CURSOR_SCHEMA_VERSION = 2;
 const MAX_SUPERVISOR_ACTORS = 64;
 const MAX_MILESTONES = 12;
 const MAX_PENDING_TOOLS_PER_ACTOR = 8;
@@ -31,6 +37,8 @@ const TERMINAL_ACTIVITY_TYPES = new Set<DagActivityType>(["blocked", "completed"
 export interface DagSupervisorActorSummary {
   actor_id: string;
   role: string;
+  actor_state: DagActorControlStateName;
+  state_token: string;
   activity_state: string;
   visibility_state: string;
   round_targeted: boolean;
@@ -41,6 +49,23 @@ export interface DagSupervisorActorSummary {
     retained_until?: number;
   };
   commands: Record<string, number>;
+  latest_intervention?: DagSupervisorInterventionSummary;
+}
+
+export interface DagSupervisorInterventionSummary {
+  intervention_id: string;
+  operation: DagActorInterventionOperation;
+  status: DagActorInterventionStatus;
+  summary: string;
+  created_at: number;
+  completed_at?: number;
+}
+
+export interface DagSupervisorInterventionMilestone extends DagSupervisorInterventionSummary {
+  milestone_id: string;
+  actor_id: string;
+  role: string;
+  timestamp: number;
 }
 
 export interface DagSupervisorMilestone {
@@ -106,16 +131,18 @@ export interface DagSupervisionSnapshot {
     has_more: boolean;
     suppressed_progress_events: number;
     milestones: DagSupervisorMilestone[];
+    intervention_milestones: DagSupervisorInterventionMilestone[];
     commentary: string[];
   };
 }
 
-interface SupervisorCursorV1 {
-  schema_version: 1;
+interface SupervisorCursorV2 {
+  schema_version: 2;
   run_id: string;
   consumer_digest: string;
   next_after_seq: number;
   pending_tools: Record<string, string[]>;
+  seen_intervention_ids: string[];
 }
 
 function assertIdentifier(value: string, label: string, maxLength = 256): string {
@@ -189,7 +216,7 @@ function cursorKey(runId: string, consumerId: string): { key: string; digest: st
   return { key: `${runId}:${digest.slice(0, 32)}`, digest };
 }
 
-function decodeCursor(value: unknown, runId: string, consumerDigest: string): SupervisorCursorV1 {
+function decodeCursor(value: unknown, runId: string, consumerDigest: string): SupervisorCursorV2 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {
       schema_version: SUPERVISOR_CURSOR_SCHEMA_VERSION,
@@ -197,9 +224,10 @@ function decodeCursor(value: unknown, runId: string, consumerDigest: string): Su
       consumer_digest: consumerDigest,
       next_after_seq: 0,
       pending_tools: {},
+      seen_intervention_ids: [],
     };
   }
-  const candidate = value as Partial<SupervisorCursorV1>;
+  const candidate = value as Partial<SupervisorCursorV2>;
   if (
     candidate.schema_version !== SUPERVISOR_CURSOR_SCHEMA_VERSION
     || candidate.run_id !== runId
@@ -224,6 +252,11 @@ function decodeCursor(value: unknown, runId: string, consumerDigest: string): Su
     consumer_digest: consumerDigest,
     next_after_seq: Number(candidate.next_after_seq),
     pending_tools: pendingTools,
+    seen_intervention_ids: Array.isArray(candidate.seen_intervention_ids)
+      ? Array.from(new Set(candidate.seen_intervention_ids
+          .filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 256)))
+          .slice(-500)
+      : [],
   };
 }
 
@@ -268,6 +301,29 @@ function commentaryFor(milestones: DagSupervisorMilestone[]): string[] {
     : `${commentary.slice(0, MAX_COMMENTARY_LENGTH - 1)}…`];
 }
 
+function interventionSummary(operation: DagActorInterventionOperation, status: DagActorInterventionStatus): string {
+  if (status === "failed") return "干预未能应用，原有证据仍保留";
+  switch (operation) {
+    case "retry": return "已从持久检查点开始新的重试";
+    case "reassign": return "已换用其他可用执行资源继续任务";
+    case "checkpoint_fork": return "已从指定检查点开启新的执行分支";
+    case "interrupt": return "当前尝试已中断，证据已保留";
+    case "cancel": return "当前 Actor 分支已取消，证据已保留";
+  }
+}
+
+function interventionCommentary(milestones: DagSupervisorInterventionMilestone[]): string[] {
+  if (milestones.length === 0) return [];
+  const text = milestones.slice(0, 3)
+    .map((milestone) => `${milestone.role || milestone.actor_id}：${milestone.summary}`)
+    .join("；");
+  const overflow = milestones.length > 3 ? `；另有 ${milestones.length - 3} 项干预` : "";
+  const commentary = `${text}${overflow}`;
+  return [commentary.length <= MAX_COMMENTARY_LENGTH
+    ? commentary
+    : `${commentary.slice(0, MAX_COMMENTARY_LENGTH - 1)}…`];
+}
+
 function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
   actor_count: number;
   actors_truncated: boolean;
@@ -276,15 +332,23 @@ function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
   const allActors = listDagActors(runId);
   const projections = new Map(listDagLiveSurfaceProjections(runId).map((projection) => [projection.actor_id, projection]));
   const actors = allActors.slice(0, MAX_SUPERVISOR_ACTORS).map((actor): DagSupervisorActorSummary => {
+    const controlState = getDagActorControlState(runId, actor.actor_id);
     const projection = projections.get(actor.actor_id);
     const lease = getDagActorLease({ run_id: runId, actor_id: actor.actor_id });
     const commandCounts: Record<string, number> = {};
     for (const command of listDagActorCommands({ run_id: runId, actor_id: actor.actor_id, limit: 500 })) {
       commandCounts[command.status] = (commandCounts[command.status] ?? 0) + 1;
     }
+    const latestIntervention = listDagActorInterventions({
+      run_id: runId,
+      actor_id: actor.actor_id,
+      limit: 1,
+    })[0];
     return {
       actor_id: actor.actor_id,
       role: actor.role,
+      actor_state: controlState.actor_state,
+      state_token: controlState.state_token,
       activity_state: projection?.activity_state ?? "pending",
       visibility_state: projection?.visibility_state ?? "unprojected",
       round_targeted: round?.target_actor_ids.includes(actor.actor_id) ?? false,
@@ -299,6 +363,20 @@ function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
         }
         : {}),
       commands: commandCounts,
+      ...(latestIntervention
+        ? {
+          latest_intervention: {
+            intervention_id: latestIntervention.intervention_id,
+            operation: latestIntervention.operation,
+            status: latestIntervention.status,
+            summary: interventionSummary(latestIntervention.operation, latestIntervention.status),
+            created_at: latestIntervention.created_at,
+            ...(latestIntervention.completed_at === undefined
+              ? {}
+              : { completed_at: latestIntervention.completed_at }),
+          },
+        }
+        : {}),
     };
   });
   return {
@@ -387,6 +465,8 @@ function consumeMilestones(input: {
   const page = listDagActivityEvents({ run_id: runId, after_seq: cursor.next_after_seq, limit: 500 });
   const pendingTools = structuredClone(cursor.pending_tools);
   const milestones: DagSupervisorMilestone[] = [];
+  const seenInterventionIds = new Set(cursor.seen_intervention_ids);
+  const interventionMilestones: DagSupervisorInterventionMilestone[] = [];
   let nextAfterSeq = cursor.next_after_seq;
   let suppressedProgressEvents = 0;
   let stoppedEarly = false;
@@ -394,6 +474,8 @@ function consumeMilestones(input: {
   for (const entry of page.events) {
     nextAfterSeq = entry.seq;
     const event = entry.event;
+    const actor = actorsById.get(event.actor_id);
+    if (!actor || event.generation !== actor.generation) continue;
     if (event.type === "tool_used") {
       const tools = new Set([...(pendingTools[event.actor_id] ?? []), ...eventToolNames(event)]);
       pendingTools[event.actor_id] = [...tools].sort().slice(0, MAX_PENDING_TOOLS_PER_ACTOR);
@@ -404,8 +486,6 @@ function consumeMilestones(input: {
       continue;
     }
     if (!MILESTONE_TYPES.has(event.type)) continue;
-    const actor = actorsById.get(event.actor_id);
-    if (!actor) continue;
     const tools = pendingTools[event.actor_id] ?? [];
     milestones.push(milestoneFromEntry(entry, actor.role, tools));
     delete pendingTools[event.actor_id];
@@ -415,7 +495,42 @@ function consumeMilestones(input: {
     }
   }
 
-  if (nextAfterSeq !== cursor.next_after_seq || JSON.stringify(pendingTools) !== JSON.stringify(cursor.pending_tools)) {
+  const pendingInterventions = listDagActorInterventions({ run_id: runId, limit: 500 })
+    .reverse()
+    .filter((intervention) => (
+      (intervention.status === "applied" || intervention.status === "failed")
+      && !seenInterventionIds.has(intervention.intervention_id)
+    ));
+  const remainingMilestoneBudget = Math.max(0, maxMilestones - milestones.length);
+  for (const intervention of pendingInterventions.slice(0, remainingMilestoneBudget)) {
+    const actor = actorsById.get(intervention.actor_id);
+    if (!actor) continue;
+    const summary = interventionSummary(intervention.operation, intervention.status);
+    interventionMilestones.push({
+      milestone_id: createHash("sha256")
+        .update(`intervention\0${intervention.intervention_id}`)
+        .digest("hex"),
+      intervention_id: intervention.intervention_id,
+      actor_id: intervention.actor_id,
+      role: actor.role,
+      operation: intervention.operation,
+      status: intervention.status,
+      summary,
+      created_at: intervention.created_at,
+      ...(intervention.completed_at === undefined ? {} : { completed_at: intervention.completed_at }),
+      timestamp: intervention.completed_at ?? intervention.started_at ?? intervention.created_at,
+    });
+    seenInterventionIds.add(intervention.intervention_id);
+    delete pendingTools[intervention.actor_id];
+  }
+  const interventionsHaveMore = pendingInterventions.length > interventionMilestones.length;
+  const nextSeenInterventionIds = Array.from(seenInterventionIds).slice(-500);
+
+  if (
+    nextAfterSeq !== cursor.next_after_seq
+    || JSON.stringify(pendingTools) !== JSON.stringify(cursor.pending_tools)
+    || JSON.stringify(nextSeenInterventionIds) !== JSON.stringify(cursor.seen_intervention_ids)
+  ) {
     const updated = updateDagState({
       namespace: SUPERVISOR_CURSOR_NAMESPACE,
       key: stateKey,
@@ -427,7 +542,8 @@ function consumeMilestones(input: {
         consumer_digest: identity.digest,
         next_after_seq: nextAfterSeq,
         pending_tools: pendingTools,
-      } satisfies SupervisorCursorV1,
+        seen_intervention_ids: nextSeenInterventionIds,
+      } satisfies SupervisorCursorV2,
     });
     if (!updated.updated) throw new Error("Manager Supervisor cursor changed concurrently; retry status query");
   }
@@ -436,10 +552,11 @@ function consumeMilestones(input: {
     consumer_digest: identity.digest,
     after_seq: cursor.next_after_seq,
     next_after_seq: nextAfterSeq,
-    has_more: stoppedEarly || (nextAfterSeq >= page.next_after_seq && page.has_more),
+    has_more: stoppedEarly || (nextAfterSeq >= page.next_after_seq && page.has_more) || interventionsHaveMore,
     suppressed_progress_events: suppressedProgressEvents,
     milestones,
-    commentary: commentaryFor(milestones),
+    intervention_milestones: interventionMilestones,
+    commentary: [...commentaryFor(milestones), ...interventionCommentary(interventionMilestones)],
   };
 }
 

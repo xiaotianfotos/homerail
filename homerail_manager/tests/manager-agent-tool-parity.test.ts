@@ -1,19 +1,25 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  HOMERAIL_MANAGER_TURN_HEADER,
+  managerAgentTurnScopeFromPayload,
   managerAgentCommonToolCatalog,
   type AgentToolDefinition,
   type GenerativeUiCanvasContextV1,
   type ManagerAgentResponseMode,
   type ManagerAgentPromptSkill,
+  type ManagerAgentTurnEnvelopeV1,
   type HomerailPluginToolExecutionEnvelopeV1,
   type HomerailPluginTurnContextV1,
 } from "homerail-protocol";
 import { createManagerTools as createHostCodexManagerTools } from "../src/server/host-codex-manager-agent.js";
-import { createManagerTools as createWorkerManagerTools } from "../../homerail_worker/src/manager-agent/server.js";
+import {
+  _withManagerTurnEnvelopeForTest,
+  createManagerTools as createWorkerManagerTools,
+} from "../../homerail_worker/src/manager-agent/server.js";
 import { closeDb } from "../src/persistence/db.js";
 import { assemblePluginTurnContext } from "../src/plugins/context-assembler.js";
 import { syncBuiltinPlugins } from "../src/plugins/registry.js";
@@ -108,6 +114,8 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   if (previousHome === undefined) delete process.env.HOMERAIL_HOME;
   else process.env.HOMERAIL_HOME = previousHome;
   fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -302,6 +310,175 @@ describe("Manager Agent deterministic result envelope parity", () => {
 
     expect(hostState.finalNotes).toEqual(workerState.finalNotes);
     expect(hostState.voiceSurface).toEqual(workerState.voiceSurface);
+  });
+
+  it("maps DAG Actor intervention identically while preserving harness authentication", async () => {
+    const { hostState, workerState, hostTools, workerTools } = createHarnessTools("chat");
+    const restUrl = "https://manager.test/api";
+    hostState.restUrl = restUrl;
+    vi.stubEnv("MANAGER_REST_URL", restUrl);
+    vi.stubEnv("HOMERAIL_MANAGER_ADMIN_TOKEN", "A".repeat(32));
+    vi.stubEnv("HOMERAIL_DAG_MUTATION_TOKEN", "mutation-parity-token");
+
+    const observed: Array<{
+      method: string;
+      pathname: string;
+      body: Record<string, unknown>;
+      authorization: string | null;
+      managerTurn: string | null;
+      mutationToken: string | null;
+    }> = [];
+    vi.stubGlobal("fetch", async (request: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof request === "string"
+        ? request
+        : request instanceof URL
+          ? request.toString()
+          : request.url;
+      const headers = new Headers(init?.headers);
+      const body = typeof init?.body === "string"
+        ? JSON.parse(init.body) as Record<string, unknown>
+        : {};
+      observed.push({
+        method: init?.method ?? "GET",
+        pathname: new URL(rawUrl).pathname,
+        body,
+        authorization: headers.get("authorization"),
+        managerTurn: headers.get(HOMERAIL_MANAGER_TURN_HEADER),
+        mutationToken: headers.get("x-homerail-dag-token"),
+      });
+      const conflict = body.idempotency_key === "conflict-intervention";
+      return new Response(JSON.stringify(conflict
+        ? { success: false, error: "state token conflict" }
+        : { success: true, data: { intervention_id: "intervention-parity" } }), {
+        status: conflict ? 409 : 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const input = {
+      run_id: "run /?# supervised",
+      actor_id: "research /?#",
+      operation: "checkpoint_fork",
+      instruction: "Resume from the verified checkpoint with the corrected constraint.",
+      expected_state_token: "opaque-state-token",
+      idempotency_key: "intervention-parity-1",
+      checkpoint_version: 3,
+    };
+    const workerPayload = {
+      project_id: "project-parity",
+      session_id: "session-parity",
+      response_mode: "chat",
+      manager_api_scopes: ["POST:/api/runs/*/actors/*/interventions"],
+    };
+    const workerTurn: ManagerAgentTurnEnvelopeV1 = {
+      claims: {
+        turn_envelope_version: 1,
+        issuer: "homerail-manager",
+        audience: "homerail-manager-agent-worker",
+        key_id: "manager-parity-key",
+        turn_id: "turn-parity",
+        issued_at: "2026-07-15T00:00:00.000Z",
+        expires_at: "2026-07-15T00:05:00.000Z",
+        payload_digest: "a".repeat(64),
+        scope: managerAgentTurnScopeFromPayload(workerPayload, {
+          runtime_placement: "container",
+          worker_id: "worker-parity",
+        }),
+      },
+      signature: "A".repeat(86),
+    };
+
+    const hostResult = await requireTool(hostTools, "intervene_dag_actor").handler(input);
+    const workerResult = await _withManagerTurnEnvelopeForTest(
+      workerTurn,
+      () => requireTool(workerTools, "intervene_dag_actor").handler(input),
+    );
+    expect(hostResult).toEqual(workerResult);
+    expect(observed.map(({ method, pathname, body }) => ({ method, pathname, body }))).toEqual([
+      {
+        method: "POST",
+        pathname: "/api/runs/run%20%2F%3F%23%20supervised/actors/research%20%2F%3F%23/interventions",
+        body: {
+          operation: "checkpoint_fork",
+          instruction: input.instruction,
+          expected_state_token: "opaque-state-token",
+          idempotency_key: "intervention-parity-1",
+          checkpoint_version: 3,
+        },
+      },
+      {
+        method: "POST",
+        pathname: "/api/runs/run%20%2F%3F%23%20supervised/actors/research%20%2F%3F%23/interventions",
+        body: {
+          operation: "checkpoint_fork",
+          instruction: input.instruction,
+          expected_state_token: "opaque-state-token",
+          idempotency_key: "intervention-parity-1",
+          checkpoint_version: 3,
+        },
+      },
+    ]);
+    expect(observed[0]).toMatchObject({
+      authorization: `Bearer ${"A".repeat(32)}`,
+      managerTurn: null,
+      mutationToken: "mutation-parity-token",
+    });
+    expect(observed[1]).toMatchObject({
+      authorization: null,
+      managerTurn: Buffer.from(JSON.stringify(workerTurn), "utf8").toString("base64url"),
+      mutationToken: "mutation-parity-token",
+    });
+    expect(hostState.objectiveToolCalls).toEqual([{ name: "intervene_dag_actor", success: true }]);
+    expect(workerState.objectiveToolCalls).toEqual([{ name: "intervene_dag_actor", success: true }]);
+
+    const conflictInput = { ...input, idempotency_key: "conflict-intervention" };
+    const errors = await Promise.all([
+      requireTool(hostTools, "intervene_dag_actor").handler(conflictInput)
+        .then(() => "", (error: unknown) => error instanceof Error ? error.message : String(error)),
+      _withManagerTurnEnvelopeForTest(
+        workerTurn,
+        () => requireTool(workerTools, "intervene_dag_actor").handler(conflictInput),
+      ).then(() => "", (error: unknown) => error instanceof Error ? error.message : String(error)),
+    ]);
+    expect(errors[0]).toBe(errors[1]);
+    expect(errors[0]).toContain("Manager API 409");
+    expect(errors[0]).toContain("state token conflict");
+  });
+
+  it("rejects physical target and arbitrary intervention fields before either harness sends HTTP", async () => {
+    const { hostTools, workerTools } = createHarnessTools("chat");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const input = {
+      run_id: "run-supervised",
+      actor_id: "research",
+      operation: "retry",
+      expected_state_token: "opaque-state-token",
+      idempotency_key: "intervention-parity-2",
+    };
+    const forbiddenFields = [
+      "node_id",
+      "worker_id",
+      "container_id",
+      "session_id",
+      "lease_id",
+      "lease_generation",
+      "generation",
+      "revision",
+      "target_id",
+      "target_generation",
+      "unexpected",
+    ];
+
+    for (const tools of [hostTools, workerTools]) {
+      for (const field of forbiddenFields) {
+        await expect(requireTool(tools, "intervene_dag_actor").handler({
+          ...input,
+          [field]: "forbidden",
+        })).rejects.toThrow(new RegExp(`additional properties: ${field}`));
+      }
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("executes the same enabled plugin projection through both voice harnesses", async () => {

@@ -15,11 +15,13 @@ import DagTaskCanvas from './DagTaskCanvas.vue'
 
 const mocks = vi.hoisted(() => ({
   getDagLiveSurfaces: vi.fn(),
+  getDagActorSurfaceHistory: vi.fn(),
   onEvent: vi.fn(() => () => undefined),
   onStateChange: vi.fn(() => () => undefined),
 }))
 
 vi.mock('@/api/agent', () => ({
+  getDagActorSurfaceHistory: mocks.getDagActorSurfaceHistory,
   getDagLiveSurfaces: mocks.getDagLiveSurfaces,
 }))
 
@@ -110,6 +112,12 @@ function snapshot(): DagLiveSurfaceSnapshot {
       created_at: 1_789_000_000_000,
       updated_at: 1_789_000_000_000 + index,
     })),
+    surface_states: actors.map(actorId => ({
+      actor_id: actorId,
+      surface_id: `surface:${actorId}`,
+      generation_state: 'current' as const,
+      superseded_count: 0,
+    })),
     document: {
       ir_version: 1,
       document_id: 'document:run:one',
@@ -153,6 +161,7 @@ afterEach(() => {
   root = null
   controls = null
   mocks.getDagLiveSurfaces.mockReset()
+  mocks.getDagActorSurfaceHistory.mockReset()
   mocks.onEvent.mockClear()
   mocks.onStateChange.mockClear()
   sessionStorage.clear()
@@ -225,12 +234,82 @@ describe('DagTaskCanvas', () => {
     expect(document.body.classList.contains('generative-ui-node-expanded')).toBe(false)
   })
 
+  it('shows compact intervention state and lazy read-only history only in expanded view', async () => {
+    const current = snapshot()
+    current.surface_states![0] = {
+      ...current.surface_states![0]!,
+      superseded_count: 1,
+      latest_intervention: {
+        intervention_id: 'intervention:retry',
+        run_id: 'run:one',
+        actor_id: 'build',
+        operation: 'retry',
+        status: 'applied',
+        created_at: 1_789_000_000_500,
+      },
+    }
+    mocks.getDagLiveSurfaces.mockResolvedValue({ success: true, data: current })
+    mocks.getDagActorSurfaceHistory.mockResolvedValue({
+      success: true,
+      data: {
+        run_id: 'run:one',
+        actor_id: 'build',
+        generation_state: 'superseded',
+        history: [{
+          run_id: 'run:one',
+          actor_id: 'build',
+          generation: 1,
+          node_id: 'node:build',
+          surface_id: 'surface:build',
+          document_id: 'document:run:one',
+          node_revision: 1,
+          document_revision: 3,
+          surface_revision: 1,
+          activity_state: 'failed',
+          visibility_state: 'visible',
+          node_snapshot: node('build', 1, 'failed'),
+          superseded_by_generation: 2,
+          intervention_id: 'intervention:retry',
+          created_at: 1_789_000_000_500,
+        }],
+        total: 1,
+      },
+    })
+
+    const mounted = mount()
+    await settle()
+    const build = mounted.querySelector<HTMLElement>('[data-generative-ui-node="surface:build"]')!
+    expect(build.querySelector('[data-generation-badge="current"]')?.textContent).toContain('Current')
+    expect(build.querySelector('[data-generation-badge="superseded"]')?.textContent).toContain('Superseded 1')
+    expect(build.querySelector('[data-generation-badge="intervention"]')?.textContent).toContain('Retry · Applied')
+    expect(mounted.querySelector('[data-generation-history]')).toBeNull()
+
+    build.querySelector<HTMLButtonElement>('.generative-ui-node-host__expand')!.click()
+    await settle()
+    expect(mocks.getDagActorSurfaceHistory).toHaveBeenCalledWith('run:one', 'build', 20)
+    const tabs = mounted.querySelectorAll<HTMLButtonElement>('[data-generation-history] [role="tab"]')
+    expect(tabs).toHaveLength(2)
+    tabs[1]!.click()
+    await nextTick()
+    expect(build.dataset.generationState).toBe('superseded')
+    expect(build.querySelector('.generative-ui-node-host__historical-banner')?.textContent)
+      .toContain('Historical content is read-only')
+    expect(build.textContent).not.toContain('node:build')
+    expect(build.textContent).not.toContain('intervention:retry')
+
+    build.querySelector<HTMLButtonElement>('.generative-ui-node-host__expand')!.click()
+    await nextTick()
+    expect(build.dataset.generationState).toBe('current')
+  })
+
   it('reconciles update, complete, fail, and remove, then retains the last snapshot while stale', async () => {
     vi.useFakeTimers()
     const initial = snapshot()
     mocks.getDagLiveSurfaces.mockResolvedValueOnce({ success: true, data: initial })
     const mounted = mount()
     await settle()
+    const unchangedResearchBlock = mounted.querySelector('[data-generative-ui-node="surface:research"]')
+    const unchangedVerifyBlock = mounted.querySelector('[data-generative-ui-node="surface:verify"]')
 
     const updated = snapshot()
     updated.document!.revision = 4
@@ -245,6 +324,10 @@ describe('DagTaskCanvas', () => {
     mocks.getDagLiveSurfaces.mockResolvedValueOnce({ success: true, data: updated })
     await controls!.refresh()
     await settle()
+    expect(mounted.querySelector('[data-generative-ui-node="surface:research"]')).toBe(unchangedResearchBlock)
+    expect(mounted.querySelector('[data-generative-ui-node="surface:verify"]')).toBe(unchangedVerifyBlock)
+    expect(mounted.querySelector('[data-generative-ui-node="surface:research"]')
+      ?.getAttribute('data-lifecycle-motion')).toBe('idle')
     expect(mounted.querySelector('[data-generative-ui-node="surface:build"]')?.getAttribute('data-lifecycle-motion'))
       .toBe('update')
     await vi.advanceTimersByTimeAsync(700)

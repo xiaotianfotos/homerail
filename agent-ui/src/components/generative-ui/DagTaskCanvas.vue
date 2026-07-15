@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { GenerativeUiPreviewRequestV1 } from '@/generative-ui/types'
 import {
+  getDagActorSurfaceHistory,
   getDagLiveSurfaces,
   type DagLiveSurfaceSnapshot,
 } from '@/api/agent'
@@ -13,8 +14,13 @@ import {
   dagTaskCanvasSelectionStorageKey,
   dagTaskCanvasSnapshotVersion,
   projectorFocusedSurface,
+  reconcileDagTaskCanvasSnapshot,
   resolveDagTaskCanvasSelection,
 } from '@/generative-ui/dag-task-canvas'
+import type {
+  GenerativeUiGenerationContext,
+  GenerativeUiGenerationHistoryEntry,
+} from '@/generative-ui/generation-history'
 import A2uiRenderer from './A2uiRenderer.vue'
 import GenerativeUiSurfaceHost from './GenerativeUiSurfaceHost.vue'
 
@@ -50,6 +56,12 @@ const loading = ref(true)
 const stale = ref(false)
 const clock = ref(Date.now())
 const viewportRevision = ref(0)
+const historyByActor = ref<Record<string, {
+  entries: GenerativeUiGenerationHistoryEntry[]
+  loaded: boolean
+  loading: boolean
+  error?: string
+}>>({})
 let mounted = false
 let requestGeneration = 0
 let refreshRequested = false
@@ -58,6 +70,7 @@ let pollTimer = 0
 let eventRefreshTimer = 0
 let unsubscribeEvents: (() => void) | null = null
 let unsubscribeState: (() => void) | null = null
+const historyRequests = new Map<string, Promise<void>>()
 
 const context = computed(() => {
   void viewportRevision.value
@@ -79,6 +92,29 @@ const initialLoading = computed(() => loading.value && !snapshot.value)
 const focusedSurface = computed(() => {
   void clock.value
   return snapshot.value ? projectorFocusedSurface(snapshot.value) : null
+})
+const generationContexts = computed<Record<string, GenerativeUiGenerationContext>>(() => {
+  const contexts: Record<string, GenerativeUiGenerationContext> = {}
+  for (const state of snapshot.value?.surface_states ?? []) {
+    const history = historyByActor.value[state.actor_id]
+    contexts[state.surface_id] = {
+      superseded_count: state.superseded_count,
+      ...(state.latest_intervention
+        ? {
+            latest_intervention: {
+              operation: state.latest_intervention.operation,
+              status: state.latest_intervention.status,
+              created_at: state.latest_intervention.created_at,
+            },
+          }
+        : {}),
+      history: history?.entries ?? [],
+      history_loading: history?.loading ?? false,
+      history_loaded: history?.loaded ?? false,
+      ...(history?.error ? { history_error: history.error } : {}),
+    }
+  }
+  return contexts
 })
 const rendererRegistry = computed(() => {
   const seen = new Set<string>()
@@ -134,6 +170,60 @@ function acceptSelection(nodeId: string): void {
   emit('select-node', { node_id: nodeId })
 }
 
+async function loadSurfaceHistory(nodeId: string): Promise<void> {
+  const state = snapshot.value?.surface_states?.find(candidate => candidate.surface_id === nodeId)
+  if (!state || state.superseded_count === 0) return
+  const actorId = state.actor_id
+  const existing = historyByActor.value[actorId]
+  if (existing?.loaded && existing.entries.length >= state.superseded_count) return
+  const requestKey = `${props.runId}:${actorId}`
+  const inflight = historyRequests.get(requestKey)
+  if (inflight) return inflight
+
+  const runId = props.runId
+  historyByActor.value = {
+    ...historyByActor.value,
+    [actorId]: {
+      entries: existing?.entries ?? [],
+      loaded: false,
+      loading: true,
+    },
+  }
+  const request = (async () => {
+    try {
+      const response = await getDagActorSurfaceHistory(runId, actorId, Math.min(100, Math.max(20, state.superseded_count)))
+      if (!mounted || props.runId !== runId) return
+      historyByActor.value = {
+        ...historyByActor.value,
+        [actorId]: {
+          entries: response.data.history.map(entry => ({
+            key: entry.intervention_id,
+            node: entry.node_snapshot,
+            created_at: entry.created_at,
+          })),
+          loaded: true,
+          loading: false,
+        },
+      }
+    } catch {
+      if (!mounted || props.runId !== runId) return
+      historyByActor.value = {
+        ...historyByActor.value,
+        [actorId]: {
+          entries: existing?.entries ?? [],
+          loaded: false,
+          loading: false,
+          error: 'unavailable',
+        },
+      }
+    } finally {
+      historyRequests.delete(requestKey)
+    }
+  })()
+  historyRequests.set(requestKey, request)
+  return request
+}
+
 async function performRefresh(): Promise<void> {
   const runId = props.runId
   if (!runId) return
@@ -148,7 +238,7 @@ async function performRefresh(): Promise<void> {
     clock.value = Date.now()
     const nextVersion = dagTaskCanvasSnapshotVersion(response.data)
     if (nextVersion !== snapshotVersion.value) {
-      snapshot.value = response.data
+      snapshot.value = reconcileDagTaskCanvasSnapshot(snapshot.value, response.data)
       snapshotVersion.value = nextVersion
     }
     selectedNodeId.value = resolveDagTaskCanvasSelection(
@@ -204,6 +294,8 @@ function resetRun(): void {
   resolved.value = false
   loading.value = true
   stale.value = false
+  historyByActor.value = {}
+  historyRequests.clear()
   publishAvailability()
   if (mounted) void refresh()
 }
@@ -287,8 +379,10 @@ defineExpose({ refresh })
       :selected-node-id="selectedNodeId"
       :focused-node-id="focusedSurface?.nodeId"
       :focused-until="focusedSurface?.focusedUntil"
+      :generation-contexts="generationContexts"
       :embedded="embedded"
       @select-node="acceptSelection($event.node_id)"
+      @request-generation-history="loadSurfaceHistory($event.node_id)"
       @open-preview="emit('open-preview', $event)"
     />
   </section>

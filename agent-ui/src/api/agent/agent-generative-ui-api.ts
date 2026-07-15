@@ -22,13 +22,24 @@ export {
 } from '@/api/services/generative-ui-api'
 
 export type {
+  DagActorInterventionList,
+  DagActorInterventionOperation,
+  DagActorInterventionStatus,
+  DagActorInterventionSummary,
+  DagActorSurfaceHistory,
   DagLiveSurfaceActivityState,
   DagLiveSurfaceProjectionRecord,
   DagLiveSurfaceSnapshot,
+  DagLiveSurfaceState,
   DagLiveSurfaceVisibilityState,
+  DagSurfaceGenerationSnapshot,
 } from '@/api/services/dag-live-surface-api'
 export {
+  getDagActorInterventions,
+  getDagActorSurfaceHistory,
   getDagLiveSurfaces,
+  normalizeDagActorInterventions,
+  normalizeDagActorSurfaceHistory,
   normalizeDagLiveSurfaceSnapshot,
 } from '@/api/services/dag-live-surface-api'
 

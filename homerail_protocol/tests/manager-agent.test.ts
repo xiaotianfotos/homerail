@@ -1,3 +1,4 @@
+import Ajv from "ajv";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MANAGER_AGENT_HARNESS,
@@ -15,6 +16,7 @@ import { buildManagerAgentSystemPrompt } from "../src/manager-agent-prompt.js";
 import {
   MANAGER_AGENT_COMMON_TOOL_NAMES,
   MANAGER_AGENT_COMMON_VOICE_TOOL_NAMES,
+  MANAGER_AGENT_DAG_ACTOR_INTERVENTION_OPERATIONS,
   MANAGER_AGENT_HOST_VOICE_TOOL_NAMES,
   MANAGER_AGENT_WIDGET_FILE_TYPES,
   formatHomeRailPromptHandoff,
@@ -22,6 +24,7 @@ import {
   managerAgentDagCommandResult,
   managerAgentCommonToolCatalog,
   managerAgentToolSpec,
+  normalizeManagerAgentDagActorInterventionInput,
   parseHomeRailPromptHandoff,
   parseHomeRailPromptToolCalls,
   stripHomeRailPromptMarkers,
@@ -155,6 +158,7 @@ describe("Manager Agent harness contract", () => {
       "start_supervised_dag",
       "list_dag_actors",
       "get_dag_supervision",
+      "intervene_dag_actor",
       "send_dag_actor_command",
       "focus_dag_actor",
       "cancel_dag_run",
@@ -196,6 +200,46 @@ describe("Manager Agent harness contract", () => {
           max_milestones: { type: "integer", minimum: 1, maximum: 12 },
         },
         required: ["run_id"],
+        additionalProperties: false,
+      },
+      intervene_dag_actor: {
+        type: "object",
+        properties: {
+          run_id: {
+            type: "string",
+            minLength: 1,
+            maxLength: 256,
+            pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
+          },
+          actor_id: {
+            type: "string",
+            minLength: 1,
+            maxLength: 256,
+            pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
+          },
+          operation: { type: "string", enum: MANAGER_AGENT_DAG_ACTOR_INTERVENTION_OPERATIONS },
+          instruction: { type: "string", minLength: 1, maxLength: 4096 },
+          expected_state_token: { type: "string", minLength: 1, maxLength: 256 },
+          idempotency_key: { type: "string", minLength: 1, maxLength: 256 },
+          checkpoint_version: { type: "integer", minimum: 1 },
+        },
+        required: ["run_id", "actor_id", "operation", "expected_state_token", "idempotency_key"],
+        allOf: [{
+          if: {
+            properties: { operation: { const: "checkpoint_fork" } },
+            required: ["operation"],
+          },
+          then: {
+            properties: { checkpoint_version: { type: "integer", minimum: 1 } },
+            required: ["checkpoint_version"],
+          },
+          else: {
+            not: {
+              properties: { checkpoint_version: {} },
+              required: ["checkpoint_version"],
+            },
+          },
+        }],
         additionalProperties: false,
       },
       send_dag_actor_command: {
@@ -244,6 +288,111 @@ describe("Manager Agent harness contract", () => {
       expect(spec.description).toContain("stable actor_id");
       expect(spec.description).toContain("Worker or container IDs");
     }
+
+    const intervention = managerAgentToolSpec("intervene_dag_actor");
+    expect(intervention.description).toContain("get_dag_supervision");
+    expect(intervention.description).toContain("expected_state_token");
+    expect(intervention.description).toContain("Never infer physical execution targets");
+  });
+
+  it("rejects invalid and physical-target inputs for DAG Actor intervention", () => {
+    const validate = new Ajv({ strict: true }).compile(
+      managerAgentToolSpec("intervene_dag_actor").input_schema,
+    );
+    const valid = {
+      run_id: "run-supervised",
+      actor_id: "research",
+      operation: "checkpoint_fork",
+      instruction: "Retry from the verified checkpoint with the corrected constraint.",
+      expected_state_token: "a".repeat(64),
+      idempotency_key: "intervention-research-1",
+      checkpoint_version: 3,
+    };
+
+    expect(validate(valid)).toBe(true);
+    expect(validate({
+      run_id: valid.run_id,
+      actor_id: valid.actor_id,
+      operation: "cancel",
+      expected_state_token: valid.expected_state_token,
+      idempotency_key: valid.idempotency_key,
+    })).toBe(true);
+
+    const invalidInputs = [
+      { ...valid, operation: "restart" },
+      {
+        run_id: valid.run_id,
+        actor_id: valid.actor_id,
+        operation: "checkpoint_fork",
+        expected_state_token: valid.expected_state_token,
+        idempotency_key: valid.idempotency_key,
+      },
+      { ...valid, operation: "retry" },
+      { ...valid, run_id: "" },
+      { ...valid, run_id: "   " },
+      { ...valid, run_id: "x".repeat(257) },
+      { ...valid, run_id: "run\nbad" },
+      { ...valid, actor_id: "" },
+      { ...valid, actor_id: "x".repeat(257) },
+      { ...valid, actor_id: "actor\u007fbad" },
+      { ...valid, instruction: "" },
+      { ...valid, instruction: "x".repeat(4097) },
+      { ...valid, expected_state_token: "" },
+      { ...valid, expected_state_token: "x".repeat(257) },
+      { ...valid, idempotency_key: "" },
+      { ...valid, idempotency_key: "x".repeat(257) },
+      { ...valid, checkpoint_version: 0 },
+      { ...valid, checkpoint_version: 1.5 },
+      ...[
+        "node_id",
+        "worker_id",
+        "container_id",
+        "session_id",
+        "lease_id",
+        "generation",
+        "revision",
+        "target_id",
+        "unexpected",
+      ].map((field) => ({ ...valid, [field]: "forbidden" })),
+    ];
+    for (const input of invalidInputs) expect(validate(input), JSON.stringify(input)).toBe(false);
+  });
+
+  it("normalizes bounded identifiers and enforces checkpoint-only version semantics", () => {
+    const base = {
+      run_id: "  run-supervised  ",
+      actor_id: "  research  ",
+      operation: "retry",
+      expected_state_token: "opaque-state-token",
+      idempotency_key: "intervention-research-1",
+    };
+    expect(normalizeManagerAgentDagActorInterventionInput(base)).toEqual({
+      ...base,
+      run_id: "run-supervised",
+      actor_id: "research",
+    });
+    expect(normalizeManagerAgentDagActorInterventionInput({
+      ...base,
+      operation: "checkpoint_fork",
+      checkpoint_version: 2,
+    })).toMatchObject({ operation: "checkpoint_fork", checkpoint_version: 2 });
+
+    expect(() => normalizeManagerAgentDagActorInterventionInput({
+      ...base,
+      operation: "checkpoint_fork",
+    })).toThrow(/checkpoint_version is required/);
+    expect(() => normalizeManagerAgentDagActorInterventionInput({
+      ...base,
+      checkpoint_version: 2,
+    })).toThrow(/only accepted for checkpoint_fork/);
+    expect(() => normalizeManagerAgentDagActorInterventionInput({
+      ...base,
+      run_id: "x".repeat(257),
+    })).toThrow(/run_id must be between 1 and 256 printable characters/);
+    expect(() => normalizeManagerAgentDagActorInterventionInput({
+      ...base,
+      actor_id: "actor\nbad",
+    })).toThrow(/actor_id must be between 1 and 256 printable characters/);
   });
 
   it("projects command responses onto the stable Actor-only contract", () => {

@@ -7,7 +7,10 @@ import {
   DAG_ACTIVITY_EVENT_SCHEMA_VERSION,
   type DagActivityEventV1,
 } from "homerail-protocol";
-import { projectDagActivityJournalEntry } from "../src/generative-ui/dag-live-surface-projector.js";
+import {
+  projectDagActivityJournalEntry,
+  supersedeDagLiveSurfaceForIntervention,
+} from "../src/generative-ui/dag-live-surface-projector.js";
 import { appendDagActivityEvent } from "../src/persistence/dag-activity-journal.js";
 import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
 import {
@@ -15,6 +18,11 @@ import {
   getDagActor,
   registerDagActor,
 } from "../src/persistence/dag-actors.js";
+import {
+  completeDagActorIntervention,
+  createDagActorIntervention,
+  markDagActorInterventionApplying,
+} from "../src/persistence/dag-actor-interventions.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import { createInitialDagRunRound } from "../src/persistence/dag-run-rounds.js";
 import { ensureRunDir } from "../src/persistence/store.js";
@@ -37,14 +45,15 @@ function event(input: {
   round_id?: string;
   generation?: number;
 }): DagActivityEventV1 {
+  const generation = input.generation ?? 1;
   return {
     schema_version: DAG_ACTIVITY_EVENT_SCHEMA_VERSION,
-    event_id: `${input.run_id}-${input.actor_id}-${input.sequence}-${input.type}`,
+    event_id: `${input.run_id}-${input.actor_id}-g${generation}-${input.sequence}-${input.type}`,
     run_id: input.run_id,
     round_id: input.round_id ?? "round-0001",
     node_id: `node-${input.actor_id}`,
     actor_id: input.actor_id,
-    generation: input.generation ?? 1,
+    generation,
     surface_id: `surface:${input.actor_id}`,
     sequence: input.sequence,
     timestamp: BASE_TIME + input.sequence,
@@ -352,6 +361,112 @@ describe("DAG Manager Supervisor", () => {
       complete: true,
     });
     expect(snapshot.round_summary?.accepted_results).toHaveLength(64);
+  });
+
+  it("ignores superseded generation events and explains an applied intervention once", () => {
+    const runId = "supervisor-intervention-generation";
+    setupRun(runId, ["research"]);
+    append({
+      run_id: runId,
+      actor_id: "research",
+      sequence: 2,
+      type: "tool_used",
+      payload: { tool_name: "old.private.tool" },
+    });
+    append({
+      run_id: runId,
+      actor_id: "research",
+      sequence: 3,
+      type: "finding",
+      payload: { summary: "superseded result must not reach Manager" },
+    });
+    const actor = getDagActor(runId, "research")!;
+    createDagActorIntervention({
+      intervention_id: "supervisor-retry-research",
+      run_id: runId,
+      actor_id: "research",
+      operation: "retry",
+      expected_actor_generation: actor.generation,
+      expected_actor_version: actor.version,
+      idempotency_key: "supervisor-retry-research",
+      created_at: BASE_TIME + 10,
+    });
+    markDagActorInterventionApplying({
+      intervention_id: "supervisor-retry-research",
+      from_generation: 1,
+      started_at: BASE_TIME + 11,
+    });
+    const advanced = advanceDagActorGeneration({
+      run_id: runId,
+      actor_id: "research",
+      expected_generation: actor.generation,
+      expected_version: actor.version,
+    });
+    supersedeDagLiveSurfaceForIntervention({
+      run_id: runId,
+      actor_id: "research",
+      intervention_id: "supervisor-retry-research",
+      created_at: BASE_TIME + 12,
+    });
+    completeDagActorIntervention({
+      intervention_id: "supervisor-retry-research",
+      from_generation: 1,
+      to_generation: 2,
+      resulting_actor_version: advanced.version,
+      completed_at: BASE_TIME + 13,
+    });
+    append({
+      run_id: runId,
+      actor_id: "research",
+      generation: 2,
+      sequence: 1,
+      type: "finding",
+      payload: { summary: "current corrected result" },
+    });
+
+    const snapshot = getDagSupervisionSnapshot({
+      run_id: runId,
+      consumer_id: "intervention-observer",
+    });
+    expect(snapshot.actors).toMatchObject([{
+      actor_id: "research",
+      latest_intervention: {
+        intervention_id: "supervisor-retry-research",
+        operation: "retry",
+        status: "applied",
+      },
+    }]);
+    expect(snapshot.milestone_digest.milestones).toMatchObject([{
+      actor_id: "research",
+      type: "finding",
+      summary: "current corrected result",
+      tools_used: [],
+    }]);
+    expect(snapshot.milestone_digest.intervention_milestones).toMatchObject([{
+      intervention_id: "supervisor-retry-research",
+      actor_id: "research",
+      operation: "retry",
+      status: "applied",
+    }]);
+    expect(snapshot.round_summary?.accepted_results).toMatchObject([{
+      actor_id: "research",
+      outcome: "finding",
+      summary: "current corrected result",
+    }]);
+    const serialized = JSON.stringify(snapshot);
+    expect(serialized).not.toContain("superseded result must not reach Manager");
+    expect(serialized).not.toContain("old.private.tool");
+    expect(serialized).not.toMatch(/private-worker-|node-research|lease_generation|\"generation\"/);
+
+    const repeated = getDagSupervisionSnapshot({
+      run_id: runId,
+      consumer_id: "intervention-observer",
+    });
+    expect(repeated.milestone_digest).toMatchObject({
+      milestones: [],
+      intervention_milestones: [],
+      commentary: [],
+    });
   });
 
   it("suppresses high-frequency progress instead of flooding commentary", () => {

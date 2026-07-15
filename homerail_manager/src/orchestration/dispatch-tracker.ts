@@ -8,6 +8,7 @@ export interface DispatchTarget {
 }
 
 const dispatches = new Map<string, DispatchTarget>();
+const exclusions = new Map<string, { targetType: "worker" | "node"; targetId: string }>();
 
 function key(runId: string, nodeId: string): string {
   return `${runId}:${nodeId}`;
@@ -25,6 +26,7 @@ export function recordDispatch(
     targetId,
     dispatchedAt: Date.now(),
   });
+  exclusions.delete(key(runId, nodeId));
 }
 
 export function recordProvisioning(runId: string, nodeId: string): void {
@@ -53,6 +55,27 @@ export function findDispatchTarget(
   return dispatches.get(key(runId, nodeId));
 }
 
+export function findDispatchExclusion(
+  runId: string,
+  nodeId: string,
+): { targetType: "worker" | "node"; targetId: string } | undefined {
+  return exclusions.get(key(runId, nodeId));
+}
+
+/** Fence the current physical target for the next dispatch without exposing it to callers. */
+export function excludeCurrentDispatchTarget(
+  runId: string,
+  nodeId: string,
+): DispatchTarget | undefined {
+  const dispatchKey = key(runId, nodeId);
+  const current = dispatches.get(dispatchKey);
+  if (current?.state === "dispatched" && current.targetType && current.targetId) {
+    exclusions.set(dispatchKey, { targetType: current.targetType, targetId: current.targetId });
+  }
+  dispatches.delete(dispatchKey);
+  return current;
+}
+
 /** Bind an inbound transport message to the exact target selected at dispatch. */
 export function isCurrentDispatchTarget(
   runId: string,
@@ -68,6 +91,7 @@ export function isCurrentDispatchTarget(
 
 export function clearDispatchTarget(runId: string, nodeId: string): void {
   dispatches.delete(key(runId, nodeId));
+  exclusions.delete(key(runId, nodeId));
 }
 
 export function clearByTargetId(targetId: string): void {
@@ -76,8 +100,12 @@ export function clearByTargetId(targetId: string): void {
       dispatches.delete(k);
     }
   }
+  for (const [k, target] of exclusions.entries()) {
+    if (target.targetId === targetId) exclusions.delete(k);
+  }
 }
 
 export function _clearAllDispatches(): void {
   dispatches.clear();
+  exclusions.clear();
 }

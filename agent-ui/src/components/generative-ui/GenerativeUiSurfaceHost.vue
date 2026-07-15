@@ -27,6 +27,7 @@ import {
   resolveGenerativeUiMotionProfile,
   type GenerativeUiLifecycleMotion,
 } from '@/generative-ui/motion-profiles'
+import type { GenerativeUiGenerationContext } from '@/generative-ui/generation-history'
 
 const props = withDefaults(defineProps<{
   document: GenerativeUiDocumentV1
@@ -40,6 +41,7 @@ const props = withDefaults(defineProps<{
   selectedNodeId?: string | null
   focusedNodeId?: string | null
   focusedUntil?: number | null
+  generationContexts?: Record<string, GenerativeUiGenerationContext>
   autoFocusLatest?: boolean
   embedded?: boolean
 }>(), {
@@ -64,6 +66,7 @@ const emit = defineEmits<{
   (event: 'renderer-error', payload: { node_id: string; message: string }): void
   (event: 'focus-node', payload: { node_id: string }): void
   (event: 'select-node', payload: { node_id: string }): void
+  (event: 'request-generation-history', payload: { node_id: string }): void
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -298,11 +301,13 @@ defineExpose({ focus, focusNode })
         :lifecycle-motion="lifecycleMotionByNodeId[entry.node.id] || 'idle'"
         :motion-profile="entry.motionProfile.id"
         :attention-duration-ms="entry.motionProfile.attentionDurationMs"
+        :generation="generationContexts?.[entry.node.id]"
         @action="emit('action', $event)"
         @action-status="emit('action-status', $event)"
         @open-preview="emit('open-preview', $event)"
         @renderer-error="emit('renderer-error', $event)"
         @select="emit('select-node', $event)"
+        @request-generation-history="emit('request-generation-history', $event)"
       />
     </TransitionGroup>
   </section>

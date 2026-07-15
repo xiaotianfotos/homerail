@@ -69,6 +69,16 @@ function modeSpecs(mode) {
     specs.build = { revision: 5, activity: 'completed', visibility: 'visible' }
     specs.research = { revision: 5, activity: 'progress', visibility: 'visible' }
   }
+  if (mode === 'intervention') {
+    specs.build = { revision: 5, activity: 'completed', visibility: 'visible' }
+    specs.research = {
+      revision: 7,
+      generation: 2,
+      activity: 'progress',
+      visibility: 'focused',
+      focusedUntil: Date.now() + 1800,
+    }
+  }
   if (mode === 'fail' || mode === 'remove') {
     specs.build = { revision: 5, activity: 'completed', visibility: 'visible' }
     specs.research = {
@@ -121,7 +131,7 @@ function makeNode(actor, spec) {
           id: actor,
           role: 'Worker',
           node_id: 'node:' + actor,
-          generation: 1,
+          generation: spec.generation || 1,
         },
         title: actorLabel(actor),
         state: {
@@ -163,7 +173,7 @@ function makeProjection(actor, spec) {
     node_id: 'node:' + actor,
     surface_id: 'surface:' + actor,
     document_id: 'document:run:visual',
-    generation: 1,
+    generation: spec.generation || 1,
     last_activity_sequence: spec.revision,
     journal_cursor: spec.revision,
     surface_revision: spec.revision,
@@ -182,12 +192,33 @@ function makeSnapshot(mode) {
     initial: 3,
     focus: 4,
     complete: 5,
+    intervention: 7,
     fail: 6,
     remove: 7,
   }[mode]
   return {
     run_id: 'run:visual',
     projections: actors.map(actor => makeProjection(actor, specs[actor])),
+    surface_states: actors.map(actor => ({
+      actor_id: actor,
+      surface_id: 'surface:' + actor,
+      generation_state: 'current',
+      superseded_count: mode === 'intervention' && actor === 'research' ? 1 : 0,
+      ...(mode === 'intervention' && actor === 'research'
+        ? {
+            latest_intervention: {
+              intervention_id: 'intervention:visual:research:retry',
+              run_id: 'run:visual',
+              actor_id: 'research',
+              operation: 'retry',
+              status: 'applied',
+              created_at: baseTime + 650,
+              started_at: baseTime + 660,
+              completed_at: baseTime + 670,
+            },
+          }
+        : {}),
+    })),
     document: {
       ir_version: 1,
       document_id: 'document:run:visual',
@@ -201,12 +232,46 @@ function makeSnapshot(mode) {
   }
 }
 
+function makeResearchHistory() {
+  const oldNode = makeNode('research', {
+    revision: 2,
+    generation: 1,
+    activity: 'finding',
+    visibility: 'visible',
+  })
+  return {
+    run_id: 'run:visual',
+    actor_id: 'research',
+    generation_state: 'superseded',
+    total: 1,
+    history: [{
+      run_id: 'run:visual',
+      actor_id: 'research',
+      generation: 1,
+      node_id: 'node:research',
+      surface_id: 'surface:research',
+      document_id: 'document:run:visual',
+      node_revision: oldNode.revision,
+      document_revision: 3,
+      surface_revision: 2,
+      activity_state: 'finding',
+      visibility_state: 'visible',
+      last_event_id: 'event:research:2',
+      node_snapshot: oldNode,
+      superseded_by_generation: 2,
+      intervention_id: 'intervention:visual:research:retry',
+      created_at: baseTime + 650,
+    }],
+  }
+}
+
 async function installSnapshotRoute(page, initialMode, holdInitial = false) {
   const controller = {
     mode: initialMode,
     snapshot: makeSnapshot(initialMode),
     holdInitial,
     release: null,
+    historyRequests: 0,
   }
   let releaseGate
   const gate = new Promise(resolve => { releaseGate = resolve })
@@ -227,6 +292,18 @@ async function installSnapshotRoute(page, initialMode, holdInitial = false) {
         success: true,
         message: 'visual fixture',
         data: controller.snapshot,
+      }),
+    })
+  })
+  await page.route('**/api/runs/**/actors/**/surface-history**', async route => {
+    controller.historyRequests += 1
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        message: 'visual history fixture',
+        data: makeResearchHistory(),
       }),
     })
   })
@@ -378,6 +455,34 @@ async function runDesktop(browser, evidence) {
   ))
   await screenshot(page, 'desktop-complete.png')
 
+  controller.setMode('intervention')
+  await page.waitForFunction(() => (
+    document.querySelector('[data-generative-ui-node="surface:research"]')
+      ?.getAttribute('data-superseded-count') === '1'
+  ))
+  await research.locator('.generative-ui-node-host__expand').click()
+  await page.locator('[data-generation-history] [role="tab"]').nth(1).waitFor()
+  assert(controller.historyRequests === 1, 'Generation history was not loaded exactly once on expansion')
+  await screenshot(page, 'desktop-intervention-current.png')
+  await page.locator('[data-generation-history] [role="tab"]').nth(1).click()
+  await page.waitForFunction(() => (
+    document.querySelector('[data-generative-ui-node="surface:research"]')
+      ?.getAttribute('data-generation-state') === 'superseded'
+  ))
+  await page.waitForFunction(() => {
+    const host = document.querySelector('[data-generative-ui-node="surface:research"]')
+    const body = host?.querySelector('.generative-ui-node-host__body')
+    const banner = host?.querySelector('.generative-ui-node-host__historical-banner')
+    return body?.scrollTop === 0 && banner?.getBoundingClientRect().top >= body?.getBoundingClientRect().top
+  })
+  const historicalText = await research.innerText()
+  assert(!historicalText.includes('node:research'), 'Historical view exposed an internal node id')
+  assert(!historicalText.includes('intervention:visual'), 'Historical view exposed an intervention id')
+  assert(await research.locator('.generative-ui-node-host__historical-banner').count() === 1, 'Historical read-only banner is missing')
+  await screenshot(page, 'desktop-intervention-history.png')
+  await page.locator('[data-generation-history] [role="tab"]').first().click()
+  await research.locator('.generative-ui-node-host__expand').click()
+
   controller.setMode('fail')
   await page.waitForFunction(() => (
     document.querySelector('[data-generative-ui-node="surface:verify"]')
@@ -441,7 +546,7 @@ async function runMobile(browser, evidence) {
   const page = await context.newPage()
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
-  await installSnapshotRoute(page, 'initial')
+  const controller = await installSnapshotRoute(page, 'intervention')
   await page.goto(baseUrl + '/task-canvas-harness.html', { waitUntil: 'domcontentloaded' })
   await waitForReady(page)
   await page.waitForTimeout(350)
@@ -454,6 +559,8 @@ async function runMobile(browser, evidence) {
       ?.getAttribute('aria-selected') === 'true'
   ))
   await screenshot(page, 'mobile-ready.png')
+
+  assert(await build.locator('[data-generation-badge="intervention"]').count() === 0, 'Mobile should hide the verbose intervention badge')
 
   const metrics = await layoutMetrics(page)
   assert(metrics.blockCount === 3, 'Mobile did not render three Worker Blocks')
@@ -473,7 +580,31 @@ async function runMobile(browser, evidence) {
   await screenshot(page, 'mobile-fullscreen.png')
   await build.locator('.generative-ui-node-host__expand').tap()
 
-  evidence.mobile = { metrics, pageErrors }
+  const research = page.locator('[data-generative-ui-node="surface:research"]')
+  await research.locator('.generative-ui-node-host__expand').tap()
+  await page.locator('[data-generation-history] [role="tab"]').nth(1).waitFor()
+  assert(controller.historyRequests === 1, 'Mobile history should load once on expansion')
+  await page.locator('[data-generation-history] [role="tab"]').nth(1).tap()
+  await page.waitForFunction(() => (
+    document.querySelector('[data-generative-ui-node="surface:research"]')
+      ?.getAttribute('data-generation-state') === 'superseded'
+  ))
+  await page.waitForFunction(() => {
+    const host = document.querySelector('[data-generative-ui-node="surface:research"]')
+    const body = host?.querySelector('.generative-ui-node-host__body')
+    const banner = host?.querySelector('.generative-ui-node-host__historical-banner')
+    return body?.scrollTop === 0 && banner?.getBoundingClientRect().top >= body?.getBoundingClientRect().top
+  })
+  const mobileHistoryLayout = await page.locator('[data-generation-history]').evaluate(element => ({
+    direction: getComputedStyle(element).flexDirection,
+    width: Math.round(element.getBoundingClientRect().width),
+    scrollWidth: element.scrollWidth,
+  }))
+  assert(mobileHistoryLayout.direction === 'column', 'Mobile history controls did not stack')
+  assert(mobileHistoryLayout.scrollWidth <= mobileHistoryLayout.width + 2, 'Mobile history controls overflow horizontally')
+  await screenshot(page, 'mobile-intervention-history.png')
+
+  evidence.mobile = { metrics, mobileHistoryLayout, pageErrors }
   assert(pageErrors.length === 0, 'Mobile page errors: ' + pageErrors.join('; '))
   await context.close()
 }

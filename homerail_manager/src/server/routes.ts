@@ -27,10 +27,16 @@ import { getDagState, listPendingApprovals } from "../persistence/dag-runtime-pr
 import { listDagTriggers } from "../persistence/dag-triggers.js";
 import { listDagActivityEvents } from "../persistence/dag-activity-journal.js";
 import { listDagActorCommands, type DagActorCommandStatus } from "../persistence/dag-actors.js";
+import {
+  getDagActorIntervention,
+  listDagActorInterventions,
+  type DagActorInterventionRecord,
+} from "../persistence/dag-actor-interventions.js";
 import { listDagRunRounds } from "../persistence/dag-run-rounds.js";
 import {
   getDagLiveSurfaceDocument,
   isDagLiveSurfaceProjectionNode,
+  listDagLiveSurfaceGenerationHistory,
   listDagLiveSurfaceProjections,
 } from "../generative-ui/dag-live-surface-projector.js";
 import {
@@ -56,6 +62,21 @@ function _notFound(res: http.ServerResponse, message: string) {
 
 function _ok(res: http.ServerResponse, message: string, data?: unknown) {
   json(res, 200, { success: true, message, data });
+}
+
+function _publicIntervention(intervention: DagActorInterventionRecord) {
+  return {
+    intervention_id: intervention.intervention_id,
+    run_id: intervention.run_id,
+    actor_id: intervention.actor_id,
+    operation: intervention.operation,
+    status: intervention.status,
+    ...(intervention.instruction === undefined ? {} : { instruction: intervention.instruction }),
+    created_at: intervention.created_at,
+    ...(intervention.started_at === undefined ? {} : { started_at: intervention.started_at }),
+    ...(intervention.completed_at === undefined ? {} : { completed_at: intervention.completed_at }),
+    ...(intervention.failure === undefined ? {} : { failure: intervention.failure }),
+  };
 }
 
 function _sseHeaders(res: http.ServerResponse): void {
@@ -645,6 +666,83 @@ export function inspectionRoutesHandler(
     return true;
   }
 
+  const actorInterventionDetailMatch = pathname.match(
+    /^\/api\/runs\/([^/]+)\/actors\/([^/]+)\/interventions\/([^/]+)$/,
+  );
+  if (actorInterventionDetailMatch && req.method === "GET") {
+    const runId = decodeURIComponent(actorInterventionDetailMatch[1]);
+    const actorId = decodeURIComponent(actorInterventionDetailMatch[2]);
+    const interventionId = decodeURIComponent(actorInterventionDetailMatch[3]);
+    if (!loadRunMetadata(runId)) {
+      _notFound(res, `Run not found: ${runId}`);
+      return true;
+    }
+    const intervention = getDagActorIntervention(interventionId);
+    if (!intervention || intervention.run_id !== runId || intervention.actor_id !== actorId) {
+      _notFound(res, `DAG Actor intervention not found: ${interventionId}`);
+      return true;
+    }
+    _ok(res, "DAG Actor intervention retrieved", _publicIntervention(intervention));
+    return true;
+  }
+
+  const actorInterventionsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/([^/]+)\/interventions$/);
+  if (actorInterventionsMatch && req.method === "GET") {
+    const runId = decodeURIComponent(actorInterventionsMatch[1]);
+    const actorId = decodeURIComponent(actorInterventionsMatch[2]);
+    if (!loadRunMetadata(runId)) {
+      _notFound(res, `Run not found: ${runId}`);
+      return true;
+    }
+    try {
+      const url = new URL(req.url || "/", "http://localhost");
+      const interventions = listDagActorInterventions({
+        run_id: runId,
+        actor_id: actorId,
+        limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+      }).map(_publicIntervention);
+      _ok(res, `Found ${interventions.length} intervention(s)`, {
+        run_id: runId,
+        actor_id: actorId,
+        interventions,
+        total: interventions.length,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      json(res, 400, { success: false, message, error: message });
+    }
+    return true;
+  }
+
+  const actorSurfaceHistoryMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/([^/]+)\/surface-history$/);
+  if (actorSurfaceHistoryMatch && req.method === "GET") {
+    const runId = decodeURIComponent(actorSurfaceHistoryMatch[1]);
+    const actorId = decodeURIComponent(actorSurfaceHistoryMatch[2]);
+    if (!loadRunMetadata(runId)) {
+      _notFound(res, `Run not found: ${runId}`);
+      return true;
+    }
+    try {
+      const url = new URL(req.url || "/", "http://localhost");
+      const history = listDagLiveSurfaceGenerationHistory({
+        run_id: runId,
+        actor_id: actorId,
+        limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+      });
+      _ok(res, `Found ${history.length} superseded surface generation(s)`, {
+        run_id: runId,
+        actor_id: actorId,
+        generation_state: "superseded",
+        history,
+        total: history.length,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      json(res, 400, { success: false, message, error: message });
+    }
+    return true;
+  }
+
   // GET /api/runs/:run_id/live-surfaces
   if (pathname.match(/^\/api\/runs\/[^/]+\/live-surfaces$/) && req.method === "GET") {
     let runId = "";
@@ -661,9 +759,29 @@ export function inspectionRoutesHandler(
     const projections = listDagLiveSurfaceProjections(runId);
     const projectionBySurface = new Map(projections.map((projection) => [projection.surface_id, projection]));
     const document = getDagLiveSurfaceDocument(runId);
+    const surfaceStates = projections.map((projection) => {
+      const latestIntervention = listDagActorInterventions({
+        run_id: runId,
+        actor_id: projection.actor_id,
+        limit: 1,
+      })[0];
+      const supersededCount = listDagLiveSurfaceGenerationHistory({
+        run_id: runId,
+        actor_id: projection.actor_id,
+        limit: 100,
+      }).length;
+      return {
+        actor_id: projection.actor_id,
+        surface_id: projection.surface_id,
+        generation_state: "current" as const,
+        superseded_count: supersededCount,
+        ...(latestIntervention ? { latest_intervention: _publicIntervention(latestIntervention) } : {}),
+      };
+    });
     _ok(res, `Live surfaces retrieved (${projections.length} actors)`, {
       run_id: runId,
       projections,
+      surface_states: surfaceStates,
       document: document
         ? {
             ...document,

@@ -18,6 +18,27 @@ export type ManagerAgentWidgetFileType = (typeof MANAGER_AGENT_WIDGET_FILE_TYPES
 
 export type ManagerAgentResponseMode = "chat" | "voice";
 
+export const MANAGER_AGENT_DAG_ACTOR_INTERVENTION_OPERATIONS = [
+  "interrupt",
+  "cancel",
+  "retry",
+  "reassign",
+  "checkpoint_fork",
+] as const;
+
+export type ManagerAgentDagActorInterventionOperation =
+  (typeof MANAGER_AGENT_DAG_ACTOR_INTERVENTION_OPERATIONS)[number];
+
+export interface ManagerAgentDagActorInterventionInput {
+  run_id: string;
+  actor_id: string;
+  operation: ManagerAgentDagActorInterventionOperation;
+  instruction?: string;
+  expected_state_token: string;
+  idempotency_key: string;
+  checkpoint_version?: number;
+}
+
 export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
   "list_projects",
   "list_skills",
@@ -41,6 +62,7 @@ export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
   "start_supervised_dag",
   "list_dag_actors",
   "get_dag_supervision",
+  "intervene_dag_actor",
   "send_dag_actor_command",
   "focus_dag_actor",
   "cancel_dag_run",
@@ -251,6 +273,112 @@ export interface HomeRailPromptHandoff {
   port: string;
   content: unknown;
   summary?: string;
+}
+
+const INTERVENE_DAG_ACTOR_ALLOWED_KEYS = new Set([
+  "run_id",
+  "actor_id",
+  "operation",
+  "instruction",
+  "expected_state_token",
+  "idempotency_key",
+  "checkpoint_version",
+]);
+const INTERVENE_DAG_ACTOR_INSTRUCTION_MAX_LENGTH = 4096;
+const INTERVENE_DAG_ACTOR_STATE_TOKEN_MAX_LENGTH = 256;
+const INTERVENE_DAG_ACTOR_IDEMPOTENCY_KEY_MAX_LENGTH = 256;
+const INTERVENE_DAG_ACTOR_IDENTIFIER_MAX_LENGTH = 256;
+const INTERVENE_DAG_ACTOR_IDENTIFIER_PATTERN = "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$";
+
+function interventionIdentifier(value: unknown, field: "run_id" | "actor_id"): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (
+    !normalized
+    || normalized.length > INTERVENE_DAG_ACTOR_IDENTIFIER_MAX_LENGTH
+    || /[\u0000-\u001f\u007f]/.test(normalized)
+  ) {
+    throw new Error(
+      `intervene_dag_actor ${field} must be between 1 and ${INTERVENE_DAG_ACTOR_IDENTIFIER_MAX_LENGTH} printable characters`,
+    );
+  }
+  return normalized;
+}
+
+function boundedNonEmptyInterventionString(
+  value: unknown,
+  field: string,
+  maxLength: number,
+): string {
+  if (
+    typeof value !== "string"
+    || !value.trim()
+    || value.length > maxLength
+  ) {
+    throw new Error(
+      `intervene_dag_actor ${field} must be a non-empty string of at most ${maxLength} characters`,
+    );
+  }
+  return value;
+}
+
+export function normalizeManagerAgentDagActorInterventionInput(
+  args: Record<string, unknown>,
+): ManagerAgentDagActorInterventionInput {
+  const extraKeys = Object.keys(args)
+    .filter((key) => !INTERVENE_DAG_ACTOR_ALLOWED_KEYS.has(key))
+    .sort();
+  if (extraKeys.length > 0) {
+    throw new Error(`intervene_dag_actor does not accept additional properties: ${extraKeys.join(", ")}`);
+  }
+
+  const runId = interventionIdentifier(args.run_id, "run_id");
+  const actorId = interventionIdentifier(args.actor_id, "actor_id");
+  if (!MANAGER_AGENT_DAG_ACTOR_INTERVENTION_OPERATIONS.includes(
+    args.operation as ManagerAgentDagActorInterventionOperation,
+  )) {
+    throw new Error(
+      `intervene_dag_actor operation must be one of ${MANAGER_AGENT_DAG_ACTOR_INTERVENTION_OPERATIONS.join(", ")}`,
+    );
+  }
+
+  const operation = args.operation as ManagerAgentDagActorInterventionOperation;
+  const instruction = args.instruction === undefined
+    ? undefined
+    : boundedNonEmptyInterventionString(
+      args.instruction,
+      "instruction",
+      INTERVENE_DAG_ACTOR_INSTRUCTION_MAX_LENGTH,
+    );
+  const expectedStateToken = boundedNonEmptyInterventionString(
+    args.expected_state_token,
+    "expected_state_token",
+    INTERVENE_DAG_ACTOR_STATE_TOKEN_MAX_LENGTH,
+  );
+  const idempotencyKey = boundedNonEmptyInterventionString(
+    args.idempotency_key,
+    "idempotency_key",
+    INTERVENE_DAG_ACTOR_IDEMPOTENCY_KEY_MAX_LENGTH,
+  );
+  const checkpointVersion = args.checkpoint_version;
+  if (operation === "checkpoint_fork") {
+    if (!Number.isSafeInteger(checkpointVersion) || Number(checkpointVersion) < 1) {
+      throw new Error(
+        "intervene_dag_actor checkpoint_version is required and must be a positive integer for checkpoint_fork",
+      );
+    }
+  } else if (checkpointVersion !== undefined) {
+    throw new Error("intervene_dag_actor checkpoint_version is only accepted for checkpoint_fork");
+  }
+
+  return {
+    run_id: runId,
+    actor_id: actorId,
+    operation,
+    ...(instruction === undefined ? {} : { instruction }),
+    expected_state_token: expectedStateToken,
+    idempotency_key: idempotencyKey,
+    ...(checkpointVersion === undefined ? {} : { checkpoint_version: Number(checkpointVersion) }),
+  };
 }
 
 const emptyObjectSchema = { type: "object", properties: {}, additionalProperties: false };
@@ -603,6 +731,62 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
         max_milestones: { type: "integer", minimum: 1, maximum: 12 },
       },
       required: ["run_id"],
+      additionalProperties: false,
+    },
+  },
+  intervene_dag_actor: {
+    name: "intervene_dag_actor",
+    description: "Intervene in one supervised DAG Actor by stable actor_id. Obtain the current expected_state_token from get_dag_supervision immediately before calling this tool and treat it as opaque. Never infer physical execution targets, including Worker or container IDs, and never supply node, session, lease, generation, revision, or target identifiers.",
+    input_schema: {
+      type: "object",
+      properties: {
+        run_id: {
+          type: "string",
+          minLength: 1,
+          maxLength: INTERVENE_DAG_ACTOR_IDENTIFIER_MAX_LENGTH,
+          pattern: INTERVENE_DAG_ACTOR_IDENTIFIER_PATTERN,
+        },
+        actor_id: {
+          type: "string",
+          minLength: 1,
+          maxLength: INTERVENE_DAG_ACTOR_IDENTIFIER_MAX_LENGTH,
+          pattern: INTERVENE_DAG_ACTOR_IDENTIFIER_PATTERN,
+        },
+        operation: { type: "string", enum: MANAGER_AGENT_DAG_ACTOR_INTERVENTION_OPERATIONS },
+        instruction: {
+          type: "string",
+          minLength: 1,
+          maxLength: INTERVENE_DAG_ACTOR_INSTRUCTION_MAX_LENGTH,
+        },
+        expected_state_token: {
+          type: "string",
+          minLength: 1,
+          maxLength: INTERVENE_DAG_ACTOR_STATE_TOKEN_MAX_LENGTH,
+        },
+        idempotency_key: {
+          type: "string",
+          minLength: 1,
+          maxLength: INTERVENE_DAG_ACTOR_IDEMPOTENCY_KEY_MAX_LENGTH,
+        },
+        checkpoint_version: { type: "integer", minimum: 1 },
+      },
+      required: ["run_id", "actor_id", "operation", "expected_state_token", "idempotency_key"],
+      allOf: [{
+        if: {
+          properties: { operation: { const: "checkpoint_fork" } },
+          required: ["operation"],
+        },
+        then: {
+          properties: { checkpoint_version: { type: "integer", minimum: 1 } },
+          required: ["checkpoint_version"],
+        },
+        else: {
+          not: {
+            properties: { checkpoint_version: {} },
+            required: ["checkpoint_version"],
+          },
+        },
+      }],
       additionalProperties: false,
     },
   },

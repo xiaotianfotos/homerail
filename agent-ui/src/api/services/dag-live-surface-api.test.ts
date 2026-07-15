@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { HOMERAIL_A2UI_CATALOG_ID } from 'homerail-protocol'
-import { normalizeDagLiveSurfaceSnapshot } from './dag-live-surface-api'
+import {
+  normalizeDagActorInterventions,
+  normalizeDagActorSurfaceHistory,
+  normalizeDagLiveSurfaceSnapshot,
+} from './dag-live-surface-api'
 
 function projectedNode(actorId: string, revision: number, activity = 'progress') {
   const surfaceId = `surface:${actorId}`
@@ -95,6 +99,79 @@ describe('DAG live surface API contract', () => {
       'surface:research',
       'surface:verify',
     ])
+    expect(normalized.surface_states).toEqual([])
+  })
+
+  it('accepts current generation metadata while remaining backward compatible', () => {
+    const value = snapshot()
+    Object.assign(value, {
+      surface_states: [{
+        actor_id: 'build',
+        surface_id: 'surface:build',
+        generation_state: 'current',
+        superseded_count: 2,
+        latest_intervention: {
+          intervention_id: 'intervention:one',
+          run_id: 'run:one',
+          actor_id: 'build',
+          operation: 'retry',
+          status: 'applied',
+          created_at: 1_789_000_000_500,
+        },
+      }],
+    })
+
+    const normalized = normalizeDagLiveSurfaceSnapshot(value)
+    expect(normalized.surface_states?.[0]).toMatchObject({
+      actor_id: 'build',
+      generation_state: 'current',
+      superseded_count: 2,
+      latest_intervention: { operation: 'retry', status: 'applied' },
+    })
+  })
+
+  it('validates read-only Actor history and intervention lists', () => {
+    const historicalNode = projectedNode('build', 4)
+    const history = normalizeDagActorSurfaceHistory({
+      run_id: 'run:one',
+      actor_id: 'build',
+      generation_state: 'superseded',
+      history: [{
+        run_id: 'run:one',
+        actor_id: 'build',
+        generation: 1,
+        node_id: 'node:build',
+        surface_id: 'surface:build',
+        document_id: 'document:run:one',
+        node_revision: 4,
+        document_revision: 8,
+        surface_revision: 4,
+        activity_state: 'failed',
+        visibility_state: 'visible',
+        node_snapshot: historicalNode,
+        superseded_by_generation: 2,
+        intervention_id: 'intervention:one',
+        created_at: 1_789_000_000_500,
+      }],
+      total: 1,
+    }, 'run:one', 'build')
+    expect(history.history[0]?.node_snapshot).not.toBe(historicalNode)
+    expect(history.history[0]?.node_snapshot.fallback.title).toBe('Worker build')
+
+    const interventions = normalizeDagActorInterventions({
+      run_id: 'run:one',
+      actor_id: 'build',
+      interventions: [{
+        intervention_id: 'intervention:one',
+        run_id: 'run:one',
+        actor_id: 'build',
+        operation: 'retry',
+        status: 'applied',
+        created_at: 1_789_000_000_500,
+      }],
+      total: 1,
+    }, 'run:one', 'build')
+    expect(interventions.interventions[0]?.operation).toBe('retry')
   })
 
   it('rejects cross-run, duplicate, and forged projector identities', () => {

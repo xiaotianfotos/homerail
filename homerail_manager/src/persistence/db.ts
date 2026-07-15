@@ -34,6 +34,8 @@ const CLEARABLE_TABLES = new Set([
   "dag_chats",
   "dag_handoffs",
   "dag_artifacts",
+  "dag_surface_generation_snapshots",
+  "dag_actor_interventions",
   "dag_run_rounds",
   "dag_actor_provisioned_workers",
   "dag_actor_checkpoints",
@@ -1340,6 +1342,107 @@ function validateDagLiveSurfaceQueueTriggersV22(db: SqliteDatabase): void {
     "trg_dag_surface_projection_queue_identity_immutable",
     DAG_SURFACE_QUEUE_IMMUTABLE_IDENTITY_TRIGGER_V22,
   );
+}
+
+function validateDagActorInterventionSchemaV26(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    dag_actor_interventions: [
+      "intervention_id", "run_id", "actor_id", "operation", "status", "idempotency_key",
+      "payload_digest", "payload_json", "expected_actor_generation", "expected_actor_version",
+      "checkpoint_version", "from_generation", "to_generation", "resulting_actor_version",
+      "created_at", "started_at", "completed_at", "failure_json",
+    ],
+    dag_surface_generation_snapshots: [
+      "run_id", "actor_id", "generation", "node_id", "surface_id", "document_id",
+      "node_revision", "document_revision", "surface_revision", "activity_state",
+      "visibility_state", "last_event_id", "node_snapshot_sha256", "node_snapshot_json",
+      "superseded_by_generation", "intervention_id", "created_at",
+    ],
+  };
+  for (const [table, names] of Object.entries(requiredColumns)) {
+    if (!hasTable(db, table)) {
+      throw new Error(`Schema migration 26 is incomplete: missing table ${table}`);
+    }
+    const actual = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+      .map((row) => row.name));
+    const missing = names.filter((name) => !actual.has(name));
+    if (missing.length > 0) {
+      throw new Error(`Schema migration 26 is incomplete: ${table} is missing ${missing.join(", ")}`);
+    }
+  }
+  const requireIndex = (
+    table: string,
+    name: string,
+    expectedColumns: readonly string[],
+    unique: number,
+    partial: number,
+  ): void => {
+    const index = (db.prepare(`PRAGMA index_list(${table})`).all() as Array<{
+      name: string;
+      unique: number;
+      partial: number;
+    }>).find((entry) => entry.name === name);
+    if (!index || index.unique !== unique || index.partial !== partial) {
+      throw new Error(`Schema migration 26 is incomplete: index ${name} is missing or invalid`);
+    }
+    const columns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{ seqno: number; name: string }>)
+      .sort((left, right) => left.seqno - right.seqno)
+      .map((entry) => entry.name);
+    if (columns.length !== expectedColumns.length || columns.some((column, indexPosition) => column !== expectedColumns[indexPosition])) {
+      throw new Error(`Schema migration 26 is incomplete: index ${name} has invalid columns`);
+    }
+  };
+  requireIndex(
+    "dag_actor_interventions",
+    "idx_dag_actor_interventions_idempotency",
+    ["run_id", "actor_id", "idempotency_key"],
+    1,
+    0,
+  );
+  requireIndex(
+    "dag_actor_interventions",
+    "idx_dag_actor_interventions_active_actor",
+    ["run_id", "actor_id"],
+    1,
+    1,
+  );
+  requireIndex(
+    "dag_actor_interventions",
+    "idx_dag_actor_interventions_actor_created",
+    ["run_id", "actor_id", "created_at", "intervention_id"],
+    0,
+    0,
+  );
+  requireIndex(
+    "dag_surface_generation_snapshots",
+    "idx_dag_surface_generation_snapshots_actor_created",
+    ["run_id", "actor_id", "created_at", "generation"],
+    0,
+    0,
+  );
+  const activeSql = normalizedSchemaSql((db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_dag_actor_interventions_active_actor'",
+  ).get() as { sql?: string } | undefined)?.sql ?? "");
+  if (!activeSql.includes("where status in ('queued', 'applying')")) {
+    throw new Error("Schema migration 26 is incomplete: active intervention index predicate is invalid");
+  }
+  const triggerSql = normalizedSchemaSql((db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_dag_surface_generation_snapshots_no_update'",
+  ).get() as { sql?: string } | undefined)?.sql ?? "");
+  if (!triggerSql.includes("dag surface generation snapshots are append-only")) {
+    throw new Error("Schema migration 26 is incomplete: generation snapshot append-only trigger is missing or invalid");
+  }
+  const foreignKeyTables = new Set(
+    (db.prepare("PRAGMA foreign_key_list(dag_surface_generation_snapshots)").all() as Array<{ table: string }>)
+      .map((entry) => entry.table),
+  );
+  if (!foreignKeyTables.has("dag_actors") || !foreignKeyTables.has("dag_actor_interventions")) {
+    throw new Error("Schema migration 26 is incomplete: generation snapshot ownership constraints are invalid");
+  }
+  if (!(db.prepare("PRAGMA foreign_key_list(dag_actor_interventions)").all() as Array<{ table: string }>)
+    .some((entry) => entry.table === "dag_actors")) {
+    throw new Error("Schema migration 26 is incomplete: intervention actor ownership constraint is invalid");
+  }
 }
 
 function validateGenerativeUiSchemaV3(db: SqliteDatabase): void {
@@ -2966,6 +3069,96 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         ON dag_activity_events(run_id, round_id, actor_id, generation, activity_type, seq);
     `),
     validate: validateDagActivityRoundIndexV25,
+  },
+  {
+    version: 26,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_actor_interventions (
+        intervention_id TEXT PRIMARY KEY CHECK(length(intervention_id) BETWEEN 1 AND 256),
+        run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 256),
+        actor_id TEXT NOT NULL CHECK(length(actor_id) BETWEEN 1 AND 256),
+        operation TEXT NOT NULL CHECK(operation IN ('interrupt', 'cancel', 'retry', 'reassign', 'checkpoint_fork')),
+        status TEXT NOT NULL CHECK(status IN ('queued', 'applying', 'applied', 'failed')),
+        idempotency_key TEXT NOT NULL CHECK(length(idempotency_key) BETWEEN 1 AND 256),
+        payload_digest TEXT NOT NULL CHECK(
+          length(payload_digest) = 64 AND payload_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        payload_json TEXT NOT NULL CHECK(length(payload_json) BETWEEN 2 AND 65536),
+        expected_actor_generation INTEGER NOT NULL CHECK(expected_actor_generation >= 1),
+        expected_actor_version INTEGER NOT NULL CHECK(expected_actor_version >= 1),
+        checkpoint_version INTEGER CHECK(checkpoint_version IS NULL OR checkpoint_version >= 1),
+        from_generation INTEGER CHECK(from_generation IS NULL OR from_generation >= 1),
+        to_generation INTEGER CHECK(to_generation IS NULL OR to_generation >= 1),
+        resulting_actor_version INTEGER CHECK(resulting_actor_version IS NULL OR resulting_actor_version >= 1),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        started_at INTEGER CHECK(started_at IS NULL OR started_at >= created_at),
+        completed_at INTEGER CHECK(completed_at IS NULL OR completed_at >= created_at),
+        failure_json TEXT CHECK(failure_json IS NULL OR length(failure_json) BETWEEN 2 AND 65536),
+        UNIQUE(intervention_id, run_id, actor_id),
+        CHECK(
+          (operation = 'checkpoint_fork' AND checkpoint_version IS NOT NULL)
+          OR (operation <> 'checkpoint_fork' AND checkpoint_version IS NULL)
+        ),
+        CHECK(to_generation IS NULL OR (from_generation IS NOT NULL AND to_generation = from_generation + 1)),
+        CHECK(
+          (status = 'queued' AND started_at IS NULL AND completed_at IS NULL AND failure_json IS NULL
+            AND from_generation IS NULL AND to_generation IS NULL AND resulting_actor_version IS NULL)
+          OR (status = 'applying' AND started_at IS NOT NULL AND completed_at IS NULL AND failure_json IS NULL
+            AND to_generation IS NULL AND resulting_actor_version IS NULL)
+          OR (status = 'applied' AND started_at IS NOT NULL AND completed_at IS NOT NULL AND failure_json IS NULL
+            AND from_generation IS NOT NULL AND to_generation IS NOT NULL AND resulting_actor_version IS NOT NULL)
+          OR (status = 'failed' AND completed_at IS NOT NULL AND failure_json IS NOT NULL
+            AND to_generation IS NULL AND resulting_actor_version IS NULL)
+        ),
+        UNIQUE(run_id, actor_id, idempotency_key),
+        FOREIGN KEY(run_id, actor_id) REFERENCES dag_actors(run_id, actor_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_interventions_idempotency
+        ON dag_actor_interventions(run_id, actor_id, idempotency_key);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_interventions_active_actor
+        ON dag_actor_interventions(run_id, actor_id)
+        WHERE status IN ('queued', 'applying');
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_interventions_actor_created
+        ON dag_actor_interventions(run_id, actor_id, created_at, intervention_id);
+
+      CREATE TABLE IF NOT EXISTS dag_surface_generation_snapshots (
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK(generation >= 1),
+        node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 256),
+        surface_id TEXT NOT NULL CHECK(length(surface_id) BETWEEN 1 AND 512),
+        document_id TEXT NOT NULL CHECK(length(document_id) BETWEEN 1 AND 256),
+        node_revision INTEGER NOT NULL CHECK(node_revision >= 1),
+        document_revision INTEGER NOT NULL CHECK(document_revision >= 1),
+        surface_revision INTEGER NOT NULL CHECK(surface_revision >= 1),
+        activity_state TEXT NOT NULL CHECK(activity_state IN ('started', 'progress', 'finding', 'blocked', 'completed', 'failed')),
+        visibility_state TEXT NOT NULL CHECK(visibility_state IN ('visible', 'focused', 'removed')),
+        last_event_id TEXT CHECK(last_event_id IS NULL OR length(last_event_id) BETWEEN 1 AND 256),
+        node_snapshot_sha256 TEXT NOT NULL CHECK(
+          length(node_snapshot_sha256) = 64 AND node_snapshot_sha256 NOT GLOB '*[^0-9a-f]*'
+        ),
+        node_snapshot_json TEXT NOT NULL CHECK(length(node_snapshot_json) BETWEEN 2 AND 262144),
+        superseded_by_generation INTEGER NOT NULL CHECK(superseded_by_generation = generation + 1),
+        intervention_id TEXT NOT NULL CHECK(length(intervention_id) BETWEEN 1 AND 256),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        PRIMARY KEY(run_id, actor_id, generation),
+        UNIQUE(intervention_id),
+        FOREIGN KEY(run_id, actor_id) REFERENCES dag_actors(run_id, actor_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE,
+        FOREIGN KEY(intervention_id, run_id, actor_id)
+          REFERENCES dag_actor_interventions(intervention_id, run_id, actor_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_surface_generation_snapshots_actor_created
+        ON dag_surface_generation_snapshots(run_id, actor_id, created_at, generation);
+      CREATE TRIGGER IF NOT EXISTS trg_dag_surface_generation_snapshots_no_update
+      BEFORE UPDATE ON dag_surface_generation_snapshots
+      BEGIN
+        SELECT RAISE(ABORT, 'DAG surface generation snapshots are append-only');
+      END;
+    `),
+    validate: validateDagActorInterventionSchemaV26,
   },
 ];
 
