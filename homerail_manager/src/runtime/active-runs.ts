@@ -1615,6 +1615,8 @@ function _correctionPrompt(
   attempt: number,
   maxAttempts: number,
   outputPorts: string[],
+  successPorts: string[],
+  failurePorts: string[],
   outputContracts: Record<string, { contract: string; schema: unknown }>,
 ): string {
   const declaredPorts = outputPorts.length > 0 ? outputPorts.join(", ") : "done";
@@ -1628,7 +1630,11 @@ function _correctionPrompt(
     `Correction attempt ${attempt}/${maxAttempts} for DAG node ${nodeId}.`,
     `Previous attempt ended without a valid DAG handoff: ${reason}`,
     `Declared output ports for this node: ${declaredPorts}.`,
+    `Preferred success ports: ${successPorts.length > 0 ? successPorts.join(", ") : "none declared"}.`,
+    `Failure ports: ${failurePorts.length > 0 ? failurePorts.join(", ") : "none declared"}.`,
     ...contractGuidance,
+    "A contract or transport error from the previous attempt is not a failure of the original task. Retry a preferred success port when the original work is complete.",
+    "Use a failure port only when the original task itself cannot complete; never use it merely to report this correction error.",
     "Treat that error as authoritative. Preserve required field names and JSON array/object/number types exactly.",
     "Reuse completed evidence when it is available in the original inputs or current workspace.",
     "Correction mode permits only the handoff tool. Do not repeat investigation, file changes, or other side effects.",
@@ -1655,11 +1661,15 @@ export function requestNodeCorrection(
 
   const before = _snapshotNodeStates(run);
   const attempt = previousAttempts + 1;
-  const outputPorts = Array.from(new Set(
-    run.dagRun.graph.edges
-      .filter((edge) => edge.from_node === nodeId && edge.label !== "after_dep")
-      .map((edge) => edge.from_port),
-  )).sort();
+  const outputEdges = run.dagRun.graph.edges
+    .filter((edge) => edge.from_node === nodeId && edge.label !== "after_dep");
+  const outputPorts = Array.from(new Set(outputEdges.map((edge) => edge.from_port))).sort();
+  const successPorts = Array.from(new Set(outputEdges
+    .filter((edge) => edge.condition !== "on_failure" && !isFailurePort(edge.from_port))
+    .map((edge) => edge.from_port))).sort();
+  const failurePorts = Array.from(new Set(outputEdges
+    .filter((edge) => edge.condition === "on_failure" || isFailurePort(edge.from_port))
+    .map((edge) => edge.from_port))).sort();
   const outputContracts = Object.fromEntries(outputPorts.flatMap((port) => {
     const contract = _outputContract(run, nodeId, port);
     return contract?.schema !== undefined
@@ -1670,7 +1680,16 @@ export function requestNodeCorrection(
   const mailbox = run.dagRun.mailboxes.get(nodeId);
   if (mailbox) {
     const values = mailbox.get("correction") ?? [];
-    values.push(_correctionPrompt(nodeId, reason, attempt, maxAttempts, outputPorts, outputContracts));
+    values.push(_correctionPrompt(
+      nodeId,
+      reason,
+      attempt,
+      maxAttempts,
+      outputPorts,
+      successPorts,
+      failurePorts,
+      outputContracts,
+    ));
     mailbox.set("correction", values);
   }
   resetSkippedSuccessDescendants(run.dagRun, nodeId);

@@ -120,6 +120,8 @@ describe("DAG correction and dispatch retry", () => {
     expect(dispatcher.calls).toHaveLength(2);
     expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("agent ended without DAG handoff");
     expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Declared output ports for this node: done.");
+    expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Preferred success ports: done.");
+    expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Failure ports: none declared.");
     expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Correction mode permits only the handoff tool");
     expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Do not repeat investigation");
     expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Never print a pseudo-tool call");
@@ -141,6 +143,12 @@ spec:
         actor: { type: string, const: systems_guide }
         status: { type: string, enum: [ready, blocked] }
         summary: { type: string, maxLength: 320 }
+    Failure:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string }
   agents:
     worker: { system: Return a report. }
   nodes:
@@ -149,13 +157,20 @@ spec:
       agent: worker
       outputs:
         report: { contract: ActorReport }
+        failed: { contract: Failure }
     terminal:
       kind: terminal
       outcome: success
       inputs:
         result: { contract: ActorReport }
+    failed:
+      kind: terminal
+      outcome: failure
+      inputs:
+        result: { contract: Failure }
   edges:
     - { from: start.report, to: terminal.result }
+    - { from: start.failed, to: failed.result, condition: on_failure }
   policies:
     max_corrections_per_node: 1
 `);
@@ -176,6 +191,9 @@ spec:
     expect(prompt).toContain('"report":{"contract":"ActorReport","schema":');
     expect(prompt).toContain('"additionalProperties":false');
     expect(prompt).toContain('"maxLength":320');
+    expect(prompt).toContain("Preferred success ports: report.");
+    expect(prompt).toContain("Failure ports: failed.");
+    expect(prompt).toContain("never use it merely to report this correction error");
   });
 
   it("restores success descendants skipped by the failed attempt", () => {
