@@ -10,7 +10,11 @@ import {
 import { projectDagActivityJournalEntry } from "../src/generative-ui/dag-live-surface-projector.js";
 import { appendDagActivityEvent } from "../src/persistence/dag-activity-journal.js";
 import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
-import { registerDagActor } from "../src/persistence/dag-actors.js";
+import {
+  advanceDagActorGeneration,
+  getDagActor,
+  registerDagActor,
+} from "../src/persistence/dag-actors.js";
 import { closeDb } from "../src/persistence/db.js";
 import { createInitialDagRunRound } from "../src/persistence/dag-run-rounds.js";
 import { ensureRunDir } from "../src/persistence/store.js";
@@ -31,6 +35,7 @@ function event(input: {
   type: DagActivityEventV1["type"];
   payload?: DagActivityEventV1["payload"];
   round_id?: string;
+  generation?: number;
 }): DagActivityEventV1 {
   return {
     schema_version: DAG_ACTIVITY_EVENT_SCHEMA_VERSION,
@@ -39,7 +44,7 @@ function event(input: {
     round_id: input.round_id ?? "round-0001",
     node_id: `node-${input.actor_id}`,
     actor_id: input.actor_id,
-    generation: 1,
+    generation: input.generation ?? 1,
     surface_id: `surface:${input.actor_id}`,
     sequence: input.sequence,
     timestamp: BASE_TIME + input.sequence,
@@ -53,7 +58,18 @@ function append(input: Parameters<typeof event>[0], project = false): void {
   if (project) projectDagActivityJournalEntry(entry);
 }
 
-function setupRun(runId: string, actorIds: readonly string[]): void {
+function setupRun(
+  runId: string,
+  actorIds: readonly string[],
+  round: {
+    round_id?: string;
+    status?: "active" | "waiting";
+    await_node_id?: string;
+    closed_at?: number;
+    project_started?: boolean;
+  } = {},
+): void {
+  const roundId = round.round_id ?? "round-0001";
   ensureRunDir(runId);
   for (const actorId of actorIds) {
     registerDagActor({
@@ -73,12 +89,18 @@ function setupRun(runId: string, actorIds: readonly string[]): void {
   }
   createInitialDagRunRound({
     run_id: runId,
-    round_id: "round-0001",
+    round_id: roundId,
     target_actor_ids: actorIds,
+    ...(round.status ? { status: round.status } : {}),
+    ...(round.await_node_id ? { await_node_id: round.await_node_id } : {}),
     opened_at: BASE_TIME,
+    ...(round.closed_at === undefined ? {} : { closed_at: round.closed_at }),
   });
   for (const actorId of actorIds) {
-    append({ run_id: runId, actor_id: actorId, sequence: 1, type: "started" }, true);
+    append(
+      { run_id: runId, actor_id: actorId, sequence: 1, type: "started", round_id: roundId },
+      round.project_started !== false,
+    );
   }
 }
 
@@ -215,6 +237,107 @@ describe("DAG Manager Supervisor", () => {
     ]);
   });
 
+  it("publishes a bounded round view without the private await node identity", () => {
+    const runId = "supervisor-private-await-node";
+    setupRun(runId, ["research"], {
+      status: "waiting",
+      await_node_id: "private-await-command-node",
+      closed_at: BASE_TIME + 10,
+    });
+
+    const snapshot = getDagSupervisionSnapshot({ run_id: runId, consumer_id: "round-view-reader" });
+    expect(snapshot.current_round).toEqual({
+      round_id: "round-0001",
+      ordinal: 1,
+      status: "waiting",
+      target_actor_count: 1,
+      target_actor_ids: ["research"],
+      targets_truncated: false,
+      opened_at: BASE_TIME,
+      closed_at: BASE_TIME + 10,
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("await_node_id");
+    expect(JSON.stringify(snapshot)).not.toContain("private-await-command-node");
+  });
+
+  it("uses only current-generation results after an Actor retry", () => {
+    const runId = "supervisor-current-generation";
+    setupRun(runId, ["research"]);
+    append({ run_id: runId, actor_id: "research", sequence: 2, type: "failed" });
+    const actor = getDagActor(runId, "research");
+    if (!actor) throw new Error("test actor missing");
+    advanceDagActorGeneration({
+      run_id: runId,
+      actor_id: actor.actor_id,
+      expected_generation: actor.generation,
+      expected_version: actor.version,
+      attempt: 2,
+    });
+
+    const retried = getDagSupervisionSnapshot({ run_id: runId, consumer_id: "generation-reader" });
+    expect(retried.round_summary).toMatchObject({ complete: false, accepted_results: [] });
+
+    append({
+      run_id: runId,
+      actor_id: "research",
+      generation: 2,
+      sequence: 1,
+      type: "completed",
+    });
+    const completed = getDagSupervisionSnapshot({ run_id: runId, consumer_id: "generation-reader" });
+    expect(completed.round_summary).toMatchObject({
+      complete: true,
+      accepted_results: [{ actor_id: "research", outcome: "completed" }],
+    });
+  });
+
+  it("finds current-round results beyond long historical progress chatter", () => {
+    const runId = "supervisor-long-history";
+    setupRun(runId, ["research"]);
+    for (let sequence = 2; sequence <= 2_005; sequence += 1) {
+      append({
+        run_id: runId,
+        actor_id: "research",
+        round_id: "historical-round",
+        sequence,
+        type: "progress",
+      });
+    }
+    append({ run_id: runId, actor_id: "research", sequence: 2_006, type: "completed" });
+
+    const snapshot = getDagSupervisionSnapshot({ run_id: runId, consumer_id: "long-history-reader" });
+    expect(snapshot.round_summary).toMatchObject({
+      complete: true,
+      accepted_result_count: 1,
+      accepted_results: [{ actor_id: "research", outcome: "completed" }],
+      results_truncated: false,
+    });
+  });
+
+  it("marks Actor and result lists when the public supervision bound is reached", () => {
+    const runId = "supervisor-bounded-actors";
+    const actorIds = Array.from({ length: 65 }, (_, index) => `actor-${String(index + 1).padStart(2, "0")}`);
+    setupRun(runId, actorIds, { project_started: false });
+    for (const actorId of actorIds) {
+      append({ run_id: runId, actor_id: actorId, sequence: 2, type: "completed" });
+    }
+
+    const snapshot = getDagSupervisionSnapshot({ run_id: runId, consumer_id: "actor-bound-reader" });
+    expect(snapshot).toMatchObject({ actor_count: 65, actors_truncated: true });
+    expect(snapshot.actors).toHaveLength(64);
+    expect(snapshot.current_round).toMatchObject({
+      target_actor_count: 65,
+      targets_truncated: true,
+    });
+    expect(snapshot.current_round?.target_actor_ids).toHaveLength(64);
+    expect(snapshot.round_summary).toMatchObject({
+      accepted_result_count: 65,
+      results_truncated: true,
+      complete: true,
+    });
+    expect(snapshot.round_summary?.accepted_results).toHaveLength(64);
+  });
+
   it("suppresses high-frequency progress instead of flooding commentary", () => {
     const runId = "supervisor-progress-only";
     setupRun(runId, ["research"]);
@@ -306,6 +429,7 @@ describe("DAG Manager Supervisor", () => {
   it("serves bounded supervision through Host Codex tools and the Manager API", async () => {
     const runId = "supervisor-host-tool";
     setupRun(runId, ["research", "build", "verify"]);
+    process.env.HOMERAIL_DAG_MUTATION_TOKEN = "supervisor-mutation-token";
     append({
       run_id: runId,
       actor_id: "research",
@@ -317,6 +441,13 @@ describe("DAG Manager Supervisor", () => {
     const managerRestUrl = `http://127.0.0.1:${await listen(server)}/api`;
 
     try {
+      const unauthorized = await fetch(`${managerRestUrl}/runs/${runId}/supervision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ consumer_id: "unauthorized-reader" }),
+      });
+      expect(unauthorized.status).toBe(403);
+
       const listed = await _invokeHostCodexVoiceToolForTest(
         "list_dag_actors",
         { run_id: runId },

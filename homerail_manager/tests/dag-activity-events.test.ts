@@ -63,7 +63,7 @@ describe("DAG activity journal persistence", () => {
     });
     getDb().exec(`
       DROP TABLE dag_activity_events;
-      DELETE FROM schema_migrations WHERE version = 19;
+      DELETE FROM schema_migrations WHERE version IN (19, 25);
     `);
     closeDb();
 

@@ -78,10 +78,10 @@ describe("DAG actor lease persistence", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("creates and revalidates the strict v24 schema on a fresh database", () => {
+  it("creates and revalidates the strict actor lease schema on a fresh database", () => {
     const db = getDb();
     expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 24 });
+      .toEqual({ version: 25 });
     expect(db.prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name IN (

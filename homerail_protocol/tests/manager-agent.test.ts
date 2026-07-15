@@ -19,6 +19,7 @@ import {
   MANAGER_AGENT_WIDGET_FILE_TYPES,
   formatHomeRailPromptHandoff,
   formatHomeRailPromptToolCall,
+  managerAgentDagCommandResult,
   managerAgentCommonToolCatalog,
   managerAgentToolSpec,
   parseHomeRailPromptHandoff,
@@ -243,6 +244,40 @@ describe("Manager Agent harness contract", () => {
       expect(spec.description).toContain("stable actor_id");
       expect(spec.description).toContain("Worker or container IDs");
     }
+  });
+
+  it("projects command responses onto the stable Actor-only contract", () => {
+    const result = managerAgentDagCommandResult({
+      success: true,
+      message: "Waiting run resumed",
+      data: {
+        resumed: true,
+        previous_round_id: "round-0001",
+        round_id: "round-0002",
+        ordinal: 2,
+        actor_ids: ["research"],
+        node_ids: ["private-node-research"],
+        command_ids: ["command-research"],
+        ready_node_ids: ["private-node-research"],
+        dispatched: 1,
+        deduplicated: true,
+      },
+    });
+
+    expect(result).toEqual({
+      resumed: true,
+      previous_round_id: "round-0001",
+      round_id: "round-0002",
+      ordinal: 2,
+      actor_ids: ["research"],
+      command_ids: ["command-research"],
+      dispatched: 1,
+      deduplicated: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("node");
+    expect(() => managerAgentDagCommandResult({ data: { resumed: true } })).toThrow(
+      "previous_round_id",
+    );
   });
 
   it("builds shared handlers for all widget-file tools with adapter-backed side effects", async () => {

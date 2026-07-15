@@ -573,6 +573,25 @@ function validateDagActivitySchemaV19(db: SqliteDatabase): void {
   ))) throw new Error("Schema migration 19 is incomplete: activity run retention constraint is missing");
 }
 
+function validateDagActivityRoundIndexV25(db: SqliteDatabase): void {
+  const name = "idx_dag_activity_events_run_round_actor_generation_type_seq";
+  const index = (db.prepare("PRAGMA index_list(dag_activity_events)").all() as Array<{
+    name: string;
+    unique: number;
+  }>).find((entry) => entry.name === name);
+  if (!index || index.unique !== 0) {
+    throw new Error(`Schema migration 25 is incomplete: index ${name} is missing or invalid`);
+  }
+  const columns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{
+    seqno: number;
+    name: string;
+  }>).sort((left, right) => left.seqno - right.seqno).map((entry) => entry.name);
+  const expected = ["run_id", "round_id", "actor_id", "generation", "activity_type", "seq"];
+  if (columns.length !== expected.length || columns.some((column, index) => column !== expected[index])) {
+    throw new Error(`Schema migration 25 is incomplete: index ${name} has invalid columns`);
+  }
+}
+
 function validateDagActorSchemaV20(db: SqliteDatabase): void {
   const requiredColumns: Record<string, readonly string[]> = {
     dag_actors: [
@@ -2939,6 +2958,14 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         WHERE status IN ('active', 'releasing');
     `),
     validate: validateDagActorLeaseSchemaV24,
+  },
+  {
+    version: 25,
+    up: (db) => db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_dag_activity_events_run_round_actor_generation_type_seq
+        ON dag_activity_events(run_id, round_id, actor_id, generation, activity_type, seq);
+    `),
+    validate: validateDagActivityRoundIndexV25,
   },
 ];
 

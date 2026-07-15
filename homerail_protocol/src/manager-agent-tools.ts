@@ -80,6 +80,72 @@ export type ManagerAgentHostVoiceToolName = (typeof MANAGER_AGENT_HOST_VOICE_TOO
 
 export type ManagerAgentToolName = ManagerAgentCommonToolName | ManagerAgentHostVoiceToolName;
 
+export interface ManagerAgentDagCommandResult {
+  resumed: true;
+  previous_round_id: string;
+  round_id: string;
+  ordinal: number;
+  actor_ids: string[];
+  command_ids: string[];
+  dispatched: number;
+  deduplicated?: boolean;
+}
+
+function requiredRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requiredResultString(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be between 1 and 256 characters`);
+  }
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 256) {
+    throw new Error(`${label} must be between 1 and 256 characters`);
+  }
+  return normalized;
+}
+
+function requiredResultStrings(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.length > 128) {
+    throw new Error(`${label} must be an array with at most 128 entries`);
+  }
+  return value.map((entry, index) => requiredResultString(entry, `${label}[${index}]`));
+}
+
+function requiredNonNegativeInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new Error(`${label} must be a non-negative safe integer`);
+  }
+  return Number(value);
+}
+
+function requiredPositiveInteger(value: unknown, label: string): number {
+  const normalized = requiredNonNegativeInteger(value, label);
+  if (normalized < 1) throw new Error(`${label} must be a positive safe integer`);
+  return normalized;
+}
+
+/** Project the general resume API response onto the stable Actor-only Manager tool contract. */
+export function managerAgentDagCommandResult(value: unknown): ManagerAgentDagCommandResult {
+  const envelope = requiredRecord(value, "Manager command response");
+  const data = requiredRecord(envelope.data, "Manager command response data");
+  if (data.resumed !== true) throw new Error("Manager command response must confirm resumed=true");
+  return {
+    resumed: true,
+    previous_round_id: requiredResultString(data.previous_round_id, "previous_round_id"),
+    round_id: requiredResultString(data.round_id, "round_id"),
+    ordinal: requiredPositiveInteger(data.ordinal, "ordinal"),
+    actor_ids: requiredResultStrings(data.actor_ids, "actor_ids"),
+    command_ids: requiredResultStrings(data.command_ids, "command_ids"),
+    dispatched: requiredNonNegativeInteger(data.dispatched, "dispatched"),
+    ...(data.deduplicated === true ? { deduplicated: true } : {}),
+  };
+}
+
 export const HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL = "homerail_tool_call";
 export const HOMERAIL_PROMPT_HANDOFF_PROTOCOL = "homerail_handoff";
 

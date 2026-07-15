@@ -8,6 +8,7 @@ import { getDb, parseJsonRow } from "./db.js";
 
 export const DEFAULT_DAG_ACTIVITY_REPLAY_LIMIT = 100;
 export const MAX_DAG_ACTIVITY_REPLAY_LIMIT = 500;
+export const MAX_DAG_ACTIVITY_ROUND_RESULTS = 1_000;
 export const MAX_DAG_ACTIVITY_EVENT_BYTES = 256 * 1024;
 export const MAX_DAG_ACTIVITY_SEQUENCE_AHEAD = 64;
 
@@ -35,6 +36,13 @@ export interface DagActivityEventPage {
   /** Cursor to pass as `after_seq` for the next page. */
   next_after_seq: number;
   has_more: boolean;
+  limit: number;
+}
+
+export interface DagActivityRoundResultPage {
+  events: DagActivityJournalEntry[];
+  total: number;
+  truncated: boolean;
   limit: number;
 }
 
@@ -310,6 +318,58 @@ export function listDagActivityEvents(options: ListDagActivityEventsOptions): Da
     events,
     next_after_seq: events.at(-1)?.seq ?? afterSeq,
     has_more: hasMore,
+    limit,
+  };
+}
+
+/**
+ * Select one accepted result per Actor for a round. Terminal milestones outrank
+ * findings, and only the Actor registry's current generation is eligible.
+ */
+export function listLatestDagActivityRoundResults(options: {
+  run_id: string;
+  round_id: string;
+  limit?: number;
+}): DagActivityRoundResultPage {
+  assertIdentifier(options.run_id, "run_id");
+  assertIdentifier(options.round_id, "round_id");
+  const requestedLimit = options.limit ?? MAX_DAG_ACTIVITY_ROUND_RESULTS;
+  if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1) {
+    throw new Error("limit must be a positive safe integer");
+  }
+  const limit = Math.min(requestedLimit, MAX_DAG_ACTIVITY_ROUND_RESULTS);
+  const rows = getDb().prepare(`
+    WITH ranked AS (
+      SELECT activity.seq, activity.received_at, activity.event_json,
+        ROW_NUMBER() OVER (
+          PARTITION BY activity.actor_id
+          ORDER BY
+            CASE WHEN activity.activity_type IN ('blocked', 'completed', 'failed') THEN 0 ELSE 1 END,
+            activity.seq DESC
+        ) AS actor_rank
+      FROM dag_activity_events activity
+      INNER JOIN dag_actors actor
+        ON actor.run_id = activity.run_id
+        AND actor.actor_id = activity.actor_id
+        AND actor.generation = activity.generation
+      WHERE activity.run_id = ?
+        AND activity.round_id = ?
+        AND activity.activity_type IN ('finding', 'blocked', 'completed', 'failed')
+    )
+    SELECT seq, received_at, event_json, COUNT(*) OVER () AS total
+    FROM ranked
+    WHERE actor_rank = 1
+    ORDER BY seq ASC
+    LIMIT ?
+  `).all(options.run_id, options.round_id, limit) as Array<Pick<ActivityRow, "seq" | "received_at" | "event_json"> & {
+    total: number;
+  }>;
+  const events = rows.map(decodeEntry);
+  const total = Number(rows[0]?.total ?? 0);
+  return {
+    events,
+    total,
+    truncated: total > events.length,
     limit,
   };
 }

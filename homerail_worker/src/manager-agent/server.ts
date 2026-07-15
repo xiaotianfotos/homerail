@@ -18,6 +18,7 @@ import {
   DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
   defaultPrReviewBudgetKey,
   isFullGitRevision,
+  managerAgentDagCommandResult,
   managerAgentToolSpec,
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
@@ -1129,10 +1130,15 @@ export function createManagerTools(state: {
         if (!runId) throw new Error("get_dag_supervision requires run_id");
         const consumerId = state.sessionId?.trim();
         if (!consumerId) throw new Error("get_dag_supervision requires a bound manager session");
-        const query = new URLSearchParams({ consumer_id: consumerId });
-        if (args.max_milestones !== undefined) query.set("max_milestones", String(args.max_milestones));
         const body = await requestManager(
-          `/runs/${encodeURIComponent(runId)}/supervision?${query.toString()}`,
+          `/runs/${encodeURIComponent(runId)}/supervision`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              consumer_id: consumerId,
+              max_milestones: args.max_milestones,
+            }),
+          },
         );
         appendSupervisionCommentary(state.voiceSurface, body);
         return { content: [{ type: "text", text: short(body, 40000) }] };
@@ -1149,19 +1155,29 @@ export function createManagerTools(state: {
           throw new Error("send_dag_actor_command requires run_id, actor_id, expected_round_id, and idempotency_key");
         }
         if (!("payload" in args)) throw new Error("send_dag_actor_command requires payload");
-        const body = await requestManager(`/runs/${encodeURIComponent(runId)}/commands`, {
-          method: "POST",
-          body: JSON.stringify({
-            expected_round_id: expectedRoundId,
-            commands: [{
-              actor_id: actorId,
-              payload: args.payload,
-              idempotency_key: idempotencyKey,
-            }],
-          }),
-        });
-        state.objectiveToolCalls.push({ name: "send_dag_actor_command", success: true });
-        return { content: [{ type: "text", text: short(body, 20000) }] };
+        try {
+          const body = await requestManager(`/runs/${encodeURIComponent(runId)}/commands`, {
+            method: "POST",
+            body: JSON.stringify({
+              expected_round_id: expectedRoundId,
+              commands: [{
+                actor_id: actorId,
+                payload: args.payload,
+                idempotency_key: idempotencyKey,
+              }],
+            }),
+          });
+          const result = managerAgentDagCommandResult(body);
+          state.objectiveToolCalls.push({ name: "send_dag_actor_command", success: true });
+          return { content: [{ type: "text", text: short(result, 20000) }] };
+        } catch (error) {
+          state.objectiveToolCalls.push({
+            name: "send_dag_actor_command",
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
       },
     },
     {
@@ -1173,16 +1189,25 @@ export function createManagerTools(state: {
         if (!runId || !actorId || !idempotencyKey) {
           throw new Error("focus_dag_actor requires run_id, actor_id, and idempotency_key");
         }
-        const body = await requestManager(`/runs/${encodeURIComponent(runId)}/focus`, {
-          method: "POST",
-          body: JSON.stringify({
-            actor_id: actorId,
-            idempotency_key: idempotencyKey,
-            duration_ms: args.duration_ms,
-          }),
-        });
-        state.objectiveToolCalls.push({ name: "focus_dag_actor", success: true });
-        return { content: [{ type: "text", text: short(body, 12000) }] };
+        try {
+          const body = await requestManager(`/runs/${encodeURIComponent(runId)}/focus`, {
+            method: "POST",
+            body: JSON.stringify({
+              actor_id: actorId,
+              idempotency_key: idempotencyKey,
+              duration_ms: args.duration_ms,
+            }),
+          });
+          state.objectiveToolCalls.push({ name: "focus_dag_actor", success: true });
+          return { content: [{ type: "text", text: short(body, 12000) }] };
+        } catch (error) {
+          state.objectiveToolCalls.push({
+            name: "focus_dag_actor",
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
       },
     },
     {
@@ -1190,12 +1215,21 @@ export function createManagerTools(state: {
       async handler(args) {
         const runId = String(args.run_id ?? "").trim();
         if (!runId) throw new Error("cancel_dag_run requires run_id");
-        const body = await requestManager(`/runs/${encodeURIComponent(runId)}/cancel`, {
-          method: "POST",
-          body: "{}",
-        });
-        state.objectiveToolCalls.push({ name: "cancel_dag_run", success: true });
-        return { content: [{ type: "text", text: short(body, 12000) }] };
+        try {
+          const body = await requestManager(`/runs/${encodeURIComponent(runId)}/cancel`, {
+            method: "POST",
+            body: "{}",
+          });
+          state.objectiveToolCalls.push({ name: "cancel_dag_run", success: true });
+          return { content: [{ type: "text", text: short(body, 12000) }] };
+        } catch (error) {
+          state.objectiveToolCalls.push({
+            name: "cancel_dag_run",
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
       },
     },
     {
@@ -1204,12 +1238,21 @@ export function createManagerTools(state: {
         const runId = String(args.run_id ?? "").trim();
         const expectedRoundId = String(args.expected_round_id ?? "").trim();
         if (!runId || !expectedRoundId) throw new Error("complete_dag_run requires run_id and expected_round_id");
-        const body = await requestManager(`/runs/${encodeURIComponent(runId)}/complete`, {
-          method: "POST",
-          body: JSON.stringify({ expected_round_id: expectedRoundId }),
-        });
-        state.objectiveToolCalls.push({ name: "complete_dag_run", success: true });
-        return { content: [{ type: "text", text: short(body, 12000) }] };
+        try {
+          const body = await requestManager(`/runs/${encodeURIComponent(runId)}/complete`, {
+            method: "POST",
+            body: JSON.stringify({ expected_round_id: expectedRoundId }),
+          });
+          state.objectiveToolCalls.push({ name: "complete_dag_run", success: true });
+          return { content: [{ type: "text", text: short(body, 12000) }] };
+        } catch (error) {
+          state.objectiveToolCalls.push({
+            name: "complete_dag_run",
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
       },
     },
     {

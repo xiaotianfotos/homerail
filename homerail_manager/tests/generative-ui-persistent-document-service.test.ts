@@ -187,7 +187,7 @@ describe("PersistentGenerativeUiDocumentService", () => {
     legacy.close();
 
     expect(getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all())
-      .toEqual(Array.from({ length: 24 }, (_, index) => ({ version: index + 1 })));
+      .toEqual(Array.from({ length: 25 }, (_, index) => ({ version: index + 1 })));
     expect(getDb().prepare("SELECT data FROM voice_agent_sessions WHERE session_id = ?").get("legacy-v2"))
       .toEqual({ data: legacyPayload });
     expect(getDb().prepare(`
@@ -269,7 +269,7 @@ describe("PersistentGenerativeUiDocumentService", () => {
     mainDb.close();
 
     expect(getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all())
-      .toEqual(Array.from({ length: 24 }, (_, index) => ({ version: index + 1 })));
+      .toEqual(Array.from({ length: 25 }, (_, index) => ({ version: index + 1 })));
     expect(getDb().prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name IN ('generative_ui_documents', 'generative_ui_user_overrides')

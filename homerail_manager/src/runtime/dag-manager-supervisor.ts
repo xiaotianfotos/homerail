@@ -7,7 +7,11 @@ import {
   listDagLiveSurfaceProjections,
 } from "../generative-ui/dag-live-surface-projector.js";
 import { getDagActorLease } from "../persistence/dag-actor-leases.js";
-import { listDagActivityEvents, type DagActivityJournalEntry } from "../persistence/dag-activity-journal.js";
+import {
+  listDagActivityEvents,
+  listLatestDagActivityRoundResults,
+  type DagActivityJournalEntry,
+} from "../persistence/dag-activity-journal.js";
 import { listDagActorCommands, listDagActors } from "../persistence/dag-actors.js";
 import { getDagState, updateDagState } from "../persistence/dag-runtime-primitives.js";
 import { getCurrentDagRunRound, listDagRunRounds, type DagRunRoundRecord } from "../persistence/dag-run-rounds.js";
@@ -21,7 +25,6 @@ const MAX_PENDING_TOOLS_PER_ACTOR = 8;
 const MAX_TOOL_NAME_LENGTH = 96;
 const MAX_MILESTONE_SUMMARY_LENGTH = 240;
 const MAX_COMMENTARY_LENGTH = 320;
-const MAX_ROUND_SCAN_EVENTS = 2_000;
 const MILESTONE_TYPES = new Set<DagActivityType>(["finding", "blocked", "completed", "failed"]);
 const TERMINAL_ACTIVITY_TYPES = new Set<DagActivityType>(["blocked", "completed", "failed"]);
 
@@ -62,15 +65,29 @@ export interface DagSupervisorRoundResult {
   journal_seq: number;
 }
 
+export interface DagSupervisorRound {
+  round_id: string;
+  ordinal: number;
+  status: DagRunRoundRecord["status"];
+  target_actor_count: number;
+  target_actor_ids: string[];
+  targets_truncated: boolean;
+  opened_at: number;
+  closed_at?: number;
+  expires_at?: number;
+}
+
 export interface DagSupervisorRoundSummary {
   round_id: string;
   ordinal: number;
   status: DagRunRoundRecord["status"];
+  target_actor_count: number;
   target_actor_ids: string[];
+  targets_truncated: boolean;
+  accepted_result_count: number;
   accepted_results: DagSupervisorRoundResult[];
+  results_truncated: boolean;
   complete: boolean;
-  scanned_events: number;
-  truncated: boolean;
 }
 
 export interface DagSupervisionSnapshot {
@@ -80,7 +97,7 @@ export interface DagSupervisionSnapshot {
   actor_count: number;
   actors_truncated: boolean;
   actors: DagSupervisorActorSummary[];
-  current_round?: DagRunRoundRecord;
+  current_round?: DagSupervisorRound;
   round_summary?: DagSupervisorRoundSummary;
   milestone_digest: {
     consumer_digest: string;
@@ -295,55 +312,62 @@ function latestRound(runId: string): DagRunRoundRecord | undefined {
   return getCurrentDagRunRound(runId) ?? listDagRunRounds(runId).at(-1);
 }
 
-function buildRoundSummary(runId: string, round: DagRunRoundRecord | undefined): DagSupervisorRoundSummary | undefined {
-  if (!round) return undefined;
-  const actorsById = new Map(listDagActors(runId).map((actor) => [actor.actor_id, actor]));
-  const accepted = new Map<string, DagSupervisorRoundResult>();
-  let afterSeq = 0;
-  let scannedEvents = 0;
-  let hasMore = false;
-  while (scannedEvents < MAX_ROUND_SCAN_EVENTS) {
-    const limit = Math.min(500, MAX_ROUND_SCAN_EVENTS - scannedEvents);
-    const page = listDagActivityEvents({ run_id: runId, after_seq: afterSeq, limit });
-    scannedEvents += page.events.length;
-    for (const entry of page.events) {
-      afterSeq = entry.seq;
-      const event = entry.event;
-      if (event.round_id !== round.round_id || !MILESTONE_TYPES.has(event.type)) continue;
-      const actor = actorsById.get(event.actor_id);
-      if (!actor) continue;
-      const previous = accepted.get(event.actor_id);
-      const previousTerminal = previous ? TERMINAL_ACTIVITY_TYPES.has(previous.outcome) : false;
-      const nextTerminal = TERMINAL_ACTIVITY_TYPES.has(event.type);
-      if (previous && previousTerminal && !nextTerminal) continue;
-      accepted.set(event.actor_id, {
-        actor_id: event.actor_id,
-        role: actor.role,
-        outcome: event.type as DagSupervisorRoundResult["outcome"],
-        summary: eventSummary(event),
-        event_id: event.event_id,
-        journal_seq: entry.seq,
-      });
-    }
-    hasMore = page.has_more;
-    if (!page.has_more || page.events.length === 0) break;
-  }
-  const acceptedResults = round.target_actor_ids
-    .map((actorId) => accepted.get(actorId))
-    .filter((result): result is DagSupervisorRoundResult => Boolean(result));
+function publicRound(round: DagRunRoundRecord): DagSupervisorRound {
+  const targetActorIds = round.target_actor_ids.slice(0, MAX_SUPERVISOR_ACTORS);
   return {
     round_id: round.round_id,
     ordinal: round.ordinal,
     status: round.status,
-    target_actor_ids: round.target_actor_ids.slice(0, MAX_SUPERVISOR_ACTORS),
+    target_actor_count: round.target_actor_ids.length,
+    target_actor_ids: targetActorIds,
+    targets_truncated: targetActorIds.length < round.target_actor_ids.length,
+    opened_at: round.opened_at,
+    ...(round.closed_at === undefined ? {} : { closed_at: round.closed_at }),
+    ...(round.expires_at === undefined ? {} : { expires_at: round.expires_at }),
+  };
+}
+
+function buildRoundSummary(runId: string, round: DagRunRoundRecord | undefined): DagSupervisorRoundSummary | undefined {
+  if (!round) return undefined;
+  const actorsById = new Map(listDagActors(runId).map((actor) => [actor.actor_id, actor]));
+  const accepted = new Map<string, DagSupervisorRoundResult>();
+  const page = listLatestDagActivityRoundResults({
+    run_id: runId,
+    round_id: round.round_id,
+  });
+  for (const entry of page.events) {
+    const event = entry.event;
+    const actor = actorsById.get(event.actor_id);
+    if (!actor) continue;
+    accepted.set(event.actor_id, {
+      actor_id: event.actor_id,
+      role: actor.role,
+      outcome: event.type as DagSupervisorRoundResult["outcome"],
+      summary: eventSummary(event),
+      event_id: event.event_id,
+      journal_seq: entry.seq,
+    });
+  }
+  const allAcceptedResults = round.target_actor_ids
+    .map((actorId) => accepted.get(actorId))
+    .filter((result): result is DagSupervisorRoundResult => Boolean(result));
+  const acceptedResults = allAcceptedResults.slice(0, MAX_SUPERVISOR_ACTORS);
+  const currentRound = publicRound(round);
+  return {
+    round_id: round.round_id,
+    ordinal: round.ordinal,
+    status: round.status,
+    target_actor_count: currentRound.target_actor_count,
+    target_actor_ids: currentRound.target_actor_ids,
+    targets_truncated: currentRound.targets_truncated,
+    accepted_result_count: allAcceptedResults.length,
     accepted_results: acceptedResults,
+    results_truncated: acceptedResults.length < allAcceptedResults.length || page.truncated,
     complete: round.target_actor_ids.length > 0
       && round.target_actor_ids.every((actorId) => {
         const result = accepted.get(actorId);
         return Boolean(result && TERMINAL_ACTIVITY_TYPES.has(result.outcome));
       }),
-    scanned_events: scannedEvents,
-    truncated: hasMore,
   };
 }
 
@@ -438,7 +462,7 @@ export function getDagSupervisionSnapshot(input: {
     ...(metadata.workflowId ? { workflow_id: metadata.workflowId } : {}),
     run_status: metadata.status,
     ...actorSnapshot,
-    ...(round ? { current_round: round } : {}),
+    ...(round ? { current_round: publicRound(round) } : {}),
     ...(round ? { round_summary: buildRoundSummary(runId, round) } : {}),
     milestone_digest: consumeMilestones(input),
   };

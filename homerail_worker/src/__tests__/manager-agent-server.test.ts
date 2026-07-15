@@ -70,6 +70,18 @@ function makeSupervisorManagerApiServer(observed: ObservedSupervisorRequest[]): 
       });
       const data = url.pathname === "/api/runs/create-and-run"
         ? { runId: "run-supervised-123" }
+        : url.pathname.endsWith("/commands")
+          ? {
+            resumed: true,
+            previous_round_id: "round-0001",
+            round_id: "round-0002",
+            ordinal: 2,
+            actor_ids: ["research"],
+            node_ids: ["private-node-research"],
+            command_ids: ["command-research-2"],
+            ready_node_ids: ["private-node-research"],
+            dispatched: 1,
+          }
         : url.pathname.endsWith("/supervision")
           ? {
             run_id: "run /?# supervised",
@@ -1245,9 +1257,10 @@ describe("manager-agent server", () => {
         },
         { method: "GET", pathname: `/api/runs/${encodedRunId}/actors`, query: {} },
         {
-          method: "GET",
+          method: "POST",
           pathname: `/api/runs/${encodedRunId}/supervision`,
-          query: { consumer_id: "manager session/?#", max_milestones: "5" },
+          query: {},
+          body: { consumer_id: "manager session/?#", max_milestones: 5 },
         },
         {
           method: "POST",
@@ -1292,6 +1305,8 @@ describe("manager-agent server", () => {
       expect(serialized).not.toContain("worker-forbidden");
       expect(serialized).not.toContain("container-forbidden");
       expect(serialized).not.toContain("generation");
+      expect(serialized).not.toContain("private-node-research");
+      expect(serialized).not.toContain("ready_node_ids");
       expect(serialized).not.toContain("mutation-secret-must-not-enter-body");
       expect(serialized).not.toContain("approval-secret-must-not-enter-body");
     } finally {
@@ -1331,9 +1346,19 @@ describe("manager-agent server", () => {
       expect(response.status).toBe(200);
       expect(body.commentary_texts).toEqual(["研究 Actor 已确认关键依赖。"]);
       expect(body.tool_results).toHaveLength(2);
-      expect(observed.map((request) => request.query)).toEqual([
-        { consumer_id: "manager session/?#" },
-        { consumer_id: "manager session/?#", max_milestones: "3" },
+      expect(observed).toEqual([
+        {
+          method: "POST",
+          pathname: "/api/runs/run%20%2F%3F%23%20supervised/supervision",
+          query: {},
+          body: { consumer_id: "manager session/?#" },
+        },
+        {
+          method: "POST",
+          pathname: "/api/runs/run%20%2F%3F%23%20supervised/supervision",
+          query: {},
+          body: { consumer_id: "manager session/?#", max_milestones: 3 },
+        },
       ]);
     } finally {
       await close(server);
