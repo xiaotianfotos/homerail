@@ -19,6 +19,7 @@ import {
   MANAGER_AGENT_DAG_ACTOR_INTERVENTION_OPERATIONS,
   MANAGER_AGENT_HOST_VOICE_TOOL_NAMES,
   MANAGER_AGENT_WIDGET_FILE_TYPES,
+  canonicalManagerAgentToolCallName,
   formatHomeRailPromptHandoff,
   formatHomeRailPromptToolCall,
   managerAgentDagCommandResult,
@@ -39,6 +40,16 @@ import {
 } from "../src/manager-agent-widget-tools.js";
 
 describe("Manager Agent required tool objective", () => {
+  it("normalizes harness-specific MCP transport names at the public boundary", () => {
+    expect(canonicalManagerAgentToolCallName("start_supervised_dag")).toBe("start_supervised_dag");
+    expect(canonicalManagerAgentToolCallName("mcp__dag-tools__start_supervised_dag"))
+      .toBe("start_supervised_dag");
+    expect(canonicalManagerAgentToolCallName("mcp__plugin_server__qualified_tool"))
+      .toBe("qualified_tool");
+    expect(canonicalManagerAgentToolCallName("mcp__malformed")).toBe("mcp__malformed");
+    expect(canonicalManagerAgentToolCallName(null)).toBe("");
+  });
+
   it("normalizes and renders only an explicit generic runtime objective", () => {
     expect(normalizeManagerAgentRequiredToolCalls([
       " start_supervised_dag ",

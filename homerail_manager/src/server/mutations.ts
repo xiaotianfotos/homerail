@@ -31,6 +31,7 @@ import {
 } from "../runtime/dag-manager-supervisor.js";
 import { DagActorInterventionConflictError } from "../persistence/dag-actor-interventions.js";
 import { DagActorInterventionRuntimeError } from "../runtime/active-runs.js";
+import { canonicalManagerAgentToolCallName } from "homerail-protocol";
 
 interface BaseResponse {
   success: boolean;
@@ -74,6 +75,19 @@ function _created(res: http.ServerResponse, message: string, data: unknown) {
 
 function _accepted(res: http.ServerResponse, message: string, data: unknown) {
   json(res, 202, { success: true, message, data });
+}
+
+function publicManagerAgentToolCalls(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const call = item as Record<string, unknown>;
+    const runtimeName = typeof call.name === "string" ? call.name : "";
+    const name = canonicalManagerAgentToolCallName(runtimeName);
+    return name && name !== runtimeName
+      ? { ...call, name, runtime_name: runtimeName }
+      : call;
+  });
 }
 
 function _runCreationError(res: http.ServerResponse, error: unknown): void {
@@ -307,7 +321,7 @@ export function mutationRoutesHandler(
         appendMessage(sessionId!, "assistant", reply, runId ? { run_id: runId } : undefined);
         _ok(res, "Manager Agent 响应成功", {
           text: reply,
-          tool_calls: Array.isArray(result.tool_calls) ? result.tool_calls : [],
+          tool_calls: publicManagerAgentToolCalls(result.tool_calls),
           tool_results: Array.isArray(result.tool_results) ? result.tool_results : [],
           agent_errors: Array.isArray(result.agent_errors) ? result.agent_errors : [],
           objective: result.objective && typeof result.objective === "object" && !Array.isArray(result.objective)

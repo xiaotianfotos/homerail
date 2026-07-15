@@ -180,6 +180,15 @@ export function managerAgentDagCommandResult(value: unknown): ManagerAgentDagCom
   };
 }
 
+export function canonicalManagerAgentToolCallName(value: unknown): string {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name.startsWith("mcp__")) return name;
+  const separator = name.lastIndexOf("__");
+  return separator > "mcp__".length && separator + 2 < name.length
+    ? name.slice(separator + 2)
+    : name;
+}
+
 export function normalizeManagerAgentRequiredToolCalls(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(

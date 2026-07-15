@@ -173,7 +173,11 @@ describe("/api/manager/chat", () => {
           satisfied: true,
           tool_calls: [{ name: "create_and_run", success: true }],
         },
-        tool_calls: [{ id: "tool-1", name: "create_and_run", input: { yamlPath: "assets/orchestrations/test.yaml" } }],
+        tool_calls: [{
+          id: "tool-1",
+          name: "mcp__dag-tools__create_and_run",
+          input: { yamlPath: "assets/orchestrations/test.yaml" },
+        }],
         tool_results: [{ tool_use_id: "tool-1", content: "ok" }],
       };
     });
@@ -224,7 +228,7 @@ describe("/api/manager/chat", () => {
           run_ids: string[];
           worker_id: string;
           container_name: string;
-          tool_calls: Array<{ name: string }>;
+          tool_calls: Array<{ name: string; runtime_name?: string }>;
           objective: { required: boolean; required_tool_calls: string[]; satisfied: boolean };
           manager_agent_config: { agent_type: string; provider_name: string; model: string; base_url: string };
         };
@@ -237,7 +241,10 @@ describe("/api/manager/chat", () => {
       expect(body.data.run_ids).toEqual(["run-container-123"]);
       expect(body.data.worker_id).toBe("manager-agent-container-test");
       expect(body.data.container_name).toBe(`homerail-manager-agent-${projectId}`);
-      expect(body.data.tool_calls).toContainEqual(expect.objectContaining({ name: "create_and_run" }));
+      expect(body.data.tool_calls).toContainEqual(expect.objectContaining({
+        name: "create_and_run",
+        runtime_name: "mcp__dag-tools__create_and_run",
+      }));
       expect(body.data.objective).toMatchObject({
         required: true,
         required_tool_calls: ["create_and_run"],
