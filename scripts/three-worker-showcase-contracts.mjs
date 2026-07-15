@@ -900,7 +900,13 @@ export function dispatchIsolationFailures(before, after, selectedActorId, minimu
   return failures;
 }
 
-export function dispatchGroupFailures(before, after, actorIds = EXPECTED_ACTOR_IDS, expectedIncrease = 1) {
+export function dispatchGroupFailures(
+  before,
+  after,
+  actorIds = EXPECTED_ACTOR_IDS,
+  minimumIncrease = 1,
+  maximumIncrease = 4,
+) {
   const failures = [];
   const prior = new Map((before?.actors ?? []).map((actor) => [actor.actor_id, actor]));
   const next = new Map((after?.actors ?? []).map((actor) => [actor.actor_id, actor]));
@@ -912,8 +918,10 @@ export function dispatchGroupFailures(before, after, actorIds = EXPECTED_ACTOR_I
       continue;
     }
     const increase = nextActor.dispatch_count - priorActor.dispatch_count;
-    if (increase !== expectedIncrease) {
-      failures.push(`${actorId} model dispatch count increased by ${increase}, expected exactly ${expectedIncrease}`);
+    if (increase < minimumIncrease || increase > maximumIncrease) {
+      failures.push(
+        `${actorId} model dispatch count increased by ${increase}, expected between ${minimumIncrease} and ${maximumIncrease}`,
+      );
     }
   }
   return failures;

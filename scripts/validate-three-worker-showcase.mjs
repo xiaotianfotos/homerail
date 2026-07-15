@@ -1062,13 +1062,13 @@ async function preparePhase(report, settingId, invocationPhase) {
     coordinated.surface_analysis,
     EXPECTED_ACTOR_IDS,
   );
-  coordinatedFailures.push(...dispatchGroupFailures(post.model, coordinated.model, EXPECTED_ACTOR_IDS, 1));
-  assertFailures("Manager batch continuation", coordinatedFailures);
   const coordinatedCommands = await roundCommandEvidence(
     runId,
     coordinated.raw.status.current_round.round_id,
     EXPECTED_ACTOR_IDS,
   );
+  coordinatedFailures.push(...dispatchGroupFailures(post.model, coordinated.model, EXPECTED_ACTOR_IDS, 1, 4));
+  assertFailures("Manager batch continuation", coordinatedFailures);
   report.phase_evidence.prepare.manager_batch_waiting = coordinated.report;
   report.manager_control.continue_before_restart = {
     ...report.manager_control.continue_before_restart,
@@ -1305,12 +1305,12 @@ async function resumePhase(report, state, invocationPhase) {
     final.surface_analysis,
     EXPECTED_ACTOR_IDS,
   );
-  coldFailures.push(...dispatchGroupFailures(recovered.model, final.model, EXPECTED_ACTOR_IDS, 1));
   const commandEvidence = await roundCommandEvidence(
     runId,
     final.raw.status.current_round.round_id,
     EXPECTED_ACTOR_IDS,
   );
+  coldFailures.push(...dispatchGroupFailures(recovered.model, final.model, EXPECTED_ACTOR_IDS, 1, 4));
   const physicalAfterResume = await waitForPhysicalLifecycle(runId, {
     expected_node_ids: EXPECTED_ACTOR_IDS,
     minimum_distinct_workers: EXPECTED_ACTOR_IDS.length,

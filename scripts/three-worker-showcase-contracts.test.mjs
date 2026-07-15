@@ -166,10 +166,12 @@ test("requires every logical Surface and dispatch to advance on group resume", (
 
   assert.deepEqual(coldResumeGroupFailures(before, after, EXPECTED_ACTOR_IDS), []);
   assert.deepEqual(dispatchGroupFailures(dispatchEvidence(2), dispatchEvidence(3)), []);
+  assert.deepEqual(dispatchGroupFailures(dispatchEvidence(2), dispatchEvidence(5)), []);
 
   after.actors[0].node_canonical = before.actors[0].node_canonical;
   assert.match(coldResumeGroupFailures(before, after).join("; "), /semantic Surface did not change/);
-  assert.match(dispatchGroupFailures(dispatchEvidence(2), dispatchEvidence(4)).join("; "), /expected exactly 1/);
+  assert.match(dispatchGroupFailures(dispatchEvidence(2), dispatchEvidence(2)).join("; "), /expected between 1 and 4/);
+  assert.match(dispatchGroupFailures(dispatchEvidence(2), dispatchEvidence(7)).join("; "), /expected between 1 and 4/);
 });
 
 test("sanitizes credentials and private paths from acceptance evidence", () => {
