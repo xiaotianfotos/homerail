@@ -500,7 +500,23 @@ describe("Manager Agent deterministic result envelope parity", () => {
         pathname: new URL(rawUrl).pathname,
         body: typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {},
       });
-      return new Response(JSON.stringify({ success: true, data: { resumed: true } }), {
+      const body = observed.at(-1)?.body ?? {};
+      const commands = Array.isArray(body.commands)
+        ? body.commands as Array<{ actor_id?: unknown }>
+        : [];
+      const call = observed.length;
+      return new Response(JSON.stringify({
+        success: true,
+        data: {
+          resumed: true,
+          previous_round_id: String(body.expected_round_id),
+          round_id: `round-resumed-${call}`,
+          ordinal: call + 1,
+          actor_ids: commands.map((command) => String(command.actor_id)),
+          command_ids: commands.map((_, index) => `command-${call}-${index + 1}`),
+          dispatched: commands.length,
+        },
+      }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -631,7 +647,11 @@ describe("Manager Agent deterministic result envelope parity", () => {
       ],
     })).rejects.toThrow(/Manager API 409.*waiting round conflict/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(hostState.objectiveToolCalls).toEqual([]);
+    expect(hostState.objectiveToolCalls).toEqual([{
+      name: "send_dag_actor_command",
+      success: false,
+      error: expect.stringMatching(/Manager API 409.*waiting round conflict/),
+    }]);
   });
 
   it("executes the same enabled plugin projection through both voice harnesses", async () => {
