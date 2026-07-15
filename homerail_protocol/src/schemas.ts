@@ -7,6 +7,7 @@ import {
   generativeUiSchemas,
 } from "./generative-ui/schemas.js";
 import { homerailPluginSchemas } from "./plugins/schemas.js";
+import { dagActivityEventV1Schema } from "./dag-activity.js";
 
 // ── DAG Tool Schemas ─────────────────────────────────────────────
 
@@ -198,6 +199,11 @@ export const dagNodeConfigSchema = {
     },
     graph_nodes: { type: "array", items: { type: "string" } },
     session_id: { type: "string", nullable: true as const },
+    round_id: { type: "string", minLength: 1, maxLength: 256 },
+    actor_id: { type: "string", minLength: 1, maxLength: 256 },
+    generation: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    surface_id: { type: "string", minLength: 1, maxLength: 256 },
+    activity_sequence_start: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
   },
   required: ["node_id", "agent_type", "model", "outgoing_edges", "incoming_edges", "graph_nodes"],
   additionalProperties: true,
@@ -391,6 +397,7 @@ export const asyncResultSchema = {
 export const allSchemas: Record<string, Record<string, unknown>> = {
   ...generativeUiSchemas,
   ...homerailPluginSchemas,
+  "dag-activity-event-v1": dagActivityEventV1Schema as Record<string, unknown>,
   "handoff-request": handoffRequestSchema as Record<string, unknown>,
   "handoff-response": handoffResponseSchema as Record<string, unknown>,
   "tool-call": toolCallSchema as Record<string, unknown>,

@@ -60,6 +60,7 @@ describe("Protocol version consistency", () => {
       "homerail-resolved-plugin-descriptor-v1",
       "homerail-direct-ui-projection-v1",
       "homerail-plugin-tool-execution-envelope-v1",
+      "dag-activity-event-v1",
       "handoff-request", "handoff-response",
       "tool-call", "tool-result",
       "send-message", "receive-message",

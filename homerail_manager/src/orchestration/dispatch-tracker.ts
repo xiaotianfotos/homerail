@@ -53,6 +53,19 @@ export function findDispatchTarget(
   return dispatches.get(key(runId, nodeId));
 }
 
+/** Bind an inbound transport message to the exact target selected at dispatch. */
+export function isCurrentDispatchTarget(
+  runId: string,
+  nodeId: string,
+  targetType: "worker" | "node",
+  targetId: string,
+): boolean {
+  const target = findDispatchTarget(runId, nodeId);
+  return target?.state === "dispatched"
+    && target.targetType === targetType
+    && target.targetId === targetId;
+}
+
 export function clearDispatchTarget(runId: string, nodeId: string): void {
   dispatches.delete(key(runId, nodeId));
 }

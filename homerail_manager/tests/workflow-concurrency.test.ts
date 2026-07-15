@@ -251,6 +251,7 @@ release:
     expect(orchestrator.createRun({ workflowId: "unrestricted", runId: "manual-2" }).status).toBe("active");
     expect(getDb().prepare("SELECT version FROM schema_migrations WHERE version = 17").get()).toEqual({ version: 17 });
     expect(getDb().prepare("SELECT version FROM schema_migrations WHERE version = 18").get()).toEqual({ version: 18 });
+    expect(getDb().prepare("SELECT version FROM schema_migrations WHERE version = 19").get()).toEqual({ version: 19 });
     expect(getDb().prepare("SELECT COUNT(*) AS count FROM dag_run_admissions").get()).toEqual({ count: 0 });
   });
 
@@ -271,6 +272,7 @@ release:
       .toEqual({ name: "dag_run_admissions" });
     expect(db.prepare("SELECT version FROM schema_migrations WHERE version = 17").get()).toEqual({ version: 17 });
     expect(db.prepare("SELECT version FROM schema_migrations WHERE version = 18").get()).toEqual({ version: 18 });
+    expect(db.prepare("SELECT version FROM schema_migrations WHERE version = 19").get()).toEqual({ version: 19 });
   });
 
   it("enforces the same admission policy through event and manual HTTP entrypoints", async () => {

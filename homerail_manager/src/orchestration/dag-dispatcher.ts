@@ -25,6 +25,13 @@ export interface DispatchEnvelope {
   workspaceAccess?: DagWorkspaceAccess;
   allowedBuiltinTools?: AgentBuiltinToolName[];
   allowedDagTools?: DagAgentToolName[];
+  activity?: {
+    roundId: string;
+    actorId: string;
+    generation: number;
+    surfaceId?: string;
+    sequenceStart: number;
+  };
 }
 
 export type DispatchResult =

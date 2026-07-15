@@ -6,6 +6,7 @@
 import AjvModule from "ajv";
 import type { ErrorObject, ValidateFunction } from "ajv";
 import { allSchemas } from "./schemas.js";
+import { DAG_ACTIVITY_EVENT_V1_SCHEMA_ID } from "./dag-activity.js";
 import {
   validateHomerailPluginManifest,
   validateHomerailPluginTurnContext,
@@ -103,4 +104,8 @@ export function validateMessage(data: unknown, schemaName: string): ValidationRe
     valid: valid as boolean,
     errors: normalizeErrors(validateFn.errors),
   };
+}
+
+export function validateDagActivityEventV1(value: unknown): ValidationResult {
+  return validateMessage(value, DAG_ACTIVITY_EVENT_V1_SCHEMA_ID);
 }

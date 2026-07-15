@@ -9,10 +9,11 @@ import type { DAGDispatcher, DispatchEnvelope, DispatchResult } from "../src/orc
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { setupWorkerWebSocket } from "../src/worker/websocket.js";
 import { _clearWorkers } from "../src/worker/registry.js";
-import { _clearAllDispatches } from "../src/orchestration/dispatch-tracker.js";
+import { _clearAllDispatches, recordDispatch } from "../src/orchestration/dispatch-tracker.js";
 import { _clearDagMessageRouter } from "../src/orchestration/dag-message-router.js";
 import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { closeDb } from "../src/persistence/db.js";
+import { listDagActivityEvents } from "../src/persistence/dag-activity-journal.js";
 import { appendSessionTranscriptForTest, loadSessionTranscript } from "../src/persistence/dag-session-files.js";
 import { _clearAllPersistence, loadRunSnapshot } from "../src/persistence/store.js";
 import {
@@ -230,6 +231,110 @@ describe("worker websocket node session filtering", () => {
     expect(persisted).toContain("***REDACTED***");
     expect(persisted).toContain("...");
     expect(persisted).toContain("[truncated]");
+    ws.close();
+  });
+
+  it("rejects stale-round activity before it reaches the journal or chat evidence", async () => {
+    createActiveRun("run-ws-activity", simpleDag());
+    const dispatcher = new CaptureDispatcher();
+    expect(dispatchReadyNodes("run-ws-activity", dispatcher)).toBe(1);
+    const sessionId = dispatcher.dispatched[0].sessionId!;
+    recordDispatch("run-ws-activity", "work", "worker", "worker-activity");
+
+    const staleEvents: unknown[] = [];
+    subscribe("dag:stale_session_ignored", (payload) => staleEvents.push(payload));
+
+    server = http.createServer();
+    setupWorkerWebSocket(server, { registrationTimeoutMs: 500, pingIntervalMs: 5_000 });
+    const port = await listen(server);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/projects/default/workers/worker-activity`);
+    await new Promise<void>((resolve) => ws.once("open", () => resolve()));
+    ws.send(JSON.stringify({ type: "register", worker_id: "worker-activity" }));
+    await delay(20);
+
+    const activity = {
+      schema_version: 1,
+      event_id: "ws-activity-1",
+      run_id: "run-ws-activity",
+      round_id: "stale-round",
+      node_id: "work",
+      actor_id: "work",
+      generation: 1,
+      sequence: 1,
+      timestamp: Date.now(),
+      type: "finding",
+      payload: {
+        message: "durable finding token=raw-worker-secret",
+        api_key: "sk-raw-worker-secret-123456",
+      },
+    };
+    const stream = JSON.stringify({
+      type: "stream",
+      data: {
+        type: "dag_activity",
+        event: "dag_activity",
+        activity,
+        run_id: "run-ws-activity",
+        node_id: "work",
+        session_id: "stale-round",
+      },
+    });
+    ws.send(stream);
+    ws.send(stream);
+    await delay(30);
+
+    const page = listDagActivityEvents({ run_id: "run-ws-activity" });
+    expect(page.events).toHaveLength(0);
+    expect(staleEvents).toHaveLength(2);
+    const genericEvidence = JSON.stringify({
+      chats: loadRunSnapshot("run-ws-activity")?.chats,
+      transcript: loadSessionTranscript(sessionId),
+    });
+    expect(genericEvidence).not.toContain("durable finding");
+    expect(genericEvidence).not.toContain("raw-worker-secret");
+    ws.close();
+  });
+
+  it("rejects activity from a worker that does not own the current dispatch", async () => {
+    createActiveRun("run-ws-source-bound", simpleDag());
+    const dispatcher = new CaptureDispatcher();
+    expect(dispatchReadyNodes("run-ws-source-bound", dispatcher)).toBe(1);
+    const sessionId = dispatcher.dispatched[0].sessionId!;
+    recordDispatch("run-ws-source-bound", "work", "worker", "worker-owner");
+
+    server = http.createServer();
+    setupWorkerWebSocket(server, { registrationTimeoutMs: 500, pingIntervalMs: 5_000 });
+    const port = await listen(server);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/projects/default/workers/worker-attacker`);
+    await new Promise<void>((resolve) => ws.once("open", () => resolve()));
+    ws.send(JSON.stringify({ type: "register", worker_id: "worker-attacker" }));
+    await delay(20);
+    ws.send(JSON.stringify({
+      type: "stream",
+      data: {
+        type: "dag_activity",
+        event: "dag_activity",
+        run_id: "run-ws-source-bound",
+        node_id: "work",
+        session_id: sessionId,
+        activity: {
+          schema_version: 1,
+          event_id: "spoofed-source-activity",
+          run_id: "run-ws-source-bound",
+          round_id: sessionId,
+          node_id: "work",
+          actor_id: "work",
+          generation: 1,
+          sequence: 1,
+          timestamp: Date.now(),
+          type: "finding",
+          payload: { message: "must not persist" },
+        },
+      },
+    }));
+    await delay(30);
+
+    expect(listDagActivityEvents({ run_id: "run-ws-source-bound" }).events).toEqual([]);
     ws.close();
   });
 

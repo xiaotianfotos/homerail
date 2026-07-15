@@ -11,6 +11,8 @@ import { createReceiveMessageTool } from "./receive-message.js";
 import { createGraphContextTool } from "./graph-context.js";
 import { createManagerCommandTool } from "./manager-command.js";
 import { createConsultAdvisorTool } from "./advisor.js";
+import { createReportActivityTool } from "./report-activity.js";
+import type { DagActivityType } from "homerail-protocol";
 
 export interface AdvisorCallResult {
   text: string;
@@ -19,6 +21,10 @@ export interface AdvisorCallResult {
 
 export interface DagToolsOptions {
   advisorRunner?: (advisor: DagAdvisorConfig, question: string) => Promise<AdvisorCallResult>;
+  activityEmitter?: (
+    type: Extract<DagActivityType, "progress" | "finding" | "blocked">,
+    payload: Record<string, unknown>,
+  ) => void;
 }
 
 /** Mutable state shared across all DAG tools for a single prompt run. */
@@ -105,6 +111,9 @@ export function createDagTools(state: DagToolsState, options: DagToolsOptions = 
   ];
   if (state.advisors.length > 0 && options.advisorRunner) {
     tools.push(createConsultAdvisorTool(state, options.advisorRunner));
+  }
+  if (options.activityEmitter) {
+    tools.push(createReportActivityTool(options.activityEmitter));
   }
   return tools;
 }

@@ -451,6 +451,7 @@ export const DAG_AGENT_TOOL_NAMES = [
   "get_graph_context",
   "manager_command",
   "consult_advisor",
+  "report_activity",
 ] as const;
 
 export type DagAgentToolName = (typeof DAG_AGENT_TOOL_NAMES)[number];
@@ -472,6 +473,13 @@ export interface DagNodeConfig {
   incoming_edges: Edge[];
   graph_nodes: string[];
   session_id?: string;
+  /** Activity routing metadata. Defaults are assigned by the Worker when omitted. */
+  round_id?: string;
+  actor_id?: string;
+  generation?: number;
+  surface_id?: string;
+  /** Last persisted activity sequence; the next emitted event starts after this value. */
+  activity_sequence_start?: number;
   advisors?: DagAdvisorConfig[];
   workspace_access?: DagWorkspaceAccess;
   /** Optional exact allowlist for backend-provided shell and file tools. */

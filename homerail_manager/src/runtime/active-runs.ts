@@ -71,6 +71,7 @@ import {
   type DagApprovalRecord,
 } from "../persistence/dag-runtime-primitives.js";
 import type { RunWorkspaceRetention } from "../persistence/types.js";
+import { getDagActivitySequenceCursor } from "../persistence/dag-activity-journal.js";
 
 export interface InjectResult {
   runId: string;
@@ -2340,6 +2341,11 @@ function _allowedDagTools(node: DAGGraphNode): DagAgentToolName[] | undefined {
   ));
 }
 
+function _activitySurfaceId(node: DAGGraphNode): string | undefined {
+  const value = _agentRuntimeConfig(node).surface_id;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelopeBuildResult {
   if (run.status !== "active") return { ok: false, reason: `run ${run.runId} is not active` };
   if (getNodeState(run.dagRun, nodeId) !== "READY") {
@@ -2360,6 +2366,9 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
 
   const inputs = _nodeInputs(run.dagRun, nodeId);
   const nodeSession = _ensureNodeSession(run, nodeId);
+  const actorId = nodeId;
+  const generation = 1;
+  const surfaceId = _activitySurfaceId(node);
   const dispatchInputs = nodeSession.resumeInstruction
     ? { ...inputs, checkpoint_resume: [nodeSession.resumeInstruction] }
     : inputs;
@@ -2395,6 +2404,13 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
       workspaceAccess: _workspaceAccess(node),
       allowedBuiltinTools: _allowedBuiltinTools(node),
       allowedDagTools: _allowedDagTools(node),
+      activity: {
+        roundId: nodeSession.sessionId,
+        actorId,
+        generation,
+        ...(surfaceId ? { surfaceId } : {}),
+        sequenceStart: getDagActivitySequenceCursor(run.runId, actorId, generation),
+      },
     },
   };
 }

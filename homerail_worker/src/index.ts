@@ -112,6 +112,9 @@ client.on("task", async (msg) => {
     hasManagerEnvelope: Boolean(envelope),
   });
   const checkpointResume = envelope ? parseCheckpointResume(envelope.checkpointResume) : undefined;
+  const activity = envelope?.activity && typeof envelope.activity === "object"
+    ? envelope.activity as Record<string, unknown>
+    : undefined;
 
   // Task text: prefer envelope.inputs (flattened), then data.task/prompt
   let task: string;
@@ -136,6 +139,11 @@ client.on("task", async (msg) => {
         incoming_edges: [],
         graph_nodes: [nodeId],
         session_id: sessionId,
+        round_id: typeof activity?.roundId === "string" ? activity.roundId : sessionId,
+        actor_id: typeof activity?.actorId === "string" ? activity.actorId : nodeId,
+        generation: typeof activity?.generation === "number" ? activity.generation : 1,
+        surface_id: typeof activity?.surfaceId === "string" ? activity.surfaceId : undefined,
+        activity_sequence_start: typeof activity?.sequenceStart === "number" ? activity.sequenceStart : 0,
         advisors: Array.isArray(envelope.advisors) ? envelope.advisors as DagAdvisorConfig[] : undefined,
         workspace_access: envelope.workspaceAccess && typeof envelope.workspaceAccess === "object"
           ? envelope.workspaceAccess as unknown as DagWorkspaceAccess
