@@ -12,7 +12,7 @@ import { useI18n } from 'vue-i18n'
 import type { RunListItem } from './useRunList'
 import { getAgentPersona } from '@/lib/agentPersonas'
 import { cn } from '@/lib/utils'
-import { CheckCircle2, XCircle, Loader2, Clock, ChevronRight, Network } from 'lucide-vue-next'
+import { CheckCircle2, XCircle, Loader2, Clock, ChevronRight, Network, CirclePause } from 'lucide-vue-next'
 
 const props = defineProps<{
   runs: RunListItem[]
@@ -33,6 +33,8 @@ const statusMeta = computed(() => (status: string) => {
   switch (status) {
     case 'active':
       return { icon: Loader2, color: 'text-emerald-300', bg: 'border-emerald-300/25 bg-emerald-300/10', spin: true, label: t('dag.status.active') }
+    case 'waiting':
+      return { icon: CirclePause, color: 'text-amber-300', bg: 'border-amber-300/25 bg-amber-300/10', spin: false, label: t('dag.status.waitingForCommand') }
     case 'completed':
       return { icon: CheckCircle2, color: 'text-blue-300', bg: 'border-blue-300/25 bg-blue-300/10', spin: false, label: t('dag.status.completed') }
     case 'failed':
@@ -115,6 +117,7 @@ watch(() => props.focusedIndex, async (idx) => {
 
         <!-- 状态图标 -->
         <div
+          :data-status="run.status"
           :class="cn(
             'flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl border',
             statusMeta(run.status).bg

@@ -40,6 +40,13 @@ const progressPct = computed(() => {
   return Math.round((completedCount.value / store.nodes.length) * 100)
 })
 
+const executionStatusLabel = computed(() => {
+  const status = store.dagExecution?.status
+  if (!status) return 'idle'
+  if (status === 'waiting') return t('dag.status.waitingForCommand')
+  return t(`dag.status.${status}`)
+})
+
 const totals = computed(() => {
   if (props.metrics) {
     return {
@@ -59,6 +66,7 @@ const totals = computed(() => {
 
 const statusItems = computed(() => [
   { key: 'running', label: t('dag.toolbar.legend.running'), color: 'bg-emerald-400' },
+  { key: 'waiting_for_command', label: t('dag.status.waitingForCommand'), color: 'bg-amber-400' },
   { key: 'completed', label: t('dag.toolbar.legend.completed'), color: 'bg-blue-500' },
   { key: 'failed', label: t('dag.toolbar.legend.failed'), color: 'bg-red-500' },
   { key: 'ready', label: t('dag.toolbar.legend.ready'), color: 'bg-blue-300' },
@@ -91,12 +99,13 @@ const statusItems = computed(() => [
             :class="cn(
               'rounded-full border px-3 py-1 text-sm font-medium',
               store.isRunning ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-200' :
+              store.isWaiting ? 'border-amber-300/25 bg-amber-300/10 text-amber-200' :
               store.isCompleted ? 'border-cyan-200/20 bg-cyan-200/10 text-cyan-100' :
               store.isFailed ? 'border-red-400/30 bg-red-500/15 text-red-300' :
               'border-white/10 bg-white/[0.04] text-white/45'
             )"
           >
-            {{ store.dagExecution?.status ?? 'idle' }}
+            {{ executionStatusLabel }}
           </span>
         </div>
         <div class="mt-1 flex items-center gap-2 text-sm text-white/50">

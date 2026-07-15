@@ -38,6 +38,7 @@ interface BackendDagResponse {
     completed_nodes: string[]
     failed_nodes: string[]
     ready_nodes: string[]
+    waiting_nodes?: string[]
     node_count: number
     nodes: Record<string, {
       status: string
@@ -109,6 +110,11 @@ function transformDagResponse(raw: BackendDagResponse): DAGExecution {
     status = 'running'
   } else if (raw.execution.ready_nodes.length > 0) {
     status = 'running'
+  } else if (
+    (raw.execution.waiting_nodes?.length ?? 0) > 0
+    || Object.values(execNodes).some(node => node.status === 'waiting_for_command')
+  ) {
+    status = 'waiting'
   }
 
   return {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Eye, EyeOff, Loader2, Network, RotateCcw, Settings } from 'lucide-vue-next'
+import { CirclePause, Eye, EyeOff, Loader2, Network, RotateCcw, Settings } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { http } from '@/api/clients/http-client'
 
@@ -35,18 +35,27 @@ interface ActiveRunsResponse {
 }
 
 const activeRunCount = ref(0)
+const waitingRunCount = ref(0)
 let activeRunTimer: ReturnType<typeof setInterval> | null = null
 
 const hasActiveRuns = computed(() => activeRunCount.value > 0)
+const hasWaitingRuns = computed(() => waitingRunCount.value > 0)
+const runtimeRunCount = computed(() => activeRunCount.value + waitingRunCount.value)
 const desktopUpdateStatus = ref<DesktopUpdateStatus | null>(null)
 const updateInstalling = ref(false)
 let removeUpdateListener: (() => void) | null = null
 
-const runtimeTitle = computed(() =>
-  hasActiveRuns.value
-    ? t('shell.dashboard.running', { count: activeRunCount.value })
-    : t('shell.dashboard.title'),
-)
+const runtimeTitle = computed(() => {
+  if (hasActiveRuns.value && hasWaitingRuns.value) {
+    return t('shell.dashboard.runningAndWaiting', {
+      active: activeRunCount.value,
+      waiting: waitingRunCount.value,
+    })
+  }
+  if (hasActiveRuns.value) return t('shell.dashboard.running', { count: activeRunCount.value })
+  if (hasWaitingRuns.value) return t('shell.dashboard.waiting', { count: waitingRunCount.value })
+  return t('shell.dashboard.title')
+})
 const downloadedUpdate = computed(() =>
   Boolean(desktopUpdateStatus.value?.supported && desktopUpdateStatus.value.state === 'downloaded'),
 )
@@ -58,14 +67,22 @@ const updateButtonTitle = computed(() => {
 async function refreshActiveRuns(): Promise<void> {
   if (!props.showRuntime) {
     activeRunCount.value = 0
+    waitingRunCount.value = 0
     return
   }
   try {
     const res = await http.get<ActiveRunsResponse>('/api/runs/active/list')
     const data = (res.data ?? res) as ActiveRunsResponse
-    activeRunCount.value = Number(data.total ?? data.runs?.length ?? 0)
+    if (data.runs) {
+      activeRunCount.value = data.runs.filter(run => run.status === 'active').length
+      waitingRunCount.value = data.runs.filter(run => run.status === 'waiting').length
+    } else {
+      activeRunCount.value = Number(data.total ?? 0)
+      waitingRunCount.value = 0
+    }
   } catch {
     activeRunCount.value = 0
+    waitingRunCount.value = 0
   }
 }
 
@@ -140,6 +157,7 @@ watch(() => props.showRuntime, (showRuntime) => {
   } else {
     stopActiveRunPolling()
     activeRunCount.value = 0
+    waitingRunCount.value = 0
   }
 })
 
@@ -191,19 +209,29 @@ onBeforeUnmount(() => {
       <button
         v-if="showRuntime"
         class="flex h-9 items-center gap-2 rounded-full border px-3 text-sm transition-colors hover:bg-cyan-200/10 hover:text-white"
-        :class="hasActiveRuns ? 'border-emerald-300/45 bg-emerald-300/10 text-emerald-100 shadow-[0_0_18px_rgba(52,211,153,0.16)]' : 'border-cyan-200/14 text-white/60'"
+        :class="hasActiveRuns
+          ? 'border-emerald-300/45 bg-emerald-300/10 text-emerald-100 shadow-[0_0_18px_rgba(52,211,153,0.16)]'
+          : hasWaitingRuns
+            ? 'border-amber-300/40 bg-amber-300/10 text-amber-100'
+            : 'border-cyan-200/14 text-white/60'"
+        :data-state="hasActiveRuns ? 'active' : hasWaitingRuns ? 'waiting' : 'idle'"
+        data-testid="dag-runtime-button"
         :title="runtimeTitle"
         type="button"
         @click="emit('openRuntime')"
       >
         <Loader2 v-if="hasActiveRuns" class="h-4 w-4 animate-spin" />
+        <CirclePause v-else-if="hasWaitingRuns" class="h-4 w-4" />
         <Network v-else class="h-4 w-4" />
         {{ t('shell.dashboard.button') }}
         <span
-          v-if="hasActiveRuns"
-          class="min-w-5 rounded-full border border-emerald-200/35 bg-emerald-300/15 px-1.5 text-center text-[11px] font-semibold leading-5 text-emerald-50"
+          v-if="runtimeRunCount > 0"
+          class="min-w-5 rounded-full border px-1.5 text-center text-[11px] font-semibold leading-5"
+          :class="hasActiveRuns
+            ? 'border-emerald-200/35 bg-emerald-300/15 text-emerald-50'
+            : 'border-amber-200/35 bg-amber-300/15 text-amber-50'"
         >
-          {{ activeRunCount }}
+          {{ runtimeRunCount }}
         </span>
       </button>
       <button

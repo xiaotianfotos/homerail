@@ -2,6 +2,7 @@
   "status": {
     "active": "运行中",
     "running": "运行中",
+    "waitingForCommand": "等待指令",
     "completed": "已完成",
     "failed": "失败",
     "cancelled": "已取消",

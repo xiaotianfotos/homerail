@@ -106,6 +106,7 @@ watch(
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
     pending: t('dag.status.pending'), ready: t('dag.status.ready'), running: t('dag.status.running'),
+    waiting_for_command: t('dag.status.waitingForCommand'),
     completed: t('dag.status.completed'), failed: t('dag.status.failed'), skipped: t('dag.status.skipped'),
   }
   return map[status] ?? status
@@ -114,6 +115,7 @@ function statusLabel(status: string): string {
 function statusClass(status: string): string {
   switch (status) {
     case 'running': return 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200'
+    case 'waiting_for_command': return 'border-amber-300/30 bg-amber-300/10 text-amber-200'
     case 'completed': return 'border-blue-300/30 bg-blue-300/10 text-blue-200'
     case 'failed': return 'border-red-400/30 bg-red-500/15 text-red-300'
     case 'ready': return 'border-cyan-200/25 bg-cyan-200/10 text-cyan-100'

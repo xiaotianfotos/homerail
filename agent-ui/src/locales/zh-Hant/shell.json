@@ -11,6 +11,8 @@
   "dashboard": {
     "title": "DAG 儀表盤",
     "running": "DAG 儀表盤：{count} 個運行正在執行",
+    "waiting": "DAG 儀表盤：{count} 個運行等待指令",
+    "runningAndWaiting": "DAG 儀表盤：{active} 個運行中，{waiting} 個等待指令",
     "button": "儀表盤"
   },
   "details": {

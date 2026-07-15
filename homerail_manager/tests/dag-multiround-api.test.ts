@@ -169,7 +169,15 @@ describe("multi-round DAG HTTP API", () => {
       body: { data: { terminal: false } },
     });
     expect(await jsonResponse(`${baseUrl}/api/dag-status/${runId}`)).toMatchObject({
-      body: { data: { execution: { complete: false } } },
+      body: {
+        data: {
+          execution: {
+            complete: false,
+            waiting_nodes: ["suspend"],
+            nodes: { suspend: { status: "waiting_for_command" } },
+          },
+        },
+      },
     });
     const rounds = await jsonResponse(`${baseUrl}/api/runs/${runId}/rounds`);
     expect(rounds.body).toMatchObject({

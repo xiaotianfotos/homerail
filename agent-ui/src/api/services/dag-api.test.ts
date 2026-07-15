@@ -101,6 +101,13 @@ describe('DAG API', () => {
     [{ complete: true, failed_nodes: [] }, 'completed'],
     [{ complete: true, failed_nodes: ['review'] }, 'failed'],
     [{ complete: false, active_nodes: [], ready_nodes: ['review'] }, 'running'],
+    [{
+      complete: false,
+      active_nodes: [],
+      ready_nodes: [],
+      waiting_nodes: ['plan'],
+      nodes: { plan: { status: 'waiting_for_command', retry_count: 0, started_at: null, completed_at: null } }
+    }, 'waiting'],
     [{ complete: false, active_nodes: [], ready_nodes: [] }, 'pending']
   ])('derives the overall DAG status from execution state', async (execution, status) => {
     vi.spyOn(http, 'get').mockResolvedValue({

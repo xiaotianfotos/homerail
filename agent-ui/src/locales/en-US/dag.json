@@ -2,6 +2,7 @@
   "status": {
     "active": "Running",
     "running": "Running",
+    "waitingForCommand": "Waiting for command",
     "completed": "Completed",
     "failed": "Failed",
     "cancelled": "Cancelled",

@@ -3,16 +3,17 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import WebSocket from "ws";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DAG_TRANSPORT_FENCE_CAPABILITY } from "homerail-protocol";
 import type { DAGDispatcher, DispatchEnvelope, DispatchResult } from "../src/orchestration/dag-dispatcher.js";
-import { _clearAllDispatches } from "../src/orchestration/dispatch-tracker.js";
+import { _clearAllDispatches, recordDispatch } from "../src/orchestration/dispatch-tracker.js";
 import { _clearDagMessageRouter } from "../src/orchestration/dag-message-router.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { _clearNodes } from "../src/node/registry.js";
 import { setupNodeWebSocket } from "../src/node/websocket.js";
+import { listDagActivityEvents } from "../src/persistence/dag-activity-journal.js";
 import { listDagActorCommands } from "../src/persistence/dag-actors.js";
 import { closeDb } from "../src/persistence/db.js";
 import { loadSessionTranscript } from "../src/persistence/dag-session-files.js";
@@ -293,4 +294,51 @@ describe("round-aware terminal websocket transport", () => {
       await closeServer(server);
     }
   });
+
+  it.each(["worker", "node"] as const)(
+    "rejects stale %s activity when only the nested round fence is present",
+    async (sourceType) => {
+      const runId = `run-${sourceType}-nested-activity-fence`;
+      const envelope = startRoundTwo(runId);
+      const { server, ws, sourceId } = await openTransport(sourceType, runId, () => undefined);
+      recordDispatch(runId, "actor", sourceType, sourceId);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      try {
+        ws.send(JSON.stringify({
+          type: "stream",
+          data: {
+            type: "dag_activity",
+            event: "dag_activity",
+            run_id: runId,
+            node_id: "actor",
+            session_id: envelope.sessionId,
+            activity: {
+              schema_version: 1,
+              event_id: `${runId}-late-activity`,
+              run_id: runId,
+              round_id: "round-0001",
+              node_id: "actor",
+              actor_id: "researcher",
+              generation: 1,
+              sequence: 1,
+              timestamp: Date.now(),
+              type: "finding",
+              payload: { message: "late round-one evidence" },
+            },
+          },
+        }));
+        await delay(30);
+
+        expect(listDagActivityEvents({ run_id: runId }).events).toEqual([]);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(
+          "DAG activity identity does not match the transport stream context",
+        ));
+      } finally {
+        warn.mockRestore();
+        ws.terminate();
+        await closeServer(server);
+      }
+    },
+  );
 });

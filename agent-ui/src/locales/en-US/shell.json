@@ -11,6 +11,8 @@
   "dashboard": {
     "title": "DAG dashboard",
     "running": "DAG dashboard: {count} run in progress | DAG dashboard: {count} runs in progress",
+    "waiting": "DAG dashboard: {count} run waiting for a command | DAG dashboard: {count} runs waiting for a command",
+    "runningAndWaiting": "DAG dashboard: {active} running, {waiting} awaiting command",
     "button": "Dashboard"
   },
   "details": {

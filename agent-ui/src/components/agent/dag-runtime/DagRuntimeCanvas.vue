@@ -72,6 +72,7 @@ let flowTick = 0
 function statusGlow(status: string): { color: string; pulse: boolean } {
   switch (status) {
     case 'running': return { color: '52, 211, 153', pulse: true }
+    case 'waiting_for_command': return { color: '251, 191, 36', pulse: false }
     case 'completed': return { color: '96, 165, 250', pulse: false }
     case 'failed': return { color: '248, 113, 113', pulse: false }
     case 'ready': return { color: '147, 197, 253', pulse: false }

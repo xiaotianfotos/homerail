@@ -78,6 +78,7 @@ export const useAgentStore = defineStore('agent', () => {
       pending: 0,
       ready: 0,
       running: 0,
+      waiting_for_command: 0,
       completed: 0,
       failed: 0,
       skipped: 0,
@@ -90,6 +91,10 @@ export const useAgentStore = defineStore('agent', () => {
 
   const isRunning = computed(() => {
     return dagExecution.value?.status === 'running'
+  })
+
+  const isWaiting = computed(() => {
+    return dagExecution.value?.status === 'waiting'
   })
 
   const isCompleted = computed(() => {
@@ -588,6 +593,7 @@ export const useAgentStore = defineStore('agent', () => {
     selectedNodeIsManager,
     statusSummary,
     isRunning,
+    isWaiting,
     isCompleted,
     isFailed,
     selectedSessionInfo,

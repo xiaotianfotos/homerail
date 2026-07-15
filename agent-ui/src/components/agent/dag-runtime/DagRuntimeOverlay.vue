@@ -185,7 +185,7 @@ function initNodeFocus(): void {
     focusedNodeId.value = null
     return
   }
-  const running = nodes.find(n => n.status === 'running' || n.status === 'ready')
+  const running = nodes.find(n => n.status === 'running' || n.status === 'ready' || n.status === 'waiting_for_command')
   const completed = nodes.find(n => n.status === 'completed')
   focusedNodeId.value = (running ?? completed ?? nodes[0]).id
 }

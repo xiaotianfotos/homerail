@@ -94,6 +94,9 @@ function _buildExecutionStatus(metadata: ReturnType<typeof loadRunMetadata>) {
   const activeNodes = Object.entries(metadata.nodeStates)
     .filter(([, state]) => state === "RUNNING")
     .map(([id]) => id);
+  const waitingNodes = Object.entries(metadata.nodeStates)
+    .filter(([, state]) => state === "WAITING_FOR_COMMAND")
+    .map(([id]) => id);
   const failedNodes = Object.entries(metadata.nodeStates)
     .filter(([, state]) => state === "FAILED")
     .map(([id]) => id);
@@ -103,6 +106,7 @@ function _buildExecutionStatus(metadata: ReturnType<typeof loadRunMetadata>) {
     completed_nodes: completedNodes,
     failed_nodes: failedNodes,
     ready_nodes: readyNodes,
+    waiting_nodes: waitingNodes,
     node_count: metadata.nodeCount || Object.keys(metadata.nodeStates).length,
     nodes,
   };
