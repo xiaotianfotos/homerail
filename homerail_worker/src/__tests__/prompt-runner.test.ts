@@ -148,6 +148,7 @@ describe("prompt runner", () => {
 
     expect(observedTools).toEqual(["handoff"]);
     expect(observedContext?.handoffOnly).toBe(true);
+    expect(observedContext?.systemPromptMode).toBe("replace");
     expect(observedContext?.systemPrompt).toContain("DAG CONTRACT CORRECTION MODE");
     expect(observedContext?.systemPrompt).toContain("The active DAG run_id is run-correction-only");
     expect(observedContext?.systemPrompt).toContain("Original reviewer instructions");
@@ -155,6 +156,37 @@ describe("prompt runner", () => {
       type: "response",
       data: expect.objectContaining({ port: "done", content: "corrected" }),
     }));
+  });
+
+  it("keeps the Claude Code preset for ordinary DAG work", async () => {
+    let observedContext: AgentRunContext | undefined;
+    const mockAgent: AgentClient = {
+      run(_prompt, tools, context) {
+        observedContext = context;
+        return (async function* () {
+          await tools.find((tool) => tool.name === "handoff")!.handler({ port: "done", content: "complete" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-ordinary-system-prompt", () => mockAgent);
+
+    await runPrompt(
+      {
+        task: "ordinary work",
+        sender: "test",
+        runId: "run-ordinary-system-prompt",
+        dagConfig: makeConfig(),
+        systemPrompt: "Node instructions",
+      },
+      {
+        wsSend: () => {},
+        agentBackend: "test-ordinary-system-prompt",
+      },
+    );
+
+    expect(observedContext?.systemPromptMode).toBe("append");
+    expect(observedContext?.systemPrompt).toBe("Node instructions");
   });
 
   it("filters HomeRail DAG tools through the node allowlist", async () => {

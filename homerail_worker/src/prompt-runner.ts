@@ -334,7 +334,7 @@ export async function runPrompt(
     const agent = createAgentClient(agentBackend);
     const context: AgentRunContext = {
       systemPrompt: effectiveSystemPrompt,
-      systemPromptMode: "append",
+      systemPromptMode: correctionOnly ? "replace" : "append",
       provider: job.llmProvider,
       protocol: job.llmProtocol,
       model: job.dagConfig.model,
