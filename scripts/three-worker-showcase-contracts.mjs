@@ -607,8 +607,11 @@ export function summarizeActivityEvents(entries) {
   };
 }
 
-export function activityRoundFailures(entries, expectedActorIds, roundId, generations = {}) {
+export function activityRoundFailures(entries, expectedActorIds, roundId, generations = {}, options = {}) {
   const failures = [];
+  const requiredActivityTypes = options.require_progress === false
+    ? REQUIRED_ACTIVITY_TYPES.filter((type) => type !== "progress")
+    : REQUIRED_ACTIVITY_TYPES;
   for (const actorId of expectedActorIds) {
     const events = (Array.isArray(entries) ? entries : [])
       .map((entry) => entry?.event)
@@ -616,11 +619,11 @@ export function activityRoundFailures(entries, expectedActorIds, roundId, genera
         && event.actor_id === actorId
         && event.round_id === roundId
         && (generations[actorId] === undefined || event.generation === generations[actorId]));
-    const counts = Object.fromEntries(REQUIRED_ACTIVITY_TYPES.map((type) => [
+    const counts = Object.fromEntries(requiredActivityTypes.map((type) => [
       type,
       events.filter((event) => event.type === type).length,
     ]));
-    for (const type of REQUIRED_ACTIVITY_TYPES) {
+    for (const type of requiredActivityTypes) {
       if (counts[type] < 1) failures.push(`${actorId} has no ${type} activity in ${roundId}`);
     }
     const hasResultActivity = events.some((event) => event.type === "finding")

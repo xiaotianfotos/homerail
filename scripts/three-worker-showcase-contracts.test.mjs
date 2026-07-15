@@ -103,6 +103,22 @@ test("accepts a result-bearing completion when a real model skips explicit findi
   );
 });
 
+test("allows later supervised rounds to omit optional progress chatter", () => {
+  const entries = [
+    activity("systems_guide", "started", 10, "round-2"),
+    activity("systems_guide", "completed", 20, "round-2", { summary: "Updated verified route" }),
+  ];
+
+  assert.deepEqual(
+    activityRoundFailures(entries, ["systems_guide"], "round-2", {}, { require_progress: false }),
+    [],
+  );
+  assert.match(
+    activityRoundFailures(entries, ["systems_guide"], "round-2").join("; "),
+    /no progress activity/,
+  );
+});
+
 test("proves physical allocation, idle cleanup, and reprovision without leaking identities", () => {
   const rawEvents = EXPECTED_ACTOR_IDS.flatMap((nodeId, index) => [{
     type: "dag:provisioning_completed",

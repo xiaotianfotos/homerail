@@ -702,6 +702,7 @@ async function captureWaitingEvidence(input) {
         .filter((surface) => input.activity_actor_ids.includes(surface.actor_id))
         .map((surface) => [surface.actor_id, surface.generation]),
     ),
+    { require_progress: input.require_progress !== false },
   );
   const supervisorFailures = milestoneFailures(
     supervision.pages,
@@ -1002,6 +1003,7 @@ async function preparePhase(report, settingId, invocationPhase) {
     expected_ordinal: 2,
     target_actor_ids: [interventionActorId],
     activity_actor_ids: [interventionActorId],
+    require_progress: false,
     consumer_label: "post-intervention-waiting",
   });
   const branchFailures = branchIsolationFailures(
@@ -1052,6 +1054,7 @@ async function preparePhase(report, settingId, invocationPhase) {
     expected_ordinal: 3,
     target_actor_ids: EXPECTED_ACTOR_IDS,
     activity_actor_ids: EXPECTED_ACTOR_IDS,
+    require_progress: false,
     consumer_label: "manager-batch-waiting",
   });
   const coordinatedFailures = coldResumeGroupFailures(
@@ -1259,6 +1262,7 @@ async function resumePhase(report, state, invocationPhase) {
     expected_ordinal: state.prepared_round.ordinal,
     target_actor_ids: EXPECTED_ACTOR_IDS,
     activity_actor_ids: EXPECTED_ACTOR_IDS,
+    require_progress: false,
     consumer_label: `recovered-waiting-${invocationPhase}`,
   });
   assertFailures(
@@ -1293,6 +1297,7 @@ async function resumePhase(report, state, invocationPhase) {
     expected_ordinal: state.prepared_round.ordinal + 1,
     target_actor_ids: EXPECTED_ACTOR_IDS,
     activity_actor_ids: EXPECTED_ACTOR_IDS,
+    require_progress: false,
     consumer_label: "cold-resume-waiting",
   });
   const coldFailures = coldResumeGroupFailures(
