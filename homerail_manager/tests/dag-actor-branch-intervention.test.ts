@@ -342,10 +342,12 @@ describe("runtime-backed DAG actor branch intervention", () => {
 
   it("replaces the durable command fence when retrying an active later-round actor", () => {
     const runId = "intervention-round-command-fence";
+    const mission = "Retain this original mission across command retries.";
     const dispatcher = new ActorDispatcher();
-    createActiveRun(runId, multiRoundActorDag());
+    createActiveRun(runId, multiRoundActorDag(), { initialPrompt: mission });
     expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
     const initialEnvelope = dispatcher.dispatched.at(-1)!;
+    expect(initialEnvelope.inputs).toEqual({ prompt: [mission] });
     handoffActiveRun(runId, "research", "result", { summary: "round one" }, {
       transport: true,
       roundId: initialEnvelope.activity!.roundId,
@@ -374,6 +376,7 @@ describe("runtime-backed DAG actor branch intervention", () => {
       generation: 1,
       commandId: "round-two-command",
     });
+    expect(beforeRetry.inputs).toMatchObject({ prompt: [mission] });
 
     const intervention = interveneActiveRunActor(runId, {
       actor_id: "research",
@@ -392,6 +395,14 @@ describe("runtime-backed DAG actor branch intervention", () => {
       actorId: "research",
       generation: 2,
     });
+    expect(retryEnvelope.inputs).toMatchObject({
+      prompt: [mission],
+      intervention: [expect.objectContaining({
+        operation: "retry",
+        instruction: "Retry from the durable checkpoint.",
+      })],
+    });
+    expect(retryEnvelope.inputs.command).toBeUndefined();
     const replacementCommandId = retryEnvelope.activity?.commandId;
     expect(replacementCommandId).toMatch(/^command-[0-9a-f]{64}$/);
     expect(replacementCommandId).not.toBe("round-two-command");

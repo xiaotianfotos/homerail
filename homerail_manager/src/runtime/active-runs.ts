@@ -2991,6 +2991,27 @@ function _roundCarryoverInputs(
 ): Map<string, Array<{ fromNode: string; port: string; value: unknown }>> {
   const handoffs = loadRunSnapshot(run.runId)?.handoffs ?? [];
   const carryover = new Map<string, Array<{ fromNode: string; port: string; value: unknown }>>();
+  const initialPrompt = run.initialPrompt;
+  if (initialPrompt !== undefined && initialPrompt.trim().length > 0) {
+    const payload = _structuredGatewayValue(initialPrompt);
+    const targets = run.runInputTargets && run.runInputTargets.length > 0
+      ? run.runInputTargets
+      : run.dagRun.graph.nodes
+        .filter((node) => !run.dagRun.graph.edges.some((edge) =>
+          edge.to_node === node.node_id && edge.label === "after_dep"
+        ))
+        .map((node) => ({ node: node.node_id, port: "prompt" }));
+    for (const target of targets) {
+      if (!resetNodeIds.has(target.node)) continue;
+      const inputs = carryover.get(target.node) ?? [];
+      inputs.push({
+        fromNode: "$run.input",
+        port: target.port,
+        value: structuredClone(payload),
+      });
+      carryover.set(target.node, inputs);
+    }
+  }
   for (const edge of run.dagRun.graph.edges) {
     if (!edge.to_node || edge.label === "after_dep" || !resetNodeIds.has(edge.to_node) || resetNodeIds.has(edge.from_node)) {
       continue;
@@ -3009,6 +3030,15 @@ function _roundCarryoverInputs(
     carryover.set(edge.to_node, inputs);
   }
   return carryover;
+}
+
+function _ephemeralActorInputPorts(run: ActiveRun): Set<string> {
+  const ports = new Set(["command", "intervention", "checkpoint_resume"]);
+  for (const node of run.dagRun.graph.nodes) {
+    if (node.node_type !== "await_command_gateway") continue;
+    ports.add(node.gateway_config?.command_port || "command");
+  }
+  return ports;
 }
 
 function _branchInterventionResetNodeIds(run: ActiveRun, actorNodeId: string): string[] {
@@ -3040,9 +3070,11 @@ function _resetActorBranchForIntervention(input: {
   const previousMailbox = input.run.dagRun.mailboxes.get(input.actor.node_id);
   if (previousMailbox) {
     const actorCarryover = carryover.get(input.actor.node_id) ?? [];
+    const ephemeralPorts = _ephemeralActorInputPorts(input.run);
     for (const [port, values] of previousMailbox.entries()) {
-      if (port === "intervention" || port === "checkpoint_resume") continue;
-      for (const value of values) {
+      if (ephemeralPorts.has(port) || actorCarryover.some((entry) => entry.port === port)) continue;
+      const value = values.at(-1);
+      if (value !== undefined) {
         actorCarryover.push({ fromNode: "__previous_actor_input__", port, value });
       }
     }

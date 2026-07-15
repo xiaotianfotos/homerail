@@ -127,6 +127,48 @@ spec:
   return projectCanonicalWorkflowToParsedDAG(compilation.canonical);
 }
 
+function strictV1SeededMultiRoundDag() {
+  const compilation = compileWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata:
+  id: strict-seeded-multi-round-runtime
+  name: Strict Seeded Multi Round Runtime
+spec:
+  contracts:
+    Prompt:
+      type: string
+      minLength: 1
+  agents:
+    worker:
+      system: HANDOFF port=summary content=ok
+  nodes:
+    actor:
+      kind: agent
+      agent: worker
+      inputs:
+        mission: { contract: Prompt }
+        command: {}
+      outputs:
+        summary: {}
+    suspend:
+      kind: await_command
+      inputs:
+        summary: {}
+      config:
+        primitive_version: 1
+        target_actors: [actor]
+        command_port: command
+  edges:
+    - { from: $run.input, to: actor.mission }
+    - { from: actor.summary, to: suspend.summary }
+`);
+  if (!compilation.valid || !compilation.canonical) {
+    throw new Error(compilation.diagnostics.map((entry) => entry.message).join("\n"));
+  }
+  return projectCanonicalWorkflowToParsedDAG(compilation.canonical);
+}
+
 function fanInMultiRoundDag() {
   return parseDAGYaml(`
 name: multi-round-fan-in
@@ -295,6 +337,85 @@ describe("durable multi-round DAG runtime", () => {
         surfaceId: "actor:actor",
       },
       requiredCapabilities: [DAG_TRANSPORT_FENCE_CAPABILITY],
+    });
+  });
+
+  it("replays immutable run input on later rounds and after cold recovery without replaying stale commands", () => {
+    const runId = "strict-seeded-multi-round";
+    const mission = "PALQUERY_EVIDENCE: route 幻悦蝶 -> 阿努比斯";
+    const dispatcher = new RepeatableDispatcher();
+    upsertProvider({
+      id: "strict-seeded-test",
+      name: "Strict Seeded Test",
+      default_model: "test-model",
+      base_url: "http://127.0.0.1:9/v1",
+      anthropic_base_url: "http://127.0.0.1:9/anthropic",
+    });
+    createSetting({
+      provider_id: "strict-seeded-test",
+      endpoint_id: "strict-seeded-test-default",
+      endpoint_name: "default",
+      model_name: "test-model",
+      display_name: "Strict Seeded Test",
+      api_key: "test-only",
+      protocol: "custom",
+      plan_type: "custom",
+      base_url: "http://127.0.0.1:9/v1",
+      anthropic_base_url: "http://127.0.0.1:9/anthropic",
+      supports_llm: true,
+      is_active: true,
+      is_default: true,
+    });
+    createActiveRun(runId, strictV1SeededMultiRoundDag(), { initialPrompt: mission });
+
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(dispatcher.dispatched.at(-1)?.inputs).toEqual({ mission: [mission] });
+    handoffActiveRun(runId, "actor", "summary", { result: "round one" });
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(getActiveRun(runId)?.status).toBe("waiting");
+
+    resumeWaitingActiveRun(runId, {
+      expected_round_id: "round-0001",
+      commands: [{ actor_id: "actor", command_id: "seed-command-2", payload: "continue" }],
+    });
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(dispatcher.dispatched.at(-1)?.inputs).toEqual({
+      mission: [mission],
+      command: [{
+        command_id: "seed-command-2",
+        round_id: "round-0002",
+        actor_id: "actor",
+        payload: "continue",
+      }],
+    });
+    const roundTwoEnvelope = dispatcher.dispatched.at(-1)!;
+    handoffActiveRun(runId, "actor", "summary", { result: "round two" }, {
+      transport: true,
+      roundId: "round-0002",
+      actorId: "actor",
+      generation: 1,
+      leaseGeneration: roundTwoEnvelope.activity!.leaseGeneration,
+      commandId: "seed-command-2",
+    });
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(getActiveRun(runId)?.status).toBe("waiting");
+
+    _clearActiveRuns();
+    closeDb();
+    expect(recoverAllActiveRuns()).toMatchObject({ recovered: [runId] });
+    resumeWaitingActiveRun(runId, {
+      expected_round_id: "round-0002",
+      commands: [{ actor_id: "actor", command_id: "seed-command-3", payload: "one more" }],
+    });
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(dispatcher.dispatched.at(-1)?.inputs).toEqual({
+      mission: [mission],
+      command: [{
+        command_id: "seed-command-3",
+        round_id: "round-0003",
+        actor_id: "actor",
+        payload: "one more",
+      }],
     });
   });
 
