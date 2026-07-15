@@ -184,6 +184,7 @@
     "realtimeTitle": "实时模式：说话后自动发送",
     "assist": "辅助",
     "assistTitle": "辅助模式：语音转文字后手动发送",
+    "voice": "语音",
     "voiceInput": "语音输入",
     "send": "发送",
     "cleared": "已清空待发送内容"

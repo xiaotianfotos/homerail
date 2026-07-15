@@ -140,18 +140,16 @@ import {
   SlidersHorizontal,
   Sparkles,
   Volume2,
+  VolumeX,
   X
 } from 'lucide-vue-next'
 
 const store = useAgentStore()
 const { t, te } = useI18n()
 const { planLabel } = createProtocolLabels(t)
-// 新手引导配置状态检测（用于"模型配置"按钮的缺配提示）
+// 新手引导配置状态检测（作为独立状态入口，不阻断模型选择）
 const { status: onboardingStatus, refresh: refreshOnboarding } = useOnboardingStatus()
 const needsOnboardingHint = computed(() => onboardingStatus.value.needsOnboarding)
-const modelConfigButtonLabel = computed(() =>
-  needsOnboardingHint.value ? t('voice.model.incomplete') : t('voice.model.configuration')
-)
 const devOnboardingEntryVisible =
   import.meta.env.DEV && flagEnabled(import.meta.env.VITE_HOMERAIL_DEV_ONBOARDING_ENTRY)
 const generativeUiShadowPreviewRequested =
@@ -272,6 +270,8 @@ const codexTextSubmitting = ref(false)
 // 'assist' = ASR 流式转写填入 composer，由用户改完手动发送。
 const VOICE_INPUT_ASSIST_KEY = 'homerail.voice.input-assist'
 const voiceInputAssist = ref(loadBooleanSetting(VOICE_INPUT_ASSIST_KEY, false))
+const VOICE_OUTPUT_ENABLED_KEY = 'homerail.voice.output-enabled'
+const voiceOutputEnabled = ref(loadBooleanSetting(VOICE_OUTPUT_ENABLED_KEY, true))
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const fullscreenPromptVisible = ref(false)
 const fullscreenPromptDismissed = ref(false)
@@ -1095,15 +1095,15 @@ function isKimiCodeCompatibleSetting(setting: LLMSetting): boolean {
 }
 
 function toggleModelMenu(): void {
-  if (needsOnboardingHint.value) {
-    modelMenuOpen.value = false
-    store.openOnboarding()
-    return
-  }
   modelMenuOpen.value = !modelMenuOpen.value
   if (modelMenuOpen.value) {
     void loadCodexModelCatalog()
   }
+}
+
+function openRequiredOnboarding(): void {
+  modelMenuOpen.value = false
+  store.openOnboarding()
 }
 
 function closeModelMenuOnOutside(event: PointerEvent): void {
@@ -3014,6 +3014,12 @@ function toggleVoiceInputAssist(): void {
   saveBooleanSetting(VOICE_INPUT_ASSIST_KEY, voiceInputAssist.value)
 }
 
+function toggleVoiceOutput(): void {
+  voiceOutputEnabled.value = !voiceOutputEnabled.value
+  saveBooleanSetting(VOICE_OUTPUT_ENABLED_KEY, voiceOutputEnabled.value)
+  if (!voiceOutputEnabled.value) cancelLocalSpeech('voice_output_disabled')
+}
+
 function submitComposerDraft(): void {
   if (composerSubmitDisabled.value) return
   void submitCodexTextDraft()
@@ -3141,6 +3147,10 @@ async function submitDraft(force = false): Promise<void> {
 async function speak(text: string): Promise<void> {
   const clean = text.trim()
   if (!clean) return
+  if (!voiceOutputEnabled.value) {
+    recordTtsDebug('tts_output_disabled', `跳过已关闭的语音输出：${previewSpeechText(clean)}`)
+    return
+  }
   if (!tabCanUseVoiceOutput()) {
     recordTtsDebug('tts_tab_inactive', `跳过不可见标签页语音输出：${previewSpeechText(clean)}`, 'warning')
     return
@@ -3204,6 +3214,13 @@ async function speakText(text: string): Promise<void> {
 function enqueueSpeechEvent(event: VoiceSpeechEvent, source = 'stream'): boolean {
   const text = event.text?.trim()
   if (!text) return false
+  if (!voiceOutputEnabled.value) {
+    recordTtsDebug(
+      'tts_enqueue_skipped',
+      `source=${source} reason=output_disabled channel=${event.channel} text="${previewSpeechText(text)}"`
+    )
+    return false
+  }
   if (!tabCanUseVoiceOutput()) {
     recordTtsDebug(
       'tts_enqueue_skipped',
@@ -4654,20 +4671,15 @@ function summarizeTask(value: string): string {
         <div ref="modelMenuRef" class="voice-model-menu">
           <button
             class="voice-model-menu__button"
-            :class="{
-              'voice-model-menu__button--alert': needsOnboardingHint
-            }"
             type="button"
             data-testid="voice-model-config-button"
             :aria-expanded="modelMenuOpen"
             aria-haspopup="menu"
             @click="toggleModelMenu"
           >
-            <AlertTriangle v-if="needsOnboardingHint" class="h-4 w-4" />
-            <SlidersHorizontal v-else class="h-4 w-4" />
-            <span>{{ modelConfigButtonLabel }}</span>
+            <SlidersHorizontal class="h-4 w-4" />
+            <span>{{ t('voice.model.configuration') }}</span>
             <ChevronDown
-              v-if="!needsOnboardingHint"
               class="h-4 w-4 transition-transform"
               :class="modelMenuOpen ? 'rotate-180' : ''"
             />
@@ -4884,6 +4896,17 @@ function summarizeTask(value: string): string {
             </div>
           </div>
         </div>
+        <button
+          v-if="needsOnboardingHint"
+          class="voice-model-menu__button voice-model-menu__button--alert"
+          type="button"
+          data-testid="voice-onboarding-status-button"
+          :title="t('voice.state.onboardingRequired')"
+          @click="openRequiredOnboarding"
+        >
+          <AlertTriangle class="h-4 w-4" />
+          <span>{{ t('voice.model.incomplete') }}</span>
+        </button>
         <button
           v-if="devOnboardingEntryVisible"
           class="voice-runtime-pill voice-runtime-pill--dev-onboarding flex h-9 items-center gap-2 rounded-full border border-amber-300/24 bg-amber-300/10 px-3 text-xs text-amber-100 transition-colors hover:bg-amber-300/16 hover:text-white"
@@ -5377,26 +5400,45 @@ function summarizeTask(value: string): string {
               data-testid="voice-composer"
               @submit.prevent="submitComposerDraft"
             >
-              <div class="voice-composer__mode" role="group" :aria-label="t('voice.composer.modeLabel')">
+              <div class="voice-composer__preferences">
+                <div class="voice-composer__mode" role="group" :aria-label="t('voice.composer.modeLabel')">
+                  <button
+                    type="button"
+                    class="voice-composer__mode-btn"
+                    :class="{ 'voice-composer__mode-btn--active': !voiceInputAssist }"
+                    :disabled="!voiceInputAssist"
+                    :title="t('voice.composer.realtimeTitle')"
+                    @click="voiceInputAssist ? toggleVoiceInputAssist() : undefined"
+                  >
+                    {{ t('voice.composer.realtime') }}
+                  </button>
+                  <button
+                    type="button"
+                    class="voice-composer__mode-btn"
+                    :class="{ 'voice-composer__mode-btn--active': voiceInputAssist }"
+                    :disabled="voiceInputAssist"
+                    :title="t('voice.composer.assistTitle')"
+                    @click="voiceInputAssist ? undefined : toggleVoiceInputAssist()"
+                  >
+                    {{ t('voice.composer.assist') }}
+                  </button>
+                </div>
                 <button
                   type="button"
-                  class="voice-composer__mode-btn"
-                  :class="{ 'voice-composer__mode-btn--active': !voiceInputAssist }"
-                  :disabled="!voiceInputAssist"
-                  :title="t('voice.composer.realtimeTitle')"
-                  @click="voiceInputAssist ? toggleVoiceInputAssist() : undefined"
+                  class="voice-composer__output-toggle"
+                  :class="{
+                    'voice-composer__output-toggle--enabled': voiceOutputEnabled
+                  }"
+                  data-testid="voice-output-toggle"
+                  :data-state="voiceOutputEnabled ? 'on' : 'off'"
+                  :aria-pressed="voiceOutputEnabled"
+                  :aria-label="t('voice.composer.voice')"
+                  :title="t('voice.composer.voice')"
+                  @click="toggleVoiceOutput"
                 >
-                  {{ t('voice.composer.realtime') }}
-                </button>
-                <button
-                  type="button"
-                  class="voice-composer__mode-btn"
-                  :class="{ 'voice-composer__mode-btn--active': voiceInputAssist }"
-                  :disabled="voiceInputAssist"
-                  :title="t('voice.composer.assistTitle')"
-                  @click="voiceInputAssist ? undefined : toggleVoiceInputAssist()"
-                >
-                  {{ t('voice.composer.assist') }}
+                  <Volume2 v-if="voiceOutputEnabled" class="h-3.5 w-3.5" />
+                  <VolumeX v-else class="h-3.5 w-3.5" />
+                  <span>{{ t('voice.composer.voice') }}</span>
                 </button>
               </div>
               <div class="voice-composer__row">
@@ -7790,6 +7832,13 @@ function summarizeTask(value: string): string {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.voice-composer__preferences {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .voice-composer__mode-btn {
   min-width: 56px;
   padding: 5px 14px;
@@ -7813,6 +7862,36 @@ function summarizeTask(value: string): string {
 
 .voice-composer__mode-btn:disabled {
   cursor: default;
+}
+
+.voice-composer__output-toggle {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 5px 11px;
+  color: rgba(236, 254, 255, 0.48);
+  font-size: 12px;
+  font-weight: 720;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.voice-composer__output-toggle:hover {
+  border-color: rgba(103, 232, 249, 0.28);
+  background: rgba(103, 232, 249, 0.08);
+  color: rgba(236, 254, 255, 0.86);
+}
+
+.voice-composer__output-toggle--enabled {
+  border-color: rgba(45, 212, 191, 0.3);
+  background: rgba(13, 148, 136, 0.16);
+  color: rgba(204, 251, 241, 0.94);
 }
 
 .voice-composer__row {

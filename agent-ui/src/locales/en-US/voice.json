@@ -184,6 +184,7 @@
     "realtimeTitle": "Live mode: send automatically after speaking",
     "assist": "Assist",
     "assistTitle": "Assist mode: transcribe, edit, then send manually",
+    "voice": "Voice",
     "voiceInput": "Voice input",
     "send": "Send",
     "cleared": "Pending input cleared"
