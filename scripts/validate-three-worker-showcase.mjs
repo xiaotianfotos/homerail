@@ -952,6 +952,7 @@ async function preparePhase(report, settingId, invocationPhase) {
     expected_ordinal: 1,
     target_actor_ids: EXPECTED_ACTOR_IDS,
     activity_actor_ids: EXPECTED_ACTOR_IDS,
+    require_progress: false,
     consumer_label: "initial-waiting",
   });
   report.phase_evidence.prepare = { initial_waiting: initial.report };
