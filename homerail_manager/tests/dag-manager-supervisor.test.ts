@@ -15,7 +15,7 @@ import {
   getDagActor,
   registerDagActor,
 } from "../src/persistence/dag-actors.js";
-import { closeDb } from "../src/persistence/db.js";
+import { closeDb, getDb } from "../src/persistence/db.js";
 import { createInitialDagRunRound } from "../src/persistence/dag-run-rounds.js";
 import { ensureRunDir } from "../src/persistence/store.js";
 import { createServer } from "../src/server/http.js";
@@ -294,16 +294,28 @@ describe("DAG Manager Supervisor", () => {
   it("finds current-round results beyond long historical progress chatter", () => {
     const runId = "supervisor-long-history";
     setupRun(runId, ["research"]);
-    for (let sequence = 2; sequence <= 2_005; sequence += 1) {
-      append({
-        run_id: runId,
-        actor_id: "research",
-        round_id: "historical-round",
-        sequence,
-        type: "progress",
-      });
-    }
-    append({ run_id: runId, actor_id: "research", sequence: 2_006, type: "completed" });
+    getDb().transaction(() => {
+      for (let actorIndex = 0; actorIndex < 32; actorIndex += 1) {
+        registerDagActor({
+          run_id: runId,
+          actor_id: `historical-${actorIndex}`,
+          node_id: `node-historical-${actorIndex}`,
+          role: "historical specialist",
+          surface_id: `surface:historical-${actorIndex}`,
+        });
+      }
+      for (let index = 0; index < 2_004; index += 1) {
+        const actorIndex = index % 32;
+        append({
+          run_id: runId,
+          actor_id: `historical-${actorIndex}`,
+          round_id: "historical-round",
+          sequence: Math.floor(index / 32) + 1,
+          type: "progress",
+        });
+      }
+    }).immediate();
+    append({ run_id: runId, actor_id: "research", sequence: 2, type: "completed" });
 
     const snapshot = getDagSupervisionSnapshot({ run_id: runId, consumer_id: "long-history-reader" });
     expect(snapshot.round_summary).toMatchObject({
