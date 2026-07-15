@@ -30,7 +30,6 @@ export const DEFAULT_MANAGER_AGENT_API_SCOPES = Object.freeze([
   "GET:/api/projects",
   "GET:/api/runs/*/actors",
   "GET:/api/runs/*/status",
-  "GET:/api/runs/*/supervision",
   "GET:/api/skills",
   "GET:/api/skills/*",
   "POST:/api/dag/patterns/*/instantiate",
