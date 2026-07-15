@@ -451,13 +451,13 @@ describe("HomeRail plugin project SDK", () => {
     expect(() => generatePluginTypes(root, { check: true })).toThrow(/output parent must not be a symbolic link/);
     expect(fs.readdirSync(outside)).toEqual([]);
 
-    fs.rmSync(path.join(root, ".homerail"));
+    fs.unlinkSync(path.join(root, ".homerail"));
     fs.mkdirSync(path.join(root, ".homerail"));
     fs.symlinkSync(outside, path.join(root, ".homerail", "generated"), "dir");
     expect(() => generatePluginTypes(root)).toThrow(/output parent must not be a symbolic link/);
     expect(fs.readdirSync(outside)).toEqual([]);
 
-    fs.rmSync(path.join(root, ".homerail", "generated"));
+    fs.unlinkSync(path.join(root, ".homerail", "generated"));
     fs.writeFileSync(path.join(root, ".homerail", "generated"), "not a directory");
     expect(() => generatePluginTypes(root)).toThrow(/output parent must be a directory/);
   });
@@ -508,7 +508,7 @@ describe("HomeRail plugin project SDK", () => {
     fs.symlinkSync(path.join(outside, "schemas"), path.join(root, "schemas"), "dir");
     expect(() => scanPluginSource(root)).toThrow(/traverses a symlink/);
 
-    fs.rmSync(path.join(root, "schemas"));
+    fs.unlinkSync(path.join(root, "schemas"));
     fs.renameSync(path.join(outside, "schemas"), path.join(root, "schemas"));
     fs.renameSync(path.join(root, "homerail.plugin.json"), path.join(outside, "manifest.json"));
     fs.symlinkSync(path.join(outside, "manifest.json"), path.join(root, "homerail.plugin.json"), "file");
