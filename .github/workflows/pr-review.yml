@@ -66,31 +66,22 @@ jobs:
       - name: Resolve immutable review input
         id: input
         env:
-          EVENT_NAME: ${{ github.event_name }}
           EVENT_REPO: ${{ github.repository }}
-          EVENT_PR: ${{ github.event.pull_request.number }}
-          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
-          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
-          EVENT_TITLE: ${{ github.event.pull_request.title }}
-          EVENT_AUTHOR: ${{ github.event.pull_request.user.login }}
-          MANUAL_REPO: ${{ inputs.repo }}
-          MANUAL_PR: ${{ inputs.pr }}
-          MANUAL_BASE: ${{ inputs.base }}
-          MANUAL_HEAD: ${{ inputs.head }}
+          INPUT_REPO: ${{ inputs.repo }}
+          INPUT_PR: ${{ inputs.pr }}
+          INPUT_BASE: ${{ inputs.base }}
+          INPUT_HEAD: ${{ inputs.head }}
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs'
-          const manual = process.env.EVENT_NAME === 'workflow_dispatch'
           const input = {
-            repo: (manual && process.env.MANUAL_REPO) || process.env.EVENT_REPO,
-            pr: Number((manual && process.env.MANUAL_PR) || process.env.EVENT_PR),
+            repo: process.env.INPUT_REPO || process.env.EVENT_REPO,
+            pr: Number(process.env.INPUT_PR),
           }
-          const base = (manual && process.env.MANUAL_BASE) || process.env.EVENT_BASE
-          const head = (manual && process.env.MANUAL_HEAD) || process.env.EVENT_HEAD
+          const base = process.env.INPUT_BASE
+          const head = process.env.INPUT_HEAD
           if (base) input.base = base
           if (head) input.head = head
-          if (!manual && process.env.EVENT_TITLE) input.title = process.env.EVENT_TITLE
-          if (!manual && process.env.EVENT_AUTHOR) input.author = process.env.EVENT_AUTHOR
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `json=${JSON.stringify(input)}\n`)
           NODE
 

@@ -539,15 +539,16 @@ describe("PR Review scenario assets", () => {
     }
   });
 
-  it("keeps the GitHub adapter thin, truthful, and off untrusted fork PRs", () => {
+  it("keeps the manual GitHub adapter thin and truthful", () => {
     const workflow = fs.readFileSync(path.resolve(process.cwd(), "..", ".github", "workflows", "pr-review.yml"), "utf8");
     const runner = fs.readFileSync(path.resolve(process.cwd(), "..", "scripts", "run-dag-patterns-live-runner.sh"), "utf8");
     const reviewRunner = fs.readFileSync(path.resolve(process.cwd(), "..", "scripts", "run-pr-review-live-runner.sh"), "utf8");
     const parsed = parseYaml(workflow) as { jobs: { review: { env: Record<string, string>; steps: Array<{ name: string; env?: Record<string, string> }> } } };
-    expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).not.toContain("pull_request:");
     expect(workflow).not.toContain("pull_request_target:");
-    expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
+    expect(workflow).not.toContain("github.event.pull_request");
+    expect(workflow).toContain("github.event_name == 'workflow_dispatch'");
     expect(workflow).not.toContain("continue-on-error: true");
     expect(workflow).toContain("bash scripts/run-pr-review-live-runner.sh");
     expect(workflow).toContain("npm run build:packages");
