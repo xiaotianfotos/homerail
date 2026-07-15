@@ -12,6 +12,7 @@ import { jsonSchemaObjectToZodRawShape } from "./json-schema-zod.js";
 import { sanitizedAgentChildEnv } from "./child-env.js";
 
 const HANDOFF_ONLY_THINKING_BUDGET = 2048;
+const HANDOFF_STOP = Symbol("claude-sdk-handoff-stop");
 
 interface SdkModule {
   query(params: {
@@ -195,6 +196,10 @@ export class ClaudeSdkAdapter implements AgentClient {
     let stderrTail = "";
     let externalAbortHandler: (() => void) | null = null;
     let handoffStopRequested = false;
+    let resolveHandoffStop: (() => void) | null = null;
+    const handoffStop = new Promise<typeof HANDOFF_STOP>((resolve) => {
+      resolveHandoffStop = () => resolve(HANDOFF_STOP);
+    });
     const appendStderr = (chunk: string): void => {
       stderrTail = `${stderrTail}${chunk}`.slice(-4000);
     };
@@ -262,7 +267,7 @@ export class ClaudeSdkAdapter implements AgentClient {
               handoffStopRequested = true;
               // Return the MCP result before closing a provider stream that may
               // otherwise wait forever after a successful terminal handoff.
-              setImmediate(() => abortController.abort());
+              setImmediate(() => resolveHandoffStop?.());
             }
             return {
               content: [{ type: "text" as const, text: res.content.map((c) => c.text).join("") }],
@@ -323,10 +328,23 @@ export class ClaudeSdkAdapter implements AgentClient {
         while (true) {
           const next = await Promise.race([
             iterator.next(),
+            handoffStop,
             transportGuard.promise.then((err) => {
               throw err;
             }),
           ]);
+          if (next === HANDOFF_STOP) {
+            abortController.abort();
+            yield {
+              type: "debug",
+              source: "claude-sdk",
+              message: "query_stopped_after_handoff",
+              data: {
+                stderr_tail: stderrTail.trim().slice(-2000) || null,
+              },
+            };
+            break;
+          }
           if (next.done) break;
           const msg = next.value;
         messageCount += 1;

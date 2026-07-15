@@ -713,6 +713,7 @@ describe("ClaudeSdkAdapter", () => {
   });
 
   it("stops a provider stream after a successful terminal handoff", async () => {
+    let capturedAbortController: AbortController | undefined;
     const toolDef: DagToolDefinition = {
       name: "handoff",
       description: "handoff tool",
@@ -726,13 +727,8 @@ describe("ClaudeSdkAdapter", () => {
           tools: Array<{ handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown> }>;
         }>)["dag-tools"];
         await server.tools[0].handler({}, {});
-        const controller = params.options?.abortController as AbortController;
-        if (!controller.signal.aborted) {
-          await new Promise<void>((resolve) => {
-            controller.signal.addEventListener("abort", () => resolve(), { once: true });
-          });
-        }
-        throw new Error("AbortError: query stopped");
+        capturedAbortController = params.options?.abortController as AbortController;
+        await new Promise(() => {});
       },
       createSdkMcpServer(opts: { name: string; tools?: Array<Record<string, unknown>> }) {
         return { type: "sdk", name: opts.name, tools: opts.tools ?? [] };
@@ -758,6 +754,7 @@ describe("ClaudeSdkAdapter", () => {
     }));
     expect(events.some((event) => event.type === "error")).toBe(false);
     expect(events.at(-1)?.type).toBe("done");
+    expect(capturedAbortController?.signal.aborted).toBe(true);
   });
 
   it("converts DAG JSON schema to Claude SDK Zod raw shape", () => {
