@@ -1568,6 +1568,16 @@ export function failActiveRun(runId: string, nodeId: string, reason: string): Ac
   writeRunMetadata(runId, serializeRunMetadata(run));
   _emitNodeStateChanges(run, before);
   emit("dag:node_failed", { runId, nodeId, reason });
+  const isDynamicFanoutChild = node?.extra?.dynamic_fanout !== undefined;
+  const terminalFailureRoute = !isDynamicFanoutChild && run.dagRun.graph.edges.some((edge) =>
+    edge.from_node === nodeId &&
+    edge.to_node === "" &&
+    (edge.terminal_outcome === "failure" ||
+      (edge.terminal_outcome === undefined && isFailurePort(edge.from_port)))
+  );
+  if (terminalFailureRoute) {
+    return abortActiveRun(runId, reason);
+  }
   if (node) {
     _recordFanoutChild(run, node, "failed", {
       status: "failed",

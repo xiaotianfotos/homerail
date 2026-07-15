@@ -25,31 +25,182 @@ import {
 } from "../src/runtime/active-runs.js";
 
 const ACTOR_IDS = ["goal_scout", "session_coach", "systems_guide"] as const;
-const FILE = path.resolve(
-  process.cwd(),
-  "..",
-  "assets",
-  "orchestrations",
-  "three-worker-game-copilot.yaml.template",
-);
-const SOURCE = fs.readFileSync(FILE, "utf8");
+const SOURCE = `api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: test-three-actor-supervised
+  name: Test Three-Actor Supervised Workflow
+
+spec:
+  contracts:
+    Prompt:
+      type: string
+      minLength: 1
+      maxLength: 24000
+    ActorReport:
+      type: object
+      additionalProperties: false
+      required: [actor, status]
+      properties:
+        actor:
+          type: string
+          enum: [goal_scout, systems_guide, session_coach]
+        status:
+          type: string
+          enum: [ready, blocked]
+    Failure:
+      type: object
+      additionalProperties: true
+      required: [error]
+      properties:
+        error: { type: string }
+    RoundGate:
+      type: object
+      additionalProperties: false
+      required: [mode, total, successes, failures, threshold, passed, values]
+      properties:
+        mode: { type: string, const: all }
+        total: { type: integer, const: 3 }
+        successes: { type: integer, minimum: 0, maximum: 3 }
+        failures: { type: integer, minimum: 0, maximum: 3 }
+        threshold: { type: integer, const: 3 }
+        passed: { type: boolean }
+        values:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { type: object }
+
+  agents:
+    goal_scout:
+      description: Extracts the exact objective and constraints.
+      system: |
+        Own the objective and constraints. Call report_activity with type progress,
+        then report_activity with type finding. Apply any command envelope on the
+        same responsibility. Call handoff exactly once on port report with only
+        actor and status.
+    systems_guide:
+      description: Evaluates options and tradeoffs.
+      system: |
+        Own options and tradeoffs. Call report_activity with type progress, then
+        report_activity with type finding. Apply any command envelope on the same
+        responsibility. Call handoff exactly once on port report with only actor
+        and status.
+    session_coach:
+      description: Turns the result into an action sequence.
+      system: |
+        Own the action sequence. Call report_activity with type progress, then
+        report_activity with type finding. Apply any command envelope on the same
+        responsibility. Call handoff exactly once on port report with only actor
+        and status.
+
+  nodes:
+    goal_scout:
+      kind: agent
+      agent: goal_scout
+      allowed_builtin_tools: []
+      allowed_dag_tools: [report_activity, handoff]
+      inputs:
+        mission: { contract: Prompt }
+        command: {}
+      outputs:
+        report: { contract: ActorReport }
+        failed: { contract: Failure }
+    systems_guide:
+      kind: agent
+      agent: systems_guide
+      allowed_builtin_tools: []
+      allowed_dag_tools: [report_activity, handoff]
+      inputs:
+        mission: { contract: Prompt }
+        command: {}
+      outputs:
+        report: { contract: ActorReport }
+        failed: { contract: Failure }
+    session_coach:
+      kind: agent
+      agent: session_coach
+      allowed_builtin_tools: []
+      allowed_dag_tools: [report_activity, handoff]
+      inputs:
+        mission: { contract: Prompt }
+        command: {}
+      outputs:
+        report: { contract: ActorReport }
+        failed: { contract: Failure }
+    collect_round:
+      kind: join
+      inputs:
+        goals: { contract: ActorReport }
+        systems: { contract: ActorReport }
+        session: { contract: ActorReport }
+      outputs:
+        ready: { contract: RoundGate }
+        blocked: { contract: RoundGate }
+      config:
+        mode: all
+        field: status
+        success_values: [ready]
+        passed_port: ready
+        failed_port: blocked
+    wait_for_command:
+      kind: await_command
+      inputs:
+        ready: { contract: RoundGate }
+        blocked: { contract: RoundGate }
+      config:
+        primitive_version: 1
+        target_actors: [goal_scout, systems_guide, session_coach]
+        command_port: command
+    goal_scout_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: { contract: Failure } }
+    systems_guide_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: { contract: Failure } }
+    session_coach_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: { contract: Failure } }
+
+  edges:
+    - { from: $run.input, to: goal_scout.mission }
+    - { from: $run.input, to: systems_guide.mission }
+    - { from: $run.input, to: session_coach.mission }
+    - { from: goal_scout.report, to: collect_round.goals }
+    - { from: systems_guide.report, to: collect_round.systems }
+    - { from: session_coach.report, to: collect_round.session }
+    - { from: collect_round.ready, to: wait_for_command.ready }
+    - { from: collect_round.blocked, to: wait_for_command.blocked }
+    - { from: goal_scout.failed, to: goal_scout_failed.result, condition: on_failure }
+    - { from: systems_guide.failed, to: systems_guide_failed.result, condition: on_failure }
+    - { from: session_coach.failed, to: session_coach_failed.result, condition: on_failure }
+
+  policies:
+    max_nodes: 8
+    max_edges: 11
+    max_parallelism: 3
+    max_dispatches: 120
+    max_handoffs: 120
+    max_tool_calls_per_node: 60
+    max_corrections_per_node: 3
+`;
 
 type ActorId = (typeof ACTOR_IDS)[number];
 
 interface ActorReport {
   actor: ActorId;
   status: "ready" | "blocked";
-  headline: string;
-  findings: Array<{ title: string; detail: string }>;
-  next_actions: string[];
-  assumptions: string[];
 }
 
 class ActorDispatcher implements DAGDispatcher {
   readonly dispatched: DispatchEnvelope[] = [];
 
   dispatch(envelope: DispatchEnvelope): DispatchResult {
-    if (!envelope.activity) throw new Error("showcase dispatch is missing logical Actor identity");
+    if (!envelope.activity) throw new Error("test dispatch is missing logical Actor identity");
     const lease = acquireDagActorLease({
       run_id: envelope.runId,
       actor_id: envelope.activity.actorId,
@@ -82,20 +233,13 @@ function runtimeAsset() {
   return parsed;
 }
 
-function report(actor: ActorId, headline = `${actor} is ready`): ActorReport {
-  return {
-    actor,
-    status: "ready",
-    headline,
-    findings: [{ title: `${actor} finding`, detail: `Useful evidence from ${actor}` }],
-    next_actions: [`Use the ${actor} recommendation`],
-    assumptions: [],
-  };
+function report(actor: ActorId): ActorReport {
+  return { actor, status: "ready" };
 }
 
 function handoffReport(runId: string, envelope: DispatchEnvelope, content: ActorReport): void {
   const activity = envelope.activity;
-  if (!activity?.leaseGeneration) throw new Error("showcase dispatch is missing its Actor lease");
+  if (!activity?.leaseGeneration) throw new Error("test dispatch is missing its Actor lease");
   handoffActiveRun(runId, envelope.nodeId, "report", content, {
     transport: true,
     roundId: activity.roundId,
@@ -106,13 +250,13 @@ function handoffReport(runId: string, envelope: DispatchEnvelope, content: Actor
   });
 }
 
-describe("three-Worker game copilot showcase asset", () => {
+describe("generic three-Actor supervised workflow", () => {
   let previousHome: string | undefined;
   let home: string;
 
   beforeEach(() => {
     previousHome = process.env.HOMERAIL_HOME;
-    home = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-three-worker-showcase-"));
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-three-actor-test-"));
     process.env.HOMERAIL_HOME = home;
     closeDb();
     _clearActiveRuns();
@@ -136,21 +280,20 @@ describe("three-Worker game copilot showcase asset", () => {
     expect(result).toMatchObject({
       source_api_version: "homerail.ai/v1",
       summary: {
-        workflow_id: "three-worker-game-copilot",
-        node_count: 5,
-        edge_count: 8,
+        workflow_id: "test-three-actor-supervised",
+        node_count: 8,
+        edge_count: 11,
         entry_nodes: [...ACTOR_IDS],
-        terminal_nodes: [],
+        terminal_nodes: ["goal_scout_failed", "session_coach_failed", "systems_guide_failed"],
       },
     });
     expect(result.canonical?.contracts.ActorReport).toMatchObject({
       type: "object",
       additionalProperties: false,
-      required: ["actor", "status", "headline", "findings", "next_actions", "assumptions"],
+      required: ["actor", "status"],
       properties: {
         actor: { enum: ["goal_scout", "systems_guide", "session_coach"] },
         status: { enum: ["ready", "blocked"] },
-        findings: { minItems: 1, maxItems: 6 },
       },
     });
     expect(result.canonical?.contracts.RoundGate).toMatchObject({
@@ -178,7 +321,10 @@ describe("three-Worker game copilot showcase asset", () => {
           { name: "mission", contract: "Prompt" },
           { name: "command" },
         ]),
-        outputs: [{ name: "report", contract: "ActorReport" }],
+        outputs: [
+          { name: "failed", contract: "Failure" },
+          { name: "report", contract: "ActorReport" },
+        ],
         config: {
           allowed_builtin_tools: [],
           allowed_dag_tools: ["handoff", "report_activity"],
@@ -187,7 +333,7 @@ describe("three-Worker game copilot showcase asset", () => {
       const system = canonical.agents[actorId]?.system ?? "";
       expect(system).toContain("report_activity with type progress");
       expect(system).toContain("report_activity with type finding");
-      expect(system).toContain("structured\ncommand envelope on command");
+      expect(system).toContain("command envelope");
       expect(system).toContain("Call handoff exactly once on port report");
     }
     expect(nodes.get("collect_round")).toMatchObject({
@@ -218,23 +364,26 @@ describe("three-Worker game copilot showcase asset", () => {
         "$run.input->systems_guide.mission",
         "$run.input->session_coach.mission",
         "goal_scout.report->collect_round.goals",
+        "goal_scout.failed->goal_scout_failed.result",
         "systems_guide.report->collect_round.systems",
+        "systems_guide.failed->systems_guide_failed.result",
         "session_coach.report->collect_round.session",
+        "session_coach.failed->session_coach_failed.result",
         "collect_round.ready->wait_for_command.ready",
         "collect_round.blocked->wait_for_command.blocked",
       ].sort());
   });
 
   it("fans in to waiting and reruns only a commanded Actor with frozen sibling reports", () => {
-    const runId = "three-worker-showcase-runtime";
+    const runId = "three-actor-supervised-runtime";
     const dispatcher = new ActorDispatcher();
     const executor = new GraphExecutor(dispatcher);
-    executor.createRun(runId, runtimeAsset(), "Plan a friendly two-hour co-op session");
+    executor.createRun(runId, runtimeAsset(), "Compare three perspectives on one objective");
 
     expect(executor.tick(runId)).toBe(3);
     expect(dispatcher.dispatched.map((entry) => entry.nodeId).sort()).toEqual([...ACTOR_IDS]);
     expect(dispatcher.dispatched.every((entry) => (
-      entry.inputs.mission?.[0] === "Plan a friendly two-hour co-op session"
+      entry.inputs.mission?.[0] === "Compare three perspectives on one objective"
       && entry.allowedBuiltinTools?.length === 0
       && entry.allowedDagTools?.join(",") === "handoff,report_activity"
     ))).toBe(true);
@@ -265,7 +414,7 @@ describe("three-Worker game copilot showcase asset", () => {
         actor_id: "systems_guide",
         command_id: "systems-focus-round-2",
         idempotency_key: "systems-focus-round-2-v1",
-        payload: { focus: "Prefer the lower-risk route and explain the tradeoff" },
+        payload: { focus: "Prefer the lower-risk option and explain the tradeoff" },
       }],
     });
     expect(resumed).toMatchObject({
@@ -293,11 +442,11 @@ describe("three-Worker game copilot showcase asset", () => {
           command_id: "systems-focus-round-2",
           round_id: "round-0002",
           actor_id: "systems_guide",
-          payload: { focus: "Prefer the lower-risk route and explain the tradeoff" },
+          payload: { focus: "Prefer the lower-risk option and explain the tradeoff" },
         }],
       },
     });
-    handoffReport(runId, commanded, report("systems_guide", "Lower-risk route refreshed"));
+    handoffReport(runId, commanded, report("systems_guide"));
     expect(executor.tick(runId)).toBe(2);
 
     const joined = loadRunSnapshot(runId)?.handoffs
@@ -307,9 +456,9 @@ describe("three-Worker game copilot showcase asset", () => {
       successes: 3,
       passed: true,
       values: expect.arrayContaining([
-        expect.objectContaining({ actor: "goal_scout", headline: "goal_scout is ready" }),
-        expect.objectContaining({ actor: "session_coach", headline: "session_coach is ready" }),
-        expect.objectContaining({ actor: "systems_guide", headline: "Lower-risk route refreshed" }),
+        expect.objectContaining({ actor: "goal_scout", status: "ready" }),
+        expect.objectContaining({ actor: "session_coach", status: "ready" }),
+        expect.objectContaining({ actor: "systems_guide", status: "ready" }),
       ]),
     });
     expect(getActiveRun(runId)).toMatchObject({

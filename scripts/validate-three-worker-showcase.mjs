@@ -3,17 +3,14 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { observeRunProgress } from "./live-run-progress.mjs";
 import {
   DEFAULT_INTERVENTION_ACTOR_ID,
   EXPECTED_ACTOR_IDS,
   SHOWCASE_PROFILE_ID,
-  SHOWCASE_PROMPT,
   SHOWCASE_SCENARIO,
   SHOWCASE_STATE_SCHEMA_VERSION,
-  SHOWCASE_WORKFLOW_ID,
   activityConcurrencyEvidence,
   activityRoundFailures,
   actorSnapshotEvidence,
@@ -43,10 +40,6 @@ import {
   waitingRoundFailures,
 } from "./three-worker-showcase-contracts.mjs";
 
-const ASSET_PATH = fileURLToPath(new URL(
-  "../assets/orchestrations/three-worker-game-copilot.yaml.template",
-  import.meta.url,
-));
 const DEFAULT_HOME = process.env.HOMERAIL_HOME || path.join(os.homedir(), ".homerail");
 const DEFAULT_VALIDATION_DIR = path.join(DEFAULT_HOME, "validation");
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
@@ -71,6 +64,8 @@ function usage() {
     "  --state-file PATH                Durable phase state JSON (alias: --state)",
     "  --output PATH                    Sanitized acceptance report JSON",
     "  --restart-evidence PATH          Sanitized Manager-only restart assertion JSON",
+    "  --asset PATH                     External Workflow asset; env HOMERAIL_SHOWCASE_ASSET",
+    "  --prompt-file PATH               UTF-8 mission; env HOMERAIL_SHOWCASE_PROMPT",
     `  --profile-id ID                  Default: ${SHOWCASE_PROFILE_ID}`,
     `  --intervention-actor ID          Default: ${DEFAULT_INTERVENTION_ACTOR_ID}`,
     "  --stall-timeout-ms N             No-progress timeout; 0 disables stall detection",
@@ -92,6 +87,8 @@ function parseArgs(argv) {
     "state-file",
     "output",
     "restart-evidence",
+    "asset",
+    "prompt-file",
     "profile-id",
     "intervention-actor",
     "stall-timeout-ms",
@@ -142,6 +139,15 @@ const requestedSettingId = cli["setting-id"] ?? process.env.HOMERAIL_PATTERN_SET
 const expectedModel = cli["expected-model"] ?? process.env.HOMERAIL_PATTERN_EXPECTED_MODEL ?? "";
 const profileId = cli["profile-id"] ?? SHOWCASE_PROFILE_ID;
 const interventionActorId = cli["intervention-actor"] ?? DEFAULT_INTERVENTION_ACTOR_ID;
+const assetPath = (cli.asset || process.env.HOMERAIL_SHOWCASE_ASSET)
+  ? path.resolve(cli.asset ?? process.env.HOMERAIL_SHOWCASE_ASSET)
+  : "";
+const promptFilePath = cli["prompt-file"]
+  ? path.resolve(cli["prompt-file"])
+  : "";
+const showcasePrompt = promptFilePath
+  ? fs.readFileSync(promptFilePath, "utf8").trim()
+  : (process.env.HOMERAIL_SHOWCASE_PROMPT ?? "").trim();
 const statePath = path.resolve(
   cli["state-file"]
     ?? process.env.HOMERAIL_THREE_WORKER_STATE_FILE
@@ -172,10 +178,19 @@ const pollIntervalMs = parseIntegerOption(
 );
 const mutationToken = process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? "";
 const managerAdminToken = process.env.HOMERAIL_MANAGER_ADMIN_TOKEN ?? "";
-const redactionSecrets = [mutationToken, managerAdminToken, baseUrl];
+const redactionSecrets = [mutationToken, managerAdminToken, baseUrl, assetPath, promptFilePath, showcasePrompt];
 
 if ((phase === "all" || phase === "prepare") && !requestedSettingId) {
   throw new Error("Missing --setting-id or HOMERAIL_PATTERN_SETTING_ID.");
+}
+if (phase === "all" || phase === "prepare") {
+  if (!assetPath || !fs.statSync(assetPath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error("Missing external --asset or HOMERAIL_SHOWCASE_ASSET Workflow file.");
+  }
+  if (!showcasePrompt) {
+    throw new Error("Missing --prompt-file or HOMERAIL_SHOWCASE_PROMPT mission.");
+  }
+  if (showcasePrompt.length > 24_000) throw new Error("Showcase mission exceeds 24000 characters.");
 }
 if (!EXPECTED_ACTOR_IDS.includes(interventionActorId)) {
   throw new Error(`--intervention-actor must be one of: ${EXPECTED_ACTOR_IDS.join(", ")}`);
@@ -338,16 +353,16 @@ function assertManagerBatchCall(call, expectedInput) {
   }
 }
 
-async function startShowcaseThroughManager(settingId) {
+async function startShowcaseThroughManager(settingId, workflowId) {
   const expectedInput = {
-    workflow_id: SHOWCASE_WORKFLOW_ID,
+    workflow_id: workflowId,
     profile: profileId,
-    prompt: SHOWCASE_PROMPT,
+    prompt: showcasePrompt,
   };
   const turn = await managerChat({
     setting_id: settingId,
     required_tool: "start_supervised_dag",
-    message: `Call start_supervised_dag exactly once with this JSON input: ${canonicalJson(expectedInput)}; start only that explicitly selected public workflow in supervised mode, do not instantiate or substitute another workflow, and reply briefly after it starts.`,
+    message: `Call start_supervised_dag exactly once with this JSON input: ${canonicalJson(expectedInput)}; start only that explicitly selected external workflow in supervised mode, do not instantiate or substitute another workflow, and reply briefly after it starts.`,
   });
   const input = turn.call.input;
   const selectedWorkflowId = input.workflow_id ?? input.workflowId;
@@ -765,23 +780,22 @@ function profileYaml(workflowId, settingId) {
 }
 
 async function syncShowcase(settingId) {
-  const yamlText = fs.readFileSync(ASSET_PATH, "utf8");
+  const yamlText = fs.readFileSync(assetPath, "utf8");
   const workflowResult = await request("/api/dag/workflows/sync", {
     method: "POST",
     body: JSON.stringify({
       yaml_text: yamlText,
-      source_path: "assets/orchestrations/three-worker-game-copilot.yaml.template",
+      source_path: `external-skill:${path.basename(assetPath)}`,
     }),
   });
   const workflow = workflowResult.workflow;
-  if (workflow?.workflow_id !== SHOWCASE_WORKFLOW_ID) {
-    throw new Error(`Synced workflow identity is ${String(workflow?.workflow_id)}, expected ${SHOWCASE_WORKFLOW_ID}`);
-  }
+  const workflowId = typeof workflow?.workflow_id === "string" ? workflow.workflow_id.trim() : "";
+  if (!workflowId) throw new Error("Manager did not return the external Workflow identity");
   const profileResult = await request("/api/dag/profiles/sync", {
     method: "POST",
     body: JSON.stringify({
-      yaml_text: profileYaml(SHOWCASE_WORKFLOW_ID, settingId),
-      workflow_id: SHOWCASE_WORKFLOW_ID,
+      yaml_text: profileYaml(workflowId, settingId),
+      workflow_id: workflowId,
       source_path: "validation:three-worker-showcase",
     }),
   });
@@ -921,7 +935,7 @@ function branchIsolationEvidence(before, after, actorId, intervention, dispatchB
 async function preparePhase(report, settingId, invocationPhase) {
   const synced = await syncShowcase(settingId);
   report.run = { ...synced };
-  const started = await startShowcaseThroughManager(settingId);
+  const started = await startShowcaseThroughManager(settingId, synced.workflow_id);
   const runId = started.run_id;
   report.run.run_id = runId;
   report.manager_control = {

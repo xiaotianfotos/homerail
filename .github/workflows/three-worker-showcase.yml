@@ -7,6 +7,14 @@ on:
         description: Branch, tag, or commit to validate (defaults to the selected workflow ref)
         type: string
         required: false
+      asset_path:
+        description: Absolute path to an external three-Actor Workflow on the self-hosted runner
+        type: string
+        required: true
+      mission:
+        description: One explicit mission for the selected external Workflow
+        type: string
+        required: true
       wake_model:
         description: Wake the Qwen model host when it is offline
         type: boolean
@@ -36,6 +44,8 @@ jobs:
       HOMERAIL_PATTERN_MODEL_BASE_URL: ${{ secrets.HOMERAIL_PATTERN_MODEL_BASE_URL }}
       HOMERAIL_PATTERN_MODEL_PROTOCOL: anthropic_compatible
       HOMERAIL_PATTERN_AGENT_TYPE: claude-sdk
+      HOMERAIL_SHOWCASE_ASSET: ${{ inputs.asset_path }}
+      HOMERAIL_SHOWCASE_PROMPT: ${{ inputs.mission }}
     steps:
       - name: Check out target revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

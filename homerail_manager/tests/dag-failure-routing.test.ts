@@ -178,6 +178,37 @@ nodes:
     expect(run?.dagRun.nodeStates.get("success")).toBe("SKIPPED");
   });
 
+  it("honors a terminal failure route when the runtime fails one parallel node", () => {
+    const parsed = parseDAGYaml(`
+name: parallel-terminal-failure
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  guarded:
+    agent: worker
+    outputs:
+      done: { to: "" }
+      error: { to: "" }
+  sibling:
+    agent: worker
+    outputs:
+      done: { to: "" }
+`);
+    createActiveRun("run-parallel-terminal-failure", parsed);
+    expect(dispatchReadyNodes("run-parallel-terminal-failure", new FakeDAGDispatcher())).toBe(2);
+
+    const run = failActiveRun(
+      "run-parallel-terminal-failure",
+      "guarded",
+      "agent exhausted contract corrections",
+    );
+
+    expect(run?.status).toBe("failed");
+    expect(run?.dagRun.nodeStates.get("guarded")).toBe("FAILED");
+    expect(run?.dagRun.nodeStates.get("sibling")).toBe("CANCELLED");
+  });
+
   it("fails immediately when a terminal failure leaves a while source open", () => {
     const parsed = parseDAGYaml(`
 name: terminal-failure-open-loop

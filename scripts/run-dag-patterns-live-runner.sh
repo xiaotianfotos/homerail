@@ -13,6 +13,8 @@ MODEL_MAC="${HOMERAIL_PATTERN_MODEL_MAC:-}"
 WAKE_MODEL="${HOMERAIL_WAKE_MODEL:-1}"
 MODEL_PROTOCOL="${HOMERAIL_PATTERN_MODEL_PROTOCOL:-anthropic_compatible}"
 AGENT_TYPE="${HOMERAIL_PATTERN_AGENT_TYPE:-claude-sdk}"
+SHOWCASE_ASSET="${HOMERAIL_SHOWCASE_ASSET:-}"
+SHOWCASE_PROMPT="${HOMERAIL_SHOWCASE_PROMPT:-}"
 RUN_KEY="${HOMERAIL_LIVE_RUN_KEY:-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}}"
 RUN_KEY="$(printf '%s' "$RUN_KEY" | tr -c 'A-Za-z0-9_.-' '-')"
 LIVE_SLOT_INPUT="${HOMERAIL_LIVE_SLOT:-}"
@@ -47,6 +49,16 @@ esac
 if [ -z "$MODEL_BASE_URL" ]; then
   echo "HOMERAIL_PATTERN_MODEL_BASE_URL is required for isolated live DAG execution." >&2
   exit 1
+fi
+if [ "$LIVE_TASK" = "three-worker-showcase" ]; then
+  if [ -z "$SHOWCASE_ASSET" ] || [ ! -f "$SHOWCASE_ASSET" ]; then
+    echo "HOMERAIL_SHOWCASE_ASSET must name an external Workflow file." >&2
+    exit 1
+  fi
+  if [ -z "$SHOWCASE_PROMPT" ]; then
+    echo "HOMERAIL_SHOWCASE_PROMPT is required for three-Worker acceptance." >&2
+    exit 1
+  fi
 fi
 
 export HOMERAIL_HOME="$HOME_BASE/run-$RUN_KEY"
@@ -277,6 +289,7 @@ SETTING_ID="$(node "$REPO_ROOT/scripts/configure-live-pattern-model.mjs")"
 if [ "$LIVE_TASK" = "three-worker-showcase" ]; then
   showcase_args=(
     --base-url "$HOMERAIL_MANAGER_URL"
+    --asset "$SHOWCASE_ASSET"
     --setting-id "$SETTING_ID"
     --expected-model "$MODEL_NAME"
     --stall-timeout-ms "${HOMERAIL_SHOWCASE_STALL_TIMEOUT_MS:-1200000}"

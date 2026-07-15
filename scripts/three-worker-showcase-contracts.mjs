@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 
-export const SHOWCASE_WORKFLOW_ID = "three-worker-game-copilot";
-export const SHOWCASE_PROFILE_ID = "three-worker-game-copilot-live";
-export const SHOWCASE_SCENARIO = "three-worker-game-copilot-live-acceptance";
+export const SHOWCASE_PROFILE_ID = "three-worker-live";
+export const SHOWCASE_SCENARIO = "three-worker-live-acceptance";
 export const SHOWCASE_STATE_SCHEMA_VERSION = 1;
 export const EXPECTED_ACTOR_IDS = Object.freeze([
   "goal_scout",
@@ -10,8 +9,6 @@ export const EXPECTED_ACTOR_IDS = Object.freeze([
   "systems_guide",
 ]);
 export const DEFAULT_INTERVENTION_ACTOR_ID = "systems_guide";
-export const SHOWCASE_PROMPT =
-  "Plan a relaxed two-hour cooperative game session for four friends with mixed experience.";
 
 const ACTOR_STATES = new Set([
   "pending",
@@ -157,8 +154,9 @@ export function unexpectedTerminalDiagnostic(input) {
   const activities = Array.isArray(input?.activities) ? input.activities : [];
   const activityTypes = {};
   for (const activity of activities) {
-    const actorId = typeof activity?.actor_id === "string" ? activity.actor_id : "unknown";
-    const type = typeof activity?.type === "string" ? activity.type : "unknown";
+    const event = isObject(activity?.event) ? activity.event : activity;
+    const actorId = typeof event?.actor_id === "string" ? event.actor_id : "unknown";
+    const type = typeof event?.type === "string" ? event.type : "unknown";
     activityTypes[actorId] ??= {};
     activityTypes[actorId][type] = (activityTypes[actorId][type] ?? 0) + 1;
   }
@@ -942,8 +940,7 @@ export function durableStateFailures(state) {
   if (state.schema_version !== SHOWCASE_STATE_SCHEMA_VERSION) failures.push("durable state schema_version is unsupported");
   if (state.scenario !== SHOWCASE_SCENARIO) failures.push("durable state scenario is invalid");
   if (state.stage !== "prepared" && state.stage !== "complete") failures.push("durable state stage is invalid");
-  if (state.run?.workflow_id !== SHOWCASE_WORKFLOW_ID) failures.push("durable state workflow_id is invalid");
-  for (const key of ["run_id", "profile_id", "setting_id"]) {
+  for (const key of ["run_id", "workflow_id", "profile_id", "setting_id"]) {
     if (typeof state.run?.[key] !== "string" || state.run[key].length === 0) failures.push(`durable state is missing run.${key}`);
   }
   if (typeof state.manager_session_id !== "string" || state.manager_session_id.length === 0) {
