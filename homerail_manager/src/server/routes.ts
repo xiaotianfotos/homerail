@@ -33,6 +33,10 @@ import {
   isDagLiveSurfaceProjectionNode,
   listDagLiveSurfaceProjections,
 } from "../generative-ui/dag-live-surface-projector.js";
+import {
+  getDagSupervisionSnapshot,
+  listDagSupervisorActors,
+} from "../runtime/dag-manager-supervisor.js";
 
 interface BaseResponse {
   success: boolean;
@@ -588,6 +592,45 @@ export function inspectionRoutesHandler(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       json(res, 400, { success: false, message, error: message });
+    }
+    return true;
+  }
+
+  const actorsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors$/);
+  if (actorsMatch && req.method === "GET") {
+    try {
+      const runId = decodeURIComponent(actorsMatch[1]);
+      _ok(res, "Logical DAG actors retrieved", listDagSupervisorActors(runId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("not found")) _notFound(res, message);
+      else json(res, 400, { success: false, message, error: message });
+    }
+    return true;
+  }
+
+  const supervisionMatch = pathname.match(/^\/api\/runs\/([^/]+)\/supervision$/);
+  if (supervisionMatch && req.method === "GET") {
+    try {
+      const runId = decodeURIComponent(supervisionMatch[1]);
+      const url = new URL(req.url || "/", "http://localhost");
+      const consumerId = url.searchParams.get("consumer_id")?.trim() ?? "";
+      if (!consumerId) throw new Error("consumer_id is required");
+      const rawMax = url.searchParams.get("max_milestones");
+      if (rawMax !== null && !/^\d+$/.test(rawMax)) {
+        throw new Error("max_milestones must be a positive integer");
+      }
+      const maxMilestones = rawMax === null ? undefined : Number(rawMax);
+      _ok(res, "DAG supervision snapshot retrieved", getDagSupervisionSnapshot({
+        run_id: runId,
+        consumer_id: consumerId,
+        max_milestones: maxMilestones,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("not found")) _notFound(res, message);
+      else if (message.includes("concurrently")) json(res, 409, { success: false, message, error: message });
+      else json(res, 400, { success: false, message, error: message });
     }
     return true;
   }

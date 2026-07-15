@@ -25,6 +25,7 @@ import {
   cleanupRunWorkspaces,
   setRunWorkspacePinned,
 } from "../runtime/workspace-retention.js";
+import { focusDagSupervisorActor } from "../runtime/dag-manager-supervisor.js";
 
 interface BaseResponse {
   success: boolean;
@@ -435,6 +436,35 @@ export function mutationRoutesHandler(
         _badRequest(res, message);
       }
     }
+    return true;
+  }
+
+  // POST /api/runs/:run_id/focus
+  const focusMatch = pathname.match(/^\/api\/runs\/([^/]+)\/focus$/);
+  if (focusMatch && req.method === "POST") {
+    const runId = decodeURIComponent(focusMatch[1]);
+    void _readJsonBody(req).then((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("request body must be an object");
+      const body = raw as Record<string, unknown>;
+      const actorId = typeof body.actor_id === "string" ? body.actor_id.trim() : "";
+      const idempotencyKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
+      if (!actorId) throw new Error("actor_id is required");
+      if (!idempotencyKey) throw new Error("idempotency_key is required");
+      const durationMs = body.duration_ms === undefined ? undefined : Number(body.duration_ms);
+      const result = focusDagSupervisorActor({
+        run_id: runId,
+        actor_id: actorId,
+        idempotency_key: idempotencyKey,
+        duration_ms: durationMs,
+      });
+      _ok(res, "DAG actor surface focused", result);
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("Unknown DAG actor") || message.includes("no projected surface")) _notFound(res, message);
+      else if (message.includes("conflict") || message.includes("reused with different input")) {
+        json(res, 409, { success: false, message, error: message });
+      } else _badRequest(res, message);
+    });
     return true;
   }
 

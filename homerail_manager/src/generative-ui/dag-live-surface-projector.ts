@@ -90,6 +90,17 @@ export interface DagLiveSurfaceControlResult {
   deduplicated: boolean;
 }
 
+export interface DagLiveSurfaceControlRecord {
+  control_id: string;
+  run_id: string;
+  actor_id: string;
+  operation: DagLiveSurfaceControlOperation;
+  expected_surface_revision: number;
+  committed_surface_revision: number;
+  focused_until?: number;
+  created_at: number;
+}
+
 export interface DagLiveSurfaceRecoveryResult {
   runs: string[];
   projected_events: number;
@@ -1034,6 +1045,21 @@ function controlDigest(input: {
 function existingControl(controlId: string): ControlRow | undefined {
   return getDb().prepare("SELECT * FROM dag_surface_projection_controls WHERE control_id = ?")
     .get(controlId) as ControlRow | undefined;
+}
+
+export function getDagLiveSurfaceControl(controlId: string): DagLiveSurfaceControlRecord | undefined {
+  const row = existingControl(assertIdentifier(controlId, "control_id"));
+  if (!row) return undefined;
+  return {
+    control_id: row.control_id,
+    run_id: row.run_id,
+    actor_id: row.actor_id,
+    operation: row.operation,
+    expected_surface_revision: row.expected_surface_revision,
+    committed_surface_revision: row.committed_surface_revision,
+    ...(row.focused_until === null ? {} : { focused_until: row.focused_until }),
+    created_at: row.created_at,
+  };
 }
 
 function visibilityContent(

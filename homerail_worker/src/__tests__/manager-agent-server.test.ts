@@ -3,9 +3,20 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { managerAgentToolSpec } from "homerail-protocol";
 import { registerAgentBackend } from "../agent/factory.js";
 import type { AgentClient, AgentEvent, AgentRunContext, DagToolDefinition } from "../agent/types.js";
-import { startManagerAgentServer } from "../manager-agent/server.js";
+import { createManagerTools, startManagerAgentServer } from "../manager-agent/server.js";
+
+const SUPERVISOR_TOOL_NAMES = [
+  "start_supervised_dag",
+  "list_dag_actors",
+  "get_dag_supervision",
+  "send_dag_actor_command",
+  "focus_dag_actor",
+  "cancel_dag_run",
+  "complete_dag_run",
+] as const;
 
 async function listen(server: http.Server, host = "127.0.0.1"): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, host, () => resolve()));
@@ -38,6 +49,80 @@ function makeManagerApiServer(createAndRunBodies: Record<string, unknown>[] = []
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: false, error: "not found" }));
   });
+}
+
+interface ObservedSupervisorRequest {
+  method: string;
+  pathname: string;
+  query: Record<string, string>;
+  body?: Record<string, unknown>;
+}
+
+function makeSupervisorManagerApiServer(observed: ObservedSupervisorRequest[]): http.Server {
+  return http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://localhost");
+    const finish = (requestBody?: Record<string, unknown>) => {
+      observed.push({
+        method: req.method || "GET",
+        pathname: url.pathname,
+        query: Object.fromEntries(url.searchParams.entries()),
+        ...(requestBody ? { body: requestBody } : {}),
+      });
+      const data = url.pathname === "/api/runs/create-and-run"
+        ? { runId: "run-supervised-123" }
+        : url.pathname.endsWith("/supervision")
+          ? {
+            run_id: "run /?# supervised",
+            milestone_digest: {
+              commentary: [
+                "  研究 Actor 已确认关键依赖。  ",
+                "研究 Actor 已确认关键依赖。",
+                "",
+                42,
+              ],
+              milestones: [{ actor_id: "research", type: "finding" }],
+            },
+          }
+          : { ok: true };
+      res.writeHead(url.pathname === "/api/runs/create-and-run" ? 201 : 200, {
+        "Content-Type": "application/json",
+      });
+      res.end(JSON.stringify({ success: true, data }));
+    };
+
+    if (req.method === "GET") {
+      finish();
+      return;
+    }
+    let raw = "";
+    req.on("data", (chunk) => { raw += chunk; });
+    req.on("end", () => finish(raw ? JSON.parse(raw) as Record<string, unknown> : undefined));
+  });
+}
+
+function managerToolState(sessionId = "manager-session") {
+  return {
+    projectId: "project-supervisor",
+    sessionId,
+    voiceSessionId: "voice-supervisor",
+    createdRunIds: [] as string[],
+    finalNotes: [] as string[],
+    objectiveToolCalls: [] as Array<{ name: string; success: boolean; error?: string; inferred?: boolean }>,
+    voiceSurface: {
+      commentaryTexts: [] as string[],
+      progress: null,
+      taskDraft: null,
+      widgets: [] as Record<string, unknown>[],
+      removeWidgetIds: [] as string[],
+      pluginProjections: [],
+    },
+  };
+}
+
+function requireManagerTool(tools: DagToolDefinition[], name: string): DagToolDefinition {
+  const tool = tools.find((candidate) => candidate.name === name);
+  if (!tool) throw new Error(`Manager Agent tool missing: ${name}`);
+  return tool;
 }
 
 function makePrReviewApiServer(createAndRunBodies: Record<string, unknown>[]): http.Server {
@@ -405,6 +490,32 @@ class ToolCatalogAgent implements AgentClient {
     this.systemPrompt = context.systemPrompt ?? "";
     this.systemPromptMode = context.systemPromptMode;
     yield { type: "text", text: "catalog captured" };
+    yield { type: "done" };
+  }
+}
+
+class SupervisionCommentaryAgent implements AgentClient {
+  async *run(
+    _prompt: string,
+    tools: DagToolDefinition[],
+    _context: AgentRunContext,
+  ): AsyncIterable<AgentEvent> {
+    const tool = requireManagerTool(tools, "get_dag_supervision");
+    for (const [index, input] of [
+      { run_id: "run /?# supervised" },
+      { run_id: "run /?# supervised", max_milestones: 3 },
+    ].entries()) {
+      const id = `supervision-${index + 1}`;
+      yield { type: "tool_use", id, name: tool.name, input };
+      const result = await tool.handler(input);
+      yield {
+        type: "tool_result",
+        tool_use_id: id,
+        content: result.content.map((item) => item.text).join(""),
+        is_error: result.is_error,
+      };
+    }
+    yield { type: "text", text: "supervision checked" };
     yield { type: "done" };
   }
 }
@@ -1053,7 +1164,184 @@ describe("manager-agent server", () => {
     }
   });
 
-  it("exposes Widget File Protocol tools in the container voice catalog", async () => {
+  it("keeps Worker supervisor tool definitions in strict protocol catalog parity", () => {
+    for (const responseMode of ["chat", "voice"] as const) {
+      const tools = createManagerTools(managerToolState(), responseMode);
+      for (const name of SUPERVISOR_TOOL_NAMES) {
+        const tool = requireManagerTool(tools, name);
+        expect({
+          name: tool.name,
+          description: tool.description,
+          input_schema: tool.input_schema,
+        }).toEqual(managerAgentToolSpec(name));
+        expect(tool.input_schema).toMatchObject({ additionalProperties: false });
+        expect(JSON.stringify(tool.input_schema)).not.toContain("worker_id");
+        expect(JSON.stringify(tool.input_schema)).not.toContain("container_id");
+        expect(JSON.stringify(tool.input_schema)).not.toContain("generation");
+      }
+    }
+  });
+
+  it("maps Worker supervisor tools to actor-only Manager REST requests", async () => {
+    const observed: ObservedSupervisorRequest[] = [];
+    const managerApi = makeSupervisorManagerApiServer(observed);
+    const managerPort = await listen(managerApi);
+    vi.stubEnv("MANAGER_REST_URL", `http://127.0.0.1:${managerPort}/api`);
+    vi.stubEnv("HOMERAIL_DAG_MUTATION_TOKEN", "mutation-secret-must-not-enter-body");
+    vi.stubEnv("HOMERAIL_DAG_APPROVAL_TOKEN", "approval-secret-must-not-enter-body");
+    const state = managerToolState("manager session/?#");
+    const tools = createManagerTools(state, "chat");
+    const runId = "run /?# supervised";
+    const results = [];
+
+    try {
+      results.push(await requireManagerTool(tools, "start_supervised_dag").handler({
+        workflowId: "supervised-workflow",
+        profile: "offline-deterministic",
+        prompt: "coordinate three actors",
+        runId: "requested-supervised-run",
+      }));
+      results.push(await requireManagerTool(tools, "list_dag_actors").handler({ run_id: runId }));
+      results.push(await requireManagerTool(tools, "get_dag_supervision").handler({
+        run_id: runId,
+        max_milestones: 5,
+      }));
+      results.push(await requireManagerTool(tools, "send_dag_actor_command").handler({
+        run_id: runId,
+        actor_id: "research",
+        expected_round_id: "round-0001",
+        idempotency_key: "command-research-2",
+        payload: { instruction: "continue with source validation" },
+        worker_id: "worker-forbidden",
+        container_id: "container-forbidden",
+        generation: 99,
+      }));
+      results.push(await requireManagerTool(tools, "focus_dag_actor").handler({
+        run_id: runId,
+        actor_id: "research",
+        idempotency_key: "focus-research",
+        duration_ms: 15_000,
+        worker_id: "worker-forbidden",
+        generation: 99,
+      }));
+      results.push(await requireManagerTool(tools, "cancel_dag_run").handler({ run_id: runId }));
+      results.push(await requireManagerTool(tools, "complete_dag_run").handler({
+        run_id: runId,
+        expected_round_id: "round-0002",
+      }));
+
+      const encodedRunId = "run%20%2F%3F%23%20supervised";
+      expect(observed).toEqual([
+        {
+          method: "POST",
+          pathname: "/api/runs/create-and-run",
+          query: {},
+          body: {
+            workflow_id: "supervised-workflow",
+            profile: "offline-deterministic",
+            prompt: "coordinate three actors",
+            runId: "requested-supervised-run",
+          },
+        },
+        { method: "GET", pathname: `/api/runs/${encodedRunId}/actors`, query: {} },
+        {
+          method: "GET",
+          pathname: `/api/runs/${encodedRunId}/supervision`,
+          query: { consumer_id: "manager session/?#", max_milestones: "5" },
+        },
+        {
+          method: "POST",
+          pathname: `/api/runs/${encodedRunId}/commands`,
+          query: {},
+          body: {
+            expected_round_id: "round-0001",
+            commands: [{
+              actor_id: "research",
+              payload: { instruction: "continue with source validation" },
+              idempotency_key: "command-research-2",
+            }],
+          },
+        },
+        {
+          method: "POST",
+          pathname: `/api/runs/${encodedRunId}/focus`,
+          query: {},
+          body: {
+            actor_id: "research",
+            idempotency_key: "focus-research",
+            duration_ms: 15_000,
+          },
+        },
+        { method: "POST", pathname: `/api/runs/${encodedRunId}/cancel`, query: {}, body: {} },
+        {
+          method: "POST",
+          pathname: `/api/runs/${encodedRunId}/complete`,
+          query: {},
+          body: { expected_round_id: "round-0002" },
+        },
+      ]);
+      expect(state.createdRunIds).toEqual(["run-supervised-123"]);
+      expect(state.objectiveToolCalls).toEqual([
+        { name: "start_supervised_dag", success: true },
+        { name: "send_dag_actor_command", success: true },
+        { name: "focus_dag_actor", success: true },
+        { name: "cancel_dag_run", success: true },
+        { name: "complete_dag_run", success: true },
+      ]);
+      const serialized = JSON.stringify({ observed, results });
+      expect(serialized).not.toContain("worker-forbidden");
+      expect(serialized).not.toContain("container-forbidden");
+      expect(serialized).not.toContain("generation");
+      expect(serialized).not.toContain("mutation-secret-must-not-enter-body");
+      expect(serialized).not.toContain("approval-secret-must-not-enter-body");
+    } finally {
+      await close(managerApi);
+    }
+  });
+
+  it("emits each supervision milestone commentary once for the bound manager session", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    registerAgentBackend("manager-agent-supervision-commentary-test", () => new SupervisionCommentaryAgent());
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const observed: ObservedSupervisorRequest[] = [];
+    const managerApi = makeSupervisorManagerApiServer(observed);
+    const managerPort = await listen(managerApi);
+    vi.stubEnv("MANAGER_REST_URL", `http://127.0.0.1:${managerPort}/api`);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "检查监督进度",
+          session_id: "manager session/?#",
+          response_mode: "voice",
+          agent_config: { agent_type: "manager-agent-supervision-commentary-test", model: "test" },
+        }),
+      });
+      const body = await response.json() as { commentary_texts?: string[]; tool_results?: unknown[] };
+
+      expect(response.status).toBe(200);
+      expect(body.commentary_texts).toEqual(["研究 Actor 已确认关键依赖。"]);
+      expect(body.tool_results).toHaveLength(2);
+      expect(observed.map((request) => request.query)).toEqual([
+        { consumer_id: "manager session/?#" },
+        { consumer_id: "manager session/?#", max_milestones: "3" },
+      ]);
+    } finally {
+      await close(server);
+      await close(managerApi);
+    }
+  });
+
+  it("exposes Widget File Protocol and supervisor tools in the container voice catalog", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
     tmpDirs.push(workspace);
     const agent = new ToolCatalogAgent();
@@ -1083,6 +1371,7 @@ describe("manager-agent server", () => {
       });
       expect(response.status).toBe(200);
       expect(agent.toolNames).toEqual(expect.arrayContaining([
+        ...SUPERVISOR_TOOL_NAMES,
         "run_pr_closeout",
         "run_pr_review",
         "update_voice_memo",
