@@ -33,6 +33,8 @@ import {
   storedSurfaceRecoveryFailures,
   summarizeActivityEvents,
   surfaceHistoryFailures,
+  surfaceSemanticTermEvidence,
+  surfaceSemanticTermFailures,
   surfaceSnapshotEvidence,
   unchangedSurfaceFailures,
   unexpectedTerminalDiagnostic,
@@ -66,6 +68,7 @@ function usage() {
     "  --restart-evidence PATH          Sanitized Manager-only restart assertion JSON",
     "  --asset PATH                     External Workflow asset; env HOMERAIL_SHOWCASE_ASSET",
     "  --prompt-file PATH               UTF-8 mission; env HOMERAIL_SHOWCASE_PROMPT",
+    "  --required-surface-terms CSV     Terms every Actor Surface must retain",
     `  --profile-id ID                  Default: ${SHOWCASE_PROFILE_ID}`,
     `  --intervention-actor ID          Default: ${DEFAULT_INTERVENTION_ACTOR_ID}`,
     "  --stall-timeout-ms N             No-progress timeout; 0 disables stall detection",
@@ -89,6 +92,7 @@ function parseArgs(argv) {
     "restart-evidence",
     "asset",
     "prompt-file",
+    "required-surface-terms",
     "profile-id",
     "intervention-actor",
     "stall-timeout-ms",
@@ -148,6 +152,12 @@ const promptFilePath = cli["prompt-file"]
 const showcasePrompt = promptFilePath
   ? fs.readFileSync(promptFilePath, "utf8").trim()
   : (process.env.HOMERAIL_SHOWCASE_PROMPT ?? "").trim();
+const requiredSurfaceTerms = Array.from(new Set(
+  String(cli["required-surface-terms"] ?? process.env.HOMERAIL_SHOWCASE_REQUIRED_TERMS ?? "")
+    .split(",")
+    .map((term) => term.normalize("NFKC").trim())
+    .filter(Boolean),
+));
 const statePath = path.resolve(
   cli["state-file"]
     ?? process.env.HOMERAIL_THREE_WORKER_STATE_FILE
@@ -179,6 +189,13 @@ const pollIntervalMs = parseIntegerOption(
 const mutationToken = process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? "";
 const managerAdminToken = process.env.HOMERAIL_MANAGER_ADMIN_TOKEN ?? "";
 const redactionSecrets = [mutationToken, managerAdminToken, baseUrl, assetPath, promptFilePath, showcasePrompt];
+
+if (requiredSurfaceTerms.length === 0) {
+  throw new Error("Missing --required-surface-terms or HOMERAIL_SHOWCASE_REQUIRED_TERMS.");
+}
+if (requiredSurfaceTerms.length > 8 || requiredSurfaceTerms.some((term) => term.length > 128)) {
+  throw new Error("Required Surface terms must contain 1-8 entries of at most 128 characters.");
+}
 
 if ((phase === "all" || phase === "prepare") && !requestedSettingId) {
   throw new Error("Missing --setting-id or HOMERAIL_PATTERN_SETTING_ID.");
@@ -711,6 +728,10 @@ async function captureWaitingEvidence(input) {
   );
   assertFailures(`${input.consumer_label} actor contract`, actorFailures);
   assertFailures(`${input.consumer_label} Surface contract`, surfaceAnalysis.failures);
+  assertFailures(
+    `${input.consumer_label} semantic grounding`,
+    surfaceSemanticTermFailures(surfaceAnalysis, requiredSurfaceTerms),
+  );
   assertFailures(`${input.consumer_label} waiting/fan-in contract`, roundFailures);
   assertFailures(`${input.consumer_label} activity contract`, activityFailures);
   assertFailures(`${input.consumer_label} supervision contract`, supervisorFailures);
@@ -728,6 +749,7 @@ async function captureWaitingEvidence(input) {
       event_counts: summarizeActivityEvents(activities),
       supervision_digest: sanitizeForReport(supervision.digest, { secrets: redactionSecrets }),
       surface_digests: surfaceSnapshotEvidence(surfaceAnalysis),
+      semantic_grounding: surfaceSemanticTermEvidence(surfaceAnalysis, requiredSurfaceTerms),
       surface_snapshot: liveSurfaceForReport(surfaces),
       model_dispatch_evidence: model.actors,
     },
@@ -1389,6 +1411,7 @@ async function resumePhase(report, state, invocationPhase) {
   };
   report.surface_snapshot = final.report.surface_snapshot;
   report.surface_digests = final.report.surface_digests;
+  report.semantic_grounding = final.report.semantic_grounding;
 
   const completedState = {
     ...state,
@@ -1406,6 +1429,7 @@ async function resumePhase(report, state, invocationPhase) {
       model_dispatch_evidence: report.model_dispatch_evidence,
       surface_digests: report.surface_digests,
       surface_snapshot: report.surface_snapshot,
+      semantic_grounding: report.semantic_grounding,
     },
   };
   assertFailures("durable completed state", durableStateFailures(completedState));
@@ -1451,6 +1475,7 @@ const report = {
   model_dispatch_evidence: {},
   surface_digests: [],
   surface_snapshot: null,
+  semantic_grounding: null,
   terminal_diagnostics: [],
   failures: [],
   passed: false,

@@ -444,6 +444,44 @@ export function surfaceSnapshotEvidence(analysis) {
   return (analysis?.actors ?? []).map(({ node_canonical: _nodeCanonical, ...actor }) => actor);
 }
 
+function normalizedSemanticTerm(value) {
+  return String(value ?? "").normalize("NFKC").trim().toLocaleLowerCase();
+}
+
+export function surfaceSemanticTermFailures(
+  analysis,
+  requiredTerms,
+  expectedActorIds = EXPECTED_ACTOR_IDS,
+) {
+  const failures = [];
+  const terms = Array.from(new Set((requiredTerms ?? []).map(normalizedSemanticTerm).filter(Boolean)));
+  const actors = mapActors(analysis);
+  for (const actorId of expectedActorIds) {
+    const actor = actors.get(actorId);
+    if (!actor) continue;
+    const semanticNode = normalizedSemanticTerm(actor.node_canonical);
+    for (const term of terms) {
+      if (!semanticNode.includes(term)) failures.push(`${actorId} Surface lost required mission evidence`);
+    }
+  }
+  return failures;
+}
+
+export function surfaceSemanticTermEvidence(analysis, requiredTerms) {
+  const terms = Array.from(new Set((requiredTerms ?? []).map(normalizedSemanticTerm).filter(Boolean)));
+  return {
+    required_term_digests: terms.map((term) => digestValue(term)).sort(),
+    actors: (analysis?.actors ?? []).map((actor) => {
+      const semanticNode = normalizedSemanticTerm(actor.node_canonical);
+      return {
+        actor_id: actor.actor_id,
+        matched_required_terms: terms.filter((term) => semanticNode.includes(term)).length,
+        required_terms: terms.length,
+      };
+    }).sort((left, right) => left.actor_id.localeCompare(right.actor_id)),
+  };
+}
+
 function mapActors(analysis) {
   return new Map((analysis?.actors ?? []).map((actor) => [actor.actor_id, actor]));
 }

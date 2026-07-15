@@ -15,6 +15,10 @@ on:
         description: One explicit mission for the selected external Workflow
         type: string
         required: true
+      required_surface_terms:
+        description: Comma-separated mission terms every Actor Surface must retain
+        type: string
+        required: true
       wake_model:
         description: Wake the Qwen model host when it is offline
         type: boolean
@@ -46,6 +50,7 @@ jobs:
       HOMERAIL_PATTERN_AGENT_TYPE: claude-sdk
       HOMERAIL_SHOWCASE_ASSET: ${{ inputs.asset_path }}
       HOMERAIL_SHOWCASE_PROMPT: ${{ inputs.mission }}
+      HOMERAIL_SHOWCASE_REQUIRED_TERMS: ${{ inputs.required_surface_terms }}
     steps:
       - name: Check out target revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

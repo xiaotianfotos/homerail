@@ -44,6 +44,8 @@ test('the live adapter requires an external asset and uses the public idle TTL',
   )
   assert.match(runner, /HOMERAIL_SHOWCASE_ASSET must name an external Workflow file/)
   assert.match(runner, /HOMERAIL_SHOWCASE_PROMPT is required/)
+  assert.match(runner, /HOMERAIL_SHOWCASE_REQUIRED_TERMS is required/)
+  assert.match(runner, /--required-surface-terms/)
   assert.match(runner, /HOMERAIL_DAG_WORKER_IDLE_TTL_MS/)
   assert.match(showcaseRunner, /--asset "\$SHOWCASE_ASSET"/)
   assert.match(showcaseRunner, /--phase prepare/)
@@ -52,4 +54,12 @@ test('the live adapter requires an external asset and uses the public idle TTL',
   assert.doesNotMatch(showcaseRunner, /--workflow-suffix/)
   assert.match(showcaseRunner, /runtime restart[\s\\]+\n[\s\S]*--manager-only/)
   assert.match(showcaseRunner, /test:three-worker-showcase-visual/)
+})
+
+test('the visual harness renders the real accepted run identity', () => {
+  const harness = read('agent-ui/src/task-canvas-harness.ts')
+  const visual = read('agent-ui/scripts/three-worker-showcase-visual.mjs')
+  assert.match(harness, /URLSearchParams\(window\.location\.search\).*run_id/)
+  assert.match(visual, /run_id=\$\{encodeURIComponent\(snapshot\.run_id\)\}/)
+  assert.doesNotMatch(visual, /run_id=run%3Avisual/)
 })

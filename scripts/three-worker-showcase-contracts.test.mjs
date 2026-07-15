@@ -9,6 +9,8 @@ import {
   dispatchGroupFailures,
   physicalWorkerLifecycleEvidence,
   sanitizeForReport,
+  surfaceSemanticTermEvidence,
+  surfaceSemanticTermFailures,
   unexpectedTerminalDiagnostic,
   unsafeReportPaths,
 } from "./three-worker-showcase-contracts.mjs";
@@ -33,6 +35,23 @@ function surfaceAnalysis(revision, suffix) {
     })),
   };
 }
+
+test("requires every actor Surface to retain the selected mission evidence", () => {
+  const analysis = surfaceAnalysis(2, "幻悦蝶 route to 阿努比斯");
+  assert.deepEqual(
+    surfaceSemanticTermFailures(analysis, ["幻悦蝶", "阿努比斯"]),
+    [],
+  );
+  analysis.actors[0].node_canonical = "generic advice without the original route";
+  assert.match(
+    surfaceSemanticTermFailures(analysis, ["幻悦蝶", "阿努比斯"]).join("; "),
+    /Surface lost required mission evidence/,
+  );
+  const evidence = surfaceSemanticTermEvidence(analysis, ["幻悦蝶", "阿努比斯"]);
+  assert.equal(evidence.required_term_digests.length, 2);
+  assert.equal(evidence.actors.find((actor) => actor.actor_id === analysis.actors[0].actor_id)?.matched_required_terms, 0);
+  assert.doesNotMatch(JSON.stringify(evidence), /幻悦蝶|阿努比斯/);
+});
 
 function dispatchEvidence(count) {
   return {

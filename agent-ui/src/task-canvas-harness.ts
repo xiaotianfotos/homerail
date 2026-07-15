@@ -6,8 +6,10 @@ import './style.css'
 import './styles/main.css'
 import './styles/scrollbar.css'
 
+const runId = new URLSearchParams(window.location.search).get('run_id')?.trim() || 'run:visual'
+
 const app = createApp(DagTaskCanvas, {
-  runId: 'run:visual',
+  runId,
   pollIntervalMs: 300,
   embedded: true,
 })

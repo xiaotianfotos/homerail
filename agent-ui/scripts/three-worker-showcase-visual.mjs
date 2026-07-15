@@ -109,7 +109,10 @@ async function renderDesktop(browser, baseUrl, snapshot, evidence) {
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
   await installRoutes(page, snapshot)
-  await page.goto(`${baseUrl}/task-canvas-harness.html`, { waitUntil: 'domcontentloaded' })
+  await page.goto(
+    `${baseUrl}/task-canvas-harness.html?run_id=${encodeURIComponent(snapshot.run_id)}`,
+    { waitUntil: 'domcontentloaded' },
+  )
   await waitForCanvas(page)
   await page.waitForTimeout(350)
   const beforeRefresh = await metrics(page)
@@ -143,7 +146,10 @@ async function renderMobile(browser, baseUrl, snapshot, evidence) {
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
   await installRoutes(page, snapshot)
-  await page.goto(`${baseUrl}/task-canvas-harness.html`, { waitUntil: 'domcontentloaded' })
+  await page.goto(
+    `${baseUrl}/task-canvas-harness.html?run_id=${encodeURIComponent(snapshot.run_id)}`,
+    { waitUntil: 'domcontentloaded' },
+  )
   await waitForCanvas(page)
   await page.waitForTimeout(350)
   const compact = await metrics(page)

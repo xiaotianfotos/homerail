@@ -15,6 +15,7 @@ MODEL_PROTOCOL="${HOMERAIL_PATTERN_MODEL_PROTOCOL:-anthropic_compatible}"
 AGENT_TYPE="${HOMERAIL_PATTERN_AGENT_TYPE:-claude-sdk}"
 SHOWCASE_ASSET="${HOMERAIL_SHOWCASE_ASSET:-}"
 SHOWCASE_PROMPT="${HOMERAIL_SHOWCASE_PROMPT:-}"
+SHOWCASE_REQUIRED_TERMS="${HOMERAIL_SHOWCASE_REQUIRED_TERMS:-}"
 RUN_KEY="${HOMERAIL_LIVE_RUN_KEY:-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}}"
 RUN_KEY="$(printf '%s' "$RUN_KEY" | tr -c 'A-Za-z0-9_.-' '-')"
 LIVE_SLOT_INPUT="${HOMERAIL_LIVE_SLOT:-}"
@@ -57,6 +58,10 @@ if [ "$LIVE_TASK" = "three-worker-showcase" ]; then
   fi
   if [ -z "$SHOWCASE_PROMPT" ]; then
     echo "HOMERAIL_SHOWCASE_PROMPT is required for three-Worker acceptance." >&2
+    exit 1
+  fi
+  if [ -z "$SHOWCASE_REQUIRED_TERMS" ]; then
+    echo "HOMERAIL_SHOWCASE_REQUIRED_TERMS is required for semantic acceptance." >&2
     exit 1
   fi
 fi
@@ -292,6 +297,7 @@ if [ "$LIVE_TASK" = "three-worker-showcase" ]; then
     --asset "$SHOWCASE_ASSET"
     --setting-id "$SETTING_ID"
     --expected-model "$MODEL_NAME"
+    --required-surface-terms "$SHOWCASE_REQUIRED_TERMS"
     --stall-timeout-ms "${HOMERAIL_SHOWCASE_STALL_TIMEOUT_MS:-1200000}"
     --state-file "$SHOWCASE_STATE_PATH"
     --output "$REPORT_PATH"
