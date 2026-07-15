@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type {
   GenerativeUiCompositionV1,
   GenerativeUiDocumentV1,
@@ -23,7 +23,10 @@ import type {
 import GenerativeUiNodeHost from './GenerativeUiNodeHost.vue'
 import type { PluginActionResponse } from '@/api/agent'
 import { canvasColumnCount, canvasRowCount, resolveCanvasSize } from '@/generative-ui/canvas-layout'
-import { resolveGenerativeUiMotionProfile } from '@/generative-ui/motion-profiles'
+import {
+  resolveGenerativeUiMotionProfile,
+  type GenerativeUiLifecycleMotion,
+} from '@/generative-ui/motion-profiles'
 
 const props = withDefaults(defineProps<{
   document: GenerativeUiDocumentV1
@@ -35,11 +38,19 @@ const props = withDefaults(defineProps<{
   interactive?: boolean
   actionMode?: GenerativeUiActionMode
   selectedNodeId?: string | null
+  focusedNodeId?: string | null
+  focusedUntil?: number | null
+  autoFocusLatest?: boolean
+  embedded?: boolean
 }>(), {
   surface: undefined,
   placement: 'all',
   interactive: true,
   actionMode: 'emit',
+  focusedNodeId: null,
+  focusedUntil: null,
+  autoFocusLatest: true,
+  embedded: false,
 })
 
 const emit = defineEmits<{
@@ -77,17 +88,58 @@ const canvasColumns = computed(() => canvasColumnCount(props.composition.context
 const canvasRows = computed(() => canvasRowCount(renderedWithLayout.value.map(entry => entry.canvasSize)))
 const contentLayout = computed(() => renderedWithLayout.value.length === 1 ? 'single' : 'flow')
 const attentionNodeId = ref<string | null>(null)
+const lifecycleMotionByNodeId = ref<Record<string, GenerativeUiLifecycleMotion>>({})
+const reducedMotion = ref(false)
 let attentionTimer = 0
+const lifecycleTimers = new Map<string, number>()
+const lifecycleGenerations = new Map<string, number>()
+let reducedMotionQuery: MediaQueryList | null = null
 
-function showAttention(nodeId: string): void {
+const transitionDuration = computed(() => reducedMotion.value
+  ? { enter: 1, leave: 1 }
+  : { enter: 300, leave: 300 })
+
+function reducedMotionPreferred(): boolean {
+  return reducedMotion.value || (
+    typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+function showAttention(nodeId: string, requestedDuration?: number): void {
   const profile = renderedWithLayout.value.find(entry => entry.node.id === nodeId)?.motionProfile
   if (!profile) return
+  const duration = Math.max(0, Math.min(requestedDuration ?? profile.attentionDurationMs, profile.attentionDurationMs))
+  if (!duration) return
   attentionNodeId.value = nodeId
   if (attentionTimer) window.clearTimeout(attentionTimer)
   attentionTimer = window.setTimeout(() => {
     if (attentionNodeId.value === nodeId) attentionNodeId.value = null
     attentionTimer = 0
-  }, profile.attentionDurationMs)
+  }, duration)
+}
+
+async function showLifecycleMotion(
+  nodeId: string,
+  motion: Exclude<GenerativeUiLifecycleMotion, 'idle'>,
+  duration: number,
+): Promise<void> {
+  const generation = (lifecycleGenerations.get(nodeId) ?? 0) + 1
+  lifecycleGenerations.set(nodeId, generation)
+  const existingTimer = lifecycleTimers.get(nodeId)
+  if (existingTimer) window.clearTimeout(existingTimer)
+  if (lifecycleMotionByNodeId.value[nodeId] !== 'idle') {
+    lifecycleMotionByNodeId.value = { ...lifecycleMotionByNodeId.value, [nodeId]: 'idle' }
+    await nextTick()
+    if (lifecycleGenerations.get(nodeId) !== generation) return
+  }
+  lifecycleMotionByNodeId.value = { ...lifecycleMotionByNodeId.value, [nodeId]: motion }
+  lifecycleTimers.set(nodeId, window.setTimeout(() => {
+    if (lifecycleMotionByNodeId.value[nodeId] === motion) {
+      lifecycleMotionByNodeId.value = { ...lifecycleMotionByNodeId.value, [nodeId]: 'idle' }
+    }
+    lifecycleTimers.delete(nodeId)
+  }, duration))
 }
 
 function focusableNodes(): HTMLElement[] {
@@ -106,9 +158,14 @@ function focus(direction: GenerativeUiFocusDirection): void {
 function focusNode(nodeId: string): boolean {
   const target = focusableNodes().find(element => element.dataset.generativeUiNode === nodeId)
   if (!target) return false
-  showAttention(nodeId)
   target.focus({ preventScroll: true })
-  target.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'start' })
+  target.scrollIntoView?.({
+    behavior: reducedMotionPreferred() ? 'auto' : 'smooth',
+    block: 'nearest',
+    inline: 'start',
+  })
+  const body = target.querySelector<HTMLElement>('.generative-ui-node-host__body')
+  body?.scrollTo?.({ top: body.scrollHeight, behavior: reducedMotionPreferred() ? 'auto' : 'smooth' })
   emit('focus-node', { node_id: nodeId })
   return true
 }
@@ -117,21 +174,75 @@ let renderedRevisions = new Map<string, number>()
 watch(
   renderedWithLayout,
   async (entries) => {
-    const changed = entries.filter(entry => renderedRevisions.get(entry.node.id) !== entry.node.revision)
+    const activeNodeIds = new Set(entries.map(entry => entry.node.id))
+    for (const [nodeId, timer] of lifecycleTimers) {
+      if (activeNodeIds.has(nodeId)) continue
+      window.clearTimeout(timer)
+      lifecycleTimers.delete(nodeId)
+      lifecycleGenerations.delete(nodeId)
+    }
+    lifecycleMotionByNodeId.value = Object.fromEntries(
+      Object.entries(lifecycleMotionByNodeId.value)
+        .filter(([nodeId]) => activeNodeIds.has(nodeId)),
+    )
+    const previousRevisions = renderedRevisions
+    const changed = entries.filter(entry => previousRevisions.get(entry.node.id) !== entry.node.revision)
     renderedRevisions = new Map(entries.map(entry => [entry.node.id, entry.node.revision]))
     if (!changed.length) return
+    for (const entry of changed) {
+      if (!previousRevisions.has(entry.node.id)) continue
+      const phase = entry.node.status?.phase
+      const motion = phase === 'succeeded' ? 'complete' : phase === 'failed' ? 'fail' : 'update'
+      const duration = motion === 'complete'
+        ? entry.motionProfile.completeDurationMs
+        : motion === 'fail'
+          ? entry.motionProfile.failDurationMs
+          : entry.motionProfile.updateDurationMs
+      void showLifecycleMotion(entry.node.id, motion, duration)
+    }
+    if (!props.autoFocusLatest || props.focusedNodeId) return
     await nextTick()
     const latest = [...changed].sort((left, right) => (
       right.node.updated_at.localeCompare(left.node.updated_at)
       || right.item.rank - left.item.rank
     ))[0]!
-    focusNode(latest.node.id)
+    if (focusNode(latest.node.id)) showAttention(latest.node.id)
   },
   { immediate: true, flush: 'post' },
 )
 
+watch(
+  () => [props.focusedNodeId, props.focusedUntil] as const,
+  async ([nodeId, focusedUntil]) => {
+    if (!nodeId) return
+    const remaining = focusedUntil === null
+      ? undefined
+      : Math.max(0, focusedUntil - Date.now())
+    if (remaining === 0) return
+    await nextTick()
+    if (focusNode(nodeId)) showAttention(nodeId, remaining)
+  },
+  { immediate: true, flush: 'post' },
+)
+
+function syncReducedMotion(event?: MediaQueryListEvent): void {
+  reducedMotion.value = event?.matches ?? reducedMotionQuery?.matches ?? false
+}
+
+onMounted(() => {
+  if (typeof window.matchMedia !== 'function') return
+  reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+  syncReducedMotion()
+  reducedMotionQuery.addEventListener?.('change', syncReducedMotion)
+})
+
 onUnmounted(() => {
   if (attentionTimer) window.clearTimeout(attentionTimer)
+  for (const timer of lifecycleTimers.values()) window.clearTimeout(timer)
+  lifecycleTimers.clear()
+  lifecycleGenerations.clear()
+  reducedMotionQuery?.removeEventListener?.('change', syncReducedMotion)
+  reducedMotionQuery = null
 })
 
 function onKeydown(event: KeyboardEvent): void {
@@ -153,17 +264,20 @@ defineExpose({ focus, focusNode })
   <section
     ref="root"
     class="generative-ui-surface-host"
+    :class="{ 'generative-ui-surface-host--embedded': embedded }"
     :data-device="composition.context.device"
     :data-viewport="composition.context.viewport"
     :data-surface="surface || 'all'"
     :data-canvas-columns="canvasColumns"
     :data-canvas-rows="canvasRows"
     :data-content-layout="contentLayout"
+    :data-reduced-motion="reducedMotion ? 'true' : 'false'"
     @keydown="onKeydown"
   >
     <TransitionGroup
       name="generative-ui-node"
-      :duration="{ enter: 300, leave: 300 }"
+      appear
+      :duration="transitionDuration"
     >
       <GenerativeUiNodeHost
         v-for="entry in renderedWithLayout"
@@ -181,6 +295,7 @@ defineExpose({ focus, focusNode })
         :action-mode="actionMode"
         :selected="entry.node.id === selectedNodeId"
         :attention="entry.node.id === attentionNodeId"
+        :lifecycle-motion="lifecycleMotionByNodeId[entry.node.id] || 'idle'"
         :motion-profile="entry.motionProfile.id"
         :attention-duration-ms="entry.motionProfile.attentionDurationMs"
         @action="emit('action', $event)"
@@ -211,6 +326,10 @@ defineExpose({ focus, focusNode })
   scrollbar-width: thin;
 }
 
+.generative-ui-surface-host--embedded {
+  display: contents;
+}
+
 .generative-ui-surface-host[data-canvas-rows='3'] {
   --generative-ui-canvas-rows: 3;
 }
@@ -233,7 +352,7 @@ defineExpose({ focus, focusNode })
 .generative-ui-surface-host :deep(.generative-ui-node-host) {
   height: 100%;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   scroll-snap-align: start;
 }
 

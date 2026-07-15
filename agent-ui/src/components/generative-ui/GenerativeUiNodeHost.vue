@@ -9,7 +9,7 @@ import type {
   GenerativeUiStoredNodeV1,
   GenerativeUiSurfaceContextV1,
 } from 'homerail-protocol'
-import { Maximize2, Minimize2 } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-vue-next'
 import {
   confirmPluginAction,
   invokePluginAction,
@@ -31,6 +31,7 @@ import type {
   GenerativeUiActionRequestV1,
   GenerativeUiPreviewRequestV1,
 } from '@/generative-ui/types'
+import type { GenerativeUiLifecycleMotion } from '@/generative-ui/motion-profiles'
 import GenerativeUiFallbackRenderer from './GenerativeUiFallbackRenderer.vue'
 import DeclarativeRenderer from './DeclarativeRenderer.vue'
 import CustomRendererSandbox from './CustomRendererSandbox.vue'
@@ -67,6 +68,7 @@ const props = withDefaults(defineProps<{
   attention?: boolean
   motionProfile?: GenerativeUiMotionProfile
   attentionDurationMs?: number
+  lifecycleMotion?: GenerativeUiLifecycleMotion
 }>(), {
   interactive: true,
   actionMode: 'emit',
@@ -74,6 +76,7 @@ const props = withDefaults(defineProps<{
   attention: false,
   motionProfile: 'standard',
   attentionDurationMs: 2400,
+  lifecycleMotion: 'idle',
 })
 
 const emit = defineEmits<{
@@ -125,6 +128,7 @@ const supplementaryActions = computed(() => inlineRendererActions.value.ready
   : [])
 const customRendererFailure = ref<string>()
 const expanded = ref(false)
+const collapsed = ref(false)
 const unavailable = computed(() => resolution.value.mode === 'unavailable' || Boolean(customRendererFailure.value))
 const fallbackReason = computed(() => (
   customRendererFailure.value
@@ -148,7 +152,13 @@ watch(expanded, value => {
 })
 
 function toggleExpanded(): void {
+  if (!expanded.value && collapsed.value) collapsed.value = false
   expanded.value = !expanded.value
+}
+
+function toggleCollapsed(): void {
+  if (!collapsed.value && expanded.value) expanded.value = false
+  collapsed.value = !collapsed.value
 }
 
 function createActionRequestId(): string {
@@ -422,6 +432,7 @@ function acceptInlineRendererActions(names: string[]): void {
         'generative-ui-node-host--expanded': expanded,
         'generative-ui-node-host--selected': selected,
         'generative-ui-node-host--attention': attention,
+        'generative-ui-node-host--collapsed': collapsed,
       },
     ]"
     :data-generative-ui-node="node.id"
@@ -432,6 +443,9 @@ function acceptInlineRendererActions(names: string[]): void {
     :data-motion-profile="motionProfile"
     :data-attention="attention ? 'true' : 'false'"
     :data-expanded="expanded ? 'true' : 'false'"
+    :data-collapsed="collapsed ? 'true' : 'false'"
+    :data-lifecycle-motion="lifecycleMotion"
+    :data-status-phase="node.status?.phase || 'unknown'"
     :style="{ '--generative-ui-attention-duration': `${attentionDurationMs}ms` }"
     :aria-selected="selected"
     tabindex="0"
@@ -439,18 +453,32 @@ function acceptInlineRendererActions(names: string[]): void {
     @keydown.enter.self="emit('select', { node_id: node.id })"
     @keydown.esc.stop="expanded = false"
   >
-    <button
-      type="button"
-      class="generative-ui-node-host__expand"
-      :title="expanded ? t('voice.generativeUi.collapse') : t('voice.generativeUi.expand')"
-      :aria-label="expanded ? t('voice.generativeUi.collapse') : t('voice.generativeUi.expand')"
-      :aria-pressed="expanded"
-      @click.stop="toggleExpanded"
-    >
-      <Minimize2 v-if="expanded" :size="18" aria-hidden="true" />
-      <Maximize2 v-else :size="18" aria-hidden="true" />
-    </button>
-    <RendererErrorBoundary
+    <div class="generative-ui-node-host__toolbar">
+      <button
+        type="button"
+        class="generative-ui-node-host__tool generative-ui-node-host__minimize"
+        :title="collapsed ? t('voice.generativeUi.restore') : t('voice.generativeUi.minimize')"
+        :aria-label="collapsed ? t('voice.generativeUi.restore') : t('voice.generativeUi.minimize')"
+        :aria-pressed="collapsed"
+        @click.stop="toggleCollapsed"
+      >
+        <ChevronUp v-if="collapsed" :size="18" aria-hidden="true" />
+        <ChevronDown v-else :size="18" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="generative-ui-node-host__tool generative-ui-node-host__expand"
+        :title="expanded ? t('voice.generativeUi.collapse') : t('voice.generativeUi.expand')"
+        :aria-label="expanded ? t('voice.generativeUi.collapse') : t('voice.generativeUi.expand')"
+        :aria-pressed="expanded"
+        @click.stop="toggleExpanded"
+      >
+        <Minimize2 v-if="expanded" :size="18" aria-hidden="true" />
+        <Maximize2 v-else :size="18" aria-hidden="true" />
+      </button>
+    </div>
+    <div v-if="!collapsed" class="generative-ui-node-host__body">
+      <RendererErrorBoundary
       v-if="registeredComponent"
       :reset-key="resetKey"
       @renderer-error="reportRendererError"
@@ -469,7 +497,7 @@ function acceptInlineRendererActions(names: string[]): void {
         <GenerativeUiFallbackRenderer :node="node" unavailable :reason="error" />
       </template>
     </RendererErrorBoundary>
-    <RendererErrorBoundary
+      <RendererErrorBoundary
       v-else-if="declarativeDocument"
       :reset-key="resetKey"
       @renderer-error="reportRendererError"
@@ -479,7 +507,7 @@ function acceptInlineRendererActions(names: string[]): void {
         <GenerativeUiFallbackRenderer :node="node" unavailable :reason="error" />
       </template>
     </RendererErrorBoundary>
-    <RendererErrorBoundary
+      <RendererErrorBoundary
       v-else-if="customRenderer && !customRendererFailure"
       :reset-key="resetKey"
       @renderer-error="reportRendererError"
@@ -501,14 +529,14 @@ function acceptInlineRendererActions(names: string[]): void {
         <GenerativeUiFallbackRenderer :node="node" unavailable :reason="error" />
       </template>
     </RendererErrorBoundary>
-    <GenerativeUiFallbackRenderer
+      <GenerativeUiFallbackRenderer
       v-else
       :node="node"
       :unavailable="unavailable"
       :reason="fallbackReason"
     />
 
-    <nav
+      <nav
       v-if="interactive !== false && actionMode !== 'disabled' && supplementaryActions.length"
       class="generative-ui-node-host__actions"
       aria-label="Actions"
@@ -524,7 +552,7 @@ function acceptInlineRendererActions(names: string[]): void {
         {{ action.label }}
       </button>
     </nav>
-    <template v-for="action in availableActions" :key="`status:${action.id}`">
+      <template v-for="action in availableActions" :key="`status:${action.id}`">
       <div
         v-if="actionStates[action.id]"
         class="generative-ui-node-host__action-state"
@@ -599,7 +627,17 @@ function acceptInlineRendererActions(names: string[]): void {
             : t('voice.generativeUi.actions.retry') }}
         </button>
       </div>
-    </template>
+      </template>
+    </div>
+    <div v-else class="generative-ui-node-host__minimal" aria-live="polite">
+      <strong>{{ node.fallback.title }}</strong>
+      <span>{{ node.status?.label || node.fallback.summary }}</span>
+      <progress
+        v-if="node.status?.progress !== undefined"
+        :value="node.status.progress"
+        max="100"
+      />
+    </div>
   </article>
 </template>
 
@@ -607,16 +645,19 @@ function acceptInlineRendererActions(names: string[]): void {
 .generative-ui-node-host {
   position: relative;
   display: grid;
+  grid-template-rows: 50px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  align-content: start;
+  align-content: stretch;
   border: 1px solid rgba(116, 228, 227, 0.16);
   border-radius: 8px;
   background: rgba(10, 20, 23, 0.88);
-  padding: 20px 58px 20px 20px;
+  overflow: hidden;
   outline: none;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  container-name: generative-ui-block;
+  container-type: size;
 }
 
 .generative-ui-node-host:hover,
@@ -688,14 +729,22 @@ function acceptInlineRendererActions(names: string[]): void {
   }
 }
 
-.generative-ui-node-host__expand {
-  position: absolute;
-  top: 10px;
-  right: 10px;
+.generative-ui-node-host__toolbar {
+  position: relative;
   z-index: 3;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 10px 4px;
+}
+
+.generative-ui-node-host__tool {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
   place-items: center;
   border: 1px solid rgba(116, 228, 227, 0.22);
   border-radius: 7px;
@@ -704,11 +753,98 @@ function acceptInlineRendererActions(names: string[]): void {
   cursor: pointer;
 }
 
-.generative-ui-node-host__expand:hover,
-.generative-ui-node-host__expand:focus-visible {
+.generative-ui-node-host__tool:hover,
+.generative-ui-node-host__tool:focus-visible {
   border-color: rgba(116, 228, 227, 0.58);
   color: #f5fffe;
   outline: none;
+}
+
+.generative-ui-node-host__body {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 20px 20px;
+  scrollbar-gutter: stable;
+}
+
+.generative-ui-node-host__minimal {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  align-content: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 12px 20px 20px;
+  color: rgba(224, 248, 246, 0.76);
+}
+
+.generative-ui-node-host__minimal strong,
+.generative-ui-node-host__minimal span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generative-ui-node-host__minimal strong {
+  color: #f1fffe;
+  font-size: 14px;
+}
+
+.generative-ui-node-host__minimal span {
+  font-size: 12px;
+}
+
+.generative-ui-node-host__minimal progress {
+  width: min(100%, 320px);
+  height: 5px;
+  accent-color: #74e4df;
+}
+
+.generative-ui-node-host[data-status-phase='succeeded'] {
+  border-color: rgba(74, 222, 128, 0.38);
+}
+
+.generative-ui-node-host[data-status-phase='failed'] {
+  border-color: rgba(248, 113, 113, 0.5);
+}
+
+.generative-ui-node-host[data-status-phase='blocked'] {
+  border-color: rgba(250, 204, 21, 0.42);
+}
+
+[data-motion-profile='standard'][data-lifecycle-motion='update'] .generative-ui-node-host__body,
+[data-motion-profile='standard'][data-lifecycle-motion='update'] .generative-ui-node-host__minimal {
+  animation: generative-ui-standard-update 700ms ease-out both;
+}
+
+[data-motion-profile='standard'][data-lifecycle-motion='complete'] .generative-ui-node-host__body,
+[data-motion-profile='standard'][data-lifecycle-motion='complete'] .generative-ui-node-host__minimal {
+  animation: generative-ui-standard-complete 1000ms ease-out both;
+}
+
+[data-motion-profile='standard'][data-lifecycle-motion='fail'] .generative-ui-node-host__body,
+[data-motion-profile='standard'][data-lifecycle-motion='fail'] .generative-ui-node-host__minimal {
+  animation: generative-ui-standard-fail 1000ms ease-out both;
+}
+
+@keyframes generative-ui-standard-update {
+  0% { background-color: rgba(116, 228, 223, 0.2); }
+  100% { background-color: transparent; }
+}
+
+@keyframes generative-ui-standard-complete {
+  0% { background-color: rgba(74, 222, 128, 0.24); }
+  45% { background-color: rgba(74, 222, 128, 0.1); }
+  100% { background-color: transparent; }
+}
+
+@keyframes generative-ui-standard-fail {
+  0% { background-color: rgba(248, 113, 113, 0.28); }
+  45% { background-color: rgba(248, 113, 113, 0.1); }
+  100% { background-color: transparent; }
 }
 
 .generative-ui-node-host--expanded {
@@ -722,10 +858,9 @@ function acceptInlineRendererActions(names: string[]): void {
   grid-column: auto !important;
   grid-row: auto !important;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   border-color: rgba(116, 228, 227, 0.46);
   background: #091316;
-  padding: 32px 64px 32px 32px;
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.72);
 }
 
@@ -835,5 +970,30 @@ function acceptInlineRendererActions(names: string[]): void {
   font: inherit;
   font-weight: 750;
   cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .generative-ui-node-host__tool {
+    width: 42px;
+    height: 42px;
+    flex-basis: 42px;
+  }
+}
+
+@media (max-width: 640px) {
+  .generative-ui-node-host--expanded {
+    inset: 8px !important;
+  }
+
+  .generative-ui-node-host__body {
+    padding: 2px 14px 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-motion-profile][data-lifecycle-motion] .generative-ui-node-host__body,
+  [data-motion-profile][data-lifecycle-motion] .generative-ui-node-host__minimal {
+    animation: none;
+  }
 }
 </style>

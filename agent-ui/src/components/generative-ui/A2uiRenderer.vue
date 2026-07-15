@@ -31,18 +31,18 @@ const emit = defineEmits<{
 }>()
 
 const { locale } = useI18n()
-const surface = computed<HomerailA2uiSurfaceV1>(() => validateA2uiSurfaceForNode(
-  props.surface ?? props.node.a2ui,
-  props.node,
+const resolvedSurface = computed<HomerailA2uiSurfaceV1>(() => validateA2uiSurfaceForNode(
+  structuredClone(toRaw(props.surface ?? props.node.a2ui)),
+  structuredClone(toRaw(props.node)),
 ))
-const components = computed(() => indexA2uiSurface(surface.value))
+const components = computed(() => indexA2uiSurface(resolvedSurface.value))
 const dataModel = ref<unknown>(structuredClone(toRaw(props.node.content)))
 
 watch(
   () => `${props.node.id}:${props.node.revision}`,
   () => { dataModel.value = structuredClone(toRaw(props.node.content)) },
 )
-watch(surface, value => emit('surface-actions', [...a2uiActionNames(value)]), { immediate: true })
+watch(resolvedSurface, value => emit('surface-actions', [...a2uiActionNames(value)]), { immediate: true })
 
 const runtime = computed<A2uiRuntime>(() => ({
   components: components.value,
@@ -63,7 +63,6 @@ const rootScope = computed(() => ({ value: dataModel.value, key: 'root' }))
     :data-device="context.device"
     :data-viewport="context.viewport"
     :data-expanded="expanded ? 'true' : 'false'"
-    :data-surface-properties="surface.surfaceProperties ? 'true' : 'false'"
   >
     <A2uiNode
       :key="`${node.id}:${node.revision}`"
@@ -568,6 +567,51 @@ div.hr-a2ui__artifact { display: grid; min-height: 220px; grid-template-rows: mi
 .hr-a2ui__dag-node > i { position: absolute; right: 10px; bottom: 7px; left: 10px; height: 3px; overflow: hidden; background: rgba(255, 255, 255, 0.07); }
 .hr-a2ui__dag-node > i b { display: block; width: var(--progress); height: 100%; background: var(--tone); }
 @keyframes hr-a2ui-edge { to { stroke-dashoffset: -20; } }
+
+@container generative-ui-block (max-width: 420px) {
+  .homerail-a2ui {
+    --hr-a2ui-gap-sm: 8px;
+    --hr-a2ui-gap-md: 12px;
+    --hr-a2ui-gap-lg: 16px;
+    font-size: 13px;
+  }
+
+  .hr-a2ui__text h1 { font-size: 24px; }
+  .hr-a2ui__text h2 { font-size: 21px; }
+  .hr-a2ui__text h3 { font-size: 17px; }
+  .hr-a2ui__card { padding: 10px; }
+  .hr-a2ui__metric strong { font-size: 23px; }
+  .hr-a2ui__list li { gap: 7px; padding-block: 8px; }
+  .hr-a2ui__image[data-variant='mediumFeature'] { height: 132px; }
+  .hr-a2ui__image[data-variant='largeFeature'] { height: 180px; }
+  .hr-a2ui__image[data-variant='header'] { height: 150px; }
+}
+
+@container generative-ui-block (min-width: 760px) {
+  .homerail-a2ui {
+    --hr-a2ui-gap-sm: 12px;
+    --hr-a2ui-gap-md: 20px;
+    --hr-a2ui-gap-lg: 28px;
+    font-size: 15px;
+  }
+
+  .hr-a2ui__text h1 { font-size: 36px; }
+  .hr-a2ui__text h2 { font-size: 29px; }
+  .hr-a2ui__text h3 { font-size: 21px; }
+}
+
+@container generative-ui-block (max-height: 360px) {
+  .homerail-a2ui {
+    --hr-a2ui-gap-sm: 7px;
+    --hr-a2ui-gap-md: 10px;
+    --hr-a2ui-gap-lg: 14px;
+  }
+
+  .hr-a2ui__card { padding: 9px; }
+  .hr-a2ui__list li { padding-block: 7px; }
+  .hr-a2ui__image,
+  .hr-a2ui__video { max-height: 180px; }
+}
 
 .homerail-a2ui[data-viewport='compact'] .hr-a2ui__grid { grid-template-columns: repeat(var(--compact-columns), minmax(0, 1fr)); }
 .homerail-a2ui[data-viewport='compact'] .hr-a2ui__grid-item { grid-column: span 1 !important; }

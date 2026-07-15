@@ -303,6 +303,8 @@
     "previewUnavailable": "生成式 UI 预览不可用",
     "expand": "放大此内容",
     "collapse": "退出放大",
+    "minimize": "收起内容",
+    "restore": "恢复内容",
     "actions": {
       "submitting": "正在提交操作…",
       "statusUnknown": "操作状态需要刷新",

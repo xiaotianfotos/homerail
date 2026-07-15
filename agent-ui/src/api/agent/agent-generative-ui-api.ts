@@ -22,6 +22,17 @@ export {
 } from '@/api/services/generative-ui-api'
 
 export type {
+  DagLiveSurfaceActivityState,
+  DagLiveSurfaceProjectionRecord,
+  DagLiveSurfaceSnapshot,
+  DagLiveSurfaceVisibilityState,
+} from '@/api/services/dag-live-surface-api'
+export {
+  getDagLiveSurfaces,
+  normalizeDagLiveSurfaceSnapshot,
+} from '@/api/services/dag-live-surface-api'
+
+export type {
   AgentToolReferenceV1,
   AgentToolResponseV1,
   AgentToolStatusV1,

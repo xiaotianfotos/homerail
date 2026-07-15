@@ -303,6 +303,8 @@
     "previewUnavailable": "Generative UI preview unavailable",
     "expand": "Expand content",
     "collapse": "Exit expanded view",
+    "minimize": "Collapse content",
+    "restore": "Restore content",
     "actions": {
       "submitting": "Submitting action…",
       "statusUnknown": "Action status needs refresh",

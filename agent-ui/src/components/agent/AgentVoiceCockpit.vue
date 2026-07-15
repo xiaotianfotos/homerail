@@ -37,6 +37,7 @@ import {
 } from '@/agent/voice-session-restore'
 import GenerativeUiCanonicalSurface from '@/components/generative-ui/GenerativeUiCanonicalSurface.vue'
 import GenerativeUiShadowPreview from '@/components/generative-ui/GenerativeUiShadowPreview.vue'
+import DagTaskCanvas from '@/components/generative-ui/DagTaskCanvas.vue'
 import {
   resolveVoiceGenerativeUiPresentation,
   showLegacyWidgetAlongsideCanonical,
@@ -194,6 +195,8 @@ const workspace = ref<VoiceWorkspace | null>(null)
 const generativeUiCanonicalAvailable = ref(false)
 const generativeUiCanonicalResolved = ref(false)
 const generativeUiCanonicalNodeIds = ref<Set<string>>(new Set())
+const dagTaskCanvasAvailable = ref(false)
+const dagTaskCanvasResolved = ref(false)
 const selectedGenerativeUiNodeId = ref('')
 const sessionTransitioning = ref(true)
 const voiceSessionTransitions = new VoiceSessionTransitionGuard()
@@ -281,11 +284,14 @@ watch(
   [
     () => workspace.value?.session_id,
     () => workspace.value?.generative_ui_mode,
+    () => workspace.value?.manager_run_id,
   ],
   () => {
     generativeUiCanonicalAvailable.value = false
     generativeUiCanonicalResolved.value = false
     generativeUiCanonicalNodeIds.value = new Set()
+    dagTaskCanvasAvailable.value = false
+    dagTaskCanvasResolved.value = false
     selectedGenerativeUiNodeId.value = ''
   },
 )
@@ -309,12 +315,28 @@ function onGenerativeUiCanonicalAvailability(payload: {
   }
 }
 
+function onDagTaskCanvasAvailability(payload: {
+  available: boolean
+  node_ids: string[]
+  loading?: boolean
+}): void {
+  if (payload.loading) {
+    dagTaskCanvasResolved.value = false
+    dagTaskCanvasAvailable.value = false
+    return
+  }
+  dagTaskCanvasResolved.value = true
+  dagTaskCanvasAvailable.value = payload.available
+}
+
 function beginVoiceSessionTransition(): number {
   const generation = voiceSessionTransitions.begin()
   sessionTransitioning.value = true
   generativeUiCanonicalResolved.value = false
   generativeUiCanonicalAvailable.value = false
   generativeUiCanonicalNodeIds.value = new Set()
+  dagTaskCanvasAvailable.value = false
+  dagTaskCanvasResolved.value = false
   selectedGenerativeUiNodeId.value = ''
   workspace.value = null
   return generation
@@ -762,11 +784,17 @@ const workspaceExecutionProgressText = computed(() => {
     return ''
   return workspaceProgressText.value
 })
-const executionCardVisible = computed(() =>
-  Boolean(primaryExecutionWidget.value || workspace.value?.manager_run_id)
-)
+const dagTaskCanvasPresent = computed(() => Boolean(
+  workspace.value?.manager_run_id
+  && (!dagTaskCanvasResolved.value || dagTaskCanvasAvailable.value)
+))
+const executionCardVisible = computed(() => Boolean(
+  !dagTaskCanvasPresent.value
+  && (primaryExecutionWidget.value || workspace.value?.manager_run_id)
+))
 const canonicalOwnsCanvasScroll = computed(() =>
   generativeUiPresentation.value.show_canonical
+  && !dagTaskCanvasPresent.value
   && !taskDraft.value
   && canvasWidgets.value.length === 0
   && !executionCardVisible.value
@@ -958,6 +986,7 @@ const canPreviewNextImage = computed(
 const hasVoiceStageContent = computed(() =>
   Boolean(
     taskDraft.value ||
+    dagTaskCanvasPresent.value ||
     artifactWidgets.value.length ||
     executionCardVisible.value ||
     taskContextWidgets.value.length ||
@@ -4942,12 +4971,21 @@ function summarizeTask(value: string): string {
               :class="{
                 'voice-card-grid--status-active': statusFocusActive,
                 'voice-card-grid--deck-active': deckPreviewFocusActive,
-                'voice-card-grid--canonical-active': generativeUiPresentation.show_canonical,
-                'voice-card-grid--canonical-scroll-owner': canonicalOwnsCanvasScroll
+                'voice-card-grid--canonical-active': generativeUiPresentation.show_canonical && !dagTaskCanvasPresent,
+                'voice-card-grid--canonical-scroll-owner': canonicalOwnsCanvasScroll,
+                'voice-card-grid--dag-task-active': dagTaskCanvasPresent
               }"
             >
+              <DagTaskCanvas
+                v-if="workspace?.manager_run_id"
+                :run-id="workspace.manager_run_id"
+                :refresh-token="workspace.updated_at"
+                embedded
+                @availability="onDagTaskCanvasAvailability"
+                @open-preview="openWidgetPreview"
+              />
               <GenerativeUiCanonicalSurface
-                v-if="generativeUiPresentation.request_canonical && workspace"
+                v-if="generativeUiPresentation.request_canonical && workspace && !dagTaskCanvasPresent"
                 ref="generativeUiCanonicalSurfaceRef"
                 :session-id="workspace.session_id"
                 :refresh-token="workspace.updated_at"

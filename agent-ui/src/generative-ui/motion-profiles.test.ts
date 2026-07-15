@@ -6,6 +6,9 @@ describe('Generative UI motion profiles', () => {
     expect(resolveGenerativeUiMotionProfile()).toEqual({
       id: 'standard',
       attentionDurationMs: 2400,
+      updateDurationMs: 700,
+      completeDurationMs: 1000,
+      failDurationMs: 1000,
     })
   })
 
