@@ -135,6 +135,24 @@ describe("settings bootstrap routes", () => {
     expect(body.data.checks.find((check) => check.name === "orchestration_templates")?.count).toBeGreaterThan(0);
   });
 
+  it("falls back to built-in orchestrations when HOME only overrides skills", async () => {
+    fs.mkdirSync(path.join(tmpHome, "asset", "skills", "custom-skill"), { recursive: true });
+    const port = await listen(server);
+
+    const diagnosticsResponse = await fetch(`http://127.0.0.1:${port}/api/assets/diagnostics`);
+    const diagnostics = await diagnosticsResponse.json() as {
+      data: { subdirs: Record<string, { exists: boolean; path: string }> };
+    };
+    expect(diagnostics.data.subdirs.orchestrations.exists).toBe(true);
+    expect(diagnostics.data.subdirs.orchestrations.path).toContain(path.join("assets", "orchestrations"));
+
+    const templatesResponse = await fetch(`http://127.0.0.1:${port}/api/manage/orchestrations`);
+    const templates = await templatesResponse.json() as {
+      data: { orchestrations: Array<{ id: string }> };
+    };
+    expect(templates.data.orchestrations).toContainEqual(expect.objectContaining({ id: "pr-review" }));
+  });
+
   it("returns asset diagnostics from HOMERAIL_ASSET_DIR when configured", async () => {
     const assetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-assets-"));
     try {

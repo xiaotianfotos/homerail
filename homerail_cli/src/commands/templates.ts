@@ -19,7 +19,9 @@ export function repoRoot(): string {
 
 export function orchestrationsDir(): string {
   const assetRoot = configuredAssetRoot();
-  return path.join(assetRoot ?? path.join(repoRoot(), "assets"), "orchestrations");
+  const configuredDir = assetRoot ? path.join(assetRoot, "orchestrations") : undefined;
+  if (configuredDir && fs.existsSync(configuredDir)) return configuredDir;
+  return path.join(repoRoot(), "assets", "orchestrations");
 }
 
 export function isYamlFile(name: string): boolean {

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { runtimeStatusHandler } from "../runtime/status.js";
 import { getExperienceDir, listExperienceGraphFromDb } from "./experience.js";
 import { listPersistedRunIds, loadRunMetadata } from "../persistence/store.js";
-import { repoRoot, resolveAssetRoot } from "../assets/root.js";
+import { repoRoot, resolveAssetDirectory, resolveAssetRoot } from "../assets/root.js";
 import {
   ensureManagerSkillsInstalled,
   listManagerSkills,
@@ -68,14 +68,15 @@ function buildAssetDiagnostics() {
   const assetRoot = assetResolution.assetRoot;
   const root = assetResolution.repoRoot;
   const skills = readSkillsCatalog();
-  const catalogPath = path.join(assetRoot, "orchestrations", "catalog.yaml");
+  const orchestrationDir = resolveAssetDirectory("orchestrations");
+  const catalogPath = path.join(orchestrationDir, "catalog.yaml");
   const experienceGraphPath = graphPath();
   const checks = [
     {
       name: "orchestration_templates",
       relative_path: "orchestrations",
-      present: fs.existsSync(path.join(assetRoot, "orchestrations")),
-      count: countFiles(path.join(assetRoot, "orchestrations"), (name) => name.endsWith(".yaml.template")),
+      present: fs.existsSync(orchestrationDir),
+      count: countFiles(orchestrationDir, (name) => name.endsWith(".yaml.template")),
     },
     {
       name: "operator_skills",
@@ -87,7 +88,7 @@ function buildAssetDiagnostics() {
   const status = checks.every((check) => check.present) ? "healthy" : "degraded";
   const subdirs = Object.fromEntries(
     ["orchestrations", "profiles", "agents", "skills", "prompts"].map((name) => {
-      const dir = path.join(assetRoot, name);
+      const dir = resolveAssetDirectory(name);
       return [name, { exists: fs.existsSync(dir), path: dir }];
     }),
   );
@@ -167,7 +168,7 @@ function orchestrationCategory(relativePath: string, stem: string): "primary" | 
 }
 
 function listOrchestrationTemplates(all = false) {
-  const dir = path.join(resolveAssetRoot().assetRoot, "orchestrations");
+  const dir = resolveAssetDirectory("orchestrations");
   const files: string[] = [];
   const walk = (current: string, prefix = "") => {
     if (!fs.existsSync(current)) return;

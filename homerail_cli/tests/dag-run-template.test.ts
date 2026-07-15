@@ -250,4 +250,13 @@ describe("PR Review run-template", () => {
     expect(fs.readFileSync(second, "utf8")).toBe("second");
     expect(first).not.toBe(second);
   });
+
+  it("keeps built-in templates visible when HOME only contains custom asset categories", () => {
+    fs.mkdirSync(path.join(tmpDir, "asset", "skills", "custom-skill"), { recursive: true });
+
+    const file = resolveTemplatePath(orchestrationsDir(), "pr-review");
+
+    expect(file).toBe(path.resolve("..", "assets", "orchestrations", "pr-review.yaml.template"));
+    expect(fs.existsSync(file)).toBe(true);
+  });
 });

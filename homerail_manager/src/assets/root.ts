@@ -59,3 +59,10 @@ export function resolveAssetRoot(): AssetRootResolution {
 export function getAssetRoot(): string {
   return resolveAssetRoot().assetRoot;
 }
+
+export function resolveAssetDirectory(name: string): string {
+  const resolution = resolveAssetRoot();
+  const configured = path.join(resolution.assetRoot, name);
+  if (fs.existsSync(configured)) return configured;
+  return path.join(resolution.repoAssetRoot, name);
+}
