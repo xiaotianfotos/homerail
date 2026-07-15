@@ -206,11 +206,18 @@ test("captures terminal graph diagnostics without model content or physical iden
     },
     activities: [{ actor_id: "goal_scout", type: "finding", detail: "private finding" }],
     events: {
-      events: [{
-        event_type: "handoff",
-        node_id: "goal_scout",
-        details: { port: "done", api_key: "sk-private-value", content: "private event content" },
-      }],
+      events: [
+        {
+          event_type: "handoff",
+          node_id: "goal_scout",
+          details: { port: "done", api_key: "sk-private-value", content: "private event content" },
+        },
+        {
+          event_type: "response_handoff_failed",
+          node_id: "goal_scout",
+          details: { reason: "contract rejected api_key=sk-private-value" },
+        },
+      ],
       raw_events: [{ payload: { workerId: "private-worker" } }],
     },
   });
@@ -219,6 +226,7 @@ test("captures terminal graph diagnostics without model content or physical iden
   assert.equal(sanitized.status, "completed");
   assert.equal(sanitized.handoffs[0].port, "done");
   assert.equal(sanitized.events[0].port, "done");
+  assert.equal(sanitized.events[1].reason, "contract rejected api_key=***REDACTED***");
   assert.deepEqual(sanitized.activity_counts, { goal_scout: { finding: 1 } });
   assert.equal(sanitized.counters.gateway_results, undefined);
   assert.deepEqual(unsafeReportPaths(sanitized), []);

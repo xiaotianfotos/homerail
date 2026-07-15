@@ -128,6 +128,7 @@ function compactDiagnosticEvents(snapshot) {
       ...(typeof details.port === "string" ? { port: details.port } : {}),
       ...(typeof details.gatewayType === "string" ? { gateway_type: details.gatewayType } : {}),
       ...(typeof details.status === "string" ? { status: details.status } : {}),
+      ...(typeof details.reason === "string" ? { reason: details.reason.slice(0, 1_000) } : {}),
     };
   });
 }
