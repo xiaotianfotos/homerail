@@ -27,12 +27,14 @@ import {
   managerAgentToolSpec,
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
+  managerAgentRequiredToolObjectivePrompt,
   managerAgentSkillViewToolDefinitions,
   matchingManagerAgentSkillViewToolDefinition,
   materializeManagerAgentSkillViewInput,
   mergeManagerAgentPluginSkillCatalog,
   normalizeManagerAgentDagActorCommandInput,
   normalizeManagerAgentDagActorInterventionInput,
+  normalizeManagerAgentRequiredToolCalls,
   executeHomerailPluginTool,
   homerailPluginTurnContextDigestInput,
   resolvePrCloseout,
@@ -2015,15 +2017,6 @@ function canonicalToolCallName(value: string): string {
   return parts.length >= 3 ? parts.at(-1)! : name;
 }
 
-function normalizeRequiredToolCalls(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return Array.from(new Set(
-    value
-      .map((item) => typeof item === "string" ? canonicalToolCallName(item) : "")
-      .filter(Boolean),
-  ));
-}
-
 function successfulToolCallNames(
   objectiveToolCalls: Array<{ name: string; success: boolean }>,
   toolCalls: Array<{ id: string; name: string }>,
@@ -2068,7 +2061,7 @@ function buildHostCodexManagerAgentResult(
   agentErrors: string[],
 ): Record<string, unknown> {
   const config = input.agent_config;
-  const requiredToolCalls = normalizeRequiredToolCalls(input.required_tool_calls);
+  const requiredToolCalls = normalizeManagerAgentRequiredToolCalls(input.required_tool_calls);
   const successfulRequiredToolCalls = successfulToolCallNames(
     state.objectiveToolCalls,
     toolCalls,
@@ -2169,6 +2162,7 @@ async function* runHostCodexManagerAgentTurnEvents(
   const texts: string[] = [];
   const commentaryTexts: string[] = [];
   const agentErrors: string[] = [];
+  const requiredToolCalls = normalizeManagerAgentRequiredToolCalls(input.required_tool_calls);
   let emittedVoiceSurfaceCommentaryCount = 0;
   const abortController = new AbortController();
   const turnTimeoutMs = managerAgentTurnTimeoutMs();
@@ -2189,7 +2183,10 @@ async function* runHostCodexManagerAgentTurnEvents(
     input.manager_skills,
   );
   const context: AgentRunContext = {
-    systemPrompt: systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, input.manager_skills),
+    systemPrompt: [
+      systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, input.manager_skills),
+      managerAgentRequiredToolObjectivePrompt(requiredToolCalls),
+    ].filter(Boolean).join("\n\n"),
     provider: config.provider_name || undefined,
     model: config.model || "codex",
     apiKey: config.api_key || "",

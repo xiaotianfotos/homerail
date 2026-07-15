@@ -22,11 +22,13 @@ import {
   managerAgentToolSpec,
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
+  managerAgentRequiredToolObjectivePrompt,
   managerAgentSkillViewToolDefinitions,
   matchingManagerAgentSkillViewToolDefinition,
   materializeManagerAgentSkillViewInput,
   mergeManagerAgentPluginSkillCatalog,
   normalizeManagerAgentDagActorInterventionInput,
+  normalizeManagerAgentRequiredToolCalls,
   executeHomerailPluginTool,
   validateHomerailPluginTurnContext,
   homerailPluginTurnContextDigestInput,
@@ -217,15 +219,6 @@ function canonicalToolCallName(value: string): string {
   return parts.length >= 3 ? parts.at(-1)! : name;
 }
 
-function normalizeRequiredToolCalls(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return Array.from(new Set(
-    value
-      .map((item) => typeof item === "string" ? canonicalToolCallName(item) : "")
-      .filter(Boolean),
-  ));
-}
-
 function successfulToolCallNames(
   objectiveToolCalls: Array<{ name: string; success: boolean }>,
   toolCalls: ToolTrace[],
@@ -246,7 +239,6 @@ function successfulToolCallNames(
   }
   return successful;
 }
-
 function managerRestUrl(): string {
   return (process.env.MANAGER_REST_URL || "http://host.docker.internal:19191/api").replace(/\/+$/, "");
 }
@@ -1738,7 +1730,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
   const texts: string[] = [];
   const agentErrors: string[] = [];
   const responseMode = body.response_mode === "voice" ? "voice" : "chat";
-  const requiredToolCalls = normalizeRequiredToolCalls(body.required_tool_calls);
+  const requiredToolCalls = normalizeManagerAgentRequiredToolCalls(body.required_tool_calls);
   const pluginContext = body.plugin_context;
   if (pluginContext) {
     const validation = validateHomerailPluginTurnContext(pluginContext);
@@ -1769,7 +1761,10 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     timeout.unref?.();
   }
   const context: AgentRunContext = {
-    systemPrompt: systemPrompt(config, responseMode, body.voice_ui_rules, body.voice_system_contract, body.manager_skills),
+    systemPrompt: [
+      systemPrompt(config, responseMode, body.voice_ui_rules, body.voice_system_contract, body.manager_skills),
+      managerAgentRequiredToolObjectivePrompt(requiredToolCalls),
+    ].filter(Boolean).join("\n\n"),
     systemPromptMode: "append",
     provider: config.provider_name,
     model,

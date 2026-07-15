@@ -1570,6 +1570,9 @@ describe("manager-agent server", () => {
         "create_and_run",
       ]);
       expect(agent.systemPrompt).toContain("homerail-dag-patterns: Select reusable DAG patterns [home]");
+      expect(agent.systemPrompt).toContain("Successfully call every required tool");
+      expect(agent.systemPrompt).toContain("instantiate_dag_pattern, create_and_run");
+      expect(agent.systemPrompt).not.toMatch(/game|showcase|three-worker/i);
       expect(observed).toContainEqual(expect.objectContaining({
         method: "POST",
         path: "/api/dag/workflows/sync",

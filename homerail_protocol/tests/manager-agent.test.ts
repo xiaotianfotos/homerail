@@ -23,9 +23,11 @@ import {
   formatHomeRailPromptToolCall,
   managerAgentDagCommandResult,
   managerAgentCommonToolCatalog,
+  managerAgentRequiredToolObjectivePrompt,
   managerAgentToolSpec,
   normalizeManagerAgentDagActorCommandInput,
   normalizeManagerAgentDagActorInterventionInput,
+  normalizeManagerAgentRequiredToolCalls,
   parseHomeRailPromptHandoff,
   parseHomeRailPromptToolCalls,
   stripHomeRailPromptMarkers,
@@ -35,6 +37,27 @@ import {
   MANAGER_AGENT_WIDGET_FILE_TOOL_NAMES,
   type ManagerAgentWidgetFileToolAdapter,
 } from "../src/manager-agent-widget-tools.js";
+
+describe("Manager Agent required tool objective", () => {
+  it("normalizes and renders only an explicit generic runtime objective", () => {
+    expect(normalizeManagerAgentRequiredToolCalls([
+      " start_supervised_dag ",
+      "focus_dag_actor",
+      "start_supervised_dag",
+      "",
+      null,
+    ])).toEqual(["start_supervised_dag", "focus_dag_actor"]);
+
+    const prompt = managerAgentRequiredToolObjectivePrompt([
+      "start_supervised_dag",
+      "focus_dag_actor",
+    ]);
+    expect(prompt).toContain("start_supervised_dag, focus_dag_actor");
+    expect(prompt).toContain("runtime verifies successful tool completion");
+    expect(prompt).not.toMatch(/game|showcase|three-worker/i);
+    expect(managerAgentRequiredToolObjectivePrompt(undefined)).toBe("");
+  });
+});
 
 describe("Manager Agent harness contract", () => {
   it("keeps canonical public harness ids explicit", () => {

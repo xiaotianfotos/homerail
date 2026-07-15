@@ -180,6 +180,25 @@ export function managerAgentDagCommandResult(value: unknown): ManagerAgentDagCom
   };
 }
 
+export function normalizeManagerAgentRequiredToolCalls(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(
+    value
+      .map((item) => typeof item === "string" ? item.trim() : "")
+      .filter(Boolean),
+  ));
+}
+
+export function managerAgentRequiredToolObjectivePrompt(value: unknown): string {
+  const names = normalizeManagerAgentRequiredToolCalls(value);
+  if (names.length === 0) return "";
+  return [
+    "HomeRail runtime objective for this turn:",
+    `- Successfully call every required tool before the final response: ${names.join(", ")}.`,
+    "- Do not merely describe, defer, or simulate these calls. The runtime verifies successful tool completion.",
+  ].join("\n");
+}
+
 export const HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL = "homerail_tool_call";
 export const HOMERAIL_PROMPT_HANDOFF_PROTOCOL = "homerail_handoff";
 

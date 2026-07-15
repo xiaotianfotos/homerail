@@ -1202,6 +1202,50 @@ describe("/api/manager/chat", () => {
     expect(JSON.stringify(body)).not.toContain("[ERROR]");
   });
 
+  it("injects and enforces explicit required tool objectives on host Codex", async () => {
+    let seenSystemPrompt = "";
+    _setHostCodexAgentEventRunnerForTest(async function* (_prompt, _tools, context) {
+      seenSystemPrompt = context.systemPrompt ?? "";
+      yield { type: "text", text: "I will start it later." };
+      yield { type: "done" };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5" }),
+    });
+    expect(saved.status).toBe(200);
+
+    const response = await fetch(`${baseUrl}/api/manager/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "Start the explicitly selected workflow.",
+        project_id: "p-host-codex-objective",
+        required_tool_calls: ["start_supervised_dag"],
+      }),
+    });
+    const body = await response.json() as {
+      success: boolean;
+      data?: Record<string, unknown>;
+    };
+
+    expect(response.status).toBe(503);
+    expect(body.success).toBe(false);
+    expect(body.data).toMatchObject({
+      code: "manager_objective_unsatisfied",
+      required_tool_calls: ["start_supervised_dag"],
+      missing_tool_calls: ["start_supervised_dag"],
+      observed_tool_calls: [],
+      objective_tool_calls: [],
+    });
+    expect(seenSystemPrompt).toContain("Successfully call every required tool");
+    expect(seenSystemPrompt).toContain("start_supervised_dag");
+    expect(seenSystemPrompt).not.toMatch(/game|showcase|three-worker/i);
+  });
+
   it("normalizes container-only manager URLs for host Codex tools", () => {
     expect(_managerRestUrlForTest("http://host.docker.internal:19191")).toBe("http://127.0.0.1:19191/api");
     expect(_managerRestUrlForTest("http://host.docker.internal:19191/api")).toBe("http://127.0.0.1:19191/api");
