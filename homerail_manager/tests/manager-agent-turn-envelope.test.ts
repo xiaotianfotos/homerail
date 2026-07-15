@@ -89,6 +89,24 @@ describe("Manager Agent signed turn envelope", () => {
       publicKey,
       Buffer.from(envelope.signature, "base64url"),
     )).toBe(true);
+
+    const authority = getManagerAgentTurnEnvelopeAuthority();
+    const credential = authority.credential(envelope);
+    expect(authority.authorizeApiRequest({
+      credential,
+      method: "GET",
+      pathname: "/api/runs/run-one/actors",
+    })).toBe(true);
+    expect(authority.authorizeApiRequest({
+      credential,
+      method: "POST",
+      pathname: "/api/runs/run-one/supervision",
+    })).toBe(true);
+    expect(authority.authorizeApiRequest({
+      credential,
+      method: "GET",
+      pathname: "/api/runs/run-one/supervision",
+    })).toBe(false);
   });
 });
 
