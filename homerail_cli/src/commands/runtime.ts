@@ -110,6 +110,12 @@ interface RuntimeStatus {
 
 interface RuntimeRestartOpts extends StartOpts {
   ui?: boolean;
+  managerOnly?: boolean;
+}
+
+interface StartRuntimeContext {
+  managerOnly?: boolean;
+  previousManagerState?: ManagerServiceState;
 }
 
 interface RuntimeInstallOpts {
@@ -319,6 +325,7 @@ export function registerRuntimeCommands(program: Command): void {
   runtime
     .command("restart")
     .description("Restart local Manager and Node runtime services")
+    .option("--manager-only", "Restart only Manager; preserve Node, Worker, and Agent UI processes")
     .option("--no-build-worker-image", "Skip building homerail-worker:latest when missing")
     .option("--rebuild-worker-image", "Force rebuilding homerail-worker:latest before DAG provisioning")
     .option("--host <host>", "Manager bind host")
@@ -333,9 +340,13 @@ export function registerRuntimeCommands(program: Command): void {
     .action(async (opts: RuntimeRestartOpts) => {
       const globalOpts = program.opts() as GlobalOpts;
       try {
-        const stopped = stopRuntime();
+        const previousManagerState = opts.managerOnly ? readManagerState() : undefined;
+        const stopped = opts.managerOnly ? await stopManagerForRestart() : stopRuntime();
         if (!globalOpts.json) console.log(`Stopped ${stopped} local service(s).`);
-        process.exitCode = await startRuntime(globalOpts, opts);
+        process.exitCode = await startRuntime(globalOpts, opts, {
+          managerOnly: opts.managerOnly,
+          previousManagerState,
+        });
       } catch (err) {
         console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
         process.exitCode = 1;
@@ -477,8 +488,17 @@ export function registerRuntimeCommands(program: Command): void {
     });
 }
 
-async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<number> {
+async function startRuntime(
+  globalOpts: GlobalOpts,
+  opts: StartOpts,
+  context: StartRuntimeContext = {},
+): Promise<number> {
   ensureHomerailHome();
+  const managerOnly = context.managerOnly === true;
+  const previousManagerState = managerOnly ? context.previousManagerState : undefined;
+  const printMessage = (message: string): void => {
+    if (!globalOpts.json) console.log(message);
+  };
   if (opts.unsafeNoAdminToken && !opts.public) {
     throw new Error("--unsafe-no-admin-token requires --public");
   }
@@ -488,11 +508,25 @@ async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<nu
   const cfg = loadLocalConfig();
   const assetRoot = configuredAssetRoot(cfg);
   const assetEnv: Record<string, string> = assetRoot ? { HOMERAIL_ASSET_DIR: assetRoot } : {};
-  const managerHost = opts.public ? "0.0.0.0" : configuredManagerHost(cfg, opts.host);
-  const managerLocalUrl = configuredManagerLocalUrl(cfg, globalOpts.baseUrl);
-  const managerPublicUrl = configuredManagerAccessUrl(cfg, opts.publicUrl || globalOpts.baseUrl);
-  const hasExplicitManagerPublicUrl = hasManagerPublicUrl(cfg, opts.publicUrl || globalOpts.baseUrl);
-  const managerPort = configuredManagerPort(cfg);
+  const managerHost = opts.public
+    ? "0.0.0.0"
+    : opts.host
+      ? configuredManagerHost(cfg, opts.host)
+      : previousManagerState?.host ?? configuredManagerHost(cfg);
+  const managerLocalUrl = configuredManagerLocalUrl(
+    cfg,
+    globalOpts.baseUrl || previousManagerState?.accessUrl,
+  );
+  const managerPublicUrl = configuredManagerAccessUrl(
+    cfg,
+    opts.publicUrl || globalOpts.baseUrl || previousManagerState?.publicUrl,
+  );
+  const hasExplicitManagerPublicUrl = hasManagerPublicUrl(cfg, opts.publicUrl || globalOpts.baseUrl)
+    || Boolean(
+      previousManagerState?.publicUrl
+      && previousManagerState.publicUrl !== previousManagerState.accessUrl,
+    );
+  const managerPort = previousManagerState?.port ?? configuredManagerPort(cfg);
   const uiBindHost = opts.public && !opts.uiHost ? detectedMachineHost() : configuredUiHost(cfg, opts.uiHost);
   const uiHttpsPort = configuredUiPort(cfg, opts.uiPort);
   const uiHttpPort = configuredUiHttpPort(cfg);
@@ -507,10 +541,10 @@ async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<nu
   const client = new HomeRailClient({ baseUrl: managerLocalUrl, timeoutMs: globalOpts.requestTimeout });
 
   ensureBuiltArtifact("homerail_manager/dist/index.js");
-  ensureBuiltArtifact("homerail_node/dist/cli.js");
+  if (!managerOnly) ensureBuiltArtifact("homerail_node/dist/cli.js");
 
-  const before = await getRuntimeStatus(globalOpts);
-  if (!before.managerHealthy) {
+  const before = managerOnly ? undefined : await getRuntimeStatus(globalOpts);
+  if (managerOnly || !before?.managerHealthy) {
     const pid = startService("manager", "homerail_manager/dist/index.js", {
       HOMERAIL_HOME: getHomerailHome(),
       HOMERAIL_MANAGER_PORT: String(managerPort),
@@ -534,17 +568,20 @@ async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<nu
       publicUrl: managerPublicUrl,
       startedAt: Date.now(),
     });
-    console.log(`Started Manager pid=${pid}`);
+    printMessage(`Started Manager pid=${pid}`);
     await waitForManager(client);
+    if (!pidIsRunning(pid)) {
+      throw new Error(`Manager process exited during startup; see ${logPath("manager")}`);
+    }
   } else {
-    console.log(`Manager already healthy at ${client.baseUrl}`);
+    printMessage(`Manager already healthy at ${client.baseUrl}`);
   }
 
   const applyResult = await applyStoredModelConfig(client);
   if (applyResult.applied) {
-    console.log(`Model config ${applyResult.action}: ${applyResult.detail}`);
+    printMessage(`Model config ${applyResult.action}: ${applyResult.detail}`);
   } else {
-    console.log(`Model config not applied: ${applyResult.detail}`);
+    printMessage(`Model config not applied: ${applyResult.detail}`);
     if (shouldAbortStartForModelConfig(applyResult)) {
       if (applyResult.detail.includes("Unknown provider_id")) {
         console.error(
@@ -556,8 +593,14 @@ async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<nu
       return 1;
     }
     if (isMissingModelCredential(applyResult.detail)) {
-      console.log("Next: run `hr model configure <provider-or-endpoint-alias>` to add provider credentials before running DAGs.");
+      printMessage("Next: run `hr model configure <provider-or-endpoint-alias>` to add provider credentials before running DAGs.");
     }
+  }
+
+  if (managerOnly) {
+    const finalStatus = await getRuntimeStatus(globalOpts);
+    printRuntimeResult(finalStatus, globalOpts.json);
+    return finalStatus.managerHealthy && finalStatus.managerPidRunning ? 0 : 1;
   }
 
   if (opts.ui) {
@@ -570,7 +613,7 @@ async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<nu
       enableTextMode: opts.enableTextMode,
       unsafeNoAdminToken: opts.unsafeNoAdminToken,
     });
-    console.log(`Agent UI: ${uiStatus.uiPidRunning ? "PASS" : "FAIL"} ${uiStatus.uiUrl}`);
+    printMessage(`Agent UI: ${uiStatus.uiPidRunning ? "PASS" : "FAIL"} ${uiStatus.uiUrl}`);
   }
 
   // commander maps --no-build-worker-image to opts.buildWorkerImage === false.
@@ -606,14 +649,14 @@ async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<nu
       ...assetEnv,
     };
     const pid = startService("node", "homerail_node/dist/cli.js", env);
-    console.log(`Started Node pid=${pid}`);
+    printMessage(`Started Node pid=${pid}`);
     await waitForNode(runtimeClient, nodeId);
   } else {
-    console.log(`Node already connected: ${nodeId}`);
+    printMessage(`Node already connected: ${nodeId}`);
   }
 
   const finalStatus = await getRuntimeStatus(globalOpts);
-  printRuntimeStatus(finalStatus);
+  printRuntimeResult(finalStatus, globalOpts.json);
   return finalStatus.managerHealthy && runtimeNodeIds(finalStatus.runtime).length > 0 ? 0 : 1;
 }
 
@@ -673,6 +716,21 @@ function stopRuntime(): number {
     if (stopService(name)) stopped++;
   }
   return stopped;
+}
+
+async function stopManagerForRestart(): Promise<number> {
+  const pid = servicePidForStop("manager");
+  const stopped = stopService("manager", pid);
+  if (stopped && pid !== undefined) await waitForPidExit(pid);
+  return stopped ? 1 : 0;
+}
+
+function printRuntimeResult(status: RuntimeStatus, json = false): void {
+  if (json) {
+    console.log(JSON.stringify(status));
+    return;
+  }
+  printRuntimeStatus(status);
 }
 
 function printRuntimeStatus(status: RuntimeStatus): void {
@@ -1055,8 +1113,7 @@ export function shouldServeStaticAgentUi(
   return hasDist && !fs.existsSync(path.join(agentUiDir, "node_modules"));
 }
 
-function stopService(name: RuntimeServiceName): boolean {
-  const pid = readPid(name);
+function stopService(name: RuntimeServiceName, pid = servicePidForStop(name)): boolean {
   let stopped = false;
   if (pid && pidIsRunning(pid)) {
     stopped = killProcessTree(pid, "SIGTERM");
@@ -1081,6 +1138,15 @@ function stopService(name: RuntimeServiceName): boolean {
     }
   }
   return stopped;
+}
+
+function servicePidForStop(name: RuntimeServiceName): number | undefined {
+  const pid = readPid(name);
+  if (pid !== undefined && pidIsRunning(pid)) return pid;
+
+  const statePid = name === "manager" ? readManagerState()?.pid : undefined;
+  if (statePid !== undefined && pidIsRunning(statePid)) return statePid;
+  return pid ?? statePid;
 }
 
 function killProcessTree(pid: number, signal: NodeJS.Signals): boolean {
@@ -1500,6 +1566,15 @@ async function waitForNode(client: HomeRailClient, nodeId: string): Promise<void
     await sleep(500);
   }
   throw new Error(`Node did not connect: ${nodeId}`);
+}
+
+async function waitForPidExit(pid: number, timeoutMs = 5_000): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (!pidIsRunning(pid)) return;
+    await sleep(50);
+  }
+  throw new Error(`Manager pid=${pid} did not stop within ${timeoutMs}ms`);
 }
 
 async function waitForHttp(url: string, timeoutMs = 15_000): Promise<void> {

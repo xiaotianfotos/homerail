@@ -37,7 +37,7 @@ ARTIFACT_BASE="$ARTIFACT_ROOT/slots/$LIVE_SLOT"
 SLOT_BASE="$RUNNER_BASE/slots/$LIVE_SLOT"
 
 case "$LIVE_TASK" in
-  patterns|pr-review) ;;
+  patterns|pr-review|three-worker-showcase) ;;
   *)
     echo "Unsupported HOMERAIL_LIVE_TASK: $LIVE_TASK" >&2
     exit 1
@@ -58,6 +58,12 @@ export HOMERAIL_WORKER_IMAGE="${HOMERAIL_LIVE_WORKER_IMAGE_PREFIX:-homerail-work
 export HOMERAIL_MANAGER_AGENT_IMAGE="$HOMERAIL_WORKER_IMAGE"
 export HOMERAIL_DAG_COMMAND_ALLOWLIST="${HOMERAIL_DAG_COMMAND_ALLOWLIST:-node,git}"
 export HOMERAIL_DAG_ALLOW_DYNAMIC_COMMANDS="${HOMERAIL_DAG_ALLOW_DYNAMIC_COMMANDS:-true}"
+if [ "$LIVE_TASK" = "three-worker-showcase" ]; then
+  # Keep the production five-minute default intact. The live acceptance run
+  # shortens the public idle-TTL setting so physical release can be observed
+  # without adding any Showcase-only Runtime behavior.
+  export HOMERAIL_DAG_WORKER_IDLE_TTL_MS="${HOMERAIL_SHOWCASE_WORKER_IDLE_TTL_MS:-15000}"
+fi
 if [ -z "${HOMERAIL_DAG_APPROVAL_TOKEN:-}" ]; then
   HOMERAIL_DAG_APPROVAL_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
   export HOMERAIL_DAG_APPROVAL_TOKEN
@@ -71,8 +77,17 @@ if [ -z "${HOMERAIL_MANAGER_ADMIN_TOKEN:-}" ]; then
   export HOMERAIL_MANAGER_ADMIN_TOKEN
 fi
 PERSISTENT_ARTIFACT_DIR="$ARTIFACT_BASE/$RUN_KEY"
-REPORT_PATH="$PERSISTENT_ARTIFACT_DIR/dag-patterns-live.json"
-UPLOAD_REPORT_PATH="${HOMERAIL_LIVE_REPORT_PATH:-$REPO_ROOT/artifacts/dag-patterns-live.json}"
+if [ "$LIVE_TASK" = "three-worker-showcase" ]; then
+  REPORT_PATH="$PERSISTENT_ARTIFACT_DIR/three-worker-showcase.json"
+  UPLOAD_REPORT_PATH="${HOMERAIL_LIVE_REPORT_PATH:-$REPO_ROOT/artifacts/three-worker-showcase/acceptance.json}"
+  SHOWCASE_STATE_PATH="$PERSISTENT_ARTIFACT_DIR/three-worker-showcase-state.json"
+  SHOWCASE_RESTART_EVIDENCE_PATH="$PERSISTENT_ARTIFACT_DIR/manager-restart.json"
+  SHOWCASE_RESTART_BEFORE_PATH="$PERSISTENT_ARTIFACT_DIR/.manager-before.json"
+  SHOWCASE_RESTART_AFTER_PATH="$PERSISTENT_ARTIFACT_DIR/.manager-after.json"
+else
+  REPORT_PATH="$PERSISTENT_ARTIFACT_DIR/dag-patterns-live.json"
+  UPLOAD_REPORT_PATH="${HOMERAIL_LIVE_REPORT_PATH:-$REPO_ROOT/artifacts/dag-patterns-live.json}"
+fi
 LOCK_FILE="$SLOT_BASE/dag-patterns-live.lock"
 
 mkdir -p "$RUNNER_BASE" "$SLOT_BASE" "$HOME_BASE" "$PERSISTENT_ARTIFACT_DIR" "$(dirname "$UPLOAD_REPORT_PATH")"
@@ -258,6 +273,46 @@ node "$REPO_ROOT/homerail_cli/dist/cli.js" start --host 0.0.0.0 --no-build-worke
 flock -u 8
 exec 8>&-
 SETTING_ID="$(node "$REPO_ROOT/scripts/configure-live-pattern-model.mjs")"
+
+if [ "$LIVE_TASK" = "three-worker-showcase" ]; then
+  showcase_args=(
+    --base-url "$HOMERAIL_MANAGER_URL"
+    --setting-id "$SETTING_ID"
+    --expected-model "$MODEL_NAME"
+    --stall-timeout-ms "${HOMERAIL_SHOWCASE_STALL_TIMEOUT_MS:-1200000}"
+    --state-file "$SHOWCASE_STATE_PATH"
+    --output "$REPORT_PATH"
+    --restart-evidence "$SHOWCASE_RESTART_EVIDENCE_PATH"
+  )
+  node "$REPO_ROOT/scripts/validate-three-worker-showcase.mjs" \
+    --phase prepare "${showcase_args[@]}"
+
+  # Exercise persisted cold recovery instead of restarting an in-memory test
+  # harness. Node/UI processes and the same isolated HOMERAIL_HOME are retained;
+  # at least one DAG Worker has already been physically released by idle TTL.
+  node "$REPO_ROOT/homerail_cli/dist/cli.js" --json runtime status \
+    >"$SHOWCASE_RESTART_BEFORE_PATH"
+  node "$REPO_ROOT/homerail_cli/dist/cli.js" --json runtime restart \
+    --manager-only --host 0.0.0.0 --no-build-worker-image \
+    >"$SHOWCASE_RESTART_AFTER_PATH"
+  node "$REPO_ROOT/scripts/manager-only-restart-evidence.mjs" \
+    --before "$SHOWCASE_RESTART_BEFORE_PATH" \
+    --after "$SHOWCASE_RESTART_AFTER_PATH" \
+    --output "$SHOWCASE_RESTART_EVIDENCE_PATH"
+  rm -f "$SHOWCASE_RESTART_BEFORE_PATH" "$SHOWCASE_RESTART_AFTER_PATH"
+
+  node "$REPO_ROOT/scripts/validate-three-worker-showcase.mjs" \
+    --phase resume "${showcase_args[@]}"
+  cp "$REPORT_PATH" "$UPLOAD_REPORT_PATH"
+  VISUAL_ARTIFACT_DIR="$PERSISTENT_ARTIFACT_DIR/visual"
+  npm --prefix "$REPO_ROOT/agent-ui" run test:three-worker-showcase-visual -- \
+    --report "$REPORT_PATH" \
+    --output "$VISUAL_ARTIFACT_DIR"
+  rm -rf "$(dirname "$UPLOAD_REPORT_PATH")/visual"
+  cp -R "$VISUAL_ARTIFACT_DIR" "$(dirname "$UPLOAD_REPORT_PATH")/visual"
+  echo "Three-Worker Showcase report: $REPORT_PATH"
+  exit 0
+fi
 
 if [ "$LIVE_TASK" = "pr-review" ]; then
   REVIEW_INPUT="${HOMERAIL_PR_REVIEW_INPUT:-}"

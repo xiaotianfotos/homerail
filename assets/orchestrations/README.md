@@ -36,10 +36,23 @@ Additional strict v1 examples cover reusable graph primitives:
 - `workflow-spec-v1-foreach.yaml.template`: bounded collection iteration;
 - `workflow-spec-v1-bounded-while.yaml.template`: bounded feedback and explicit
   exhaustion.
+- `three-worker-game-copilot.yaml.template`: three concurrent, provider-neutral
+  game-planning Actors that fan in and wait for follow-up commands.
 
 Validate any of them with `hr dag validate <path>`. The foreach example expects
 the run prompt to be a JSON-encoded string array; the bounded-while example
 expects a JSON object containing a numeric `score`.
+
+Start the three-Actor showcase with one ordinary request. After it reaches
+`waiting`, use the current round ID from `hr dag rounds` to call only the Actor
+that needs another pass:
+
+```bash
+hr run assets/orchestrations/three-worker-game-copilot.yaml.template \
+  --prompt "Plan a relaxed two-hour co-op session for four friends"
+hr dag send-command <run-id> --expected-round <round-id> \
+  --actor systems_guide --payload '{"focus":"prefer the lower-risk route"}'
+```
 
 Start with `public-dev-5node.yaml.template` for the release smoke path:
 

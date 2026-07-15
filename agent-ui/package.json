@@ -15,7 +15,8 @@
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --coverage --passWithNoTests",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "test:three-worker-showcase-visual": "node scripts/three-worker-showcase-visual.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",

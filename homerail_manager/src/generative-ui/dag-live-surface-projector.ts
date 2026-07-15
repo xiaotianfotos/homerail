@@ -787,7 +787,7 @@ function buildProjectedNode(input: {
       },
       content,
       a2ui: structuredClone(LIVE_SURFACE_A2UI),
-      presentation: { density: "summary" },
+      presentation: { density: "summary", canvas_size: "1x2" },
       lifecycle: { persistence: "session", removable: true },
       fallback: {
         title,
@@ -1203,7 +1203,7 @@ function buildInterventionNode(input: {
       },
       content,
       a2ui: structuredClone(LIVE_SURFACE_A2UI),
-      presentation: { density: "summary" },
+      presentation: { density: "summary", canvas_size: "1x2" },
       lifecycle: { persistence: "session", removable: true },
       fallback: { title, summary: input.summary },
       provenance: {

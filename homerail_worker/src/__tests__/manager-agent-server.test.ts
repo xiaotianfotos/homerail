@@ -1388,6 +1388,7 @@ describe("manager-agent server", () => {
       expect(state.createdRunIds).toEqual(["run-supervised-123"]);
       expect(state.objectiveToolCalls).toEqual([
         { name: "start_supervised_dag", success: true },
+        { name: "get_dag_supervision", success: true },
         { name: "intervene_dag_actor", success: true },
         { name: "send_dag_actor_command", success: true },
         { name: "focus_dag_actor", success: true },

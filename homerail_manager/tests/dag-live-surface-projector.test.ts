@@ -241,6 +241,8 @@ describe("DAG Live Surface Projector", () => {
       .toBe(true);
     expect(document.nodes.every((node) => node.a2ui?.catalogId === "https://homerail.dev/a2ui/catalogs/core/v1"))
       .toBe(true);
+    expect(document.nodes.every((node) => node.presentation?.canvas_size === "1x2"))
+      .toBe(true);
     expect(listDagLiveSurfaceProjections(runId)).toMatchObject([
       { actor_id: "build", surface_id: "surface:build", surface_revision: 1 },
       { actor_id: "research", surface_id: "surface:research", surface_revision: 1 },

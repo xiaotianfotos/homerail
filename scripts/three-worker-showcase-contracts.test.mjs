@@ -1,0 +1,135 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  EXPECTED_ACTOR_IDS,
+  activityConcurrencyEvidence,
+  coldResumeGroupFailures,
+  dispatchGroupFailures,
+  physicalWorkerLifecycleEvidence,
+  sanitizeForReport,
+  unsafeReportPaths,
+} from "./three-worker-showcase-contracts.mjs";
+
+function activity(actorId, type, receivedAt, roundId = "round-1") {
+  return {
+    seq: receivedAt,
+    received_at: receivedAt,
+    event: { actor_id: actorId, round_id: roundId, type },
+  };
+}
+
+function surfaceAnalysis(revision, suffix) {
+  return {
+    actors: EXPECTED_ACTOR_IDS.map((actorId) => ({
+      actor_id: actorId,
+      node_id: actorId,
+      surface_id: `surface-${actorId}`,
+      generation: actorId === "systems_guide" ? 2 : 1,
+      surface_revision: revision,
+      node_canonical: `${actorId}:${suffix}`,
+    })),
+  };
+}
+
+function dispatchEvidence(count) {
+  return {
+    actors: EXPECTED_ACTOR_IDS.map((actorId) => ({ actor_id: actorId, dispatch_count: count })),
+  };
+}
+
+test("proves all three Actor executions overlap before the first terminal event", () => {
+  const entries = [
+    activity("goal_scout", "started", 10),
+    activity("systems_guide", "started", 20),
+    activity("session_coach", "started", 30),
+    activity("goal_scout", "completed", 40),
+    activity("systems_guide", "completed", 50),
+    activity("session_coach", "completed", 60),
+  ];
+  const result = activityConcurrencyEvidence(entries, EXPECTED_ACTOR_IDS, "round-1");
+
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.evidence.all_started_before_first_terminal, true);
+  assert.equal(result.evidence.overlap_ms, 10);
+});
+
+test("rejects a serial Actor execution", () => {
+  const entries = [
+    activity("goal_scout", "started", 10),
+    activity("goal_scout", "completed", 20),
+    activity("systems_guide", "started", 30),
+    activity("systems_guide", "completed", 40),
+    activity("session_coach", "started", 50),
+    activity("session_coach", "completed", 60),
+  ];
+  const result = activityConcurrencyEvidence(entries, EXPECTED_ACTOR_IDS, "round-1");
+
+  assert.match(result.failures.join("; "), /did not overlap/);
+  assert.equal(result.evidence.all_started_before_first_terminal, false);
+});
+
+test("proves physical allocation, idle cleanup, and reprovision without leaking identities", () => {
+  const rawEvents = EXPECTED_ACTOR_IDS.flatMap((nodeId, index) => [{
+    type: "dag:provisioning_completed",
+    payload: { nodeId, workerId: `private-worker-${index}`, containerId: `private-container-${index}` },
+  }]);
+  rawEvents.push(
+    {
+      type: "dag:actor_lease_released",
+      payload: { actorId: "systems_guide", reason: "idle_ttl_expired" },
+    },
+    {
+      type: "dag:cleanup_completed",
+      payload: {
+        nodeId: "systems_guide",
+        workerId: "private-worker-1",
+        containerId: "private-container-1",
+      },
+    },
+    {
+      type: "dag:provisioning_completed",
+      payload: {
+        nodeId: "systems_guide",
+        workerId: "private-worker-4",
+        containerId: "private-container-4",
+      },
+    },
+  );
+
+  const result = physicalWorkerLifecycleEvidence({ raw_events: rawEvents }, {
+    expected_node_ids: EXPECTED_ACTOR_IDS,
+    minimum_distinct_workers: 3,
+    require_idle_release_actor: "systems_guide",
+    require_reprovisioned_node_ids: ["systems_guide"],
+  });
+
+  assert.deepEqual(result.failures, []);
+  assert.deepEqual(result.evidence.reprovisioned_node_ids, ["systems_guide"]);
+  assert.deepEqual(unsafeReportPaths(result.evidence), []);
+  assert.doesNotMatch(JSON.stringify(result.evidence), /private-worker|private-container/);
+});
+
+test("requires every logical Surface and dispatch to advance on group resume", () => {
+  const before = surfaceAnalysis(3, "before");
+  const after = surfaceAnalysis(4, "after");
+
+  assert.deepEqual(coldResumeGroupFailures(before, after, EXPECTED_ACTOR_IDS), []);
+  assert.deepEqual(dispatchGroupFailures(dispatchEvidence(2), dispatchEvidence(3)), []);
+
+  after.actors[0].node_canonical = before.actors[0].node_canonical;
+  assert.match(coldResumeGroupFailures(before, after).join("; "), /semantic Surface did not change/);
+  assert.match(dispatchGroupFailures(dispatchEvidence(2), dispatchEvidence(4)).join("; "), /expected exactly 1/);
+});
+
+test("sanitizes credentials and private paths from acceptance evidence", () => {
+  const sanitized = sanitizeForReport({
+    api_key: "sk-private-value",
+    note: "Bearer secret-token at /Users/example/private/file",
+    nested: { worker_id: "private-worker", safe: "visible" },
+  }, { secrets: ["secret-token"] });
+
+  assert.deepEqual(unsafeReportPaths(sanitized), []);
+  assert.equal(sanitized.nested.safe, "visible");
+  assert.doesNotMatch(JSON.stringify(sanitized), /sk-private|secret-token|private-worker|\/Users\/example/);
+});

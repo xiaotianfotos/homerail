@@ -39,6 +39,18 @@ export interface ManagerAgentDagActorInterventionInput {
   checkpoint_version?: number;
 }
 
+export interface ManagerAgentDagActorCommand {
+  actor_id: string;
+  payload: unknown;
+  idempotency_key?: string;
+}
+
+export interface ManagerAgentDagActorCommandInput {
+  run_id: string;
+  expected_round_id: string;
+  commands: ManagerAgentDagActorCommand[];
+}
+
 export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
   "list_projects",
   "list_skills",
@@ -378,6 +390,105 @@ export function normalizeManagerAgentDagActorInterventionInput(
     expected_state_token: expectedStateToken,
     idempotency_key: idempotencyKey,
     ...(checkpointVersion === undefined ? {} : { checkpoint_version: Number(checkpointVersion) }),
+  };
+}
+
+const SEND_DAG_ACTOR_COMMAND_ALLOWED_KEYS = new Set([
+  "run_id",
+  "actor_id",
+  "expected_round_id",
+  "idempotency_key",
+  "payload",
+  "commands",
+]);
+const SEND_DAG_ACTOR_COMMAND_ITEM_ALLOWED_KEYS = new Set(["actor_id", "payload"]);
+const SEND_DAG_ACTOR_COMMAND_LEGACY_KEYS = ["actor_id", "idempotency_key", "payload"] as const;
+const SEND_DAG_ACTOR_COMMAND_MAX_ITEMS = 128;
+const SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH = 256;
+const SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN = "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$";
+
+function hasOwnProperty(value: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function dagActorCommandIdentifier(value: unknown, field: string): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (
+    !normalized
+    || normalized.length > SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH
+    || /[\u0000-\u001f\u007f]/.test(normalized)
+  ) {
+    throw new Error(
+      `send_dag_actor_command ${field} must be between 1 and ${SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH} printable characters`,
+    );
+  }
+  return normalized;
+}
+
+export function normalizeManagerAgentDagActorCommandInput(
+  args: Record<string, unknown>,
+): ManagerAgentDagActorCommandInput {
+  const extraKeys = Object.keys(args)
+    .filter((key) => !SEND_DAG_ACTOR_COMMAND_ALLOWED_KEYS.has(key))
+    .sort();
+  if (extraKeys.length > 0) {
+    throw new Error(`send_dag_actor_command does not accept additional properties: ${extraKeys.join(", ")}`);
+  }
+
+  const runId = dagActorCommandIdentifier(args.run_id, "run_id");
+  const expectedRoundId = dagActorCommandIdentifier(args.expected_round_id, "expected_round_id");
+  const hasCommands = hasOwnProperty(args, "commands");
+  const legacyKeys = SEND_DAG_ACTOR_COMMAND_LEGACY_KEYS.filter((key) => hasOwnProperty(args, key));
+  if (hasCommands && legacyKeys.length > 0) {
+    throw new Error(
+      "send_dag_actor_command accepts either actor_id/idempotency_key/payload or commands, not both",
+    );
+  }
+
+  if (hasCommands) {
+    if (
+      !Array.isArray(args.commands)
+      || args.commands.length < 1
+      || args.commands.length > SEND_DAG_ACTOR_COMMAND_MAX_ITEMS
+    ) {
+      throw new Error(
+        `send_dag_actor_command commands must contain between 1 and ${SEND_DAG_ACTOR_COMMAND_MAX_ITEMS} entries`,
+      );
+    }
+    const commands = args.commands.map((rawCommand, index): ManagerAgentDagActorCommand => {
+      if (!rawCommand || typeof rawCommand !== "object" || Array.isArray(rawCommand)) {
+        throw new Error(`send_dag_actor_command commands[${index}] must be an object`);
+      }
+      const command = rawCommand as Record<string, unknown>;
+      const commandExtraKeys = Object.keys(command)
+        .filter((key) => !SEND_DAG_ACTOR_COMMAND_ITEM_ALLOWED_KEYS.has(key))
+        .sort();
+      if (commandExtraKeys.length > 0) {
+        throw new Error(
+          `send_dag_actor_command commands[${index}] does not accept additional properties: ${commandExtraKeys.join(", ")}`,
+        );
+      }
+      const actorId = dagActorCommandIdentifier(command.actor_id, `commands[${index}].actor_id`);
+      if (!hasOwnProperty(command, "payload") || command.payload === undefined) {
+        throw new Error(`send_dag_actor_command commands[${index}].payload is required`);
+      }
+      return { actor_id: actorId, payload: command.payload };
+    });
+    if (new Set(commands.map((command) => command.actor_id)).size !== commands.length) {
+      throw new Error("send_dag_actor_command commands must contain unique actor_id values");
+    }
+    return { run_id: runId, expected_round_id: expectedRoundId, commands };
+  }
+
+  const actorId = dagActorCommandIdentifier(args.actor_id, "actor_id");
+  const idempotencyKey = dagActorCommandIdentifier(args.idempotency_key, "idempotency_key");
+  if (!hasOwnProperty(args, "payload") || args.payload === undefined) {
+    throw new Error("send_dag_actor_command requires payload");
+  }
+  return {
+    run_id: runId,
+    expected_round_id: expectedRoundId,
+    commands: [{ actor_id: actorId, idempotency_key: idempotencyKey, payload: args.payload }],
   };
 }
 
@@ -792,17 +903,74 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   send_dag_actor_command: {
     name: "send_dag_actor_command",
-    description: "Send a fenced, idempotent command to a stable actor_id; never accept or expose transient Worker or container IDs.",
+    description: "Send one legacy fenced command to a stable actor_id, or atomically send between 1 and 128 commands in one request; every batch item contains actor_id and payload. Always require expected_round_id and never accept or expose transient Worker or container IDs.",
     input_schema: {
       type: "object",
       properties: {
-        run_id: { type: "string" },
-        actor_id: { type: "string" },
-        expected_round_id: { type: "string" },
-        idempotency_key: { type: "string" },
+        run_id: {
+          type: "string",
+          minLength: 1,
+          maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
+          pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
+        },
+        actor_id: {
+          type: "string",
+          minLength: 1,
+          maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
+          pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
+        },
+        expected_round_id: {
+          type: "string",
+          minLength: 1,
+          maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
+          pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
+        },
+        idempotency_key: {
+          type: "string",
+          minLength: 1,
+          maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
+          pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
+        },
         payload: {},
+        commands: {
+          type: "array",
+          minItems: 1,
+          maxItems: SEND_DAG_ACTOR_COMMAND_MAX_ITEMS,
+          items: {
+            type: "object",
+            properties: {
+              actor_id: {
+                type: "string",
+                minLength: 1,
+                maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
+                pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
+              },
+              payload: {},
+            },
+            required: ["actor_id", "payload"],
+            additionalProperties: false,
+          },
+        },
       },
-      required: ["run_id", "actor_id", "expected_round_id", "idempotency_key", "payload"],
+      required: ["run_id", "expected_round_id"],
+      oneOf: [
+        {
+          properties: { actor_id: {}, idempotency_key: {}, payload: {} },
+          required: ["actor_id", "idempotency_key", "payload"],
+          not: { properties: { commands: {} }, required: ["commands"] },
+        },
+        {
+          properties: { commands: {} },
+          required: ["commands"],
+          not: {
+            anyOf: [
+              { properties: { actor_id: {} }, required: ["actor_id"] },
+              { properties: { idempotency_key: {} }, required: ["idempotency_key"] },
+              { properties: { payload: {} }, required: ["payload"] },
+            ],
+          },
+        },
+      ],
       additionalProperties: false,
     },
   },

@@ -24,6 +24,7 @@ import {
   managerAgentDagCommandResult,
   managerAgentCommonToolCatalog,
   managerAgentToolSpec,
+  normalizeManagerAgentDagActorCommandInput,
   normalizeManagerAgentDagActorInterventionInput,
   parseHomeRailPromptHandoff,
   parseHomeRailPromptToolCalls,
@@ -245,13 +246,70 @@ describe("Manager Agent harness contract", () => {
       send_dag_actor_command: {
         type: "object",
         properties: {
-          run_id: { type: "string" },
-          actor_id: { type: "string" },
-          expected_round_id: { type: "string" },
-          idempotency_key: { type: "string" },
+          run_id: {
+            type: "string",
+            minLength: 1,
+            maxLength: 256,
+            pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
+          },
+          actor_id: {
+            type: "string",
+            minLength: 1,
+            maxLength: 256,
+            pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
+          },
+          expected_round_id: {
+            type: "string",
+            minLength: 1,
+            maxLength: 256,
+            pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
+          },
+          idempotency_key: {
+            type: "string",
+            minLength: 1,
+            maxLength: 256,
+            pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
+          },
           payload: {},
+          commands: {
+            type: "array",
+            minItems: 1,
+            maxItems: 128,
+            items: {
+              type: "object",
+              properties: {
+                actor_id: {
+                  type: "string",
+                  minLength: 1,
+                  maxLength: 256,
+                  pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                },
+                payload: {},
+              },
+              required: ["actor_id", "payload"],
+              additionalProperties: false,
+            },
+          },
         },
-        required: ["run_id", "actor_id", "expected_round_id", "idempotency_key", "payload"],
+        required: ["run_id", "expected_round_id"],
+        oneOf: [
+          {
+            properties: { actor_id: {}, idempotency_key: {}, payload: {} },
+            required: ["actor_id", "idempotency_key", "payload"],
+            not: { properties: { commands: {} }, required: ["commands"] },
+          },
+          {
+            properties: { commands: {} },
+            required: ["commands"],
+            not: {
+              anyOf: [
+                { properties: { actor_id: {} }, required: ["actor_id"] },
+                { properties: { idempotency_key: {} }, required: ["idempotency_key"] },
+                { properties: { payload: {} }, required: ["payload"] },
+              ],
+            },
+          },
+        ],
         additionalProperties: false,
       },
       focus_dag_actor: {
@@ -293,6 +351,124 @@ describe("Manager Agent harness contract", () => {
     expect(intervention.description).toContain("get_dag_supervision");
     expect(intervention.description).toContain("expected_state_token");
     expect(intervention.description).toContain("Never infer physical execution targets");
+  });
+
+  it("accepts strict legacy and atomic batch DAG Actor command schemas", () => {
+    const validate = new Ajv({ strict: true }).compile(
+      managerAgentToolSpec("send_dag_actor_command").input_schema,
+    );
+    const legacy = {
+      run_id: "run-supervised",
+      actor_id: "research",
+      expected_round_id: "round-0001",
+      idempotency_key: "command-research-2",
+      payload: { task: "continue" },
+    };
+    const batch = {
+      run_id: "run-supervised",
+      expected_round_id: "round-0001",
+      commands: [
+        { actor_id: "research", payload: { task: "continue research" } },
+        { actor_id: "verify", payload: { task: "continue verification" } },
+      ],
+    };
+
+    expect(validate(legacy)).toBe(true);
+    expect(validate(batch)).toBe(true);
+    expect(validate({
+      ...batch,
+      commands: Array.from({ length: 128 }, (_, index) => ({
+        actor_id: `actor-${index}`,
+        payload: index,
+      })),
+    })).toBe(true);
+
+    const invalidInputs = [
+      { ...legacy, expected_round_id: "" },
+      { ...legacy, commands: batch.commands },
+      { ...batch, actor_id: "research" },
+      { ...batch, commands: [] },
+      {
+        ...batch,
+        commands: Array.from({ length: 129 }, (_, index) => ({ actor_id: `actor-${index}`, payload: index })),
+      },
+      { ...batch, commands: [{ actor_id: "research" }] },
+      { ...batch, commands: [{ actor_id: " ", payload: null }] },
+      { ...batch, commands: [{ actor_id: "research", payload: null, worker_id: "forbidden" }] },
+      { ...batch, unexpected: true },
+    ];
+    for (const input of invalidInputs) expect(validate(input), JSON.stringify(input)).toBe(false);
+  });
+
+  it("normalizes legacy and batch DAG Actor commands and rejects malformed batches", () => {
+    expect(normalizeManagerAgentDagActorCommandInput({
+      run_id: "  run /?# supervised  ",
+      actor_id: "  research  ",
+      expected_round_id: "  round-0001  ",
+      idempotency_key: "  command-research-2  ",
+      payload: { task: "continue" },
+    })).toEqual({
+      run_id: "run /?# supervised",
+      expected_round_id: "round-0001",
+      commands: [{
+        actor_id: "research",
+        idempotency_key: "command-research-2",
+        payload: { task: "continue" },
+      }],
+    });
+    expect(normalizeManagerAgentDagActorCommandInput({
+      run_id: "  run-batch  ",
+      expected_round_id: "  round-0002  ",
+      commands: [
+        { actor_id: "  research  ", payload: null },
+        { actor_id: "verify", payload: false },
+      ],
+    })).toEqual({
+      run_id: "run-batch",
+      expected_round_id: "round-0002",
+      commands: [
+        { actor_id: "research", payload: null },
+        { actor_id: "verify", payload: false },
+      ],
+    });
+
+    expect(() => normalizeManagerAgentDagActorCommandInput({
+      run_id: "run-batch",
+      expected_round_id: "round-0001",
+      commands: [],
+    })).toThrow(/between 1 and 128 entries/);
+    expect(() => normalizeManagerAgentDagActorCommandInput({
+      run_id: "run-batch",
+      expected_round_id: "round-0001",
+      commands: [{ actor_id: "research" }],
+    })).toThrow(/commands\[0\]\.payload is required/);
+    expect(() => normalizeManagerAgentDagActorCommandInput({
+      run_id: "run-batch",
+      expected_round_id: "round-0001",
+      commands: [{ actor_id: "research", payload: null, worker_id: "forbidden" }],
+    })).toThrow(/commands\[0\].*additional properties: worker_id/);
+    expect(() => normalizeManagerAgentDagActorCommandInput({
+      run_id: "run-batch",
+      expected_round_id: "round-0001",
+      commands: [
+        { actor_id: "research", payload: 1 },
+        { actor_id: " research ", payload: 2 },
+      ],
+    })).toThrow(/unique actor_id/);
+    expect(() => normalizeManagerAgentDagActorCommandInput({
+      run_id: "run-batch",
+      actor_id: "research",
+      expected_round_id: "round-0001",
+      idempotency_key: "legacy-key",
+      payload: null,
+      commands: [{ actor_id: "verify", payload: null }],
+    })).toThrow(/either actor_id\/idempotency_key\/payload or commands, not both/);
+    expect(() => normalizeManagerAgentDagActorCommandInput({
+      run_id: "run-batch",
+      expected_round_id: "round-0001",
+      commands: [{ actor_id: "research", payload: null }],
+      container_id: "forbidden",
+    })).toThrow(/additional properties: container_id/);
   });
 
   it("rejects invalid and physical-target inputs for DAG Actor intervention", () => {

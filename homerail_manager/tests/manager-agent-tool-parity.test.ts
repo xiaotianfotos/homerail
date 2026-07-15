@@ -481,6 +481,159 @@ describe("Manager Agent deterministic result envelope parity", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("keeps the legacy Host command mapping and submits a batch with one encoded POST", async () => {
+    const { hostState, hostTools } = createHarnessTools("chat");
+    hostState.restUrl = "https://manager.test/api";
+    const observed: Array<{
+      method: string;
+      pathname: string;
+      body: Record<string, unknown>;
+    }> = [];
+    const fetchMock = vi.fn(async (request: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof request === "string"
+        ? request
+        : request instanceof URL
+          ? request.toString()
+          : request.url;
+      observed.push({
+        method: init?.method ?? "GET",
+        pathname: new URL(rawUrl).pathname,
+        body: typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {},
+      });
+      return new Response(JSON.stringify({ success: true, data: { resumed: true } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const tool = requireTool(hostTools, "send_dag_actor_command");
+
+    await tool.handler({
+      run_id: "run /?# supervised",
+      actor_id: "research",
+      expected_round_id: "round-0001",
+      idempotency_key: "command-research-2",
+      payload: { task: "continue research" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await tool.handler({
+      run_id: "run /?# supervised",
+      expected_round_id: "round-0002",
+      commands: [
+        { actor_id: "research", payload: { task: "continue research" } },
+        { actor_id: "build", payload: { task: "continue build" } },
+        { actor_id: "verify", payload: { task: "continue verification" } },
+      ],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(observed).toEqual([
+      {
+        method: "POST",
+        pathname: "/api/runs/run%20%2F%3F%23%20supervised/commands",
+        body: {
+          expected_round_id: "round-0001",
+          commands: [{
+            actor_id: "research",
+            idempotency_key: "command-research-2",
+            payload: { task: "continue research" },
+          }],
+        },
+      },
+      {
+        method: "POST",
+        pathname: "/api/runs/run%20%2F%3F%23%20supervised/commands",
+        body: {
+          expected_round_id: "round-0002",
+          commands: [
+            { actor_id: "research", payload: { task: "continue research" } },
+            { actor_id: "build", payload: { task: "continue build" } },
+            { actor_id: "verify", payload: { task: "continue verification" } },
+          ],
+        },
+      },
+    ]);
+    expect(hostState.objectiveToolCalls).toEqual([
+      { name: "send_dag_actor_command", success: true },
+      { name: "send_dag_actor_command", success: true },
+    ]);
+  });
+
+  it("rejects malformed Host command batches before HTTP and surfaces the batch API error", async () => {
+    const { hostState, hostTools } = createHarnessTools("chat");
+    hostState.restUrl = "https://manager.test/api";
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      success: false,
+      error: "waiting round conflict",
+    }), {
+      status: 409,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const tool = requireTool(hostTools, "send_dag_actor_command");
+    const base = {
+      run_id: "run-supervised",
+      expected_round_id: "round-0001",
+    };
+    const invalidInputs: Array<{ input: Record<string, unknown>; error: RegExp }> = [
+      { input: { ...base, commands: [] }, error: /between 1 and 128 entries/ },
+      {
+        input: {
+          ...base,
+          commands: Array.from({ length: 129 }, (_, index) => ({ actor_id: `actor-${index}`, payload: index })),
+        },
+        error: /between 1 and 128 entries/,
+      },
+      {
+        input: { ...base, commands: [{ actor_id: "research" }] },
+        error: /commands\[0\]\.payload is required/,
+      },
+      {
+        input: { ...base, commands: [{ actor_id: "research", payload: null, worker_id: "forbidden" }] },
+        error: /additional properties: worker_id/,
+      },
+      {
+        input: {
+          ...base,
+          commands: [
+            { actor_id: "research", payload: 1 },
+            { actor_id: " research ", payload: 2 },
+          ],
+        },
+        error: /unique actor_id/,
+      },
+      {
+        input: {
+          ...base,
+          actor_id: "research",
+          idempotency_key: "legacy-key",
+          payload: null,
+          commands: [{ actor_id: "verify", payload: null }],
+        },
+        error: /not both/,
+      },
+      {
+        input: { ...base, commands: [{ actor_id: "research", payload: null }], container_id: "forbidden" },
+        error: /additional properties: container_id/,
+      },
+    ];
+
+    for (const invalid of invalidInputs) {
+      await expect(tool.handler(invalid.input)).rejects.toThrow(invalid.error);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await expect(tool.handler({
+      ...base,
+      commands: [
+        { actor_id: "research", payload: { task: "continue" } },
+        { actor_id: "verify", payload: { task: "continue" } },
+      ],
+    })).rejects.toThrow(/Manager API 409.*waiting round conflict/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(hostState.objectiveToolCalls).toEqual([]);
+  });
+
   it("executes the same enabled plugin projection through both voice harnesses", async () => {
     const context = assemblePluginTurnContext(undefined, { modality: "voice" });
     const descriptor = context.tools.find((tool) => tool.plugin_id === "com.homerail.topic-outline")!;

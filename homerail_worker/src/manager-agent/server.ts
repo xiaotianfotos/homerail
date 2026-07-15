@@ -1170,6 +1170,7 @@ export function createManagerTools(state: {
           },
         );
         appendSupervisionCommentary(state.voiceSurface, body);
+        state.objectiveToolCalls.push({ name: "get_dag_supervision", success: true });
         return { content: [{ type: "text", text: short(body, 40000) }] };
       },
     },
