@@ -73,10 +73,37 @@ async function installRoutes(page, snapshot) {
   }))
 }
 
-async function waitForCanvas(page) {
-  await page.locator('[data-state="ready"]').waitFor({ timeout: 20_000 })
-  await page.waitForFunction(() => document.querySelectorAll('[data-generative-ui-node]').length === 3)
-  await page.waitForFunction(() => document.querySelectorAll('.homerail-a2ui').length === 3)
+async function canvasDiagnostics(page) {
+  return page.evaluate(() => ({
+    url: location.href,
+    state: document.querySelector('[data-testid="dag-task-canvas"]')?.getAttribute('data-state') ?? 'missing',
+    resolved: document.querySelector('[data-testid="dag-task-canvas"]')?.getAttribute('data-resolved') ?? 'missing',
+    node_count: document.querySelectorAll('[data-generative-ui-node]').length,
+    renderer_count: document.querySelectorAll('.homerail-a2ui').length,
+    body_text: document.body.innerText.slice(0, 500),
+  }))
+}
+
+async function waitForCanvas(page, label) {
+  const failures = []
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await page.locator('[data-state="ready"]').waitFor({ timeout: 20_000 })
+      await page.waitForFunction(() => document.querySelectorAll('[data-generative-ui-node]').length === 3)
+      await page.waitForFunction(() => document.querySelectorAll('.homerail-a2ui').length === 3)
+      return attempt
+    } catch (error) {
+      failures.push({
+        attempt,
+        error: error instanceof Error ? error.message : String(error),
+        diagnostics: await canvasDiagnostics(page),
+      })
+      if (attempt === 2) break
+      await page.screenshot({ path: path.join(outputDir, `${label}-ready-timeout.png`) })
+      await page.reload({ waitUntil: 'domcontentloaded' })
+    }
+  }
+  throw new Error(`${label} canvas did not become ready: ${JSON.stringify(failures)}`)
 }
 
 async function metrics(page) {
@@ -113,7 +140,7 @@ async function renderDesktop(browser, baseUrl, snapshot, evidence) {
     `${baseUrl}/task-canvas-harness.html?run_id=${encodeURIComponent(snapshot.run_id)}`,
     { waitUntil: 'domcontentloaded' },
   )
-  await waitForCanvas(page)
+  const initialReadyAttempt = await waitForCanvas(page, 'desktop-initial')
   await page.waitForTimeout(350)
   const beforeRefresh = await metrics(page)
   assert(beforeRefresh.block_count === 3, 'Desktop did not render exactly three Blocks')
@@ -122,7 +149,7 @@ async function renderDesktop(browser, baseUrl, snapshot, evidence) {
   await page.screenshot({ path: path.join(outputDir, 'desktop-1920x1080.png') })
 
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await waitForCanvas(page)
+  const refreshReadyAttempt = await waitForCanvas(page, 'desktop-refresh')
   await page.waitForTimeout(350)
   const afterRefresh = await metrics(page)
   assert(
@@ -131,7 +158,12 @@ async function renderDesktop(browser, baseUrl, snapshot, evidence) {
   )
   await page.screenshot({ path: path.join(outputDir, 'desktop-after-refresh.png') })
   assert(pageErrors.length === 0, `Desktop page errors: ${pageErrors.join('; ')}`)
-  evidence.desktop = { before_refresh: beforeRefresh, after_refresh: afterRefresh, page_errors: pageErrors }
+  evidence.desktop = {
+    before_refresh: beforeRefresh,
+    after_refresh: afterRefresh,
+    ready_attempts: { initial: initialReadyAttempt, refresh: refreshReadyAttempt },
+    page_errors: pageErrors,
+  }
   await context.close()
 }
 
@@ -150,7 +182,7 @@ async function renderMobile(browser, baseUrl, snapshot, evidence) {
     `${baseUrl}/task-canvas-harness.html?run_id=${encodeURIComponent(snapshot.run_id)}`,
     { waitUntil: 'domcontentloaded' },
   )
-  await waitForCanvas(page)
+  const readyAttempt = await waitForCanvas(page, 'mobile')
   await page.waitForTimeout(350)
   const compact = await metrics(page)
   assert(compact.block_count === 3, 'Mobile did not render exactly three Blocks')
@@ -168,7 +200,7 @@ async function renderMobile(browser, baseUrl, snapshot, evidence) {
   assert(expanded && expanded.width >= 370 && expanded.height >= 820, 'Mobile fullscreen is not viewport sized')
   await page.screenshot({ path: path.join(outputDir, 'mobile-fullscreen.png') })
   assert(pageErrors.length === 0, `Mobile page errors: ${pageErrors.join('; ')}`)
-  evidence.mobile = { compact, expanded, page_errors: pageErrors }
+  evidence.mobile = { compact, expanded, ready_attempt: readyAttempt, page_errors: pageErrors }
   await context.close()
 }
 
