@@ -681,7 +681,7 @@ function isQwen3Tts(model: string): boolean {
   return model === 'qwen3-tts'
 }
 
-function applyTtsDefaultsFor(model: string, baseUrl: string): void {
+function applyTtsDefaultsFor(model: string, baseUrl: string, configuredVoice?: string | null): void {
   if (isMimoTts(model, baseUrl)) {
     voiceForm.value.tts_voice = 'mimo_default'
     voiceForm.value.tts_speed = null
@@ -692,7 +692,11 @@ function applyTtsDefaultsFor(model: string, baseUrl: string): void {
     voiceForm.value.tts_voice = 'serena'
     voiceForm.value.tts_speed = null
     voiceForm.value.tts_stream = false
+    return
   }
+  voiceForm.value.tts_voice = configuredVoice || 'alloy'
+  voiceForm.value.tts_speed = null
+  voiceForm.value.tts_stream = false
 }
 
 function setTtsSpeed(event: Event): void {
@@ -1331,7 +1335,7 @@ function selectVoiceModelSetting(service: 'omni' | 'llm' | 'asr' | 'tts', event:
   voiceForm.value.tts_llm_setting_id = setting.id
   voiceForm.value.tts_model = setting.model_name
   voiceForm.value.tts_base_url = setting.provider_base_url || voiceForm.value.tts_base_url
-  applyTtsDefaultsFor(voiceForm.value.tts_model, voiceForm.value.tts_base_url)
+  applyTtsDefaultsFor(voiceForm.value.tts_model, voiceForm.value.tts_base_url, setting.tts_voice)
 }
 
 async function fetchVoiceModels(service: 'omni' | 'llm' | 'asr' | 'tts'): Promise<void> {

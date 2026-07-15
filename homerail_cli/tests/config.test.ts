@@ -6,6 +6,7 @@ import { createProgram } from "../src/index.js";
 import {
   configuredUiHttpPublicUrl,
   configuredUiPublicUrl,
+  defaultLocalConfig,
   detectedMachineHost,
   getConfigPath,
   getSecretsPath,
@@ -50,6 +51,29 @@ afterEach(() => {
 });
 
 describe("config command", () => {
+  it("keeps Docker capability implicit for the managed local Node", () => {
+    expect(defaultLocalConfig().node).toEqual({
+      projectId: "p1",
+      nodeId: "local-docker-node",
+      provider: "docker-cli",
+    });
+
+    fs.writeFileSync(getConfigPath(), JSON.stringify({
+      node: {
+        projectId: "legacy-project",
+        nodeId: "legacy-node",
+        provider: "docker-cli",
+        capabilities: ["browser"],
+      },
+    }));
+
+    expect(loadLocalConfig().node).toEqual({
+      projectId: "legacy-project",
+      nodeId: "legacy-node",
+      provider: "docker-cli",
+    });
+  });
+
   it("routes regular config to config.json and secrets to the secrets file", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const program = createProgram();

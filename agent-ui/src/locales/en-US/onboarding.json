@@ -34,12 +34,17 @@
     "dockerReady": "Docker workspace access confirmed",
     "dockerSharePath": "Allow Docker Desktop to share {path}",
     "dockerShareHomeRail": "Allow Docker Desktop to share the HomeRail workspace",
+    "dockerInstallRequired": "Docker was not detected. Install and start Docker, then check again.",
+    "dockerStartRequired": "Docker is installed but not running. Start Docker, then check again.",
+    "dockerPermissionRequired": "The current user cannot access Docker. Grant Docker access, then check again.",
+    "dockerCheckFailed": "Docker workspace check failed: {error}",
     "passed": "Passed",
     "needsAttention": "Action needed",
     "dockerTitle": "Docker workspace access",
     "checkTitle": "Check Docker workspace access",
     "checking": "Checking",
-    "check": "Check"
+    "check": "Check",
+    "recheck": "Check again"
   },
   "actions": {
     "skipTts": "Skip TTS",

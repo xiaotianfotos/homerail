@@ -5,9 +5,18 @@ import * as path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../src/server/edge-tts.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/server/edge-tts.js")>();
+  return {
+    ...actual,
+    synthesizeEdgeTts: vi.fn(async () => Buffer.from("ID3-homerail-edge")),
+  };
+});
+
 import { _clearStoredConfig } from "../src/server/voice-agent-bootstrap.js";
 import { _clearStoredVoiceSettings } from "../src/server/voice.js";
-import { _clearAllSettings, createSetting, upsertProvider } from "../src/persistence/llm-settings.js";
+import { BUILTIN_EDGE_TTS_MODEL, synthesizeEdgeTts } from "../src/server/edge-tts.js";
+import { _clearAllSettings, createSetting, listSettings, upsertProvider } from "../src/persistence/llm-settings.js";
 import { createProject } from "../src/persistence/projects-changes.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import { createServer } from "../src/server/http.js";
@@ -105,6 +114,7 @@ describe("voice bootstrap routes", () => {
     process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = "0";
     process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "container";
     process.env.HOMERAIL_MANAGER_AGENT_PORT = String(await findAvailableManagerAgentPort());
+    vi.mocked(synthesizeEdgeTts).mockReset().mockResolvedValue(Buffer.from("ID3-homerail-edge"));
     _clearStoredConfig();
     _clearStoredVoiceSettings();
     _clearAllSettings();
@@ -1440,11 +1450,12 @@ describe("voice bootstrap routes", () => {
     expect(row.message_count).toBe(2);
   });
 
-  it("serves voice model and connection endpoints without requiring local defaults", async () => {
+  it("serves voice endpoints and built-in Edge TTS without requiring local defaults", async () => {
     const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
 
     for (const endpoint of ["/api/voice/models", "/api/voice/test"]) {
-      const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, {
+      const response = await fetch(`${baseUrl}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
@@ -1456,13 +1467,75 @@ describe("voice bootstrap routes", () => {
       expect(body.data?.models).toEqual(expect.any(Array));
     }
 
-    const speech = await fetch(`http://127.0.0.1:${port}/api/voice/speech`, {
+    const settingsResponse = await fetch(`${baseUrl}/api/voice`);
+    const settingsBody = await settingsResponse.json() as {
+      data: { tts_model: string; tts_llm_setting_id: string; tts_token_set: boolean };
+    };
+    expect(settingsBody.data).toMatchObject({
+      tts_model: BUILTIN_EDGE_TTS_MODEL,
+      tts_llm_setting_id: "",
+      tts_token_set: false,
+    });
+
+    const speech = await fetch(`${baseUrl}/api/voice/speech`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: "hello" }),
     });
-    expect(speech.status).toBe(502);
-    expect(await speech.text()).toContain("Missing TTS API key");
+    expect(speech.status).toBe(200);
+    expect(speech.headers.get("content-type")).toContain("audio/mpeg");
+    expect(Buffer.from(await speech.arrayBuffer()).toString()).toBe("ID3-homerail-edge");
+    expect(synthesizeEdgeTts).toHaveBeenCalledWith(expect.objectContaining({
+      text: "hello",
+      voice: "en-US-MichelleNeural",
+    }));
+  });
+
+  it("keeps an explicit built-in Edge selection ahead of configured TTS settings", async () => {
+    createSetting({
+      provider_id: "xiaomi",
+      model_name: "mimo-v2.5-tts",
+      api_key: "tts-secret-12345678",
+      base_url: "https://api.xiaomimimo.com",
+      supports_llm: false,
+      supports_tts: true,
+      is_active: true,
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const initial = await fetch(`${baseUrl}/api/voice`);
+    expect((await initial.json() as { data: { tts_model: string } }).data.tts_model)
+      .toBe("mimo-v2.5-tts");
+
+    const updated = await fetch(`${baseUrl}/api/voice`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tts_base_url: "https://ignored.example/v1",
+        tts_model: BUILTIN_EDGE_TTS_MODEL,
+        tts_llm_setting_id: null,
+        tts_voice: "ignored-voice",
+      }),
+    });
+    const updatedBody = await updated.json() as {
+      data: { tts_base_url: string; tts_model: string; tts_llm_setting_id: string; tts_voice: string };
+    };
+    expect(updatedBody.data).toEqual(expect.objectContaining({
+      tts_base_url: "",
+      tts_model: BUILTIN_EDGE_TTS_MODEL,
+      tts_llm_setting_id: "",
+      tts_voice: "en-US-MichelleNeural",
+    }));
+    expect(listSettings().map((setting) => setting.model_name)).toEqual(["mimo-v2.5-tts"]);
+
+    const speech = await fetch(`${baseUrl}/api/voice/speech`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "使用内置语音" }),
+    });
+    expect(speech.status).toBe(200);
+    expect(synthesizeEdgeTts).toHaveBeenCalledOnce();
   });
 
   it("forwards speech to a configured MiMo TTS setting instead of returning silent audio", async () => {

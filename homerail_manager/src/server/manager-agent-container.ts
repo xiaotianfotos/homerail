@@ -33,6 +33,8 @@ export interface ManagerAgentRuntimeConfig {
 
 export interface ManagerAgentContainerOptions {
   managerRestUrl: string | (() => string);
+  /** Manager URL reachable from a host-side managed Node. */
+  localManagerUrl?: string | (() => string);
   image?: string;
   env?: Record<string, string>;
   extraHosts?: string[];
@@ -91,6 +93,11 @@ function baseUrl(projectId?: string): string {
 function managerRestUrl(options: ManagerAgentContainerOptions): string {
   const raw = typeof options.managerRestUrl === "function" ? options.managerRestUrl() : options.managerRestUrl;
   return raw.replace(/\/+$/, "").endsWith("/api") ? raw.replace(/\/+$/, "") : `${raw.replace(/\/+$/, "")}/api`;
+}
+
+function localManagerUrl(options: ManagerAgentContainerOptions): string {
+  const source = options.localManagerUrl ?? options.managerRestUrl;
+  return typeof source === "function" ? source() : source;
 }
 
 function resolveProjectWorkspace(projectId?: string): string | undefined {
@@ -156,6 +163,10 @@ function restUrlToWsUrl(raw: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
+export function resolveLocalNodeManagerWsUrl(options: ManagerAgentContainerOptions): string {
+  return restUrlToWsUrl(localManagerUrl(options));
+}
+
 function localNodeAutostartEnabled(): boolean {
   const raw = process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
   return raw === undefined || !["0", "false", "no", "off"].includes(raw.trim().toLowerCase());
@@ -171,7 +182,7 @@ async function waitForDockerNode(timeoutMs: number): Promise<string | undefined>
   return undefined;
 }
 
-async function ensureLocalDockerNode(options: ManagerAgentContainerOptions, projectId?: string): Promise<string | undefined> {
+export async function ensureLocalDockerNode(options: ManagerAgentContainerOptions, projectId?: string): Promise<string | undefined> {
   const existing = selectDockerNode();
   if (existing) return existing;
   if (!localNodeAutostartEnabled()) return undefined;
@@ -185,7 +196,7 @@ async function ensureLocalDockerNode(options: ManagerAgentContainerOptions, proj
     const out = fs.openSync(path.join(logDir, "local-node.log"), "a");
     const err = fs.openSync(path.join(logDir, "local-node.err.log"), "a");
     const nodeId = process.env.HOMERAIL_NODE_ID || LOCAL_NODE_ID;
-    const managerUrl = restUrlToWsUrl(managerRestUrl(options));
+    const managerUrl = resolveLocalNodeManagerWsUrl(options);
     const child = spawn(process.execPath, [cliPath], {
       cwd: runtimeRoot(),
       detached: true,
@@ -199,7 +210,6 @@ async function ensureLocalDockerNode(options: ManagerAgentContainerOptions, proj
         HOMERAIL_PROJECT_ID: projectId || process.env.HOMERAIL_PROJECT_ID || "p1",
         HOMERAIL_NODE_ID: nodeId,
         HOMERAIL_NODE_PROVIDER: process.env.HOMERAIL_NODE_PROVIDER || "docker-cli",
-        HOMERAIL_NODE_CAPABILITIES: process.env.HOMERAIL_NODE_CAPABILITIES || "docker-cli",
       },
     });
     fs.closeSync(out);

@@ -7,6 +7,7 @@ import { readManagerAgentConfig, type ManagerAgentConfig } from "../persistence/
 import { sendLifecycleRequest } from "../node/lifecycle-request.js";
 import { getHomerailHome } from "../config/env.js";
 import {
+  ensureLocalDockerNode,
   resolveManagerAgentConfig,
   type ManagerAgentContainerOptions,
 } from "./manager-agent-container.js";
@@ -118,7 +119,8 @@ function errorMessage(error: unknown): string {
 async function probeDockerWorkspaceMount(
   managerAgentOptions?: ManagerAgentContainerOptions,
 ): Promise<Record<string, unknown>> {
-  const nodeId = dockerCapableNodeIds()[0];
+  const nodeId = dockerCapableNodeIds()[0]
+    ?? (managerAgentOptions ? await ensureLocalDockerNode(managerAgentOptions) : undefined);
   const workspaceRoot = dockerWorkspaceRoot();
   fs.mkdirSync(workspaceRoot, { recursive: true });
 

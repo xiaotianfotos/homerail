@@ -603,7 +603,6 @@ async function startRuntime(globalOpts: GlobalOpts, opts: StartOpts): Promise<nu
       HOMERAIL_PROJECT_ID: cfg.node?.projectId || "p1",
       HOMERAIL_NODE_ID: nodeId,
       HOMERAIL_NODE_PROVIDER: cfg.node?.provider || "docker-cli",
-      HOMERAIL_NODE_CAPABILITIES: (cfg.node?.capabilities || ["docker-cli"]).join(","),
       ...assetEnv,
     };
     const pid = startService("node", "homerail_node/dist/cli.js", env);

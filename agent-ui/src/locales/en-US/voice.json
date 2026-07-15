@@ -17,6 +17,7 @@
     "asrUnconfigured": "ASR not configured",
     "asrModelUnconfigured": "ASR model not configured",
     "ttsUnconfigured": "TTS not configured",
+    "edgeTts": "Microsoft Edge (online, no API key)",
     "omniUnconfigured": "Omni model not configured",
     "saving": "Saving",
     "noAvailableCodex": "No Codex models are available for this account",
@@ -183,6 +184,7 @@
     "realtimeTitle": "Live mode: send automatically after speaking",
     "assist": "Assist",
     "assistTitle": "Assist mode: transcribe, edit, then send manually",
+    "voice": "Voice",
     "voiceInput": "Voice input",
     "send": "Send",
     "cleared": "Pending input cleared"

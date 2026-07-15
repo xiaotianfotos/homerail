@@ -13,7 +13,6 @@ export interface LocalHomeRailConfig {
     projectId?: string;
     nodeId?: string;
     provider?: string;
-    capabilities?: string[];
   };
   ui?: {
     host?: string;
@@ -73,7 +72,6 @@ export function defaultLocalConfig(): LocalHomeRailConfig {
       projectId: "p1",
       nodeId: "local-docker-node",
       provider: "docker-cli",
-      capabilities: ["docker-cli"],
     },
     ui: {
       host: DEFAULT_UI_HOST,
@@ -323,9 +321,15 @@ export function setConfigPathValue(config: LocalHomeRailConfig, key: string, val
 }
 
 function mergeConfig(defaults: LocalHomeRailConfig, raw: LocalHomeRailConfig): LocalHomeRailConfig {
+  const rawNode = raw.node ?? {};
   return {
     manager: { ...defaults.manager, ...(raw.manager ?? {}) },
-    node: { ...defaults.node, ...(raw.node ?? {}) },
+    node: {
+      ...defaults.node,
+      ...(rawNode.projectId !== undefined ? { projectId: rawNode.projectId } : {}),
+      ...(rawNode.nodeId !== undefined ? { nodeId: rawNode.nodeId } : {}),
+      ...(rawNode.provider !== undefined ? { provider: rawNode.provider } : {}),
+    },
     ui: { ...defaults.ui, ...(raw.ui ?? {}) },
     model: { ...defaults.model, ...(raw.model ?? {}) },
     runtime: { ...defaults.runtime, ...(raw.runtime ?? {}) },

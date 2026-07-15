@@ -17,7 +17,7 @@
   "runtime": {
     "ready": "主 Agent 运行时已就绪",
     "currentHarness": "当前 Harness：{harness}",
-    "notReady": "主 Agent 运行时未就绪。模型凭证在这里配置，本机依赖和 Docker 授权请到环境检查页处理。",
+    "notReady": "主 Agent 运行时未就绪。模型凭证在这里配置，本机依赖和 Docker 访问请到环境检查页处理。",
     "existing": "已有主 Agent 配置",
     "switching": "切换中...",
     "use": "使用",
@@ -25,21 +25,26 @@
     "nextAvailable": "可以进入下一步"
   },
   "environmentCheck": {
-    "description": "确认本机运行依赖和 Docker 工作区授权",
+    "description": "确认本机运行依赖和 Docker 工作区访问",
     "hostNotRequired": "当前 Manager Agent 不需要 Git Bash host-shell 环境",
     "gitBashReadyPath": "Git Bash 已就绪：{path}",
     "gitBashReady": "Git Bash host-shell 环境已就绪",
     "gitBashRequired": "请安装 Git Bash，并确认 packaged shell 包内 worker 运行文件可用",
-    "checkingDocker": "正在检查 Docker 工作区授权...",
-    "dockerReady": "Docker 工作区授权已确认",
+    "checkingDocker": "正在检查 Docker 工作区访问...",
+    "dockerReady": "Docker 工作区访问已确认",
     "dockerSharePath": "请确认 Docker Desktop 已允许共享 {path}",
     "dockerShareHomeRail": "请确认 Docker Desktop 已允许共享 HomeRail 工作区",
+    "dockerInstallRequired": "未检测到可用 Docker。请安装并启动 Docker 后重新检查。",
+    "dockerStartRequired": "Docker 已安装但未运行。请启动 Docker 后重新检查。",
+    "dockerPermissionRequired": "当前用户无法访问 Docker。请授予 Docker 访问权限后重新检查。",
+    "dockerCheckFailed": "Docker 工作区检查失败：{error}",
     "passed": "已通过",
     "needsAttention": "需处理",
-    "dockerTitle": "Docker 工作区授权",
-    "checkTitle": "检查 Docker 工作区授权",
+    "dockerTitle": "Docker 工作区访问",
+    "checkTitle": "检查 Docker 工作区访问",
     "checking": "检查中",
-    "check": "检查"
+    "check": "检查",
+    "recheck": "重新检查"
   },
   "actions": {
     "skipTts": "跳过 TTS",

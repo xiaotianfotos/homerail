@@ -17,6 +17,7 @@
     "asrUnconfigured": "未配置 ASR",
     "asrModelUnconfigured": "未配置 ASR 模型",
     "ttsUnconfigured": "未配置 TTS",
+    "edgeTts": "Microsoft Edge（在線、無需 Key）",
     "omniUnconfigured": "未配置 Omni 模型",
     "saving": "保存中",
     "noAvailableCodex": "當前賬號沒有可用的 Codex 模型",
@@ -183,6 +184,7 @@
     "realtimeTitle": "實時模式：說話後自動發送",
     "assist": "輔助",
     "assistTitle": "輔助模式：語音轉文字後手動發送",
+    "voice": "語音",
     "voiceInput": "語音輸入",
     "send": "發送",
     "cleared": "已清空待發送內容"
