@@ -102,9 +102,10 @@ jobs:
       - name: Typecheck, build, and test
         env:
           HOMERAIL_HOME: ${{ runner.temp }}/homerail-ci
-          # Windows filesystem and process startup contention makes the default
-          # CPU-minus-one Vitest pool prone to unrelated short-test timeouts.
-          VITEST_MAX_WORKERS: "2"
+          # Windows filesystem and process startup contention makes parallel
+          # Vitest files prone to unrelated short-test timeouts. Keep the
+          # per-test timeout strict and serialize files on this runner only.
+          VITEST_MAX_WORKERS: "1"
         run: npm run ci
 
   agent-ui-coverage:
