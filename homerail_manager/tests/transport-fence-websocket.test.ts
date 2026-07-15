@@ -317,6 +317,12 @@ describe("round-aware terminal websocket transport", () => {
       const envelope = startRoundTwo(runId);
       const { server, ws, sourceId } = await openTransport(sourceType, runId, () => undefined);
       recordDispatch(runId, "actor", sourceType, sourceId);
+      const lease = acquireDagActorLease({
+        run_id: runId,
+        actor_id: "researcher",
+        target_type: sourceType,
+        target_id: sourceId,
+      });
       const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
       try {
@@ -328,6 +334,11 @@ describe("round-aware terminal websocket transport", () => {
             run_id: runId,
             node_id: "actor",
             session_id: envelope.sessionId,
+            round_id: "round-0002",
+            actor_id: "researcher",
+            generation: 1,
+            lease_generation: lease.lease_generation,
+            command_id: `${runId}-command-2`,
             activity: {
               schema_version: 1,
               event_id: `${runId}-late-activity`,

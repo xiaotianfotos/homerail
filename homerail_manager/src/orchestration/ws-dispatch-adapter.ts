@@ -39,6 +39,8 @@ import {
 } from "./provisioned-cleanup.js";
 import {
   acquireDagActorLease,
+  getDagActorLease,
+  listDagProvisionedWorkers,
   releaseDagActorLease,
   type DagActorLeaseRecord,
 } from "../persistence/dag-actor-leases.js";
@@ -368,7 +370,7 @@ export class WsDispatchAdapter implements DAGDispatcher {
     const previousTarget = findDispatchTarget(envelope.runId, envelope.nodeId);
     if (previousTarget?.state === "dispatched" && previousTarget.targetType === "worker") {
       const hotWorker = workers.find((worker) => worker.worker_id === previousTarget.targetId);
-      if (hotWorker) return hotWorker;
+      if (hotWorker && this._hasCurrentProvisionedOwnership(envelope, hotWorker.worker_id)) return hotWorker;
     }
 
     const runScopedPrefix = `provisioned-${sanitizeProvisionedWorkerToken(envelope.runId)}-`;
@@ -376,7 +378,10 @@ export class WsDispatchAdapter implements DAGDispatcher {
       `provisioned-${envelope.runId}-${envelope.nodeId}`,
     );
     const exactRunScopedWorker = workers.find((w) => w.worker_id === exactRunScopedWorkerId);
-    if (exactRunScopedWorker) return exactRunScopedWorker;
+    if (
+      exactRunScopedWorker
+      && this._hasCurrentProvisionedOwnership(envelope, exactRunScopedWorker.worker_id)
+    ) return exactRunScopedWorker;
 
     if (requiresIsolatedWorkspace(envelope)) return undefined;
 
@@ -389,6 +394,29 @@ export class WsDispatchAdapter implements DAGDispatcher {
     const worker = genericWorkers[this.nextWorkerIndex % genericWorkers.length];
     this.nextWorkerIndex = (this.nextWorkerIndex + 1) % genericWorkers.length;
     return worker;
+  }
+
+  private _hasCurrentProvisionedOwnership(
+    envelope: DispatchEnvelope,
+    workerId: string,
+  ): boolean {
+    if (!workerId.startsWith("provisioned-")) return true;
+    const actorId = envelope.activity?.actorId;
+    if (!actorId) return false;
+    const lease = getDagActorLease({ run_id: envelope.runId, actor_id: actorId });
+    if (
+      !lease
+      || lease.state !== "leased"
+      || (lease.target_type !== "worker" && lease.target_type !== "provisioned_worker")
+      || lease.target_id !== workerId
+    ) return false;
+    return listDagProvisionedWorkers({
+      run_id: envelope.runId,
+      actor_id: actorId,
+      lease_generation: lease.lease_generation,
+      statuses: ["active"],
+      limit: 1,
+    }).some((worker) => worker.worker_id === workerId);
   }
 
   private _dispatchToNode(
@@ -420,6 +448,12 @@ export class WsDispatchAdapter implements DAGDispatcher {
       && envelope.activity?.leaseGeneration !== preboundLease.lease_generation
     ) {
       throw new Error(`DAG dispatch ${envelope.runId}/${envelope.nodeId} has a mismatched prebound lease`);
+    }
+    if (!this._hasCurrentProvisionedOwnership(bound.envelope, workerId)) {
+      this._releaseFailedDispatchLease(bound.lease);
+      throw new Error(
+        `Provisioned worker ${workerId} is not durably active for DAG actor ${bound.envelope.activity?.actorId ?? "unknown"}`,
+      );
     }
     try {
       socket.send(JSON.stringify({ type: "prompt", envelope: bound.envelope }));

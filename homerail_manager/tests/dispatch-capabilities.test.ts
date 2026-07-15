@@ -16,7 +16,13 @@ import { listDagActorCommands } from "../src/persistence/dag-actors.js";
 import { appendSessionTranscriptForTest, loadSessionTranscript } from "../src/persistence/dag-session-files.js";
 import { _clearAllPersistence } from "../src/persistence/store.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
-import { getDagActorLease } from "../src/persistence/dag-actor-leases.js";
+import {
+  acquireDagActorLease,
+  getDagActorLease,
+  registerDagProvisionedWorker,
+  releaseDagActorLease,
+  transitionDagProvisionedWorker,
+} from "../src/persistence/dag-actor-leases.js";
 import {
   _clearActiveRuns,
   checkpointResumeActiveRun,
@@ -864,6 +870,62 @@ nodes:
       reason: "provisioning_in_progress",
     });
     expect(workerSocket.send).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a provisioned Worker after its lease is released for cleanup", () => {
+    const workerId = "provisioned-run-capabilities-diagnose-stale";
+    const workerSocket = makeSocket();
+    registerWorker({
+      worker_id: workerId,
+      project_id: "p1",
+      socket: workerSocket,
+      status: "idle",
+      capabilities: [DAG_TRANSPORT_FENCE_CAPABILITY],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+    });
+    const lease = acquireDagActorLease({
+      run_id: "run-capabilities",
+      actor_id: "diagnose",
+      target_type: "worker",
+      target_id: workerId,
+    });
+    const ownership = registerDagProvisionedWorker({
+      run_id: "run-capabilities",
+      node_id: "diagnose",
+      actor_id: "diagnose",
+      lease_generation: lease.lease_generation,
+      worker_id: workerId,
+      container_id: "container-stale",
+      docker_node_id: "docker-node",
+    });
+    recordDispatch("run-capabilities", "diagnose", "worker", workerId);
+    releaseDagActorLease({
+      run_id: "run-capabilities",
+      actor_id: "diagnose",
+      lease_generation: lease.lease_generation,
+      target_type: "worker",
+      target_id: workerId,
+      expected_version: lease.version,
+    });
+    transitionDagProvisionedWorker({
+      run_id: "run-capabilities",
+      actor_id: "diagnose",
+      lease_generation: lease.lease_generation,
+      worker_id: workerId,
+      expected_status: "active",
+      status: "releasing",
+      expected_version: ownership.version,
+    });
+
+    const result = new WsDispatchAdapter({ provisioner: false }).dispatch(
+      makeEnvelope({ workspace: { mode: "isolated" } }),
+    );
+
+    expect(result).toMatchObject({ status: "skipped", reason: "no available worker or node" });
+    expect(workerSocket.send).not.toHaveBeenCalled();
+    expect(getDagActorLease({ run_id: "run-capabilities", actor_id: "diagnose" }))
+      .toMatchObject({ state: "dormant", lease_generation: lease.lease_generation });
   });
 
   it("dispatches the current checkpoint-resume envelope after pending provisioning completes", async () => {
