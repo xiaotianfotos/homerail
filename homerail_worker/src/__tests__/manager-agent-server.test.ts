@@ -425,6 +425,25 @@ class NoToolAgent implements AgentClient {
   }
 }
 
+class FailedRequiredToolAgent implements AgentClient {
+  async *run(): AsyncIterable<AgentEvent> {
+    yield {
+      type: "tool_use",
+      id: "failed-required-tool",
+      name: "mcp__dag-tools__get_dag_supervision",
+      input: { run_id: "missing-run" },
+    };
+    yield {
+      type: "tool_result",
+      tool_use_id: "failed-required-tool",
+      content: "run not found",
+      is_error: true,
+    };
+    yield { type: "text", text: "supervision checked" };
+    yield { type: "done" };
+  }
+}
+
 class DeltaTextAgent implements AgentClient {
   async *run(): AsyncIterable<AgentEvent> {
     yield { type: "text", text: "你好" };
@@ -518,7 +537,7 @@ class SupervisionCommentaryAgent implements AgentClient {
       { run_id: "run /?# supervised", max_milestones: 3 },
     ].entries()) {
       const id = `supervision-${index + 1}`;
-      yield { type: "tool_use", id, name: tool.name, input };
+      yield { type: "tool_use", id, name: `mcp__dag-tools__${tool.name}`, input };
       const result = await tool.handler(input);
       yield {
         type: "tool_result",
@@ -1092,6 +1111,40 @@ describe("manager-agent server", () => {
     }
   });
 
+  it("does not satisfy required tools when an MCP-prefixed call returns an error", async () => {
+    registerAgentBackend("manager-agent-failed-required-tool-test", () => new FailedRequiredToolAgent());
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "检查监督进度",
+          required_tool_calls: ["get_dag_supervision"],
+          agent_config: { agent_type: "manager-agent-failed-required-tool-test", model: "test-model" },
+        }),
+      });
+      const body = await response.json() as { error?: string; data?: Record<string, unknown> };
+
+      expect(response.status).toBe(424);
+      expect(body.data).toMatchObject({
+        required_tool_calls: ["get_dag_supervision"],
+        missing_tool_calls: ["get_dag_supervision"],
+        observed_tool_calls: ["mcp__dag-tools__get_dag_supervision"],
+      });
+    } finally {
+      await close(server);
+    }
+  });
+
   it("uses release-smoke backend override for container chat without real provider credentials", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
     tmpDirs.push(workspace);
@@ -1338,14 +1391,24 @@ describe("manager-agent server", () => {
           message: "检查监督进度",
           session_id: "manager session/?#",
           response_mode: "voice",
+          required_tool_calls: ["get_dag_supervision"],
           agent_config: { agent_type: "manager-agent-supervision-commentary-test", model: "test" },
         }),
       });
-      const body = await response.json() as { commentary_texts?: string[]; tool_results?: unknown[] };
+      const body = await response.json() as {
+        commentary_texts?: string[];
+        tool_results?: unknown[];
+        objective?: { required?: boolean; required_tool_calls?: string[]; satisfied?: boolean };
+      };
 
       expect(response.status).toBe(200);
       expect(body.commentary_texts).toEqual(["研究 Actor 已确认关键依赖。"]);
       expect(body.tool_results).toHaveLength(2);
+      expect(body.objective).toMatchObject({
+        required: true,
+        required_tool_calls: ["get_dag_supervision"],
+        satisfied: true,
+      });
       expect(observed).toEqual([
         {
           method: "POST",

@@ -10,6 +10,7 @@ import {
 } from "./host-shell-manager-agent.js";
 import {
   HostCodexManagerAgentExecutionError,
+  HostCodexManagerAgentObjectiveUnsatisfiedError,
   loadVoiceSystemContract,
   runHostCodexManagerAgentTurn,
   runHostCodexManagerAgentTurnStream,
@@ -442,6 +443,7 @@ async function runManagerAgentTurnOnce(
         continue_chat: input.continue_chat,
         history: input.history,
         canvas_context: input.canvas_context,
+        required_tool_calls: input.required_tool_calls,
         agent_config: input.agent_config,
         managerRestUrl: options?.managerRestUrl,
         response_mode: input.response_mode,
@@ -465,7 +467,10 @@ async function runManagerAgentTurnOnce(
         {
           worker_id: "host-codex",
           project_id: input.project_id ?? null,
-          ...(err instanceof HostCodexManagerAgentExecutionError ? err.data : {}),
+          ...(err instanceof HostCodexManagerAgentExecutionError
+            || err instanceof HostCodexManagerAgentObjectiveUnsatisfiedError
+            ? err.data
+            : {}),
         },
       );
     }
@@ -651,6 +656,7 @@ export async function* runManagerAgentTurnStream(
       continue_chat: input.continue_chat,
       history: input.history,
       canvas_context: input.canvas_context,
+      required_tool_calls: input.required_tool_calls,
       agent_config: input.agent_config,
       managerRestUrl: options?.managerRestUrl,
       response_mode: input.response_mode,
@@ -686,7 +692,10 @@ export async function* runManagerAgentTurnStream(
       {
         worker_id: "host-codex",
         project_id: input.project_id ?? null,
-        ...(err instanceof HostCodexManagerAgentExecutionError ? err.data : {}),
+        ...(err instanceof HostCodexManagerAgentExecutionError
+          || err instanceof HostCodexManagerAgentObjectiveUnsatisfiedError
+          ? err.data
+          : {}),
       },
     );
   } finally {

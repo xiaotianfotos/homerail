@@ -169,6 +169,7 @@ export interface HostCodexManagerAgentInput {
   continue_chat?: boolean;
   history?: Array<{ role?: string; content?: string; timestamp?: string }>;
   canvas_context?: GenerativeUiCanvasContextV1;
+  required_tool_calls?: string[];
   agent_config: ManagerAgentRuntimeConfig;
   managerRestUrl?: string | (() => string);
   response_mode?: "chat" | "voice";
@@ -199,6 +200,17 @@ export class HostCodexManagerAgentExecutionError extends Error {
     this.name = "HostCodexManagerAgentExecutionError";
     this.data = { code: "agent_execution_failed", errors, ...data };
     Object.setPrototypeOf(this, HostCodexManagerAgentExecutionError.prototype);
+  }
+}
+
+export class HostCodexManagerAgentObjectiveUnsatisfiedError extends Error {
+  readonly data: Record<string, unknown>;
+
+  constructor(data: Record<string, unknown>) {
+    super("Host Codex Manager Agent did not satisfy required tool calls");
+    this.name = "HostCodexManagerAgentObjectiveUnsatisfiedError";
+    this.data = { code: "required_tool_calls_unsatisfied", ...data };
+    Object.setPrototypeOf(this, HostCodexManagerAgentObjectiveUnsatisfiedError.prototype);
   }
 }
 
@@ -1972,6 +1984,43 @@ function compactDeltas(parts: string[]): string {
   return parts.join("").trim();
 }
 
+function canonicalToolCallName(value: string): string {
+  const name = value.trim();
+  if (!name.startsWith("mcp__")) return name;
+  const parts = name.split("__").filter(Boolean);
+  return parts.length >= 3 ? parts.at(-1)! : name;
+}
+
+function normalizeRequiredToolCalls(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(
+    value
+      .map((item) => typeof item === "string" ? canonicalToolCallName(item) : "")
+      .filter(Boolean),
+  ));
+}
+
+function successfulToolCallNames(
+  objectiveToolCalls: Array<{ name: string; success: boolean }>,
+  toolCalls: Array<{ id: string; name: string }>,
+  toolResults: Array<{ tool_use_id: string; is_error?: boolean }>,
+): Set<string> {
+  const successful = new Set(
+    objectiveToolCalls
+      .filter((item) => item.success)
+      .map((item) => canonicalToolCallName(item.name)),
+  );
+  const successfulResultIds = new Set(
+    toolResults
+      .filter((result) => result.is_error !== true)
+      .map((result) => result.tool_use_id),
+  );
+  for (const call of toolCalls) {
+    if (successfulResultIds.has(call.id)) successful.add(canonicalToolCallName(call.name));
+  }
+  return successful;
+}
+
 export function _compactDeltasForTest(parts: string[]): string {
   return compactDeltas(parts);
 }
@@ -1995,6 +2044,22 @@ function buildHostCodexManagerAgentResult(
   agentErrors: string[],
 ): Record<string, unknown> {
   const config = input.agent_config;
+  const requiredToolCalls = normalizeRequiredToolCalls(input.required_tool_calls);
+  const successfulRequiredToolCalls = successfulToolCallNames(
+    state.objectiveToolCalls,
+    toolCalls,
+    toolResults,
+  );
+  const missingRequiredToolCalls = requiredToolCalls.filter((name) => !successfulRequiredToolCalls.has(name));
+  if (missingRequiredToolCalls.length > 0) {
+    throw new HostCodexManagerAgentObjectiveUnsatisfiedError({
+      required_tool_calls: requiredToolCalls,
+      missing_tool_calls: missingRequiredToolCalls,
+      observed_tool_calls: toolCalls.map((item) => item.name),
+      objective_tool_calls: state.objectiveToolCalls,
+      run_ids: state.createdRunIds,
+    });
+  }
   const finalText = state.finalNotes.at(-1) || compactDeltas(texts) || "Manager Agent turn completed.";
   const commentary = [
     ...state.voiceSurface.commentaryTexts,
@@ -2022,9 +2087,12 @@ function buildHostCodexManagerAgentResult(
     run_id: state.createdRunIds.at(-1) ?? null,
     run_ids: state.createdRunIds,
     objective: {
-      required: false,
+      required: requiredToolCalls.length > 0,
+      required_tool_calls: requiredToolCalls,
       tool_calls: state.objectiveToolCalls,
-      satisfied: state.objectiveToolCalls.length === 0 || state.objectiveToolCalls.some((item) => item.success),
+      satisfied: requiredToolCalls.length > 0
+        ? missingRequiredToolCalls.length === 0
+        : state.objectiveToolCalls.length === 0 || state.objectiveToolCalls.some((item) => item.success),
     },
     effective_config: {
       harness: "host_codex",

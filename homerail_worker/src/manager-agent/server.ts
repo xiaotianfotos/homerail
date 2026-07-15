@@ -209,13 +209,41 @@ function compactDeltas(parts: string[]): string {
   return parts.join("").trim();
 }
 
+function canonicalToolCallName(value: string): string {
+  const name = value.trim();
+  if (!name.startsWith("mcp__")) return name;
+  const parts = name.split("__").filter(Boolean);
+  return parts.length >= 3 ? parts.at(-1)! : name;
+}
+
 function normalizeRequiredToolCalls(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(
     value
-      .map((item) => typeof item === "string" ? item.trim() : "")
+      .map((item) => typeof item === "string" ? canonicalToolCallName(item) : "")
       .filter(Boolean),
   ));
+}
+
+function successfulToolCallNames(
+  objectiveToolCalls: Array<{ name: string; success: boolean }>,
+  toolCalls: ToolTrace[],
+  toolResults: ToolResultTrace[],
+): Set<string> {
+  const successful = new Set(
+    objectiveToolCalls
+      .filter((item) => item.success)
+      .map((item) => canonicalToolCallName(item.name)),
+  );
+  const successfulResultIds = new Set(
+    toolResults
+      .filter((result) => result.is_error !== true)
+      .map((result) => result.tool_use_id),
+  );
+  for (const call of toolCalls) {
+    if (successfulResultIds.has(call.id)) successful.add(canonicalToolCallName(call.name));
+  }
+  return successful;
 }
 
 function managerRestUrl(): string {
@@ -1760,9 +1788,12 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
       run_ids: state.createdRunIds,
     });
   }
-  const missingRequiredToolCalls = requiredToolCalls.filter((name) =>
-    !state.objectiveToolCalls.some((item) => item.name === name && item.success)
+  const successfulRequiredToolCalls = successfulToolCallNames(
+    state.objectiveToolCalls,
+    toolCalls,
+    toolResults,
   );
+  const missingRequiredToolCalls = requiredToolCalls.filter((name) => !successfulRequiredToolCalls.has(name));
   if (missingRequiredToolCalls.length > 0) {
     throw new ManagerAgentObjectiveUnsatisfiedError({
       required_tool_calls: requiredToolCalls,
@@ -1808,7 +1839,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
       tool_calls: state.objectiveToolCalls,
       satisfied: requiredToolCalls.length === 0
         ? state.objectiveToolCalls.length === 0 || state.objectiveToolCalls.some((item) => item.success)
-        : requiredToolCalls.every((name) => state.objectiveToolCalls.some((item) => item.name === name && item.success)),
+        : missingRequiredToolCalls.length === 0,
     },
     effective_config: {
       harness: normalizeManagerAgentRuntimeAgentType(config.agent_type),

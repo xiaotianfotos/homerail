@@ -1068,6 +1068,101 @@ describe("/api/manager/chat", () => {
     });
   });
 
+  it("accepts successful MCP-prefixed read tools as required host Codex calls", async () => {
+    _setHostCodexAgentEventRunnerForTest(async function* (_prompt, tools) {
+      const tool = tools.find((candidate) => candidate.name === "list_orchestrations");
+      if (!tool) throw new Error("list_orchestrations tool missing");
+      const id = "host-required-read";
+      yield { type: "tool_use", id, name: "mcp__homerail-tools__list_orchestrations", input: {} };
+      const result = await tool.handler({});
+      yield {
+        type: "tool_result",
+        tool_use_id: id,
+        content: result.content.map((item) => item.text).join(""),
+        is_error: result.is_error,
+      };
+      yield { type: "text", text: "patterns listed" };
+      yield { type: "done" };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5" }),
+    });
+    expect(saved.status).toBe(200);
+
+    const response = await fetch(`${baseUrl}/api/manager/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "列出 DAG 工作流资源",
+        project_id: "p-host-codex-required-read",
+        required_tool_calls: ["list_orchestrations"],
+      }),
+    });
+    const body = await response.json() as {
+      success: boolean;
+      data: {
+        tool_calls: Array<{ name: string }>;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.tool_calls).toContainEqual(expect.objectContaining({
+      name: "mcp__homerail-tools__list_orchestrations",
+    }));
+  });
+
+  it("rejects failed MCP-prefixed host Codex calls required by the objective", async () => {
+    _setHostCodexAgentEventRunnerForTest(async function* () {
+      yield {
+        type: "tool_use",
+        id: "host-failed-required-read",
+        name: "mcp__homerail-tools__list_dag_patterns",
+        input: {},
+      };
+      yield {
+        type: "tool_result",
+        tool_use_id: "host-failed-required-read",
+        content: "catalog unavailable",
+        is_error: true,
+      };
+      yield { type: "text", text: "patterns listed" };
+      yield { type: "done" };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5" }),
+    });
+    expect(saved.status).toBe(200);
+
+    const response = await fetch(`${baseUrl}/api/manager/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "列出 DAG 模式",
+        project_id: "p-host-codex-failed-required-read",
+        required_tool_calls: ["list_dag_patterns"],
+      }),
+    });
+    const body = await response.json() as { success: boolean; data: Record<string, unknown> };
+
+    expect(response.status).toBe(503);
+    expect(body.success).toBe(false);
+    expect(body.data).toMatchObject({
+      code: "required_tool_calls_unsatisfied",
+      required_tool_calls: ["list_dag_patterns"],
+      missing_tool_calls: ["list_dag_patterns"],
+      observed_tool_calls: ["mcp__homerail-tools__list_dag_patterns"],
+    });
+  });
+
   it("returns host Codex harness failures as structured errors instead of assistant text", async () => {
     _setHostCodexAgentEventRunnerForTest(async function* () {
       yield { type: "error", message: "provider rejected the configured credential" };
