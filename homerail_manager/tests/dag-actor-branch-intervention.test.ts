@@ -31,7 +31,11 @@ import {
   getDagActorIntervention,
   listDagActorInterventions,
 } from "../src/persistence/dag-actor-interventions.js";
-import { getDagActor, listDagActors } from "../src/persistence/dag-actors.js";
+import {
+  getDagActor,
+  getDagActorCommand,
+  listDagActors,
+} from "../src/persistence/dag-actors.js";
 import {
   acquireDagActorLease,
   getDagActorLease,
@@ -48,6 +52,7 @@ import {
   interveneActiveRunActor,
   recoverAllActiveRuns,
   recoverDagActorInterventions,
+  resumeWaitingActiveRun,
 } from "../src/runtime/active-runs.js";
 import { buildDagActorCheckpoint } from "../src/runtime/dag-actor-checkpoint-builder.js";
 import { getDagActorControlState } from "../src/runtime/dag-actor-control-state.js";
@@ -135,6 +140,32 @@ nodes:
         actor_id: research
         role: Research
         surface_id: surface:research
+`);
+}
+
+function multiRoundActorDag() {
+  return parseDAGYaml(`
+name: intervention-command-fence
+workflow_id: intervention-command-fence
+agents:
+  worker: { agent_type: deterministic }
+nodes:
+  research:
+    agent: worker
+    extra:
+      agent_runtime:
+        actor_id: research
+        role: Research
+        surface_id: surface:research
+    outputs:
+      result: { to: suspend.in:result }
+  suspend:
+    type: await_command
+    after: [research]
+    gateway_config:
+      primitive_version: 1
+      target_actors: [research]
+      command_port: command
 `);
 }
 
@@ -307,6 +338,88 @@ describe("runtime-backed DAG actor branch intervention", () => {
       idempotency_key: "retry-research-again",
     })).toThrow("state changed before intervention");
     expect(listDagActorInterventions({ run_id: runId, actor_id: "research" })).toHaveLength(1);
+  });
+
+  it("replaces the durable command fence when retrying an active later-round actor", () => {
+    const runId = "intervention-round-command-fence";
+    const dispatcher = new ActorDispatcher();
+    createActiveRun(runId, multiRoundActorDag());
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    const initialEnvelope = dispatcher.dispatched.at(-1)!;
+    handoffActiveRun(runId, "research", "result", { summary: "round one" }, {
+      transport: true,
+      roundId: initialEnvelope.activity!.roundId,
+      actorId: initialEnvelope.activity!.actorId,
+      generation: initialEnvelope.activity!.generation,
+      leaseGeneration: initialEnvelope.activity!.leaseGeneration,
+    });
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(getActiveRun(runId)?.status).toBe("waiting");
+
+    const resumed = resumeWaitingActiveRun(runId, {
+      expected_round_id: "round-0001",
+      commands: [{
+        command_id: "round-two-command",
+        actor_id: "research",
+        idempotency_key: "round-two-research",
+        payload: { objective: "recheck the route" },
+      }],
+    });
+    expect(resumed.roundId).toBe("round-0002");
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    const beforeRetry = dispatcher.dispatched.at(-1)!;
+    expect(beforeRetry.activity).toMatchObject({
+      roundId: "round-0002",
+      actorId: "research",
+      generation: 1,
+      commandId: "round-two-command",
+    });
+
+    const intervention = interveneActiveRunActor(runId, {
+      actor_id: "research",
+      operation: "retry",
+      expected_state_token: getDagActorControlState(runId, "research").state_token,
+      idempotency_key: "retry-round-two-research",
+      instruction: "Retry from the durable checkpoint.",
+    });
+    expect(intervention).toMatchObject({ status: "applied", actor_state: "ready" });
+    expect(getDagActorCommand("round-two-command")?.status).toBe("cancelled");
+
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    const retryEnvelope = dispatcher.dispatched.at(-1)!;
+    expect(retryEnvelope.activity).toMatchObject({
+      roundId: "round-0002",
+      actorId: "research",
+      generation: 2,
+    });
+    const replacementCommandId = retryEnvelope.activity?.commandId;
+    expect(replacementCommandId).toMatch(/^command-[0-9a-f]{64}$/);
+    expect(replacementCommandId).not.toBe("round-two-command");
+    expect(getDagActorCommand(replacementCommandId!)).toMatchObject({
+      run_id: runId,
+      actor_id: "research",
+      round_id: "round-0002",
+      target_generation: 2,
+      status: "delivered",
+      payload: {
+        kind: "actor_intervention",
+        operation: "retry",
+        source_command_id: "round-two-command",
+        source_payload: { objective: "recheck the route" },
+      },
+    });
+
+    handoffActiveRun(runId, "research", "result", { summary: "round two retry" }, {
+      transport: true,
+      roundId: retryEnvelope.activity!.roundId,
+      actorId: retryEnvelope.activity!.actorId,
+      generation: retryEnvelope.activity!.generation,
+      leaseGeneration: retryEnvelope.activity!.leaseGeneration,
+      commandId: replacementCommandId,
+    });
+    expect(getDagActorCommand(replacementCommandId!)?.status).toBe("acknowledged");
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(getActiveRun(runId)?.status).toBe("waiting");
   });
 
   it.each([

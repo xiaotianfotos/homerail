@@ -179,6 +179,7 @@ export class DagActorInterventionRuntimeError extends Error {
       | "actor_not_found"
       | "actor_retired"
       | "state_token_conflict"
+      | "command_fence_missing"
       | "intervention_recovery_failed",
     message: string,
   ) {
@@ -2386,6 +2387,19 @@ function _interventionInstruction(intervention: DagActorInterventionRecord): str
   }
 }
 
+function _interventionCommandIdentity(
+  intervention: DagActorInterventionRecord,
+  generation: number,
+): { command_id: string; idempotency_key: string } {
+  const digest = createHash("sha256")
+    .update(`${intervention.intervention_id}\0${generation}`)
+    .digest("hex");
+  return {
+    command_id: `command-${digest}`,
+    idempotency_key: `intervention-${digest}`,
+  };
+}
+
 function _interventionResult(
   intervention: DagActorInterventionRecord,
   deduplicated: boolean,
@@ -2549,6 +2563,25 @@ function _applyPersistedDagActorIntervention(
         );
       }
 
+      const sourceCommand = listDagActorCommands({
+        run_id: current.run_id,
+        actor_id: current.actor_id,
+        round_id: run.currentRound.round_id,
+      }).find((command) => (
+        command.target_generation === current.generation
+        && command.status !== "cancelled"
+        && command.status !== "failed"
+      ));
+      const resumesActor = applying.operation === "retry"
+        || applying.operation === "reassign"
+        || applying.operation === "checkpoint_fork";
+      if (resumesActor && run.currentRound.ordinal > 1 && !sourceCommand) {
+        throw new DagActorInterventionRuntimeError(
+          "command_fence_missing",
+          `DAG actor ${current.run_id}/${current.actor_id} has no current-round command to supersede`,
+        );
+      }
+
       cancelUnclaimedDagActorCommands({
         run_id: current.run_id,
         actor_id: current.actor_id,
@@ -2576,6 +2609,25 @@ function _applyPersistedDagActorIntervention(
         checkpoint_ref: `portable:${checkpoint.checkpoint_version}`,
       });
       _persistNodeSession(run, nextActor.node_id, nextSession);
+
+      if (resumesActor && sourceCommand) {
+        const identity = _interventionCommandIdentity(applying, nextActor.generation);
+        createDagActorCommand({
+          ...identity,
+          run_id: nextActor.run_id,
+          actor_id: nextActor.actor_id,
+          round_id: run.currentRound.round_id,
+          target_generation: nextActor.generation,
+          payload: {
+            kind: "actor_intervention",
+            intervention_id: applying.intervention_id,
+            operation: applying.operation,
+            instruction: _interventionInstruction(applying),
+            source_command_id: sourceCommand.command_id,
+            source_payload: sourceCommand.payload,
+          },
+        });
+      }
 
       if (applying.operation === "interrupt" || applying.operation === "cancel") {
         failNode(run.dagRun, nextActor.node_id, {
