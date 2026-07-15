@@ -6,6 +6,7 @@ import { recoverStaleVoiceSessions } from "./server/voice-session-registry.js";
 import { markRecoveryComplete } from "./health/index.js";
 import { cleanupPluginPackageStaging, recoverPluginPackageTrash } from "./plugins/package-lifecycle.js";
 import { shutdownHostShellManagerAgents } from "./server/host-shell-manager-agent.js";
+import { recoverDagLiveSurfaceProjections } from "./generative-ui/dag-live-surface-projector.js";
 
 initEventLogging();
 
@@ -17,6 +18,9 @@ const server = createServer(port);
 // the server accepts traffic. The first-worker hook (wired in createServer)
 // re-dispatches their READY nodes once a worker reconnects.
 const recovery = recoverAllActiveRuns();
+// Logical actors are restored before Activity Journal replay. The projector
+// can therefore re-establish exact ownership and drain any crash-pending gaps.
+const surfaceRecovery = recoverDagLiveSurfaceProjections();
 // Reset voice sessions stuck in running/submitted (no live process after restart).
 const voiceRecovery = recoverStaleVoiceSessions();
 const pluginTrashRecovery = recoverPluginPackageTrash();
@@ -27,6 +31,9 @@ server.listen(port, host, () => {
   console.error(`homerail_manager listening on ${host}:${port}`);
   console.error(
     `cold recovery: recovered=${recovery.recovered.length} failed=${recovery.failed.length} skipped=${recovery.skipped.length}`,
+  );
+  console.error(
+    `live surface recovery: projected=${surfaceRecovery.projected_events} failed=${surfaceRecovery.failed.length}`,
   );
   if (voiceRecovery.recovered.length) {
     console.error(`voice recovery: reset ${voiceRecovery.recovered.length} stale session(s)`);

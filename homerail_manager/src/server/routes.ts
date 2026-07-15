@@ -28,6 +28,11 @@ import { listDagTriggers } from "../persistence/dag-triggers.js";
 import { listDagActivityEvents } from "../persistence/dag-activity-journal.js";
 import { listDagActorCommands, type DagActorCommandStatus } from "../persistence/dag-actors.js";
 import { listDagRunRounds } from "../persistence/dag-run-rounds.js";
+import {
+  getDagLiveSurfaceDocument,
+  isDagLiveSurfaceProjectionNode,
+  listDagLiveSurfaceProjections,
+} from "../generative-ui/dag-live-surface-projector.js";
 
 interface BaseResponse {
   success: boolean;
@@ -624,8 +629,40 @@ export function inspectionRoutesHandler(
     return true;
   }
 
+  // GET /api/runs/:run_id/live-surfaces
+  if (pathname.match(/^\/api\/runs\/[^/]+\/live-surfaces$/) && req.method === "GET") {
+    let runId = "";
+    try {
+      runId = decodeURIComponent(pathname.split("/")[3] ?? "");
+    } catch {
+      json(res, 400, { success: false, message: "Invalid encoded run ID", error: "Invalid encoded run ID" });
+      return true;
+    }
+    if (!runId || !loadRunMetadata(runId)) {
+      _notFound(res, runId ? `Run not found: ${runId}` : "Invalid run ID");
+      return true;
+    }
+    const projections = listDagLiveSurfaceProjections(runId);
+    const projectionBySurface = new Map(projections.map((projection) => [projection.surface_id, projection]));
+    const document = getDagLiveSurfaceDocument(runId);
+    _ok(res, `Live surfaces retrieved (${projections.length} actors)`, {
+      run_id: runId,
+      projections,
+      document: document
+        ? {
+            ...document,
+            nodes: document.nodes.filter((node) => {
+              const projection = projectionBySurface.get(node.id);
+              return projection !== undefined && isDagLiveSurfaceProjectionNode(node, projection);
+            }),
+          }
+        : null,
+    });
+    return true;
+  }
+
   // GET /api/runs/:run_id
-  if (pathname.startsWith("/api/runs/") && !pathname.includes("/activities") && !pathname.includes("/events") && !pathname.includes("/handoffs") && !pathname.includes("/chats") && !pathname.includes("/scorecard") && !pathname.includes("/eval-run") && !pathname.includes("/supervise") && !pathname.includes("/inject") && !pathname.includes("/experience") && !pathname.includes("/status") && !pathname.includes("/audit") && !pathname.includes("/rounds") && !pathname.includes("/commands") && !pathname.includes("/complete") && req.method === "GET") {
+  if (pathname.startsWith("/api/runs/") && !pathname.includes("/activities") && !pathname.includes("/events") && !pathname.includes("/handoffs") && !pathname.includes("/chats") && !pathname.includes("/scorecard") && !pathname.includes("/eval-run") && !pathname.includes("/supervise") && !pathname.includes("/inject") && !pathname.includes("/experience") && !pathname.includes("/status") && !pathname.includes("/audit") && !pathname.includes("/rounds") && !pathname.includes("/commands") && !pathname.includes("/complete") && !pathname.includes("/live-surfaces") && req.method === "GET") {
     const runId = _parseRunId(pathname, "/api/runs/");
     if (!runId) {
       _notFound(res, "Invalid run ID");

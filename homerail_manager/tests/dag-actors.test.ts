@@ -109,9 +109,13 @@ describe("durable DAG logical actors and command inbox", () => {
   it("upgrades a v19 database and validates migration v20 on repeated startup", () => {
     getDb().exec(`
       DROP TABLE dag_run_rounds;
+      DROP TABLE dag_surface_projection_controls;
+      DROP TABLE dag_surface_projection_queue;
+      DROP TABLE dag_surface_projections;
+      DROP INDEX idx_dag_actors_projection_identity;
       DROP TABLE dag_actor_commands;
       DROP TABLE dag_actors;
-      DELETE FROM schema_migrations WHERE version IN (20, 23);
+      DELETE FROM schema_migrations WHERE version IN (20, 21, 22, 23);
     `);
     closeDb();
 

@@ -1,5 +1,6 @@
 import { appendDagActivityEvent } from "../persistence/dag-activity-journal.js";
 import { getDagActorByNode } from "../persistence/dag-actors.js";
+import { projectDagActivityJournalEntry } from "../generative-ui/dag-live-surface-projector.js";
 
 export interface DagActivityStreamContext {
   runId: string;
@@ -37,5 +38,9 @@ export function ingestDagActivityStream(
       throw new Error("DAG activity surface identity does not match the logical actor registry");
     }
   }
-  return appendDagActivityEvent(activity);
+  const stored = appendDagActivityEvent(activity);
+  // Legacy journal-only runs may not have a logical actor. Every current DAG
+  // Worker does; only those events enter the trusted A2UI projector boundary.
+  if (actor) projectDagActivityJournalEntry(stored);
+  return stored;
 }

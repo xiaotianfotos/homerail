@@ -388,6 +388,12 @@ export class PersistentGenerativeUiDocumentService implements GenerativeUiDocume
 
   clear(): void {
     getDb().transaction(() => {
+      // Live DAG surfaces are derived from the Activity Journal and can be
+      // rebuilt. Remove their ownership metadata before the shared document
+      // store so the document retention FK remains strict in normal writes.
+      getDb().prepare("DELETE FROM dag_surface_projection_controls").run();
+      getDb().prepare("DELETE FROM dag_surface_projection_queue").run();
+      getDb().prepare("DELETE FROM dag_surface_projections").run();
       getDb().prepare("DELETE FROM generative_ui_user_overrides").run();
       getDb().prepare("DELETE FROM generative_ui_transactions").run();
       getDb().prepare("DELETE FROM generative_ui_documents").run();

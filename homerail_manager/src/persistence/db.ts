@@ -38,6 +38,9 @@ const CLEARABLE_TABLES = new Set([
   "dag_actor_provisioned_workers",
   "dag_actor_checkpoints",
   "dag_actor_runtimes",
+  "dag_surface_projection_controls",
+  "dag_surface_projection_queue",
+  "dag_surface_projections",
   "dag_actor_commands",
   "dag_actors",
   "dag_activity_events",
@@ -1041,6 +1044,283 @@ function validateDagActorLeaseSchemaV24(db: SqliteDatabase): void {
   if (!checkpointTrigger.includes("beforeupdateondag_actor_checkpoints") || !checkpointTrigger.includes("raise(abort,'dagactorcheckpointsareappend-only')")) {
     throw new Error("Schema migration 24 is incomplete: checkpoint append-only trigger is missing or invalid");
   }
+}
+
+function validateDagLiveSurfaceSchemaV21(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    dag_surface_projections: [
+      "run_id",
+      "actor_id",
+      "node_id",
+      "surface_id",
+      "document_id",
+      "generation",
+      "last_activity_sequence",
+      "journal_cursor",
+      "surface_revision",
+      "activity_state",
+      "visibility_state",
+      "last_event_id",
+      "focused_until",
+      "created_at",
+      "updated_at",
+    ],
+    dag_surface_projection_queue: [
+      "journal_seq",
+      "event_id",
+      "run_id",
+      "actor_id",
+      "node_id",
+      "surface_id",
+      "generation",
+      "activity_sequence",
+      "status",
+      "transaction_id",
+      "surface_revision",
+      "queued_at",
+      "applied_at",
+      "failure_json",
+    ],
+    dag_surface_projection_controls: [
+      "control_id",
+      "run_id",
+      "actor_id",
+      "node_id",
+      "surface_id",
+      "operation",
+      "expected_surface_revision",
+      "committed_surface_revision",
+      "focused_until",
+      "transaction_id",
+      "input_digest",
+      "created_at",
+    ],
+  };
+  for (const [table, columns] of Object.entries(requiredColumns)) {
+    if (!hasTable(db, table)) {
+      throw new Error(`Schema migration 21 is incomplete: missing table ${table}`);
+    }
+    for (const column of columns) {
+      if (!hasColumn(db, table, column)) {
+        throw new Error(`Schema migration 21 is incomplete: ${table} is missing column ${column}`);
+      }
+    }
+  }
+
+  type IndexEntry = { name: string; unique: number; partial: number };
+  const indexColumns = (name: string): string[] => (
+    db.prepare(`PRAGMA index_info(${name})`).all() as Array<{ seqno: number; name: string }>
+  ).sort((left, right) => left.seqno - right.seqno).map((entry) => entry.name);
+  const columnsMatch = (actual: readonly string[], expected: readonly string[]): boolean => (
+    actual.length === expected.length && actual.every((column, position) => column === expected[position])
+  );
+  const requirePrimaryKey = (table: string, expectedColumns: readonly string[]): void => {
+    const columns = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+      pk: number;
+    }>).filter((entry) => entry.pk > 0)
+      .sort((left, right) => left.pk - right.pk)
+      .map((entry) => entry.name);
+    if (!columnsMatch(columns, expectedColumns)) {
+      throw new Error(`Schema migration 21 is incomplete: ${table} has an invalid primary key`);
+    }
+  };
+  const requireNamedIndex = (
+    table: string,
+    name: string,
+    expectedColumns: readonly string[],
+    unique: number,
+    partial: number,
+  ): void => {
+    const index = (db.prepare(`PRAGMA index_list(${table})`).all() as IndexEntry[])
+      .find((entry) => entry.name === name);
+    if (!index || index.unique !== unique || index.partial !== partial) {
+      throw new Error(`Schema migration 21 is incomplete: index ${name} is missing or invalid`);
+    }
+    if (!columnsMatch(indexColumns(name), expectedColumns)) {
+      throw new Error(`Schema migration 21 is incomplete: index ${name} has invalid columns`);
+    }
+  };
+  const requireUniqueConstraint = (table: string, expectedColumns: readonly string[]): void => {
+    const indexes = db.prepare(`PRAGMA index_list(${table})`).all() as IndexEntry[];
+    const found = indexes.some((index) => (
+      index.unique === 1
+      && index.partial === 0
+      && columnsMatch(indexColumns(index.name), expectedColumns)
+    ));
+    if (!found) {
+      throw new Error(
+        `Schema migration 21 is incomplete: ${table} is missing unique constraint (${expectedColumns.join(", ")})`,
+      );
+    }
+  };
+  requireNamedIndex(
+    "dag_actors",
+    "idx_dag_actors_projection_identity",
+    ["run_id", "actor_id", "node_id", "surface_id"],
+    1,
+    0,
+  );
+  requirePrimaryKey("dag_surface_projections", ["run_id", "actor_id"]);
+  requireUniqueConstraint("dag_surface_projections", ["document_id", "surface_id"]);
+  requirePrimaryKey("dag_surface_projection_queue", ["journal_seq"]);
+  requireUniqueConstraint("dag_surface_projection_queue", ["event_id"]);
+  requireUniqueConstraint(
+    "dag_surface_projection_queue",
+    ["run_id", "actor_id", "generation", "activity_sequence"],
+  );
+  requireNamedIndex(
+    "dag_surface_projection_queue",
+    "idx_dag_surface_projection_queue_actor_status",
+    ["run_id", "actor_id", "status", "generation", "activity_sequence"],
+    0,
+    0,
+  );
+  requireNamedIndex(
+    "dag_surface_projection_queue",
+    "idx_dag_surface_projection_queue_transaction_id",
+    ["transaction_id"],
+    1,
+    1,
+  );
+  const transactionIndexSql = (db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+  ).get("idx_dag_surface_projection_queue_transaction_id") as { sql: string | null } | undefined)?.sql
+    ?.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!transactionIndexSql || !/\bwhere transaction_id is not null;?$/.test(transactionIndexSql)) {
+    throw new Error(
+      "Schema migration 21 is incomplete: index idx_dag_surface_projection_queue_transaction_id has an invalid predicate",
+    );
+  }
+  requirePrimaryKey("dag_surface_projection_controls", ["control_id"]);
+  requireUniqueConstraint("dag_surface_projection_controls", ["transaction_id"]);
+  requireUniqueConstraint(
+    "dag_surface_projection_controls",
+    ["run_id", "actor_id", "committed_surface_revision"],
+  );
+  requireNamedIndex(
+    "dag_surface_projection_controls",
+    "idx_dag_surface_projection_controls_actor_created",
+    ["run_id", "actor_id", "created_at", "control_id"],
+    0,
+    0,
+  );
+
+  type ForeignKeyEntry = {
+    id: number;
+    seq: number;
+    table: string;
+    from: string;
+    to: string;
+    on_delete: string;
+  };
+  const hasForeignKey = (
+    table: string,
+    referencedTable: string,
+    fromColumns: readonly string[],
+    toColumns: readonly string[],
+    onDelete: "CASCADE" | "RESTRICT",
+  ): boolean => {
+    const entries = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as ForeignKeyEntry[];
+    const groups = new Map<number, ForeignKeyEntry[]>();
+    for (const entry of entries) {
+      const group = groups.get(entry.id) ?? [];
+      group.push(entry);
+      groups.set(entry.id, group);
+    }
+    return [...groups.values()].some((group) => {
+      const ordered = group.sort((left, right) => left.seq - right.seq);
+      return ordered.length === fromColumns.length
+        && ordered.every((entry, position) => (
+          entry.table === referencedTable
+          && entry.from === fromColumns[position]
+          && entry.to === toColumns[position]
+          && entry.on_delete.toUpperCase() === onDelete
+        ));
+    });
+  };
+  const actorIdentityColumns = ["run_id", "actor_id", "node_id", "surface_id"] as const;
+  for (const table of Object.keys(requiredColumns)) {
+    if (!hasForeignKey(table, "dag_actors", actorIdentityColumns, actorIdentityColumns, "CASCADE")) {
+      throw new Error(`Schema migration 21 is incomplete: ${table} actor identity constraint is missing`);
+    }
+  }
+  if (!hasForeignKey(
+    "dag_surface_projections",
+    "generative_ui_documents",
+    ["document_id"],
+    ["document_id"],
+    "RESTRICT",
+  )) {
+    throw new Error("Schema migration 21 is incomplete: projection document retention constraint is missing");
+  }
+  if (!hasForeignKey(
+    "dag_surface_projection_queue",
+    "dag_activity_events",
+    ["journal_seq"],
+    ["seq"],
+    "CASCADE",
+  )) {
+    throw new Error("Schema migration 21 is incomplete: projection queue journal constraint is missing");
+  }
+}
+
+const DAG_SURFACE_QUEUE_JOURNAL_IDENTITY_TRIGGER_V22 = `
+  CREATE TRIGGER trg_dag_surface_projection_queue_journal_identity
+    BEFORE INSERT ON dag_surface_projection_queue
+    WHEN NOT EXISTS (
+      SELECT 1
+      FROM dag_activity_events e
+      WHERE e.seq = NEW.journal_seq
+        AND e.event_id = NEW.event_id
+        AND e.run_id = NEW.run_id
+        AND e.actor_id = NEW.actor_id
+        AND e.node_id = NEW.node_id
+        AND e.generation = NEW.generation
+        AND e.activity_sequence = NEW.activity_sequence
+        AND (e.surface_id IS NULL OR e.surface_id = NEW.surface_id)
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'projection queue journal identity mismatch');
+    END
+`;
+
+const DAG_SURFACE_QUEUE_IMMUTABLE_IDENTITY_TRIGGER_V22 = `
+  CREATE TRIGGER trg_dag_surface_projection_queue_identity_immutable
+    BEFORE UPDATE OF journal_seq, event_id, run_id, actor_id, node_id,
+      surface_id, generation, activity_sequence
+    ON dag_surface_projection_queue
+    BEGIN
+      SELECT RAISE(ABORT, 'projection queue identity is immutable');
+    END
+`;
+
+function normalizedSchemaSql(sql: string): string {
+  return sql.replace(/\s+/g, " ").trim().replace(/;$/, "").toLowerCase();
+}
+
+function validateDagLiveSurfaceQueueTriggersV22(db: SqliteDatabase): void {
+  const requireTrigger = (name: string, expectedSql: string): void => {
+    const trigger = db.prepare(`
+      SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = ?
+    `).get(name) as { tbl_name: string; sql: string | null } | undefined;
+    if (
+      !trigger
+      || trigger.tbl_name !== "dag_surface_projection_queue"
+      || !trigger.sql
+      || normalizedSchemaSql(trigger.sql) !== normalizedSchemaSql(expectedSql)
+    ) {
+      throw new Error(`Schema migration 22 is incomplete: trigger ${name} is missing or invalid`);
+    }
+  };
+  requireTrigger(
+    "trg_dag_surface_projection_queue_journal_identity",
+    DAG_SURFACE_QUEUE_JOURNAL_IDENTITY_TRIGGER_V22,
+  );
+  requireTrigger(
+    "trg_dag_surface_projection_queue_identity_immutable",
+    DAG_SURFACE_QUEUE_IMMUTABLE_IDENTITY_TRIGGER_V22,
+  );
 }
 
 function validateGenerativeUiSchemaV3(db: SqliteDatabase): void {
@@ -2421,7 +2701,100 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     `),
     validate: validateDagActorSchemaV20,
   },
-  // Versions 21 and 22 are reserved for the parallel live-surface projector work.
+  {
+    version: 21,
+    up: (db) => db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actors_projection_identity
+        ON dag_actors(run_id, actor_id, node_id, surface_id);
+
+      CREATE TABLE IF NOT EXISTS dag_surface_projections (
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        surface_id TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK(generation >= 1),
+        last_activity_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_activity_sequence >= 0),
+        journal_cursor INTEGER NOT NULL DEFAULT 0 CHECK(journal_cursor >= 0),
+        surface_revision INTEGER NOT NULL DEFAULT 0 CHECK(surface_revision >= 0),
+        activity_state TEXT NOT NULL CHECK(activity_state IN (
+          'started', 'progress', 'finding', 'blocked', 'completed', 'failed'
+        )),
+        visibility_state TEXT NOT NULL DEFAULT 'visible' CHECK(visibility_state IN (
+          'visible', 'focused', 'removed'
+        )),
+        last_event_id TEXT,
+        focused_until INTEGER CHECK(focused_until IS NULL OR focused_until >= 0),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+        PRIMARY KEY(run_id, actor_id),
+        UNIQUE(document_id, surface_id),
+        FOREIGN KEY(run_id, actor_id, node_id, surface_id)
+          REFERENCES dag_actors(run_id, actor_id, node_id, surface_id) ON DELETE CASCADE,
+        FOREIGN KEY(document_id) REFERENCES generative_ui_documents(document_id) ON DELETE RESTRICT
+      );
+
+      CREATE TABLE IF NOT EXISTS dag_surface_projection_queue (
+        journal_seq INTEGER PRIMARY KEY,
+        event_id TEXT NOT NULL UNIQUE,
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        surface_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK(generation >= 1),
+        activity_sequence INTEGER NOT NULL CHECK(activity_sequence >= 1),
+        status TEXT NOT NULL CHECK(status IN ('pending', 'applied', 'stale', 'rejected')),
+        transaction_id TEXT,
+        surface_revision INTEGER CHECK(surface_revision IS NULL OR surface_revision >= 0),
+        queued_at INTEGER NOT NULL CHECK(queued_at >= 0),
+        applied_at INTEGER CHECK(applied_at IS NULL OR applied_at >= queued_at),
+        failure_json TEXT,
+        CHECK(
+          (status = 'pending' AND applied_at IS NULL AND transaction_id IS NULL AND surface_revision IS NULL AND failure_json IS NULL)
+          OR (status = 'applied' AND applied_at IS NOT NULL AND surface_revision IS NOT NULL AND failure_json IS NULL)
+          OR (status = 'stale' AND applied_at IS NOT NULL AND transaction_id IS NULL AND surface_revision IS NULL AND failure_json IS NULL)
+          OR (status = 'rejected' AND applied_at IS NOT NULL AND transaction_id IS NULL AND surface_revision IS NULL AND failure_json IS NOT NULL)
+        ),
+        UNIQUE(run_id, actor_id, generation, activity_sequence),
+        FOREIGN KEY(journal_seq) REFERENCES dag_activity_events(seq) ON DELETE CASCADE,
+        FOREIGN KEY(run_id, actor_id, node_id, surface_id)
+          REFERENCES dag_actors(run_id, actor_id, node_id, surface_id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_surface_projection_queue_actor_status
+        ON dag_surface_projection_queue(run_id, actor_id, status, generation, activity_sequence);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_surface_projection_queue_transaction_id
+        ON dag_surface_projection_queue(transaction_id)
+        WHERE transaction_id IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS dag_surface_projection_controls (
+        control_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        surface_id TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK(operation IN ('focused', 'removed')),
+        expected_surface_revision INTEGER NOT NULL CHECK(expected_surface_revision >= 0),
+        committed_surface_revision INTEGER NOT NULL CHECK(committed_surface_revision >= 1),
+        focused_until INTEGER CHECK(focused_until IS NULL OR focused_until >= 0),
+        transaction_id TEXT NOT NULL UNIQUE,
+        input_digest TEXT NOT NULL CHECK(length(input_digest) = 64),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        UNIQUE(run_id, actor_id, committed_surface_revision),
+        FOREIGN KEY(run_id, actor_id, node_id, surface_id)
+          REFERENCES dag_actors(run_id, actor_id, node_id, surface_id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_surface_projection_controls_actor_created
+        ON dag_surface_projection_controls(run_id, actor_id, created_at, control_id);
+    `),
+    validate: validateDagLiveSurfaceSchemaV21,
+  },
+  {
+    version: 22,
+    up: (db) => db.exec([
+      DAG_SURFACE_QUEUE_JOURNAL_IDENTITY_TRIGGER_V22,
+      DAG_SURFACE_QUEUE_IMMUTABLE_IDENTITY_TRIGGER_V22,
+    ].map((sql) => `${sql.replace("CREATE TRIGGER", "CREATE TRIGGER IF NOT EXISTS")};`).join("\n")),
+    validate: validateDagLiveSurfaceQueueTriggersV22,
+  },
   {
     version: 23,
     up: (db) => {
