@@ -547,60 +547,62 @@ describe("DAG Live Surface Projector", () => {
   it("focuses and removes a surface through revision-checked idempotent controls", () => {
     const runId = "surface-controls";
     ensureRunDir(runId);
-    register(runId, "worker");
-    appendAndProject(activity({ run_id: runId, actor_id: "worker", sequence: 1, type: "started" }));
+    getDb().transaction(() => {
+      register(runId, "worker");
+      appendAndProject(activity({ run_id: runId, actor_id: "worker", sequence: 1, type: "started" }));
 
-    const focus = controlDagLiveSurface({
-      control_id: "focus-1",
-      run_id: runId,
-      actor_id: "worker",
-      operation: "focused",
-      expected_surface_revision: 1,
-      focused_until: BASE_TIME + 10_000,
-      created_at: BASE_TIME + 100,
-    });
-    expect(focus).toMatchObject({ deduplicated: false, projection: { surface_revision: 2, visibility_state: "focused" } });
-    expect(getDagLiveSurfaceDocument(runId)?.nodes[0]).toMatchObject({ importance: "critical", revision: 2 });
-    expect(controlDagLiveSurface({
-      control_id: "focus-1",
-      run_id: runId,
-      actor_id: "worker",
-      operation: "focused",
-      expected_surface_revision: 1,
-      focused_until: BASE_TIME + 10_000,
-      created_at: BASE_TIME + 999,
-    })).toMatchObject({ deduplicated: true, projection: { surface_revision: 2 } });
-    expect(() => controlDagLiveSurface({
-      control_id: "stale-focus",
-      run_id: runId,
-      actor_id: "worker",
-      operation: "focused",
-      expected_surface_revision: 1,
-    })).toThrowError(expect.objectContaining<DagLiveSurfaceProjectionError>({ code: "surface_revision_conflict" }));
+      const focus = controlDagLiveSurface({
+        control_id: "focus-1",
+        run_id: runId,
+        actor_id: "worker",
+        operation: "focused",
+        expected_surface_revision: 1,
+        focused_until: BASE_TIME + 10_000,
+        created_at: BASE_TIME + 100,
+      });
+      expect(focus).toMatchObject({ deduplicated: false, projection: { surface_revision: 2, visibility_state: "focused" } });
+      expect(getDagLiveSurfaceDocument(runId)?.nodes[0]).toMatchObject({ importance: "critical", revision: 2 });
+      expect(controlDagLiveSurface({
+        control_id: "focus-1",
+        run_id: runId,
+        actor_id: "worker",
+        operation: "focused",
+        expected_surface_revision: 1,
+        focused_until: BASE_TIME + 10_000,
+        created_at: BASE_TIME + 999,
+      })).toMatchObject({ deduplicated: true, projection: { surface_revision: 2 } });
+      expect(() => controlDagLiveSurface({
+        control_id: "stale-focus",
+        run_id: runId,
+        actor_id: "worker",
+        operation: "focused",
+        expected_surface_revision: 1,
+      })).toThrowError(expect.objectContaining<DagLiveSurfaceProjectionError>({ code: "surface_revision_conflict" }));
 
-    expect(controlDagLiveSurface({
-      control_id: "remove-1",
-      run_id: runId,
-      actor_id: "worker",
-      operation: "removed",
-      expected_surface_revision: 2,
-      created_at: BASE_TIME + 200,
-    })).toMatchObject({ projection: { surface_revision: 3, visibility_state: "removed" } });
-    expect(getDagLiveSurfaceDocument(runId)?.nodes).toEqual([]);
+      expect(controlDagLiveSurface({
+        control_id: "remove-1",
+        run_id: runId,
+        actor_id: "worker",
+        operation: "removed",
+        expected_surface_revision: 2,
+        created_at: BASE_TIME + 200,
+      })).toMatchObject({ projection: { surface_revision: 3, visibility_state: "removed" } });
+      expect(getDagLiveSurfaceDocument(runId)?.nodes).toEqual([]);
 
-    expect(appendAndProject(activity({
-      run_id: runId,
-      actor_id: "worker",
-      sequence: 2,
-      payload: { message: "late progress after removal", progress: 50 },
-    }))).toMatchObject({ applied_count: 1 });
-    expect(getDagLiveSurfaceProjection(runId, "worker")).toMatchObject({
-      activity_state: "progress",
-      last_activity_sequence: 2,
-      surface_revision: 3,
-      visibility_state: "removed",
-    });
-    expect(getDagLiveSurfaceDocument(runId)?.nodes).toEqual([]);
+      expect(appendAndProject(activity({
+        run_id: runId,
+        actor_id: "worker",
+        sequence: 2,
+        payload: { message: "late progress after removal", progress: 50 },
+      }))).toMatchObject({ applied_count: 1 });
+      expect(getDagLiveSurfaceProjection(runId, "worker")).toMatchObject({
+        activity_state: "progress",
+        last_activity_sequence: 2,
+        surface_revision: 3,
+        visibility_state: "removed",
+      });
+      expect(getDagLiveSurfaceDocument(runId)?.nodes).toEqual([]);
+    }).immediate();
 
     closeDb();
     expect(recoverDagLiveSurfaceProjections(runId)).toMatchObject({ projected_events: 0, failed: [] });
