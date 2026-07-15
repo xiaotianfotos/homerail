@@ -1615,12 +1615,20 @@ function _correctionPrompt(
   attempt: number,
   maxAttempts: number,
   outputPorts: string[],
+  outputContracts: Record<string, { contract: string; schema: unknown }>,
 ): string {
   const declaredPorts = outputPorts.length > 0 ? outputPorts.join(", ") : "done";
+  const contractGuidance = Object.keys(outputContracts).length > 0
+    ? [
+        "The handoff tool call shape is {\"port\":\"<declared port>\",\"content\":<value matching that port schema>}. Put contract fields only inside content.",
+        `Exact output contracts by port (JSON Schema): ${JSON.stringify(outputContracts)}`,
+      ]
+    : [];
   return [
     `Correction attempt ${attempt}/${maxAttempts} for DAG node ${nodeId}.`,
     `Previous attempt ended without a valid DAG handoff: ${reason}`,
     `Declared output ports for this node: ${declaredPorts}.`,
+    ...contractGuidance,
     "Treat that error as authoritative. Preserve required field names and JSON array/object/number types exactly.",
     "Reuse completed evidence when it is available in the original inputs or current workspace.",
     "Correction mode permits only the handoff tool. Do not repeat investigation, file changes, or other side effects.",
@@ -1652,11 +1660,17 @@ export function requestNodeCorrection(
       .filter((edge) => edge.from_node === nodeId && edge.label !== "after_dep")
       .map((edge) => edge.from_port),
   )).sort();
+  const outputContracts = Object.fromEntries(outputPorts.flatMap((port) => {
+    const contract = _outputContract(run, nodeId, port);
+    return contract?.schema !== undefined
+      ? [[port, { contract: contract.contract, schema: contract.schema }] as const]
+      : [];
+  }));
   run.counters.corrections[nodeId] = attempt;
   const mailbox = run.dagRun.mailboxes.get(nodeId);
   if (mailbox) {
     const values = mailbox.get("correction") ?? [];
-    values.push(_correctionPrompt(nodeId, reason, attempt, maxAttempts, outputPorts));
+    values.push(_correctionPrompt(nodeId, reason, attempt, maxAttempts, outputPorts, outputContracts));
     mailbox.set("correction", values);
   }
   resetSkippedSuccessDescendants(run.dagRun, nodeId);
@@ -2153,12 +2167,11 @@ export function expireWaitingActiveRuns(now = Date.now()): string[] {
   return expired.sort();
 }
 
-function _handoffContractViolation(
+function _outputContract(
   run: ActiveRun,
   fromNode: string,
   port: string,
-  content: unknown,
-): string | undefined {
+): { contract: string; schema?: unknown } | undefined {
   const node = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === fromNode);
   const workflowSpec = node?.extra?.workflow_spec_v1;
   if (!workflowSpec || typeof workflowSpec !== "object" || Array.isArray(workflowSpec)) return undefined;
@@ -2167,7 +2180,21 @@ function _handoffContractViolation(
   const contractName = (outputContracts as Record<string, unknown>)[port];
   if (typeof contractName !== "string" || !contractName) return undefined;
   const schema = run.contracts?.[contractName];
-  if (!schema) return `DAG_HANDOFF_CONTRACT_VIOLATION ${fromNode}.${port}: contract '${contractName}' is missing`;
+  return { contract: contractName, ...(schema !== undefined ? { schema } : {}) };
+}
+
+function _handoffContractViolation(
+  run: ActiveRun,
+  fromNode: string,
+  port: string,
+  content: unknown,
+): string | undefined {
+  const outputContract = _outputContract(run, fromNode, port);
+  if (!outputContract) return undefined;
+  const { contract: contractName, schema } = outputContract;
+  if (schema === undefined) {
+    return `DAG_HANDOFF_CONTRACT_VIOLATION ${fromNode}.${port}: contract '${contractName}' is missing`;
+  }
   const validation = validateJsonContract(schema, content);
   if (validation.valid) return undefined;
   return `DAG_HANDOFF_CONTRACT_VIOLATION ${fromNode}.${port} (${contractName}): ${validation.details}`;

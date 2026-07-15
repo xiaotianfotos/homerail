@@ -126,6 +126,58 @@ describe("DAG correction and dispatch retry", () => {
     expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("Finish by calling the handoff tool exactly once");
   });
 
+  it("includes the exact v1 output contract in correction-only work", () => {
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: correction-schema, name: Correction Schema }
+spec:
+  contracts:
+    ActorReport:
+      type: object
+      additionalProperties: false
+      required: [actor, status, summary]
+      properties:
+        actor: { type: string, const: systems_guide }
+        status: { type: string, enum: [ready, blocked] }
+        summary: { type: string, maxLength: 320 }
+  agents:
+    worker: { system: Return a report. }
+  nodes:
+    start:
+      kind: agent
+      agent: worker
+      outputs:
+        report: { contract: ActorReport }
+    terminal:
+      kind: terminal
+      outcome: success
+      inputs:
+        result: { contract: ActorReport }
+  edges:
+    - { from: start.report, to: terminal.result }
+  policies:
+    max_corrections_per_node: 1
+`);
+    parsed.meta.agents!.worker!.agent_type = "deterministic";
+    createActiveRun("run-correction-schema", parsed);
+    const dispatcher = new FlakyDispatcher({ status: "dispatched", targetType: "fake", targetId: "first" });
+
+    expect(dispatchReadyNodes("run-correction-schema", dispatcher)).toBe(1);
+    expect(requestNodeCorrection(
+      "run-correction-schema",
+      "start",
+      "invalid ActorReport",
+    ).status).toBe("scheduled");
+    expect(dispatchReadyNodes("run-correction-schema", dispatcher)).toBe(1);
+
+    const prompt = String(dispatcher.calls[1].inputs.correction?.[0]);
+    expect(prompt).toContain('The handoff tool call shape is {"port":"<declared port>","content":');
+    expect(prompt).toContain('"report":{"contract":"ActorReport","schema":');
+    expect(prompt).toContain('"additionalProperties":false');
+    expect(prompt).toContain('"maxLength":320');
+  });
+
   it("restores success descendants skipped by the failed attempt", () => {
     const parsed = parseDAGYaml(correctionWithDownstreamYaml());
     createActiveRun("run-correction-descendants", parsed);
