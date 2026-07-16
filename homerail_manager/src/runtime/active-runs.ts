@@ -28,6 +28,7 @@ import {
   clearDispatchTarget,
   excludeCurrentDispatchTarget,
   findDispatchTarget,
+  restoreDispatchExclusion,
   type DispatchTarget,
 } from "../orchestration/dispatch-tracker.js";
 import { deprovisionProvisionedForRun } from "../orchestration/provisioned-cleanup.js";
@@ -127,6 +128,9 @@ import {
   listDagActorInterventions,
   markDagActorInterventionApplying,
   completeDagActorIntervention,
+  clearDagActorDispatchExclusion,
+  listDagActorDispatchExclusions,
+  upsertDagActorDispatchExclusion,
   type DagActorInterventionOperation,
   type DagActorInterventionRecord,
 } from "../persistence/dag-actor-interventions.js";
@@ -173,6 +177,7 @@ export class DagActorInterventionRuntimeError extends Error {
     public readonly code:
       | "run_not_active"
       | "actor_not_found"
+      | "actor_retired"
       | "state_token_conflict"
       | "intervention_recovery_failed",
     message: string,
@@ -2488,6 +2493,7 @@ function _applyPersistedDagActorIntervention(
   const beforeStates = _snapshotNodeStates(run);
   const oldTarget = findDispatchTarget(run.runId, actor.node_id);
   const now = Math.max(Date.now(), applying.created_at, actor.updated_at);
+  let terminalizedRun = false;
 
   let completed: DagActorInterventionRecord;
   try {
@@ -2577,13 +2583,42 @@ function _applyPersistedDagActorIntervention(
         });
       }
 
+      if (
+        applying.operation === "reassign"
+        && oldTarget?.state === "dispatched"
+        && oldTarget.targetType
+        && oldTarget.targetId
+      ) {
+        upsertDagActorDispatchExclusion({
+          run_id: run.runId,
+          actor_id: nextActor.actor_id,
+          node_id: nextActor.node_id,
+          target_type: oldTarget.targetType,
+          target_id: oldTarget.targetId,
+          intervention_id: applying.intervention_id,
+          created_at: now,
+        });
+      } else if (applying.operation !== "reassign") {
+        clearDagActorDispatchExclusion({ run_id: run.runId, node_id: nextActor.node_id });
+      }
+
       supersedeDagLiveSurfaceForIntervention({
         run_id: run.runId,
         actor_id: nextActor.actor_id,
         intervention_id: applying.intervention_id,
         created_at: now,
       });
-      writeRunMetadata(run.runId, serializeRunMetadata(run));
+      if (
+        (applying.operation === "interrupt" || applying.operation === "cancel")
+        && isRunTerminal(run.dagRun)
+      ) {
+        run.status = "cancelled";
+        run.completedAt = now;
+        _persistTerminalRun(run, "cancelled");
+        terminalizedRun = true;
+      } else {
+        writeRunMetadata(run.runId, serializeRunMetadata(run));
+      }
       return completeDagActorIntervention({
         intervention_id: applying.intervention_id,
         from_generation: current.generation,
@@ -2615,6 +2650,11 @@ function _applyPersistedDagActorIntervention(
     operation: completed.operation,
     interventionId: completed.intervention_id,
   });
+  if (terminalizedRun) {
+    _emitStatusUpdate(run);
+    emit("dag:run_cancelled", { runId: run.runId });
+    deprovisionProvisionedForRun(run.runId);
+  }
   return completed;
 }
 
@@ -2654,6 +2694,12 @@ export function interveneActiveRunActor(
   if (!actor) {
     throw new DagActorInterventionRuntimeError("actor_not_found", `Unknown DAG actor: ${runId}/${request.actor_id}`);
   }
+  if (getDagActorLease({ run_id: runId, actor_id: actor.actor_id })?.state === "retired") {
+    throw new DagActorInterventionRuntimeError(
+      "actor_retired",
+      `DAG actor ${runId}/${actor.actor_id} is retired and cannot accept another intervention`,
+    );
+  }
   const control = getDagActorControlState(runId, actor.actor_id);
   if (control.state_token !== request.expected_state_token.trim()) {
     throw new DagActorInterventionRuntimeError(
@@ -2661,17 +2707,38 @@ export function interveneActiveRunActor(
       `DAG actor ${runId}/${actor.actor_id} state changed before intervention`,
     );
   }
-  const queued = createDagActorIntervention({
-    intervention_id: _interventionId(runId, actor.actor_id, request.idempotency_key),
-    run_id: runId,
-    actor_id: actor.actor_id,
-    operation: request.operation,
-    instruction: request.instruction,
-    expected_actor_generation: actor.generation,
-    expected_actor_version: actor.version,
-    idempotency_key: request.idempotency_key,
-    checkpoint_version: request.checkpoint_version,
-  });
+  const oldTarget = request.operation === "reassign"
+    ? findDispatchTarget(runId, actor.node_id)
+    : undefined;
+  const queued = getDb().transaction(() => {
+    const created = createDagActorIntervention({
+      intervention_id: _interventionId(runId, actor.actor_id, request.idempotency_key),
+      run_id: runId,
+      actor_id: actor.actor_id,
+      operation: request.operation,
+      instruction: request.instruction,
+      expected_actor_generation: actor.generation,
+      expected_actor_version: actor.version,
+      idempotency_key: request.idempotency_key,
+      checkpoint_version: request.checkpoint_version,
+    });
+    if (
+      created.changed
+      && oldTarget?.state === "dispatched"
+      && oldTarget.targetType
+      && oldTarget.targetId
+    ) {
+      upsertDagActorDispatchExclusion({
+        run_id: runId,
+        actor_id: actor.actor_id,
+        node_id: actor.node_id,
+        target_type: oldTarget.targetType,
+        target_id: oldTarget.targetId,
+        intervention_id: created.intervention.intervention_id,
+      });
+    }
+    return created;
+  }).immediate();
   const applied = _applyPersistedDagActorIntervention(queued.intervention);
   return _interventionResult(applied, queued.deduplicated);
 }
@@ -2679,6 +2746,7 @@ export function interveneActiveRunActor(
 /** Resume interventions durably queued before a Manager crash. */
 export function recoverDagActorInterventions(): DagActorInterventionRecoverySummary {
   const summary: DagActorInterventionRecoverySummary = { applied: [], failed: [], skipped: [] };
+  const runsNeedingOrphanDemotion = new Set<string>();
   const rows = getDb().prepare(`
     SELECT intervention_id, run_id FROM dag_actor_interventions
     WHERE status IN ('queued', 'applying')
@@ -2697,7 +2765,10 @@ export function recoverDagActorInterventions(): DagActorInterventionRecoverySumm
       }
       const applied = _applyPersistedDagActorIntervention(record);
       if (applied.status === "applied") summary.applied.push(applied.intervention_id);
-      else summary.failed.push(applied.intervention_id);
+      else {
+        summary.failed.push(applied.intervention_id);
+        runsNeedingOrphanDemotion.add(row.run_id);
+      }
     } catch (error) {
       try {
         failDagActorIntervention({
@@ -2708,7 +2779,40 @@ export function recoverDagActorInterventions(): DagActorInterventionRecoverySumm
         // The apply path may already have recorded a bounded failure.
       }
       summary.failed.push(row.intervention_id);
+      runsNeedingOrphanDemotion.add(row.run_id);
     }
+  }
+  for (const runId of runsNeedingOrphanDemotion) {
+    const run = store.get(runId);
+    if (!run || run.status !== "active") continue;
+    const demoted = _applyOrphanedNodeDemotion(run);
+    if (demoted.length === 0) continue;
+    writeRunMetadata(run.runId, serializeRunMetadata(run));
+    _emitStatusUpdate(run);
+  }
+  for (const exclusion of listDagActorDispatchExclusions()) {
+    const run = store.get(exclusion.run_id);
+    const actor = getDagActor(exclusion.run_id, exclusion.actor_id);
+    const intervention = getDagActorIntervention(exclusion.intervention_id);
+    if (
+      !run
+      || run.status !== "active"
+      || !actor
+      || actor.node_id !== exclusion.node_id
+      || run.dagRun.nodeStates.get(actor.node_id) !== "READY"
+      || intervention?.status !== "applied"
+      || intervention.operation !== "reassign"
+      || intervention.to_generation !== actor.generation
+    ) {
+      clearDagActorDispatchExclusion({ run_id: exclusion.run_id, node_id: exclusion.node_id });
+      continue;
+    }
+    restoreDispatchExclusion(
+      exclusion.run_id,
+      exclusion.node_id,
+      exclusion.target_type,
+      exclusion.target_id,
+    );
   }
   return summary;
 }

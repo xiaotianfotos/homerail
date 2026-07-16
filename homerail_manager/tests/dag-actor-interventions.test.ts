@@ -43,21 +43,34 @@ describe("DAG actor intervention persistence", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("creates and validates the strict v26 schema on fresh and upgraded databases", () => {
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 26 });
+  it("creates and validates the strict intervention and dispatch-fence schemas on fresh and upgraded databases", () => {
+    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 27 });
     expect(getDb().prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     getDb().exec(`
+      DROP TABLE dag_actor_dispatch_exclusions;
+      DELETE FROM schema_migrations WHERE version = 27;
+    `);
+    closeDb();
+    expect(getDb().prepare("SELECT version FROM schema_migrations WHERE version = 27").get()).toEqual({ version: 27 });
+    expect(getDb().prepare(`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dag_actor_dispatch_exclusions'
+    `).get()).toEqual({ name: "dag_actor_dispatch_exclusions" });
+    getDb().exec(`
+      DROP TABLE dag_actor_dispatch_exclusions;
       DROP TABLE dag_surface_generation_snapshots;
       DROP TABLE dag_actor_interventions;
-      DELETE FROM schema_migrations WHERE version = 26;
+      DELETE FROM schema_migrations WHERE version IN (26, 27);
     `);
     closeDb();
     expect(getDb().prepare("SELECT version FROM schema_migrations WHERE version = 26").get()).toEqual({ version: 26 });
+    expect(getDb().prepare("SELECT version FROM schema_migrations WHERE version = 27").get()).toEqual({ version: 27 });
     expect(getDb().prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     closeDb();
     expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 25").get())
       .toEqual({ count: 1 });
     expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 26").get())
+      .toEqual({ count: 1 });
+    expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 27").get())
       .toEqual({ count: 1 });
   });
 

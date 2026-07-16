@@ -170,6 +170,23 @@ describe("DAG actor intervention HTTP API", () => {
       status: 403,
       body: { success: false },
     });
+    expect(await jsonResponse(endpoint, jsonPost({
+      ...request,
+      instruction: { text: "not a string" },
+      idempotency_key: "invalid-instruction-type",
+    }, "test-mutation-token"))).toMatchObject({
+      status: 400,
+      body: { error: "instruction must be a string when provided" },
+    });
+    expect(await jsonResponse(endpoint, jsonPost({
+      ...request,
+      operation: "checkpoint_fork",
+      checkpoint_version: "1",
+      idempotency_key: "invalid-checkpoint-type",
+    }, "test-mutation-token"))).toMatchObject({
+      status: 400,
+      body: { error: "checkpoint_version must be a positive integer" },
+    });
     const applied = await jsonResponse(endpoint, jsonPost(request, "test-mutation-token"));
     expect(applied).toMatchObject({
       status: 202,

@@ -538,12 +538,20 @@ export function mutationRoutesHandler(
       const idempotencyKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
       if (!expectedStateToken) throw new Error("expected_state_token is required");
       if (!idempotencyKey) throw new Error("idempotency_key is required");
-      const instruction = typeof body.instruction === "string" ? body.instruction : undefined;
-      const checkpointVersion = body.checkpoint_version === undefined
-        ? undefined
-        : Number(body.checkpoint_version);
-      if (checkpointVersion !== undefined && (!Number.isSafeInteger(checkpointVersion) || checkpointVersion < 1)) {
-        throw new Error("checkpoint_version must be a positive integer");
+      if (body.instruction !== undefined && typeof body.instruction !== "string") {
+        throw new Error("instruction must be a string when provided");
+      }
+      const instruction = body.instruction as string | undefined;
+      let checkpointVersion: number | undefined;
+      if (body.checkpoint_version !== undefined) {
+        if (
+          typeof body.checkpoint_version !== "number"
+          || !Number.isSafeInteger(body.checkpoint_version)
+          || body.checkpoint_version < 1
+        ) {
+          throw new Error("checkpoint_version must be a positive integer");
+        }
+        checkpointVersion = body.checkpoint_version;
       }
       const result = changeOrchestrator.interveneActor(runId, {
         actor_id: actorId,

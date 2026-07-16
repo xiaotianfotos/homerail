@@ -33,6 +33,16 @@ export interface DagActorInterventionRecord {
   failure?: unknown;
 }
 
+export interface DagActorDispatchExclusionRecord {
+  run_id: string;
+  actor_id: string;
+  node_id: string;
+  target_type: "worker" | "node";
+  target_id: string;
+  intervention_id: string;
+  created_at: number;
+}
+
 export interface DagSurfaceGenerationSnapshotRecord {
   run_id: string;
   actor_id: string;
@@ -105,6 +115,16 @@ interface SnapshotRow {
   node_snapshot_sha256: string;
   node_snapshot_json: string;
   superseded_by_generation: number;
+  intervention_id: string;
+  created_at: number;
+}
+
+interface DispatchExclusionRow {
+  run_id: string;
+  actor_id: string;
+  node_id: string;
+  target_type: "worker" | "node";
+  target_id: string;
   intervention_id: string;
   created_at: number;
 }
@@ -205,6 +225,18 @@ function snapshotFromRow(row: SnapshotRow): DagSurfaceGenerationSnapshotRecord {
     ...(row.last_event_id === null ? {} : { last_event_id: row.last_event_id }),
     node_snapshot: parseJsonRow(row.node_snapshot_json),
     superseded_by_generation: Number(row.superseded_by_generation),
+    intervention_id: row.intervention_id,
+    created_at: Number(row.created_at),
+  };
+}
+
+function dispatchExclusionFromRow(row: DispatchExclusionRow): DagActorDispatchExclusionRecord {
+  return {
+    run_id: row.run_id,
+    actor_id: row.actor_id,
+    node_id: row.node_id,
+    target_type: row.target_type,
+    target_id: row.target_id,
     intervention_id: row.intervention_id,
     created_at: Number(row.created_at),
   };
@@ -483,6 +515,76 @@ export function failDagActorIntervention(input: {
     if (result.changes !== 1) throw new DagActorInterventionConflictError("intervention_status_conflict", "intervention changed concurrently");
     return { intervention: interventionFromRow(interventionRowById(interventionId)!), changed: true, deduplicated: false };
   }).immediate();
+}
+
+export function upsertDagActorDispatchExclusion(input: {
+  run_id: string;
+  actor_id: string;
+  node_id: string;
+  target_type: "worker" | "node";
+  target_id: string;
+  intervention_id: string;
+  created_at?: number;
+}): DagActorDispatchExclusionRecord {
+  const runId = assertIdentifier(input.run_id, "run_id");
+  const actorId = assertIdentifier(input.actor_id, "actor_id");
+  const nodeId = assertIdentifier(input.node_id, "node_id");
+  if (input.target_type !== "worker" && input.target_type !== "node") {
+    throw new Error("target_type must be worker or node");
+  }
+  const targetId = assertIdentifier(input.target_id, "target_id");
+  const interventionId = assertIdentifier(input.intervention_id, "intervention_id");
+  const createdAt = assertTimestamp(input.created_at, "created_at");
+  const db = getDb();
+  return db.transaction(() => {
+    const actor = getDagActor(runId, actorId);
+    if (!actor || actor.node_id !== nodeId) {
+      throw new Error(`Unknown DAG actor dispatch identity: ${runId}/${actorId}/${nodeId}`);
+    }
+    const intervention = interventionRowById(interventionId);
+    if (
+      !intervention
+      || intervention.run_id !== runId
+      || intervention.actor_id !== actorId
+      || intervention.operation !== "reassign"
+      || !["queued", "applying", "applied"].includes(intervention.status)
+    ) {
+      throw new Error(`DAG actor dispatch exclusion requires a queued, applying, or applied reassign intervention`);
+    }
+    db.prepare(`
+      INSERT INTO dag_actor_dispatch_exclusions(
+        run_id, actor_id, node_id, target_type, target_id, intervention_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id, node_id) DO UPDATE SET
+        actor_id = excluded.actor_id,
+        target_type = excluded.target_type,
+        target_id = excluded.target_id,
+        intervention_id = excluded.intervention_id,
+        created_at = excluded.created_at
+    `).run(runId, actorId, nodeId, input.target_type, targetId, interventionId, createdAt);
+    return dispatchExclusionFromRow(db.prepare(`
+      SELECT * FROM dag_actor_dispatch_exclusions WHERE run_id = ? AND node_id = ?
+    `).get(runId, nodeId) as DispatchExclusionRow);
+  }).immediate();
+}
+
+export function clearDagActorDispatchExclusion(input: {
+  run_id: string;
+  node_id: string;
+}): boolean {
+  const result = getDb().prepare(`
+    DELETE FROM dag_actor_dispatch_exclusions WHERE run_id = ? AND node_id = ?
+  `).run(
+    assertIdentifier(input.run_id, "run_id"),
+    assertIdentifier(input.node_id, "node_id"),
+  );
+  return result.changes > 0;
+}
+
+export function listDagActorDispatchExclusions(): DagActorDispatchExclusionRecord[] {
+  return (getDb().prepare(`
+    SELECT * FROM dag_actor_dispatch_exclusions ORDER BY created_at, run_id, node_id
+  `).all() as DispatchExclusionRow[]).map(dispatchExclusionFromRow);
 }
 
 export function createDagSurfaceGenerationSnapshot(input: {

@@ -20,6 +20,7 @@ import type {
 } from "../src/orchestration/dag-dispatcher.js";
 import {
   _clearAllDispatches,
+  clearByTargetId,
   findDispatchExclusion,
   recordDispatch,
 } from "../src/orchestration/dispatch-tracker.js";
@@ -309,12 +310,12 @@ describe("runtime-backed DAG actor branch intervention", () => {
   });
 
   it.each([
-    ["retry", "READY", "dormant"],
-    ["reassign", "READY", "dormant"],
-    ["checkpoint_fork", "READY", "dormant"],
-    ["interrupt", "CANCELLED", "dormant"],
-    ["cancel", "CANCELLED", "retired"],
-  ] as const)("enforces %s branch state, checkpoint, and lease semantics", (operation, nodeState, leaseState) => {
+    ["retry", "READY", "dormant", "active"],
+    ["reassign", "READY", "dormant", "active"],
+    ["checkpoint_fork", "READY", "dormant", "active"],
+    ["interrupt", "CANCELLED", "retired", "cancelled"],
+    ["cancel", "CANCELLED", "retired", "cancelled"],
+  ] as const)("enforces %s branch state, checkpoint, and lease semantics", (operation, nodeState, leaseState, runStatus) => {
     const runId = `operation-${operation}`;
     const dispatcher = new ActorDispatcher();
     createActiveRun(runId, oneActorDag());
@@ -344,6 +345,8 @@ describe("runtime-backed DAG actor branch intervention", () => {
 
     expect(result.status).toBe("applied");
     expect(getActiveRun(runId)?.dagRun.nodeStates.get("research")).toBe(nodeState);
+    expect(getActiveRun(runId)?.status).toBe(runStatus);
+    if (runStatus === "cancelled") expect(getActiveRun(runId)?.completedAt).toEqual(expect.any(Number));
     expect(getDagActor(runId, "research")).toMatchObject({
       generation: 2,
       checkpoint_ref: `portable:${operation === "checkpoint_fork" ? checkpointVersion : 1}`,
@@ -358,6 +361,65 @@ describe("runtime-backed DAG actor branch intervention", () => {
     } else {
       expect(findDispatchExclusion(runId, "research")).toBeUndefined();
     }
+  });
+
+  it("keeps a reassign exclusion across target disconnect and Manager restart until replacement dispatch", () => {
+    const runId = "durable-reassign-exclusion";
+    const dispatcher = new ActorDispatcher();
+    createActiveRun(runId, oneActorDag());
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+
+    interveneActiveRunActor(runId, {
+      actor_id: "research",
+      operation: "reassign",
+      expected_state_token: getDagActorControlState(runId, "research").state_token,
+      idempotency_key: "durable-reassign-once",
+    });
+    expect(findDispatchExclusion(runId, "research")).toEqual({
+      targetType: "worker",
+      targetId: "worker-research",
+    });
+    clearByTargetId("worker-research");
+    expect(findDispatchExclusion(runId, "research")?.targetId).toBe("worker-research");
+
+    _clearActiveRuns();
+    _clearAllDispatches();
+    closeDb();
+    expect(recoverAllActiveRuns().recovered).toContain(runId);
+    expect(recoverDagActorInterventions()).toEqual({ applied: [], failed: [], skipped: [] });
+    expect(findDispatchExclusion(runId, "research")?.targetId).toBe("worker-research");
+
+    recordDispatch(runId, "research", "worker", "replacement-worker");
+    expect(findDispatchExclusion(runId, "research")).toBeUndefined();
+    _clearActiveRuns();
+    _clearAllDispatches();
+    closeDb();
+    expect(recoverAllActiveRuns().recovered).toContain(runId);
+    recoverDagActorInterventions();
+    expect(findDispatchExclusion(runId, "research")).toBeUndefined();
+  });
+
+  it("rejects new interventions after an actor branch is retired", () => {
+    const runId = "retired-actor-intervention";
+    const dispatcher = new ActorDispatcher();
+    createActiveRun(runId, threeActorDag());
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(3);
+
+    interveneActiveRunActor(runId, {
+      actor_id: "research",
+      operation: "cancel",
+      expected_state_token: getDagActorControlState(runId, "research").state_token,
+      idempotency_key: "cancel-research",
+    });
+    expect(getActiveRun(runId)?.status).toBe("active");
+    expect(getDagActorLease({ run_id: runId, actor_id: "research" })?.state).toBe("retired");
+    expect(() => interveneActiveRunActor(runId, {
+      actor_id: "research",
+      operation: "retry",
+      expected_state_token: getDagActorControlState(runId, "research").state_token,
+      idempotency_key: "retry-retired-research",
+    })).toThrow("is retired and cannot accept another intervention");
+    expect(listDagActorInterventions({ run_id: runId, actor_id: "research" })).toHaveLength(1);
   });
 
   it("recovers a durable queued intervention before orphaned running-node demotion", () => {
@@ -400,5 +462,37 @@ describe("runtime-backed DAG actor branch intervention", () => {
     expect(getActiveRun(runId)?.dagRun.nodeStates.get("research")).toBe("READY");
     expect(listDagLiveSurfaceGenerationHistory({ run_id: runId, actor_id: "research" })).toHaveLength(1);
     expect(recoverDagActorInterventions()).toEqual({ applied: [], failed: [], skipped: [] });
+  });
+
+  it("demotes an orphaned running node when its queued intervention cannot recover", () => {
+    const runId = "recover-failed-intervention";
+    const dispatcher = new ActorDispatcher();
+    createActiveRun(runId, oneActorDag());
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    const actor = getDagActor(runId, "research")!;
+    createDagActorIntervention({
+      intervention_id: "recover-missing-checkpoint",
+      run_id: runId,
+      actor_id: actor.actor_id,
+      operation: "checkpoint_fork",
+      checkpoint_version: 999,
+      expected_actor_generation: actor.generation,
+      expected_actor_version: actor.version,
+      idempotency_key: "recover-missing-checkpoint-once",
+    });
+
+    _clearActiveRuns();
+    _clearAllDispatches();
+    closeDb();
+    expect(recoverAllActiveRuns()).toMatchObject({ recovered: [runId], failed: [] });
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("research")).toBe("RUNNING");
+    expect(recoverDagActorInterventions()).toEqual({
+      applied: [],
+      failed: ["recover-missing-checkpoint"],
+      skipped: [],
+    });
+    expect(getDagActorIntervention("recover-missing-checkpoint")?.status).toBe("failed");
+    expect(getActiveRun(runId)?.dagRun.nodeStates.get("research")).toBe("FAILED");
+    expect(getActiveRun(runId)).toMatchObject({ status: "failed", completedAt: expect.any(Number) });
   });
 });

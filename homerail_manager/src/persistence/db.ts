@@ -34,6 +34,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_chats",
   "dag_handoffs",
   "dag_artifacts",
+  "dag_actor_dispatch_exclusions",
   "dag_surface_generation_snapshots",
   "dag_actor_interventions",
   "dag_run_rounds",
@@ -1442,6 +1443,50 @@ function validateDagActorInterventionSchemaV26(db: SqliteDatabase): void {
   if (!(db.prepare("PRAGMA foreign_key_list(dag_actor_interventions)").all() as Array<{ table: string }>)
     .some((entry) => entry.table === "dag_actors")) {
     throw new Error("Schema migration 26 is incomplete: intervention actor ownership constraint is invalid");
+  }
+}
+
+function validateDagActorDispatchExclusionSchemaV27(db: SqliteDatabase): void {
+  if (!hasTable(db, "dag_actor_dispatch_exclusions")) {
+    throw new Error("Schema migration 27 is incomplete: missing table dag_actor_dispatch_exclusions");
+  }
+  const requiredColumns = [
+    "run_id",
+    "actor_id",
+    "node_id",
+    "target_type",
+    "target_id",
+    "intervention_id",
+    "created_at",
+  ];
+  const actualColumns = new Set(
+    (db.prepare("PRAGMA table_info(dag_actor_dispatch_exclusions)").all() as Array<{ name: string }>)
+      .map((row) => row.name),
+  );
+  const missing = requiredColumns.filter((name) => !actualColumns.has(name));
+  if (missing.length > 0) {
+    throw new Error(`Schema migration 27 is incomplete: dag_actor_dispatch_exclusions is missing ${missing.join(", ")}`);
+  }
+  const targetIndex = (db.prepare("PRAGMA index_list(dag_actor_dispatch_exclusions)").all() as Array<{
+    name: string;
+    unique: number;
+  }>).find((entry) => entry.name === "idx_dag_actor_dispatch_exclusions_target");
+  if (!targetIndex || targetIndex.unique !== 0) {
+    throw new Error("Schema migration 27 is incomplete: dispatch exclusion target index is missing or invalid");
+  }
+  const targetColumns = (db.prepare("PRAGMA index_info(idx_dag_actor_dispatch_exclusions_target)").all() as Array<{
+    seqno: number;
+    name: string;
+  }>).sort((left, right) => left.seqno - right.seqno).map((entry) => entry.name);
+  if (targetColumns.join(",") !== "target_type,target_id") {
+    throw new Error("Schema migration 27 is incomplete: dispatch exclusion target index has invalid columns");
+  }
+  const foreignKeyTables = new Set(
+    (db.prepare("PRAGMA foreign_key_list(dag_actor_dispatch_exclusions)").all() as Array<{ table: string }>)
+      .map((entry) => entry.table),
+  );
+  if (!foreignKeyTables.has("dag_actors") || !foreignKeyTables.has("dag_actor_interventions")) {
+    throw new Error("Schema migration 27 is incomplete: dispatch exclusion ownership constraints are invalid");
   }
 }
 
@@ -3159,6 +3204,30 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       END;
     `),
     validate: validateDagActorInterventionSchemaV26,
+  },
+  {
+    version: 27,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_actor_dispatch_exclusions (
+        run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 256),
+        actor_id TEXT NOT NULL CHECK(length(actor_id) BETWEEN 1 AND 256),
+        node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 256),
+        target_type TEXT NOT NULL CHECK(target_type IN ('worker', 'node')),
+        target_id TEXT NOT NULL CHECK(length(target_id) BETWEEN 1 AND 256),
+        intervention_id TEXT NOT NULL CHECK(length(intervention_id) BETWEEN 1 AND 256),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        PRIMARY KEY(run_id, node_id),
+        UNIQUE(intervention_id),
+        FOREIGN KEY(run_id, actor_id) REFERENCES dag_actors(run_id, actor_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE,
+        FOREIGN KEY(intervention_id, run_id, actor_id)
+          REFERENCES dag_actor_interventions(intervention_id, run_id, actor_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_dispatch_exclusions_target
+        ON dag_actor_dispatch_exclusions(target_type, target_id);
+    `),
+    validate: validateDagActorDispatchExclusionSchemaV27,
   },
 ];
 

@@ -1,3 +1,5 @@
+import { clearDagActorDispatchExclusion } from "../persistence/dag-actor-interventions.js";
+
 export type DispatchState = "provisioning" | "dispatched" | "failed";
 
 export interface DispatchTarget {
@@ -27,6 +29,7 @@ export function recordDispatch(
     dispatchedAt: Date.now(),
   });
   exclusions.delete(key(runId, nodeId));
+  clearDagActorDispatchExclusion({ run_id: runId, node_id: nodeId });
 }
 
 export function recordProvisioning(runId: string, nodeId: string): void {
@@ -62,6 +65,15 @@ export function findDispatchExclusion(
   return exclusions.get(key(runId, nodeId));
 }
 
+export function restoreDispatchExclusion(
+  runId: string,
+  nodeId: string,
+  targetType: "worker" | "node",
+  targetId: string,
+): void {
+  exclusions.set(key(runId, nodeId), { targetType, targetId });
+}
+
 /** Fence the current physical target for the next dispatch without exposing it to callers. */
 export function excludeCurrentDispatchTarget(
   runId: string,
@@ -92,6 +104,7 @@ export function isCurrentDispatchTarget(
 export function clearDispatchTarget(runId: string, nodeId: string): void {
   dispatches.delete(key(runId, nodeId));
   exclusions.delete(key(runId, nodeId));
+  clearDagActorDispatchExclusion({ run_id: runId, node_id: nodeId });
 }
 
 export function clearByTargetId(targetId: string): void {
@@ -99,9 +112,6 @@ export function clearByTargetId(targetId: string): void {
     if (target.targetId && target.targetId === targetId) {
       dispatches.delete(k);
     }
-  }
-  for (const [k, target] of exclusions.entries()) {
-    if (target.targetId === targetId) exclusions.delete(k);
   }
 }
 
