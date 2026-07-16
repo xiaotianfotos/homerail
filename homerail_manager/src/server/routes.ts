@@ -28,6 +28,11 @@ import { listDagTriggers } from "../persistence/dag-triggers.js";
 import { listDagActivityEvents } from "../persistence/dag-activity-journal.js";
 import { listDagActorCommands, type DagActorCommandStatus } from "../persistence/dag-actors.js";
 import {
+  DAG_ACTOR_LIVE_COMMAND_STATUSES,
+  listDagActorLiveCommands,
+  type DagActorLiveCommandStatus,
+} from "../persistence/dag-actor-live-commands.js";
+import {
   getDagActorIntervention,
   listDagActorInterventions,
   type DagActorInterventionRecord,
@@ -651,14 +656,44 @@ export function inspectionRoutesHandler(
     const url = new URL(req.url || "/", "http://localhost");
     const status = url.searchParams.get("status") || undefined;
     try {
-      const commands = listDagActorCommands({
-        run_id: runId,
-        actor_id: url.searchParams.get("actor_id") || undefined,
-        round_id: url.searchParams.get("round_id") || undefined,
-        status: status as DagActorCommandStatus | undefined,
-        limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+      const plane = url.searchParams.get("plane") || "all";
+      if (plane !== "all" && plane !== "round_resume" && plane !== "live") {
+        throw new Error("plane must be all, round_resume, or live");
+      }
+      const actorId = url.searchParams.get("actor_id") || undefined;
+      const limit = url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined;
+      const roundStatuses = new Set<DagActorCommandStatus>([
+        "pending", "delivered", "claimed", "acknowledged", "failed", "cancelled",
+      ]);
+      const liveStatuses = new Set<string>(DAG_ACTOR_LIVE_COMMAND_STATUSES);
+      const roundCommands = plane === "live" || (status && !roundStatuses.has(status as DagActorCommandStatus))
+        ? []
+        : listDagActorCommands({
+            run_id: runId,
+            actor_id: actorId,
+            round_id: url.searchParams.get("round_id") || undefined,
+            status: status as DagActorCommandStatus | undefined,
+            limit,
+          });
+      const liveCommands = plane === "round_resume" || (status && !liveStatuses.has(status))
+        ? []
+        : listDagActorLiveCommands({
+            run_id: runId,
+            actor_id: actorId,
+            status: status as DagActorLiveCommandStatus | undefined,
+            limit,
+          });
+      if (status && roundCommands.length === 0 && liveCommands.length === 0
+        && !roundStatuses.has(status as DagActorCommandStatus) && !liveStatuses.has(status)) {
+        throw new Error(`Invalid command status: ${status}`);
+      }
+      _ok(res, `Found ${roundCommands.length + liveCommands.length} command(s)`, {
+        commands: roundCommands,
+        round_commands: roundCommands,
+        live_commands: liveCommands,
+        totals: { round_resume: roundCommands.length, live: liveCommands.length },
+        total: roundCommands.length + liveCommands.length,
       });
-      _ok(res, `Found ${commands.length} command(s)`, { commands, total: commands.length });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       json(res, 400, { success: false, message, error: message });

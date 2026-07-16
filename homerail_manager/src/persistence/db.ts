@@ -44,6 +44,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_surface_projection_controls",
   "dag_surface_projection_queue",
   "dag_surface_projections",
+  "dag_actor_live_commands",
   "dag_actor_commands",
   "dag_actors",
   "dag_activity_events",
@@ -1487,6 +1488,124 @@ function validateDagActorDispatchExclusionSchemaV27(db: SqliteDatabase): void {
   );
   if (!foreignKeyTables.has("dag_actors") || !foreignKeyTables.has("dag_actor_interventions")) {
     throw new Error("Schema migration 27 is incomplete: dispatch exclusion ownership constraints are invalid");
+  }
+}
+
+function validateDagActorLiveCommandSchemaV28(db: SqliteDatabase): void {
+  const table = "dag_actor_live_commands";
+  if (!hasTable(db, table)) {
+    throw new Error(`Schema migration 28 is incomplete: missing table ${table}`);
+  }
+  const requiredColumns = [
+    "command_id", "run_id", "actor_id", "node_id", "session_id", "round_id",
+    "target_generation", "target_lease_generation", "expected_state_token", "sequence",
+    "status", "idempotency_key", "payload_digest", "payload_json", "delivery_attempts",
+    "last_sent_at", "fallback_reason_json", "delivered_at", "applied_at", "terminal_at",
+    "terminal_reason_json", "created_at", "updated_at",
+  ];
+  const actualColumns = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+    .map((row) => row.name));
+  const missing = requiredColumns.filter((name) => !actualColumns.has(name));
+  if (missing.length > 0) {
+    throw new Error(`Schema migration 28 is incomplete: ${table} is missing ${missing.join(", ")}`);
+  }
+
+  const requireIndex = (
+    name: string,
+    expectedColumns: readonly string[],
+    unique: number,
+    partial: number,
+  ): void => {
+    const index = (db.prepare(`PRAGMA index_list(${table})`).all() as Array<{
+      name: string;
+      unique: number;
+      partial: number;
+    }>).find((entry) => entry.name === name);
+    if (!index || index.unique !== unique || index.partial !== partial) {
+      throw new Error(`Schema migration 28 is incomplete: index ${name} is missing or invalid`);
+    }
+    const columns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{ seqno: number; name: string }>)
+      .sort((left, right) => left.seqno - right.seqno)
+      .map((entry) => entry.name);
+    if (columns.length !== expectedColumns.length || columns.some((column, position) => column !== expectedColumns[position])) {
+      throw new Error(`Schema migration 28 is incomplete: index ${name} has invalid columns`);
+    }
+  };
+  requireIndex(
+    "idx_dag_actor_live_commands_idempotency",
+    ["run_id", "actor_id", "idempotency_key"],
+    1,
+    0,
+  );
+  requireIndex(
+    "idx_dag_actor_live_commands_sequence",
+    ["run_id", "actor_id", "sequence"],
+    1,
+    0,
+  );
+  requireIndex(
+    "idx_dag_actor_live_commands_run_status",
+    ["run_id", "status", "created_at", "command_id"],
+    0,
+    0,
+  );
+  requireIndex(
+    "idx_dag_actor_live_commands_actor_status_sequence",
+    ["run_id", "actor_id", "status", "sequence"],
+    0,
+    0,
+  );
+  requireIndex(
+    "idx_dag_actor_live_commands_fallback",
+    ["run_id", "actor_id", "sequence"],
+    0,
+    1,
+  );
+  const fallbackIndexSql = normalizedSchemaSql((db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_dag_actor_live_commands_fallback'",
+  ).get() as { sql?: string } | undefined)?.sql ?? "");
+  if (!fallbackIndexSql.includes("where status = 'queued' and fallback_reason_json is not null")) {
+    throw new Error("Schema migration 28 is incomplete: live command fallback index predicate is invalid");
+  }
+
+  const tableSql = normalizedSchemaSql((db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+  ).get(table) as { sql?: string } | undefined)?.sql ?? "");
+  const constraintSql = tableSql.replace(/\(\s+/g, "(").replace(/\s+\)/g, ")");
+  for (const fragment of [
+    "status in ('queued', 'delivered', 'applied', 'completed', 'rejected', 'failed', 'superseded', 'cancelled')",
+    "length(payload_json) between 2 and 65536",
+    "status = 'queued' and delivered_at is null and applied_at is null and terminal_at is null",
+    "status = 'completed' and delivered_at is not null and applied_at is not null and terminal_at is not null",
+    "status in ('rejected', 'failed', 'superseded', 'cancelled') and terminal_at is not null",
+    "fallback_reason_json is null and terminal_reason_json is not null",
+  ]) {
+    if (!constraintSql.includes(fragment)) {
+      throw new Error(`Schema migration 28 is incomplete: ${table} constraints are invalid`);
+    }
+  }
+
+  const foreignKeys = (db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+    id: number;
+    seq: number;
+    table: string;
+    from: string;
+    to: string;
+    on_update: string;
+    on_delete: string;
+  }>).sort((left, right) => left.seq - right.seq);
+  if (
+    foreignKeys.length !== 2
+    || foreignKeys[0].id !== foreignKeys[1].id
+    || foreignKeys.some((entry) => entry.table !== "dag_actors")
+    || foreignKeys[0].from !== "run_id"
+    || foreignKeys[0].to !== "run_id"
+    || foreignKeys[1].from !== "actor_id"
+    || foreignKeys[1].to !== "actor_id"
+    || foreignKeys.some((entry) => entry.on_update.toUpperCase() !== "RESTRICT")
+    || foreignKeys.some((entry) => entry.on_delete.toUpperCase() !== "CASCADE")
+  ) {
+    throw new Error("Schema migration 28 is incomplete: live command actor ownership constraint is invalid");
   }
 }
 
@@ -3228,6 +3347,77 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         ON dag_actor_dispatch_exclusions(target_type, target_id);
     `),
     validate: validateDagActorDispatchExclusionSchemaV27,
+  },
+  {
+    version: 28,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_actor_live_commands (
+        command_id TEXT PRIMARY KEY CHECK(length(command_id) BETWEEN 1 AND 256),
+        run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 256),
+        actor_id TEXT NOT NULL CHECK(length(actor_id) BETWEEN 1 AND 256),
+        node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 256),
+        session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 512),
+        round_id TEXT NOT NULL CHECK(length(round_id) BETWEEN 1 AND 256),
+        target_generation INTEGER NOT NULL CHECK(target_generation >= 1),
+        target_lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(target_lease_generation >= 0),
+        expected_state_token TEXT NOT NULL CHECK(
+          length(expected_state_token) = 64
+          AND expected_state_token NOT GLOB '*[^0-9a-f]*'
+        ),
+        sequence INTEGER NOT NULL CHECK(sequence >= 1),
+        status TEXT NOT NULL CHECK(status IN (
+          'queued', 'delivered', 'applied', 'completed',
+          'rejected', 'failed', 'superseded', 'cancelled'
+        )),
+        idempotency_key TEXT NOT NULL CHECK(length(idempotency_key) BETWEEN 1 AND 256),
+        payload_digest TEXT NOT NULL CHECK(
+          length(payload_digest) = 64 AND payload_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        payload_json TEXT NOT NULL CHECK(length(payload_json) BETWEEN 2 AND 65536),
+        delivery_attempts INTEGER NOT NULL DEFAULT 0 CHECK(delivery_attempts >= 0),
+        last_sent_at INTEGER CHECK(last_sent_at IS NULL OR last_sent_at >= created_at),
+        fallback_reason_json TEXT CHECK(
+          fallback_reason_json IS NULL OR length(fallback_reason_json) BETWEEN 2 AND 4096
+        ),
+        delivered_at INTEGER CHECK(delivered_at IS NULL OR delivered_at >= created_at),
+        applied_at INTEGER CHECK(applied_at IS NULL OR applied_at >= created_at),
+        terminal_at INTEGER CHECK(terminal_at IS NULL OR terminal_at >= created_at),
+        terminal_reason_json TEXT CHECK(
+          terminal_reason_json IS NULL OR length(terminal_reason_json) BETWEEN 2 AND 4096
+        ),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        updated_at INTEGER NOT NULL CHECK(updated_at >= created_at),
+        CHECK(last_sent_at IS NULL OR delivery_attempts >= 1),
+        CHECK(applied_at IS NULL OR delivered_at IS NOT NULL),
+        CHECK(fallback_reason_json IS NULL OR status = 'queued'),
+        CHECK(
+          (status = 'queued' AND delivered_at IS NULL AND applied_at IS NULL AND terminal_at IS NULL
+            AND terminal_reason_json IS NULL)
+          OR (status = 'delivered' AND delivered_at IS NOT NULL AND applied_at IS NULL AND terminal_at IS NULL
+            AND fallback_reason_json IS NULL AND terminal_reason_json IS NULL)
+          OR (status = 'applied' AND delivered_at IS NOT NULL AND applied_at IS NOT NULL AND terminal_at IS NULL
+            AND fallback_reason_json IS NULL AND terminal_reason_json IS NULL)
+          OR (status = 'completed' AND delivered_at IS NOT NULL AND applied_at IS NOT NULL AND terminal_at IS NOT NULL
+            AND fallback_reason_json IS NULL)
+          OR (status IN ('rejected', 'failed', 'superseded', 'cancelled') AND terminal_at IS NOT NULL
+            AND fallback_reason_json IS NULL AND terminal_reason_json IS NOT NULL)
+        ),
+        FOREIGN KEY(run_id, actor_id) REFERENCES dag_actors(run_id, actor_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_live_commands_idempotency
+        ON dag_actor_live_commands(run_id, actor_id, idempotency_key);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_live_commands_sequence
+        ON dag_actor_live_commands(run_id, actor_id, sequence);
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_live_commands_run_status
+        ON dag_actor_live_commands(run_id, status, created_at, command_id);
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_live_commands_actor_status_sequence
+        ON dag_actor_live_commands(run_id, actor_id, status, sequence);
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_live_commands_fallback
+        ON dag_actor_live_commands(run_id, actor_id, sequence)
+        WHERE status = 'queued' AND fallback_reason_json IS NOT NULL;
+    `),
+    validate: validateDagActorLiveCommandSchemaV28,
   },
 ];
 

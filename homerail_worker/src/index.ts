@@ -6,8 +6,9 @@
 
 import { WsClient } from "./ws-client.js";
 import { runPrompt } from "./prompt-runner.js";
-import type { PromptJob } from "./prompt-runner.js";
+import type { PromptJob, PromptRunResult } from "./prompt-runner.js";
 import {
+  DAG_ACTOR_LIVE_COMMAND_CAPABILITY,
   DAG_TRANSPORT_FENCE_CAPABILITY,
   DAG_TRANSPORT_FENCE_V1_CAPABILITY,
   type DagActorCheckpointV1,
@@ -19,7 +20,16 @@ import {
 } from "homerail-protocol";
 import { startManagerAgentServer } from "./manager-agent/server.js";
 import { resolveWorkerAgentBackend } from "./agent/backend-selection.js";
+import {
+  AgentTurnController,
+  agentTurnControllerOptionsForBackend,
+} from "./agent/turn-controller.js";
 import { envelopeInputsToTaskText } from "./envelope-task.js";
+import {
+  activePromptTransportIdentity,
+  routeDagActorCommand,
+  type ActivePromptLiveSteering,
+} from "./live-steering.js";
 
 // ── Env vars ─────────────────────────────────────────────────
 
@@ -39,9 +49,15 @@ const CONFIGURED_CAPABILITIES = (process.env.HOMERAIL_WORKER_CAPABILITIES ?? "")
   .filter((capability) => capability.length > 0);
 const CAPABILITIES = Array.from(new Set([
   ...CONFIGURED_CAPABILITIES,
+  DAG_ACTOR_LIVE_COMMAND_CAPABILITY,
   DAG_TRANSPORT_FENCE_V1_CAPABILITY,
   DAG_TRANSPORT_FENCE_CAPABILITY,
 ]));
+const configuredLiveSteerQueueSize = Number(process.env.HOMERAIL_LIVE_STEER_QUEUE_MAX ?? 32);
+const LIVE_STEER_QUEUE_SIZE = Number.isSafeInteger(configuredLiveSteerQueueSize)
+  && configuredLiveSteerQueueSize > 0
+  ? configuredLiveSteerQueueSize
+  : 32;
 
 if (process.env.MANAGER_AGENT_MODE === "1") {
   startManagerAgentServer();
@@ -57,12 +73,11 @@ const client = new WsClient({
 });
 
 let activePrompt:
-  | {
-      runId: string;
-      nodeId: string;
+  | (ActivePromptLiveSteering & {
       abortController: AbortController;
+      commandRoutes: Set<Promise<unknown>>;
       deliverInbox?: (content: unknown) => void;
-    }
+    })
   | null = null;
 
 function stringField(data: Record<string, unknown>, ...keys: string[]): string {
@@ -203,30 +218,68 @@ client.on("task", async (msg) => {
   };
 
   const abortController = new AbortController();
-  activePrompt = { runId, nodeId: dagConfig.node_id, abortController };
+  const controllerOptions = agentTurnControllerOptionsForBackend(backend);
+  const turnController = new AgentTurnController({
+    ...controllerOptions,
+    maxQueueSize: LIVE_STEER_QUEUE_SIZE,
+    interruptFallback: () => abortController.abort(),
+  });
+  const commandRoutes = new Set<Promise<unknown>>();
+  activePrompt = {
+    identity: activePromptTransportIdentity({
+      runId,
+      nodeId: dagConfig.node_id,
+      sessionId: dagConfig.session_id ?? runId,
+      roundId: dagConfig.round_id ?? "",
+      actorId: dagConfig.actor_id ?? "",
+      generation: dagConfig.generation ?? 0,
+      leaseGeneration: dagConfig.lease_generation ?? 0,
+      commandId: dagConfig.command_id ?? "",
+    }),
+    controller: turnController,
+    abortController,
+    commandRoutes,
+  };
   const deferredTerminalMessages: string[] = [];
+  let promptResult: PromptRunResult = {
+    status: "failed",
+    reason: "prompt runner did not reach a successful handoff",
+  };
 
   try {
-    await runPrompt(job, {
+    promptResult = await runPrompt(job, {
       wsSend: (d) => client.send(d),
       onTerminalMessage: (data) => deferredTerminalMessages.push(data),
       agentBackend: backend,
       abortSignal: abortController.signal,
+      turnController,
       registerInboxHandler: (handler) => {
-        if (activePrompt?.abortController === abortController) {
+        if (activePrompt?.controller === turnController) {
           activePrompt.deliverInbox = handler;
         }
         return () => {
-          if (activePrompt?.abortController === abortController) {
+          if (activePrompt?.controller === turnController) {
             delete activePrompt.deliverInbox;
           }
         };
       },
     });
   } catch (err) {
+    promptResult = {
+      status: "failed",
+      reason: err instanceof Error ? err.message : String(err),
+    };
     console.error("[homerail_worker] prompt runner error:", err);
   } finally {
-    if (activePrompt?.abortController === abortController) {
+    const closeResult = await turnController.close({
+      outcome: promptResult.status === "completed" ? "completed" : "failed",
+      ...(promptResult.status === "failed" ? { reason: promptResult.reason } : {}),
+    });
+    if (closeResult.driverError) {
+      console.error("[homerail_worker] agent turn driver close error:", closeResult.driverError);
+    }
+    await Promise.allSettled([...commandRoutes]);
+    if (activePrompt?.controller === turnController) {
       activePrompt = null;
     }
   }
@@ -235,6 +288,24 @@ client.on("task", async (msg) => {
   for (const data of deferredTerminalMessages) {
     client.send(data);
   }
+});
+
+client.on("dag_actor_command", (msg) => {
+  const prompt = activePrompt;
+  const routing = routeDagActorCommand(msg, prompt, (data) => client.send(data));
+  prompt?.commandRoutes.add(routing);
+  void routing
+    .then((result) => {
+      if (!result.handled) {
+        console.log("[homerail_worker] dag_actor_command ignored:", result.reason ?? "unrecognized message");
+      }
+    })
+    .catch((err) => {
+      console.error("[homerail_worker] dag_actor_command routing error:", err);
+    })
+    .finally(() => {
+      prompt?.commandRoutes.delete(routing);
+    });
 });
 
 client.on("inject", (msg) => {
@@ -246,21 +317,23 @@ client.on("inject", (msg) => {
   if (
     mode === "interrupt" &&
     activePrompt &&
-    activePrompt.runId === runId &&
-    activePrompt.nodeId === nodeId
+    activePrompt.identity.runId === runId &&
+    activePrompt.identity.nodeId === nodeId
   ) {
-    activePrompt.abortController.abort();
-    client.send(
-      JSON.stringify({
-        type: "stream",
-        data: {
-          event: "agent_interrupted",
-          run_id: runId,
-          node_id: nodeId,
-          reason: "manager inject interrupt",
-        },
-      }),
-    );
+    const interruptedPrompt = activePrompt;
+    void interruptedPrompt.controller.interrupt("manager inject interrupt").then((result) => {
+      client.send(
+        JSON.stringify({
+          type: "stream",
+          data: {
+            event: result.status === "interrupted" ? "agent_interrupted" : "agent_interrupt_failed",
+            run_id: runId,
+            node_id: nodeId,
+            reason: result.status === "interrupted" ? "manager inject interrupt" : result.reason,
+          },
+        }),
+      );
+    });
   }
 });
 
@@ -270,8 +343,8 @@ client.on("dag_inbox", (msg) => {
   const nodeId = stringField(data, "toNode", "to_node", "nodeId", "node_id");
   if (
     activePrompt &&
-    activePrompt.runId === runId &&
-    activePrompt.nodeId === nodeId &&
+    activePrompt.identity.runId === runId &&
+    activePrompt.identity.nodeId === nodeId &&
     activePrompt.deliverInbox
   ) {
     activePrompt.deliverInbox(data);
@@ -282,14 +355,22 @@ client.on("dag_inbox", (msg) => {
 
 // ── Graceful shutdown ────────────────────────────────────────
 
-function shutdown() {
+async function shutdown() {
   console.log("[homerail_worker] shutting down...");
+  const prompt = activePrompt;
+  if (prompt) {
+    await prompt.controller.close({
+      outcome: "failed",
+      reason: "Worker shutting down",
+    });
+    await Promise.allSettled([...prompt.commandRoutes]);
+  }
   client.close();
   process.exit(0);
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
 
 // ── Start ────────────────────────────────────────────────────
 

@@ -116,6 +116,40 @@ describe("WsClient", () => {
     }));
   });
 
+  it("emits formal dag_actor_command messages without treating them as dag_inbox", () => {
+    const client = new WsClient({
+      url: "ws://localhost:9999",
+      workerId: "w-1",
+    });
+    const commandFn = vi.fn();
+    const inboxFn = vi.fn();
+    client.on("dag_actor_command", commandFn);
+    client.on("dag_inbox", inboxFn);
+    const message = {
+      type: "dag_actor_command",
+      data: {
+        schema_version: 1,
+        command_id: "command-1",
+        idempotency_key: "request-1",
+        sequence: 1,
+        run_id: "run-1",
+        node_id: "coder",
+        session_id: "session-1",
+        round_id: "round-1",
+        actor_id: "actor-1",
+        generation: 1,
+        lease_generation: 1,
+        expected_state_token: "a".repeat(64),
+        payload: { instruction: "continue" },
+      },
+    };
+
+    (client as unknown as { handleMessage: (msg: unknown) => void }).handleMessage(message);
+
+    expect(commandFn).toHaveBeenCalledWith(message);
+    expect(inboxFn).not.toHaveBeenCalled();
+  });
+
   it("close stops reconnection", () => {
     const client = new WsClient({
       url: "ws://localhost:9999",

@@ -6,6 +6,7 @@
  */
 
 import type { AgentBuiltinToolName, AgentToolDefinition } from "homerail-protocol";
+import type { AgentTurnController } from "./turn-controller.js";
 
 /** Tool definition with a runtime handler (extends protocol's AgentToolDefinition). */
 export interface DagToolDefinition extends AgentToolDefinition {
@@ -71,6 +72,8 @@ export interface AgentRunContext {
   workspace?: string;
   sessionId?: string;
   abortSignal?: AbortSignal;
+  /** Provider-neutral control plane for the currently executing agent turn. */
+  turnController?: AgentTurnController;
   /** Contract-correction turns may only submit a DAG handoff. */
   handoffOnly?: boolean;
   /** Exact allowlist for backend-provided shell and file tools. */

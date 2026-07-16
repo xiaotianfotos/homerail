@@ -35,7 +35,11 @@ import { GraphExecutor } from "../orchestration/graph-executor.js";
 import { WsDispatchAdapter, type WsDispatchAdapterOptions } from "../orchestration/ws-dispatch-adapter.js";
 import type { DAGDispatcher } from "../orchestration/dag-dispatcher.js";
 import { emit } from "../events/bus.js";
-import { dispatchRecoveredRuns } from "../runtime/active-runs.js";
+import {
+  consumeRecoveredDagActorLiveCommandFallbacks,
+  dispatchRecoveredRuns,
+} from "../runtime/active-runs.js";
+import { recoverDagActorLiveCommands } from "../runtime/dag-actor-live-command-runtime.js";
 import {
   HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
   createPluginHttpTrustPolicy,
@@ -470,9 +474,11 @@ export function createServer(
       }
     },
     onFirstWorkerRegistered: () => {
-      // Cold-recovery: now that a dispatch target has reconnected, push READY
-      // nodes of every recovered active run out to the worker pool.
+      // Consume waiting fallbacks first, dispatch their READY round nodes, then
+      // retry only live commands that still have an active Worker target.
+      consumeRecoveredDagActorLiveCommandFallbacks();
       dispatchRecoveredRuns(actualDispatcher);
+      recoverDagActorLiveCommands();
     },
   };
   const nodeWebsocketOptions: NodeWebSocketOptions = {

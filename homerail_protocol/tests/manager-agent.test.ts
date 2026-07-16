@@ -342,6 +342,16 @@ describe("Manager Agent harness contract", () => {
                   maxLength: 256,
                   pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
                 },
+                idempotency_key: {
+                  type: "string",
+                  minLength: 1,
+                  maxLength: 256,
+                  pattern: "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                },
+                expected_state_token: {
+                  type: "string",
+                  pattern: "^[0-9a-f]{64}$",
+                },
                 payload: {},
               },
               required: ["actor_id", "payload"],
@@ -349,7 +359,7 @@ describe("Manager Agent harness contract", () => {
             },
           },
         },
-        required: ["run_id", "expected_round_id", "commands"],
+        required: ["run_id", "commands"],
         additionalProperties: false,
       },
       focus_dag_actor: {
@@ -630,6 +640,7 @@ describe("Manager Agent harness contract", () => {
     });
 
     expect(result).toEqual({
+      delivery_mode: "round_resume",
       resumed: true,
       previous_round_id: "round-0001",
       round_id: "round-0002",

@@ -8,6 +8,10 @@ import type { ErrorObject, ValidateFunction } from "ajv";
 import { allSchemas } from "./schemas.js";
 import { DAG_ACTIVITY_EVENT_V1_SCHEMA_ID } from "./dag-activity.js";
 import {
+  DAG_ACTOR_LIVE_COMMAND_SCHEMA_ID,
+  DAG_ACTOR_LIVE_COMMAND_STATUS_SCHEMA_ID,
+} from "./types.js";
+import {
   validateHomerailPluginManifest,
   validateHomerailPluginTurnContext,
   validateHomerailPluginUiProjection,
@@ -108,4 +112,12 @@ export function validateMessage(data: unknown, schemaName: string): ValidationRe
 
 export function validateDagActivityEventV1(value: unknown): ValidationResult {
   return validateMessage(value, DAG_ACTIVITY_EVENT_V1_SCHEMA_ID);
+}
+
+export function validateDagActorLiveCommandMessage(value: unknown): ValidationResult {
+  return validateMessage(value, DAG_ACTOR_LIVE_COMMAND_SCHEMA_ID);
+}
+
+export function validateDagActorLiveCommandStatusMessage(value: unknown): ValidationResult {
+  return validateMessage(value, DAG_ACTOR_LIVE_COMMAND_STATUS_SCHEMA_ID);
 }

@@ -1,5 +1,6 @@
 import type { DagTransportFenceMetadata } from "homerail-protocol";
 import { getDagActorByNode, getDagActorCommand } from "../persistence/dag-actors.js";
+import { getDagActorLiveCommand } from "../persistence/dag-actor-live-commands.js";
 import { acquireDagActorLease, assessDagActorLease } from "../persistence/dag-actor-leases.js";
 import { getActiveRun, handoffActiveRun } from "../runtime/active-runs.js";
 
@@ -171,7 +172,14 @@ export function assessDagTransportFence(
   }
 
   if (commandId) {
-    const command = getDagActorCommand(commandId);
+    const roundCommand = getDagActorCommand(commandId);
+    let liveCommand: ReturnType<typeof getDagActorLiveCommand>;
+    try {
+      liveCommand = getDagActorLiveCommand(commandId);
+    } catch {
+      return ignored("invalid", runId, nodeId, `DAG_TRANSPORT_COMMAND_INVALID ${runId}/${nodeId}`);
+    }
+    const command = roundCommand ?? liveCommand;
     if (!command) {
       return ignored("invalid", runId, nodeId, `DAG_TRANSPORT_COMMAND_UNKNOWN ${runId}/${nodeId}: ${commandId}`);
     }
@@ -189,7 +197,7 @@ export function assessDagTransportFence(
         `DAG_TRANSPORT_COMMAND_${disposition === "stale" ? "STALE" : "CONFLICT"} ${runId}/${nodeId}: ${commandId}`,
       );
     }
-    if (command.status === "acknowledged") {
+    if (roundCommand?.status === "acknowledged") {
       return ignored("duplicate", runId, nodeId, `DAG_TRANSPORT_COMMAND_DUPLICATE ${runId}/${nodeId}: ${commandId}`);
     }
   }

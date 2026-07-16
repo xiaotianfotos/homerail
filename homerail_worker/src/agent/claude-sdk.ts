@@ -7,6 +7,7 @@
  */
 
 import { AGENT_BUILTIN_TOOL_NAMES } from "homerail-protocol";
+import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentClient, AgentEvent, AgentRunContext, AgentUsage, DagToolDefinition } from "./types.js";
 import { jsonSchemaObjectToZodRawShape } from "./json-schema-zod.js";
 import { sanitizedAgentChildEnv } from "./child-env.js";
@@ -16,7 +17,7 @@ const HANDOFF_STOP = Symbol("claude-sdk-handoff-stop");
 
 interface SdkModule {
   query(params: {
-    prompt: string | AsyncIterable<unknown>;
+    prompt: string | AsyncIterable<SDKUserMessage>;
     options?: Record<string, unknown>;
   }): AsyncIterable<SdkMessage>;
   createSdkMcpServer(opts: {
@@ -82,6 +83,81 @@ interface SdkMessage {
   };
   permission_denials?: unknown[];
   is_error?: boolean;
+}
+
+interface SdkInputEntry {
+  message: SDKUserMessage;
+  resolveApplied?: () => void;
+  rejectApplied?: (error: Error) => void;
+}
+
+function sdkUserMessage(content: string): SDKUserMessage {
+  return {
+    type: "user",
+    message: { role: "user", content },
+    parent_tool_use_id: null,
+  };
+}
+
+export class ClaudeSdkUserMessageQueue implements AsyncIterable<SDKUserMessage> {
+  private readonly entries: SdkInputEntry[] = [];
+  private readonly waiters: Array<(result: IteratorResult<SDKUserMessage>) => void> = [];
+  private closed = false;
+  private closeError = new Error("Claude SDK input queue is closed");
+
+  constructor(initialPrompt: string) {
+    this.entries.push({ message: sdkUserMessage(initialPrompt) });
+  }
+
+  enqueue(content: string): Promise<void> {
+    if (this.closed) return Promise.reject(this.closeError);
+    return new Promise<void>((resolve, reject) => {
+      const entry: SdkInputEntry = {
+        message: sdkUserMessage(content),
+        resolveApplied: resolve,
+        rejectApplied: reject,
+      };
+      const waiter = this.waiters.shift();
+      if (waiter) this.deliver(waiter, entry);
+      else this.entries.push(entry);
+    });
+  }
+
+  close(error?: Error): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (error) this.closeError = error;
+    for (const entry of this.entries.splice(0)) entry.rejectApplied?.(this.closeError);
+    for (const waiter of this.waiters.splice(0)) waiter({ value: undefined, done: true });
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+    return {
+      next: () => this.next(),
+      return: async () => {
+        this.close();
+        return { value: undefined, done: true };
+      },
+    };
+  }
+
+  private next(): Promise<IteratorResult<SDKUserMessage>> {
+    const entry = this.entries.shift();
+    if (entry) {
+      entry.resolveApplied?.();
+      return Promise.resolve({ value: entry.message, done: false });
+    }
+    if (this.closed) return Promise.resolve({ value: undefined, done: true });
+    return new Promise((resolve) => this.waiters.push(resolve));
+  }
+
+  private deliver(
+    waiter: (result: IteratorResult<SDKUserMessage>) => void,
+    entry: SdkInputEntry,
+  ): void {
+    entry.resolveApplied?.();
+    waiter({ value: entry.message, done: false });
+  }
 }
 
 function sdkToolCallId(extra: unknown): string | undefined {
@@ -179,11 +255,38 @@ export class ClaudeSdkAdapter implements AgentClient {
       return;
     }
 
+    const inputQueue = new ClaudeSdkUserMessageQueue(prompt);
+    let sdkAbortController: AbortController | null = null;
+    let controllerStopped = false;
+    const controllerBinding = context.turnController?.bindDriver({
+      steer: (command) => inputQueue.enqueue(command.content),
+      interrupt: (reason) => {
+        controllerStopped = true;
+        inputQueue.close(new Error(`Claude SDK turn interrupted: ${reason}`));
+        sdkAbortController?.abort();
+      },
+      close: () => {
+        controllerStopped = true;
+        inputQueue.close();
+        sdkAbortController?.abort();
+      },
+    });
+    if (controllerBinding?.status === "rejected") {
+      inputQueue.close(new Error(controllerBinding.reason ?? "Claude SDK turn controller binding failed"));
+      yield {
+        type: "error",
+        message: `Claude SDK turn controller binding failed: ${controllerBinding.reason ?? "unknown error"}`,
+      };
+      yield { type: "done" };
+      return;
+    }
+
     const sdk = await this.loadSdk().catch((err) => {
       return { error: err instanceof Error ? err.message : String(err) };
     });
 
     if ("error" in sdk) {
+      inputQueue.close(new Error(`Claude Agent SDK not available: ${sdk.error}`));
       yield {
         type: "error",
         message: `Claude Agent SDK not available: ${sdk.error}. Install @anthropic-ai/claude-agent-sdk.`,
@@ -237,11 +340,16 @@ export class ClaudeSdkAdapter implements AgentClient {
         options.maxTurns = this.maxTurns;
       }
       const abortController = new AbortController();
+      sdkAbortController = abortController;
       options.abortController = abortController;
+      if (controllerStopped) abortController.abort();
       if (context.abortSignal) {
-        externalAbortHandler = () => abortController.abort();
-        if (context.abortSignal.aborted) {
+        externalAbortHandler = () => {
+          inputQueue.close(new Error("Claude SDK turn aborted"));
           abortController.abort();
+        };
+        if (context.abortSignal.aborted) {
+          externalAbortHandler();
         } else {
           context.abortSignal.addEventListener("abort", externalAbortHandler, { once: true });
         }
@@ -265,6 +373,7 @@ export class ClaudeSdkAdapter implements AgentClient {
             const res = await t.handler(args, toolCallId ? { tool_call_id: toolCallId } : undefined);
             if (t.name === "handoff" && res.is_error !== true) {
               handoffStopRequested = true;
+              inputQueue.close();
               // Return the MCP result before closing a provider stream that may
               // otherwise wait forever after a successful terminal handoff.
               setImmediate(() => resolveHandoffStop?.());
@@ -317,10 +426,13 @@ export class ClaudeSdkAdapter implements AgentClient {
       };
 
       if (this.queryTimeoutMs > 0) {
-        timeout = setTimeout(() => abortController.abort(), this.queryTimeoutMs);
+        timeout = setTimeout(() => {
+          inputQueue.close(new Error(`Claude SDK query timed out after ${this.queryTimeoutMs}ms`));
+          abortController.abort();
+        }, this.queryTimeoutMs);
       }
 
-      const query = sdk.query({ prompt, options });
+      const query = sdk.query({ prompt: inputQueue, options });
       const transportGuard = createSdkTransportGuard(abortController);
       let messageCount = 0;
       try {
@@ -334,6 +446,7 @@ export class ClaudeSdkAdapter implements AgentClient {
             }),
           ]);
           if (next === HANDOFF_STOP) {
+            inputQueue.close();
             abortController.abort();
             yield {
               type: "debug",
@@ -345,8 +458,12 @@ export class ClaudeSdkAdapter implements AgentClient {
             };
             break;
           }
-          if (next.done) break;
+          if (next.done) {
+            inputQueue.close();
+            break;
+          }
           const msg = next.value;
+          if (msg.type === "result") inputQueue.close();
         messageCount += 1;
         const stderrChunk = stderrTail.trim();
         if (stderrChunk) {
@@ -418,6 +535,7 @@ export class ClaudeSdkAdapter implements AgentClient {
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      inputQueue.close(err instanceof Error ? err : new Error(msg));
       if (handoffStopRequested) {
         yield {
           type: "debug",
@@ -449,10 +567,12 @@ export class ClaudeSdkAdapter implements AgentClient {
         }
       }
     } finally {
+      inputQueue.close();
       if (timeout) clearTimeout(timeout);
       if (context.abortSignal && externalAbortHandler) {
         context.abortSignal.removeEventListener("abort", externalAbortHandler);
       }
+      sdkAbortController = null;
     }
 
     yield {

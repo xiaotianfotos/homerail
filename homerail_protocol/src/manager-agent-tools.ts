@@ -43,11 +43,12 @@ export interface ManagerAgentDagActorCommand {
   actor_id: string;
   payload: unknown;
   idempotency_key?: string;
+  expected_state_token?: string;
 }
 
 export interface ManagerAgentDagActorCommandInput {
   run_id: string;
-  expected_round_id: string;
+  expected_round_id?: string;
   commands: ManagerAgentDagActorCommand[];
 }
 
@@ -114,7 +115,8 @@ export type ManagerAgentHostVoiceToolName = (typeof MANAGER_AGENT_HOST_VOICE_TOO
 
 export type ManagerAgentToolName = ManagerAgentCommonToolName | ManagerAgentHostVoiceToolName;
 
-export interface ManagerAgentDagCommandResult {
+export interface ManagerAgentDagRoundCommandResult {
+  delivery_mode: "round_resume";
   resumed: true;
   previous_round_id: string;
   round_id: string;
@@ -124,6 +126,30 @@ export interface ManagerAgentDagCommandResult {
   dispatched: number;
   deduplicated?: boolean;
 }
+
+export interface ManagerAgentDagLiveCommandStatusResult {
+  command_id: string;
+  actor_id: string;
+  sequence: number;
+  status: "queued" | "delivered" | "applied" | "completed" | "rejected" | "failed" | "superseded" | "cancelled";
+}
+
+export interface ManagerAgentDagLiveCommandResult {
+  delivery_mode: "live";
+  resumed: false;
+  run_id: string;
+  round_id: string;
+  actor_ids: string[];
+  command_ids: string[];
+  command_statuses: ManagerAgentDagLiveCommandStatusResult[];
+  sent: number;
+  fallback_pending: number;
+  deduplicated?: boolean;
+}
+
+export type ManagerAgentDagCommandResult =
+  | ManagerAgentDagRoundCommandResult
+  | ManagerAgentDagLiveCommandResult;
 
 function requiredRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -167,8 +193,45 @@ function requiredPositiveInteger(value: unknown, label: string): number {
 export function managerAgentDagCommandResult(value: unknown): ManagerAgentDagCommandResult {
   const envelope = requiredRecord(value, "Manager command response");
   const data = requiredRecord(envelope.data, "Manager command response data");
-  if (data.resumed !== true) throw new Error("Manager command response must confirm resumed=true");
+  if (data.resumed === false || data.delivery_mode === "live") {
+    if (data.delivery_mode !== "live" || data.resumed !== false) {
+      throw new Error("Manager live command response must identify delivery_mode=live and resumed=false");
+    }
+    if (!Array.isArray(data.command_statuses) || data.command_statuses.length > 128) {
+      throw new Error("command_statuses must be an array with at most 128 entries");
+    }
+    const allowedStatuses = new Set([
+      "queued", "delivered", "applied", "completed", "rejected", "failed", "superseded", "cancelled",
+    ]);
+    const commandStatuses = data.command_statuses.map((raw, index): ManagerAgentDagLiveCommandStatusResult => {
+      const entry = requiredRecord(raw, `command_statuses[${index}]`);
+      const status = requiredResultString(entry.status, `command_statuses[${index}].status`);
+      if (!allowedStatuses.has(status)) {
+        throw new Error(`command_statuses[${index}].status is invalid`);
+      }
+      return {
+        command_id: requiredResultString(entry.command_id, `command_statuses[${index}].command_id`),
+        actor_id: requiredResultString(entry.actor_id, `command_statuses[${index}].actor_id`),
+        sequence: requiredPositiveInteger(entry.sequence, `command_statuses[${index}].sequence`),
+        status: status as ManagerAgentDagLiveCommandStatusResult["status"],
+      };
+    });
+    return {
+      delivery_mode: "live",
+      resumed: false,
+      run_id: requiredResultString(data.run_id, "run_id"),
+      round_id: requiredResultString(data.round_id, "round_id"),
+      actor_ids: requiredResultStrings(data.actor_ids, "actor_ids"),
+      command_ids: requiredResultStrings(data.command_ids, "command_ids"),
+      command_statuses: commandStatuses,
+      sent: requiredNonNegativeInteger(data.sent, "sent"),
+      fallback_pending: requiredNonNegativeInteger(data.fallback_pending, "fallback_pending"),
+      ...(data.deduplicated === true ? { deduplicated: true } : {}),
+    };
+  }
+  if (data.resumed !== true) throw new Error("Manager command response must confirm a live delivery or round resume");
   return {
+    delivery_mode: "round_resume",
     resumed: true,
     previous_round_id: requiredResultString(data.previous_round_id, "previous_round_id"),
     round_id: requiredResultString(data.round_id, "round_id"),
@@ -425,12 +488,23 @@ const SEND_DAG_ACTOR_COMMAND_ALLOWED_KEYS = new Set([
   "run_id",
   "actor_id",
   "expected_round_id",
+  "expected_state_token",
   "idempotency_key",
   "payload",
   "commands",
 ]);
-const SEND_DAG_ACTOR_COMMAND_ITEM_ALLOWED_KEYS = new Set(["actor_id", "payload"]);
-const SEND_DAG_ACTOR_COMMAND_LEGACY_KEYS = ["actor_id", "idempotency_key", "payload"] as const;
+const SEND_DAG_ACTOR_COMMAND_ITEM_ALLOWED_KEYS = new Set([
+  "actor_id",
+  "payload",
+  "idempotency_key",
+  "expected_state_token",
+]);
+const SEND_DAG_ACTOR_COMMAND_LEGACY_KEYS = [
+  "actor_id",
+  "expected_state_token",
+  "idempotency_key",
+  "payload",
+] as const;
 const SEND_DAG_ACTOR_COMMAND_MAX_ITEMS = 128;
 const SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH = 256;
 const SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN = "^(?=[^\\u0000-\\u001f\\u007f]*\\S)[^\\u0000-\\u001f\\u007f]+$";
@@ -453,6 +527,14 @@ function dagActorCommandIdentifier(value: unknown, field: string): string {
   return normalized;
 }
 
+function dagActorCommandStateToken(value: unknown, field: string): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error(`send_dag_actor_command ${field} must be a 64-character lowercase hex token`);
+  }
+  return normalized;
+}
+
 export function normalizeManagerAgentDagActorCommandInput(
   args: Record<string, unknown>,
 ): ManagerAgentDagActorCommandInput {
@@ -464,7 +546,9 @@ export function normalizeManagerAgentDagActorCommandInput(
   }
 
   const runId = dagActorCommandIdentifier(args.run_id, "run_id");
-  const expectedRoundId = dagActorCommandIdentifier(args.expected_round_id, "expected_round_id");
+  const expectedRoundId = args.expected_round_id === undefined
+    ? undefined
+    : dagActorCommandIdentifier(args.expected_round_id, "expected_round_id");
   const hasCommands = hasOwnProperty(args, "commands");
   const legacyKeys = SEND_DAG_ACTOR_COMMAND_LEGACY_KEYS.filter((key) => hasOwnProperty(args, key));
   if (hasCommands && legacyKeys.length > 0) {
@@ -500,23 +584,46 @@ export function normalizeManagerAgentDagActorCommandInput(
       if (!hasOwnProperty(command, "payload") || command.payload === undefined) {
         throw new Error(`send_dag_actor_command commands[${index}].payload is required`);
       }
-      return { actor_id: actorId, payload: command.payload };
+      const idempotencyKey = command.idempotency_key === undefined
+        ? undefined
+        : dagActorCommandIdentifier(command.idempotency_key, `commands[${index}].idempotency_key`);
+      const expectedStateToken = command.expected_state_token === undefined
+        ? undefined
+        : dagActorCommandStateToken(command.expected_state_token, `commands[${index}].expected_state_token`);
+      return {
+        actor_id: actorId,
+        payload: command.payload,
+        ...(idempotencyKey === undefined ? {} : { idempotency_key: idempotencyKey }),
+        ...(expectedStateToken === undefined ? {} : { expected_state_token: expectedStateToken }),
+      };
     });
     if (new Set(commands.map((command) => command.actor_id)).size !== commands.length) {
       throw new Error("send_dag_actor_command commands must contain unique actor_id values");
     }
-    return { run_id: runId, expected_round_id: expectedRoundId, commands };
+    return {
+      run_id: runId,
+      ...(expectedRoundId === undefined ? {} : { expected_round_id: expectedRoundId }),
+      commands,
+    };
   }
 
   const actorId = dagActorCommandIdentifier(args.actor_id, "actor_id");
   const idempotencyKey = dagActorCommandIdentifier(args.idempotency_key, "idempotency_key");
+  const expectedStateToken = args.expected_state_token === undefined
+    ? undefined
+    : dagActorCommandStateToken(args.expected_state_token, "expected_state_token");
   if (!hasOwnProperty(args, "payload") || args.payload === undefined) {
     throw new Error("send_dag_actor_command requires payload");
   }
   return {
     run_id: runId,
-    expected_round_id: expectedRoundId,
-    commands: [{ actor_id: actorId, idempotency_key: idempotencyKey, payload: args.payload }],
+    ...(expectedRoundId === undefined ? {} : { expected_round_id: expectedRoundId }),
+    commands: [{
+      actor_id: actorId,
+      idempotency_key: idempotencyKey,
+      ...(expectedStateToken === undefined ? {} : { expected_state_token: expectedStateToken }),
+      payload: args.payload,
+    }],
   };
 }
 
@@ -931,7 +1038,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   send_dag_actor_command: {
     name: "send_dag_actor_command",
-    description: "Atomically send between 1 and 128 commands in one request; even a single Actor uses a one-item commands array. Every item contains stable actor_id and payload. Always require expected_round_id and never accept or expose transient Worker or container IDs.",
+    description: "Atomically send between 1 and 128 commands to stable actor_id values in one request. For an active round, every item requires the latest expected_state_token and a stable idempotency_key. For a waiting round, supply expected_round_id to use the existing safe multiround resume path. Never accept or expose transient Worker or container IDs, lease, session, or generation identifiers.",
     input_schema: {
       type: "object",
       properties: {
@@ -960,6 +1067,16 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
                 maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
                 pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
               },
+              idempotency_key: {
+                type: "string",
+                minLength: 1,
+                maxLength: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_MAX_LENGTH,
+                pattern: SEND_DAG_ACTOR_COMMAND_IDENTIFIER_PATTERN,
+              },
+              expected_state_token: {
+                type: "string",
+                pattern: "^[0-9a-f]{64}$",
+              },
               payload: {},
             },
             required: ["actor_id", "payload"],
@@ -967,7 +1084,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
           },
         },
       },
-      required: ["run_id", "expected_round_id", "commands"],
+      required: ["run_id", "commands"],
       additionalProperties: false,
     },
   },

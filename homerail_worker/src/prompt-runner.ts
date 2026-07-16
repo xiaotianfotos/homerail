@@ -12,6 +12,7 @@ import {
 } from "homerail-protocol";
 import { createAgentClient } from "./agent/factory.js";
 import type { AgentEvent, AgentRunContext, AgentUsage } from "./agent/types.js";
+import type { AgentTurnController } from "./agent/turn-controller.js";
 import { createDagTools, createDagToolsState, deliverInbox } from "./dag-tools/index.js";
 import type { DagToolsState } from "./dag-tools/index.js";
 import { createAuditWriters } from "./audit/index.js";
@@ -46,8 +47,13 @@ export interface PromptRunnerDeps {
   agentBackend?: string;
   auditDir?: string;
   abortSignal?: AbortSignal;
+  turnController?: AgentTurnController;
   registerInboxHandler?: (handler: (content: unknown) => void) => () => void;
 }
+
+export type PromptRunResult =
+  | { status: "completed" }
+  | { status: "failed"; reason: string };
 
 function resolveLlmBaseUrl(job: PromptJob): string {
   const baseUrl = job.llmBaseUrl ?? process.env.LLM_BASE_URL ?? "";
@@ -138,7 +144,7 @@ async function runAdvisorCall(
 export async function runPrompt(
   job: PromptJob,
   deps: PromptRunnerDeps,
-): Promise<void> {
+): Promise<PromptRunResult> {
   const { wsSend, agentBackend, auditDir } = deps;
   const sessionId = job.dagConfig.session_id ?? job.runId;
   const effectiveTask = job.actorCheckpoint
@@ -312,6 +318,10 @@ export async function runPrompt(
   let nodeNumTurns: number | undefined;
   let workspaceBefore: WorkspaceSnapshot | undefined;
   let terminalActivityEmitted = false;
+  let promptResult: PromptRunResult = {
+    status: "failed",
+    reason: "agent turn ended without a successful DAG handoff",
+  };
   const toolNamesById = new Map<string, string>();
 
   activityEmitter.emit("started", {
@@ -343,6 +353,7 @@ export async function runPrompt(
       workspace,
       sessionId: job.dagConfig.session_id ?? job.runId,
       abortSignal: deps.abortSignal,
+      turnController: deps.turnController,
       handoffOnly: correctionOnly,
       allowedBuiltinTools: job.dagConfig.allowed_builtin_tools,
     };
@@ -513,6 +524,7 @@ export async function runPrompt(
           session_id: dagState.sessionId,
           data: dagState.handoffData,
         }));
+        promptResult = { status: "completed" };
       }
     }
   } catch (err) {
@@ -569,6 +581,7 @@ export async function runPrompt(
 
   function sendNodeError(message: string) {
     const redactedMessage = String(redactTelemetry(message));
+    promptResult = { status: "failed", reason: redactedMessage };
     if (!terminalActivityEmitted) {
       activityEmitter.emit("failed", { message: redactedMessage });
       terminalActivityEmitted = true;
@@ -621,6 +634,8 @@ export async function runPrompt(
       num_turns: nodeNumTurns,
     });
   }
+
+  return promptResult;
 }
 
 /** Expose deliverInbox for external callers (e.g., dag_inbox handler). */

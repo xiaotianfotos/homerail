@@ -832,9 +832,21 @@ export class KimiCodeAdapter implements AgentClient {
     });
     const turn = session.prompt(this.buildAgentPrompt(prompt, context.systemPrompt));
     let cancelled = false;
-    const abortHandler = (): void => {
+    let turnFinished = false;
+    let interruptRequested = false;
+    const interruptTurn = async (): Promise<void> => {
+      if (interruptRequested || turnFinished) return;
+      interruptRequested = true;
       cancelled = true;
-      turn.interrupt().catch(() => {
+      await turn.interrupt();
+    };
+    const controllerBinding = context.turnController?.bindDriver({
+      steer: (command) => turn.steer(command.content),
+      interrupt: interruptTurn,
+      close: interruptTurn,
+    });
+    const abortHandler = (): void => {
+      interruptTurn().catch(() => {
         // The SDK process may already be shutting down.
       });
     };
@@ -845,6 +857,17 @@ export class KimiCodeAdapter implements AgentClient {
     }
 
     try {
+      if (controllerBinding?.status === "rejected") {
+        await interruptTurn().catch(() => {
+          // The SDK process may already be shutting down.
+        });
+        yield {
+          type: "error",
+          message: `Kimi Agent SDK turn controller binding failed: ${controllerBinding.reason ?? "unknown error"}`,
+        };
+        return;
+      }
+
       yield {
         type: "debug",
         source: "kimi-code",
@@ -887,6 +910,7 @@ export class KimiCodeAdapter implements AgentClient {
         };
       }
     } finally {
+      turnFinished = true;
       if (context.abortSignal) {
         context.abortSignal.removeEventListener("abort", abortHandler);
       }

@@ -13,6 +13,7 @@ import {
   type DagActivityJournalEntry,
 } from "../persistence/dag-activity-journal.js";
 import { listDagActorCommands, listDagActors } from "../persistence/dag-actors.js";
+import { listDagActorLiveCommands } from "../persistence/dag-actor-live-commands.js";
 import {
   listDagActorInterventions,
   type DagActorInterventionOperation,
@@ -49,6 +50,7 @@ export interface DagSupervisorActorSummary {
     retained_until?: number;
   };
   commands: Record<string, number>;
+  live_commands: Record<string, number>;
   latest_intervention?: DagSupervisorInterventionSummary;
 }
 
@@ -339,6 +341,10 @@ function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
     for (const command of listDagActorCommands({ run_id: runId, actor_id: actor.actor_id, limit: 500 })) {
       commandCounts[command.status] = (commandCounts[command.status] ?? 0) + 1;
     }
+    const liveCommandCounts: Record<string, number> = {};
+    for (const command of listDagActorLiveCommands({ run_id: runId, actor_id: actor.actor_id, limit: 500 })) {
+      liveCommandCounts[command.status] = (liveCommandCounts[command.status] ?? 0) + 1;
+    }
     const latestIntervention = listDagActorInterventions({
       run_id: runId,
       actor_id: actor.actor_id,
@@ -363,6 +369,7 @@ function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
         }
         : {}),
       commands: commandCounts,
+      live_commands: liveCommandCounts,
       ...(latestIntervention
         ? {
           latest_intervention: {

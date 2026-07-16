@@ -53,6 +53,11 @@ export interface PongMessage {
   type: "pong";
 }
 
+export interface DagActorLiveCommandStatusMessage {
+  type: "dag_actor_command_status";
+  data: DagActorLiveCommandStatusData;
+}
+
 export interface NodeErrorMessage {
   type: "node_error";
   data: {
@@ -78,6 +83,7 @@ export type IncomingNodeMessage =
   | StreamMessage
   | ContentMessage
   | NodeErrorMessage
+  | DagActorLiveCommandStatusMessage
   | PongMessage
   | LifecycleResponseMessage;
 
@@ -203,6 +209,12 @@ export function parseIncomingNodeMessage(raw: unknown): IncomingNodeMessage | nu
         },
       };
     }
+    case "dag_actor_command_status":
+      if (typeof obj.data !== "object" || obj.data === null || Array.isArray(obj.data)) return null;
+      return {
+        type: "dag_actor_command_status",
+        data: obj.data as unknown as DagActorLiveCommandStatusData,
+      };
     case "pong":
       return { type: "pong" };
     case "lifecycle_response":
@@ -223,3 +235,4 @@ export function parseIncomingNodeMessage(raw: unknown): IncomingNodeMessage | nu
       return null;
   }
 }
+import type { DagActorLiveCommandStatusData } from "homerail-protocol";
