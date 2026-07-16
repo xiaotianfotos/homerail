@@ -358,6 +358,10 @@ const reusingCredential = computed(() => canReuseCredential.value && !useNewApiK
 const reusableCredentialDisplay = computed(
   () => reusableCredentialSettings.value[0]?.api_key_display || '****'
 )
+const reusableProbeSetting = computed(() => {
+  const endpoint = representativeEndpoint.value
+  return endpoint ? reusableSettingForEndpoint(endpoint) : undefined
+})
 
 const endpointUrlRows = computed(() => {
   const ep = representativeEndpoint.value
@@ -434,18 +438,22 @@ const selectedModelRows = computed(() =>
 // ── 动态探测模型 ──────────────────────────────────────────────
 async function runProbe(): Promise<void> {
   const ep = representativeEndpoint.value
-  if (!ep || !apiKey.value.trim()) return
+  if (!ep) return
   if (isArkVoiceEndpoint(ep)) {
     probedModels.value = []
     probeError.value = null
     return
   }
+  const savedSetting = reusingCredential.value ? reusableProbeSetting.value : undefined
+  const rawApiKey = apiKey.value.trim()
   const baseUrl = ep.chat_completions_base_url || ep.base_url
-  if (!baseUrl) return
+  if (!savedSetting && (!baseUrl || !rawApiKey)) return
   probing.value = true
   probeError.value = null
   try {
-    const result = await probeModels(baseUrl, apiKey.value.trim())
+    const result = await probeModels(
+      savedSetting ? { settingId: savedSetting.id } : { baseUrl, apiKey: rawApiKey }
+    )
     probedModels.value = result.models
     if (result.error) probeError.value = result.error
   } catch (e: any) {
@@ -456,16 +464,25 @@ async function runProbe(): Promise<void> {
   }
 }
 
-// 填 key 后 debounce 自动 probe（500ms）
-watch([apiKey, selectedEndpointId], ([key]) => {
-  if (probeTimer) window.clearTimeout(probeTimer)
-  probedModels.value = []
-  probeError.value = null
-  if (!key?.trim() || isArkVoiceCredential.value) return
-  probeTimer = window.setTimeout(() => {
-    void runProbe()
-  }, 600)
-})
+const canProbeModels = computed(
+  () =>
+    !isArkVoiceCredential.value &&
+    Boolean(reusingCredential.value ? reusableProbeSetting.value : apiKey.value.trim())
+)
+
+// 填入新 key 或选择可复用凭证后 debounce 自动 probe。
+watch(
+  [apiKey, selectedEndpointId, reusingCredential, () => reusableProbeSetting.value?.id],
+  () => {
+    if (probeTimer) window.clearTimeout(probeTimer)
+    probedModels.value = []
+    probeError.value = null
+    if (!canProbeModels.value) return
+    probeTimer = window.setTimeout(() => {
+      void runProbe()
+    }, 600)
+  }
+)
 
 function endpointDefaultCapabilities(ep?: ProviderEndpointPreset | null): ModelCapabilities {
   return {
@@ -794,7 +811,7 @@ async function submit(): Promise<void> {
               {{ t('settings.models.form.probedCount', { count: probedModels.length }) }}
             </span>
             <button
-              v-if="apiKey && !probing && !isArkVoiceCredential"
+              v-if="canProbeModels && !probing"
               type="button"
               class="flex items-center gap-1 text-[11px] text-gray-500 transition-colors hover:text-cyan-300"
               :title="t('settings.models.form.reprobe')"

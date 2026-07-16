@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App } from 'vue'
 import { i18n } from '@/plugins/i18n'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
+import { probeModels } from '@/api/services/providers-api'
 import type { Provider } from '@/api/types/orchestration-v2.types'
 import OnboardingStepForm from './OnboardingStepForm.vue'
 
@@ -124,6 +125,32 @@ describe('OnboardingStepForm TTS persistence', () => {
       supports_tts: true
     }))
     expect(apiMocks.createLLMSetting.mock.calls[0]?.[0]).not.toHaveProperty('api_key')
+  })
+
+  it('probes preset models by saved setting id when onboarding reuses a credential', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(probeModels).mockResolvedValueOnce({
+        models: ['mimo-v2.5-tts', 'mimo-v2.5-tts-latest']
+      })
+      const root = await mountForm({
+        capability: 'supports_tts',
+        providers: [ttsProvider],
+        existingSettings: [existingAsrSetting]
+      })
+
+      const credential = root.querySelector<HTMLSelectElement>('select')!
+      credential.value = 'xiaomi::api_billing'
+      credential.dispatchEvent(new Event('change'))
+      await nextTick()
+      await vi.advanceTimersByTimeAsync(600)
+      await nextTick()
+
+      expect(probeModels).toHaveBeenCalledWith({ settingId: existingAsrSetting.id })
+      expect(root.textContent).toContain('mimo-v2.5-tts-latest')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('creates a custom TTS provider before saving its model setting', async () => {

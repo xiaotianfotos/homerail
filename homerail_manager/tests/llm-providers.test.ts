@@ -12,6 +12,7 @@ import {
   listProviders,
   listSettings,
   resolveClaudeSdkBaseUrlForSetting,
+  upsertProvider,
   updateSetting,
 } from "../src/persistence/llm-settings.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
@@ -370,6 +371,91 @@ describe("custom LLM providers", () => {
     ]));
     expect(body.data?.models).toHaveLength(3);
     expect(body.data?.error).toBeUndefined();
+  });
+
+  it("probes upstream models with a saved encrypted setting credential", async () => {
+    const upstreamRequests: Array<{
+      url?: string;
+      authorization?: string;
+      apiKey?: string;
+    }> = [];
+    const upstream = http.createServer((req, res) => {
+      upstreamRequests.push({
+        url: req.url,
+        authorization: req.headers.authorization,
+        apiKey: typeof req.headers["x-api-key"] === "string"
+          ? req.headers["x-api-key"]
+          : undefined,
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        data: [
+          { id: "kimi-for-coding" },
+          { id: "k3" },
+        ],
+      }));
+    });
+    const upstreamPort = await listen(upstream);
+
+    try {
+      upsertProvider({
+        id: "saved-probe-provider",
+        name: "Saved probe provider",
+        default_model: "kimi-for-coding",
+        base_url: `http://127.0.0.1:${upstreamPort}/v1`,
+        supports_llm: true,
+        supports_asr: false,
+        supports_tts: false,
+        supports_audio_input: false,
+        supports_image_input: false,
+        supports_video_input: false,
+      });
+      const setting = createSetting({
+        provider_id: "saved-probe-provider",
+        endpoint_id: "saved-probe-provider_custom",
+        model_name: "kimi-for-coding",
+        api_key: "saved-probe-secret",
+        is_active: true,
+        is_default: false,
+        supports_llm: true,
+        supports_asr: false,
+        supports_tts: false,
+        supports_audio_input: false,
+        supports_image_input: false,
+        supports_video_input: false,
+      });
+      expect(storedLlmSettingsText()).not.toContain("saved-probe-secret");
+
+      const port = await listen(server);
+      const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/probe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ setting_id: setting.id }),
+      });
+      const body = await response.json() as { data?: { models?: string[]; error?: string } };
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ models: ["k3", "kimi-for-coding"] });
+      expect(JSON.stringify(body)).not.toContain("saved-probe-secret");
+      expect(upstreamRequests).toEqual([{
+        url: "/v1/models",
+        authorization: "Bearer saved-probe-secret",
+        apiKey: "saved-probe-secret",
+      }]);
+    } finally {
+      await close(upstream);
+    }
+  });
+
+  it("rejects model probes for unknown saved settings", async () => {
+    const port = await listen(server);
+    const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/probe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ setting_id: "missing-setting" }),
+    });
+
+    expect(response.status).toBe(404);
   });
 
   it("migrates legacy plaintext DB settings to Manager-encrypted storage", () => {

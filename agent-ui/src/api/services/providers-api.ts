@@ -86,13 +86,19 @@ export async function getProviderModels(
 
 /**
  * 动态探测供应商可用模型（后端代理调 /v1/models）
- * 用户填入 API Key 后调用，返回实际可用的模型 ID 列表。
+ * 已保存凭证只发送 settingId；新凭证发送 baseUrl + apiKey。
  */
+export type ProbeModelsInput =
+  | { settingId: string; baseUrl?: never; apiKey?: never }
+  | { settingId?: never; baseUrl: string; apiKey: string }
+
 export async function probeModels(
-  baseUrl: string,
-  apiKey: string
+  input: ProbeModelsInput
 ): Promise<{ models: string[]; error?: string }> {
-  const res = await http.post<any>('/api/llm/models/probe', { base_url: baseUrl, api_key: apiKey })
+  const body = input.settingId
+    ? { setting_id: input.settingId }
+    : { base_url: input.baseUrl, api_key: input.apiKey }
+  const res = await http.post<any>('/api/llm/models/probe', body)
   const data = res.data ?? res
   return {
     models: Array.isArray(data?.models) ? data.models : [],

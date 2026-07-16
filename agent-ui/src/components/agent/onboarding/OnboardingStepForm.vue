@@ -128,13 +128,13 @@ const credentials = computed<CredentialOption[]>(() => {
 // ── credential 已有 key 检测 ───────────────────────────────────
 // Key 的复用边界是具体 credential/endpoint，不是 provider。
 // 例如 Xiaomi 的 API 计费和 Token Plan 是不同 credential，不能互相复用。
-function maskedKeyForCredential(
+function settingForCredential(
   credential: CredentialOption,
   endpoint?: ProviderEndpointPreset | null,
-): string | undefined {
+): LLMSetting | undefined {
   const existing = props.existingSettings ?? []
   const endpointIds = new Set((endpoint ? [endpoint] : credential.endpoints).map(ep => ep.id))
-  const hit = existing.find(s =>
+  return existing.find(s =>
     s.is_active &&
     s.provider_id === credential.provider.id &&
     s.api_key_display &&
@@ -143,7 +143,13 @@ function maskedKeyForCredential(
       (!s.endpoint_id && s.plan_type === credential.planType)
     )
   )
-  return hit?.api_key_display
+}
+
+function maskedKeyForCredential(
+  credential: CredentialOption,
+  endpoint?: ProviderEndpointPreset | null,
+): string | undefined {
+  return settingForCredential(credential, endpoint)?.api_key_display
 }
 
 // ── 表单状态 ──────────────────────────────────────────────────
@@ -164,7 +170,12 @@ const selectedCredential = computed<CredentialOption | null>(() => {
 const selectedCredentialHasKey = computed(() => {
   const cred = selectedCredential.value
   if (!cred) return false
-  return Boolean(maskedKeyForCredential(cred, selectedEndpoint.value))
+  return Boolean(settingForCredential(cred, selectedEndpoint.value))
+})
+const selectedCredentialSetting = computed(() => {
+  const cred = selectedCredential.value
+  if (!cred) return undefined
+  return settingForCredential(cred, selectedEndpoint.value)
 })
 const selectedMaskedKey = computed(() => {
   const cred = selectedCredential.value
@@ -280,23 +291,38 @@ watch(() => props.capability, () => {
 // ── 动态探测（内置模式，key 填入后）──────────────────────────
 async function runProbe(): Promise<void> {
   const ep = selectedEndpoint.value
-  if (!ep || !apiKey.value.trim()) return
+  if (!ep) return
+  const savedSetting = selectedCredentialSetting.value
+  const rawApiKey = apiKey.value.trim()
   const baseUrl = ep.chat_completions_base_url || ep.base_url
-  if (!baseUrl) return
+  if (!savedSetting && (!baseUrl || !rawApiKey)) return
   try {
-    const result = await probeModels(baseUrl, apiKey.value.trim())
+    const result = await probeModels(
+      savedSetting ? { settingId: savedSetting.id } : { baseUrl, apiKey: rawApiKey }
+    )
     probedModels.value = result.models
   } catch {
     probedModels.value = []
   }
 }
 
-watch([apiKey, selectedCredentialKey], () => {
-  if (probeTimer) window.clearTimeout(probeTimer)
-  probedModels.value = []
-  if (!apiKey.value.trim() || !selectedCredential.value) return
-  probeTimer = window.setTimeout(() => { void runProbe() }, 600)
-})
+watch(
+  [
+    apiKey,
+    selectedCredentialKey,
+    () => selectedEndpoint.value?.id,
+    () => selectedCredentialSetting.value?.id
+  ],
+  () => {
+    if (probeTimer) window.clearTimeout(probeTimer)
+    probedModels.value = []
+    if ((!apiKey.value.trim() && !selectedCredentialSetting.value) || !selectedCredential.value)
+      return
+    probeTimer = window.setTimeout(() => {
+      void runProbe()
+    }, 600)
+  }
+)
 
 // ── 校验 ──────────────────────────────────────────────────────
 // credential 已有 key 时只需选模型；否则需模型 + key

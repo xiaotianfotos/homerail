@@ -4,6 +4,7 @@ import { i18n } from '@/plugins/i18n'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
 import type { Provider } from '@/api/types/orchestration-v2.types'
 import { agentSettingsApi } from '@/api/agent'
+import { probeModels } from '@/api/services/providers-api'
 import CustomProviderManager from './CustomProviderManager.vue'
 import EditModelForm, { type EditModelPayload } from './EditModelForm.vue'
 import ModelForm, { type ModelFormPayload } from './ModelForm.vue'
@@ -241,6 +242,34 @@ describe('model purpose forms', () => {
     expect(submitted?.modelName).toBe('second-chat-model')
     expect(submitted?.apiKey).toBe('')
     expect(submitted?.reuseExistingApiKey).toBe(true)
+  })
+
+  it('probes new models by saved setting id when reusing a credential', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(probeModels).mockResolvedValueOnce({ models: ['chat-model', 'k3'] })
+      const root = await mount(ModelForm, {
+        providers: [provider],
+        settings: [setting],
+        purpose: 'llm'
+      })
+
+      const credential = Array.from(root.querySelectorAll('button')).find(button =>
+        button.textContent?.includes('API 计费')
+      )!
+      credential.click()
+      await nextTick()
+      await vi.advanceTimersByTimeAsync(600)
+      await nextTick()
+
+      expect(probeModels).toHaveBeenCalledWith({ settingId: setting.id })
+      expect(probeModels).not.toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: expect.anything() })
+      )
+      expect(root.textContent).toContain('k3')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('uses a separate edit form with a read-only provider binding', async () => {

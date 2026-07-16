@@ -64,6 +64,15 @@ function _catalogModelsForBaseUrl(baseUrl: string): string[] | undefined {
   return endpoint?.models.map((model) => model.id) ?? [];
 }
 
+function _modelProbeBaseUrlForSetting(setting: LLMSetting): string {
+  const provider = getProvider(setting.provider_id);
+  const endpoint = provider?.endpoints?.find((candidate) => candidate.id === setting.endpoint_id);
+  const baseUrl = setting.chat_completions_base_url ?? setting.base_url ??
+    endpoint?.chat_completions_base_url ?? endpoint?.base_url ??
+    provider?.chat_completions_base_url ?? provider?.base_url ?? "";
+  return _normalizedBaseUrl(baseUrl);
+}
+
 function _created(res: http.ServerResponse, message: string, data: unknown) {
   json(res, 201, { success: true, message, data });
 }
@@ -303,20 +312,32 @@ export function llmSettingsRoutesHandler(
   }
 
   // POST /api/llm/models/probe — 动态探测供应商可用模型
-  // 后端代理调用供应商的 /v1/models 端点（避免浏览器 CORS），
-  // 返回实际可用的模型 ID 列表。用于"填 Key 后自动拉取模型"。
+  // 已保存的凭证只传 setting_id，由 Manager 解密；新凭证仍可传 base_url + api_key。
+  // API key 始终由后端代理调用供应商，不回传浏览器。
   if (pathname === "/api/llm/models/probe" && req.method === "POST") {
     _readJsonBody(req)
       .then(async (body) => {
         const b = body as Record<string, unknown>;
-        const baseUrl = typeof b.base_url === "string" ? b.base_url.trim().replace(/\/+$/, "") : "";
-        const apiKey = typeof b.api_key === "string" ? b.api_key.trim() : "";
+        const settingId = typeof b.setting_id === "string" ? b.setting_id.trim() : "";
+        const setting = settingId ? getSetting(settingId) : undefined;
+        if (settingId && !setting) {
+          _notFound(res, `LLM setting not found: ${settingId}`);
+          return;
+        }
+        const baseUrl = setting
+          ? _modelProbeBaseUrlForSetting(setting)
+          : typeof b.base_url === "string" ? _normalizedBaseUrl(b.base_url) : "";
+        const apiKey = setting?.api_key ?? (typeof b.api_key === "string" ? b.api_key.trim() : "");
         if (!baseUrl) {
-          _badRequest(res, "Missing required field: base_url");
+          _badRequest(res, setting
+            ? `No model probe URL configured for LLM setting: ${setting.id}`
+            : "Missing required field: base_url");
           return;
         }
         if (!apiKey) {
-          _badRequest(res, "Missing required field: api_key");
+          _badRequest(res, setting
+            ? `No API key configured for LLM setting: ${setting.id}`
+            : "Missing required field: api_key");
           return;
         }
         const catalogModels = _catalogModelsForBaseUrl(baseUrl);
