@@ -30,6 +30,7 @@ import {
   routeDagActorCommand,
   type ActivePromptLiveSteering,
 } from "./live-steering.js";
+import { prepareWorkerSkillContext } from "./worker-skill-context.js";
 
 // ── Env vars ─────────────────────────────────────────────────
 
@@ -190,9 +191,36 @@ client.on("task", async (msg) => {
           : undefined,
       }
     : (data.dag_config ?? data.dagConfig ?? {}) as DagNodeConfig;
-  const systemPrompt = envelope
-    ? (agentConfig.system as string | undefined)
-    : (data.system_prompt as string | undefined);
+  const systemPromptValue = envelope ? agentConfig.system : data.system_prompt;
+  let preparedSkillContext;
+  try {
+    preparedSkillContext = prepareWorkerSkillContext({
+      systemPrompt: systemPromptValue,
+      declaredSkills: envelope ? agentConfig.skills : undefined,
+      skillContext: envelope?.skillContext,
+      actorCheckpoint,
+    });
+  } catch (cause) {
+    const message = `Worker Skill Context rejected: ${cause instanceof Error ? cause.message : String(cause)}`;
+    console.error(`[homerail_worker] ${message}`);
+    client.send(JSON.stringify({
+      type: "node_error",
+      data: {
+        runId,
+        nodeId,
+        message,
+        ...(sessionId ? { session_id: sessionId } : {}),
+        ...(typeof activity?.roundId === "string" ? { round_id: activity.roundId } : {}),
+        ...(typeof activity?.actorId === "string" ? { actor_id: activity.actorId } : {}),
+        ...(typeof activity?.generation === "number" ? { generation: activity.generation } : {}),
+        ...(typeof activity?.leaseGeneration === "number"
+          ? { lease_generation: activity.leaseGeneration }
+          : {}),
+        ...(typeof activity?.commandId === "string" ? { command_id: activity.commandId } : {}),
+      },
+    }));
+    return;
+  }
 
   if (!task) {
     console.error("[homerail_worker] received task with empty body");
@@ -208,13 +236,14 @@ client.on("task", async (msg) => {
     sender,
     runId,
     dagConfig,
-    systemPrompt,
+    systemPrompt: preparedSkillContext.systemPrompt,
     llmProvider: provider,
     llmProtocol: protocol,
     llmApiKey: apiKey,
     llmBaseUrl: baseUrl,
     checkpointResume,
     actorCheckpoint,
+    skillContextSummary: preparedSkillContext.summary,
   };
 
   const abortController = new AbortController();

@@ -3,6 +3,7 @@ import { listDagActors, listDagActorCommands, type DagActorRecord } from "../per
 import { listDagActivityEvents } from "../persistence/dag-activity-journal.js";
 import { listRunArtifacts } from "../persistence/run-artifacts.js";
 import { loadRunSnapshot } from "../persistence/store.js";
+import { getDagRunSkillContextSummary } from "../persistence/dag-run-skill-contexts.js";
 
 const MAX_CHECKPOINT_ITEMS = 24;
 const MAX_ITEM_CHARS = 2_000;
@@ -110,6 +111,15 @@ export function buildDagActorCheckpoint(input: {
   const unresolvedActivity = activities.filter((entry) => entry.event.type === "blocked" || entry.event.type === "progress");
   const objective = boundedText(snapshot.metadata.initialPrompt ?? snapshot.metadata.workflowName ?? input.actor.role, 8_000)
     ?? input.actor.role;
+  const agentId = typeof input.actor.model_profile.agent_id === "string"
+    ? input.actor.model_profile.agent_id
+    : undefined;
+  const skillContext = agentId
+    ? getDagRunSkillContextSummary(input.runId, agentId)
+    : undefined;
+  if (agentId && snapshot.metadata.agents?.[agentId]?.skills?.length && !skillContext) {
+    throw new Error(`DAG run ${input.runId} agent ${agentId} is missing its pinned Skill Context`);
+  }
 
   return {
     schema_version: 1,
@@ -139,6 +149,12 @@ export function buildDagActorCheckpoint(input: {
       activities,
       commands,
     }),
+    ...(skillContext ? {
+      skill_context: {
+        context_digest: skillContext.context_digest,
+        skills: skillContext.skills.map((skill) => ({ id: skill.id, digest: skill.digest })),
+      },
+    } : {}),
     round_id: input.roundId,
     actor_generation: input.actor.generation,
     captured_at: input.capturedAt ?? Date.now(),

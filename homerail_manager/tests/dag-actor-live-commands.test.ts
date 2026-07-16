@@ -71,7 +71,7 @@ describe("durable DAG Actor live commands", () => {
   }
 
   it("creates, validates, and reapplies migration 28 on repeated startup", () => {
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 28 });
+    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 29 });
     expect(getDb().prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     getDb().exec(`
       DROP TABLE dag_actor_live_commands;

@@ -5,6 +5,7 @@ import type {
   DagAdvisorConfig,
   DagAgentToolName,
   DagWorkspaceAccess,
+  DagWorkerSkillContextV1,
 } from "homerail-protocol";
 
 export interface DispatchEnvelope {
@@ -13,6 +14,8 @@ export interface DispatchEnvelope {
   sessionId?: string;
   agentId: string;
   agentConfig: DAGAgentConfig;
+  /** Immutable, digest-pinned Skill bodies for this logical Agent. */
+  skillContext?: DagWorkerSkillContextV1;
   inputs: Record<string, unknown[]>;
   outgoingEdges: DAGEdge[];
   checkpointResume?: {
