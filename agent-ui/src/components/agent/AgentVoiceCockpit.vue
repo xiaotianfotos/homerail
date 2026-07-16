@@ -31,6 +31,7 @@ import VoiceSessionProjectSidebar from '@/components/agent/VoiceSessionProjectSi
 import AgentModeTopBar from '@/components/agent/AgentModeTopBar.vue'
 import DagResourceStatusPill from '@/components/agent/DagResourceStatusPill.vue'
 import VoiceDynamicWidget from '@/components/agent/VoiceDynamicWidget.vue'
+import { shouldSubmitVoiceComposer } from '@/components/agent/voice-composer-keyboard'
 import {
   resolveVoiceSessionProjectRestore,
   VoiceSessionTransitionGuard,
@@ -3026,7 +3027,7 @@ function submitComposerDraft(): void {
 }
 
 function handleComposerKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter' && !event.shiftKey) {
+  if (shouldSubmitVoiceComposer(event)) {
     event.preventDefault()
     submitComposerDraft()
   }
