@@ -31,6 +31,7 @@ import {
   type ActivePromptLiveSteering,
 } from "./live-steering.js";
 import { prepareWorkerSkillContext } from "./worker-skill-context.js";
+import { DAG_ACTOR_SURFACE_PATCH_V1_CAPABILITY } from "./dag-tools/report-surface-state.js";
 
 // ── Env vars ─────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ const CAPABILITIES = Array.from(new Set([
   DAG_ACTOR_LIVE_COMMAND_CAPABILITY,
   DAG_TRANSPORT_FENCE_V1_CAPABILITY,
   DAG_TRANSPORT_FENCE_CAPABILITY,
+  DAG_ACTOR_SURFACE_PATCH_V1_CAPABILITY,
 ]));
 const configuredLiveSteerQueueSize = Number(process.env.HOMERAIL_LIVE_STEER_QUEUE_MAX ?? 32);
 const LIVE_STEER_QUEUE_SIZE = Number.isSafeInteger(configuredLiveSteerQueueSize)

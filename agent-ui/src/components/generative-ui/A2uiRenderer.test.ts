@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { createApp, nextTick, type App } from 'vue'
+import { createApp, h, nextTick, ref, type App } from 'vue'
 import {
   HOMERAIL_A2UI_CATALOG_ID,
   type GenerativeUiCompositionItemV1,
@@ -225,6 +225,90 @@ describe('A2uiRenderer', () => {
       expect.objectContaining({ title: 'AI cover', kind: 'image', layout: 'portrait' }),
       expect.objectContaining({ title: 'Story page', kind: 'html', layout: 'fluid' }),
     ])
+  })
+
+  it('renders passive Actor media, metrics, comparisons, timelines, and routes without active controls', () => {
+    const mounted = mount(surface([
+      { id: 'root', component: 'Column', children: ['image', 'video', 'metric', 'timeline', 'comparison', 'route'] },
+      { id: 'image', component: 'Image', url: 'https://example.com/evidence.png', description: 'Evidence image' },
+      { id: 'video', component: 'Video', url: 'https://example.com/evidence.mp4' },
+      { id: 'metric', component: 'HrMetric', label: 'Coverage', value: { path: '/coverage' }, unit: '%' },
+      {
+        id: 'timeline', component: 'HrTimeline', source: { path: '/events' },
+        itemTitlePath: '/title', itemDetailPath: '/detail', itemTimePath: '/time',
+      },
+      {
+        id: 'comparison', component: 'HrBarChart', source: { path: '/options' },
+        itemLabelPath: '/label', itemValuePath: '/value',
+      },
+      {
+        id: 'route', component: 'HrDag', source: { path: '/route' },
+        itemIdPath: '/id', itemLabelPath: '/label', itemDependsOnPath: '/dependsOn',
+      },
+    ]), {
+      coverage: 84,
+      events: [{ title: 'Collected', detail: 'Media checked', time: '09:00' }],
+      options: [{ label: 'A', value: 72 }, { label: 'B', value: 84 }],
+      route: [
+        { id: 'collect', label: 'Collect', dependsOn: [] },
+        { id: 'verify', label: 'Verify', dependsOn: ['collect'] },
+      ],
+    })
+
+    expect(mounted.querySelector<HTMLImageElement>('[data-a2ui-id="image"]')?.alt).toBe('Evidence image')
+    expect(mounted.querySelector<HTMLVideoElement>('[data-a2ui-id="video"]')?.controls).toBe(true)
+    expect(mounted.querySelector('.hr-a2ui__metric')?.textContent).toContain('84')
+    expect(mounted.querySelectorAll('.hr-a2ui__timeline > li')).toHaveLength(1)
+    expect(mounted.querySelectorAll('.hr-a2ui__bar-chart > div')).toHaveLength(2)
+    expect(mounted.querySelectorAll('.hr-a2ui__dag-node')).toHaveLength(2)
+    expect(mounted.querySelector('form, input, .hr-a2ui__button')).toBeNull()
+  })
+
+  it('keeps the stable A2UI root, local tab state, and focus across node revisions', async () => {
+    const a2ui = surface([
+      {
+        id: 'root', component: 'Tabs', tabs: [
+          { title: 'Overview', child: 'overview' },
+          { title: 'Details', child: 'details' },
+        ],
+      },
+      { id: 'overview', component: 'Text', text: { path: '/overview' } },
+      { id: 'details', component: 'Text', text: { path: '/details' } },
+    ])
+    const currentNode = ref(node(a2ui, { overview: 'Revision one', details: 'Initial details' }))
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp({
+      setup: () => () => h(A2uiRenderer, {
+        node: currentNode.value,
+        placement,
+        context,
+      }),
+    })
+    app.use(i18n)
+    app.mount(root)
+
+    const stableRoot = root.querySelector<HTMLElement>('[data-a2ui-id="root"]')!
+    const detailsTab = root.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!
+    detailsTab.click()
+    detailsTab.focus()
+    await nextTick()
+    expect(detailsTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(detailsTab)
+
+    currentNode.value = {
+      ...node(a2ui, { overview: 'Revision two', details: 'Updated details' }),
+      revision: 2,
+      updated_at: '2026-07-12T10:00:01.000Z',
+    }
+    await nextTick()
+    await nextTick()
+
+    expect(root.querySelector('[data-a2ui-id="root"]')).toBe(stableRoot)
+    expect(root.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]).toBe(detailsTab)
+    expect(detailsTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(detailsTab)
+    expect(root.querySelector('.hr-a2ui__tab-panel')?.textContent).toContain('Updated details')
   })
 
   it('keeps invalid inputs editable, binds writable values, and disables failed actions', async () => {

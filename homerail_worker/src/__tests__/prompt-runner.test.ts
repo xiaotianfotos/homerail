@@ -8,7 +8,11 @@ import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { runPrompt } from "../prompt-runner.js";
 import type { PromptJob } from "../prompt-runner.js";
-import type { DagNodeConfig } from "homerail-protocol";
+import {
+  HOMERAIL_A2UI_CATALOG_ID,
+  HOMERAIL_A2UI_VERSION,
+  type DagNodeConfig,
+} from "homerail-protocol";
 import { registerAgentBackend } from "../agent/factory.js";
 import type { AgentClient, AgentEvent, AgentRunContext } from "../agent/types.js";
 
@@ -216,6 +220,132 @@ describe("prompt runner", () => {
     );
 
     expect(observedTools).toEqual(["handoff"]);
+  });
+
+  it("does not expose rich surface reporting when allowed_dag_tools is omitted", async () => {
+    let observedTools: string[] = [];
+    let observedContext: AgentRunContext | undefined;
+    const mockAgent: AgentClient = {
+      run(_prompt, tools, context) {
+        observedTools = tools.map((tool) => tool.name);
+        observedContext = context;
+        return (async function* () {
+          await tools.find((tool) => tool.name === "handoff")!.handler({ port: "done", content: "complete" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-surface-tool-default-deny", () => mockAgent);
+
+    await runPrompt(
+      {
+        task: "ordinary work",
+        sender: "test",
+        runId: "run-surface-default-deny",
+        dagConfig: makeConfigWith({
+          round_id: "round-1",
+          actor_id: "actor-coder",
+          generation: 1,
+          lease_generation: 1,
+          surface_id: "surface:actor-coder",
+        }),
+        systemPrompt: "Node instructions",
+      },
+      {
+        wsSend: () => {},
+        agentBackend: "test-surface-tool-default-deny",
+      },
+    );
+
+    expect(observedTools).not.toContain("report_surface_state");
+    expect(observedContext?.systemPrompt).toBe("Node instructions");
+  });
+
+  it("exposes and prompts rich surface reporting only when explicitly allowed", async () => {
+    let observedTools: string[] = [];
+    let observedContext: AgentRunContext | undefined;
+    let reportResult: Record<string, unknown> | undefined;
+    const mockAgent: AgentClient = {
+      run(_prompt, tools, context) {
+        observedTools = tools.map((tool) => tool.name);
+        observedContext = context;
+        return (async function* () {
+          const result = await tools.find((tool) => tool.name === "report_surface_state")!.handler({
+            patch_id: "patch-prompt-1",
+            patch_sequence: 1,
+            phase: "partial",
+            op: "replace_body",
+            body: {
+              a2ui: {
+                version: HOMERAIL_A2UI_VERSION,
+                catalogId: HOMERAIL_A2UI_CATALOG_ID,
+                components: [
+                  { id: "root", component: "HrMetric", label: "Checks", value: { path: "/actor_view/data/checks" } },
+                ],
+              },
+              data: { checks: 3 },
+              fallback: { title: "Checks", summary: "Three checks complete" },
+            },
+          });
+          reportResult = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+          await tools.find((tool) => tool.name === "handoff")!.handler({ port: "done", content: "complete" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-surface-tool-explicit-allow", () => mockAgent);
+    const sent: string[] = [];
+    const richConfig = makeConfigWith({
+      round_id: "round-rich",
+      actor_id: "actor-coder",
+      generation: 2,
+      lease_generation: 3,
+      surface_id: "surface:actor-coder",
+      allowed_dag_tools: ["handoff", "report_surface_state"],
+    } as unknown as Partial<DagNodeConfig>);
+
+    await runPrompt(
+      {
+        task: "report progress",
+        sender: "test",
+        runId: "run-surface-allowed",
+        dagConfig: richConfig,
+        systemPrompt: "Node instructions",
+      },
+      {
+        wsSend: (data) => sent.push(data),
+        agentBackend: "test-surface-tool-explicit-allow",
+      },
+    );
+
+    expect(observedTools).toEqual(["handoff", "report_surface_state"]);
+    expect(observedContext?.systemPrompt).toContain("Node instructions");
+    expect(observedContext?.systemPrompt).toContain("RICH SURFACE REPORTING CAPABILITY");
+    expect(observedContext?.systemPrompt).toContain("never mutates the Canvas directly");
+    expect(reportResult).toMatchObject({
+      status: "submitted",
+      surface_id: "surface:actor-coder",
+      manager_validation: "pending",
+      canvas_mutated: false,
+    });
+    const proposal = sent
+      .map((message) => JSON.parse(message))
+      .find((message) => message.type === "stream" && message.data?.event === "dag_actor_surface_patch");
+    expect(proposal?.data).toMatchObject({
+      event: "dag_actor_surface_patch",
+      surface_id: "surface:actor-coder",
+      patch: {
+        run_id: "run-surface-allowed",
+        node_id: "coder",
+        session_id: "run-surface-allowed",
+        round_id: "round-rich",
+        actor_id: "actor-coder",
+        generation: 2,
+        lease_generation: 3,
+        patch_id: "patch-prompt-1",
+        patch_sequence: 1,
+      },
+    });
   });
 
   it("fails closed when a backend cannot enforce the built-in tool allowlist", async () => {

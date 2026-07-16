@@ -5,7 +5,14 @@ import * as path from "node:path";
 import WebSocket from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DAG_TRANSPORT_FENCE_CAPABILITY } from "homerail-protocol";
+import {
+  DAG_ACTOR_SURFACE_PATCH_SCHEMA_VERSION,
+  DAG_TRANSPORT_FENCE_CAPABILITY,
+  HOMERAIL_A2UI_CATALOG_ID,
+  HOMERAIL_A2UI_VERSION,
+  type DagActorSurfacePatchV1,
+} from "homerail-protocol";
+import { getDagLiveSurfaceDocument } from "../src/generative-ui/dag-live-surface-projector.js";
 import type { DAGDispatcher, DispatchEnvelope, DispatchResult } from "../src/orchestration/dag-dispatcher.js";
 import { _clearAllDispatches, recordDispatch } from "../src/orchestration/dispatch-tracker.js";
 import { _clearDagMessageRouter } from "../src/orchestration/dag-message-router.js";
@@ -15,6 +22,10 @@ import { _clearNodes } from "../src/node/registry.js";
 import { setupNodeWebSocket } from "../src/node/websocket.js";
 import { listDagActorCommands } from "../src/persistence/dag-actors.js";
 import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
+import {
+  getDagActorSurfaceView,
+  listDagActorSurfacePatchQueue,
+} from "../src/persistence/dag-actor-surface-patches.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import { loadSessionTranscript } from "../src/persistence/dag-session-files.js";
 import { _clearAllPersistence, loadNodeUsages } from "../src/persistence/store.js";
@@ -571,4 +582,112 @@ describe("round-aware terminal websocket transport", () => {
       await closeServer(server);
     }
   });
+
+  it.each(["worker", "node"] as const)(
+    "routes only current fenced %s Actor surface patches without mirroring raw body data",
+    async (sourceType) => {
+      const runId = `run-${sourceType}-actor-surface-patch`;
+      const envelope = startRoundTwo(runId);
+      const sessionId = envelope.sessionId!;
+      const { server, ws, sourceId } = await openTransport(sourceType, runId, () => undefined);
+      recordDispatch(runId, "actor", sourceType, sourceId);
+      const lease = acquireDagActorLease({
+        run_id: runId,
+        actor_id: "researcher",
+        target_type: sourceType,
+        target_id: sourceId,
+      });
+      const auditEvents: unknown[] = [];
+      subscribe("dag:stale_lease_ignored", (payload) => auditEvents.push(payload));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const chatsBefore = getDb().prepare("SELECT COUNT(*) AS count FROM dag_chats WHERE run_id = ?")
+        .get(runId) as { count: number };
+      const patch: DagActorSurfacePatchV1 = {
+        schema_version: DAG_ACTOR_SURFACE_PATCH_SCHEMA_VERSION,
+        run_id: runId,
+        node_id: "actor",
+        session_id: sessionId,
+        round_id: "round-0002",
+        actor_id: "researcher",
+        generation: 1,
+        lease_generation: lease.lease_generation,
+        patch_id: "update-1",
+        patch_sequence: 1,
+        timestamp: Date.now(),
+        op: "replace_body",
+        phase: "verified",
+        body: {
+          a2ui: {
+            version: HOMERAIL_A2UI_VERSION,
+            catalogId: HOMERAIL_A2UI_CATALOG_ID,
+            components: [
+              { id: "root", component: "Column", children: ["summary"] },
+              { id: "summary", component: "Text", text: { path: "/actor_view/data/summary" } },
+            ],
+          },
+          data: { summary: "Current rich result", api_key: "sk-websocket-secret" },
+          fallback: { title: "Research result", summary: "Current rich result" },
+        },
+      };
+      const stream = (value: DagActorSurfacePatchV1, overrides: Record<string, unknown> = {}) => ({
+        type: "stream",
+        data: {
+          event: "dag_actor_surface_patch",
+          surface_id: "surface-research",
+          run_id: runId,
+          node_id: "actor",
+          session_id: sessionId,
+          round_id: "round-0002",
+          actor_id: "researcher",
+          generation: value.generation,
+          lease_generation: value.lease_generation,
+          command_id: `${runId}-command-2`,
+          patch: value,
+          ...overrides,
+        },
+      });
+
+      try {
+        const future = { ...patch, patch_id: "future", generation: 2 };
+        ws.send(JSON.stringify(stream(future)));
+        ws.send(JSON.stringify(stream(patch)));
+        ws.send(JSON.stringify(stream({
+          ...patch,
+          patch_id: "sibling-update",
+          patch_sequence: 2,
+          actor_id: "sibling",
+        })));
+        await delay(80);
+
+        expect(auditEvents).toContainEqual(expect.objectContaining({
+          messageType: "dag_actor_surface_patch",
+          disposition: "invalid",
+          reason: expect.stringContaining("DAG_TRANSPORT_GENERATION_CONFLICT"),
+        }));
+        expect(listDagActorSurfacePatchQueue({ run_id: runId, actor_id: "researcher" }))
+          .toMatchObject([{ patch_id: "update-1", status: "applied", body_revision: 1 }]);
+        expect(getDagActorSurfaceView(runId, "researcher")).toMatchObject({
+          body_revision: 1,
+          body: { data: { summary: "Current rich result", api_key: "***REDACTED***" } },
+        });
+        const node = getDagLiveSurfaceDocument(runId)?.nodes.find((candidate) => candidate.id === "surface-research");
+        expect((node?.content as Record<string, any>).actor_view.data).toMatchObject({
+          summary: "Current rich result",
+          api_key: "***REDACTED***",
+        });
+        expect(getDb().prepare("SELECT COUNT(*) AS count FROM dag_chats WHERE run_id = ?").get(runId))
+          .toEqual(chatsBefore);
+        expect(listDagActivityEvents({ run_id: runId }).events).toEqual([]);
+        expect(JSON.stringify(loadSessionTranscript(sessionId))).not.toContain("sk-websocket-secret");
+        expect(JSON.stringify(warn.mock.calls)).not.toContain("sk-websocket-secret");
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(
+          "Actor surface patch identity does not match the transport stream context",
+        ));
+      } finally {
+        warn.mockRestore();
+        ws.terminate();
+        await closeServer(server);
+      }
+    },
+  );
 });

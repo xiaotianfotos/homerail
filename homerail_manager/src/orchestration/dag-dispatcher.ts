@@ -45,6 +45,7 @@ export interface DispatchEnvelope {
     commandId?: string;
     surfaceId?: string;
     sequenceStart: number;
+    surfacePatchSequenceStart: number;
   };
 }
 

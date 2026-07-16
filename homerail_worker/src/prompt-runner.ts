@@ -22,6 +22,10 @@ import { appendTranscriptEntry, redactAgentContext, saveSession } from "./sessio
 import { redactTelemetry } from "./telemetry-redaction.js";
 import { snapshotWorkspace, verifyWorkspacePolicy, type WorkspaceSnapshot } from "./workspace-policy.js";
 import { completedActivityPayloadForHandoff, createDagActivityEmitter } from "./dag-activity.js";
+import {
+  REPORT_SURFACE_STATE_PROMPT,
+  REPORT_SURFACE_STATE_TOOL_NAME,
+} from "./dag-tools/report-surface-state.js";
 
 export interface PromptJob {
   task: string;
@@ -224,19 +228,32 @@ export async function runPrompt(
   const activityEmitter = createDagActivityEmitter(job.dagConfig, job.runId, (activity) => {
     sendStream({ event: "dag_activity", activity });
   });
-  const allDagTools = createDagTools(dagState, {
-    advisorRunner: (advisor, question) => runAdvisorCall(advisor, question, workspace, deps.abortSignal),
-    activityEmitter: (type, payload) => activityEmitter.emit(type, payload),
-  });
   const allowedDagTools = job.dagConfig.allowed_dag_tools === undefined
     ? undefined
     : new Set<string>(job.dagConfig.allowed_dag_tools);
+  const surfacePatchAllowed = allowedDagTools?.has(REPORT_SURFACE_STATE_TOOL_NAME) === true;
+  const allDagTools = createDagTools(dagState, {
+    advisorRunner: (advisor, question) => runAdvisorCall(advisor, question, workspace, deps.abortSignal),
+    activityEmitter: (type, payload) => activityEmitter.emit(type, payload),
+    ...(surfacePatchAllowed
+      ? {
+          surfacePatchEmitter: ({ surface_id, patch }) => sendStream({
+            event: "dag_actor_surface_patch",
+            surface_id,
+            patch,
+          }),
+        }
+      : {}),
+  });
   const selectedDagTools = allowedDagTools === undefined
     ? allDagTools
     : allDagTools.filter((tool) => allowedDagTools.has(tool.name));
   const dagTools = correctionOnly
     ? allDagTools.filter((tool) => tool.name === "handoff")
     : selectedDagTools;
+  const ordinarySystemPrompt = surfacePatchAllowed
+    ? [job.systemPrompt?.trim(), REPORT_SURFACE_STATE_PROMPT].filter(Boolean).join("\n\n")
+    : job.systemPrompt;
   const effectiveSystemPrompt = correctionOnly
     ? [
         "DAG CONTRACT CORRECTION MODE.",
@@ -248,7 +265,7 @@ export async function runPrompt(
         "The original node instructions follow only for output schema and evidence context:",
         job.systemPrompt ?? "",
       ].join("\n")
-    : job.systemPrompt;
+    : ordinarySystemPrompt;
   const unregisterInboxHandler = deps.registerInboxHandler?.((content) => {
     deliverInbox(dagState, content);
   });
@@ -429,7 +446,7 @@ export async function runPrompt(
             tool_id: event.id,
             tool_input: redactTelemetry(event.input),
           });
-          if (event.name !== "report_activity") {
+          if (event.name !== "report_activity" && event.name !== REPORT_SURFACE_STATE_TOOL_NAME) {
             activityEmitter.emit("tool_used", {
               phase: "started",
               tool_name: event.name,
@@ -458,7 +475,8 @@ export async function runPrompt(
             is_error: event.is_error,
             result_preview: redactTelemetry(event.content),
           });
-          if (toolNamesById.get(event.tool_use_id) !== "report_activity") {
+          if (toolNamesById.get(event.tool_use_id) !== "report_activity"
+            && toolNamesById.get(event.tool_use_id) !== REPORT_SURFACE_STATE_TOOL_NAME) {
             activityEmitter.emit("tool_used", {
               phase: "completed",
               tool_name: toolNamesById.get(event.tool_use_id) ?? "unknown",

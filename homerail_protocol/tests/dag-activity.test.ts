@@ -66,8 +66,9 @@ describe("Worker Activity Event V1", () => {
     expect(validateDagActivityEventV1(activity({ lease_generation: 0 }))).toMatchObject({ valid: false });
   });
 
-  it("exposes report_activity as a DAG agent tool", () => {
+  it("exposes activity and surface reporting as DAG agent tools", () => {
     expect(DAG_AGENT_TOOL_NAMES).toContain("report_activity");
+    expect(DAG_AGENT_TOOL_NAMES).toContain("report_surface_state");
   });
 
   it.each([
@@ -123,11 +124,13 @@ describe("DAG activity routing metadata", () => {
     command_id: "command-02",
     surface_id: "surface-news",
     activity_sequence_start: 41,
+    surface_patch_sequence_start: 7,
   };
 
   it("accepts optional routing metadata in DAG node config", () => {
     expect(validateMessage(config, "dag-node-config").valid).toBe(true);
     expect(validateMessage({ ...config, activity_sequence_start: 0 }, "dag-node-config").valid).toBe(true);
+    expect(validateMessage({ ...config, surface_patch_sequence_start: 0 }, "dag-node-config").valid).toBe(true);
   });
 
   it.each([
@@ -140,6 +143,9 @@ describe("DAG activity routing metadata", () => {
     ["activity_sequence_start", -1],
     ["activity_sequence_start", 1.5],
     ["activity_sequence_start", Number.MAX_SAFE_INTEGER + 1],
+    ["surface_patch_sequence_start", -1],
+    ["surface_patch_sequence_start", 1.5],
+    ["surface_patch_sequence_start", Number.MAX_SAFE_INTEGER + 1],
   ])("rejects invalid %s metadata", (key, value) => {
     expect(validateMessage({ ...config, [key]: value }, "dag-node-config").valid).toBe(false);
   });

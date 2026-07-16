@@ -65,7 +65,7 @@ const rootScope = computed(() => ({ value: dataModel.value, key: 'root' }))
     :data-expanded="expanded ? 'true' : 'false'"
   >
     <A2uiNode
-      :key="`${node.id}:${node.revision}`"
+      :key="node.id"
       component-id="root"
       :runtime="runtime"
       :scope="rootScope"

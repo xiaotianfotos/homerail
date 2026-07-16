@@ -15,6 +15,12 @@ import {
 import { listDagActorCommands, listDagActors } from "../persistence/dag-actors.js";
 import { listDagActorLiveCommands } from "../persistence/dag-actor-live-commands.js";
 import {
+  listDagActorSurfacePatchMilestones,
+  listDagActorSurfaceViews,
+  type DagActorSurfacePatchApplyKind,
+  type DagActorSurfacePatchQueueStatus,
+} from "../persistence/dag-actor-surface-patches.js";
+import {
   listDagActorInterventions,
   type DagActorInterventionOperation,
   type DagActorInterventionStatus,
@@ -26,6 +32,8 @@ import { getDagActorControlState, type DagActorControlStateName } from "./dag-ac
 
 const SUPERVISOR_CURSOR_NAMESPACE = "manager_supervisor_cursor_v2";
 const SUPERVISOR_CURSOR_SCHEMA_VERSION = 2;
+const SUPERVISOR_SURFACE_CURSOR_NAMESPACE = "manager_supervisor_surface_cursor_v1";
+const SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION = 1;
 const MAX_SUPERVISOR_ACTORS = 64;
 const MAX_MILESTONES = 12;
 const MAX_PENDING_TOOLS_PER_ACTOR = 8;
@@ -51,6 +59,12 @@ export interface DagSupervisorActorSummary {
   };
   commands: Record<string, number>;
   live_commands: Record<string, number>;
+  surface_patch?: {
+    body_revision: number;
+    visual_revision: number;
+    phase?: string;
+    last_patch_id?: string;
+  };
   latest_intervention?: DagSupervisorInterventionSummary;
 }
 
@@ -80,6 +94,21 @@ export interface DagSupervisorMilestone {
   type: "finding" | "blocked" | "completed" | "failed";
   summary: string;
   tools_used: string[];
+  timestamp: number;
+}
+
+export interface DagSupervisorSurfacePatchMilestone {
+  milestone_id: string;
+  journal_seq: number;
+  patch_id: string;
+  actor_id: string;
+  role: string;
+  phase: string;
+  status: DagActorSurfacePatchQueueStatus;
+  apply_kind?: DagActorSurfacePatchApplyKind;
+  body_revision: number;
+  visual_revision: number;
+  summary: string;
   timestamp: number;
 }
 
@@ -134,6 +163,7 @@ export interface DagSupervisionSnapshot {
     suppressed_progress_events: number;
     milestones: DagSupervisorMilestone[];
     intervention_milestones: DagSupervisorInterventionMilestone[];
+    surface_patch_milestones: DagSupervisorSurfacePatchMilestone[];
     commentary: string[];
   };
 }
@@ -145,6 +175,13 @@ interface SupervisorCursorV2 {
   next_after_seq: number;
   pending_tools: Record<string, string[]>;
   seen_intervention_ids: string[];
+}
+
+interface SupervisorSurfaceCursorV1 {
+  schema_version: 1;
+  run_id: string;
+  consumer_digest: string;
+  actor_cursors: Record<string, number>;
 }
 
 function assertIdentifier(value: string, label: string, maxLength = 256): string {
@@ -262,6 +299,39 @@ function decodeCursor(value: unknown, runId: string, consumerDigest: string): Su
   };
 }
 
+function decodeSurfaceCursor(value: unknown, runId: string, consumerDigest: string): SupervisorSurfaceCursorV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      schema_version: SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION,
+      run_id: runId,
+      consumer_digest: consumerDigest,
+      actor_cursors: {},
+    };
+  }
+  const candidate = value as Partial<SupervisorSurfaceCursorV1>;
+  if (candidate.schema_version !== SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION
+    || candidate.run_id !== runId
+    || candidate.consumer_digest !== consumerDigest
+    || !candidate.actor_cursors
+    || typeof candidate.actor_cursors !== "object"
+    || Array.isArray(candidate.actor_cursors)) {
+    throw new Error("Manager Supervisor surface cursor identity is invalid");
+  }
+  const actorCursors: Record<string, number> = {};
+  for (const [actorId, cursor] of Object.entries(candidate.actor_cursors).slice(0, MAX_SUPERVISOR_ACTORS)) {
+    if (!Number.isSafeInteger(cursor) || Number(cursor) < 0) {
+      throw new Error("Manager Supervisor surface cursor revision is invalid");
+    }
+    actorCursors[actorId] = Number(cursor);
+  }
+  return {
+    schema_version: SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION,
+    run_id: runId,
+    consumer_digest: consumerDigest,
+    actor_cursors: actorCursors,
+  };
+}
+
 function milestoneFromEntry(
   entry: DagActivityJournalEntry,
   role: string,
@@ -333,9 +403,11 @@ function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
 } {
   const allActors = listDagActors(runId);
   const projections = new Map(listDagLiveSurfaceProjections(runId).map((projection) => [projection.actor_id, projection]));
+  const surfaceViews = new Map(listDagActorSurfaceViews(runId).map((view) => [view.actor_id, view]));
   const actors = allActors.slice(0, MAX_SUPERVISOR_ACTORS).map((actor): DagSupervisorActorSummary => {
     const controlState = getDagActorControlState(runId, actor.actor_id);
     const projection = projections.get(actor.actor_id);
+    const surfaceView = surfaceViews.get(actor.actor_id);
     const lease = getDagActorLease({ run_id: runId, actor_id: actor.actor_id });
     const commandCounts: Record<string, number> = {};
     for (const command of listDagActorCommands({ run_id: runId, actor_id: actor.actor_id, limit: 500 })) {
@@ -370,6 +442,16 @@ function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
         : {}),
       commands: commandCounts,
       live_commands: liveCommandCounts,
+      ...(surfaceView
+        ? {
+          surface_patch: {
+            body_revision: surfaceView.body_revision,
+            visual_revision: surfaceView.visual_revision,
+            ...(surfaceView.phase === undefined ? {} : { phase: surfaceView.phase }),
+            ...(surfaceView.last_patch_id === undefined ? {} : { last_patch_id: surfaceView.last_patch_id }),
+          },
+        }
+        : {}),
       ...(latestIntervention
         ? {
           latest_intervention: {
@@ -454,6 +536,112 @@ function buildRoundSummary(runId: string, round: DagRunRoundRecord | undefined):
         return Boolean(result && TERMINAL_ACTIVITY_TYPES.has(result.outcome));
       }),
   };
+}
+
+function surfacePatchSummary(input: {
+  status: DagActorSurfacePatchQueueStatus;
+  apply_kind?: DagActorSurfacePatchApplyKind;
+  phase: string;
+}): string {
+  if (input.status === "rejected") return "Rich surface proposal was rejected";
+  if (input.apply_kind === "clear_body") return "Rich surface body was cleared";
+  if (input.apply_kind === "patch_components") return "Rich surface structure was updated";
+  switch (input.phase) {
+    case "verified": return "Rich surface reached a verified milestone";
+    case "refined": return "Rich surface reached a refined milestone";
+    case "final": return "Rich surface reached its final milestone";
+    default: return "Rich surface was updated";
+  }
+}
+
+function surfacePatchCommentary(milestones: DagSupervisorSurfacePatchMilestone[]): string[] {
+  if (milestones.length === 0) return [];
+  const text = milestones.slice(0, 3)
+    .map((milestone) => `${milestone.role || milestone.actor_id}：${milestone.summary}`)
+    .join("；");
+  const overflow = milestones.length > 3 ? `；另有 ${milestones.length - 3} 项界面里程碑` : "";
+  const commentary = `${text}${overflow}`;
+  return [commentary.length <= MAX_COMMENTARY_LENGTH
+    ? commentary
+    : `${commentary.slice(0, MAX_COMMENTARY_LENGTH - 1)}…`];
+}
+
+function consumeSurfacePatchMilestones(input: {
+  run_id: string;
+  consumer_id: string;
+  max_milestones?: number;
+}): { milestones: DagSupervisorSurfacePatchMilestone[]; commentary: string[]; has_more: boolean } {
+  const runId = input.run_id;
+  const consumer = assertIdentifier(input.consumer_id, "consumer_id", 512);
+  const maxMilestones = assertMaxMilestones(input.max_milestones);
+  const identity = cursorKey(runId, consumer);
+  const state = getDagState(SUPERVISOR_SURFACE_CURSOR_NAMESPACE, identity.key);
+  const cursor = decodeSurfaceCursor(state?.value, runId, identity.digest);
+  const actorCursors = structuredClone(cursor.actor_cursors);
+  const actors = listDagActors(runId).slice(0, MAX_SUPERVISOR_ACTORS);
+  const milestones: DagSupervisorSurfacePatchMilestone[] = [];
+  let hasMore = false;
+
+  actorLoop: for (const [actorIndex, actor] of actors.entries()) {
+    const page = listDagActorSurfacePatchMilestones({
+      run_id: runId,
+      actor_id: actor.actor_id,
+      after_journal_seq: actorCursors[actor.actor_id] ?? 0,
+      limit: 500,
+    });
+    for (const [index, patch] of page.entries()) {
+      if (patch.status === "pending") break;
+      actorCursors[actor.actor_id] = patch.journal_seq;
+      const meaningful = patch.generation === actor.generation
+        && patch.status !== "stale"
+        && patch.status !== "coalesced"
+        && (patch.status === "rejected"
+          || patch.apply_kind === "patch_components"
+          || patch.apply_kind === "clear_body"
+          || patch.phase === "verified"
+          || patch.phase === "refined"
+          || patch.phase === "final");
+      if (!meaningful || patch.body_revision === undefined || patch.visual_revision === undefined) continue;
+      milestones.push({
+        milestone_id: createHash("sha256")
+          .update(`surface-patch\0${patch.journal_seq}\0${patch.patch_id}\0${patch.actor_id}`)
+          .digest("hex"),
+        journal_seq: patch.journal_seq,
+        patch_id: patch.patch_id,
+        actor_id: patch.actor_id,
+        role: actor.role,
+        phase: patch.phase,
+        status: patch.status,
+        ...(patch.apply_kind === undefined ? {} : { apply_kind: patch.apply_kind }),
+        body_revision: patch.body_revision,
+        visual_revision: patch.visual_revision,
+        summary: surfacePatchSummary(patch),
+        timestamp: patch.applied_at ?? patch.queued_at,
+      });
+      if (milestones.length >= maxMilestones) {
+        hasMore = index < page.length - 1 || page.length === 500 || actorIndex < actors.length - 1;
+        break actorLoop;
+      }
+    }
+    if (page.length === 500) hasMore = true;
+  }
+
+  if (JSON.stringify(actorCursors) !== JSON.stringify(cursor.actor_cursors)) {
+    const updated = updateDagState({
+      namespace: SUPERVISOR_SURFACE_CURSOR_NAMESPACE,
+      key: identity.key,
+      expectedVersion: state?.version ?? 0,
+      runId,
+      value: {
+        schema_version: SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION,
+        run_id: runId,
+        consumer_digest: identity.digest,
+        actor_cursors: actorCursors,
+      } satisfies SupervisorSurfaceCursorV1,
+    });
+    if (!updated.updated) throw new Error("Manager Supervisor surface cursor changed concurrently; retry status query");
+  }
+  return { milestones, commentary: surfacePatchCommentary(milestones), has_more: hasMore };
 }
 
 function consumeMilestones(input: {
@@ -555,15 +743,24 @@ function consumeMilestones(input: {
     if (!updated.updated) throw new Error("Manager Supervisor cursor changed concurrently; retry status query");
   }
 
+  const surfacePatchDigest = consumeSurfacePatchMilestones(input);
   return {
     consumer_digest: identity.digest,
     after_seq: cursor.next_after_seq,
     next_after_seq: nextAfterSeq,
-    has_more: stoppedEarly || (nextAfterSeq >= page.next_after_seq && page.has_more) || interventionsHaveMore,
+    has_more: stoppedEarly
+      || (nextAfterSeq >= page.next_after_seq && page.has_more)
+      || interventionsHaveMore
+      || surfacePatchDigest.has_more,
     suppressed_progress_events: suppressedProgressEvents,
     milestones,
     intervention_milestones: interventionMilestones,
-    commentary: [...commentaryFor(milestones), ...interventionCommentary(interventionMilestones)],
+    surface_patch_milestones: surfacePatchDigest.milestones,
+    commentary: [
+      ...commentaryFor(milestones),
+      ...interventionCommentary(interventionMilestones),
+      ...surfacePatchDigest.commentary,
+    ],
   };
 }
 

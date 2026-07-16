@@ -417,8 +417,16 @@ async function runDesktop(browser, evidence) {
   assert(initialMetrics.documentOverflowY === 0, 'Desktop page has vertical overflow')
   assert(new Set(initialMetrics.blockWidths).size <= 2, 'Desktop Worker widths are inconsistent')
 
-  controller.setMode('focus')
   const research = page.locator('[data-generative-ui-node="surface:research"]')
+  await research.focus()
+  await page.evaluate(() => {
+    const host = document.querySelector('[data-generative-ui-node="surface:research"]')
+    window.__stableResearchBlock = host
+    window.__stableResearchA2uiRoot = host?.querySelector('[data-a2ui-id="root"]')
+    window.__researchFocusLosses = 0
+    host?.addEventListener('focusout', () => { window.__researchFocusLosses += 1 })
+  })
+  controller.setMode('focus')
   await page.waitForFunction(() => (
     document.querySelector('[data-generative-ui-node="surface:research"]')
       ?.getAttribute('data-lifecycle-motion') === 'update'
@@ -428,6 +436,18 @@ async function runDesktop(browser, evidence) {
       ?.getAttribute('data-attention') === 'true'
   ))
   assert(await research.getAttribute('aria-selected') === 'true', 'Manager focus did not restore selection')
+  const stableFocusRevision = await page.evaluate(() => ({
+    sameBlock: window.__stableResearchBlock
+      === document.querySelector('[data-generative-ui-node="surface:research"]'),
+    sameA2uiRoot: window.__stableResearchA2uiRoot
+      === document.querySelector('[data-generative-ui-node="surface:research"] [data-a2ui-id="root"]'),
+    activeNode: document.activeElement?.getAttribute('data-generative-ui-node'),
+    focusLosses: window.__researchFocusLosses,
+  }))
+  assert(stableFocusRevision.sameBlock, 'Research Block remounted during a focus revision')
+  assert(stableFocusRevision.sameA2uiRoot, 'Research A2UI root remounted during a focus revision')
+  assert(stableFocusRevision.activeNode === 'surface:research', 'Research focus was not retained after revision')
+  assert(stableFocusRevision.focusLosses === 0, 'Research focus flickered during revision')
   const focusStates = await page.locator('[data-generative-ui-node]').evaluateAll(blocks => (
     blocks.map(block => ({
       id: block.getAttribute('data-generative-ui-node'),
@@ -453,6 +473,18 @@ async function runDesktop(browser, evidence) {
     document.querySelector('[data-generative-ui-node="surface:build"]')
       ?.getAttribute('data-lifecycle-motion') === 'complete'
   ))
+  const stableCompleteRevision = await page.evaluate(() => ({
+    sameBlock: window.__stableResearchBlock
+      === document.querySelector('[data-generative-ui-node="surface:research"]'),
+    sameA2uiRoot: window.__stableResearchA2uiRoot
+      === document.querySelector('[data-generative-ui-node="surface:research"] [data-a2ui-id="root"]'),
+    activeNode: document.activeElement?.getAttribute('data-generative-ui-node'),
+    focusLosses: window.__researchFocusLosses,
+  }))
+  assert(stableCompleteRevision.sameBlock, 'Research Block remounted during a completed peer revision')
+  assert(stableCompleteRevision.sameA2uiRoot, 'Research A2UI root remounted across consecutive revisions')
+  assert(stableCompleteRevision.activeNode === 'surface:research', 'Research focus was lost across consecutive revisions')
+  assert(stableCompleteRevision.focusLosses === 0, 'Research focus flickered across consecutive revisions')
   await screenshot(page, 'desktop-complete.png')
 
   controller.setMode('intervention')
@@ -528,6 +560,8 @@ async function runDesktop(browser, evidence) {
     initial: initialMetrics,
     afterRemoval: await layoutMetrics(page),
     focusStates,
+    stableFocusRevision,
+    stableCompleteRevision,
     postRemoveStates,
     transitionClasses,
     pageErrors,

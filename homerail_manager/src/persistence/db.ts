@@ -34,6 +34,10 @@ const CLEARABLE_TABLES = new Set([
   "dag_chats",
   "dag_handoffs",
   "dag_artifacts",
+  "dag_actor_surface_snapshots",
+  "dag_actor_surface_views",
+  "dag_actor_surface_patch_queue",
+  "dag_actor_surface_patch_journal",
   "dag_actor_dispatch_exclusions",
   "dag_surface_generation_snapshots",
   "dag_actor_interventions",
@@ -1674,6 +1678,166 @@ function validateDagRunSkillContextSchemaV29(db: SqliteDatabase): void {
   ).get() as { sql?: string } | undefined)?.sql ?? "");
   if (!triggerSql.includes("dag run skill contexts are append-only")) {
     throw new Error("Schema migration 29 is incomplete: skill context append-only trigger is missing or invalid");
+  }
+}
+
+function validateDagActorSurfacePatchSchemaV30(db: SqliteDatabase): void {
+  const requiredColumns: Record<string, readonly string[]> = {
+    dag_actor_surface_patch_journal: [
+      "journal_seq", "patch_id", "schema_version", "run_id", "actor_id", "node_id",
+      "surface_id", "session_id", "round_id", "generation", "lease_generation",
+      "patch_sequence", "patch_timestamp", "received_at", "operation", "phase",
+      "patch_digest", "patch_json",
+    ],
+    dag_actor_surface_patch_queue: [
+      "journal_seq", "patch_id", "run_id", "actor_id", "node_id", "surface_id",
+      "generation", "patch_sequence", "status", "apply_kind", "body_revision",
+      "visual_revision", "transaction_id", "queued_at", "applied_at", "failure_json",
+    ],
+    dag_actor_surface_views: [
+      "run_id", "actor_id", "node_id", "surface_id", "document_id", "generation",
+      "session_id", "round_id", "lease_generation", "body_revision", "visual_revision",
+      "has_body", "last_patch_id", "phase", "a2ui_json", "data_json", "fallback_json",
+      "presentation_hint_json", "component_digest", "body_digest", "last_transaction_id",
+      "last_applied_at", "last_focus_at", "created_at", "updated_at",
+    ],
+    dag_actor_surface_snapshots: [
+      "run_id", "actor_id", "generation", "node_id", "surface_id", "document_id",
+      "body_revision", "visual_revision", "has_body", "last_patch_id", "phase",
+      "body_digest", "body_json", "superseded_by_generation", "created_at",
+    ],
+  };
+  for (const [table, names] of Object.entries(requiredColumns)) {
+    if (!hasTable(db, table)) throw new Error(`Schema migration 30 is incomplete: missing table ${table}`);
+    const actual = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+      .map((entry) => entry.name));
+    const missing = names.filter((name) => !actual.has(name));
+    if (missing.length > 0) {
+      throw new Error(`Schema migration 30 is incomplete: ${table} is missing ${missing.join(", ")}`);
+    }
+  }
+
+  const requireIndex = (
+    table: string,
+    name: string,
+    expectedColumns: readonly string[],
+    unique: number,
+    partial: number,
+  ): void => {
+    const index = (db.prepare(`PRAGMA index_list(${table})`).all() as Array<{
+      name: string;
+      unique: number;
+      partial: number;
+    }>).find((entry) => entry.name === name);
+    if (!index || index.unique !== unique || index.partial !== partial) {
+      throw new Error(`Schema migration 30 is incomplete: index ${name} is missing or invalid`);
+    }
+    const columns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{ seqno: number; name: string }>)
+      .sort((left, right) => left.seqno - right.seqno)
+      .map((entry) => entry.name);
+    if (columns.length !== expectedColumns.length
+      || columns.some((column, position) => column !== expectedColumns[position])) {
+      throw new Error(`Schema migration 30 is incomplete: index ${name} has invalid columns`);
+    }
+  };
+  requireIndex(
+    "dag_actor_surface_patch_journal",
+    "idx_dag_actor_surface_patch_journal_actor_patch_id",
+    ["run_id", "actor_id", "generation", "patch_id"],
+    1,
+    0,
+  );
+  requireIndex(
+    "dag_actor_surface_patch_journal",
+    "idx_dag_actor_surface_patch_journal_actor_sequence",
+    ["run_id", "actor_id", "generation", "patch_sequence"],
+    1,
+    0,
+  );
+  requireIndex(
+    "dag_actor_surface_patch_queue",
+    "idx_dag_actor_surface_patch_queue_actor_patch_id",
+    ["run_id", "actor_id", "generation", "patch_id"],
+    1,
+    0,
+  );
+  requireIndex(
+    "dag_actor_surface_patch_queue",
+    "idx_dag_actor_surface_patch_queue_actor_status",
+    ["run_id", "actor_id", "status", "generation", "patch_sequence"],
+    0,
+    0,
+  );
+  requireIndex(
+    "dag_actor_surface_patch_queue",
+    "idx_dag_actor_surface_patch_queue_transaction",
+    ["transaction_id"],
+    1,
+    1,
+  );
+  requireIndex(
+    "dag_actor_surface_snapshots",
+    "idx_dag_actor_surface_snapshots_actor_created",
+    ["run_id", "actor_id", "created_at", "generation"],
+    0,
+    0,
+  );
+
+  for (const table of ["dag_actor_surface_patch_journal", "dag_actor_surface_patch_queue"]) {
+    const globalPatchIdIndex = (db.prepare(`PRAGMA index_list(${table})`).all() as Array<{
+      name: string;
+      unique: number;
+    }>).find((entry) => {
+      if (entry.unique !== 1) return false;
+      const columns = (db.prepare(`PRAGMA index_info(${entry.name})`).all() as Array<{ name: string }>)
+        .map((column) => column.name);
+      return columns.length === 1 && columns[0] === "patch_id";
+    });
+    if (globalPatchIdIndex) {
+      throw new Error(`Schema migration 30 is invalid: ${table}.patch_id must not be globally unique`);
+    }
+  }
+
+  for (const [name, fragment] of [
+    ["trg_dag_actor_surface_patch_journal_no_update", "patch journal is append-only"],
+    ["trg_dag_actor_surface_patch_queue_journal_identity", "patch queue journal identity mismatch"],
+    ["trg_dag_actor_surface_patch_queue_identity_immutable", "patch queue identity is immutable"],
+    ["trg_dag_actor_surface_views_identity_immutable", "surface view identity is immutable"],
+    ["trg_dag_actor_surface_snapshots_no_update", "surface snapshots are append-only"],
+  ] as const) {
+    const sql = normalizedSchemaSql((db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+    ).get(name) as { sql?: string } | undefined)?.sql ?? "");
+    if (!sql.includes(fragment)) {
+      throw new Error(`Schema migration 30 is incomplete: trigger ${name} is missing or invalid`);
+    }
+  }
+  const viewSql = normalizedSchemaSql((db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'dag_actor_surface_views'",
+  ).get() as { sql?: string } | undefined)?.sql ?? "");
+  if (!viewSql.includes(
+    "(last_patch_id is null and phase is null and last_applied_at is null) or (last_patch_id is not null and phase is not null and last_applied_at is not null)",
+  )) {
+    throw new Error("Schema migration 30 is incomplete: rejected-only surface view state is invalid");
+  }
+  const journalForeignKeys = new Set(
+    (db.prepare("PRAGMA foreign_key_list(dag_actor_surface_patch_journal)").all() as Array<{ table: string }>)
+      .map((entry) => entry.table),
+  );
+  const queueForeignKeys = new Set(
+    (db.prepare("PRAGMA foreign_key_list(dag_actor_surface_patch_queue)").all() as Array<{ table: string }>)
+      .map((entry) => entry.table),
+  );
+  const viewForeignKeys = new Set(
+    (db.prepare("PRAGMA foreign_key_list(dag_actor_surface_views)").all() as Array<{ table: string }>)
+      .map((entry) => entry.table),
+  );
+  if (!journalForeignKeys.has("dag_actors")
+    || !queueForeignKeys.has("dag_actors")
+    || !queueForeignKeys.has("dag_actor_surface_patch_journal")
+    || !viewForeignKeys.has("dag_actors")
+    || !viewForeignKeys.has("generative_ui_documents")) {
+    throw new Error("Schema migration 30 is incomplete: Actor surface ownership constraints are invalid");
   }
 }
 
@@ -3512,6 +3676,232 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       END;
     `),
     validate: validateDagRunSkillContextSchemaV29,
+  },
+  {
+    version: 30,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_actor_surface_patch_journal (
+        journal_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        patch_id TEXT NOT NULL CHECK(length(patch_id) BETWEEN 1 AND 256),
+        schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+        run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 256),
+        actor_id TEXT NOT NULL CHECK(length(actor_id) BETWEEN 1 AND 256),
+        node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 256),
+        surface_id TEXT NOT NULL CHECK(length(surface_id) BETWEEN 1 AND 512),
+        session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 256),
+        round_id TEXT NOT NULL CHECK(length(round_id) BETWEEN 1 AND 256),
+        generation INTEGER NOT NULL CHECK(generation >= 1),
+        lease_generation INTEGER NOT NULL CHECK(lease_generation >= 1),
+        patch_sequence INTEGER NOT NULL CHECK(patch_sequence >= 1),
+        patch_timestamp INTEGER NOT NULL CHECK(patch_timestamp >= 0),
+        received_at INTEGER NOT NULL CHECK(received_at >= 0),
+        operation TEXT NOT NULL CHECK(operation IN ('replace_body', 'clear_body')),
+        phase TEXT NOT NULL CHECK(phase IN ('started', 'partial', 'verified', 'refined', 'final')),
+        patch_digest TEXT NOT NULL CHECK(
+          length(patch_digest) = 64 AND patch_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        patch_json TEXT NOT NULL CHECK(length(patch_json) BETWEEN 2 AND 65536),
+        FOREIGN KEY(run_id, actor_id, node_id, surface_id)
+          REFERENCES dag_actors(run_id, actor_id, node_id, surface_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_surface_patch_journal_actor_patch_id
+        ON dag_actor_surface_patch_journal(run_id, actor_id, generation, patch_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_surface_patch_journal_actor_sequence
+        ON dag_actor_surface_patch_journal(run_id, actor_id, generation, patch_sequence);
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_surface_patch_journal_run_seq
+        ON dag_actor_surface_patch_journal(run_id, journal_seq);
+      CREATE TRIGGER IF NOT EXISTS trg_dag_actor_surface_patch_journal_no_update
+      BEFORE UPDATE ON dag_actor_surface_patch_journal
+      BEGIN
+        SELECT RAISE(ABORT, 'DAG Actor surface patch journal is append-only');
+      END;
+
+      CREATE TABLE IF NOT EXISTS dag_actor_surface_patch_queue (
+        journal_seq INTEGER PRIMARY KEY,
+        patch_id TEXT NOT NULL CHECK(length(patch_id) BETWEEN 1 AND 256),
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        surface_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK(generation >= 1),
+        patch_sequence INTEGER NOT NULL CHECK(patch_sequence >= 1),
+        status TEXT NOT NULL CHECK(status IN (
+          'pending', 'applied', 'noop', 'coalesced', 'stale', 'rejected'
+        )),
+        apply_kind TEXT CHECK(apply_kind IS NULL OR apply_kind IN (
+          'update_data_model', 'patch_components', 'clear_body', 'no_op', 'coalesced'
+        )),
+        body_revision INTEGER CHECK(body_revision IS NULL OR body_revision >= 1),
+        visual_revision INTEGER CHECK(visual_revision IS NULL OR visual_revision >= 0),
+        transaction_id TEXT,
+        queued_at INTEGER NOT NULL CHECK(queued_at >= 0),
+        applied_at INTEGER CHECK(applied_at IS NULL OR applied_at >= queued_at),
+        failure_json TEXT CHECK(failure_json IS NULL OR length(failure_json) BETWEEN 2 AND 65536),
+        UNIQUE(run_id, actor_id, generation, patch_sequence),
+        CHECK(
+          (status = 'pending' AND apply_kind IS NULL AND body_revision IS NULL
+            AND visual_revision IS NULL AND transaction_id IS NULL AND applied_at IS NULL
+            AND failure_json IS NULL)
+          OR (status = 'applied' AND apply_kind IN (
+              'update_data_model', 'patch_components', 'clear_body'
+            ) AND body_revision IS NOT NULL AND visual_revision IS NOT NULL
+            AND transaction_id IS NOT NULL AND applied_at IS NOT NULL AND failure_json IS NULL)
+          OR (status = 'noop' AND apply_kind = 'no_op' AND body_revision IS NOT NULL
+            AND visual_revision IS NOT NULL AND transaction_id IS NULL
+            AND applied_at IS NOT NULL AND failure_json IS NULL)
+          OR (status = 'coalesced' AND apply_kind = 'coalesced' AND body_revision IS NOT NULL
+            AND visual_revision IS NOT NULL AND transaction_id IS NULL
+            AND applied_at IS NOT NULL AND failure_json IS NULL)
+          OR (status = 'stale' AND apply_kind IS NULL AND body_revision IS NULL
+            AND visual_revision IS NULL AND transaction_id IS NULL
+            AND applied_at IS NOT NULL AND failure_json IS NULL)
+          OR (status = 'rejected' AND apply_kind IS NULL AND body_revision IS NOT NULL
+            AND visual_revision IS NOT NULL AND transaction_id IS NULL
+            AND applied_at IS NOT NULL AND failure_json IS NOT NULL)
+        ),
+        FOREIGN KEY(journal_seq) REFERENCES dag_actor_surface_patch_journal(journal_seq)
+          ON UPDATE RESTRICT ON DELETE CASCADE,
+        FOREIGN KEY(run_id, actor_id, node_id, surface_id)
+          REFERENCES dag_actors(run_id, actor_id, node_id, surface_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_surface_patch_queue_actor_patch_id
+        ON dag_actor_surface_patch_queue(run_id, actor_id, generation, patch_id);
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_surface_patch_queue_actor_status
+        ON dag_actor_surface_patch_queue(run_id, actor_id, status, generation, patch_sequence);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_actor_surface_patch_queue_transaction
+        ON dag_actor_surface_patch_queue(transaction_id)
+        WHERE transaction_id IS NOT NULL;
+      CREATE TRIGGER IF NOT EXISTS trg_dag_actor_surface_patch_queue_journal_identity
+      BEFORE INSERT ON dag_actor_surface_patch_queue
+      WHEN NOT EXISTS (
+        SELECT 1 FROM dag_actor_surface_patch_journal journal
+        WHERE journal.journal_seq = NEW.journal_seq
+          AND journal.patch_id = NEW.patch_id
+          AND journal.run_id = NEW.run_id
+          AND journal.actor_id = NEW.actor_id
+          AND journal.node_id = NEW.node_id
+          AND journal.surface_id = NEW.surface_id
+          AND journal.generation = NEW.generation
+          AND journal.patch_sequence = NEW.patch_sequence
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'Actor surface patch queue journal identity mismatch');
+      END;
+      CREATE TRIGGER IF NOT EXISTS trg_dag_actor_surface_patch_queue_identity_immutable
+      BEFORE UPDATE OF journal_seq, patch_id, run_id, actor_id, node_id, surface_id,
+        generation, patch_sequence
+      ON dag_actor_surface_patch_queue
+      BEGIN
+        SELECT RAISE(ABORT, 'Actor surface patch queue identity is immutable');
+      END;
+
+      CREATE TABLE IF NOT EXISTS dag_actor_surface_views (
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        surface_id TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK(generation >= 1),
+        session_id TEXT CHECK(session_id IS NULL OR length(session_id) BETWEEN 1 AND 256),
+        round_id TEXT CHECK(round_id IS NULL OR length(round_id) BETWEEN 1 AND 256),
+        lease_generation INTEGER CHECK(lease_generation IS NULL OR lease_generation >= 1),
+        body_revision INTEGER NOT NULL DEFAULT 0 CHECK(body_revision >= 0),
+        visual_revision INTEGER NOT NULL DEFAULT 0 CHECK(visual_revision >= 0),
+        has_body INTEGER NOT NULL DEFAULT 0 CHECK(has_body IN (0, 1)),
+        last_patch_id TEXT CHECK(last_patch_id IS NULL OR length(last_patch_id) BETWEEN 1 AND 256),
+        phase TEXT CHECK(phase IS NULL OR phase IN ('started', 'partial', 'verified', 'refined', 'final')),
+        a2ui_json TEXT CHECK(a2ui_json IS NULL OR length(a2ui_json) BETWEEN 2 AND 65536),
+        data_json TEXT CHECK(data_json IS NULL OR length(data_json) BETWEEN 2 AND 65536),
+        fallback_json TEXT CHECK(fallback_json IS NULL OR length(fallback_json) BETWEEN 2 AND 65536),
+        presentation_hint_json TEXT CHECK(
+          presentation_hint_json IS NULL OR length(presentation_hint_json) BETWEEN 2 AND 4096
+        ),
+        component_digest TEXT CHECK(
+          component_digest IS NULL OR (
+            length(component_digest) = 64 AND component_digest NOT GLOB '*[^0-9a-f]*'
+          )
+        ),
+        body_digest TEXT CHECK(
+          body_digest IS NULL OR (length(body_digest) = 64 AND body_digest NOT GLOB '*[^0-9a-f]*')
+        ),
+        last_transaction_id TEXT,
+        last_applied_at INTEGER CHECK(last_applied_at IS NULL OR last_applied_at >= 0),
+        last_focus_at INTEGER CHECK(last_focus_at IS NULL OR last_focus_at >= 0),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        updated_at INTEGER NOT NULL CHECK(updated_at >= created_at),
+        PRIMARY KEY(run_id, actor_id),
+        UNIQUE(document_id, surface_id),
+        CHECK(
+          (body_revision = 0 AND visual_revision = 0 AND has_body = 0
+            AND session_id IS NULL AND round_id IS NULL AND lease_generation IS NULL
+            AND last_patch_id IS NULL AND phase IS NULL AND a2ui_json IS NULL
+            AND data_json IS NULL AND fallback_json IS NULL AND presentation_hint_json IS NULL
+            AND component_digest IS NULL AND body_digest IS NULL
+            AND last_transaction_id IS NULL AND last_applied_at IS NULL)
+          OR (body_revision >= 1 AND session_id IS NOT NULL AND round_id IS NOT NULL
+            AND lease_generation IS NOT NULL
+            AND (
+              (last_patch_id IS NULL AND phase IS NULL AND last_applied_at IS NULL)
+              OR (last_patch_id IS NOT NULL AND phase IS NOT NULL AND last_applied_at IS NOT NULL)
+            ))
+        ),
+        CHECK(
+          (has_body = 0 AND a2ui_json IS NULL AND data_json IS NULL AND fallback_json IS NULL
+            AND presentation_hint_json IS NULL AND component_digest IS NULL AND body_digest IS NULL)
+          OR (has_body = 1 AND a2ui_json IS NOT NULL AND data_json IS NOT NULL
+            AND fallback_json IS NOT NULL AND component_digest IS NOT NULL AND body_digest IS NOT NULL)
+        ),
+        FOREIGN KEY(run_id, actor_id, node_id, surface_id)
+          REFERENCES dag_actors(run_id, actor_id, node_id, surface_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE,
+        FOREIGN KEY(document_id) REFERENCES generative_ui_documents(document_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_surface_views_generation
+        ON dag_actor_surface_views(run_id, generation, actor_id);
+      CREATE TRIGGER IF NOT EXISTS trg_dag_actor_surface_views_identity_immutable
+      BEFORE UPDATE OF run_id, actor_id, node_id, surface_id, document_id
+      ON dag_actor_surface_views
+      BEGIN
+        SELECT RAISE(ABORT, 'DAG Actor surface view identity is immutable');
+      END;
+
+      CREATE TABLE IF NOT EXISTS dag_actor_surface_snapshots (
+        run_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK(generation >= 1),
+        node_id TEXT NOT NULL,
+        surface_id TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        body_revision INTEGER NOT NULL CHECK(body_revision >= 0),
+        visual_revision INTEGER NOT NULL CHECK(visual_revision >= 0),
+        has_body INTEGER NOT NULL CHECK(has_body IN (0, 1)),
+        last_patch_id TEXT,
+        phase TEXT CHECK(phase IS NULL OR phase IN ('started', 'partial', 'verified', 'refined', 'final')),
+        body_digest TEXT CHECK(
+          body_digest IS NULL OR (length(body_digest) = 64 AND body_digest NOT GLOB '*[^0-9a-f]*')
+        ),
+        body_json TEXT CHECK(body_json IS NULL OR length(body_json) BETWEEN 2 AND 65536),
+        superseded_by_generation INTEGER NOT NULL CHECK(superseded_by_generation = generation + 1),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        PRIMARY KEY(run_id, actor_id, generation),
+        CHECK((has_body = 0 AND body_digest IS NULL AND body_json IS NULL)
+          OR (has_body = 1 AND body_digest IS NOT NULL AND body_json IS NOT NULL)),
+        FOREIGN KEY(run_id, actor_id, node_id, surface_id)
+          REFERENCES dag_actors(run_id, actor_id, node_id, surface_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_dag_actor_surface_snapshots_actor_created
+        ON dag_actor_surface_snapshots(run_id, actor_id, created_at, generation);
+      CREATE TRIGGER IF NOT EXISTS trg_dag_actor_surface_snapshots_no_update
+      BEFORE UPDATE ON dag_actor_surface_snapshots
+      BEGIN
+        SELECT RAISE(ABORT, 'DAG Actor surface snapshots are append-only');
+      END;
+    `),
+    validate: validateDagActorSurfacePatchSchemaV30,
   },
 ];
 

@@ -104,14 +104,14 @@ describe("WorkflowSpec v1", () => {
   it("canonicalizes strict per-agent built-in tool allowlists", () => {
     const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
     workflow.spec.nodes.execute.allowed_builtin_tools = ["Write", "Read"];
-    workflow.spec.nodes.execute.allowed_dag_tools = ["handoff", "get_graph_context"];
+    workflow.spec.nodes.execute.allowed_dag_tools = ["handoff", "get_graph_context", "report_surface_state"];
 
     const result = compileWorkflowSource(YAML.stringify(workflow));
 
     expect(result.valid, result.diagnostics.map((item) => item.message).join("\n")).toBe(true);
     expect(result.canonical?.nodes.find((node) => node.id === "execute")?.config).toMatchObject({
       allowed_builtin_tools: ["Read", "Write"],
-      allowed_dag_tools: ["get_graph_context", "handoff"],
+      allowed_dag_tools: ["get_graph_context", "handoff", "report_surface_state"],
     });
 
     workflow.spec.nodes.execute.allowed_builtin_tools.reverse();

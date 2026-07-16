@@ -87,4 +87,59 @@ describe('A2UI action bridge', () => {
     expect(actions[0]).not.toHaveProperty('context')
     expect(actions[0]).not.toHaveProperty('selectedId')
   })
+
+  it('shows the readable node fallback when the A2UI renderer rejects rich content', async () => {
+    const onRendererError = vi.fn()
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp(GenerativeUiNodeHost, {
+      documentId: 'document-fallback',
+      documentRevision: 2,
+      node: {
+        ir_version: 1,
+        id: 'com.example.views:invalid',
+        kind: 'com.example.views/generated',
+        kind_version: 1,
+        owner: { id: 'com.example.views', version: '1.0.0' },
+        surface: 'result',
+        importance: 'primary',
+        content: {},
+        a2ui: {
+          version: 'v1.0',
+          catalogId: HOMERAIL_A2UI_CATALOG_ID,
+          components: [{ id: 'orphan', component: 'Text', text: 'No root component' }],
+        },
+        fallback: {
+          title: 'Readable progress',
+          summary: 'Rich rendering failed, but this status remains available.',
+          items: ['Media collection completed'],
+        },
+        revision: 2,
+        updated_at: '2026-07-12T10:00:01.000Z',
+      },
+      placement: {
+        node_id: 'com.example.views:invalid', node_revision: 2, surface: 'result', variant: 'summary', rank: 1,
+        placement: 'primary', pinned: false, visibility: 'visible',
+      },
+      context: { device: 'desktop', input: 'mouse', viewport: 'wide', attention: 'focused' },
+      registry: new GenerativeUiRendererRegistry([{
+        renderer_api_version: 1,
+        plugin_id: 'com.example.views', plugin_version: '1.0.0', renderer_id: 'a2ui',
+        kind: 'com.example.views/generated', kind_version: 1, surface: 'result', device: 'desktop',
+        mode: 'specialized', component: A2uiRenderer,
+      }]),
+      onRendererError,
+    })
+    app.use(i18n)
+    app.mount(root)
+    await nextTick()
+    await nextTick()
+
+    const fallback = root.querySelector('.generative-ui-fallback--unavailable')
+    expect(fallback?.textContent).toContain('Readable progress')
+    expect(fallback?.textContent).toContain('Rich rendering failed, but this status remains available.')
+    expect(fallback?.textContent).toContain('Media collection completed')
+    expect(root.querySelector('.homerail-a2ui')).toBeNull()
+    expect(onRendererError).toHaveBeenCalledWith(expect.objectContaining({ node_id: 'com.example.views:invalid' }))
+  })
 })

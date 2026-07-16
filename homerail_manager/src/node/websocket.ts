@@ -38,6 +38,7 @@ import {
 } from "../server/control-plane-auth.js";
 import { ingestDagActivityStream } from "../runtime/dag-activity-stream.js";
 import { handleDagActorLiveCommandStatus } from "../runtime/dag-actor-live-command-runtime.js";
+import { ingestDagActorSurfacePatchStream } from "../runtime/dag-actor-surface-patch-stream.js";
 
 const WS_URL_PATTERN = /^\/ws\/projects\/([^\/]+)\/nodes\/([^\/]+)$/;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
@@ -525,6 +526,8 @@ export function setupNodeWebSocket(
           const nodeId = streamNodeId(msg.data);
           const messageType = msg.data.event === "dag_activity"
             ? "dag_activity"
+            : msg.data.event === "dag_actor_surface_patch"
+              ? "dag_actor_surface_patch"
             : msg.data.event === "usage"
               ? "usage"
               : "stream";
@@ -549,6 +552,23 @@ export function setupNodeWebSocket(
             } catch (error) {
               console.warn(
                 `[homerail_manager] rejected DAG activity from node ${node_id}: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+            return;
+          }
+          if (msg.data.event === "dag_actor_surface_patch") {
+            try {
+              if (!runId || !nodeId) throw new Error("Actor surface patch transport identity is missing");
+              const sessionId = dataSessionId(msg.data);
+              if (!sessionId) throw new Error("Actor surface patch transport session is missing");
+              if (!isCurrentDispatchTarget(runId, nodeId, "node", node_id)) {
+                throw new Error("Actor surface patch source does not match the current dispatch target");
+              }
+              if (shouldIgnoreStaleSession(node_id, "dag_actor_surface_patch", msg.data)) return;
+              ingestDagActorSurfacePatchStream(msg.data, { runId, nodeId });
+            } catch (error) {
+              console.warn(
+                `[homerail_manager] rejected Actor surface patch from node ${node_id}: ${error instanceof Error ? error.message : String(error)}`,
               );
             }
             return;

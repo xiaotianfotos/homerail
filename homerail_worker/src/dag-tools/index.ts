@@ -12,6 +12,10 @@ import { createGraphContextTool } from "./graph-context.js";
 import { createManagerCommandTool } from "./manager-command.js";
 import { createConsultAdvisorTool } from "./advisor.js";
 import { createReportActivityTool } from "./report-activity.js";
+import {
+  createReportSurfaceStateTool,
+  type SurfacePatchEmitter,
+} from "./report-surface-state.js";
 import type { DagActivityType } from "homerail-protocol";
 
 export interface AdvisorCallResult {
@@ -25,6 +29,7 @@ export interface DagToolsOptions {
     type: Extract<DagActivityType, "progress" | "finding" | "blocked">,
     payload: Record<string, unknown>,
   ) => void;
+  surfacePatchEmitter?: SurfacePatchEmitter;
 }
 
 /** Mutable state shared across all DAG tools for a single prompt run. */
@@ -36,6 +41,9 @@ export interface DagToolsState {
   actorId?: string;
   generation?: number;
   leaseGeneration?: number;
+  surfaceId?: string;
+  surfacePatchSequence: number;
+  surfacePatchIds: Set<string>;
   commandId?: string;
   graphNodes: string[];
   availablePorts: string[];
@@ -81,6 +89,9 @@ export function createDagToolsState(
   runId: string,
   wsSend: (data: string) => void,
 ): DagToolsState {
+  const surfacePatchSequenceStart = (config as DagNodeConfig & {
+    surface_patch_sequence_start?: number;
+  }).surface_patch_sequence_start;
   const ports = new Set<string>();
   for (const e of config.outgoing_edges) {
     if (e.from_port) ports.add(e.from_port);
@@ -94,6 +105,11 @@ export function createDagToolsState(
     actorId: config.actor_id,
     generation: config.generation,
     leaseGeneration: config.lease_generation,
+    surfaceId: config.surface_id,
+    surfacePatchSequence: Number.isSafeInteger(surfacePatchSequenceStart) && (surfacePatchSequenceStart ?? -1) >= 0
+      ? surfacePatchSequenceStart as number
+      : 0,
+    surfacePatchIds: new Set(),
     commandId: config.command_id,
     graphNodes: config.graph_nodes,
     availablePorts: [...ports].sort(),
@@ -124,6 +140,9 @@ export function createDagTools(state: DagToolsState, options: DagToolsOptions = 
   }
   if (options.activityEmitter) {
     tools.push(createReportActivityTool(options.activityEmitter));
+  }
+  if (options.surfacePatchEmitter) {
+    tools.push(createReportSurfaceStateTool(state, options.surfacePatchEmitter));
   }
   return tools;
 }

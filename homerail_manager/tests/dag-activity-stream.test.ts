@@ -137,6 +137,7 @@ nodes:
       actorId: "research",
       generation: 1,
       sequenceStart: 2,
+      surfacePatchSequenceStart: 0,
       roundId: "round-0001",
     });
   });
