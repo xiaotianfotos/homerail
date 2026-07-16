@@ -37,6 +37,11 @@ import {
   releaseWorkflowRunReservation,
   reserveWorkflowRun,
 } from "../persistence/dag-run-admission.js";
+import {
+  sendDagActorLiveCommands,
+  type SendDagActorLiveCommandRequest,
+  type SendDagActorLiveCommandResult,
+} from "../runtime/dag-actor-live-command-runtime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = process.env.HOMERAIL_REPO_ROOT
@@ -85,6 +90,7 @@ export interface InterveneActorResponse extends InterveneDagActorResult {
 }
 
 export interface ResumeRunResponse {
+  delivery_mode: "round_resume";
   resumed: true;
   previous_round_id: string;
   round_id: string;
@@ -96,6 +102,8 @@ export interface ResumeRunResponse {
   dispatched: number;
   deduplicated?: boolean;
 }
+
+export type SendActorCommandsResponse = ResumeRunResponse | SendDagActorLiveCommandResult;
 
 export interface CheckpointResumeResponse {
   scheduled: boolean;
@@ -400,6 +408,7 @@ export class ChangeOrchestrator {
     })();
     const dispatched = this.graphExecutor.tick(runId);
     return {
+      delivery_mode: "round_resume",
       resumed: true,
       previous_round_id: resumed.previousRoundId,
       round_id: resumed.roundId,
@@ -411,6 +420,33 @@ export class ChangeOrchestrator {
       dispatched,
       ...(resumed.deduplicated ? { deduplicated: true } : {}),
     };
+  }
+
+  sendActorCommands(
+    runId: string,
+    request: SendDagActorLiveCommandRequest,
+  ): SendActorCommandsResponse {
+    const run = this.graphExecutor.getRun(runId);
+    if (!run) throw new Error(`Run not found: ${runId}`);
+    const expectedRoundId = request.expected_round_id?.trim();
+    if (run.status === "active" && expectedRoundId) {
+      const waitingRetry = {
+        expected_round_id: expectedRoundId,
+        commands: request.commands,
+      };
+      if (deduplicateWaitingActiveRunResume(runId, waitingRetry)) {
+        return this.resumeRun(runId, waitingRetry);
+      }
+    }
+    if (run.status === "waiting") {
+      if (!expectedRoundId) throw new Error("expected_round_id is required while the run is waiting");
+      return this.resumeRun(runId, {
+        expected_round_id: expectedRoundId,
+        commands: request.commands,
+      });
+    }
+    if (run.status === "active") return sendDagActorLiveCommands(runId, request);
+    throw new Error(`Run ${runId} is terminal (${run.status})`);
   }
 
   emergencyStopAllRuns(): { stopped: number; run_ids: string[]; active_before: number; active_after: number } {

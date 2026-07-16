@@ -110,6 +110,14 @@ import {
   type DagActorRecord,
 } from "../persistence/dag-actors.js";
 import {
+  getDagActorLiveCommand,
+  listOutstandingDagActorLiveCommands,
+  markDagActorLiveCommandFallback,
+  terminateDagActorLiveCommands,
+  transitionDagActorLiveCommand,
+  type DagActorLiveCommandRecord,
+} from "../persistence/dag-actor-live-commands.js";
+import {
   acquireDagActorLease,
   ensureDagActorLease,
   getDagActorCheckpoint,
@@ -347,6 +355,7 @@ const DEFAULT_LIMITS: DAGRunLimits = {
   max_tool_calls_per_node: 0,
 };
 const MAX_DISPATCH_RETRIES_PER_NODE = 1;
+const MAX_LIVE_FALLBACK_ACTORS_PER_ROUND = 128;
 const RECOVERABLE_NODE_STATES: ReadonlySet<string> = new Set([
   "PENDING",
   "READY",
@@ -942,6 +951,22 @@ function _applyOrphanedNodeDemotion(run: ActiveRun): string[] {
       .map((intervention) => getDagActor(run.runId, intervention.actor_id)?.node_id)
       .filter((nodeId): nodeId is string => Boolean(nodeId)),
   );
+  const liveCommandProtectedNodeIds = new Set(
+    listOutstandingDagActorLiveCommands(run.runId)
+      .filter((command) => command.status === "queued" || command.status === "delivered" || command.status === "applied")
+      .map((command) => {
+        const actor = getDagActor(run.runId, command.actor_id);
+        return actor?.generation === command.target_generation ? actor.node_id : undefined;
+      })
+      .filter((nodeId): nodeId is string => Boolean(nodeId)),
+  );
+  for (const nodeId of liveCommandProtectedNodeIds) {
+    if (run.dagRun.nodeStates.get(nodeId) !== "RUNNING") continue;
+    run.dagRun.nodeStates.set(nodeId, "READY");
+    const current = run.nodeSessions.get(nodeId);
+    if (current) _persistNodeSession(run, nodeId, { ...current, status: "pending" });
+    emit("dag:node_ready", { runId: run.runId, nodeId });
+  }
   const demotedFromRunning = Array.from(run.dagRun.nodeStates.entries())
     .filter(([nodeId, state]) => state === "RUNNING" && !interventionProtectedNodeIds.has(nodeId))
     .map(([nodeId]) => nodeId);
@@ -1416,6 +1441,118 @@ export function resumeWaitingActiveRun(
   };
 }
 
+export interface DagActorLiveFallbackConsumption {
+  run_id: string;
+  previous_round_id: string;
+  round_id: string;
+  command_ids: string[];
+  actor_ids: string[];
+}
+
+function _liveFallbackIdempotencyKey(command: DagActorLiveCommandRecord): string {
+  return `live-fallback-${createHash("sha256").update(command.command_id).digest("hex")}`;
+}
+
+/**
+ * Consume at most the earliest unresolved command for each Actor. The command
+ * remains queued in the live table until the linked round command actually
+ * hands off, which makes crash recovery and the applied/completed lifecycle
+ * observable without treating prompt socket writes as delivery.
+ */
+export function consumeDagActorLiveCommandFallbacksAtBoundary(
+  runId: string,
+): DagActorLiveFallbackConsumption | undefined {
+  const run = store.get(runId);
+  if (!run || run.status !== "waiting" || run.currentRound.status !== "waiting") return undefined;
+  const actorsById = new Map(listDagActors(runId).map((actor) => [actor.actor_id, actor]));
+  const awaitNode = run.currentRound.await_node_id
+    ? run.dagRun.graph.nodes.find((node) => node.node_id === run.currentRound.await_node_id)
+    : undefined;
+  if (!awaitNode || awaitNode.node_type !== "await_command_gateway") return undefined;
+  const configuredTargets = awaitNode.gateway_config?.target_actors;
+  const allowedTargets = configuredTargets && configuredTargets.length > 0
+    ? new Set(configuredTargets)
+    : undefined;
+  const terminal = new Set(["completed", "rejected", "failed", "superseded", "cancelled"]);
+  const selectedActors = new Set<string>();
+  const candidates: DagActorLiveCommandRecord[] = [];
+
+  for (const command of listOutstandingDagActorLiveCommands(runId)) {
+    if (terminal.has(command.status) || selectedActors.has(command.actor_id)) continue;
+    const actor = actorsById.get(command.actor_id);
+    if (!actor) {
+      transitionDagActorLiveCommand({
+        command_id: command.command_id,
+        status: "superseded",
+        reason: "logical Actor no longer exists at fallback boundary",
+      });
+      continue;
+    }
+    if (actor.generation !== command.target_generation) {
+      transitionDagActorLiveCommand({
+        command_id: command.command_id,
+        status: "superseded",
+        reason: `Actor generation advanced to ${actor.generation} before fallback consumption`,
+      });
+      continue;
+    }
+
+    // delivered/applied commands block later sequence numbers until their
+    // terminal status arrives; only queued commands can enter round fallback.
+    selectedActors.add(command.actor_id);
+    if (command.status !== "queued") continue;
+    if (
+      allowedTargets
+      && !allowedTargets.has(actor.actor_id)
+      && !allowedTargets.has(actor.node_id)
+    ) {
+      markDagActorLiveCommandFallback({
+        command_id: command.command_id,
+        reason: `await_command ${awaitNode.node_id} does not target this Actor`,
+      });
+      continue;
+    }
+    if (candidates.length < MAX_LIVE_FALLBACK_ACTORS_PER_ROUND) candidates.push(command);
+  }
+  if (candidates.length === 0) return undefined;
+
+  const previousRoundId = run.currentRound.round_id;
+  const resumed = resumeWaitingActiveRun(runId, {
+    expected_round_id: previousRoundId,
+    commands: candidates.map((command) => ({
+      actor_id: command.actor_id,
+      command_id: command.command_id,
+      idempotency_key: _liveFallbackIdempotencyKey(command),
+      payload: command.payload,
+    })),
+  });
+  for (const command of candidates) {
+    const current = getDagActorLiveCommand(command.command_id);
+    if (current?.status !== "queued") continue;
+    markDagActorLiveCommandFallback({
+      command_id: command.command_id,
+      reason: `consumed by durable round ${resumed.roundId}`,
+    });
+  }
+  return {
+    run_id: runId,
+    previous_round_id: previousRoundId,
+    round_id: resumed.roundId,
+    command_ids: candidates.map((command) => command.command_id),
+    actor_ids: candidates.map((command) => command.actor_id),
+  };
+}
+
+export function consumeRecoveredDagActorLiveCommandFallbacks(): DagActorLiveFallbackConsumption[] {
+  const consumed: DagActorLiveFallbackConsumption[] = [];
+  for (const run of store.values()) {
+    if (run.status !== "waiting") continue;
+    const result = consumeDagActorLiveCommandFallbacksAtBoundary(run.runId);
+    if (result) consumed.push(result);
+  }
+  return consumed;
+}
+
 function _persistTerminalRun(
   run: ActiveRun,
   status: "completed" | "cancelled" | "failed",
@@ -1436,6 +1573,12 @@ function _persistTerminalRun(
     cancelUnclaimedDagActorCommands({
       run_id: run.runId,
       reason: { status, message: `run ${status}` },
+    });
+    terminateDagActorLiveCommands({
+      run_id: run.runId,
+      status: "cancelled",
+      reason: `run ${status} before live command completion`,
+      transitioned_at: closedAt,
     });
     const leaseRetiredAt = Date.now();
     for (const actor of listDagActors(run.runId)) {
@@ -1824,7 +1967,7 @@ export function checkpointResumeActiveRun(
     const actorNode = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === nodeId);
     if (!actorNode || _isGatewayNode(actorNode)) throw new Error(`Node ${nodeId} has no logical actor`);
     const actor = _ensureLogicalActor(run, actorNode);
-    advanceDagActorGeneration({
+    const nextActor = advanceDagActorGeneration({
       run_id: runId,
       actor_id: actor.actor_id,
       expected_generation: actor.generation,
@@ -1832,6 +1975,12 @@ export function checkpointResumeActiveRun(
       session_id: nextSession.sessionId,
       attempt: nextSession.attempt,
       checkpoint_ref: fork.entryUuid,
+    });
+    terminateDagActorLiveCommands({
+      run_id: runId,
+      actor_id: nextActor.actor_id,
+      status: "superseded",
+      reason: `Actor generation advanced to ${nextActor.generation} for checkpoint resume`,
     });
   } catch (err) {
     return {
@@ -1912,6 +2061,19 @@ export function handoffActiveRun(
           actor_id: fencedCommand.actor_id,
           generation: fencedCommand.target_generation,
         });
+        const liveCommand = getDagActorLiveCommand(fencedCommand.command_id);
+        if (
+          liveCommand
+          && liveCommand.run_id === runId
+          && liveCommand.actor_id === fencedCommand.actor_id
+          && liveCommand.target_generation === fencedCommand.target_generation
+          && (liveCommand.status === "queued" || liveCommand.status === "delivered")
+        ) {
+          transitionDagActorLiveCommand({
+            command_id: liveCommand.command_id,
+            status: "applied",
+          });
+        }
       }
       transition = handoff(run.dagRun, fromNode, port, content);
       _markNodeSessionStatus(
@@ -1936,6 +2098,19 @@ export function handoffActiveRun(
           command_id: fencedCommand.command_id,
           generation: fencedCommand.target_generation,
         });
+        const liveCommand = getDagActorLiveCommand(fencedCommand.command_id);
+        if (
+          liveCommand
+          && liveCommand.run_id === runId
+          && liveCommand.actor_id === fencedCommand.actor_id
+          && liveCommand.target_generation === fencedCommand.target_generation
+          && (liveCommand.status === "queued" || liveCommand.status === "delivered" || liveCommand.status === "applied")
+        ) {
+          transitionDagActorLiveCommand({
+            command_id: liveCommand.command_id,
+            status: "completed",
+          });
+        }
       }
       const handedOffNode = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === fromNode);
       if (handedOffNode) _recordFanoutChild(run, handedOffNode, port, content);
@@ -2657,6 +2832,13 @@ function _applyPersistedDagActorIntervention(
         session_id: nextSession.sessionId,
         attempt: nextSession.attempt,
         checkpoint_ref: `portable:${checkpoint.checkpoint_version}`,
+      });
+      terminateDagActorLiveCommands({
+        run_id: nextActor.run_id,
+        actor_id: nextActor.actor_id,
+        status: "superseded",
+        reason: `Actor generation advanced to ${nextActor.generation} for ${applying.operation}`,
+        transitioned_at: now,
       });
       _persistNodeSession(run, nextActor.node_id, nextSession);
 
@@ -3780,6 +3962,15 @@ function _executeGatewayNode(runId: string, run: ActiveRun, node: DAGGraphNode):
       gatewayType: node.node_type,
       port: "waiting",
     });
+    try {
+      consumeDagActorLiveCommandFallbacksAtBoundary(runId);
+    } catch (error) {
+      // The command remains durable and queued. A later waiting-run recovery
+      // pass can retry the same sequence without reopening a partial round.
+      console.warn(
+        `[homerail_manager] live command fallback remained queued for ${runId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     return true;
   }
 

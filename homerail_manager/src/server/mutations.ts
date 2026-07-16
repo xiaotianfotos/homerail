@@ -31,6 +31,8 @@ import {
 } from "../runtime/dag-manager-supervisor.js";
 import { DagActorInterventionConflictError } from "../persistence/dag-actor-interventions.js";
 import { DagActorInterventionRuntimeError } from "../runtime/active-runs.js";
+import { DagActorLiveCommandRuntimeError } from "../runtime/dag-actor-live-command-runtime.js";
+import { DagActorLiveCommandConflictError } from "../persistence/dag-actor-live-commands.js";
 import { canonicalManagerAgentToolCallName } from "homerail-protocol";
 
 interface BaseResponse {
@@ -651,8 +653,7 @@ export function mutationRoutesHandler(
       const body = raw as Record<string, unknown>;
       const expectedRoundId = typeof body.expected_round_id === "string"
         ? body.expected_round_id.trim()
-        : "";
-      if (!expectedRoundId) throw new Error("expected_round_id is required");
+        : undefined;
       if (!Array.isArray(body.commands) || body.commands.length < 1 || body.commands.length > 128) {
         throw new Error("commands must contain between 1 and 128 entries");
       }
@@ -668,22 +669,44 @@ export function mutationRoutesHandler(
         const idempotencyKey = typeof command.idempotency_key === "string"
           ? command.idempotency_key.trim()
           : undefined;
+        const expectedStateToken = typeof command.expected_state_token === "string"
+          ? command.expected_state_token.trim()
+          : undefined;
+        if (expectedStateToken !== undefined && !/^[0-9a-f]{64}$/.test(expectedStateToken)) {
+          throw new Error(`commands[${index}].expected_state_token must be a 64-character lowercase hex token`);
+        }
         return {
           actor_id: actorId,
           payload: command.payload,
           ...(commandId ? { command_id: commandId } : {}),
           ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+          ...(expectedStateToken ? { expected_state_token: expectedStateToken } : {}),
         };
       });
-      const result = changeOrchestrator.resumeRun(runId, {
-        expected_round_id: expectedRoundId,
+      const result = changeOrchestrator.sendActorCommands(runId, {
+        ...(expectedRoundId ? { expected_round_id: expectedRoundId } : {}),
         commands,
       });
-      _ok(res, "Waiting run resumed", result);
+      _ok(
+        res,
+        result.delivery_mode === "live" ? "Actor commands persisted" : "Waiting run resumed",
+        result,
+      );
     }).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("not found") || message.includes("Unknown DAG actor")) _notFound(res, message);
-      else if (message.includes("not waiting") || message.includes("conflict")) {
+      if (
+        (error instanceof DagActorLiveCommandRuntimeError && error.code === "actor_not_found")
+        || message.includes("not found")
+        || message.includes("Unknown DAG actor")
+      ) _notFound(res, message);
+      else if (
+        error instanceof DagActorLiveCommandConflictError
+        || (error instanceof DagActorLiveCommandRuntimeError
+          && (error.code === "state_token_conflict" || error.code === "expected_round_conflict"))
+        || message.includes("not waiting")
+        || message.includes("conflict")
+        || message.includes("terminal")
+      ) {
         json(res, 409, { success: false, message, error: message });
       } else _badRequest(res, message);
     });

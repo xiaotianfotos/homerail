@@ -156,6 +156,9 @@ export class WsClient extends EventEmitter {
       case "dag_inbox":
         this.emit("dag_inbox", msg);
         break;
+      case "dag_actor_command":
+        this.emit("dag_actor_command", msg);
+        break;
       case "inject":
         this.emit("inject", msg);
         break;

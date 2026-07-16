@@ -467,6 +467,66 @@ export const DAG_TRANSPORT_FENCE_CAPABILITY = "dag-transport-fence-v2" as const;
 export const DAG_TRANSPORT_FENCE_SCHEMA_ID = "dag-transport-fence-v2" as const;
 export const DAG_NODE_ERROR_SCHEMA_ID = "dag-node-error" as const;
 
+/** Durable logical-Actor command transport layered on the v2 transport fence. */
+export const DAG_ACTOR_LIVE_COMMAND_PROTOCOL_VERSION = 1 as const;
+export const DAG_ACTOR_LIVE_COMMAND_CAPABILITY = "dag-actor-live-command-v1" as const;
+export const DAG_ACTOR_LIVE_COMMAND_SCHEMA_ID = "dag-actor-live-command-v1" as const;
+export const DAG_ACTOR_LIVE_COMMAND_STATUS_SCHEMA_ID = "dag-actor-live-command-status-v1" as const;
+
+export const DAG_ACTOR_LIVE_COMMAND_WORKER_STATUSES = [
+  "accepted",
+  "applied",
+  "completed",
+  "unsupported",
+  "rejected",
+  "failed",
+] as const;
+
+export type DagActorLiveCommandWorkerStatus =
+  (typeof DAG_ACTOR_LIVE_COMMAND_WORKER_STATUSES)[number];
+
+export interface DagActorLiveCommandData {
+  schema_version: typeof DAG_ACTOR_LIVE_COMMAND_PROTOCOL_VERSION;
+  command_id: string;
+  idempotency_key: string;
+  sequence: number;
+  run_id: string;
+  node_id: string;
+  session_id: string;
+  round_id: string;
+  actor_id: string;
+  generation: number;
+  lease_generation: number;
+  expected_state_token: string;
+  payload: unknown;
+}
+
+export interface DagActorLiveCommandMessage {
+  type: "dag_actor_command";
+  data: DagActorLiveCommandData;
+}
+
+export interface DagActorLiveCommandStatusData {
+  schema_version: typeof DAG_ACTOR_LIVE_COMMAND_PROTOCOL_VERSION;
+  command_id: string;
+  sequence: number;
+  status: DagActorLiveCommandWorkerStatus;
+  run_id: string;
+  node_id: string;
+  session_id: string;
+  round_id: string;
+  actor_id: string;
+  generation: number;
+  lease_generation: number;
+  expected_state_token: string;
+  reason?: string;
+}
+
+export interface DagActorLiveCommandStatusMessage {
+  type: "dag_actor_command_status";
+  data: DagActorLiveCommandStatusData;
+}
+
 /** Optional on round-one wire messages; required by Manager for later rounds. */
 export interface DagTransportFenceMetadata {
   round_id?: string;

@@ -9,6 +9,10 @@ import {
 import { homerailPluginSchemas } from "./plugins/schemas.js";
 import { dagActivityEventV1Schema } from "./dag-activity.js";
 import {
+  DAG_ACTOR_LIVE_COMMAND_PROTOCOL_VERSION,
+  DAG_ACTOR_LIVE_COMMAND_SCHEMA_ID,
+  DAG_ACTOR_LIVE_COMMAND_STATUS_SCHEMA_ID,
+  DAG_ACTOR_LIVE_COMMAND_WORKER_STATUSES,
   DAG_NODE_ERROR_SCHEMA_ID,
   DAG_TRANSPORT_FENCE_SCHEMA_ID,
   DAG_TRANSPORT_FENCE_PROTOCOL_VERSION,
@@ -244,6 +248,74 @@ export const dagTransportFenceV2Schema = {
   version: DAG_TRANSPORT_FENCE_PROTOCOL_VERSION,
 };
 
+const dagActorLiveCommandIdentityProperties = {
+  schema_version: { const: DAG_ACTOR_LIVE_COMMAND_PROTOCOL_VERSION },
+  command_id: { type: "string", minLength: 1, maxLength: 256 },
+  sequence: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+  run_id: { type: "string", minLength: 1, maxLength: 256 },
+  node_id: { type: "string", minLength: 1, maxLength: 256 },
+  session_id: { type: "string", minLength: 1, maxLength: 512 },
+  round_id: { type: "string", minLength: 1, maxLength: 256 },
+  actor_id: { type: "string", minLength: 1, maxLength: 256 },
+  generation: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+  lease_generation: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+  expected_state_token: { type: "string", pattern: "^[0-9a-f]{64}$" },
+};
+
+const dagActorLiveCommandIdentityRequired = [
+  "schema_version",
+  "command_id",
+  "sequence",
+  "run_id",
+  "node_id",
+  "session_id",
+  "round_id",
+  "actor_id",
+  "generation",
+  "lease_generation",
+  "expected_state_token",
+] as const;
+
+export const dagActorLiveCommandSchema = {
+  $id: DAG_ACTOR_LIVE_COMMAND_SCHEMA_ID,
+  type: "object",
+  properties: {
+    type: { const: "dag_actor_command" },
+    data: {
+      type: "object",
+      properties: {
+        ...dagActorLiveCommandIdentityProperties,
+        idempotency_key: { type: "string", minLength: 1, maxLength: 256 },
+        payload: {},
+      },
+      required: [...dagActorLiveCommandIdentityRequired, "idempotency_key", "payload"],
+      additionalProperties: false,
+    },
+  },
+  required: ["type", "data"],
+  additionalProperties: false,
+};
+
+export const dagActorLiveCommandStatusSchema = {
+  $id: DAG_ACTOR_LIVE_COMMAND_STATUS_SCHEMA_ID,
+  type: "object",
+  properties: {
+    type: { const: "dag_actor_command_status" },
+    data: {
+      type: "object",
+      properties: {
+        ...dagActorLiveCommandIdentityProperties,
+        status: { type: "string", enum: [...DAG_ACTOR_LIVE_COMMAND_WORKER_STATUSES] },
+        reason: { type: "string", maxLength: 4096 },
+      },
+      required: [...dagActorLiveCommandIdentityRequired, "status"],
+      additionalProperties: false,
+    },
+  },
+  required: ["type", "data"],
+  additionalProperties: false,
+};
+
 export const dagNodeErrorSchema = {
   $id: DAG_NODE_ERROR_SCHEMA_ID,
   type: "object",
@@ -458,6 +530,8 @@ export const allSchemas: Record<string, Record<string, unknown>> = {
   [DAG_TRANSPORT_FENCE_V1_SCHEMA_ID]: dagTransportFenceV1Schema as Record<string, unknown>,
   [DAG_TRANSPORT_FENCE_SCHEMA_ID]: dagTransportFenceV2Schema as Record<string, unknown>,
   [DAG_NODE_ERROR_SCHEMA_ID]: dagNodeErrorSchema as Record<string, unknown>,
+  [DAG_ACTOR_LIVE_COMMAND_SCHEMA_ID]: dagActorLiveCommandSchema as Record<string, unknown>,
+  [DAG_ACTOR_LIVE_COMMAND_STATUS_SCHEMA_ID]: dagActorLiveCommandStatusSchema as Record<string, unknown>,
   "handoff-request": handoffRequestSchema as Record<string, unknown>,
   "handoff-response": handoffResponseSchema as Record<string, unknown>,
   "tool-call": toolCallSchema as Record<string, unknown>,

@@ -33,6 +33,7 @@ import {
   rejectWebSocketUpgrade,
 } from "../server/control-plane-auth.js";
 import { ingestDagActivityStream } from "../runtime/dag-activity-stream.js";
+import { handleDagActorLiveCommandStatus } from "../runtime/dag-actor-live-command-runtime.js";
 
 const WS_URL_PATTERN = /^\/ws\/projects\/([^\/]+)\/workers\/([^\/]+)$/;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
@@ -370,6 +371,19 @@ export function setupWorkerWebSocket(
         updateHeartbeat(worker_id);
 
         if (msg.type === "pong" || msg.type === "heartbeat") {
+          return;
+        }
+
+        if (msg.type === "dag_actor_command_status") {
+          const result = handleDagActorLiveCommandStatus(
+            { targetType: "worker", targetId: worker_id },
+            { type: msg.type, data: msg.data },
+          );
+          if (result.status === "malformed_payload") {
+            console.warn(
+              `[homerail_manager] rejected live command status from worker ${worker_id}: ${result.reason}`,
+            );
+          }
           return;
         }
 

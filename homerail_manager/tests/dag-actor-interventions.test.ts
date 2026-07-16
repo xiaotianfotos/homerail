@@ -44,7 +44,7 @@ describe("DAG actor intervention persistence", () => {
   });
 
   it("creates and validates the strict intervention and dispatch-fence schemas on fresh and upgraded databases", () => {
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 27 });
+    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 28 });
     expect(getDb().prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     getDb().exec(`
       DROP TABLE dag_actor_dispatch_exclusions;
@@ -71,6 +71,8 @@ describe("DAG actor intervention persistence", () => {
     expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 26").get())
       .toEqual({ count: 1 });
     expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 27").get())
+      .toEqual({ count: 1 });
+    expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 28").get())
       .toEqual({ count: 1 });
   });
 

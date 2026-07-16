@@ -50,6 +50,11 @@ export interface ManagerCommandMessage {
   data: Record<string, unknown>;
 }
 
+export interface DagActorLiveCommandStatusMessage {
+  type: "dag_actor_command_status";
+  data: DagActorLiveCommandStatusData;
+}
+
 export interface NodeErrorMessage {
   type: "node_error";
   data: {
@@ -92,6 +97,7 @@ export type IncomingWorkerMessage =
   | StreamMessage
   | ContentMessage
   | ManagerCommandMessage
+  | DagActorLiveCommandStatusMessage
   | NodeErrorMessage
   | SessionEndMessage
   | PongMessage;
@@ -196,6 +202,12 @@ export function parseIncomingMessage(raw: unknown): IncomingWorkerMessage | null
         type: "manager_command",
         data: obj.data as Record<string, unknown>,
       };
+    case "dag_actor_command_status":
+      if (typeof obj.data !== "object" || obj.data === null || Array.isArray(obj.data)) return null;
+      return {
+        type: "dag_actor_command_status",
+        data: obj.data as unknown as DagActorLiveCommandStatusData,
+      };
     case "node_error": {
       if (typeof obj.data !== "object" || obj.data === null) return null;
       const data = obj.data as Record<string, unknown>;
@@ -243,3 +255,4 @@ export function parseIncomingMessage(raw: unknown): IncomingWorkerMessage | null
       return null;
   }
 }
+import type { DagActorLiveCommandStatusData } from "homerail-protocol";
