@@ -142,6 +142,33 @@ describe("doctor readiness helpers", () => {
     });
   });
 
+  it("accepts an explicitly selected custom setting for the Kimi Code manager agent", () => {
+    const resp = settings([
+      {
+        id: "qwen36-local-setting",
+        provider_id: "qwen36-local",
+        model_name: "qwen3.6",
+        plan_type: "custom",
+        endpoint_id: "qwen36-local_custom",
+        is_active: true,
+        is_default: true,
+        supports_llm: true,
+        protocol: "openai_compatible",
+        base_url: "http://192.0.2.10:5000/v1",
+      },
+    ]);
+
+    const check = managerAgentReadiness({
+      harness: "kimi_code",
+      llm_setting_id: "qwen36-local-setting",
+    }, resp);
+    expect(check).toMatchObject({
+      name: "manager-agent",
+      ok: true,
+      detail: "qwen36-local/qwen3.6 via kimi_code",
+    });
+  });
+
   it("reports Docker CLI absence for Docker-backed DAG readiness", () => {
     const checks = dockerReadiness(runnerFor([
       { status: null, error: Object.assign(new Error("spawn docker ENOENT"), { code: "ENOENT" }) },

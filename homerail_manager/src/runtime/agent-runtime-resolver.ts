@@ -18,6 +18,7 @@ import {
   DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
   ManagerAgentRuntimePlacement,
   isDisabledDirectLlmAgentType,
+  isKimiCodeCompatibleModelSetting,
   managerAgentHarnessDefinition,
   normalizeManagerAgentHarness,
   normalizeManagerAgentRuntimeAgentType,
@@ -81,20 +82,15 @@ function requestedAgentType(input: AgentRuntimeResolutionInput): string | undefi
   return normalizeManagerAgentRuntimeAgentType(input.agentType);
 }
 
-function isCustomModelSetting(setting: LLMSetting): boolean {
-  const provider = getProvider(setting.provider_id);
-  if (provider?.source === "builtin") return false;
-  if (provider?.source === "custom") return true;
-  return (
-    setting.plan_type === "custom" ||
-    setting.protocol === "custom" ||
-    setting.endpoint_id === "custom" ||
-    setting.endpoint_name === "custom"
-  );
-}
-
 function isKimiCodeCompatibleSetting(setting: LLMSetting): boolean {
-  return isKimiProviderId(setting.provider_id) || isCustomModelSetting(setting);
+  return isKimiCodeCompatibleModelSetting({
+    providerId: setting.provider_id,
+    providerSource: getProvider(setting.provider_id)?.source,
+    planType: setting.plan_type,
+    protocol: setting.protocol,
+    endpointId: setting.endpoint_id,
+    endpointName: setting.endpoint_name,
+  });
 }
 
 function findActiveKimiSetting(modelName?: string): LLMSetting | undefined {

@@ -80,6 +80,46 @@ describe("DAG actor intervention persistence", () => {
       .toEqual({ count: 1 });
   });
 
+  it("reconciles the shifted pre-merge migration 27-29 chain without losing persisted data", () => {
+    getDb().prepare(`
+      INSERT INTO dag_run_skill_contexts(
+        run_id, agent_id, context_version, context_digest, total_bytes,
+        skill_count, context_json, created_at
+      ) VALUES (?, ?, 1, ?, 0, 0, '{}', ?)
+    `).run("run-1", "legacy-agent", "a".repeat(64), 100);
+    getDb().exec(`
+      DROP TABLE dag_actor_dispatch_exclusions;
+      DELETE FROM schema_migrations WHERE version IN (27, 28, 29, 30);
+      INSERT INTO schema_migrations(version, applied_at) VALUES
+        (27, 'legacy-live-commands'),
+        (28, 'legacy-skill-context'),
+        (29, 'legacy-surface-patches');
+    `);
+    closeDb();
+
+    const migrated = getDb();
+    expect(migrated.prepare(
+      "SELECT version FROM schema_migrations WHERE version >= 27 ORDER BY version",
+    ).all()).toEqual([
+      { version: 27 },
+      { version: 28 },
+      { version: 29 },
+      { version: 30 },
+    ]);
+    expect(migrated.prepare(`
+      SELECT agent_id, context_json FROM dag_run_skill_contexts
+      WHERE run_id = ? AND agent_id = ?
+    `).get("run-1", "legacy-agent")).toEqual({
+      agent_id: "legacy-agent",
+      context_json: "{}",
+    });
+    expect(migrated.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name = 'dag_actor_dispatch_exclusions'
+    `).get()).toEqual({ name: "dag_actor_dispatch_exclusions" });
+    expect(migrated.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
   it("persists the Inbox before applying, deduplicates retries, and enforces Actor CAS", () => {
     const request = {
       intervention_id: "intervention-1",

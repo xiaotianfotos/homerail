@@ -5,6 +5,7 @@ import type { BaseResponse } from "../client.js";
 import { dockerNotFoundDetail, resolveDockerBinary } from "../docker-bin.js";
 import {
   DEFAULT_MANAGER_AGENT_HARNESS,
+  isKimiCodeCompatibleModelSetting,
   normalizeManagerAgentHarness,
 } from "homerail-protocol";
 
@@ -41,7 +42,13 @@ interface LlmSettingSummary {
   providerId?: unknown;
   model_name?: unknown;
   modelName?: unknown;
+  plan_type?: unknown;
+  planType?: unknown;
   protocol?: unknown;
+  endpoint_id?: unknown;
+  endpointId?: unknown;
+  endpoint_name?: unknown;
+  endpointName?: unknown;
   base_url?: unknown;
   baseUrl?: unknown;
   anthropic_base_url?: unknown;
@@ -135,6 +142,16 @@ function anthropicCompatibleBaseUrl(setting: LlmSettingSummary): string {
 
 function modelRuntimeBaseUrl(setting: LlmSettingSummary): string {
   return stringValue(setting.base_url ?? setting.baseUrl);
+}
+
+function isKimiCodeCompatibleSetting(setting: LlmSettingSummary): boolean {
+  return isKimiCodeCompatibleModelSetting({
+    providerId: providerId(setting),
+    planType: setting.plan_type ?? setting.planType,
+    protocol: setting.protocol,
+    endpointId: setting.endpoint_id ?? setting.endpointId,
+    endpointName: setting.endpoint_name ?? setting.endpointName,
+  });
 }
 
 const defaultCommandRunner: CommandRunner = (file, args, options) => spawnSync(file, args, {
@@ -263,11 +280,11 @@ export function managerAgentReadiness(
     };
   }
   if (harness === "kimi_code") {
-    if (!KIMI_PROVIDER_IDS.has(providerId(selected))) {
+    if (!isKimiCodeCompatibleSetting(selected)) {
       return {
         name: "manager-agent",
         ok: false,
-        detail: `${settingLabel(selected)} is not a Kimi setting for kimi_code`,
+        detail: `${settingLabel(selected)} is not Kimi Code-compatible`,
       };
     }
     if (!modelRuntimeBaseUrl(selected)) {

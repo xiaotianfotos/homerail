@@ -470,6 +470,27 @@ function legacyMainMigrationVersions(db: SqliteDatabase): number[] {
   return versions;
 }
 
+/**
+ * The durable-Actor PR stack originally used ids 27-29 for live commands,
+ * pinned Skill context, and Surface patches. After interventions were inserted,
+ * those schemas moved to 28-30 and id 27 became dispatch exclusions. Detect
+ * that exact pre-merge physical chain so the current idempotent migrations can
+ * record the canonical order without dropping persisted data.
+ */
+function legacyDurableActorMigrationVersions(db: SqliteDatabase): number[] {
+  if (!hasTable(db, "schema_migrations")) return [];
+  const hasVersion = (version: number) => Boolean(db.prepare(
+    "SELECT 1 FROM schema_migrations WHERE version = ?",
+  ).get(version));
+  const shiftedChain =
+    hasVersion(27) && hasVersion(28) && hasVersion(29) && !hasVersion(30) &&
+    !hasTable(db, "dag_actor_dispatch_exclusions") &&
+    hasTable(db, "dag_actor_live_commands") &&
+    hasTable(db, "dag_run_skill_contexts") &&
+    hasTable(db, "dag_actor_surface_patch_journal");
+  return shiftedChain ? [27, 28, 29] : [];
+}
+
 function validateDagWorkflowSchemaV15(db: SqliteDatabase): void {
   if (!hasTable(db, "dag_workflow_revisions")) {
     throw new Error("Schema migration 15 is incomplete: missing table dag_workflow_revisions");
@@ -3909,7 +3930,10 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
-  const collidingMainVersions = legacyMainMigrationVersions(db);
+  const collidingMigrationVersions = [
+    ...legacyMainMigrationVersions(db),
+    ...legacyDurableActorMigrationVersions(db),
+  ];
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
@@ -4677,10 +4701,10 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
   ensureExpandedColumns(db);
   seedBuiltinProviderCatalog(db);
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, nowIso());
-  if (collidingMainVersions.length > 0) {
+  if (collidingMigrationVersions.length > 0) {
     const remove = db.prepare("DELETE FROM schema_migrations WHERE version = ?");
     db.transaction(() => {
-      for (const version of collidingMainVersions) remove.run(version);
+      for (const version of collidingMigrationVersions) remove.run(version);
     })();
   }
   runSchemaMigrations(db, SCHEMA_MIGRATIONS);

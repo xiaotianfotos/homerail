@@ -73,6 +73,34 @@ function normalizedString(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+export interface KimiCodeModelSettingDescriptor {
+  providerId?: unknown;
+  providerSource?: unknown;
+  planType?: unknown;
+  protocol?: unknown;
+  endpointId?: unknown;
+  endpointName?: unknown;
+}
+
+const KIMI_CODE_PROVIDER_IDS = new Set(["kimi", "kimi_cn"]);
+
+/** Keep Kimi Code setting compatibility consistent across runtime and setup checks. */
+export function isKimiCodeCompatibleModelSetting(
+  setting: KimiCodeModelSettingDescriptor,
+): boolean {
+  const providerId = normalizedString(setting.providerId);
+  if (KIMI_CODE_PROVIDER_IDS.has(providerId)) return true;
+
+  const providerSource = normalizedString(setting.providerSource);
+  if (providerSource === "builtin") return false;
+  if (providerSource === "custom") return true;
+
+  return normalizedString(setting.planType) === "custom" ||
+    normalizedString(setting.protocol) === "custom" ||
+    normalizedString(setting.endpointId) === "custom" ||
+    normalizedString(setting.endpointName) === "custom";
+}
+
 export function isManagerAgentHarness(value: unknown): value is ManagerAgentHarness {
   return value === ManagerAgentHarness.CLAUDE_AGENT_SDK ||
     value === ManagerAgentHarness.CODEX_APPSERVER ||

@@ -5,6 +5,7 @@ import {
   MANAGER_AGENT_PRODUCTION_RUNTIME_AGENT_TYPES,
   ManagerAgentRuntimePlacement,
   isDisabledDirectLlmAgentType,
+  isKimiCodeCompatibleModelSetting,
   isManagerAgentHarness,
   managerAgentHarnessDefinition,
   managerAgentRuntimeAgentTypeForHarness,
@@ -108,6 +109,27 @@ describe("Manager Agent DAG context", () => {
 });
 
 describe("Manager Agent harness contract", () => {
+  it("accepts official Kimi providers and explicitly custom model settings", () => {
+    expect(isKimiCodeCompatibleModelSetting({ providerId: "kimi_cn" })).toBe(true);
+    expect(isKimiCodeCompatibleModelSetting({
+      providerId: "qwen36-local",
+      providerSource: "custom",
+    })).toBe(true);
+    expect(isKimiCodeCompatibleModelSetting({
+      providerId: "qwen36-local",
+      planType: "custom",
+      protocol: "openai_compatible",
+    })).toBe(true);
+  });
+
+  it("rejects unrelated builtin providers even if their metadata is malformed", () => {
+    expect(isKimiCodeCompatibleModelSetting({
+      providerId: "deepseek",
+      providerSource: "builtin",
+      planType: "custom",
+    })).toBe(false);
+  });
+
   it("keeps canonical public harness ids explicit", () => {
     expect(DEFAULT_MANAGER_AGENT_HARNESS).toBe("claude_agent_sdk");
     expect(isManagerAgentHarness("claude_agent_sdk")).toBe(true);
