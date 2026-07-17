@@ -9,6 +9,7 @@ import {
   type DagActorCheckpointV1,
   type DagAdvisorConfig,
   type DagNodeConfig,
+  type DagWorkerSkillContextSummaryV1,
 } from "homerail-protocol";
 import { createAgentClient } from "./agent/factory.js";
 import type { AgentEvent, AgentRunContext, AgentUsage } from "./agent/types.js";
@@ -39,6 +40,7 @@ export interface PromptJob {
     attempt: number;
   };
   actorCheckpoint?: DagActorCheckpointV1;
+  skillContextSummary?: DagWorkerSkillContextSummaryV1;
 }
 
 export interface PromptRunnerDeps {
@@ -266,8 +268,13 @@ export async function runPrompt(
     run_id: job.runId,
     sender: job.sender,
     task_preview: effectiveTask.slice(0, 500),
+    ...(job.skillContextSummary ? { skill_context: job.skillContextSummary } : {}),
   });
-  appendSessionTranscript("prompt_start", { task_preview: effectiveTask.slice(0, 500) });
+  appendSessionTranscript(
+    "prompt_start",
+    { task_preview: effectiveTask.slice(0, 500) },
+    job.skillContextSummary ? { skill_context: job.skillContextSummary } : undefined,
+  );
 
   // Stream content via WS
   function sendContent(text: string) {

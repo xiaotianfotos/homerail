@@ -45,6 +45,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_surface_projection_queue",
   "dag_surface_projections",
   "dag_actor_live_commands",
+  "dag_run_skill_contexts",
   "dag_actor_commands",
   "dag_actors",
   "dag_activity_events",
@@ -1606,6 +1607,73 @@ function validateDagActorLiveCommandSchemaV28(db: SqliteDatabase): void {
     || foreignKeys.some((entry) => entry.on_delete.toUpperCase() !== "CASCADE")
   ) {
     throw new Error("Schema migration 28 is incomplete: live command actor ownership constraint is invalid");
+  }
+}
+
+function validateDagRunSkillContextSchemaV29(db: SqliteDatabase): void {
+  const table = "dag_run_skill_contexts";
+  if (!hasTable(db, table)) {
+    throw new Error(`Schema migration 29 is incomplete: missing table ${table}`);
+  }
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    notnull: number;
+    pk: number;
+  }>;
+  const requiredColumns = [
+    "run_id",
+    "agent_id",
+    "context_version",
+    "context_digest",
+    "total_bytes",
+    "skill_count",
+    "context_json",
+    "created_at",
+  ];
+  const actual = new Set(columns.map((column) => column.name));
+  const missing = requiredColumns.filter((name) => !actual.has(name));
+  if (missing.length > 0) {
+    throw new Error(`Schema migration 29 is incomplete: ${table} is missing ${missing.join(", ")}`);
+  }
+  const primaryKey = columns
+    .filter((column) => column.pk > 0)
+    .sort((left, right) => left.pk - right.pk)
+    .map((column) => column.name);
+  if (primaryKey.length !== 2 || primaryKey[0] !== "run_id" || primaryKey[1] !== "agent_id") {
+    throw new Error(`Schema migration 29 is incomplete: ${table} has an invalid primary key`);
+  }
+  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_update: string;
+    on_delete: string;
+  }>;
+  if (!foreignKeys.some((foreignKey) => (
+    foreignKey.table === "dag_runs"
+    && foreignKey.from === "run_id"
+    && foreignKey.to === "run_id"
+    && foreignKey.on_update.toUpperCase() === "RESTRICT"
+    && foreignKey.on_delete.toUpperCase() === "CASCADE"
+  ))) {
+    throw new Error(`Schema migration 29 is incomplete: ${table} run ownership constraint is invalid`);
+  }
+  const tableSql = normalizedSchemaSql((db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+  ).get(table) as { sql?: string } | undefined)?.sql ?? "");
+  const requiredChecks = [
+    "check(context_version = 1)",
+    "check(total_bytes between 0 and 65536)",
+    "check(skill_count between 0 and 8)",
+  ];
+  if (requiredChecks.some((check) => !tableSql.includes(check))) {
+    throw new Error(`Schema migration 29 is incomplete: ${table} validation constraints are invalid`);
+  }
+  const triggerSql = normalizedSchemaSql((db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_dag_run_skill_contexts_no_update'",
+  ).get() as { sql?: string } | undefined)?.sql ?? "");
+  if (!triggerSql.includes("dag run skill contexts are append-only")) {
+    throw new Error("Schema migration 29 is incomplete: skill context append-only trigger is missing or invalid");
   }
 }
 
@@ -3418,6 +3486,32 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         WHERE status = 'queued' AND fallback_reason_json IS NOT NULL;
     `),
     validate: validateDagActorLiveCommandSchemaV28,
+  },
+  {
+    version: 29,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS dag_run_skill_contexts (
+        run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 256),
+        agent_id TEXT NOT NULL CHECK(length(agent_id) BETWEEN 1 AND 256),
+        context_version INTEGER NOT NULL CHECK(context_version = 1),
+        context_digest TEXT NOT NULL CHECK(
+          length(context_digest) = 64 AND context_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        total_bytes INTEGER NOT NULL CHECK(total_bytes BETWEEN 0 AND 65536),
+        skill_count INTEGER NOT NULL CHECK(skill_count BETWEEN 0 AND 8),
+        context_json TEXT NOT NULL CHECK(length(context_json) BETWEEN 2 AND 524288),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        PRIMARY KEY(run_id, agent_id),
+        FOREIGN KEY(run_id) REFERENCES dag_runs(run_id)
+          ON UPDATE RESTRICT ON DELETE CASCADE
+      );
+      CREATE TRIGGER IF NOT EXISTS trg_dag_run_skill_contexts_no_update
+      BEFORE UPDATE ON dag_run_skill_contexts
+      BEGIN
+        SELECT RAISE(ABORT, 'DAG run skill contexts are append-only');
+      END;
+    `),
+    validate: validateDagRunSkillContextSchemaV29,
   },
 ];
 

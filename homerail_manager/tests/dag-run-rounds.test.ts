@@ -144,6 +144,7 @@ describe("DAG run round persistence", () => {
         { version: 26 },
         { version: 27 },
         { version: 28 },
+        { version: 29 },
       ]);
     expect(migrated.prepare("SELECT * FROM dag_actor_commands ORDER BY command_id").all())
       .toEqual(expectedRows);

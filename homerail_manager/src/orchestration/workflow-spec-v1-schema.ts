@@ -464,7 +464,7 @@ export const WorkflowSpecV1Schema = Type.Object({
       system: Type.Optional(LongText),
       skills: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
         uniqueItems: true,
-        maxItems: 128,
+        maxItems: 8,
       })),
     }, { additionalProperties: false }), { maxProperties: 256 }),
     nodes: Type.Record(Identifier, WorkflowNode, {

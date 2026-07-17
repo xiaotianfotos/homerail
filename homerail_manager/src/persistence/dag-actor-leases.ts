@@ -771,6 +771,58 @@ function normalizeCheckpointStringArray(value: unknown, label: string): string[]
   return value.map((entry, index) => assertContentString(entry, `${label}[${index}]`, 8_192));
 }
 
+function normalizeCheckpointSkillContext(
+  value: unknown,
+): NonNullable<DagActorCheckpointV1["skill_context"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("checkpoint.skill_context must be an object");
+  }
+  const raw = value as Record<string, unknown>;
+  const unknownKeys = Object.keys(raw).filter((key) => !["context_digest", "skills"].includes(key));
+  if (unknownKeys.length > 0) {
+    throw new Error(`checkpoint.skill_context has unknown fields: ${unknownKeys.sort().join(", ")}`);
+  }
+  const contextDigest = assertBoundedString(
+    raw.context_digest,
+    "checkpoint.skill_context.context_digest",
+    64,
+  );
+  if (!/^[a-f0-9]{64}$/.test(contextDigest)) {
+    throw new Error("checkpoint.skill_context.context_digest must be a lowercase SHA-256 digest");
+  }
+  if (!Array.isArray(raw.skills) || raw.skills.length > 8) {
+    throw new Error("checkpoint.skill_context.skills must contain at most 8 items");
+  }
+  const skills = raw.skills.map((value, index) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`checkpoint.skill_context.skills[${index}] must be an object`);
+    }
+    const skill = value as Record<string, unknown>;
+    const unknownSkillKeys = Object.keys(skill).filter((key) => !["id", "digest"].includes(key));
+    if (unknownSkillKeys.length > 0) {
+      throw new Error(`checkpoint.skill_context.skills[${index}] has unknown fields`);
+    }
+    const id = assertBoundedString(skill.id, `checkpoint.skill_context.skills[${index}].id`, 256);
+    const digest = assertBoundedString(
+      skill.digest,
+      `checkpoint.skill_context.skills[${index}].digest`,
+      64,
+    );
+    if (!/^[a-f0-9]{64}$/.test(digest)) {
+      throw new Error(`checkpoint.skill_context.skills[${index}].digest must be a lowercase SHA-256 digest`);
+    }
+    return { id, digest };
+  });
+  const sorted = [...skills].sort((left, right) => left.id.localeCompare(right.id));
+  if (
+    new Set(skills.map((skill) => skill.id)).size !== skills.length
+    || skills.some((skill, index) => skill.id !== sorted[index]?.id)
+  ) {
+    throw new Error("checkpoint.skill_context.skills must contain unique ids in canonical order");
+  }
+  return { context_digest: contextDigest, skills };
+}
+
 function normalizeCheckpoint(value: unknown): DagActorCheckpointV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("checkpoint must be an object");
@@ -786,6 +838,7 @@ function normalizeCheckpoint(value: unknown): DagActorCheckpointV1 {
     "workspace_ref",
     "surface_binding",
     "context_summary",
+    "skill_context",
     "round_id",
     "actor_generation",
     "captured_at",
@@ -808,6 +861,9 @@ function normalizeCheckpoint(value: unknown): DagActorCheckpointV1 {
       : { workspace_ref: assertBoundedString(raw.workspace_ref, "checkpoint.workspace_ref", 2_048) }),
     surface_binding: assertBoundedString(raw.surface_binding, "checkpoint.surface_binding", 2_048),
     context_summary: assertContentString(raw.context_summary, "checkpoint.context_summary", 65_536),
+    ...(raw.skill_context === undefined
+      ? {}
+      : { skill_context: normalizeCheckpointSkillContext(raw.skill_context) }),
     round_id: assertBoundedString(raw.round_id, "checkpoint.round_id", 256),
     actor_generation: assertPositiveSafeInteger(raw.actor_generation, "checkpoint.actor_generation"),
     captured_at: assertNonNegativeSafeInteger(raw.captured_at, "checkpoint.captured_at"),

@@ -45,7 +45,11 @@ import {
   releaseDagActorLease,
   type DagActorLeaseRecord,
 } from "../persistence/dag-actor-leases.js";
-import { normalizeManagerAgentRuntimeAgentType, redactTelemetry } from "homerail-protocol";
+import {
+  normalizeManagerAgentRuntimeAgentType,
+  redactTelemetry,
+  summarizeDagWorkerSkillContextV1,
+} from "homerail-protocol";
 import WebSocket from "ws";
 
 const OFFLINE_RETRY_MIN_MS = 1_000;
@@ -65,8 +69,14 @@ export interface WsDispatchAdapterOptions {
   projectId?: string;
 }
 
-function redactDispatchEnvelope(envelope: DispatchEnvelope): unknown {
-  return redactTelemetry(envelope);
+export function dispatchEnvelopeAuditView(envelope: DispatchEnvelope): unknown {
+  const { skillContext, ...withoutSkillContent } = envelope;
+  return redactTelemetry({
+    ...withoutSkillContent,
+    ...(skillContext
+      ? { skillContext: summarizeDagWorkerSkillContextV1(skillContext) }
+      : {}),
+  });
 }
 
 function mirrorDispatchPrompt(envelope: DispatchEnvelope, targetType: "worker" | "node", targetId: string): void {
@@ -77,7 +87,7 @@ function mirrorDispatchPrompt(envelope: DispatchEnvelope, targetType: "worker" |
       runId: envelope.runId,
       nodeId: envelope.nodeId,
       sessionId: envelope.sessionId,
-      content: redactDispatchEnvelope(envelope),
+      content: dispatchEnvelopeAuditView(envelope),
       metadata: { targetType, targetId },
     });
   } catch {
@@ -491,7 +501,7 @@ export class WsDispatchAdapter implements DAGDispatcher {
         role: "manager",
         type: "prompt",
         targetId,
-        content: redactDispatchEnvelope(envelope),
+        content: dispatchEnvelopeAuditView(envelope),
         timestamp: Date.now(),
       });
     } catch (error) {

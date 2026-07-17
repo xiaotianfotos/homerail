@@ -562,6 +562,13 @@ export interface DagActorCheckpointV1 {
   workspace_ref?: string;
   surface_binding: string;
   context_summary: string;
+  skill_context?: {
+    context_digest: string;
+    skills: Array<{
+      id: string;
+      digest: string;
+    }>;
+  };
   round_id: string;
   actor_generation: number;
   captured_at: number;

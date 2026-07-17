@@ -145,6 +145,15 @@ import {
 import { supersedeDagLiveSurfaceForIntervention } from "../generative-ui/dag-live-surface-projector.js";
 import { buildDagActorCheckpoint, buildRunActorCheckpoints } from "./dag-actor-checkpoint-builder.js";
 import { getDagActorControlState, type DagActorControlStateName } from "./dag-actor-control-state.js";
+import {
+  getDagRunSkillContext,
+  pinDagRunSkillContext,
+  pinDagRunSkillContexts,
+} from "../persistence/dag-run-skill-contexts.js";
+import {
+  resolveDagWorkerSkillContext,
+  resolveDeclaredDagWorkerSkillContexts,
+} from "./dag-worker-skill-context.js";
 
 export interface InjectResult {
   runId: string;
@@ -731,6 +740,9 @@ export function createActiveRun(
   parsedDAG: ParsedDAG,
   options: CreateActiveRunOptions = {},
 ): ActiveRun {
+  const skillContexts = resolveDeclaredDagWorkerSkillContexts({
+    agents: parsedDAG.meta.agents ?? {},
+  });
   const dagRun = createDAGRun(parsedDAG, runId);
   const createdAt = Date.now();
   seedInitialPrompt(
@@ -780,6 +792,11 @@ export function createActiveRun(
   _assertLogicalActorIdentities(run.dagRun.graph.nodes);
   dbTransaction(() => {
     writeRunMetadata(runId, serializeRunMetadata(run));
+    pinDagRunSkillContexts({
+      run_id: runId,
+      contexts: skillContexts,
+      created_at: createdAt,
+    });
     createInitialDagRunRound({
       run_id: runId,
       round_id: run.currentRound.round_id,
@@ -2465,6 +2482,31 @@ export function appendRunNode(
   assertGraphValid(nextGraph);
   _assertLogicalActorIdentities(nextGraph.nodes);
 
+  const existingAgentConfig = run.agents?.[node.agent];
+  const nextAgentConfig = request.agentConfig
+    ? {
+        ...request.agentConfig,
+        ...(request.agentConfig.skills === undefined && existingAgentConfig?.skills
+          ? { skills: [...existingAgentConfig.skills] }
+          : {}),
+      }
+    : undefined;
+  const existingSkillContext = getDagRunSkillContext(runId, node.agent);
+  if (existingAgentConfig && !existingSkillContext) {
+    throw new Error(`DAG run ${runId} agent ${node.agent} is missing its pinned Skill Context`);
+  }
+  if (request.agentConfig && (request.agentConfig.skills !== undefined || !existingSkillContext)) {
+    const resolvedSkillContext = resolveDagWorkerSkillContext({
+      agent_id: node.agent,
+      skills: nextAgentConfig?.skills ?? [],
+    });
+    pinDagRunSkillContext({
+      run_id: runId,
+      agent_id: node.agent,
+      context: resolvedSkillContext,
+    });
+  }
+
   run.dagRun.graph.nodes.push(node);
   run.dagRun.graph.edges.push(...afterEdges, ...outputEdges);
   run.nodeIndex.set(node.node_id, run.dagRun.graph.nodes.length - 1);
@@ -2477,8 +2519,8 @@ export function appendRunNode(
   const depsSatisfied = node.after.every((dep) => run.dagRun.handoffedNodes.has(dep));
   run.dagRun.nodeStates.set(node.node_id, depsSatisfied ? "READY" : "PENDING");
   run.nodeCount = run.dagRun.graph.nodes.length;
-  if (request.agentConfig) {
-    run.agents = { ...(run.agents ?? {}), [node.agent]: request.agentConfig };
+  if (nextAgentConfig) {
+    run.agents = { ...(run.agents ?? {}), [node.agent]: nextAgentConfig };
   }
 
   writeRunMetadata(runId, serializeRunMetadata(run));
@@ -4243,6 +4285,25 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
 
   const agentId = node.agent;
   const agentConfig = run.agents?.[agentId] ?? {};
+  let skillContext;
+  try {
+    skillContext = getDagRunSkillContext(run.runId, agentId)?.context;
+  } catch (cause) {
+    return {
+      ok: false,
+      reason: `Skill Context validation failed for agent ${agentId}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    };
+  }
+  if (agentConfig.skills?.length) {
+    if (!skillContext) {
+      return { ok: false, reason: `pinned Skill Context is unavailable for agent ${agentId}` };
+    }
+    const declaredIds = [...agentConfig.skills].sort();
+    const pinnedIds = skillContext.skills.map((skill) => skill.id);
+    if (!isDeepStrictEqual(declaredIds, pinnedIds)) {
+      return { ok: false, reason: `pinned Skill Context does not match agent ${agentId} declarations` };
+    }
+  }
   const credentials = _withDispatchCredentials(agentConfig);
   if (!credentials.ok) return credentials;
   const advisorResolution = _advisorConfigs(run, node);
@@ -4290,6 +4351,7 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
       sessionId: nodeSession.sessionId,
       agentId,
       agentConfig: credentials.agentConfig,
+      ...(skillContext ? { skillContext } : {}),
       inputs: dispatchInputs,
       outgoingEdges,
       checkpointResume: nodeSession.resumeInstruction
