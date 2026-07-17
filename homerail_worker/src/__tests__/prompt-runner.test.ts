@@ -8,7 +8,11 @@ import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { runPrompt } from "../prompt-runner.js";
 import type { PromptJob } from "../prompt-runner.js";
-import type { DagNodeConfig } from "homerail-protocol";
+import {
+  HOMERAIL_A2UI_CATALOG_ID,
+  HOMERAIL_A2UI_VERSION,
+  type DagNodeConfig,
+} from "homerail-protocol";
 import { registerAgentBackend } from "../agent/factory.js";
 import type { AgentClient, AgentEvent, AgentRunContext } from "../agent/types.js";
 
@@ -216,6 +220,225 @@ describe("prompt runner", () => {
     );
 
     expect(observedTools).toEqual(["handoff"]);
+  });
+
+  it("does not expose rich surface reporting when allowed_dag_tools is omitted", async () => {
+    let observedTools: string[] = [];
+    let observedContext: AgentRunContext | undefined;
+    const mockAgent: AgentClient = {
+      run(_prompt, tools, context) {
+        observedTools = tools.map((tool) => tool.name);
+        observedContext = context;
+        return (async function* () {
+          await tools.find((tool) => tool.name === "handoff")!.handler({ port: "done", content: "complete" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-surface-tool-default-deny", () => mockAgent);
+
+    await runPrompt(
+      {
+        task: "ordinary work",
+        sender: "test",
+        runId: "run-surface-default-deny",
+        dagConfig: makeConfigWith({
+          round_id: "round-1",
+          actor_id: "actor-coder",
+          generation: 1,
+          lease_generation: 1,
+          surface_id: "surface:actor-coder",
+        }),
+        systemPrompt: "Node instructions",
+      },
+      {
+        wsSend: () => {},
+        agentBackend: "test-surface-tool-default-deny",
+      },
+    );
+
+    expect(observedTools).not.toContain("report_surface_state");
+    expect(observedContext?.systemPrompt).toBe("Node instructions");
+  });
+
+  it("exposes and prompts rich surface reporting only when explicitly allowed", async () => {
+    let observedTools: string[] = [];
+    let observedContext: AgentRunContext | undefined;
+    let reportResult: Record<string, unknown> | undefined;
+    const mockAgent: AgentClient = {
+      run(_prompt, tools, context) {
+        observedTools = tools.map((tool) => tool.name);
+        observedContext = context;
+        return (async function* () {
+          const result = await tools.find((tool) => tool.name === "report_surface_state")!.handler({
+            patch_id: "patch-prompt-1",
+            patch_sequence: 1,
+            phase: "partial",
+            op: "replace_body",
+            body: {
+              a2ui: {
+                version: HOMERAIL_A2UI_VERSION,
+                catalogId: HOMERAIL_A2UI_CATALOG_ID,
+                components: [
+                  { id: "root", component: "Column", children: ["preview", "checks"] },
+                  { id: "preview", component: "Image", url: { path: "/actor_view/data/image_url" } },
+                  { id: "checks", component: "HrMetric", label: "Checks", value: { path: "/actor_view/data/checks" } },
+                ],
+              },
+              data: { checks: 3, image_url: "https://cdn.example/progress.webp" },
+              fallback: { title: "Checks", summary: "Three checks complete" },
+            },
+          });
+          reportResult = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+          await tools.find((tool) => tool.name === "handoff")!.handler({ port: "done", content: "complete" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-surface-tool-explicit-allow", () => mockAgent);
+    const sent: string[] = [];
+    const richConfig = makeConfigWith({
+      round_id: "round-rich",
+      actor_id: "actor-coder",
+      generation: 2,
+      lease_generation: 3,
+      surface_id: "surface:actor-coder",
+      allowed_dag_tools: ["handoff", "report_surface_state"],
+    } as unknown as Partial<DagNodeConfig>);
+
+    await runPrompt(
+      {
+        task: "report progress",
+        sender: "test",
+        runId: "run-surface-allowed",
+        dagConfig: richConfig,
+        systemPrompt: "Node instructions",
+      },
+      {
+        wsSend: (data) => sent.push(data),
+        agentBackend: "test-surface-tool-explicit-allow",
+        surfaceMediaDownloader: async () => ({
+          bytes: Buffer.alloc(5_000, 7),
+          media_type: "image/webp",
+        }),
+      },
+    );
+
+    expect(observedTools).toEqual(["handoff", "report_surface_state"]);
+    expect(observedContext?.systemPrompt).toContain("Node instructions");
+    expect(observedContext?.systemPrompt).toContain("RICH SURFACE REPORTING CAPABILITY");
+    expect(observedContext?.systemPrompt).toContain("never mutates the Canvas directly");
+    expect(reportResult).toMatchObject({
+      status: "submitted",
+      surface_id: "surface:actor-coder",
+      manager_validation: "pending",
+      canvas_mutated: false,
+    });
+    const proposal = sent
+      .map((message) => JSON.parse(message))
+      .find((message) => message.type === "stream" && message.data?.event === "dag_actor_surface_patch");
+    expect(proposal?.data).toMatchObject({
+      event: "dag_actor_surface_patch",
+      surface_id: "surface:actor-coder",
+      patch: {
+        run_id: "run-surface-allowed",
+        node_id: "coder",
+        session_id: "run-surface-allowed",
+        round_id: "round-rich",
+        actor_id: "actor-coder",
+        generation: 2,
+        lease_generation: 3,
+        patch_id: "patch-prompt-1",
+        patch_sequence: 1,
+      },
+    });
+    const media = sent
+      .map((message) => JSON.parse(message))
+      .find((message) => message.type === "stream" && message.data?.event === "dag_actor_surface_media");
+    expect(media?.data.media).toMatchObject({
+      run_id: "run-surface-allowed",
+      actor_id: "actor-coder",
+      media_type: "image/webp",
+      size_bytes: 5_000,
+    });
+    expect(media?.data.media.content_base64).toHaveLength(Math.ceil(5_000 / 3) * 4);
+    expect(sent.findIndex((message) => JSON.parse(message).data?.event === "dag_actor_surface_media"))
+      .toBeLessThan(sent.findIndex((message) => JSON.parse(message).data?.event === "dag_actor_surface_patch"));
+  });
+
+  it("uses structured dispatch inputs to materialize trusted pinned Surface data", async () => {
+    let reportResult: Record<string, unknown> | undefined;
+    const mockAgent: AgentClient = {
+      run(_prompt, tools) {
+        return (async function* () {
+          const result = await tools.find((tool) => tool.name === "report_surface_state")!.handler({
+            phase: "final",
+            view_id: "trusted-summary",
+            data: { title: "wrong model copy", items: 1, phase_text: "Done" },
+            fallback: "Trusted title",
+          });
+          reportResult = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+          await tools.find((tool) => tool.name === "handoff")!.handler({ port: "done", content: "complete" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-trusted-surface-input", () => mockAgent);
+    const sent: string[] = [];
+    const dagConfig = makeConfigWith({
+      round_id: "round-trusted",
+      actor_id: "actor-coder",
+      generation: 1,
+      lease_generation: 1,
+      surface_id: "surface:actor-coder",
+      allowed_dag_tools: ["handoff", "report_surface_state"],
+    } as unknown as Partial<DagNodeConfig>);
+
+    await runPrompt({
+      task: "## input:mission\nEVIDENCE: model-visible copy",
+      sender: "test",
+      runId: "run-trusted-surface",
+      dagConfig,
+      pinnedSurfaceViews: new Map([["trusted-summary", {
+        version: HOMERAIL_A2UI_VERSION,
+        catalogId: HOMERAIL_A2UI_CATALOG_ID,
+        components: [
+          { id: "root", component: "Column", children: ["title", "items", "phase"] },
+          { id: "title", component: "Text", text: { path: "/actor_view/data/title" } },
+          { id: "items", component: "List", children: { path: "/actor_view/data/items", componentId: "item" } },
+          { id: "item", component: "Text", text: { path: "label" } },
+          { id: "phase", component: "Text", text: { path: "/actor_view/data/phase_text" } },
+        ],
+      }]]),
+      pinnedSurfaceDataContracts: new Map([["trusted-summary", {
+        source: { input_port: "mission", encoding: "json", json_prefix: "EVIDENCE: ", pointer: "/result" },
+        fields: [
+          { field: "title", mode: "source", source_pointer: "/title" },
+          { field: "items", mode: "source_prefix", source_pointer: "/items", max_items: 4 },
+          { field: "phase_text", mode: "presentation" },
+        ],
+      }]]),
+      trustedInputs: {
+        mission: ['EVIDENCE: {"result":{"title":"Trusted title","items":[{"label":"one"},{"label":"two"}]}}'],
+      },
+    }, {
+      wsSend: (data) => sent.push(data),
+      agentBackend: "test-trusted-surface-input",
+    });
+
+    expect(reportResult).toMatchObject({
+      status: "submitted",
+      ignored_model_source_fields: ["title"],
+      source_prefix_counts: { items: 1 },
+    });
+    const proposal = sent
+      .map((message) => JSON.parse(message))
+      .find((message) => message.type === "stream" && message.data?.event === "dag_actor_surface_patch");
+    expect(proposal?.data.patch.body.data).toEqual({
+      title: "Trusted title",
+      items: [{ label: "one" }],
+      phase_text: "Done",
+    });
   });
 
   it("fails closed when a backend cannot enforce the built-in tool allowlist", async () => {

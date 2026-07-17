@@ -452,6 +452,7 @@ export const DAG_AGENT_TOOL_NAMES = [
   "manager_command",
   "consult_advisor",
   "report_activity",
+  "report_surface_state",
 ] as const;
 
 export type DagAgentToolName = (typeof DAG_AGENT_TOOL_NAMES)[number];
@@ -612,6 +613,10 @@ export interface DagNodeConfig {
   surface_id?: string;
   /** Last persisted activity sequence; the next emitted event starts after this value. */
   activity_sequence_start?: number;
+  /** Last processed Actor surface body sequence for this generation. */
+  surface_patch_sequence_start?: number;
+  /** Manager-attested final Surface milestone for the current correction turn. */
+  surface_reporting_complete?: boolean;
   advisors?: DagAdvisorConfig[];
   workspace_access?: DagWorkspaceAccess;
   /** Optional exact allowlist for backend-provided shell and file tools. */

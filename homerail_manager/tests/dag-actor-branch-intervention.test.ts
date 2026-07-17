@@ -249,6 +249,9 @@ describe("runtime-backed DAG actor branch intervention", () => {
     const actorsBefore = new Map(listDagActors(runId).map((actor) => [actor.actor_id, actor]));
     const researchBefore = actorsBefore.get("research")!;
     const oldEnvelope = dispatcher.dispatched.find((entry) => entry.activity?.actorId === "research")!;
+    getActiveRun(runId)?.dagRun.mailboxes.get("research")?.set("correction", [
+      "stale handoff-only correction must not survive an intervention",
+    ]);
     const buildSurfaceBefore = structuredClone(nodeById(runId, "surface:build"));
     const verifySurfaceBefore = structuredClone(nodeById(runId, "surface:verify"));
     const researchSurfaceBefore = structuredClone(nodeById(runId, "surface:research"));
@@ -279,6 +282,7 @@ describe("runtime-backed DAG actor branch intervention", () => {
     expect(actorsAfter.get("build")).toEqual(actorsBefore.get("build"));
     expect(actorsAfter.get("verify")).toEqual(actorsBefore.get("verify"));
     expect(getActiveRun(runId)?.dagRun.nodeStates.get("research")).toBe("READY");
+    expect(getActiveRun(runId)?.dagRun.mailboxes.get("research")?.has("correction")).toBe(false);
     expect(getActiveRun(runId)?.dagRun.nodeStates.get("build")).toBe("RUNNING");
     expect(getActiveRun(runId)?.dagRun.nodeStates.get("verify")).toBe("RUNNING");
 

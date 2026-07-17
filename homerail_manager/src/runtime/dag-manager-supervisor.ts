@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { redactTelemetry, type DagActivityEventV1, type DagActivityType } from "homerail-protocol";
+import {
+  redactTelemetry,
+  type DagActivityEventV1,
+  type DagActivityType,
+  type DagActorSurfaceBodyV1,
+  type DagWorkerSkillContextV1,
+} from "homerail-protocol";
 import {
   controlDagLiveSurface,
   getDagLiveSurfaceControl,
@@ -15,23 +21,36 @@ import {
 import { listDagActorCommands, listDagActors } from "../persistence/dag-actors.js";
 import { listDagActorLiveCommands } from "../persistence/dag-actor-live-commands.js";
 import {
+  getQueuedDagActorSurfacePatch,
+  listDagActorSurfacePatchMilestones,
+  listDagActorSurfaceViews,
+  type DagActorSurfacePatchApplyKind,
+  type DagActorSurfacePatchQueueStatus,
+} from "../persistence/dag-actor-surface-patches.js";
+import {
   listDagActorInterventions,
   type DagActorInterventionOperation,
   type DagActorInterventionStatus,
 } from "../persistence/dag-actor-interventions.js";
 import { getDagState, updateDagState } from "../persistence/dag-runtime-primitives.js";
+import { listDagRunSkillContexts } from "../persistence/dag-run-skill-contexts.js";
 import { getCurrentDagRunRound, listDagRunRounds, type DagRunRoundRecord } from "../persistence/dag-run-rounds.js";
 import { loadRunMetadata } from "../persistence/store.js";
 import { getDagActorControlState, type DagActorControlStateName } from "./dag-actor-control-state.js";
 
 const SUPERVISOR_CURSOR_NAMESPACE = "manager_supervisor_cursor_v2";
 const SUPERVISOR_CURSOR_SCHEMA_VERSION = 2;
+const SUPERVISOR_SURFACE_CURSOR_NAMESPACE = "manager_supervisor_surface_cursor_v1";
+const SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION = 1;
 const MAX_SUPERVISOR_ACTORS = 64;
 const MAX_MILESTONES = 12;
 const MAX_PENDING_TOOLS_PER_ACTOR = 8;
 const MAX_TOOL_NAME_LENGTH = 96;
 const MAX_MILESTONE_SUMMARY_LENGTH = 240;
 const MAX_COMMENTARY_LENGTH = 320;
+const MAX_COMMAND_PAYLOAD_FIELDS = 8;
+const MAX_COMMAND_PAYLOAD_PATH_DEPTH = 8;
+const MAX_COMMAND_PAYLOAD_PATH_SEGMENT_LENGTH = 96;
 const MILESTONE_TYPES = new Set<DagActivityType>(["finding", "blocked", "completed", "failed"]);
 const TERMINAL_ACTIVITY_TYPES = new Set<DagActivityType>(["blocked", "completed", "failed"]);
 
@@ -51,7 +70,29 @@ export interface DagSupervisorActorSummary {
   };
   commands: Record<string, number>;
   live_commands: Record<string, number>;
+  surface_patch?: {
+    body_revision: number;
+    visual_revision: number;
+    phase?: string;
+    last_patch_id?: string;
+  };
+  command_payload_contract?: DagSupervisorCommandPayloadContract;
   latest_intervention?: DagSupervisorInterventionSummary;
+}
+
+export interface DagSupervisorCommandPayloadField {
+  purpose: "final_source_prefix_count";
+  payload_path: string[];
+  type: "integer";
+  minimum: 0;
+  maximum: number;
+  default: number | "source_length";
+  surface_data_fields: string[];
+}
+
+export interface DagSupervisorCommandPayloadContract {
+  schema_version: 1;
+  fields: DagSupervisorCommandPayloadField[];
 }
 
 export interface DagSupervisorInterventionSummary {
@@ -80,6 +121,21 @@ export interface DagSupervisorMilestone {
   type: "finding" | "blocked" | "completed" | "failed";
   summary: string;
   tools_used: string[];
+  timestamp: number;
+}
+
+export interface DagSupervisorSurfacePatchMilestone {
+  milestone_id: string;
+  journal_seq: number;
+  patch_id: string;
+  actor_id: string;
+  role: string;
+  phase: string;
+  status: DagActorSurfacePatchQueueStatus;
+  apply_kind?: DagActorSurfacePatchApplyKind;
+  body_revision: number;
+  visual_revision: number;
+  summary: string;
   timestamp: number;
 }
 
@@ -134,6 +190,7 @@ export interface DagSupervisionSnapshot {
     suppressed_progress_events: number;
     milestones: DagSupervisorMilestone[];
     intervention_milestones: DagSupervisorInterventionMilestone[];
+    surface_patch_milestones: DagSupervisorSurfacePatchMilestone[];
     commentary: string[];
   };
 }
@@ -145,6 +202,13 @@ interface SupervisorCursorV2 {
   next_after_seq: number;
   pending_tools: Record<string, string[]>;
   seen_intervention_ids: string[];
+}
+
+interface SupervisorSurfaceCursorV1 {
+  schema_version: 1;
+  run_id: string;
+  consumer_digest: string;
+  actor_cursors: Record<string, number>;
 }
 
 function assertIdentifier(value: string, label: string, maxLength = 256): string {
@@ -262,6 +326,39 @@ function decodeCursor(value: unknown, runId: string, consumerDigest: string): Su
   };
 }
 
+function decodeSurfaceCursor(value: unknown, runId: string, consumerDigest: string): SupervisorSurfaceCursorV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      schema_version: SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION,
+      run_id: runId,
+      consumer_digest: consumerDigest,
+      actor_cursors: {},
+    };
+  }
+  const candidate = value as Partial<SupervisorSurfaceCursorV1>;
+  if (candidate.schema_version !== SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION
+    || candidate.run_id !== runId
+    || candidate.consumer_digest !== consumerDigest
+    || !candidate.actor_cursors
+    || typeof candidate.actor_cursors !== "object"
+    || Array.isArray(candidate.actor_cursors)) {
+    throw new Error("Manager Supervisor surface cursor identity is invalid");
+  }
+  const actorCursors: Record<string, number> = {};
+  for (const [actorId, cursor] of Object.entries(candidate.actor_cursors).slice(0, MAX_SUPERVISOR_ACTORS)) {
+    if (!Number.isSafeInteger(cursor) || Number(cursor) < 0) {
+      throw new Error("Manager Supervisor surface cursor revision is invalid");
+    }
+    actorCursors[actorId] = Number(cursor);
+  }
+  return {
+    schema_version: SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION,
+    run_id: runId,
+    consumer_digest: consumerDigest,
+    actor_cursors: actorCursors,
+  };
+}
+
 function milestoneFromEntry(
   entry: DagActivityJournalEntry,
   role: string,
@@ -326,16 +423,123 @@ function interventionCommentary(milestones: DagSupervisorInterventionMilestone[]
     : `${commentary.slice(0, MAX_COMMENTARY_LENGTH - 1)}…`];
 }
 
-function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
+type SupervisorAgentConfig = {
+  allowed_surface_views?: string[];
+};
+
+function decodeJsonPointerSegment(value: string): string | undefined {
+  if (/~(?:[^01]|$)/.test(value)) return undefined;
+  const decoded = value.replace(/~1/g, "/").replace(/~0/g, "~");
+  if (!decoded
+    || decoded.length > MAX_COMMAND_PAYLOAD_PATH_SEGMENT_LENGTH
+    || /[\u0000-\u001f\u007f]/.test(decoded)) {
+    return undefined;
+  }
+  return decoded;
+}
+
+function commandPayloadPath(pointer: string | undefined): string[] | undefined {
+  if (!pointer?.startsWith("/payload/")) return undefined;
+  const segments = pointer.slice(1).split("/").map(decodeJsonPointerSegment);
+  if (segments[0] !== "payload"
+    || segments.length < 2
+    || segments.length > MAX_COMMAND_PAYLOAD_PATH_DEPTH + 1
+    || segments.some((segment) => segment === undefined)) {
+    return undefined;
+  }
+  return segments.slice(1) as string[];
+}
+
+function selectedVisualViews(
+  context: DagWorkerSkillContextV1,
+  allowedSurfaceViews: readonly string[] | undefined,
+) {
+  const localCounts = new Map<string, number>();
+  for (const skill of context.skills) {
+    for (const view of skill.visual_profile?.views ?? []) {
+      localCounts.set(view.id, (localCounts.get(view.id) ?? 0) + 1);
+    }
+  }
+  const allowed = allowedSurfaceViews === undefined ? undefined : new Set(allowedSurfaceViews);
+  return context.skills.flatMap((skill) => (
+    (skill.visual_profile?.views ?? []).filter((view) => (
+      allowed === undefined
+      || allowed.has(`${skill.id}:${view.id}`)
+      || (allowed.has(view.id) && localCounts.get(view.id) === 1)
+    ))
+  ));
+}
+
+function buildCommandPayloadContract(
+  context: DagWorkerSkillContextV1 | undefined,
+  allowedSurfaceViews: readonly string[] | undefined,
+): DagSupervisorCommandPayloadContract | undefined {
+  if (!context) return undefined;
+  const fields = new Map<string, DagSupervisorCommandPayloadField>();
+  const ambiguous = new Set<string>();
+  for (const view of selectedVisualViews(context, allowedSurfaceViews)) {
+    for (const field of view.data_contract?.fields ?? []) {
+      const source = field.final_count?.source;
+      if (field.mode !== "source_prefix"
+        || !field.final_count
+        || source?.input_port !== "command"
+        || (source.value_index !== undefined && source.value_index !== 0)
+        || (source.encoding !== undefined && source.encoding !== "value")
+        || source.json_prefix !== undefined) {
+        continue;
+      }
+      const payloadPath = commandPayloadPath(source.pointer);
+      if (!payloadPath) continue;
+      const key = JSON.stringify(payloadPath);
+      if (ambiguous.has(key)) continue;
+      const candidate: DagSupervisorCommandPayloadField = {
+        purpose: "final_source_prefix_count",
+        payload_path: payloadPath,
+        type: "integer",
+        minimum: 0,
+        maximum: field.max_items ?? 100,
+        default: field.final_count.default,
+        surface_data_fields: [field.field],
+      };
+      const existing = fields.get(key);
+      if (!existing) {
+        fields.set(key, candidate);
+        continue;
+      }
+      if (existing.maximum !== candidate.maximum || existing.default !== candidate.default) {
+        fields.delete(key);
+        ambiguous.add(key);
+        continue;
+      }
+      existing.surface_data_fields = [...new Set([
+        ...existing.surface_data_fields,
+        ...candidate.surface_data_fields,
+      ])].sort();
+    }
+  }
+  const bounded = [...fields.values()]
+    .sort((left, right) => JSON.stringify(left.payload_path).localeCompare(JSON.stringify(right.payload_path)))
+    .slice(0, MAX_COMMAND_PAYLOAD_FIELDS);
+  return bounded.length > 0 ? { schema_version: 1, fields: bounded } : undefined;
+}
+
+function buildActorSummaries(
+  runId: string,
+  round?: DagRunRoundRecord,
+  agents?: Record<string, SupervisorAgentConfig>,
+): {
   actor_count: number;
   actors_truncated: boolean;
   actors: DagSupervisorActorSummary[];
 } {
   const allActors = listDagActors(runId);
+  const skillContexts = new Map(listDagRunSkillContexts(runId).map((record) => [record.agent_id, record.context]));
   const projections = new Map(listDagLiveSurfaceProjections(runId).map((projection) => [projection.actor_id, projection]));
+  const surfaceViews = new Map(listDagActorSurfaceViews(runId).map((view) => [view.actor_id, view]));
   const actors = allActors.slice(0, MAX_SUPERVISOR_ACTORS).map((actor): DagSupervisorActorSummary => {
     const controlState = getDagActorControlState(runId, actor.actor_id);
     const projection = projections.get(actor.actor_id);
+    const surfaceView = surfaceViews.get(actor.actor_id);
     const lease = getDagActorLease({ run_id: runId, actor_id: actor.actor_id });
     const commandCounts: Record<string, number> = {};
     for (const command of listDagActorCommands({ run_id: runId, actor_id: actor.actor_id, limit: 500 })) {
@@ -350,6 +554,12 @@ function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
       actor_id: actor.actor_id,
       limit: 1,
     })[0];
+    const agentId = typeof actor.model_profile.agent_id === "string"
+      ? actor.model_profile.agent_id
+      : undefined;
+    const commandPayloadContract = agentId
+      ? buildCommandPayloadContract(skillContexts.get(agentId), agents?.[agentId]?.allowed_surface_views)
+      : undefined;
     return {
       actor_id: actor.actor_id,
       role: actor.role,
@@ -370,6 +580,17 @@ function buildActorSummaries(runId: string, round?: DagRunRoundRecord): {
         : {}),
       commands: commandCounts,
       live_commands: liveCommandCounts,
+      ...(surfaceView
+        ? {
+          surface_patch: {
+            body_revision: surfaceView.body_revision,
+            visual_revision: surfaceView.visual_revision,
+            ...(surfaceView.phase === undefined ? {} : { phase: surfaceView.phase }),
+            ...(surfaceView.last_patch_id === undefined ? {} : { last_patch_id: surfaceView.last_patch_id }),
+          },
+        }
+        : {}),
+      ...(commandPayloadContract ? { command_payload_contract: commandPayloadContract } : {}),
       ...(latestIntervention
         ? {
           latest_intervention: {
@@ -454,6 +675,144 @@ function buildRoundSummary(runId: string, round: DagRunRoundRecord | undefined):
         return Boolean(result && TERMINAL_ACTIVITY_TYPES.has(result.outcome));
       }),
   };
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function surfacePatchBodySummary(body: DagActorSurfaceBodyV1 | undefined): string | undefined {
+  if (!body) return undefined;
+  const data = recordValue(body.data);
+  const fallback = recordValue(body.fallback);
+  const candidates = [
+    data?.phase_text,
+    data?.status_text,
+    fallback?.summary,
+    fallback?.title,
+    data?.summary,
+    data?.title,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || !candidate.trim()) continue;
+    const summary = candidate.trim();
+    return summary.length <= MAX_MILESTONE_SUMMARY_LENGTH
+      ? summary
+      : `${summary.slice(0, MAX_MILESTONE_SUMMARY_LENGTH - 1)}…`;
+  }
+  return undefined;
+}
+
+function surfacePatchSummary(input: {
+  status: DagActorSurfacePatchQueueStatus;
+  apply_kind?: DagActorSurfacePatchApplyKind;
+  phase: string;
+}, body?: DagActorSurfaceBodyV1): string {
+  if (input.status === "rejected") return "Rich surface proposal was rejected";
+  if (input.apply_kind === "clear_body") return "Rich surface body was cleared";
+  const bodySummary = surfacePatchBodySummary(body);
+  if (bodySummary) return bodySummary;
+  if (input.apply_kind === "patch_components") return "Rich surface structure was updated";
+  switch (input.phase) {
+    case "verified": return "Rich surface reached a verified milestone";
+    case "refined": return "Rich surface reached a refined milestone";
+    case "final": return "Rich surface reached its final milestone";
+    default: return "Rich surface was updated";
+  }
+}
+
+function surfacePatchCommentary(milestones: DagSupervisorSurfacePatchMilestone[]): string[] {
+  if (milestones.length === 0) return [];
+  const text = milestones.slice(0, 3)
+    .map((milestone) => `${milestone.role || milestone.actor_id}：${milestone.summary}`)
+    .join("；");
+  const overflow = milestones.length > 3 ? `；另有 ${milestones.length - 3} 项界面里程碑` : "";
+  const commentary = `${text}${overflow}`;
+  return [commentary.length <= MAX_COMMENTARY_LENGTH
+    ? commentary
+    : `${commentary.slice(0, MAX_COMMENTARY_LENGTH - 1)}…`];
+}
+
+function consumeSurfacePatchMilestones(input: {
+  run_id: string;
+  consumer_id: string;
+  max_milestones?: number;
+}): { milestones: DagSupervisorSurfacePatchMilestone[]; commentary: string[]; has_more: boolean } {
+  const runId = input.run_id;
+  const consumer = assertIdentifier(input.consumer_id, "consumer_id", 512);
+  const maxMilestones = assertMaxMilestones(input.max_milestones);
+  const identity = cursorKey(runId, consumer);
+  const state = getDagState(SUPERVISOR_SURFACE_CURSOR_NAMESPACE, identity.key);
+  const cursor = decodeSurfaceCursor(state?.value, runId, identity.digest);
+  const actorCursors = structuredClone(cursor.actor_cursors);
+  const actors = listDagActors(runId).slice(0, MAX_SUPERVISOR_ACTORS);
+  const milestones: DagSupervisorSurfacePatchMilestone[] = [];
+  let hasMore = false;
+
+  actorLoop: for (const [actorIndex, actor] of actors.entries()) {
+    const page = listDagActorSurfacePatchMilestones({
+      run_id: runId,
+      actor_id: actor.actor_id,
+      after_journal_seq: actorCursors[actor.actor_id] ?? 0,
+      limit: 500,
+    });
+    for (const [index, patch] of page.entries()) {
+      if (patch.status === "pending") break;
+      actorCursors[actor.actor_id] = patch.journal_seq;
+      const meaningful = patch.generation === actor.generation
+        && patch.status !== "stale"
+        && patch.status !== "coalesced"
+        && (patch.status === "rejected"
+          || patch.apply_kind === "patch_components"
+          || patch.apply_kind === "clear_body"
+          || patch.phase === "verified"
+          || patch.phase === "refined"
+          || patch.phase === "final");
+      if (!meaningful || patch.body_revision === undefined || patch.visual_revision === undefined) continue;
+      const queued = getQueuedDagActorSurfacePatch(patch.journal_seq);
+      const body = queued?.patch.op === "replace_body" ? queued.patch.body : undefined;
+      milestones.push({
+        milestone_id: createHash("sha256")
+          .update(`surface-patch\0${patch.journal_seq}\0${patch.patch_id}\0${patch.actor_id}`)
+          .digest("hex"),
+        journal_seq: patch.journal_seq,
+        patch_id: patch.patch_id,
+        actor_id: patch.actor_id,
+        role: actor.role,
+        phase: patch.phase,
+        status: patch.status,
+        ...(patch.apply_kind === undefined ? {} : { apply_kind: patch.apply_kind }),
+        body_revision: patch.body_revision,
+        visual_revision: patch.visual_revision,
+        summary: surfacePatchSummary(patch, body),
+        timestamp: patch.applied_at ?? patch.queued_at,
+      });
+      if (milestones.length >= maxMilestones) {
+        hasMore = index < page.length - 1 || page.length === 500 || actorIndex < actors.length - 1;
+        break actorLoop;
+      }
+    }
+    if (page.length === 500) hasMore = true;
+  }
+
+  if (JSON.stringify(actorCursors) !== JSON.stringify(cursor.actor_cursors)) {
+    const updated = updateDagState({
+      namespace: SUPERVISOR_SURFACE_CURSOR_NAMESPACE,
+      key: identity.key,
+      expectedVersion: state?.version ?? 0,
+      runId,
+      value: {
+        schema_version: SUPERVISOR_SURFACE_CURSOR_SCHEMA_VERSION,
+        run_id: runId,
+        consumer_digest: identity.digest,
+        actor_cursors: actorCursors,
+      } satisfies SupervisorSurfaceCursorV1,
+    });
+    if (!updated.updated) throw new Error("Manager Supervisor surface cursor changed concurrently; retry status query");
+  }
+  return { milestones, commentary: surfacePatchCommentary(milestones), has_more: hasMore };
 }
 
 function consumeMilestones(input: {
@@ -555,15 +914,24 @@ function consumeMilestones(input: {
     if (!updated.updated) throw new Error("Manager Supervisor cursor changed concurrently; retry status query");
   }
 
+  const surfacePatchDigest = consumeSurfacePatchMilestones(input);
   return {
     consumer_digest: identity.digest,
     after_seq: cursor.next_after_seq,
     next_after_seq: nextAfterSeq,
-    has_more: stoppedEarly || (nextAfterSeq >= page.next_after_seq && page.has_more) || interventionsHaveMore,
+    has_more: stoppedEarly
+      || (nextAfterSeq >= page.next_after_seq && page.has_more)
+      || interventionsHaveMore
+      || surfacePatchDigest.has_more,
     suppressed_progress_events: suppressedProgressEvents,
     milestones,
     intervention_milestones: interventionMilestones,
-    commentary: [...commentaryFor(milestones), ...interventionCommentary(interventionMilestones)],
+    surface_patch_milestones: surfacePatchDigest.milestones,
+    commentary: [
+      ...commentaryFor(milestones),
+      ...interventionCommentary(interventionMilestones),
+      ...surfacePatchDigest.commentary,
+    ],
   };
 }
 
@@ -580,7 +948,7 @@ export function getDagSupervisionSnapshot(input: {
   const metadata = loadRunMetadata(runId);
   if (!metadata) throw new Error(`Run not found: ${runId}`);
   const round = latestRound(runId);
-  const actorSnapshot = buildActorSummaries(runId, round);
+  const actorSnapshot = buildActorSummaries(runId, round, metadata.agents);
   return {
     run_id: runId,
     ...(metadata.workflowId ? { workflow_id: metadata.workflowId } : {}),
@@ -599,8 +967,12 @@ export function listDagSupervisorActors(runId: string): {
   actors: DagSupervisorActorSummary[];
 } {
   const normalizedRunId = assertIdentifier(runId, "run_id");
-  if (!loadRunMetadata(normalizedRunId)) throw new Error(`Run not found: ${normalizedRunId}`);
-  return { run_id: normalizedRunId, ...buildActorSummaries(normalizedRunId, latestRound(normalizedRunId)) };
+  const metadata = loadRunMetadata(normalizedRunId);
+  if (!metadata) throw new Error(`Run not found: ${normalizedRunId}`);
+  return {
+    run_id: normalizedRunId,
+    ...buildActorSummaries(normalizedRunId, latestRound(normalizedRunId), metadata.agents),
+  };
 }
 
 /** Focus is resolved through stable actor identity and the current Projector CAS revision. */

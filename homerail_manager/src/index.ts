@@ -6,7 +6,10 @@ import { recoverStaleVoiceSessions } from "./server/voice-session-registry.js";
 import { markRecoveryComplete } from "./health/index.js";
 import { cleanupPluginPackageStaging, recoverPluginPackageTrash } from "./plugins/package-lifecycle.js";
 import { shutdownHostShellManagerAgents } from "./server/host-shell-manager-agent.js";
-import { recoverDagLiveSurfaceProjections } from "./generative-ui/dag-live-surface-projector.js";
+import {
+  recoverDagActorSurfacePatches,
+  recoverDagLiveSurfaceProjections,
+} from "./generative-ui/dag-live-surface-projector.js";
 
 initEventLogging();
 
@@ -24,6 +27,9 @@ const interventionRecovery = recoverDagActorInterventions();
 // Logical actors are restored before Activity Journal replay. The projector
 // can therefore re-establish exact ownership and drain any crash-pending gaps.
 const surfaceRecovery = recoverDagLiveSurfaceProjections();
+// Actor patch recovery follows host Activity recovery so the single projector
+// can rebuild a stable node before draining independent body revisions.
+const actorSurfaceRecovery = recoverDagActorSurfacePatches();
 // Reset voice sessions stuck in running/submitted (no live process after restart).
 const voiceRecovery = recoverStaleVoiceSessions();
 const pluginTrashRecovery = recoverPluginPackageTrash();
@@ -37,6 +43,9 @@ server.listen(port, host, () => {
   );
   console.error(
     `live surface recovery: projected=${surfaceRecovery.projected_events} failed=${surfaceRecovery.failed.length}`,
+  );
+  console.error(
+    `actor surface recovery: applied=${actorSurfaceRecovery.applied_patches} stale=${actorSurfaceRecovery.stale_patches} failed=${actorSurfaceRecovery.failed.length}`,
   );
   if (interventionRecovery.applied.length || interventionRecovery.failed.length || interventionRecovery.skipped.length) {
     console.error(

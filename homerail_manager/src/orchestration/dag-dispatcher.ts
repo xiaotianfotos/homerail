@@ -45,6 +45,9 @@ export interface DispatchEnvelope {
     commandId?: string;
     surfaceId?: string;
     sequenceStart: number;
+    surfacePatchSequenceStart: number;
+    /** True only when a correction turn follows an applied final Surface patch in the same round. */
+    surfaceReportingComplete?: boolean;
   };
 }
 

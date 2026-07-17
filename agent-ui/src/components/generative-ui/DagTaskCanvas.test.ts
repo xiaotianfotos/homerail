@@ -20,6 +20,13 @@ const mocks = vi.hoisted(() => ({
   onStateChange: vi.fn(() => () => undefined),
 }))
 
+const originalViewport = { width: window.innerWidth, height: window.innerHeight }
+
+function setViewport(width: number, height: number): void {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
+}
+
 vi.mock('@/api/agent', () => ({
   getDagActorSurfaceHistory: mocks.getDagActorSurfaceHistory,
   getDagLiveSurfaces: mocks.getDagLiveSurfaces,
@@ -167,6 +174,7 @@ afterEach(() => {
   sessionStorage.clear()
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  setViewport(originalViewport.width, originalViewport.height)
 })
 
 describe('DagTaskCanvas', () => {
@@ -308,6 +316,8 @@ describe('DagTaskCanvas', () => {
     mocks.getDagLiveSurfaces.mockResolvedValueOnce({ success: true, data: initial })
     const mounted = mount()
     await settle()
+    const stableBuildBlock = mounted.querySelector('[data-generative-ui-node="surface:build"]')
+    const stableBuildA2uiRoot = stableBuildBlock?.querySelector('[data-a2ui-id="root"]')
     const unchangedResearchBlock = mounted.querySelector('[data-generative-ui-node="surface:research"]')
     const unchangedVerifyBlock = mounted.querySelector('[data-generative-ui-node="surface:verify"]')
 
@@ -324,6 +334,9 @@ describe('DagTaskCanvas', () => {
     mocks.getDagLiveSurfaces.mockResolvedValueOnce({ success: true, data: updated })
     await controls!.refresh()
     await settle()
+    expect(mounted.querySelector('[data-generative-ui-node="surface:build"]')).toBe(stableBuildBlock)
+    expect(mounted.querySelector('[data-generative-ui-node="surface:build"] [data-a2ui-id="root"]'))
+      .toBe(stableBuildA2uiRoot)
     expect(mounted.querySelector('[data-generative-ui-node="surface:research"]')).toBe(unchangedResearchBlock)
     expect(mounted.querySelector('[data-generative-ui-node="surface:verify"]')).toBe(unchangedVerifyBlock)
     expect(mounted.querySelector('[data-generative-ui-node="surface:research"]')
@@ -451,5 +464,37 @@ describe('DagTaskCanvas', () => {
 
     expect(mounted.querySelector('.generative-ui-surface-host')
       ?.getAttribute('data-reduced-motion')).toBe('true')
+  })
+
+  it('keeps the 3x2 1080p canvas and mobile rail responsive with a usable expand button', async () => {
+    setViewport(1920, 1080)
+    mocks.getDagLiveSurfaces.mockResolvedValue({ success: true, data: snapshot() })
+    const mounted = mount()
+    await settle()
+
+    const canvas = mounted.querySelector<HTMLElement>('.generative-ui-surface-host')!
+    expect(canvas.dataset.device).toBe('desktop')
+    expect(canvas.dataset.viewport).toBe('wide')
+    expect(canvas.dataset.canvasColumns).toBe('3')
+    expect(canvas.dataset.canvasRows).toBe('2')
+
+    setViewport(390, 844)
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+    await nextTick()
+    expect(canvas.dataset.device).toBe('phone')
+    expect(canvas.dataset.viewport).toBe('compact')
+    expect(canvas.dataset.canvasColumns).toBe('1')
+    expect(canvas.dataset.canvasRows).toBe('2')
+    expect([...canvas.querySelectorAll<HTMLElement>('[data-generative-ui-node]')]
+      .map(block => block.dataset.canvasSize)).toEqual(['1x2', '1x2', '1x2'])
+
+    const build = canvas.querySelector<HTMLElement>('[data-generative-ui-node="surface:build"]')!
+    const expand = build.querySelector<HTMLButtonElement>('.generative-ui-node-host__expand')!
+    expect(expand.disabled).toBe(false)
+    expand.click()
+    await nextTick()
+    expect(build.dataset.expanded).toBe('true')
+    expect(expand.getAttribute('aria-pressed')).toBe('true')
   })
 })

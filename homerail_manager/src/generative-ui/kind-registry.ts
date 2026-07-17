@@ -2,6 +2,7 @@ import AjvModule, { type ErrorObject, type ValidateFunction } from "ajv";
 import {
   GenerativeUiActorType,
   analyzeGenerativeUiJsonValue,
+  dagActorSurfaceActorViewV1Schema,
   type GenerativeUiDocumentV1,
   type GenerativeUiKindValidatorV1,
   type GenerativeUiStoredNodeV1,
@@ -67,6 +68,35 @@ const LEGACY_CORE_GENERATED_VIEW_PACKAGE_VERSIONS = new Set([
   "0.1.7",
   "0.1.8",
 ]);
+
+const CORE_GENERATED_VIEW_KIND = "com.homerail.core/generated_view";
+const CORE_GENERATED_VIEW_ACTOR_SURFACE_VERSION = 2;
+
+function effectiveKindContentSchema(input: {
+  plugin_id: string;
+  kind: string;
+  kind_version: number;
+  schema: Record<string, unknown>;
+}): Record<string, unknown> {
+  const schema = structuredClone(input.schema);
+  if (
+    input.plugin_id !== "com.homerail.core"
+    || input.kind !== CORE_GENERATED_VIEW_KIND
+    || input.kind_version !== CORE_GENERATED_VIEW_ACTOR_SURFACE_VERSION
+  ) return schema;
+
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+    throw new Error(`${CORE_GENERATED_VIEW_KIND}@2 content schema must declare object properties`);
+  }
+  return {
+    ...schema,
+    properties: {
+      ...properties,
+      actor_view: structuredClone(dagActorSurfaceActorViewV1Schema),
+    },
+  };
+}
 
 function isKnownLegacyGeneratedViewVersionCollision(input: {
   plugin_id: string;
@@ -164,8 +194,14 @@ export class GenerativeUiKindRegistry {
 
       for (const kind of manifest.kinds) {
         for (const version of kind.versions) {
-          const schema = schemas.get(version.content_schema);
-          if (!schema) throw new Error(`Missing resolved schema ${version.content_schema} for ${kind.kind}`);
+          const archivedSchema = schemas.get(version.content_schema);
+          if (!archivedSchema) throw new Error(`Missing resolved schema ${version.content_schema} for ${kind.kind}`);
+          const schema = effectiveKindContentSchema({
+            plugin_id: manifest.id,
+            kind: kind.kind,
+            kind_version: version.version,
+            schema: archivedSchema,
+          });
           const ajv = new AjvClass({ allErrors: true, strict: false, coerceTypes: false });
           let validate: ValidateFunction;
           try {

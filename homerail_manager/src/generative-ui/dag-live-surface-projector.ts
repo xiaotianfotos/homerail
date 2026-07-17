@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
+  DAG_ACTOR_SURFACE_PATCH_PHASES,
   GENERATIVE_UI_IR_VERSION,
+  GENERATIVE_UI_MAX_NODE_CONTENT_BYTES,
   HOMERAIL_A2UI_CATALOG_ID,
   HOMERAIL_A2UI_MAX_COMPONENTS,
   HOMERAIL_A2UI_VERSION,
@@ -12,6 +14,10 @@ import {
   validateDagActivityEventV1,
   type DagActivityEventV1,
   type DagActivityType,
+  type DagActorSurfaceBodyV1,
+  type DagActorSurfacePatchPhaseV1,
+  type DagActorSurfacePatchV1,
+  type A2uiComponentV1,
   type GenerativeUiDocumentV1,
   type GenerativeUiNodeV1,
   type GenerativeUiStoredNodeV1,
@@ -29,7 +35,25 @@ import {
   getDagActor,
   type DagActorRecord,
 } from "../persistence/dag-actors.js";
+import { getDagActorLease } from "../persistence/dag-actor-leases.js";
+import { getCurrentDagRunRound } from "../persistence/dag-run-rounds.js";
+import {
+  commitDagActorSurfacePatchApplication,
+  dagActorSurfacePatchDigest,
+  ensureDagActorSurfaceView,
+  getDagActorSurfaceView,
+  getQueuedDagActorSurfacePatch,
+  listContiguousPendingDagActorSurfacePatches,
+  markStaleDagActorSurfacePatches,
+  pruneDagActorSurfacePatchJournal,
+  rejectDagActorSurfacePatch,
+  type DagActorSurfacePatchApplyKind,
+  type DagActorSurfaceViewRecord,
+  type QueuedDagActorSurfacePatch,
+} from "../persistence/dag-actor-surface-patches.js";
+import { getRunArtifact } from "../persistence/run-artifacts.js";
 import { encodeJson, getDb, parseJsonRow } from "../persistence/db.js";
+import { getPluginArtifactBroker } from "../plugins/artifact-broker.js";
 import { getGenerativeUiKindRegistry } from "./kind-registry.js";
 import { persistentGenerativeUiDocumentService } from "./shadow-service.js";
 
@@ -43,6 +67,11 @@ const MAX_PROJECTED_FINDINGS = 8;
 const MAX_PROJECTED_CONTENT_BYTES = 32 * 1024;
 const MAX_FOCUS_UNTIL = 8_640_000_000_000_000;
 const INTERVENTION_FOCUS_DURATION_MS = 15_000;
+const ACTOR_PATCH_FOCUS_DURATION_MS = 12_000;
+const ACTOR_PATCH_FOCUS_COOLDOWN_MS = 5_000;
+const ACTOR_PATCH_COALESCE_WINDOW_MS = 75;
+const MAX_SCHEDULED_ACTOR_PATCH_DRAINS = 256;
+const ACTOR_COMPONENT_PREFIX = "actor.";
 
 export type DagLiveSurfaceActivityState = Exclude<DagActivityType, "tool_used">;
 export type DagLiveSurfaceVisibilityState = "visible" | "focused" | "removed";
@@ -124,6 +153,23 @@ export interface DagLiveSurfaceRecoveryResult {
   runs: string[];
   projected_events: number;
   failed: Array<{ run_id: string; event_id: string; error: string }>;
+}
+
+export interface DagActorSurfaceProjectionResult {
+  run_id: string;
+  actor_id: string;
+  generation: number;
+  journal_seq: number;
+  applied_count: number;
+  scheduled: boolean;
+  view: DagActorSurfaceViewRecord;
+}
+
+export interface DagActorSurfaceRecoveryResult {
+  runs: string[];
+  applied_patches: number;
+  stale_patches: number;
+  failed: Array<{ run_id: string; actor_id: string; patch_id?: string; error: string }>;
 }
 
 export class DagLiveSurfaceProjectionError extends Error {
@@ -270,6 +316,108 @@ const LIVE_SURFACE_A2UI: HomerailA2uiSurfaceV1 = {
   ],
 };
 
+type ProjectedFallback = NonNullable<GenerativeUiNodeV1["fallback"]>;
+
+function actorComponentIds(body: DagActorSurfaceBodyV1): Map<string, string> {
+  const ids = new Map<string, string>();
+  const reserved = new Set(LIVE_SURFACE_A2UI.components.map((component) => component.id));
+  for (const component of body.a2ui.components) {
+    const namespaced = component.id === "root"
+      ? `${ACTOR_COMPONENT_PREFIX}root`
+      : `${ACTOR_COMPONENT_PREFIX}${createHash("sha256").update(component.id).digest("hex").slice(0, 24)}`;
+    if (reserved.has(namespaced) || [...ids.values()].includes(namespaced)) {
+      throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Actor component namespace collision");
+    }
+    ids.set(component.id, namespaced);
+  }
+  if (!ids.has("root")) {
+    throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Actor A2UI root component is missing");
+  }
+  return ids;
+}
+
+function namespaceActorComponents(body: DagActorSurfaceBodyV1): A2uiComponentV1[] {
+  const ids = actorComponentIds(body);
+  const reference = (id: string): string => {
+    const mapped = ids.get(id);
+    if (!mapped) throw new DagLiveSurfaceProjectionError("a2ui_rejected", `Actor component reference is missing: ${id}`);
+    return mapped;
+  };
+  return body.a2ui.components.map((component) => {
+    const clone = structuredClone(component) as unknown as Record<string, unknown>;
+    clone.id = reference(component.id);
+    if (Array.isArray(clone.children)) {
+      clone.children = clone.children.map((child) => reference(String(child)));
+    } else if (clone.children && typeof clone.children === "object") {
+      const children = clone.children as Record<string, unknown>;
+      children.componentId = reference(String(children.componentId));
+    }
+    if (typeof clone.child === "string") clone.child = reference(clone.child);
+    if (Array.isArray(clone.tabs)) {
+      clone.tabs = clone.tabs.map((tab) => {
+        const entry = tab as Record<string, unknown>;
+        return { ...entry, child: reference(String(entry.child)) };
+      });
+    }
+    if (typeof clone.trigger === "string") clone.trigger = reference(clone.trigger);
+    if (typeof clone.content === "string") clone.content = reference(clone.content);
+    return clone as unknown as A2uiComponentV1;
+  });
+}
+
+function composedLiveSurfaceA2ui(body?: DagActorSurfaceBodyV1): HomerailA2uiSurfaceV1 {
+  const host = structuredClone(LIVE_SURFACE_A2UI);
+  if (!body) return host;
+  const root = host.components.find((component) => component.id === "root");
+  if (!root || root.component !== "Column" || !Array.isArray(root.children)) {
+    throw new DagLiveSurfaceProjectionError("projection_state_conflict", "Projector A2UI root is invalid");
+  }
+  root.children.push(`${ACTOR_COMPONENT_PREFIX}root`);
+  host.components.push(...namespaceActorComponents(body));
+  if (host.components.length > HOMERAIL_A2UI_MAX_COMPONENTS) {
+    throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Composed DAG live surface exceeds the A2UI component budget");
+  }
+  return host;
+}
+
+function actorViewContent(body: DagActorSurfaceBodyV1): Record<string, unknown> {
+  return {
+    data: structuredClone(body.data),
+    fallback: structuredClone(body.fallback),
+    ...(body.presentation_hint ? { presentation_hint: structuredClone(body.presentation_hint) } : {}),
+  };
+}
+
+function composedProjectedContent(data: ProjectedData, body?: DagActorSurfaceBodyV1): Record<string, unknown> {
+  return {
+    data,
+    ...(body ? { actor_view: actorViewContent(body) } : {}),
+  };
+}
+
+function hostFallback(data: ProjectedData): ProjectedFallback {
+  return {
+    title: data.title,
+    summary: data.state.summary,
+    ...(data.findings.length ? { items: data.findings.map((finding) => finding.title) } : {}),
+  };
+}
+
+function composedFallback(data: ProjectedData, body?: DagActorSurfaceBodyV1): ProjectedFallback {
+  return body ? structuredClone(body.fallback) : hostFallback(data);
+}
+
+function actorBodyForProjection(projection: DagLiveSurfaceProjectionRecord): DagActorSurfaceBodyV1 | undefined {
+  const view = getDagActorSurfaceView(projection.run_id, projection.actor_id);
+  if (!view) return undefined;
+  if (view.node_id !== projection.node_id
+    || view.surface_id !== projection.surface_id
+    || view.document_id !== projection.document_id) {
+    throw new DagLiveSurfaceProjectionError("identity_mismatch", "Actor surface view ownership does not match Canvas projection");
+  }
+  return view.generation === projection.generation ? view.body : undefined;
+}
+
 function projectionFromRow(row: ProjectionRow): DagLiveSurfaceProjectionRecord {
   return {
     run_id: row.run_id,
@@ -357,7 +505,7 @@ function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex");
 }
 
-function transactionId(kind: "activity" | "control" | "intervention", id: string): string {
+function transactionId(kind: "activity" | "control" | "intervention" | "actor-patch" | "generation", id: string): string {
   return `dag-live-surface-${kind}-${createHash("sha256").update(id).digest("hex")}`;
 }
 
@@ -487,6 +635,7 @@ function enqueueJournalEntry(entry: DagActivityJournalEntry): { inserted: boolea
   assertJournalIdentity(entry, actor);
   let projection = ensureProjection(actor, entry.received_at);
   projection = advanceProjectionGeneration(projection, actor, entry.received_at);
+  ensureDagActorSurfaceView({ actor, document_id: projection.document_id, now: entry.received_at });
 
   const existing = getQueueRow(entry.seq);
   if (existing) {
@@ -770,19 +919,22 @@ function buildProjectedNode(input: {
       : {}),
     findings: boundedFindings,
   };
-  const content = { data };
+  const hostContent = { data };
   while (
     data.findings.length > 1
-    && Buffer.byteLength(JSON.stringify(content), "utf8") > MAX_PROJECTED_CONTENT_BYTES
+    && Buffer.byteLength(JSON.stringify(hostContent), "utf8") > MAX_PROJECTED_CONTENT_BYTES
   ) {
     data.findings.shift();
   }
-  if (Buffer.byteLength(JSON.stringify(content), "utf8") > MAX_PROJECTED_CONTENT_BYTES) {
+  if (Buffer.byteLength(JSON.stringify(hostContent), "utf8") > MAX_PROJECTED_CONTENT_BYTES) {
     throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Projected DAG live surface content exceeds its budget");
   }
-  if (LIVE_SURFACE_A2UI.components.length > HOMERAIL_A2UI_MAX_COMPONENTS) {
-    throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Projected DAG live surface exceeds the A2UI component budget");
+  const actorBody = actorBodyForProjection(input.projection);
+  const content = composedProjectedContent(data, actorBody);
+  if (Buffer.byteLength(JSON.stringify(content), "utf8") > GENERATIVE_UI_MAX_NODE_CONTENT_BYTES) {
+    throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Composed DAG live surface content exceeds its budget");
   }
+  const a2ui = composedLiveSurfaceA2ui(actorBody);
 
   return {
     activity,
@@ -801,14 +953,10 @@ function buildProjectedNode(input: {
         progress: data.state.progress,
       },
       content,
-      a2ui: structuredClone(LIVE_SURFACE_A2UI),
+      a2ui,
       presentation: { density: "summary", canvas_size: "1x2" },
       lifecycle: { persistence: "session", removable: true },
-      fallback: {
-        title,
-        summary,
-        ...(boundedFindings.length ? { items: boundedFindings.map((finding) => finding.title) } : {}),
-      },
+      fallback: composedFallback(data, actorBody),
       provenance: {
         actor: "agent",
         actor_id: input.actor.actor_id,
@@ -1415,6 +1563,7 @@ export function supersedeDagLiveSurfaceForIntervention(input: {
     }
 
     projection = advanceProjectionGeneration(projection, actor, normalized.created_at);
+    ensureDagActorSurfaceView({ actor, document_id: projection.document_id, now: normalized.created_at });
     const focusedUntil = Math.min(MAX_FOCUS_UNTIL, normalized.created_at + INTERVENTION_FOCUS_DURATION_MS);
     const presentation = interventionPresentation(intervention.operation);
     const summary = interventionSummary(
@@ -1558,13 +1707,13 @@ export function getDagLiveSurfaceControl(controlId: string): DagLiveSurfaceContr
   };
 }
 
-function visibilityContent(
+function visibilityChanges(
   node: GenerativeUiStoredNodeV1,
   projection: DagLiveSurfaceProjectionRecord,
   visibility: DagLiveSurfaceVisibilityState,
   nextRevision: number,
   focusedUntil?: number,
-): Record<string, unknown> {
+): { content: Record<string, unknown>; a2ui: HomerailA2uiSurfaceV1; fallback: ProjectedFallback } {
   assertOwnedNode(node, projection);
   const data = projectedDataFromNode(node)!;
   data.actor.generation = projection.generation;
@@ -1572,7 +1721,12 @@ function visibilityContent(
   data.state.surface_revision = nextRevision;
   if (focusedUntil === undefined) delete data.state.focused_until;
   else data.state.focused_until = focusedUntil;
-  return { data };
+  const body = actorBodyForProjection(projection);
+  return {
+    content: composedProjectedContent(data, body),
+    a2ui: composedLiveSurfaceA2ui(body),
+    fallback: composedFallback(data, body),
+  };
 }
 
 /** Trusted Manager-side focus/removal boundary. Worker code has no access to it. */
@@ -1630,6 +1784,7 @@ export function controlDagLiveSurface(input: {
     if (!actor) throw new Error(`Unknown DAG actor: ${normalized.run_id}/${normalized.actor_id}`);
     let projection = requireProjection(normalized.run_id, normalized.actor_id);
     projection = advanceProjectionGeneration(projection, actor, normalized.created_at);
+    ensureDagActorSurfaceView({ actor, document_id: projection.document_id, now: normalized.created_at });
     if (
       projection.node_id !== actor.node_id
       || projection.surface_id !== actor.surface_id
@@ -1660,7 +1815,7 @@ export function controlDagLiveSurface(input: {
           if_revision: node.revision,
           changes: {
             importance: GenerativeUiImportance.CRITICAL,
-            content: visibilityContent(node, projection, "focused", nextRevision, normalized.focused_until),
+            ...visibilityChanges(node, projection, "focused", nextRevision, normalized.focused_until),
           },
         };
     const result = persistentGenerativeUiDocumentService.apply({
@@ -1727,6 +1882,731 @@ export function controlDagLiveSurface(input: {
       deduplicated: false,
     };
   }).immediate();
+}
+
+interface ActorBindingScope {
+  inTemplate: boolean;
+  value: unknown;
+}
+
+function actorPointer(root: unknown, path: string): unknown {
+  if (!path.startsWith("/")) return undefined;
+  let current = root;
+  for (const encoded of path.split("/").slice(1)) {
+    const token = encoded.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (!current || typeof current !== "object") return undefined;
+    if (Array.isArray(current)) {
+      if (!/^(?:0|[1-9][0-9]*)$/.test(token)) return undefined;
+      current = current[Number(token)];
+    } else {
+      current = (current as Record<string, unknown>)[token];
+    }
+  }
+  return current;
+}
+
+function resolveActorPath(path: string, body: DagActorSurfaceBodyV1, scope: ActorBindingScope): unknown {
+  const dataModel = { actor_view: { data: body.data } };
+  return path.startsWith("/")
+    ? actorPointer(dataModel, path)
+    : scope.inTemplate
+      ? actorPointer(scope.value, `/${path}`)
+      : undefined;
+}
+
+function resolveActorBinding(
+  value: unknown,
+  body: DagActorSurfaceBodyV1,
+  scope: ActorBindingScope,
+): unknown {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const path = (value as { path?: unknown }).path;
+  return typeof path === "string" ? resolveActorPath(path, body, scope) : undefined;
+}
+
+function actorComponentEdges(component: Record<string, unknown>): Array<{ id: string; templatePath?: string }> {
+  const children = component.children;
+  if (Array.isArray(children)) {
+    return children.filter((entry): entry is string => typeof entry === "string").map((id) => ({ id }));
+  }
+  if (children && typeof children === "object" && !Array.isArray(children)) {
+    const path = (children as Record<string, unknown>).path;
+    const id = (children as Record<string, unknown>).componentId;
+    return typeof path === "string" && typeof id === "string" ? [{ id, templatePath: path }] : [];
+  }
+  if (typeof component.child === "string") return [{ id: component.child }];
+  if (Array.isArray(component.tabs)) {
+    return component.tabs.flatMap((tab) => tab && typeof tab === "object" && typeof (tab as { child?: unknown }).child === "string"
+      ? [{ id: (tab as { child: string }).child }]
+      : []);
+  }
+  return [];
+}
+
+function assertBrokerArtifactUri(uri: unknown, runId: string): void {
+  if (typeof uri !== "string" || !uri.startsWith("/")) {
+    throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Actor media must use a Manager broker URI");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(uri, "http://homerail.invalid");
+  } catch {
+    throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Actor media URI is invalid");
+  }
+  if (parsed.origin !== "http://homerail.invalid"
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash
+    || `${parsed.pathname}` !== uri) {
+    throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Actor media URI must be credential-free and canonical");
+  }
+
+  const runMatch = /^\/api\/runs\/([^/]+)\/artifacts\/([^/]+)\/content$/.exec(uri);
+  if (runMatch) {
+    let uriRunId: string;
+    let name: string;
+    try {
+      uriRunId = decodeURIComponent(runMatch[1]);
+      name = decodeURIComponent(runMatch[2]);
+    } catch {
+      throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Run artifact URI encoding is invalid");
+    }
+    const canonical = `/api/runs/${encodeURIComponent(uriRunId)}/artifacts/${encodeURIComponent(name)}/content`;
+    const artifact = uriRunId === runId && canonical === uri ? getRunArtifact(uriRunId, name) : undefined;
+    if (!artifact || artifact.status !== "ready") {
+      throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Run artifact is not published for this Actor run");
+    }
+    return;
+  }
+
+  const pluginMatch = /^\/api\/plugins\/artifacts\/([^/]+)\/([^/]+)\/([0-9a-f]{64})$/.exec(uri);
+  if (pluginMatch) {
+    try {
+      const pluginId = decodeURIComponent(pluginMatch[1]);
+      const requestId = decodeURIComponent(pluginMatch[2]);
+      const result = getPluginArtifactBroker().read({
+        plugin_id: pluginId,
+        request_id: requestId,
+        digest: pluginMatch[3],
+      });
+      if (result.metadata.read_path !== uri) throw new Error("non-canonical broker path");
+      return;
+    } catch {
+      throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Plugin artifact is not published by the Manager broker");
+    }
+  }
+
+  throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Actor media URI is outside the Manager artifact brokers");
+}
+
+function assertBrokerAllowedBody(body: DagActorSurfaceBodyV1, runId: string): void {
+  if (body.a2ui.surfaceProperties?.iconUrl) {
+    assertBrokerArtifactUri(body.a2ui.surfaceProperties.iconUrl, runId);
+  }
+  const components = new Map<string, Record<string, unknown>>();
+  for (const component of body.a2ui.components as unknown as Record<string, unknown>[]) {
+    if (typeof component.id === "string") components.set(component.id, component);
+  }
+  const visit = (id: string, scope: ActorBindingScope, ancestors: ReadonlySet<string>): void => {
+    const component = components.get(id);
+    if (!component || ancestors.has(id)) return;
+    switch (component.component) {
+      case "Image":
+      case "AudioPlayer":
+        assertBrokerArtifactUri(resolveActorBinding(component.url, body, scope), runId);
+        break;
+      case "Video":
+        assertBrokerArtifactUri(resolveActorBinding(component.url, body, scope), runId);
+        if (component.posterUrl !== undefined) {
+          assertBrokerArtifactUri(resolveActorBinding(component.posterUrl, body, scope), runId);
+        }
+        break;
+      case "HrArtifact":
+        assertBrokerArtifactUri(resolveActorBinding(component.uri, body, scope), runId);
+        break;
+      default:
+        break;
+    }
+    const next = new Set(ancestors);
+    next.add(id);
+    for (const edge of actorComponentEdges(component)) {
+      if (!edge.templatePath) {
+        visit(edge.id, scope, next);
+        continue;
+      }
+      const items = resolveActorPath(edge.templatePath, body, scope);
+      if (!Array.isArray(items)) continue;
+      for (const item of items) visit(edge.id, { inTemplate: true, value: item }, next);
+    }
+  };
+  visit("root", { inTemplate: false, value: { actor_view: { data: body.data } } }, new Set());
+  for (const reference of body.fallback.artifact_refs ?? []) {
+    assertBrokerArtifactUri(reference.uri, runId);
+  }
+}
+
+function assertCurrentActorPatchTarget(target: QueuedDagActorSurfacePatch, actor: DagActorRecord): void {
+  const patch = target.patch;
+  if (target.queue.status !== "pending"
+    || patch.run_id !== actor.run_id
+    || patch.actor_id !== actor.actor_id
+    || patch.node_id !== actor.node_id
+    || target.surface_id !== actor.surface_id) {
+    throw new DagLiveSurfaceProjectionError("identity_mismatch", "Actor surface patch ownership is not current");
+  }
+  if (patch.generation !== actor.generation) {
+    throw new DagLiveSurfaceProjectionError("generation_conflict", "Actor surface patch generation is not current");
+  }
+  if (!actor.session_id || patch.session_id !== actor.session_id) {
+    throw new DagLiveSurfaceProjectionError("identity_mismatch", "Actor surface patch session is not current");
+  }
+  const round = getCurrentDagRunRound(actor.run_id);
+  if (!round || round.round_id !== patch.round_id) {
+    throw new DagLiveSurfaceProjectionError("identity_mismatch", "Actor surface patch round is not current");
+  }
+  const lease = getDagActorLease({ run_id: actor.run_id, actor_id: actor.actor_id });
+  if (!lease || lease.state !== "leased" || lease.lease_generation !== patch.lease_generation) {
+    throw new DagLiveSurfaceProjectionError("identity_mismatch", "Actor surface patch lease is not current");
+  }
+}
+
+function initialProjectedData(input: {
+  actor: DagActorRecord;
+  projection: DagLiveSurfaceProjectionRecord;
+  target: QueuedDagActorSurfacePatch;
+  surface_revision: number;
+}): ProjectedData {
+  return {
+    projector: { id: PROJECTOR_ID, version: PROJECTOR_DATA_VERSION },
+    actor: {
+      id: input.actor.actor_id,
+      role: input.actor.role,
+      node_id: input.actor.node_id,
+      generation: input.actor.generation,
+    },
+    title: input.actor.role,
+    state: {
+      activity: "started",
+      visibility: "visible",
+      label: "Started",
+      summary: "Started",
+      tone: "info",
+      progress: 0,
+      event_id: `surface-init:${input.actor.generation}`,
+      round_id: input.target.patch.round_id,
+      sequence: 0,
+      updated_at: input.target.received_at,
+      surface_revision: input.surface_revision,
+    },
+    findings: [],
+  };
+}
+
+function initialActorSurfaceNode(input: {
+  actor: DagActorRecord;
+  projection: DagLiveSurfaceProjectionRecord;
+  target: QueuedDagActorSurfacePatch;
+  body: DagActorSurfaceBodyV1;
+  data: ProjectedData;
+  focused_until?: number;
+}): GenerativeUiNodeV1 {
+  const focused = input.focused_until !== undefined;
+  return {
+    ir_version: GENERATIVE_UI_IR_VERSION,
+    id: input.projection.surface_id,
+    kind: GENERATED_VIEW_KIND,
+    kind_version: GENERATED_VIEW_KIND_VERSION,
+    owner: { id: CORE_PLUGIN_ID, version: activeCoreVersion() },
+    surface: GenerativeUiSurface.EXECUTION,
+    importance: focused ? GenerativeUiImportance.CRITICAL : GenerativeUiImportance.PRIMARY,
+    status: { phase: GenerativeUiPhase.RUNNING, label: "Started", progress: 0 },
+    content: composedProjectedContent(input.data, input.body),
+    a2ui: composedLiveSurfaceA2ui(input.body),
+    presentation: { density: "summary", canvas_size: "1x2" },
+    lifecycle: { persistence: "session", removable: true },
+    fallback: composedFallback(input.data, input.body),
+    provenance: { actor: "agent", actor_id: input.actor.actor_id, run_id: input.actor.run_id },
+  };
+}
+
+function ensureActorPatchProjection(target: QueuedDagActorSurfacePatch): {
+  actor: DagActorRecord;
+  projection: DagLiveSurfaceProjectionRecord;
+  view: DagActorSurfaceViewRecord;
+} {
+  const actor = getDagActor(target.patch.run_id, target.patch.actor_id);
+  if (!actor) throw new DagLiveSurfaceProjectionError("identity_mismatch", "Actor surface patch Actor is unavailable");
+  assertCurrentActorPatchTarget(target, actor);
+  let projection = ensureProjection(actor, target.received_at);
+  projection = advanceProjectionGeneration(projection, actor, target.received_at);
+  const view = ensureDagActorSurfaceView({
+    actor,
+    document_id: projection.document_id,
+    now: target.received_at,
+  });
+  return { actor, projection, view };
+}
+
+function coalescedActorPatchGroup(
+  contiguous: QueuedDagActorSurfacePatch[],
+  actor: DagActorRecord,
+): QueuedDagActorSurfacePatch[] {
+  const first = contiguous[0];
+  if (!first || first.patch.op !== "replace_body" || first.patch.phase !== "partial") return first ? [first] : [];
+  const componentDigest = dagActorSurfacePatchDigest(first.patch.body.a2ui.components);
+  const group: QueuedDagActorSurfacePatch[] = [];
+  for (const candidate of contiguous) {
+    if (candidate.patch.op !== "replace_body"
+      || candidate.patch.phase !== "partial"
+      || candidate.patch.session_id !== first.patch.session_id
+      || candidate.patch.round_id !== first.patch.round_id
+      || candidate.patch.lease_generation !== first.patch.lease_generation
+      || dagActorSurfacePatchDigest(candidate.patch.body.a2ui.components) !== componentDigest) break;
+    try {
+      assertCurrentActorPatchTarget(candidate, actor);
+      assertBrokerAllowedBody(candidate.patch.body, candidate.patch.run_id);
+      composedLiveSurfaceA2ui(candidate.patch.body);
+    } catch {
+      break;
+    }
+    group.push(candidate);
+  }
+  return group.length > 0 ? group : [first];
+}
+
+function assertMonotonicActorPatchPhase(
+  view: DagActorSurfaceViewRecord,
+  patch: DagActorSurfacePatchV1,
+): void {
+  if (!view.phase || view.round_id !== patch.round_id) return;
+  if (view.phase === "final") {
+    throw new DagLiveSurfaceProjectionError(
+      "a2ui_rejected",
+      `Actor Surface phase final already closed round ${patch.round_id}`,
+    );
+  }
+  if (DAG_ACTOR_SURFACE_PATCH_PHASES.indexOf(patch.phase)
+    < DAG_ACTOR_SURFACE_PATCH_PHASES.indexOf(view.phase)) {
+    throw new DagLiveSurfaceProjectionError(
+      "a2ui_rejected",
+      `Actor Surface phase cannot move backward from ${view.phase} to ${patch.phase}`,
+    );
+  }
+}
+
+function applyActorPatchGroup(group: QueuedDagActorSurfacePatch[]): number {
+  const target = group.at(-1);
+  if (!target) return 0;
+  const { actor, projection, view } = ensureActorPatchProjection(target);
+  if (view.body_revision + group.length !== target.patch.patch_sequence) {
+    throw new DagLiveSurfaceProjectionError("projection_state_conflict", "Actor surface patch group is not contiguous");
+  }
+  assertMonotonicActorPatchPhase(view, target.patch);
+  for (const candidate of group) {
+    assertCurrentActorPatchTarget(candidate, actor);
+    if (candidate.patch.op === "replace_body") {
+      assertBrokerAllowedBody(candidate.patch.body, candidate.patch.run_id);
+      composedLiveSurfaceA2ui(candidate.patch.body);
+    }
+  }
+
+  const body = target.patch.op === "replace_body" ? target.patch.body : undefined;
+  const nextBodyDigest = body ? dagActorSurfacePatchDigest(body) : undefined;
+  const nextComponentDigest = body ? dagActorSurfacePatchDigest(body.a2ui.components) : undefined;
+  const bodyChanged = view.body_digest !== nextBodyDigest || Boolean(view.body) !== Boolean(body);
+  const structureChanged = Boolean(view.body) !== Boolean(body)
+    || view.component_digest !== nextComponentDigest;
+  const milestonePhase = new Set<DagActorSurfacePatchPhaseV1>(["verified", "refined", "final"])
+    .has(target.patch.phase)
+    && target.patch.phase !== view.phase;
+
+  const scope = scopeFor(actor.run_id);
+  const document = persistentGenerativeUiDocumentService.get(projection.document_id, scope);
+  if (!document) throw new DagLiveSurfaceProjectionError("projection_state_conflict", "Actor surface Canvas document is unavailable");
+  const existing = document.nodes.find((node) => node.id === projection.surface_id);
+  if (existing) {
+    assertOwnedNode(existing, projection);
+    const expectedA2ui = composedLiveSurfaceA2ui(view.body);
+    if (digest(existing.a2ui) !== digest(expectedA2ui)) {
+      throw new DagLiveSurfaceProjectionError("projection_state_conflict", "Actor surface components do not match the materialized view");
+    }
+  }
+  if (projection.visibility_state === "removed") {
+    throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Actor patch cannot restore a removed Canvas surface");
+  }
+
+  const focusAllowed = view.last_focus_at === undefined
+    || target.received_at >= view.last_focus_at + ACTOR_PATCH_FOCUS_COOLDOWN_MS;
+  const shouldFocus = Boolean(existing || body) && focusAllowed && (structureChanged || milestonePhase);
+  const visualChange = bodyChanged || shouldFocus;
+  let applyKind: Exclude<DagActorSurfacePatchApplyKind, "coalesced"> = "no_op";
+  if (visualChange) {
+    if (target.patch.op === "clear_body" && bodyChanged) applyKind = "clear_body";
+    else if (structureChanged) applyKind = "patch_components";
+    else applyKind = "update_data_model";
+  }
+  if (!visualChange) {
+    commitDagActorSurfacePatchApplication({
+      target,
+      expected_body_revision: view.body_revision,
+      ...(body ? { body } : {}),
+      apply_kind: "no_op",
+      coalesced_journal_seqs: group.slice(0, -1).map((entry) => entry.journal_seq),
+      applied_at: target.received_at,
+    });
+    return group.length;
+  }
+
+  const nextSurfaceRevision = projection.surface_revision + 1;
+  const focusedUntil = shouldFocus
+    ? Math.min(MAX_FOCUS_UNTIL, target.received_at + ACTOR_PATCH_FOCUS_DURATION_MS)
+    : projection.focused_until;
+  const visibility = shouldFocus ? "focused" : nextVisibility(projection, target.received_at);
+  const data = existing
+    ? projectedDataFromNode(existing)
+    : initialProjectedData({ actor, projection, target, surface_revision: nextSurfaceRevision });
+  if (!data) throw new DagLiveSurfaceProjectionError("projection_state_conflict", "Actor surface host data is unavailable");
+  data.actor.generation = actor.generation;
+  data.state.surface_revision = nextSurfaceRevision;
+  data.state.visibility = visibility;
+  if (visibility === "focused" && focusedUntil !== undefined) data.state.focused_until = focusedUntil;
+  else delete data.state.focused_until;
+
+  const txId = transactionId(
+    "actor-patch",
+    `${actor.run_id}\u0000${actor.actor_id}\u0000${actor.generation}\u0000${target.patch.patch_id}`,
+  );
+  const operation = existing
+    ? {
+        op: "patch" as const,
+        node_id: existing.id,
+        if_revision: existing.revision,
+        changes: {
+          importance: visibility === "focused" ? GenerativeUiImportance.CRITICAL : GenerativeUiImportance.PRIMARY,
+          content: composedProjectedContent(data, body),
+          fallback: composedFallback(data, body),
+          ...(structureChanged ? { a2ui: composedLiveSurfaceA2ui(body) } : {}),
+        },
+      }
+    : {
+        op: "put" as const,
+        node: initialActorSurfaceNode({
+          actor,
+          projection,
+          target,
+          body: body!,
+          data,
+          ...(focusedUntil === undefined ? {} : { focused_until: focusedUntil }),
+        }),
+      };
+  const result = persistentGenerativeUiDocumentService.apply({
+    ir_version: GENERATIVE_UI_IR_VERSION,
+    transaction_id: txId,
+    document_id: document.document_id,
+    base_revision: document.revision,
+    actor: { type: GenerativeUiActorType.SYSTEM, id: PROJECTOR_ID },
+    operations: [operation],
+    created_at: new Date(target.received_at).toISOString(),
+  }, scope);
+  if (result.status === "conflict") {
+    throw new DagLiveSurfaceProjectionError("a2ui_revision_conflict", "Actor surface Canvas changed before patch commit");
+  }
+  if (result.status !== "applied") {
+    throw new DagLiveSurfaceProjectionError(
+      "a2ui_rejected",
+      `Actor surface Canvas transaction was ${result.status}: ${JSON.stringify(result.errors ?? [])}`,
+    );
+  }
+
+  const projectionUpdated = getDb().prepare(`
+    UPDATE dag_surface_projections
+    SET surface_revision = ?, visibility_state = ?, focused_until = ?, updated_at = MAX(updated_at, ?)
+    WHERE run_id = ? AND actor_id = ? AND generation = ? AND surface_revision = ?
+  `).run(
+    nextSurfaceRevision,
+    visibility,
+    visibility === "focused" ? focusedUntil ?? null : null,
+    target.received_at,
+    actor.run_id,
+    actor.actor_id,
+    actor.generation,
+    projection.surface_revision,
+  );
+  if (projectionUpdated.changes !== 1) {
+    throw new DagLiveSurfaceProjectionError("surface_revision_conflict", "Actor surface projection changed before patch bookkeeping");
+  }
+  commitDagActorSurfacePatchApplication({
+    target,
+    expected_body_revision: view.body_revision,
+    ...(body ? { body } : {}),
+    apply_kind: applyKind,
+    transaction_id: txId,
+    coalesced_journal_seqs: group.slice(0, -1).map((entry) => entry.journal_seq),
+    ...(shouldFocus ? { focus_at: target.received_at } : {}),
+    applied_at: target.received_at,
+  });
+  return group.length;
+}
+
+function rejectableActorPatchError(error: unknown): error is DagLiveSurfaceProjectionError {
+  return error instanceof DagLiveSurfaceProjectionError
+    && (error.code === "a2ui_rejected" || error.code === "identity_mismatch");
+}
+
+function drainActorSurfacePatches(runId: string, actorId: string): number {
+  let processed = 0;
+  while (processed < 500) {
+    const actor = getDagActor(runId, actorId);
+    if (!actor) throw new DagLiveSurfaceProjectionError("identity_mismatch", "Actor surface patch Actor is unavailable");
+    let projection = ensureProjection(actor, Date.now());
+    projection = advanceProjectionGeneration(projection, actor, Date.now());
+    const view = ensureDagActorSurfaceView({ actor, document_id: projection.document_id });
+    const contiguous = listContiguousPendingDagActorSurfacePatches({
+      run_id: runId,
+      actor_id: actorId,
+      generation: actor.generation,
+      after_patch_sequence: view.body_revision,
+    });
+    if (contiguous.length === 0) break;
+    let group = coalescedActorPatchGroup(contiguous, actor);
+    try {
+      processed += getDb().transaction(() => applyActorPatchGroup(group)).immediate();
+      continue;
+    } catch (error) {
+      if (group.length > 1) {
+        group = [group[0]];
+        try {
+          processed += getDb().transaction(() => applyActorPatchGroup(group)).immediate();
+          continue;
+        } catch (singleError) {
+          error = singleError;
+        }
+      }
+      if (!rejectableActorPatchError(error)) throw error;
+      const currentView = getDagActorSurfaceView(runId, actorId);
+      if (!currentView || currentView.generation !== group[0].patch.generation) throw error;
+      rejectDagActorSurfacePatch({
+        target: group[0],
+        expected_body_revision: currentView.body_revision,
+        failure: { code: error.code, message: error.message },
+      });
+      processed += 1;
+    }
+  }
+  pruneDagActorSurfacePatchJournal(runId, actorId);
+  return processed;
+}
+
+const scheduledActorPatchDrains = new Map<string, ReturnType<typeof setTimeout>>();
+
+function actorPatchDrainKey(runId: string, actorId: string): string {
+  return `${runId}\u0000${actorId}`;
+}
+
+function cancelActorPatchDrain(runId: string, actorId: string): void {
+  const key = actorPatchDrainKey(runId, actorId);
+  const timer = scheduledActorPatchDrains.get(key);
+  if (!timer) return;
+  clearTimeout(timer);
+  scheduledActorPatchDrains.delete(key);
+}
+
+export function flushDagActorSurfacePatches(runId: string, actorId: string): number {
+  cancelActorPatchDrain(assertIdentifier(runId, "run_id"), assertIdentifier(actorId, "actor_id"));
+  return drainActorSurfacePatches(runId, actorId);
+}
+
+/** Queue-aware projector entrypoint. Partial updates inside the short window are durably merged. */
+export function projectDagActorSurfacePatch(journalSeq: number): DagActorSurfaceProjectionResult {
+  if (!Number.isSafeInteger(journalSeq) || journalSeq < 1) throw new Error("journal seq must be a positive safe integer");
+  const target = getQueuedDagActorSurfacePatch(journalSeq);
+  if (!target) throw new Error(`Actor surface patch queue entry is unavailable: ${journalSeq}`);
+  const actor = getDagActor(target.patch.run_id, target.patch.actor_id);
+  if (!actor) throw new DagLiveSurfaceProjectionError("identity_mismatch", "Actor surface patch Actor is unavailable");
+  if (target.patch.generation < actor.generation && target.queue.status === "pending") {
+    markStaleDagActorSurfacePatches({
+      run_id: actor.run_id,
+      actor_id: actor.actor_id,
+      before_generation: actor.generation,
+    });
+  } else if (target.patch.generation > actor.generation) {
+    throw new DagLiveSurfaceProjectionError("generation_conflict", "Actor surface patch generation is ahead of its Actor");
+  }
+
+  let projection = ensureProjection(actor, target.received_at);
+  projection = advanceProjectionGeneration(projection, actor, target.received_at);
+  let view = ensureDagActorSurfaceView({ actor, document_id: projection.document_id, now: target.received_at });
+  if (target.queue.status !== "pending" || target.patch.generation !== actor.generation) {
+    return {
+      run_id: actor.run_id,
+      actor_id: actor.actor_id,
+      generation: actor.generation,
+      journal_seq: journalSeq,
+      applied_count: 0,
+      scheduled: false,
+      view,
+    };
+  }
+
+  const key = actorPatchDrainKey(actor.run_id, actor.actor_id);
+  const recentPartial = target.patch.phase === "partial"
+    && view.last_applied_at !== undefined
+    && target.received_at < view.last_applied_at + ACTOR_PATCH_COALESCE_WINDOW_MS;
+  if (recentPartial && (scheduledActorPatchDrains.has(key)
+    || scheduledActorPatchDrains.size < MAX_SCHEDULED_ACTOR_PATCH_DRAINS)) {
+    if (!scheduledActorPatchDrains.has(key)) {
+      const delay = Math.max(1, view.last_applied_at! + ACTOR_PATCH_COALESCE_WINDOW_MS - target.received_at);
+      const timer = setTimeout(() => {
+        scheduledActorPatchDrains.delete(key);
+        try {
+          drainActorSurfacePatches(actor.run_id, actor.actor_id);
+        } catch (error) {
+          console.warn("[dag-actor-surface] scheduled projection failed", {
+            runId: actor.run_id,
+            actorId: actor.actor_id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }, delay);
+      timer.unref?.();
+      scheduledActorPatchDrains.set(key, timer);
+    }
+    return {
+      run_id: actor.run_id,
+      actor_id: actor.actor_id,
+      generation: actor.generation,
+      journal_seq: journalSeq,
+      applied_count: 0,
+      scheduled: true,
+      view,
+    };
+  }
+
+  cancelActorPatchDrain(actor.run_id, actor.actor_id);
+  const appliedCount = drainActorSurfacePatches(actor.run_id, actor.actor_id);
+  view = getDagActorSurfaceView(actor.run_id, actor.actor_id)!;
+  return {
+    run_id: actor.run_id,
+    actor_id: actor.actor_id,
+    generation: actor.generation,
+    journal_seq: journalSeq,
+    applied_count: appliedCount,
+    scheduled: false,
+    view,
+  };
+}
+
+/** Clear only the old Actor-owned body when a logical Actor generation advances. */
+export function resetDagLiveSurfaceActorBody(input: {
+  run_id: string;
+  actor_id: string;
+  now?: number;
+}): DagActorSurfaceViewRecord {
+  const runId = assertIdentifier(input.run_id, "run_id");
+  const actorId = assertIdentifier(input.actor_id, "actor_id");
+  const now = input.now ?? Date.now();
+  return getDb().transaction(() => {
+    const actor = getDagActor(runId, actorId);
+    if (!actor) throw new Error(`Unknown DAG actor: ${runId}/${actorId}`);
+    let projection = ensureProjection(actor, now);
+    const fromGeneration = projection.generation;
+    projection = advanceProjectionGeneration(projection, actor, now);
+    const view = ensureDagActorSurfaceView({ actor, document_id: projection.document_id, now });
+    if (fromGeneration === actor.generation) return view;
+
+    const scope = scopeFor(runId);
+    const document = persistentGenerativeUiDocumentService.get(projection.document_id, scope);
+    const node = document?.nodes.find((candidate) => candidate.id === projection.surface_id);
+    if (!document || !node) return view;
+    assertOwnedNode(node, projection);
+    const data = projectedDataFromNode(node);
+    if (!data) throw new DagLiveSurfaceProjectionError("projection_state_conflict", "Generation reset host data is unavailable");
+    const nextRevision = projection.surface_revision + 1;
+    data.actor.generation = actor.generation;
+    data.state.surface_revision = nextRevision;
+    const txId = transactionId("generation", `${runId}\u0000${actorId}\u0000${actor.generation}`);
+    const result = persistentGenerativeUiDocumentService.apply({
+      ir_version: GENERATIVE_UI_IR_VERSION,
+      transaction_id: txId,
+      document_id: document.document_id,
+      base_revision: document.revision,
+      actor: { type: GenerativeUiActorType.SYSTEM, id: PROJECTOR_ID },
+      operations: [{
+        op: "patch",
+        node_id: node.id,
+        if_revision: node.revision,
+        changes: {
+          content: composedProjectedContent(data),
+          a2ui: composedLiveSurfaceA2ui(),
+          fallback: hostFallback(data),
+        },
+      }],
+      created_at: new Date(now).toISOString(),
+    }, scope);
+    if (result.status === "conflict") {
+      throw new DagLiveSurfaceProjectionError("a2ui_revision_conflict", "Canvas changed before Actor generation reset");
+    }
+    if (result.status !== "applied") {
+      throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Canvas rejected Actor generation reset");
+    }
+    const updated = getDb().prepare(`
+      UPDATE dag_surface_projections
+      SET surface_revision = ?, updated_at = MAX(updated_at, ?)
+      WHERE run_id = ? AND actor_id = ? AND generation = ? AND surface_revision = ?
+    `).run(nextRevision, now, runId, actorId, actor.generation, projection.surface_revision);
+    if (updated.changes !== 1) {
+      throw new DagLiveSurfaceProjectionError("surface_revision_conflict", "Projection changed before Actor generation reset bookkeeping");
+    }
+    return getDagActorSurfaceView(runId, actorId)!;
+  }).immediate();
+}
+
+/** Recover only pending queues and generation mismatches; settled journal history is not replayed. */
+export function recoverDagActorSurfacePatches(runId?: string): DagActorSurfaceRecoveryResult {
+  const normalizedRunId = runId === undefined ? undefined : assertIdentifier(runId, "run_id");
+  const conditions = normalizedRunId === undefined ? "" : "AND actor.run_id = ?";
+  const rows = getDb().prepare(`
+    SELECT DISTINCT actor.run_id, actor.actor_id
+    FROM dag_actors actor
+    LEFT JOIN dag_actor_surface_views view
+      ON view.run_id = actor.run_id AND view.actor_id = actor.actor_id
+    LEFT JOIN dag_actor_surface_patch_queue queue
+      ON queue.run_id = actor.run_id AND queue.actor_id = actor.actor_id AND queue.status = 'pending'
+    WHERE (view.generation < actor.generation OR queue.journal_seq IS NOT NULL)
+      ${conditions}
+    ORDER BY actor.run_id, actor.actor_id
+  `).all(...(normalizedRunId === undefined ? [] : [normalizedRunId])) as Array<{ run_id: string; actor_id: string }>;
+  const result: DagActorSurfaceRecoveryResult = {
+    runs: [...new Set(rows.map((row) => row.run_id))],
+    applied_patches: 0,
+    stale_patches: 0,
+    failed: [],
+  };
+  for (const row of rows) {
+    try {
+      const actor = getDagActor(row.run_id, row.actor_id);
+      if (!actor) continue;
+      const view = getDagActorSurfaceView(row.run_id, row.actor_id);
+      if (view && view.generation < actor.generation) {
+        resetDagLiveSurfaceActorBody({ run_id: row.run_id, actor_id: row.actor_id });
+      }
+      result.stale_patches += markStaleDagActorSurfacePatches({
+        run_id: row.run_id,
+        actor_id: row.actor_id,
+        before_generation: actor.generation,
+      });
+      result.applied_patches += flushDagActorSurfacePatches(row.run_id, row.actor_id);
+    } catch (error) {
+      result.failed.push({
+        run_id: row.run_id,
+        actor_id: row.actor_id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return result;
 }
 
 function recoverableRunIds(): string[] {

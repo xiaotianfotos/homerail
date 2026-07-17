@@ -101,17 +101,47 @@ function awaitCommandWorkflow(): any {
 }
 
 describe("WorkflowSpec v1", () => {
+  it("canonicalizes exact per-agent pinned Surface view allowlists", () => {
+    const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
+    workflow.spec.agents.worker.allowed_surface_views = ["review:summary", "summary"];
+
+    const result = compileWorkflowSource(YAML.stringify(workflow));
+
+    expect(result.valid, result.diagnostics.map((item) => item.message).join("\n")).toBe(true);
+    expect(result.canonical?.agents.worker.allowed_surface_views).toEqual([
+      "review:summary",
+      "summary",
+    ]);
+    expect(projectCanonicalWorkflowToParsedDAG(result.canonical!).meta.agents?.worker)
+      .toMatchObject({ allowed_surface_views: ["review:summary", "summary"] });
+
+    workflow.spec.agents.worker.allowed_surface_views.reverse();
+    expect(compileWorkflowSource(YAML.stringify(workflow)).canonical_hash).toBe(result.canonical_hash);
+  });
+
+  it("rejects duplicate or malformed pinned Surface view allowlists", () => {
+    for (const allowedSurfaceViews of [["summary", "summary"], ["bad view"]]) {
+      const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
+      workflow.spec.agents.worker.allowed_surface_views = allowedSurfaceViews;
+      const result = compileWorkflowSource(YAML.stringify(workflow));
+      expect(result.valid).toBe(false);
+      expect(result.diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "DAG_SCHEMA_INVALID_FIELD" }),
+      ]));
+    }
+  });
+
   it("canonicalizes strict per-agent built-in tool allowlists", () => {
     const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
     workflow.spec.nodes.execute.allowed_builtin_tools = ["Write", "Read"];
-    workflow.spec.nodes.execute.allowed_dag_tools = ["handoff", "get_graph_context"];
+    workflow.spec.nodes.execute.allowed_dag_tools = ["handoff", "get_graph_context", "report_surface_state"];
 
     const result = compileWorkflowSource(YAML.stringify(workflow));
 
     expect(result.valid, result.diagnostics.map((item) => item.message).join("\n")).toBe(true);
     expect(result.canonical?.nodes.find((node) => node.id === "execute")?.config).toMatchObject({
       allowed_builtin_tools: ["Read", "Write"],
-      allowed_dag_tools: ["get_graph_context", "handoff"],
+      allowed_dag_tools: ["get_graph_context", "handoff", "report_surface_state"],
     });
 
     workflow.spec.nodes.execute.allowed_builtin_tools.reverse();

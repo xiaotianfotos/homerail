@@ -352,7 +352,9 @@ describe("Manager Agent harness contract", () => {
                   type: "string",
                   pattern: "^[0-9a-f]{64}$",
                 },
-                payload: {},
+                payload: {
+                  description: "Actor command payload. Preserve semantic instructions and populate any applicable typed paths advertised by this Actor's latest command_payload_contract.",
+                },
               },
               required: ["actor_id", "payload"],
               additionalProperties: false,
@@ -404,9 +406,14 @@ describe("Manager Agent harness contract", () => {
   });
 
   it("exposes only the atomic batch DAG Actor command schema to models", () => {
-    const validate = new Ajv({ strict: true }).compile(
-      managerAgentToolSpec("send_dag_actor_command").input_schema,
-    );
+    const spec = managerAgentToolSpec("send_dag_actor_command");
+    const validate = new Ajv({ strict: true }).compile(spec.input_schema);
+    expect(spec.description).toContain("command_payload_contract");
+    expect(spec.description).toContain("never encode those constraints only in prose");
+    const commandItems = spec.input_schema.properties?.commands?.items as {
+      properties?: { payload?: { description?: string } };
+    };
+    expect(commandItems.properties?.payload?.description).toContain("typed paths");
     const legacy = {
       run_id: "run-supervised",
       actor_id: "research",
@@ -726,6 +733,8 @@ describe("Manager Agent harness contract", () => {
     expect(prompt).toContain("Use tool-created widgets for generated UI");
     expect(prompt).toContain("Commentary is spoken too");
     expect(prompt).toContain("never narrate Skill loading, tool names, read-only checks, rendering, or canvas updates");
+    expect(prompt).toContain("inspect command_payload_contract");
+    expect(prompt).toContain("never leave a machine-readable constraint only inside instruction text");
   });
 
   it("renders HomeRail skill metadata and the pattern-first DAG workflow", () => {

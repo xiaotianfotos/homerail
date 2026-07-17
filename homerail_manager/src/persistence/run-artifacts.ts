@@ -7,6 +7,11 @@ import { dbTransaction, encodeJson, getDb, parseJsonRow } from "./db.js";
 
 export type RunArtifactStatus = "pending" | "uploading" | "ready" | "failed" | "skipped";
 
+export type RunArtifactSource = DAGArtifactDeclaration["source"] | {
+  type: "actor_surface_media";
+  sha256: string;
+};
+
 export interface RunArtifactError {
   code: string;
   message: string;
@@ -20,7 +25,7 @@ export interface RunArtifactRecord {
   media_type: string;
   required: boolean;
   publish: "success" | "failure" | "always";
-  source: DAGArtifactDeclaration["source"];
+  source: RunArtifactSource;
   archive?: { format: "tar.gz"; deterministic: boolean };
   limits?: {
     max_files: number;
@@ -215,6 +220,66 @@ export function writeRunArtifactBytes(
   };
   writeRecord(ready, { uploadTokenHash: null, uploadExpiresAt: null });
   return getRunArtifact(runId, name)!;
+}
+
+export function publishActorSurfaceMediaArtifact(input: {
+  run_id: string;
+  artifact_name: string;
+  media_type: string;
+  sha256: string;
+  bytes: Uint8Array;
+}): RunArtifactRecord {
+  safeId(input.run_id, "runId");
+  safeId(input.artifact_name, "artifact name");
+  const actualDigest = createHash("sha256").update(input.bytes).digest("hex");
+  if (actualDigest !== input.sha256) throw new Error("Actor surface media digest does not match its bytes");
+  const now = Date.now();
+  const initial: RunArtifactRecord = {
+    artifact_id: randomUUID(),
+    run_id: input.run_id,
+    name: input.artifact_name,
+    status: "pending",
+    media_type: input.media_type,
+    required: false,
+    publish: "always",
+    source: {
+      type: "actor_surface_media",
+      sha256: input.sha256,
+    },
+    created_at: now,
+    updated_at: now,
+  };
+  getDb().prepare(`
+    INSERT OR IGNORE INTO dag_artifacts(
+      run_id, name, artifact_id, status, upload_token_hash, upload_expires_at,
+      created_at, updated_at, data
+    ) VALUES (?, ?, ?, 'pending', NULL, NULL, ?, ?, ?)
+  `).run(
+    input.run_id,
+    input.artifact_name,
+    initial.artifact_id,
+    now,
+    now,
+    encodeJson(initial),
+  );
+
+  const current = getRunArtifact(input.run_id, input.artifact_name);
+  if (!current
+    || current.media_type !== input.media_type
+    || current.source.type !== "actor_surface_media"
+    || current.source.sha256 !== input.sha256) {
+    throw new Error("Actor surface media artifact identity conflicts with an existing artifact");
+  }
+  if (current.status === "ready"
+    && current.sha256 === input.sha256
+    && current.size_bytes === input.bytes.byteLength
+    && fs.existsSync(path.join(artifactDir(current), "blob"))) {
+    return current;
+  }
+  if (current.status !== "pending" && current.status !== "ready") {
+    throw new Error(`Actor surface media artifact is ${current.status}`);
+  }
+  return writeRunArtifactBytes(input.run_id, input.artifact_name, input.bytes);
 }
 
 export function markRunArtifactFailed(runId: string, name: string, error: RunArtifactError): RunArtifactRecord {

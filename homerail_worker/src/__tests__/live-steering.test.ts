@@ -36,7 +36,10 @@ function command(overrides: Partial<DagActorLiveCommandMessage["data"]> = {}): D
   };
 }
 
-function active(controller: AgentTurnController): ActivePromptLiveSteering {
+function active(
+  controller: AgentTurnController,
+  onCommandAccepted?: ActivePromptLiveSteering["onCommandAccepted"],
+): ActivePromptLiveSteering {
   return {
     identity: activePromptTransportIdentity({
       runId: "run-1",
@@ -49,6 +52,7 @@ function active(controller: AgentTurnController): ActivePromptLiveSteering {
       commandId: "dispatch-command-9",
     }),
     controller,
+    ...(onCommandAccepted ? { onCommandAccepted } : {}),
   };
 }
 
@@ -115,6 +119,32 @@ describe("dag_actor_command Worker routing", () => {
     }
   });
 
+  it("updates trusted live-command input only for a newly admitted command", async () => {
+    const sent: string[] = [];
+    const onCommandAccepted = vi.fn();
+    const controller = new AgentTurnController({ capabilities: { liveSteer: true } });
+    controller.bindDriver({ steer: async () => {} });
+    const prompt = active(controller, onCommandAccepted);
+    const first = command();
+
+    const firstRoute = routeDagActorCommand(first, prompt, (value) => sent.push(value));
+    expect(onCommandAccepted).toHaveBeenCalledOnce();
+    expect(onCommandAccepted).toHaveBeenCalledWith(first.data);
+
+    const duplicateRoute = routeDagActorCommand(first, prompt, (value) => sent.push(value));
+    expect(onCommandAccepted).toHaveBeenCalledOnce();
+
+    const staleRoute = routeDagActorCommand(
+      command({ command_id: "stale-command", sequence: 2, generation: 99 }),
+      prompt,
+      (value) => sent.push(value),
+    );
+    expect(onCommandAccepted).toHaveBeenCalledOnce();
+
+    await controller.close({ outcome: "completed" });
+    await Promise.all([firstRoute, duplicateRoute, staleRoute]);
+  });
+
   it.each([
     ["run_id", "stale-run"],
     ["node_id", "stale-node"],
@@ -136,15 +166,17 @@ describe("dag_actor_command Worker routing", () => {
 
   it("reports unsupported for Kimi CLI/ACP without claiming delivery", async () => {
     const sent: string[] = [];
+    const onCommandAccepted = vi.fn();
     const controller = new AgentTurnController({
       capabilities: { liveSteer: false },
       unsupportedReason: "Kimi CLI and ACP are unsupported",
     });
 
-    await expect(routeDagActorCommand(command(), active(controller), (data) => sent.push(data))).resolves.toMatchObject({
+    await expect(routeDagActorCommand(command(), active(controller, onCommandAccepted), (data) => sent.push(data))).resolves.toMatchObject({
       handled: true,
       reason: expect.stringContaining("unsupported"),
     });
+    expect(onCommandAccepted).not.toHaveBeenCalled();
     expect(parsedStatuses(sent)).toEqual([
       expect.objectContaining({
         type: "dag_actor_command_status",

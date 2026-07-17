@@ -6,10 +6,12 @@
 
 import {
   normalizeManagerAgentRuntimeAgentType,
+  validateDagActorSurfaceMediaV1,
   type DagActorCheckpointV1,
   type DagAdvisorConfig,
   type DagNodeConfig,
   type DagWorkerSkillContextSummaryV1,
+  type DagWorkerSkillVisualDataContractV1,
 } from "homerail-protocol";
 import { createAgentClient } from "./agent/factory.js";
 import type { AgentEvent, AgentRunContext, AgentUsage } from "./agent/types.js";
@@ -22,6 +24,15 @@ import { appendTranscriptEntry, redactAgentContext, saveSession } from "./sessio
 import { redactTelemetry } from "./telemetry-redaction.js";
 import { snapshotWorkspace, verifyWorkspacePolicy, type WorkspaceSnapshot } from "./workspace-policy.js";
 import { completedActivityPayloadForHandoff, createDagActivityEmitter } from "./dag-activity.js";
+import {
+  REPORT_SURFACE_STATE_PROMPT,
+  REPORT_SURFACE_STATE_TOOL_NAME,
+  type PinnedSurfaceViewRegistry,
+} from "./dag-tools/report-surface-state.js";
+import {
+  createSurfaceMediaPublisher,
+  type SurfaceMediaDownloader,
+} from "./dag-tools/surface-media.js";
 
 export interface PromptJob {
   task: string;
@@ -41,6 +52,10 @@ export interface PromptJob {
   };
   actorCheckpoint?: DagActorCheckpointV1;
   skillContextSummary?: DagWorkerSkillContextSummaryV1;
+  pinnedSurfaceViews?: PinnedSurfaceViewRegistry;
+  pinnedSurfaceDataContracts?: ReadonlyMap<string, DagWorkerSkillVisualDataContractV1>;
+  /** Manager-dispatched structured inputs retained outside the model prompt. */
+  trustedInputs?: Readonly<Record<string, unknown[]>>;
 }
 
 export interface PromptRunnerDeps {
@@ -51,6 +66,7 @@ export interface PromptRunnerDeps {
   abortSignal?: AbortSignal;
   turnController?: AgentTurnController;
   registerInboxHandler?: (handler: (content: unknown) => void) => () => void;
+  surfaceMediaDownloader?: SurfaceMediaDownloader;
 }
 
 export type PromptRunResult =
@@ -224,19 +240,42 @@ export async function runPrompt(
   const activityEmitter = createDagActivityEmitter(job.dagConfig, job.runId, (activity) => {
     sendStream({ event: "dag_activity", activity });
   });
-  const allDagTools = createDagTools(dagState, {
-    advisorRunner: (advisor, question) => runAdvisorCall(advisor, question, workspace, deps.abortSignal),
-    activityEmitter: (type, payload) => activityEmitter.emit(type, payload),
-  });
   const allowedDagTools = job.dagConfig.allowed_dag_tools === undefined
     ? undefined
     : new Set<string>(job.dagConfig.allowed_dag_tools);
+  const surfacePatchAllowed = allowedDagTools?.has(REPORT_SURFACE_STATE_TOOL_NAME) === true;
+  const surfaceMediaPublisher = surfacePatchAllowed
+    ? createSurfaceMediaPublisher(dagState, (media) => sendStream({
+        event: "dag_actor_surface_media",
+        media,
+      }), deps.surfaceMediaDownloader)
+    : undefined;
+  const allDagTools = createDagTools(dagState, {
+    advisorRunner: (advisor, question) => runAdvisorCall(advisor, question, workspace, deps.abortSignal),
+    activityEmitter: (type, payload) => activityEmitter.emit(type, payload),
+    ...(surfacePatchAllowed
+      ? {
+          surfacePatchEmitter: ({ surface_id, patch }) => sendStream({
+            event: "dag_actor_surface_patch",
+            surface_id,
+            patch,
+          }),
+          surfaceMediaPublisher,
+          pinnedSurfaceViews: job.pinnedSurfaceViews,
+          pinnedSurfaceDataContracts: job.pinnedSurfaceDataContracts,
+          trustedInputs: job.trustedInputs,
+        }
+      : {}),
+  });
   const selectedDagTools = allowedDagTools === undefined
     ? allDagTools
     : allDagTools.filter((tool) => allowedDagTools.has(tool.name));
   const dagTools = correctionOnly
     ? allDagTools.filter((tool) => tool.name === "handoff")
     : selectedDagTools;
+  const ordinarySystemPrompt = surfacePatchAllowed
+    ? [job.systemPrompt?.trim(), REPORT_SURFACE_STATE_PROMPT].filter(Boolean).join("\n\n")
+    : job.systemPrompt;
   const effectiveSystemPrompt = correctionOnly
     ? [
         "DAG CONTRACT CORRECTION MODE.",
@@ -248,7 +287,7 @@ export async function runPrompt(
         "The original node instructions follow only for output schema and evidence context:",
         job.systemPrompt ?? "",
       ].join("\n")
-    : job.systemPrompt;
+    : ordinarySystemPrompt;
   const unregisterInboxHandler = deps.registerInboxHandler?.((content) => {
     deliverInbox(dagState, content);
   });
@@ -298,7 +337,16 @@ export async function runPrompt(
   }
 
   function sendStream(data: Record<string, unknown>) {
-    const redactedData = redactTelemetry(data) as Record<string, unknown>;
+    let redactedData: Record<string, unknown>;
+    if (data.event === "dag_actor_surface_media") {
+      const validation = validateDagActorSurfaceMediaV1(data.media);
+      if (!validation.valid) {
+        throw new Error(`invalid Actor surface media stream: ${validation.errors[0]?.message ?? "validation failed"}`);
+      }
+      redactedData = { event: "dag_actor_surface_media", media: data.media };
+    } else {
+      redactedData = redactTelemetry(data) as Record<string, unknown>;
+    }
     wsSend(
       JSON.stringify({
         type: "stream",
@@ -429,7 +477,7 @@ export async function runPrompt(
             tool_id: event.id,
             tool_input: redactTelemetry(event.input),
           });
-          if (event.name !== "report_activity") {
+          if (event.name !== "report_activity" && event.name !== REPORT_SURFACE_STATE_TOOL_NAME) {
             activityEmitter.emit("tool_used", {
               phase: "started",
               tool_name: event.name,
@@ -458,7 +506,8 @@ export async function runPrompt(
             is_error: event.is_error,
             result_preview: redactTelemetry(event.content),
           });
-          if (toolNamesById.get(event.tool_use_id) !== "report_activity") {
+          if (toolNamesById.get(event.tool_use_id) !== "report_activity"
+            && toolNamesById.get(event.tool_use_id) !== REPORT_SURFACE_STATE_TOOL_NAME) {
             activityEmitter.emit("tool_used", {
               phase: "completed",
               tool_name: toolNamesById.get(event.tool_use_id) ?? "unknown",

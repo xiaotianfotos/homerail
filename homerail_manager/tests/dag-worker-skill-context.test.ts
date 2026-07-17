@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DAG_WORKER_SKILL_RUN_MAX_BYTES,
+  HOMERAIL_A2UI_CATALOG_ID,
+  HOMERAIL_A2UI_VERSION,
   createDagWorkerSkillContextV1,
   digestDagWorkerSkillContent,
 } from "homerail-protocol";
@@ -184,6 +186,39 @@ describe("digest-pinned DAG Worker Skill Context", () => {
     }
   });
 
+  it("fails closed when an Agent allows a pinned Surface view its Skills do not provide", () => {
+    writeSkill(home, "visual", "# Visual\nUse the pinned view selected by runtime.");
+    const assetDirectory = path.join(home, "skills", "visual", "assets", "homerail");
+    fs.mkdirSync(assetDirectory, { recursive: true });
+    fs.writeFileSync(path.join(assetDirectory, "worker-visual-profile.json"), JSON.stringify({
+      profile_version: 1,
+      views: ["summary", "detail"].map((id) => ({
+        id,
+        a2ui: {
+          version: HOMERAIL_A2UI_VERSION,
+          catalogId: HOMERAIL_A2UI_CATALOG_ID,
+          components: [{ id: "root", component: "Text", text: { path: "/actor_view/data/title" } }],
+        },
+        data_contract: {
+          source: { input_port: "mission", encoding: "json", pointer: `/${id}` },
+          fields: [{ field: "title", mode: "source", source_pointer: "/title" }],
+        },
+      })),
+    }), "utf8");
+
+    expect(resolveDeclaredDagWorkerSkillContexts({
+      agents: {
+        worker: { skills: ["visual"], allowed_surface_views: ["summary"] },
+      },
+    }).worker?.skills[0]?.visual_profile?.views).toHaveLength(2);
+
+    expect(() => resolveDeclaredDagWorkerSkillContexts({
+      agents: {
+        worker: { skills: ["visual"], allowed_surface_views: ["missing"] },
+      },
+    })).toThrow(/unavailable pinned Surface view 'missing'/);
+  });
+
   it("migrates old databases at 29, validates repeated startup, and prohibits UPDATE", () => {
     const initial = getDb();
     expect(initial.prepare("SELECT 1 FROM schema_migrations WHERE version = 29").get()).toBeTruthy();
@@ -336,6 +371,66 @@ describe("digest-pinned DAG Worker Skill Context", () => {
       },
     })).toMatchObject({ nodeId: "observer-preserved", nodeCount: 2 });
     expect(getDagRunSkillContext("dynamic-skill-run", "worker")?.context).toEqual(pinnedContext);
+  });
+
+  it("changes a dynamic Agent Surface allowlist without replacing its pinned Skill snapshot", () => {
+    writeSkill(home, "visual-pinned", "# Visual pinned\nORIGINAL_VISUAL_SKILL");
+    const assetDirectory = path.join(home, "skills", "visual-pinned", "assets", "homerail");
+    fs.mkdirSync(assetDirectory, { recursive: true });
+    fs.writeFileSync(path.join(assetDirectory, "worker-visual-profile.json"), JSON.stringify({
+      profile_version: 1,
+      views: ["summary", "detail"].map((id) => ({
+        id,
+        a2ui: {
+          version: HOMERAIL_A2UI_VERSION,
+          catalogId: HOMERAIL_A2UI_CATALOG_ID,
+          components: [{ id: "root", component: "Text", text: { path: "/actor_view/data/title" } }],
+        },
+        data_contract: {
+          source: { input_port: "mission", encoding: "json", pointer: `/${id}` },
+          fields: [{ field: "title", mode: "source", source_pointer: "/title" }],
+        },
+      })),
+    }), "utf8");
+    const parsed = parseDAGYaml(`
+name: visual-pinned-worker
+workflow_id: visual-pinned-worker
+agents:
+  worker:
+    agent_type: deterministic
+    system: "HANDOFF port=done content=ok"
+    skills: [visual-pinned]
+    allowed_surface_views: [summary]
+nodes:
+  work:
+    agent: worker
+    outputs:
+      done:
+        to: ""
+`);
+    createActiveRun("dynamic-surface-allowlist-run", parsed);
+    const pinnedContext = getDagRunSkillContext("dynamic-surface-allowlist-run", "worker")!.context;
+    writeSkill(home, "visual-pinned", "# Visual pinned\nCHANGED_AFTER_ADMISSION");
+
+    expect(appendRunNode("dynamic-surface-allowlist-run", {
+      node: {
+        node_id: "detail",
+        name: "Detail",
+        description: "Reuse the pinned detail view",
+        node_type: "task",
+        agent: "worker",
+        after: [],
+        outputs: { done: { to: "" } },
+      },
+      agentConfig: {
+        agent_type: "deterministic",
+        system: "HANDOFF port=done content=detail",
+        allowed_surface_views: ["detail"],
+      },
+    })).toMatchObject({ nodeId: "detail", nodeCount: 2 });
+    expect(getDagRunSkillContext("dynamic-surface-allowlist-run", "worker")?.context).toEqual(pinnedContext);
+    expect(requireEnvelope("dynamic-surface-allowlist-run", "detail").agentConfig.allowed_surface_views)
+      .toEqual(["detail"]);
   });
 
   it("treats an initially empty Agent context as pinned during dynamic append", () => {

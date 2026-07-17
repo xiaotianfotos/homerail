@@ -7,6 +7,7 @@ const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 const HTTP_URI = /^https?:\/\/[^\s\\]+$/i;
 const ARTIFACT_URI = /^artifact:[A-Za-z0-9][A-Za-z0-9._~/%-]*$/i;
 const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/](?![\\/])[^\u0000-\u001f\u007f]*$/;
+const DAG_ACTOR_MEDIA_PREVIEW_URI = /^\/api\/runs\/[A-Za-z0-9][A-Za-z0-9._-]{0,255}\/artifacts\/actor-media-[a-f0-9]{64}\.(?:avif|gif|jpg|png|webp|mp4|webm|mp3|m4a|ogg|wav|weba)\/content$/i;
 
 /** Navigable external references are limited to credential-free HTTP(S). */
 export function isSafeGenerativeUiExternalUri(value: unknown): value is string {
@@ -47,5 +48,6 @@ export function isSafeGenerativeUiPreviewUri(value: unknown): value is string {
   return /^https?:\/\//i.test(value)
     || /^\/api\/voice-agent\/sessions\/[^/]+\/artifacts\/(?:preview|[^?#]+)$/i.test(value)
     || /^\/artifacts\/[^/]+\/[^/]+\/preview(?:[?#].*)?$/i.test(value)
-    || /^\/api\/plugins\/artifacts\/[^/]+\/[^/]+\/[a-f0-9]{64}$/i.test(value);
+    || /^\/api\/plugins\/artifacts\/[^/]+\/[^/]+\/[a-f0-9]{64}$/i.test(value)
+    || DAG_ACTOR_MEDIA_PREVIEW_URI.test(value);
 }

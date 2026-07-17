@@ -43,6 +43,7 @@ function localSchemaRef(root: JsonSchema, ref: string): JsonSchema | undefined {
 
 function parseJsonObjectString(value: unknown): unknown {
   if (typeof value !== "string") return value;
+  if (value.length > 1024 * 1024) return value;
   let encoded = value.trim();
   for (let depth = 0; depth < 2; depth += 1) {
     try {
@@ -57,15 +58,156 @@ function parseJsonObjectString(value: unknown): unknown {
   return value;
 }
 
-function encodedJsonObjectSchema(): ZodSchema {
-  return z.string().transform((value, context) => {
-    const parsed = parseJsonObjectString(value);
-    if (parsed === value) {
-      context.addIssue({ code: "custom", message: "Expected a JSON-encoded object" });
-      return z.NEVER;
+function unpackPackedObjectProperty(
+  propertyName: string,
+  value: string,
+  properties: JsonSchema,
+): Record<string, unknown> | undefined {
+  if (value.length > 1024 * 1024) return undefined;
+  const encoded = value.trim();
+  if (!encoded.startsWith("{")) return undefined;
+  const prefix = `{${JSON.stringify(propertyName)}:`;
+  for (const candidate of [`${prefix}${encoded}`, `${prefix}${encoded}}`]) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      const record = parsed as Record<string, unknown>;
+      const packedValue = record[propertyName];
+      if (!packedValue || typeof packedValue !== "object" || Array.isArray(packedValue)) continue;
+      if (Object.keys(record).some((key) => !Object.prototype.hasOwnProperty.call(properties, key))) continue;
+      return record;
+    } catch {
+      // Try the alternate root-brace form.
     }
-    return parsed;
-  }) as unknown as ZodSchema;
+  }
+  return undefined;
+}
+
+function unpackNestedRootProperties(
+  propertyName: string,
+  value: Record<string, unknown>,
+  properties: JsonSchema,
+  required: ReadonlySet<string>,
+  rootValue: Record<string, unknown>,
+): { propertyValue: Record<string, unknown>; siblings: Record<string, unknown> } | undefined {
+  const missingRequired = [...required]
+    .filter((key) => key !== propertyName && rootValue[key] === undefined);
+  if (missingRequired.length === 0
+    || missingRequired.some((key) => value[key] === undefined || !Object.prototype.hasOwnProperty.call(properties, key))) {
+    return undefined;
+  }
+
+  const propertyValue = { ...value };
+  const siblings: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === propertyName
+      || rootValue[key] !== undefined
+      || !Object.prototype.hasOwnProperty.call(properties, key)) continue;
+    siblings[key] = entry;
+    delete propertyValue[key];
+  }
+  return Object.keys(siblings).length > 0 ? { propertyValue, siblings } : undefined;
+}
+
+/**
+ * Claude-compatible providers sometimes preserve JSON-encoded nested objects
+ * after MCP validation. Decode only fields that the original JSON Schema says
+ * are objects, then let the tool handler apply its authoritative validation.
+ */
+export function normalizeJsonObjectStringsBySchema(
+  value: unknown,
+  schema: Record<string, unknown>,
+  rootSchema: Record<string, unknown> = schema,
+  depth = 0,
+): unknown {
+  if (depth > 32) return value;
+  let json = asRecord(schema);
+  if (typeof json.$ref === "string") {
+    const resolved = localSchemaRef(rootSchema, json.$ref);
+    if (resolved) json = resolved;
+  }
+
+  if (schemaType(json) === "object") {
+    const decoded = parseJsonObjectString(value);
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return value;
+    const properties = asRecord(json.properties);
+    const additional = asRecord(json.additionalProperties);
+    const required = new Set(Array.isArray(json.required) ? json.required.map(String) : []);
+    const normalized: Record<string, unknown> = { ...decoded as Record<string, unknown> };
+    if (depth === 0) {
+      for (const [key, entry] of Object.entries(normalized)) {
+        const propertySchema = asRecord(properties[key]);
+        if (schemaType(propertySchema) !== "object" || typeof entry !== "string") continue;
+        const decodedEntry = parseJsonObjectString(entry);
+        if (decodedEntry !== entry) {
+          normalized[key] = decodedEntry;
+          continue;
+        }
+        const packed = unpackPackedObjectProperty(key, entry, properties);
+        if (!packed) continue;
+        normalized[key] = packed[key];
+        for (const [packedKey, packedEntry] of Object.entries(packed)) {
+          if (packedKey !== key && normalized[packedKey] === undefined) normalized[packedKey] = packedEntry;
+        }
+      }
+      for (const [key, entry] of Object.entries(normalized)) {
+        const propertySchema = asRecord(properties[key]);
+        if (schemaType(propertySchema) !== "object"
+          || !entry
+          || typeof entry !== "object"
+          || Array.isArray(entry)) continue;
+        const unpacked = unpackNestedRootProperties(
+          key,
+          entry as Record<string, unknown>,
+          properties,
+          required,
+          normalized,
+        );
+        if (!unpacked) continue;
+        normalized[key] = unpacked.propertyValue;
+        Object.assign(normalized, unpacked.siblings);
+      }
+    }
+    for (const [key, entry] of Object.entries(normalized)) {
+      const propertySchema = asRecord(properties[key]);
+      if (Object.keys(propertySchema).length > 0) {
+        normalized[key] = normalizeJsonObjectStringsBySchema(
+          entry,
+          propertySchema,
+          rootSchema,
+          depth + 1,
+        );
+      } else if (Object.keys(additional).length > 0) {
+        normalized[key] = normalizeJsonObjectStringsBySchema(
+          entry,
+          additional,
+          rootSchema,
+          depth + 1,
+        );
+      }
+    }
+    return normalized;
+  }
+
+  if (schemaType(json) === "array" && Array.isArray(value)) {
+    const itemSchema = asRecord(json.items);
+    return value.map((entry) => normalizeJsonObjectStringsBySchema(
+      entry,
+      itemSchema,
+      rootSchema,
+      depth + 1,
+    ));
+  }
+
+  return value;
+}
+
+function encodedJsonObjectSchema(): ZodSchema {
+  // Keep malformed strings alive until the schema-aware compatibility pass.
+  // Some Anthropic-compatible providers pack sibling arguments into one
+  // object-valued field, so rejecting here would bypass the DAG handler and
+  // its authoritative validation entirely.
+  return z.string().transform((value) => parseJsonObjectString(value)) as unknown as ZodSchema;
 }
 
 function convertSchema(json: JsonSchema, root: JsonSchema): ZodSchema {
@@ -119,10 +261,12 @@ function convertSchema(json: JsonSchema, root: JsonSchema): ZodSchema {
       // strings. Keep that compatibility explicit in the SDK-facing schema so
       // MCP validation can reach the decoder; Manager validates the decoded
       // object again against the original strict JSON Schema.
-      out = z.union([
-        objectSchema,
-        encodedJsonObjectSchema() as never,
-      ] as unknown as [never, never]) as unknown as ZodSchema;
+      out = json["x-homerail-sdk-object-only"] === true
+        ? objectSchema
+        : z.union([
+            objectSchema,
+            encodedJsonObjectSchema() as never,
+          ] as unknown as [never, never]) as unknown as ZodSchema;
       break;
     }
     default:

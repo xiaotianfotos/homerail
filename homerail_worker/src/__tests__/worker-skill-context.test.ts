@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createDagWorkerSkillContextV1,
+  HOMERAIL_A2UI_CATALOG_ID,
+  HOMERAIL_A2UI_VERSION,
   type DagActorCheckpointV1,
   type DagNodeConfig,
 } from "homerail-protocol";
@@ -13,6 +15,8 @@ import { registerAgentBackend } from "../agent/factory.js";
 import type { AgentClient, AgentRunContext } from "../agent/types.js";
 import { runPrompt } from "../prompt-runner.js";
 import {
+  createWorkerSkillVisualDataContractRegistry,
+  createWorkerSkillVisualViewRegistry,
   prepareWorkerSkillContext,
   WorkerSkillContextError,
 } from "../worker-skill-context.js";
@@ -24,6 +28,54 @@ function skillContext() {
     id: "review",
     source: "repo",
     content: SKILL_BODY,
+  }]);
+}
+
+function visualSkillContext() {
+  return createDagWorkerSkillContextV1([{
+    id: "review",
+    source: "repo",
+    content: SKILL_BODY,
+    visual_profile: {
+      profile_version: 1,
+      views: [{
+        id: "summary",
+        a2ui: {
+          version: HOMERAIL_A2UI_VERSION,
+          catalogId: HOMERAIL_A2UI_CATALOG_ID,
+          components: [{ id: "root", component: "Text", text: { path: "/actor_view/data/title" } }],
+        },
+        data_contract: {
+          source: { input_port: "mission", encoding: "json", pointer: "/summary" },
+          fields: [{ field: "title", mode: "source", source_pointer: "/title" }],
+        },
+      }],
+      data_fields: ["title"],
+      mobile_fallback: "summary",
+    },
+  }]);
+}
+
+function multiVisualSkillContext() {
+  return createDagWorkerSkillContextV1([{
+    id: "review",
+    source: "repo",
+    content: SKILL_BODY,
+    visual_profile: {
+      profile_version: 1,
+      views: ["summary", "detail"].map((id) => ({
+        id,
+        a2ui: {
+          version: HOMERAIL_A2UI_VERSION,
+          catalogId: HOMERAIL_A2UI_CATALOG_ID,
+          components: [{ id: "root", component: "Text", text: { path: "/actor_view/data/title" } }],
+        },
+        data_contract: {
+          source: { input_port: "mission", encoding: "json" as const, pointer: `/${id}` },
+          fields: [{ field: "title", mode: "source" as const, source_pointer: "/title" }],
+        },
+      })),
+    },
   }]);
 }
 
@@ -107,6 +159,59 @@ describe("Worker Skill Context", () => {
     expect(prepared.systemPrompt!.indexOf(SKILL_BODY))
       .toBeGreaterThan(prepared.systemPrompt!.indexOf("Original node instructions"));
     expect(JSON.stringify(prepared.summary)).not.toContain(SKILL_BODY);
+  });
+
+  it("keeps full visual views pinned outside the prompt and exposes stable view ids", () => {
+    const context = visualSkillContext();
+    const prepared = prepareWorkerSkillContext({
+      declaredSkills: ["review"],
+      skillContext: context,
+    });
+    const views = createWorkerSkillVisualViewRegistry(prepared.context);
+    const contracts = createWorkerSkillVisualDataContractRegistry(prepared.context);
+
+    expect(prepared.systemPrompt).toContain('"id":"summary"');
+    expect(prepared.systemPrompt).toContain('"data_contract"');
+    expect(prepared.systemPrompt).toContain('"mode":"source"');
+    expect(prepared.systemPrompt).toContain('"data_fields":["title"]');
+    expect(prepared.systemPrompt).not.toContain('"components"');
+    expect(views.get("summary")).toEqual(context.skills[0]!.visual_profile!.views![0]!.a2ui);
+    expect(views.get("review:summary")).toEqual(context.skills[0]!.visual_profile!.views![0]!.a2ui);
+    expect(contracts.get("summary")).toEqual(context.skills[0]!.visual_profile!.views![0]!.data_contract);
+    expect(contracts.get("review:summary")).toEqual(context.skills[0]!.visual_profile!.views![0]!.data_contract);
+
+    const local = views.get("summary")!;
+    (local.components[0] as { id: string }).id = "mutated";
+    expect(context.skills[0]!.visual_profile!.views![0]!.a2ui.components[0]!.id).toBe("root");
+  });
+
+  it("exposes only the workflow-authorized pinned Surface views", () => {
+    const context = multiVisualSkillContext();
+    const prepared = prepareWorkerSkillContext({
+      declaredSkills: ["review"],
+      allowedSurfaceViews: ["summary"],
+      skillContext: context,
+    });
+    const views = createWorkerSkillVisualViewRegistry(
+      prepared.context,
+      prepared.allowedSurfaceViewIds,
+    );
+    const contracts = createWorkerSkillVisualDataContractRegistry(
+      prepared.context,
+      prepared.allowedSurfaceViewIds,
+    );
+
+    expect(prepared.systemPrompt).toContain("Runtime allowed pinned Surface views: summary");
+    expect(prepared.systemPrompt).toContain('"id":"summary"');
+    expect(prepared.systemPrompt).not.toContain('"id":"detail"');
+    expect([...views.keys()]).toEqual(["summary"]);
+    expect([...contracts.keys()]).toEqual(["summary"]);
+
+    expect(() => prepareWorkerSkillContext({
+      declaredSkills: ["review"],
+      allowedSurfaceViews: ["missing"],
+      skillContext: context,
+    })).toThrow(/unavailable pinned view 'missing'/);
   });
 
   it("rejects a cold-recovery checkpoint whose pinned digests differ", () => {

@@ -83,6 +83,7 @@ import {
 } from "../persistence/dag-runtime-primitives.js";
 import type { RunWorkspaceRetention } from "../persistence/types.js";
 import { getDagActivitySequenceCursor } from "../persistence/dag-activity-journal.js";
+import { getDagActorSurfaceView } from "../persistence/dag-actor-surface-patches.js";
 import { getDb } from "../persistence/db.js";
 import {
   createInitialDagRunRound,
@@ -142,7 +143,10 @@ import {
   type DagActorInterventionOperation,
   type DagActorInterventionRecord,
 } from "../persistence/dag-actor-interventions.js";
-import { supersedeDagLiveSurfaceForIntervention } from "../generative-ui/dag-live-surface-projector.js";
+import {
+  resetDagLiveSurfaceActorBody,
+  supersedeDagLiveSurfaceForIntervention,
+} from "../generative-ui/dag-live-surface-projector.js";
 import { buildDagActorCheckpoint, buildRunActorCheckpoints } from "./dag-actor-checkpoint-builder.js";
 import { getDagActorControlState, type DagActorControlStateName } from "./dag-actor-control-state.js";
 import {
@@ -151,6 +155,7 @@ import {
   pinDagRunSkillContexts,
 } from "../persistence/dag-run-skill-contexts.js";
 import {
+  assertDagWorkerSurfaceViewAllowlist,
   resolveDagWorkerSkillContext,
   resolveDeclaredDagWorkerSkillContexts,
 } from "./dag-worker-skill-context.js";
@@ -1984,7 +1989,7 @@ export function checkpointResumeActiveRun(
     const actorNode = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === nodeId);
     if (!actorNode || _isGatewayNode(actorNode)) throw new Error(`Node ${nodeId} has no logical actor`);
     const actor = _ensureLogicalActor(run, actorNode);
-    const nextActor = advanceDagActorGeneration({
+    const advancedActor = advanceDagActorGeneration({
       run_id: runId,
       actor_id: actor.actor_id,
       expected_generation: actor.generation,
@@ -1995,9 +2000,13 @@ export function checkpointResumeActiveRun(
     });
     terminateDagActorLiveCommands({
       run_id: runId,
-      actor_id: nextActor.actor_id,
+      actor_id: advancedActor.actor_id,
       status: "superseded",
-      reason: `Actor generation advanced to ${nextActor.generation} for checkpoint resume`,
+      reason: `Actor generation advanced to ${advancedActor.generation} for checkpoint resume`,
+    });
+    resetDagLiveSurfaceActorBody({
+      run_id: advancedActor.run_id,
+      actor_id: advancedActor.actor_id,
     });
   } catch (err) {
     return {
@@ -2230,6 +2239,8 @@ function _assertHandoffPreconditions(
   content: unknown,
   abortOnLimit = false,
 ): void {
+  const surfaceViolation = _requiredSurfaceFinalViolation(run, fromNode, port);
+  if (surfaceViolation) throw new Error(surfaceViolation);
   const contractViolation = _handoffContractViolation(run, fromNode, port, content);
   if (contractViolation) throw new Error(contractViolation);
   if (run.counters.handoffs >= run.limits.max_handoffs) {
@@ -2247,6 +2258,52 @@ function _assertHandoffPreconditions(
       throw new Error(`edge retry limit (${edgeLimit}) exceeded for ${key}`);
     }
   }
+}
+
+function _requiredSurfaceFinalViolation(
+  run: ActiveRun,
+  fromNode: string,
+  port: string,
+): string | undefined {
+  const matchingEdges = run.dagRun.graph.edges.filter((edge) => (
+    edge.from_node === fromNode
+    && edge.from_port === port
+    && edge.label !== "after_dep"
+  ));
+  if (isFailurePort(port) || matchingEdges.some((edge) => edge.condition === "on_failure")) {
+    return undefined;
+  }
+  const node = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === fromNode);
+  if (!node || !_allowedDagTools(node)?.includes("report_surface_state")) return undefined;
+  const allowedViewIds = run.agents?.[node.agent]?.allowed_surface_views;
+  if (!Array.isArray(allowedViewIds) || allowedViewIds.length !== 1) return undefined;
+  const context = getDagRunSkillContext(run.runId, node.agent)?.context;
+  if (!context) return undefined;
+
+  const localCounts = new Map<string, number>();
+  for (const skill of context.skills) {
+    for (const view of skill.visual_profile?.views ?? []) {
+      localCounts.set(view.id, (localCounts.get(view.id) ?? 0) + 1);
+    }
+  }
+  const allowedViewId = allowedViewIds[0]!;
+  const matches = context.skills.flatMap((skill) => (
+    (skill.visual_profile?.views ?? []).filter((view) => (
+      allowedViewId === `${skill.id}:${view.id}`
+      || (allowedViewId === view.id && localCounts.get(view.id) === 1)
+    ))
+  ));
+  if (matches.length !== 1 || !matches[0]!.data_contract?.required_phases?.length) return undefined;
+
+  const actor = getDagActorByNode(run.runId, fromNode);
+  const view = actor ? getDagActorSurfaceView(run.runId, actor.actor_id) : undefined;
+  if (actor
+    && view?.generation === actor.generation
+    && view.round_id === run.currentRound.round_id
+    && view.phase === "final") {
+    return undefined;
+  }
+  return `DAG_HANDOFF_SURFACE_INCOMPLETE ${run.runId}/${fromNode}: pinned view '${allowedViewId}' requires an applied final Surface patch in round ${run.currentRound.round_id}`;
 }
 
 export function decideActiveRunApproval(input: {
@@ -2489,6 +2546,10 @@ export function appendRunNode(
         ...(request.agentConfig.skills === undefined && existingAgentConfig?.skills
           ? { skills: [...existingAgentConfig.skills] }
           : {}),
+        ...(request.agentConfig.allowed_surface_views === undefined
+          && existingAgentConfig?.allowed_surface_views
+          ? { allowed_surface_views: [...existingAgentConfig.allowed_surface_views] }
+          : {}),
       }
     : undefined;
   const existingSkillContext = getDagRunSkillContext(runId, node.agent);
@@ -2500,10 +2561,21 @@ export function appendRunNode(
       agent_id: node.agent,
       skills: nextAgentConfig?.skills ?? [],
     });
+    assertDagWorkerSurfaceViewAllowlist({
+      agent_id: node.agent,
+      context: resolvedSkillContext,
+      allowed_surface_views: nextAgentConfig?.allowed_surface_views,
+    });
     pinDagRunSkillContext({
       run_id: runId,
       agent_id: node.agent,
       context: resolvedSkillContext,
+    });
+  } else if (request.agentConfig?.allowed_surface_views !== undefined && existingSkillContext) {
+    assertDagWorkerSurfaceViewAllowlist({
+      agent_id: node.agent,
+      context: existingSkillContext.context,
+      allowed_surface_views: nextAgentConfig?.allowed_surface_views,
     });
   }
 
@@ -3261,7 +3333,7 @@ function _roundCarryoverInputs(
 }
 
 function _ephemeralActorInputPorts(run: ActiveRun): Set<string> {
-  const ports = new Set(["command", "intervention", "checkpoint_resume"]);
+  const ports = new Set(["command", "correction", "intervention", "checkpoint_resume"]);
   for (const node of run.dagRun.graph.nodes) {
     if (node.node_type !== "await_command_gateway") continue;
     ports.add(node.gateway_config?.command_port || "command");
@@ -4304,6 +4376,20 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
       return { ok: false, reason: `pinned Skill Context does not match agent ${agentId} declarations` };
     }
   }
+  try {
+    if (skillContext) {
+      assertDagWorkerSurfaceViewAllowlist({
+        agent_id: agentId,
+        context: skillContext,
+        allowed_surface_views: agentConfig.allowed_surface_views,
+      });
+    }
+  } catch (cause) {
+    return {
+      ok: false,
+      reason: cause instanceof Error ? cause.message : String(cause),
+    };
+  }
   const credentials = _withDispatchCredentials(agentConfig);
   if (!credentials.ok) return credentials;
   const advisorResolution = _advisorConfigs(run, node);
@@ -4315,6 +4401,8 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
   const actorId = actor.actor_id;
   const generation = actor.generation;
   const surfaceId = actor.surface_id;
+  const actorSurfaceView = getDagActorSurfaceView(run.runId, actorId);
+  const correctionOnly = Array.isArray(inputs.correction) && inputs.correction.length > 0;
   const requestedCheckpointVersion = actor.checkpoint_ref?.match(/^portable:(\d+)$/)?.[1];
   const actorCheckpointRecord = requestedCheckpointVersion
     ? getDagActorCheckpoint({
@@ -4380,6 +4468,13 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
         ...(roundCommand ? { commandId: roundCommand.command_id } : {}),
         ...(surfaceId ? { surfaceId } : {}),
         sequenceStart: getDagActivitySequenceCursor(run.runId, actorId, generation),
+        surfacePatchSequenceStart: actorSurfaceView?.generation === generation
+          ? actorSurfaceView.body_revision
+          : 0,
+        surfaceReportingComplete: correctionOnly
+          && actorSurfaceView?.generation === generation
+          && actorSurfaceView.round_id === run.currentRound.round_id
+          && actorSurfaceView.phase === "final",
       },
     },
   };

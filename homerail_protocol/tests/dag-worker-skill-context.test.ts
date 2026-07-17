@@ -172,6 +172,127 @@ describe("DagWorkerSkillContextV1", () => {
     }])).toThrow(/A2UI surface validation/);
   });
 
+  it("validates trusted visual data contracts and requires coverage for bound A2UI fields", () => {
+    const context = createDagWorkerSkillContextV1([{
+      ...skill("trusted-visual"),
+      visual_profile: {
+        profile_version: 1,
+        views: [{
+          id: "route",
+          a2ui: {
+            version: "v1.0",
+            catalogId: HOMERAIL_A2UI_CATALOG_ID,
+            components: [
+              { id: "root", component: "Column", children: ["title", "steps", "phase"] },
+              { id: "title", component: "Text", text: { path: "/actor_view/data/title" } },
+              { id: "steps", component: "List", children: { path: "/actor_view/data/steps", componentId: "step" } },
+              { id: "step", component: "Text", text: { path: "label" } },
+              { id: "phase", component: "Text", text: { path: "/actor_view/data/phase_text" } },
+            ],
+          },
+          data_contract: {
+            source: {
+              input_port: "mission",
+              value_index: 0,
+              encoding: "json",
+              json_prefix: "EVIDENCE: ",
+              pointer: "/route/data",
+            },
+            required_phases: ["started", "partial", "final"],
+            fields: [
+              { field: "title", mode: "source", source_pointer: "/title" },
+              {
+                field: "steps",
+                mode: "source_prefix",
+                source_pointer: "/steps",
+                max_items: 8,
+                final_count: {
+                  source: { input_port: "command", pointer: "/payload/steps_count" },
+                  default: "source_length",
+                },
+              },
+              {
+                field: "phase_text",
+                mode: "presentation",
+                value_schema: { type: "string", enum: ["starting", "ready"], max_length: 32 },
+              },
+            ],
+          },
+        }],
+      },
+    }]);
+    expect(context.skills[0]!.visual_profile!.views![0]!.data_contract).toMatchObject({
+      source: { input_port: "mission", encoding: "json", pointer: "/route/data" },
+      required_phases: ["started", "partial", "final"],
+      fields: [
+        { field: "title", mode: "source" },
+        {
+          field: "steps",
+          mode: "source_prefix",
+          max_items: 8,
+          final_count: {
+            source: { input_port: "command", pointer: "/payload/steps_count" },
+            default: "source_length",
+          },
+        },
+        {
+          field: "phase_text",
+          mode: "presentation",
+          value_schema: { type: "string", enum: ["starting", "ready"], max_length: 32 },
+        },
+      ],
+    });
+
+    const missingField = structuredClone(context.skills[0]!);
+    missingField.visual_profile!.views![0]!.data_contract!.fields = missingField.visual_profile!.views![0]!
+      .data_contract!.fields.filter((field) => field.field !== "phase_text");
+    expect(() => createDagWorkerSkillContextV1([missingField])).toThrow(/does not cover A2UI data field 'phase_text'/);
+
+    const invalidPresentation = structuredClone(context.skills[0]!);
+    invalidPresentation.visual_profile!.views![0]!.data_contract!.fields[2] = {
+      field: "phase_text",
+      mode: "presentation",
+      source_pointer: "/phase",
+    };
+    expect(() => createDagWorkerSkillContextV1([invalidPresentation])).toThrow(/forbidden for presentation/);
+
+    const invalidPresentationSchema = structuredClone(context.skills[0]!);
+    invalidPresentationSchema.visual_profile!.views![0]!.data_contract!.fields[2]!.value_schema = {
+      type: "integer",
+      enum: ["ready"],
+    } as never;
+    expect(() => createDagWorkerSkillContextV1([invalidPresentationSchema])).toThrow(
+      /must match presentation value type integer/,
+    );
+
+    const invalidPrefix = structuredClone(context.skills[0]!);
+    invalidPrefix.visual_profile!.views![0]!.data_contract!.fields[1]!.max_items = 101;
+    expect(() => createDagWorkerSkillContextV1([invalidPrefix])).toThrow(/between 1 and 100/);
+
+    const invalidFinalCount = structuredClone(context.skills[0]!);
+    invalidFinalCount.visual_profile!.views![0]!.data_contract!.fields[1]!.final_count!.default = 101;
+    expect(() => createDagWorkerSkillContextV1([invalidFinalCount])).toThrow(/source_length or an integer between 0 and 100/);
+
+    const invalidPhases = structuredClone(context.skills[0]!);
+    invalidPhases.visual_profile!.views![0]!.data_contract!.required_phases = ["partial", "final"];
+    expect(() => createDagWorkerSkillContextV1([invalidPhases])).toThrow(/must start with started/);
+
+    const reservedPresentation = structuredClone(context.skills[0]!);
+    reservedPresentation.visual_profile!.views![0]!.data_contract!.fields[2] = {
+      field: "canvas_size",
+      mode: "presentation",
+    };
+    expect(() => createDagWorkerSkillContextV1([reservedPresentation])).toThrow(
+      /reserved report_surface_state input field/,
+    );
+
+    const reservedPrefix = structuredClone(context.skills[0]!);
+    reservedPrefix.visual_profile!.views![0]!.data_contract!.fields[1]!.field = "phase";
+    expect(() => createDagWorkerSkillContextV1([reservedPrefix])).toThrow(
+      /reserved report_surface_state input field/,
+    );
+  });
+
   it("summarizes only ids, digests, and byte counts", () => {
     const content = "PRIVATE SKILL BODY WITHOUT CREDENTIALS";
     const context = createDagWorkerSkillContextV1([skill("summary", content)]);
