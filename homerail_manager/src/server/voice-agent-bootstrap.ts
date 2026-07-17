@@ -10,8 +10,8 @@ import { getProject } from "../persistence/projects-changes.js";
 import { normalizeStatus } from "../persistence/status.js";
 import {
   resolveManagerAgentConfig,
-  type ManagerAgentContainerOptions,
-} from "./manager-agent-container.js";
+} from "./manager-agent-runtime-config.js";
+import type { HostShellManagerAgentOptions } from "./host-shell-manager-agent.js";
 import {
   composeVoiceUiRules,
   getUserVoiceRulesPath,
@@ -1471,10 +1471,17 @@ function managerAgentHistory(workspace: VoiceWorkspace): Array<{ role: string; c
 
 function markManagerAgentBlocker(workspace: VoiceWorkspace, code: string, message: string): ManagerAgentHandoffResult {
   appendDebugEvent(workspace, code, message, "error");
+  const outcomeBlocked = code === "manager_outcome_unsatisfied";
   const displayText = code === "manager_agent_unavailable"
-    ? `主 Agent 执行入口不可用：${message}`
-    : `主 Agent 执行失败：${message}`;
-  workspace.progress_brief = { status: "error", short_text: shortText(displayText, 80), updated_at: now() };
+    ? "这次没能开始处理，请稍后再试。"
+    : outcomeBlocked
+      ? "这次还没完成，我可以继续处理。"
+      : "这次没能完成，我可以继续重试。";
+  workspace.progress_brief = {
+    status: outcomeBlocked ? "blocked" : "error",
+    short_text: shortText(displayText, 80),
+    updated_at: now(),
+  };
   removeWidget(workspace, "manager-agent-blocker");
   removeWidget(workspace, "manager-run");
   appendConversation(workspace, "assistant", displayText, "final", "error");
@@ -1485,7 +1492,7 @@ async function submitVoiceWorkspaceToManagerAgent(
   workspace: VoiceWorkspace,
   message: string,
   config: Record<string, unknown>,
-  options?: ManagerAgentContainerOptions,
+  options?: HostShellManagerAgentOptions,
   realtimeHooks?: ManagerAgentRealtimeHooks,
   selectedNodeId?: string,
 ): Promise<ManagerAgentHandoffResult> {
@@ -1494,8 +1501,8 @@ async function submitVoiceWorkspaceToManagerAgent(
   workspace.progress_brief = { status: "submitted", short_text: "已确认，主 Agent 正在处理。", updated_at: now() };
 
   const requestedHarness = normalizeManagerAgentHarness(config.harness) ?? "claude_agent_sdk";
-  if (!options && managerAgentRuntimePlacementForHarness(requestedHarness) === "container") {
-    return markManagerAgentBlocker(workspace, "manager_agent_unavailable", "当前服务未启用容器执行入口");
+  if (!options && managerAgentRuntimePlacementForHarness(requestedHarness) === "host_shell") {
+    return markManagerAgentBlocker(workspace, "manager_agent_unavailable", "当前服务未启用本机 Agent 进程");
   }
 
   let agentConfig;
@@ -1578,17 +1585,20 @@ async function submitVoiceWorkspaceToManagerAgent(
     }
   } catch (err) {
     if (err instanceof ManagerAgentRuntimeError) {
-      if (err.code === "manager_container_options_missing") {
-        return markManagerAgentBlocker(workspace, "manager_agent_unavailable", "当前服务未启用容器执行入口");
+      if (err.code === "manager_runtime_options_missing") {
+        return markManagerAgentBlocker(workspace, "manager_agent_unavailable", "当前服务未启用本机 Agent 进程");
       }
-      if (err.code === "manager_container_error") {
-        return markManagerAgentBlocker(workspace, "manager_container_error", err.message);
+      if (err.code === "manager_runtime_start_error") {
+        return markManagerAgentBlocker(workspace, "manager_runtime_start_error", err.message);
+      }
+      if (err.data.code === "required_outcomes_unsatisfied") {
+        return markManagerAgentBlocker(workspace, "manager_outcome_unsatisfied", err.message);
       }
       return markManagerAgentBlocker(workspace, "manager_chat_error", err.message);
     }
     const detail = err instanceof Error ? err.message : String(err);
-    if (!options && managerAgentRuntimePlacement(agentConfig) === "container") {
-      return markManagerAgentBlocker(workspace, "manager_agent_unavailable", "当前服务未启用容器执行入口");
+    if (!options && managerAgentRuntimePlacement(agentConfig) === "host_shell") {
+      return markManagerAgentBlocker(workspace, "manager_agent_unavailable", "当前服务未启用本机 Agent 进程");
     }
     return markManagerAgentBlocker(workspace, "manager_chat_error", detail);
   }
@@ -1678,7 +1688,7 @@ async function submitVoiceWorkspaceToManagerAgent(
 async function processTurn(
   workspace: VoiceWorkspace,
   text: string,
-  options?: ManagerAgentContainerOptions,
+  options?: HostShellManagerAgentOptions,
   realtimeHooks?: ManagerAgentRealtimeHooks,
   managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
   selectedNodeId?: string,
@@ -1752,7 +1762,7 @@ export function _getGenerativeUiShadowForTest(sessionId: string): Record<string,
 export function voiceAgentBootstrapHandler(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  managerAgentOptions?: ManagerAgentContainerOptions,
+  managerAgentOptions?: HostShellManagerAgentOptions,
   managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
 ): boolean {
   const url = new URL(req.url || "/", "http://localhost");

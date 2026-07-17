@@ -35,8 +35,8 @@ function nonEmpty(value: string | undefined): string | undefined {
 
 function expectedPlacement(env: NodeJS.ProcessEnv): ManagerAgentTurnRuntimePlacementV1 {
   const placement = env.HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT;
-  if (placement === "container" || placement === "host_shell") return placement;
-  throw new Error("Manager Agent turn verification requires an isolated Worker placement");
+  if (placement === "host_shell") return placement;
+  throw new Error("Manager Agent turn verification requires the host-shell placement");
 }
 
 function publicKeyFromEnvironment(env: NodeJS.ProcessEnv): KeyObject {

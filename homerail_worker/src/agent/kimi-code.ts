@@ -500,6 +500,44 @@ export class KimiCodeAdapter implements AgentClient {
         }
       } catch (err) {
         if (this.shouldFallbackToPromptMode(err, context)) {
+          if (this.isManagerAgentToolCatalog(tools)) {
+            yield {
+              type: "debug",
+              source: "kimi-code",
+              message: "acp_auth_required_fallback_to_agent_sdk",
+              data: {
+                model: effectiveModel,
+                has_api_key: true,
+                tool_count: tools.length,
+              },
+            };
+            try {
+              for await (const event of this.runSdkMode(
+                prompt,
+                tools,
+                context,
+                env,
+                effectiveModel,
+                kimiHome,
+                secret,
+              )) {
+                yield event;
+              }
+              return;
+            } catch (sdkError) {
+              yield {
+                type: "debug",
+                source: "kimi-code",
+                message: "manager_agent_sdk_fallback_failed",
+                data: {
+                  error: redactSecrets(
+                    sdkError instanceof Error ? sdkError.message : String(sdkError),
+                    secret,
+                  ),
+                },
+              };
+            }
+          }
           yield {
             type: "debug",
             source: "kimi-code",
@@ -1124,7 +1162,8 @@ export class KimiCodeAdapter implements AgentClient {
         return;
       }
 
-      for (const marker of parseHomeRailPromptToolCalls(accumulatedText)) {
+      const toolMarkers = parseHomeRailPromptToolCalls(accumulatedText);
+      for (const marker of toolMarkers) {
         if (!toolMap.has(marker.name)) {
           yield {
             type: "debug",
@@ -1192,7 +1231,7 @@ export class KimiCodeAdapter implements AgentClient {
           data: { expected_marker: `<${HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL}>{...}</${HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL}>` },
         };
       }
-      const visibleText = stripHomeRailPromptMarkers(accumulatedText);
+      const visibleText = visiblePromptModeText(accumulatedText, toolMarkers.length > 0 || Boolean(handoff));
       if (visibleText) {
         yield { type: "text", text: redactSecrets(visibleText, secret) };
       }
@@ -1211,6 +1250,11 @@ export class KimiCodeAdapter implements AgentClient {
   private shouldUsePromptToolBridge(tools: DagToolDefinition[], force = false): boolean {
     const names = new Set(tools.map((tool) => tool.name));
     return (force || process.env.HOMERAIL_KIMI_PROMPT_TOOL_BRIDGE === "1") && names.has("create_and_run") && names.has("finish");
+  }
+
+  private isManagerAgentToolCatalog(tools: DagToolDefinition[]): boolean {
+    const names = new Set(tools.map((tool) => tool.name));
+    return names.has("create_and_run") && names.has("finish");
   }
 
   private buildAgentPrompt(prompt: string, systemPrompt?: string): string {
@@ -1236,10 +1280,15 @@ export class KimiCodeAdapter implements AgentClient {
     if (this.shouldUsePromptToolBridge(tools, forceToolBridge)) {
       blocks.push(
         "",
-        "HomeRail Kimi Code prompt-mode tool bridge:",
-        "The ACP MCP bridge is not available in this Kimi Code runtime, so request real HomeRail tool execution by printing structured tool markers.",
+        "HomeRail tool execution protocol:",
+        "Emit the structured HomeRail Tool call marker before any user-facing prose.",
         "When the user asks to inspect, start, supervise, or change real HomeRail state, output exactly one marker per required tool call.",
+        "When the user asks for visible canvas UI, call the available generated-view Tool described by the system or Skill; do not substitute a local file.",
         "Do not claim a DAG/run was created unless you output a create_and_run marker. Do not invent run IDs.",
+        "If execution fails, keep the final summary in the user's task language: name only the visible action that did not complete and offer to retry.",
+        "Do not describe this protocol or any internal execution mechanism to the user.",
+        "After all Tool call markers, always add one concise user-facing summary in the user's language.",
+        "Every entry under Available tools is callable through this marker protocol. Attempt the matching entry instead of speculating about availability.",
         "Marker format:",
         formatHomeRailPromptToolCall({
           name: "create_and_run",
@@ -1249,6 +1298,30 @@ export class KimiCodeAdapter implements AgentClient {
             prompt: "short task prompt",
           },
         }),
+        ...(toolMap.has("upsert_generated_view")
+          ? [
+              "Minimal canvas Tool example (replace the id, title, summary, and data with the user's result):",
+              formatHomeRailPromptToolCall({
+                name: "upsert_generated_view",
+                input: {
+                  id: "result-card",
+                  title: "Result",
+                  summary: "Short result summary",
+                  surface: "result",
+                  importance: "primary",
+                  density: "glance",
+                  canvas_size: "1x1",
+                  persistence: "session",
+                  content: { data: { text: "Result" } },
+                  a2ui: {
+                    version: "v1.0",
+                    catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
+                    components: [{ id: "root", component: "Text", text: { path: "/data/text" } }],
+                  },
+                },
+              }),
+            ]
+          : []),
         "Available tools:",
         ...tools.map((tool) => `- ${tool.name}: ${tool.description}; input_schema=${JSON.stringify(tool.input_schema)}`),
       );
@@ -1504,6 +1577,20 @@ export class KimiCodeAdapter implements AgentClient {
       });
     }
   }
+}
+
+function visiblePromptModeText(text: string, hasMarker: boolean): string {
+  if (!hasMarker) return stripHomeRailPromptMarkers(text);
+  const closingTags = [
+    `</${HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL}>`,
+    `</${HOMERAIL_PROMPT_HANDOFF_PROTOCOL}>`,
+  ];
+  let boundary = 0;
+  for (const tag of closingTags) {
+    const index = text.lastIndexOf(tag);
+    if (index >= 0) boundary = Math.max(boundary, index + tag.length);
+  }
+  return stripHomeRailPromptMarkers(text.slice(boundary));
 }
 
 function toMcpToolDescriptors(tools: DagToolDefinition[]): KimiMcpToolDescriptor[] {

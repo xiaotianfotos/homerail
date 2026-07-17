@@ -16,7 +16,7 @@ import {
   widgetTomlExample,
   writeWidgetFile,
 } from "../widgets/widget-file-protocol.js";
-import type { ManagerAgentRuntimeConfig } from "./manager-agent-container.js";
+import type { ManagerAgentRuntimeConfig } from "./manager-agent-runtime-config.js";
 import {
   buildManagerAgentSystemPrompt,
   canonicalManagerAgentToolCallName,
@@ -29,6 +29,8 @@ import {
   managerAgentToolSpec,
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
+  managerAgentPluginToolCallName,
+  managerAgentOutcomeObjectivePrompt,
   managerAgentRequiredToolObjectivePrompt,
   managerAgentSkillViewToolDefinitions,
   matchingManagerAgentSkillViewToolDefinition,
@@ -48,6 +50,7 @@ import {
   type ManagerAgentReasoningEffort,
   type ManagerAgentPromptSkill,
   type ManagerAgentDagContextV1,
+  type ManagerAgentOutcomeContract,
   type GenerativeUiCanvasContextV1,
   type HomerailPluginTurnContextV1,
   type HomerailPluginToolExecutionEnvelopeV1,
@@ -178,6 +181,7 @@ export interface HostCodexManagerAgentInput {
   canvas_context?: GenerativeUiCanvasContextV1;
   dag_context?: ManagerAgentDagContextV1;
   required_tool_calls?: string[];
+  outcome_contracts?: ManagerAgentOutcomeContract[];
   agent_config: ManagerAgentRuntimeConfig;
   managerRestUrl?: string | (() => string);
   response_mode?: "chat" | "voice";
@@ -1715,11 +1719,15 @@ export function createManagerTools(state: {
     }
   }
   for (const descriptor of responseMode === "voice" ? pluginContext?.tools ?? [] : []) {
-    if (tools.some((tool) => tool.name === descriptor.wire_id)) {
-      throw new Error(`Plugin Tool wire id collides with an existing Tool: ${descriptor.wire_id}`);
+    const preferredName = managerAgentPluginToolCallName(descriptor, pluginContext?.tools ?? []);
+    const callName = tools.some((tool) => tool.name === preferredName)
+      ? descriptor.wire_id
+      : preferredName;
+    if (tools.some((tool) => tool.name === callName)) {
+      throw new Error(`Plugin Tool call name collides with an existing Tool: ${callName}`);
     }
     tools.push({
-      name: descriptor.wire_id,
+      name: callName,
       description: descriptor.description,
       input_schema: structuredClone(descriptor.input_schema),
       async handler(args, context) {
@@ -2078,7 +2086,9 @@ function buildHostCodexManagerAgentResult(
       run_ids: state.createdRunIds,
     });
   }
-  const finalText = state.finalNotes.at(-1) || compactDeltas(texts) || "Manager Agent turn completed.";
+  const finalText = state.finalNotes.at(-1) || compactDeltas(texts) || (responseMode === "voice"
+    ? "已处理。"
+    : "Done.");
   const commentary = [
     ...state.voiceSurface.commentaryTexts,
     ...(compactDeltas(commentaryTexts) ? [compactDeltas(commentaryTexts)] : []),
@@ -2133,7 +2143,6 @@ function buildHostCodexManagerAgentResult(
     commentary_texts: commentary,
     project_id: input.project_id ?? config.project_id ?? null,
     worker_id: "host-codex",
-    container_name: null,
   };
 }
 
@@ -2188,6 +2197,7 @@ async function* runHostCodexManagerAgentTurnEvents(
     systemPrompt: [
       systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, input.manager_skills),
       managerAgentRequiredToolObjectivePrompt(requiredToolCalls),
+      managerAgentOutcomeObjectivePrompt(input.outcome_contracts),
     ].filter(Boolean).join("\n\n"),
     provider: config.provider_name || undefined,
     model: config.model || "codex",

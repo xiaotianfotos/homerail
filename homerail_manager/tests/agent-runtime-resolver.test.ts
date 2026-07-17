@@ -14,17 +14,11 @@ import { resolveAgentRuntimeConfig } from "../src/runtime/agent-runtime-resolver
 describe("agent runtime resolver", () => {
   let tmpHome: string;
   let oldHome: string | undefined;
-  let oldManagerRuntime: string | undefined;
-  let oldManagerRuntimePlacement: string | undefined;
 
   beforeEach(() => {
     oldHome = process.env.HOMERAIL_HOME;
-    oldManagerRuntime = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
-    oldManagerRuntimePlacement = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT;
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-agent-runtime-resolver-"));
     process.env.HOMERAIL_HOME = tmpHome;
-    process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "container";
-    delete process.env.HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT;
     closeDb();
     clearLlmSettings();
   });
@@ -34,10 +28,6 @@ describe("agent runtime resolver", () => {
     closeDb();
     if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
     else process.env.HOMERAIL_HOME = oldHome;
-    if (oldManagerRuntime === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
-    else process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = oldManagerRuntime;
-    if (oldManagerRuntimePlacement === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT;
-    else process.env.HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT = oldManagerRuntimePlacement;
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
@@ -61,7 +51,7 @@ describe("agent runtime resolver", () => {
     });
   });
 
-  it("resolves Kimi settings to the container Kimi Code harness for both surfaces", () => {
+  it("runs Kimi Manager on the host while keeping DAG execution containerized", () => {
     const setting = createSetting({
       provider_id: "kimi",
       endpoint_id: "kimi_coding_plan",
@@ -92,10 +82,11 @@ describe("agent runtime resolver", () => {
         base_url: "https://api.kimi.com/coding/v1",
         protocol: "openai_compatible",
         agent_type: "kimi_code",
-        runtime_placement: "container",
         llm_setting_id: setting.id,
       });
     }
+    expect(manager.runtime_placement).toBe("host_shell");
+    expect(dag.runtime_placement).toBe("container");
   });
 
   it("uses the active default DB setting for DAG runtime when YAML does not name a provider", () => {
@@ -149,7 +140,7 @@ describe("agent runtime resolver", () => {
       base_url: "https://api.kimi.com/coding",
       protocol: "anthropic_compatible",
       agent_type: "claude-sdk",
-      runtime_placement: "container",
+      runtime_placement: "host_shell",
       llm_setting_id: setting.id,
     });
   });
@@ -189,7 +180,7 @@ describe("agent runtime resolver", () => {
       base_url: "http://127.0.0.1:5000/v1",
       protocol: "openai_compatible",
       agent_type: "kimi_code",
-      runtime_placement: "container",
+      runtime_placement: "host_shell",
       llm_setting_id: setting.id,
     });
   });
@@ -275,13 +266,13 @@ describe("agent runtime resolver", () => {
         base_url: "https://dual.example/anthropic",
         protocol: "anthropic_compatible",
         agent_type: "claude-sdk",
-        runtime_placement: "container",
       });
     }
+    expect(manager.runtime_placement).toBe("host_shell");
+    expect(dag.runtime_placement).toBe("container");
   });
 
-  it("can route Manager Agent Kimi and Claude harnesses through host-shell without changing DAG placement", () => {
-    process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "host-shell";
+  it("keeps Manager execution on the host without changing DAG placement", () => {
     upsertProvider({
       id: "dual-url-provider",
       name: "Dual URL Provider",

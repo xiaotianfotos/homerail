@@ -1,5 +1,5 @@
 /**
- * Manager-signed, request-bound trust envelope for isolated Agent Workers.
+ * Manager-signed, request-bound trust envelope for host Agent processes.
  * @version 0.1.0
  */
 
@@ -12,7 +12,7 @@ export const HOMERAIL_MANAGER_TURN_KEY_ID_ENV = "HOMERAIL_MANAGER_TURN_KEY_ID";
 export const HOMERAIL_MANAGER_TURN_ENVELOPE_REQUIRED_ENV = "HOMERAIL_MANAGER_TURN_ENVELOPE_REQUIRED";
 export const HOMERAIL_MANAGER_TURN_HEADER = "x-homerail-manager-turn";
 
-export type ManagerAgentTurnRuntimePlacementV1 = "host_shell" | "container";
+export type ManagerAgentTurnRuntimePlacementV1 = "host_shell";
 export type ManagerAgentTurnResponseModeV1 = "chat" | "voice";
 export type ManagerAgentTurnGenerativeUiModeV1 = "off" | "shadow" | "prefer";
 

@@ -79,14 +79,6 @@ export function resolveManagerWorkerWsBaseUrl(actualPort: number): string {
   return `ws://${host}:${actualPort}`;
 }
 
-export function resolveManagerContainerRestUrl(actualPort: number): string {
-  const explicit = process.env.HOMERAIL_MANAGER_CONTAINER_REST_URL;
-  if (explicit) return explicit.replace(/\/$/, "");
-  return resolveManagerWorkerWsBaseUrl(actualPort)
-    .replace(/^ws:/, "http:")
-    .replace(/^wss:/, "https:");
-}
-
 export function resolveManagerWorkerExtraHosts(): string[] {
   const explicit = process.env.HOMERAIL_MANAGER_WORKER_EXTRA_HOSTS;
   if (explicit !== undefined) {
@@ -256,24 +248,22 @@ export function createServer(
     provisionerOptions,
     effectiveWorkerToken,
   );
-  const managerAgentContainerOptions =
-    provisionerOptions === false
-      ? undefined
-      : {
-          image: process.env.HOMERAIL_MANAGER_AGENT_IMAGE || workerImage,
-          env: resolveManagerAgentRuntimeEnv(),
-          extraHosts: resolveManagerWorkerExtraHosts(),
-          localManagerUrl: () => {
-            const addr = server?.address();
-            const actualPort = typeof addr === "object" && addr ? addr.port : port;
-            return `http://127.0.0.1:${actualPort}`;
-          },
-          managerRestUrl: () => {
-            const addr = server?.address();
-            const actualPort = typeof addr === "object" && addr ? addr.port : port;
-            return resolveManagerContainerRestUrl(actualPort);
-          },
-        };
+  const localManagerUrl = (): string => {
+    const addr = server?.address();
+    const actualPort = typeof addr === "object" && addr ? addr.port : port;
+    return `http://127.0.0.1:${actualPort}`;
+  };
+  const managerAgentRuntimeOptions = {
+    env: resolveManagerAgentRuntimeEnv(),
+    managerRestUrl: localManagerUrl,
+  };
+  const dockerWorkspaceProbeOptions = provisionerOptions === false
+    ? undefined
+    : {
+        image: workerImage,
+        managerRestUrl: localManagerUrl,
+        localManagerUrl,
+      };
   const actualDispatcher =
     dispatcher ?? new WsDispatchAdapter(adapterOptions);
   const graphExecutor = new GraphExecutor(actualDispatcher);
@@ -326,7 +316,7 @@ export function createServer(
       return;
     }
 
-    if (mutationRoutesHandler(req, res, changeOrchestrator, managerAgentContainerOptions, managerAgentConfigOptions)) {
+    if (mutationRoutesHandler(req, res, changeOrchestrator, managerAgentRuntimeOptions, managerAgentConfigOptions)) {
       return;
     }
 
@@ -374,7 +364,12 @@ export function createServer(
       return;
     }
 
-    if (managerAgentReadinessRoutesHandler(req, res, managerAgentContainerOptions, managerAgentConfigOptions)) {
+    if (managerAgentReadinessRoutesHandler(
+      req,
+      res,
+      managerAgentConfigOptions,
+      dockerWorkspaceProbeOptions,
+    )) {
       return;
     }
 
@@ -386,7 +381,7 @@ export function createServer(
       return;
     }
 
-    if (voiceAgentBootstrapHandler(req, res, managerAgentContainerOptions, managerAgentConfigOptions)) {
+    if (voiceAgentBootstrapHandler(req, res, managerAgentRuntimeOptions, managerAgentConfigOptions)) {
       return;
     }
 

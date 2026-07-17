@@ -259,7 +259,7 @@ export function registerSmokeCommand(program: Command): void {
     .command("manager-agent")
     .description("Ask the configured Manager Agent to start a deterministic DAG and verify the returned run")
     .option("--message <text>", "Manager Agent smoke prompt")
-    .option("--project-id <id>", "Project id used for the manager-agent session/container", "manager-agent-smoke")
+    .option("--project-id <id>", "Project id used for the Manager Agent session", "manager-agent-smoke")
     .option("--setting-id <id>", "Override Manager LLM setting id for this smoke")
     .option("--provider <id>", "Override Manager provider id for this smoke")
     .option("--model <name>", "Override Manager model name for this smoke")
@@ -295,7 +295,6 @@ export function registerSmokeCommand(program: Command): void {
                 : "",
             ).filter(Boolean)
           : [];
-        const containerName = typeof data?.container_name === "string" ? data.container_name : null;
         const workerId = typeof data?.worker_id === "string" ? data.worker_id : null;
         const text = typeof data?.text === "string" ? data.text : "";
 
@@ -325,7 +324,6 @@ export function registerSmokeCommand(program: Command): void {
             run_id: runId || null,
             run_status: finalStatus,
             tool_calls: toolCalls,
-            container_name: containerName,
             worker_id: workerId,
             text,
           }));
@@ -336,7 +334,6 @@ export function registerSmokeCommand(program: Command): void {
         console.log(`Manager Agent smoke: ${passed ? "PASS" : "FAIL"}`);
         if (runId) console.log(`Run: ${runId}`);
         if (finalStatus) console.log(`Final status: ${finalStatus}`);
-        if (containerName) console.log(`Container: ${containerName}`);
         if (workerId) console.log(`Worker: ${workerId}`);
         if (toolCalls.length > 0) console.log(`Tool calls: ${toolCalls.join(", ")}`);
         if (text) console.log(`Reply: ${text}`);

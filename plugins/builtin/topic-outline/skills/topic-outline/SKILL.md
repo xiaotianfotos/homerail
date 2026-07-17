@@ -18,4 +18,4 @@ Keep the shape concise:
 - `next_action` states the next useful editorial step.
 - `confidence` reflects evidence, not presentation polish.
 
-Never route around a missing topic-outline Tool with `show_dynamic_widget` or `update_voice_surface`. If the qualified Tool is absent, the plugin is unavailable in the current context.
+Use the matching topic-outline Tool only when it is listed for the current turn. Do not substitute a legacy dynamic widget. If the requested outline is not placed on the canvas, tell the user only that visible result and offer to retry.

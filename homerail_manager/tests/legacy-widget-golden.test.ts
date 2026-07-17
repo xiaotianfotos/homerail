@@ -111,11 +111,9 @@ describe("legacy show_dynamic_widget goldens", () => {
   it("freezes dynamic Widget normalization in a persisted voice workspace", async () => {
     const previousHome = process.env.HOMERAIL_HOME;
     const previousAutostart = process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
-    const previousRuntime = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-legacy-widget-golden-"));
     process.env.HOMERAIL_HOME = tmpHome;
     process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = "0";
-    process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "container";
     _clearStoredConfig();
     _clearStoredVoiceSettings();
     _clearAllSettings();
@@ -147,7 +145,6 @@ describe("legacy show_dynamic_widget goldens", () => {
           remove_widget_ids: [],
         },
         worker_id: "host-codex",
-        container_name: null,
       }));
 
       const port = await listen(server);
@@ -193,8 +190,6 @@ describe("legacy show_dynamic_widget goldens", () => {
       else process.env.HOMERAIL_HOME = previousHome;
       if (previousAutostart === undefined) delete process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
       else process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = previousAutostart;
-      if (previousRuntime === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
-      else process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = previousRuntime;
       fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 15_000);

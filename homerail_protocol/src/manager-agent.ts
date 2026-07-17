@@ -42,12 +42,12 @@ export const MANAGER_AGENT_HARNESSES: Record<ManagerAgentHarness, ManagerAgentHa
   [ManagerAgentHarness.KIMI_CODE]: {
     harness: ManagerAgentHarness.KIMI_CODE,
     agent_type: "kimi_code",
-    runtime_placement: ManagerAgentRuntimePlacement.CONTAINER,
+    runtime_placement: ManagerAgentRuntimePlacement.HOST_SHELL,
   },
   [ManagerAgentHarness.CLAUDE_AGENT_SDK]: {
     harness: ManagerAgentHarness.CLAUDE_AGENT_SDK,
     agent_type: "claude-sdk",
-    runtime_placement: ManagerAgentRuntimePlacement.CONTAINER,
+    runtime_placement: ManagerAgentRuntimePlacement.HOST_SHELL,
   },
 };
 

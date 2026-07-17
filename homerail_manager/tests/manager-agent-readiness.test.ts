@@ -8,7 +8,7 @@ import { createServer } from "../src/server/http.js";
 import { _clearAllSettings, createSetting, upsertProvider } from "../src/persistence/llm-settings.js";
 import { clearManagerAgentConfig } from "../src/persistence/manager-agent-config.js";
 import { _clearNodes } from "../src/node/registry.js";
-import { registerFakeDockerNode } from "./helpers/fake-manager-agent-node.js";
+import { registerFakeDockerNode } from "./helpers/fake-docker-node.js";
 
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -53,20 +53,19 @@ describe("/api/manager-agent/readiness", () => {
   let tmpHome: string;
   let oldHome: string | undefined;
   let oldLocalNodeAutostart: string | undefined;
-  let oldManagerRuntime: string | undefined;
   let oldHostEntry: string | undefined;
   let oldHostShell: string | undefined;
+  let oldRepoRoot: string | undefined;
 
   beforeEach(() => {
     oldHome = process.env.HOMERAIL_HOME;
     oldLocalNodeAutostart = process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
-    oldManagerRuntime = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
     oldHostEntry = process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
     oldHostShell = process.env.HOMERAIL_MANAGER_AGENT_SHELL;
+    oldRepoRoot = process.env.HOMERAIL_REPO_ROOT;
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-readiness-"));
     process.env.HOMERAIL_HOME = tmpHome;
     process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = "0";
-    process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "container";
     delete process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
     delete process.env.HOMERAIL_MANAGER_AGENT_SHELL;
     clearManagerAgentConfig();
@@ -83,12 +82,12 @@ describe("/api/manager-agent/readiness", () => {
     else process.env.HOMERAIL_HOME = oldHome;
     if (oldLocalNodeAutostart === undefined) delete process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
     else process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = oldLocalNodeAutostart;
-    if (oldManagerRuntime === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
-    else process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = oldManagerRuntime;
     if (oldHostEntry === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
     else process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = oldHostEntry;
     if (oldHostShell === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_SHELL;
     else process.env.HOMERAIL_MANAGER_AGENT_SHELL = oldHostShell;
+    if (oldRepoRoot === undefined) delete process.env.HOMERAIL_REPO_ROOT;
+    else process.env.HOMERAIL_REPO_ROOT = oldRepoRoot;
     await removeTempDir(tmpHome);
   });
 
@@ -110,7 +109,8 @@ describe("/api/manager-agent/readiness", () => {
     }));
   });
 
-  it("requires a docker-capable node for container-backed Manager Agent harnesses", async () => {
+  it("reports missing host prerequisites without requiring a Docker node", async () => {
+    process.env.HOMERAIL_REPO_ROOT = tmpHome;
     server = createServer(0, undefined, undefined, false);
     const setting = createSetting({
       provider_id: "kimi",
@@ -136,22 +136,26 @@ describe("/api/manager-agent/readiness", () => {
         ready: boolean;
         runtime_placement: string;
         blockers: Array<{ code: string }>;
-        checks: { docker_node?: { required: boolean; available: boolean } };
+        checks: {
+          docker_node?: unknown;
+          host_shell?: { required: boolean; available: boolean };
+        };
       };
     };
 
     expect(body.data.ready).toBe(false);
-    expect(body.data.runtime_placement).toBe("container");
-    expect(body.data.checks.docker_node).toEqual({ required: true, available: false, node_ids: [] });
-    expect(body.data.blockers.map((item) => item.code)).toEqual([
-      "manager_container_options_missing",
-      "docker_node_unavailable",
-    ]);
+    expect(body.data.runtime_placement).toBe("host_shell");
+    expect(body.data.checks.docker_node).toBeUndefined();
+    expect(body.data.checks.host_shell).toEqual({ required: true, available: false });
+    expect(body.data.blockers.map((item) => item.code)).toEqual(["host_shell_unavailable"]);
   });
 
-  it("reports ready for a container-backed harness when config and docker node are available", async () => {
-    const fakeNode = registerFakeDockerNode("p1", () => ({ text: "unused" }));
-    server = createServer(0);
+  it("reports a host-shell harness ready without a Docker node", async () => {
+    const workerEntry = path.join(tmpHome, "worker-entry.js");
+    fs.writeFileSync(workerEntry, "console.log('worker entry')\n", "utf-8");
+    process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = workerEntry;
+    process.env.HOMERAIL_MANAGER_AGENT_SHELL = process.platform === "win32" ? process.execPath : "/bin/sh";
+    server = createServer(0, undefined, undefined, false);
     upsertProvider({
       id: "qwen36",
       name: "Qwen3.6 Local",
@@ -187,7 +191,8 @@ describe("/api/manager-agent/readiness", () => {
         agent_type: string;
         blockers: unknown[];
         checks: {
-          docker_node?: { available: boolean; node_ids: string[] };
+          docker_node?: unknown;
+          host_shell?: { required: boolean; available: boolean; worker_entry?: string };
           docker_workspace?: { required: boolean; host_path: string; probe_endpoint: string };
         };
       };
@@ -195,27 +200,30 @@ describe("/api/manager-agent/readiness", () => {
 
     expect(body.data).toMatchObject({
       ready: true,
-      runtime_placement: "container",
+      runtime_placement: "host_shell",
       agent_type: "claude-sdk",
       blockers: [],
     });
-    expect(body.data.checks.docker_node?.available).toBe(true);
-    expect(body.data.checks.docker_node?.node_ids).toEqual([fakeNode.node.node_id]);
+    expect(body.data.checks.docker_node).toBeUndefined();
+    expect(body.data.checks.host_shell).toMatchObject({
+      required: true,
+      available: true,
+      worker_entry: workerEntry,
+    });
     expect(body.data.checks.docker_workspace).toEqual({
       required: true,
       host_path: path.join(tmpHome, "workspace"),
-      probe_endpoint: "/api/manager-agent/docker-workspace-probe",
+      probe_endpoint: "/api/dag/docker-workspace-probe",
     });
-    await fakeNode.close();
   });
 
   it("probes Docker workspace bind mount on demand", async () => {
-    const fakeNode = registerFakeDockerNode("p1", () => ({ text: "unused" }));
+    const fakeNode = registerFakeDockerNode();
     server = createServer(0);
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
 
-    const response = await fetch(`${baseUrl}/api/manager-agent/docker-workspace-probe`, {
+    const response = await fetch(`${baseUrl}/api/dag/docker-workspace-probe`, {
       method: "POST",
     });
     const body = await response.json() as {
@@ -246,10 +254,9 @@ describe("/api/manager-agent/readiness", () => {
     await fakeNode.close();
   });
 
-  it("checks host-shell prerequisites instead of docker node when configured", async () => {
+  it("checks host prerequisites for Claude SDK", async () => {
     const workerEntry = path.join(tmpHome, "worker-entry.js");
     fs.writeFileSync(workerEntry, "console.log('worker entry')\n", "utf-8");
-    process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "host-shell";
     process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = workerEntry;
     process.env.HOMERAIL_MANAGER_AGENT_SHELL = process.platform === "win32" ? process.execPath : "/bin/sh";
 

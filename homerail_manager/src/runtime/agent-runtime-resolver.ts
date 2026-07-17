@@ -52,14 +52,7 @@ function runtimePlacementForAgentType(agentType: string, surface: AgentRuntimeSu
   if (agentType === managerAgentHarnessDefinition("codex_appserver").agent_type) {
     return managerAgentHarnessDefinition("codex_appserver").runtime_placement;
   }
-  if (surface !== "manager_agent") return ManagerAgentRuntimePlacement.CONTAINER;
-  const raw = (process.env.HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT || process.env.HOMERAIL_MANAGER_AGENT_RUNTIME || "auto")
-    .trim()
-    .toLowerCase()
-    .replace(/-/g, "_");
-  if (raw === "host_shell" || raw === "host") return ManagerAgentRuntimePlacement.HOST_SHELL;
-  if (raw === "container") return ManagerAgentRuntimePlacement.CONTAINER;
-  return process.platform === "win32"
+  return surface === "manager_agent"
     ? ManagerAgentRuntimePlacement.HOST_SHELL
     : ManagerAgentRuntimePlacement.CONTAINER;
 }

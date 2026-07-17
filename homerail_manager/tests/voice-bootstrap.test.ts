@@ -34,9 +34,11 @@ import {
 import { _clearNodes } from "../src/node/registry.js";
 import {
   findAvailableManagerAgentPort,
-  managerAgentHostPort,
-  registerFakeDockerNode,
-} from "./helpers/fake-manager-agent-node.js";
+} from "./helpers/test-host-shell-manager-agent.js";
+import {
+  _forgetHostShellManagerAgentsForTest,
+  shutdownHostShellManagerAgents,
+} from "../src/server/host-shell-manager-agent.js";
 import type { CodexModelCatalog } from "../src/server/codex-models.js";
 import { applyVoiceCanonicalProjectionPatch } from "../src/generative-ui/canonical-voice-service.js";
 import { persistentGenerativeUiDocumentService } from "../src/generative-ui/shadow-service.js";
@@ -64,6 +66,51 @@ async function listen(server: http.Server): Promise<number> {
 
 async function close(server: http.Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+function installVoiceHostManagerStub(input: {
+  home: string;
+  response: Record<string, unknown>;
+  status?: number;
+  capture_path?: string;
+}): void {
+  const entry = path.join(input.home, `voice-host-manager-${Date.now()}-${Math.random().toString(16).slice(2)}.cjs`);
+  fs.writeFileSync(entry, `
+    const fs = require('node:fs');
+    const http = require('node:http');
+    const port = Number(process.env.MANAGER_AGENT_PORT || '0');
+    const response = ${JSON.stringify(input.response)};
+    const capturePath = ${JSON.stringify(input.capture_path ?? "")};
+    const status = ${input.status ?? 200};
+    const server = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'running',
+          service: 'manager-agent',
+          fingerprint: process.env.HOMERAIL_MANAGER_AGENT_FINGERPRINT,
+          process_id: process.pid,
+          project_id: process.env.PROJECT_ID || null,
+          worker_id: process.env.HOMERAIL_WORKER_ID,
+        }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/chat') {
+        let raw = '';
+        req.on('data', chunk => { raw += chunk; });
+        req.on('end', () => {
+          if (capturePath) fs.writeFileSync(capturePath, raw);
+          res.writeHead(status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(response));
+        });
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    server.listen(port, '127.0.0.1');
+  `, "utf-8");
+  process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = entry;
+  process.env.HOMERAIL_MANAGER_AGENT_SHELL = process.platform === "win32" ? process.execPath : "/bin/sh";
 }
 
 async function listenWebSocket(server: WebSocketServer): Promise<number> {
@@ -101,19 +148,22 @@ describe("voice bootstrap routes", () => {
   let tmpHome: string;
   let oldHome: string | undefined;
   let oldLocalNodeAutostart: string | undefined;
-  let oldManagerRuntime: string | undefined;
-  let oldManagerAgentPort: string | undefined;
+  let oldHostPort: string | undefined;
+  let oldHostEntry: string | undefined;
+  let oldHostShell: string | undefined;
 
   beforeEach(async () => {
     oldHome = process.env.HOMERAIL_HOME;
     oldLocalNodeAutostart = process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
-    oldManagerRuntime = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
-    oldManagerAgentPort = process.env.HOMERAIL_MANAGER_AGENT_PORT;
+    oldHostPort = process.env.HOMERAIL_MANAGER_AGENT_HOST_PORT;
+    oldHostEntry = process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
+    oldHostShell = process.env.HOMERAIL_MANAGER_AGENT_SHELL;
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-voice-bootstrap-"));
     process.env.HOMERAIL_HOME = tmpHome;
     process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = "0";
-    process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "container";
-    process.env.HOMERAIL_MANAGER_AGENT_PORT = String(await findAvailableManagerAgentPort());
+    process.env.HOMERAIL_MANAGER_AGENT_HOST_PORT = String(await findAvailableManagerAgentPort());
+    delete process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
+    delete process.env.HOMERAIL_MANAGER_AGENT_SHELL;
     vi.mocked(synthesizeEdgeTts).mockReset().mockResolvedValue(Buffer.from("ID3-homerail-edge"));
     _clearStoredConfig();
     _clearStoredVoiceSettings();
@@ -134,16 +184,20 @@ describe("voice bootstrap routes", () => {
     _setHostCodexAgentEventRunnerForTest();
     _setHostCodexManagerAgentRunnerForTest();
     _setHostCodexManagerAgentStreamRunnerForTest();
+    await shutdownHostShellManagerAgents();
+    _forgetHostShellManagerAgentsForTest();
     await close(server);
     closeDb();
     if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
     else process.env.HOMERAIL_HOME = oldHome;
     if (oldLocalNodeAutostart === undefined) delete process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
     else process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = oldLocalNodeAutostart;
-    if (oldManagerRuntime === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
-    else process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = oldManagerRuntime;
-    if (oldManagerAgentPort === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_PORT;
-    else process.env.HOMERAIL_MANAGER_AGENT_PORT = oldManagerAgentPort;
+    if (oldHostPort === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_HOST_PORT;
+    else process.env.HOMERAIL_MANAGER_AGENT_HOST_PORT = oldHostPort;
+    if (oldHostEntry === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
+    else process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = oldHostEntry;
+    if (oldHostShell === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_SHELL;
+    else process.env.HOMERAIL_MANAGER_AGENT_SHELL = oldHostShell;
     delete process.env.HOMERAIL_MIMO_API_KEY;
     delete process.env.HOMERAIL_TTS_API_KEY;
     fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -376,7 +430,6 @@ describe("voice bootstrap routes", () => {
         commentary_texts: [],
         voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
         worker_id: "host-codex",
-        container_name: null,
       };
     });
 
@@ -475,13 +528,13 @@ describe("voice bootstrap routes", () => {
     expect(turnBody.data.voice_events).toEqual([]);
     expect(turnBody.data.workspace.pending_confirmations).toHaveLength(0);
     expect(turnBody.data.workspace.progress_brief.status).toBe("error");
-    expect(turnBody.data.workspace.debug_events).toContainEqual(expect.objectContaining({ code: "manager_agent_unavailable" }));
+    expect(turnBody.data.workspace.debug_events).toContainEqual(expect.objectContaining({ code: "manager_config_error" }));
     expect(turnBody.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-agent-blocker" }));
     expect(turnBody.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
     expect(turnBody.data.workspace.conversation).toContainEqual(expect.objectContaining({
       role: "assistant",
       kind: "error",
-      text: expect.stringContaining("主 Agent 执行入口不可用"),
+      text: "这次没能完成，我可以继续重试。",
     }));
 
     const titledList = await fetch(`http://127.0.0.1:${port}/api/voice-agent/sessions?project_id=p1&limit=5`);
@@ -510,7 +563,7 @@ describe("voice bootstrap routes", () => {
     expect(confirm.status).toBe(200);
     expect(confirmBody.success).toBe(true);
     expect(confirmBody.data.spoken_text).toBe("");
-    expect(confirmBody.data.manager.code).toBe("manager_agent_unavailable");
+    expect(confirmBody.data.manager.code).toBe("manager_config_error");
   });
 
   it("strips legacy programmatic status widgets when loading a voice workspace", async () => {
@@ -741,7 +794,6 @@ describe("voice bootstrap routes", () => {
           voice_ui_rules_sources: input.voice_ui_rules?.sources ?? [],
         },
         worker_id: "host-codex",
-        container_name: null,
       };
     });
 
@@ -817,7 +869,6 @@ describe("voice bootstrap routes", () => {
         commentary_texts: [],
         voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     const port = await listen(server);
@@ -883,7 +934,6 @@ describe("voice bootstrap routes", () => {
         commentary_texts: [],
         voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     const port = await listen(server);
@@ -947,7 +997,6 @@ describe("voice bootstrap routes", () => {
           voice_ui_rules_sources: input.voice_ui_rules?.sources ?? [],
         },
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     try {
@@ -1100,7 +1149,6 @@ describe("voice bootstrap routes", () => {
         commentary_texts: [],
         voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     const port = await listen(server);
@@ -1185,7 +1233,6 @@ describe("voice bootstrap routes", () => {
         remove_widget_ids: ["com.homerail.core:motion-check"],
       },
       worker_id: "host-codex",
-      container_name: null,
     }));
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -1292,7 +1339,6 @@ describe("voice bootstrap routes", () => {
         tool_calls: [],
         tool_results: [],
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     const port = await listen(server);
@@ -1349,7 +1395,6 @@ describe("voice bootstrap routes", () => {
           tool_calls: [],
           tool_results: [],
           worker_id: "host-codex",
-          container_name: null,
         },
       };
     });
@@ -1403,6 +1448,11 @@ describe("voice bootstrap routes", () => {
 
   it("persists manager-agent voice errors as failed sessions instead of throwing status errors", async () => {
     await close(server);
+    installVoiceHostManagerStub({
+      home: tmpHome,
+      status: 500,
+      response: { error: "forced host Manager failure" },
+    });
     server = createServer(0);
     createSetting({
       provider_id: "kimi",
@@ -1434,14 +1484,14 @@ describe("voice bootstrap routes", () => {
       .get(createdBody.data.session_id) as { status: string; message_count: number };
 
     expect(stream.status).toBe(200);
-    expect(streamText).toContain("主 Agent 执行失败");
+    expect(streamText).toContain("这次没能完成，我可以继续重试。");
     expect(streamEvents).not.toContainEqual(expect.objectContaining({ type: "speech" }));
     expect(streamEvents).toContainEqual(expect.objectContaining({ type: "done", spoken_text: "" }));
     expect(streamEvents).toContainEqual(expect.objectContaining({
       type: "workspace",
       workspace: expect.objectContaining({
         conversation: expect.arrayContaining([
-          expect.objectContaining({ kind: "error", text: expect.stringContaining("主 Agent 执行失败") }),
+          expect.objectContaining({ kind: "error", text: "这次没能完成，我可以继续重试。" }),
         ]),
       }),
     }));
@@ -2140,7 +2190,6 @@ describe("voice bootstrap routes", () => {
       agent_errors: ["harness stream ended after the run was created"],
       commentary_texts: ["正在调用 Manager tools。"],
       worker_id: "host-codex",
-      container_name: null,
     }));
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -2203,6 +2252,70 @@ describe("voice bootstrap routes", () => {
     expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-agent-blocker" }));
   });
 
+  it("keeps natural voice turns conversational instead of inferring a hard outcome gate", async () => {
+    _setHostCodexManagerAgentRunnerForTest(async (input) => {
+      expect(input.outcome_contracts).toBeUndefined();
+      return {
+        text: "这次没有更新画布，我可以继续回答或重试。",
+        spoken_text: "这次没有更新画布，我可以继续回答或重试。",
+        session_id: input.session_id || "host-session-advisory-outcome",
+        run_id: null,
+        run_ids: [],
+        objective: { required: false, satisfied: true, tool_calls: [] },
+        tool_calls: [],
+        tool_results: [],
+        commentary_texts: [],
+        worker_id: "host-codex",
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5", reasoning_effort: "low" }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "请在主画布创建一个今日学习面板，不要只回复文字。" }),
+    });
+    const body = await turn.json() as {
+      data: {
+        spoken_text: string;
+        voice_events: Array<{ channel: string; text: string }>;
+        manager: { code?: string; error?: string };
+        workspace: {
+          progress_brief: { status: string };
+          debug_events: Array<{ code: string }>;
+          conversation: Array<{ role: string; kind?: string; text: string }>;
+          widgets: Array<{ id: string }>;
+        };
+      };
+    };
+
+    expect(turn.status).toBe(200);
+    expect(body.data.spoken_text).toBe("这次没有更新画布，我可以继续回答或重试。");
+    expect(body.data.manager.code).toBeUndefined();
+    expect(body.data.workspace.progress_brief.status).toBe("done");
+    expect(body.data.workspace.debug_events).not.toContainEqual(expect.objectContaining({
+      code: "manager_outcome_unsatisfied",
+    }));
+    expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      kind: "message",
+      text: "这次没有更新画布，我可以继续回答或重试。",
+    }));
+    expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
+  });
+
   it("renders host Codex harness failures as silent error messages", async () => {
     _setHostCodexAgentEventRunnerForTest(async function* () {
       yield { type: "error", message: "provider rejected the configured credential" };
@@ -2247,36 +2360,38 @@ describe("voice bootstrap routes", () => {
     expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
       role: "assistant",
       kind: "error",
-      text: expect.stringContaining("主 Agent 执行失败"),
+      text: "这次没能完成，我可以继续重试。",
     }));
     expect(JSON.stringify(body)).not.toContain("[ERROR]");
   });
 
-  it("routes non-Codex voice turns through the same Manager Agent container path", async () => {
+  it("routes non-Codex voice turns through the host Manager process", async () => {
     await close(server);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-voice-project-workspace-"));
-    const project = createProject({ name: "Voice Container Project", workspace_path: workspaceDir });
+    const workspaceDir = path.join(tmpHome, "voice-project-workspace");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    const project = createProject({ name: "Voice Host Project", workspace_path: workspaceDir });
     const projectId = project.id;
-    const observedChatBodies: Record<string, unknown>[] = [];
-    const fakeNode = registerFakeDockerNode(projectId, (body) => {
-      observedChatBodies.push(body);
-      return {
-        text: "container voice handled",
-        spoken_text: "容器主 Agent 已启动执行。",
-        session_id: "container-voice-session",
-        run_id: "run-container-voice-123",
-        run_ids: ["run-container-voice-123"],
+    const capturePath = path.join(tmpHome, "voice-host-request.json");
+    installVoiceHostManagerStub({
+      home: tmpHome,
+      capture_path: capturePath,
+      response: {
+        text: "验证任务已启动。",
+        spoken_text: "验证任务已启动。",
+        session_id: "host-voice-session",
+        run_id: "run-host-voice-123",
+        run_ids: ["run-host-voice-123"],
         objective: { required: false, satisfied: true, tool_calls: [{ name: "create_and_run", success: true }] },
         tool_calls: [{ id: "tool-1", name: "create_and_run", input: { yamlPath: "assets/orchestrations/test.yaml" } }],
         tool_results: [{ tool_use_id: "tool-1", content: "ok" }],
-        commentary_texts: ["正在通过容器 Manager Agent 调用工具。"],
+        commentary_texts: ["第一轮验证已经开始。"],
         voice_surface: {
           progress: null,
           task_draft: null,
           widgets: [],
           remove_widget_ids: [],
         },
-      };
+      },
     });
     server = createServer(0);
     upsertProvider({
@@ -2290,7 +2405,7 @@ describe("voice bootstrap routes", () => {
       provider_id: "qwen36",
       endpoint_id: "qwen36_custom",
       model_name: "qwen3.6",
-      api_key: "pk-test-voice-container",
+      api_key: "pk-test-voice-host",
       protocol: "anthropic_compatible",
       base_url: "http://127.0.0.1:5000",
       anthropic_base_url: "http://127.0.0.1:5000",
@@ -2300,26 +2415,25 @@ describe("voice bootstrap routes", () => {
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
 
-    try {
-      const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
+    const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ llm_setting_id: setting.id, harness: "claude_agent_sdk" }),
-      });
-      expect(saved.status).toBe(200);
+    });
+    expect(saved.status).toBe(200);
 
-      const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: projectId }),
-      });
-      const createdBody = await created.json() as { data: { session_id: string } };
-      const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: "用非 Codex 主 Agent 启动一个验证任务。" }),
-      });
-      const body = await turn.json() as {
+    });
+    const body = await turn.json() as {
         data: {
           spoken_text: string;
           suggested_action: string | null;
@@ -2340,30 +2454,30 @@ describe("voice bootstrap routes", () => {
             tool_results: Array<{ tool_use_id: string }>;
           };
         };
-      };
+    };
 
-      expect(turn.status).toBe(200);
-      expect(body.data.spoken_text).toBe("已启动执行，我会继续跟进。");
-      expect(body.data.suggested_action).toBeNull();
-      expect(body.data.manager.session_id).toBe("container-voice-session");
-      expect(body.data.manager.run_id).toBe("run-container-voice-123");
-      expect(body.data.manager.run_ids).toEqual(["run-container-voice-123"]);
-      expect(body.data.manager.objective?.satisfied).toBe(true);
-      expect(body.data.manager.tool_calls).toContainEqual(expect.objectContaining({ name: "create_and_run" }));
-      expect(body.data.manager.tool_results).toContainEqual(expect.objectContaining({ tool_use_id: "tool-1" }));
-      expect(body.data.workspace.manager_session_id).toBe("container-voice-session");
-      expect(body.data.workspace.manager_run_id).toBe("run-container-voice-123");
-      expect(body.data.workspace.progress_brief.status).toBe("done");
-      expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
-      expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-agent-blocker" }));
-      expect(body.data.workspace.debug_events).not.toContainEqual(expect.objectContaining({ code: "manager_agent_unavailable" }));
-      expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
-        role: "assistant",
-        text: "正在通过容器 Manager Agent 调用工具。",
-        channel: "commentary",
-      }));
-      expect(observedChatBodies).toHaveLength(1);
-      expect(observedChatBodies[0]).toMatchObject({
+    expect(turn.status).toBe(200);
+    expect(body.data.spoken_text).toBe("已启动执行，我会继续跟进。");
+    expect(body.data.suggested_action).toBeNull();
+    expect(body.data.manager.session_id).toBe("host-voice-session");
+    expect(body.data.manager.run_id).toBe("run-host-voice-123");
+    expect(body.data.manager.run_ids).toEqual(["run-host-voice-123"]);
+    expect(body.data.manager.objective?.satisfied).toBe(true);
+    expect(body.data.manager.tool_calls).toContainEqual(expect.objectContaining({ name: "create_and_run" }));
+    expect(body.data.manager.tool_results).toContainEqual(expect.objectContaining({ tool_use_id: "tool-1" }));
+    expect(body.data.workspace.manager_session_id).toBe("host-voice-session");
+    expect(body.data.workspace.manager_run_id).toBe("run-host-voice-123");
+    expect(body.data.workspace.progress_brief.status).toBe("done");
+    expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
+    expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-agent-blocker" }));
+    expect(body.data.workspace.debug_events).not.toContainEqual(expect.objectContaining({ code: "manager_agent_unavailable" }));
+    expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      text: "第一轮验证已经开始。",
+      channel: "commentary",
+    }));
+    const observedChatBody = JSON.parse(fs.readFileSync(capturePath, "utf-8")) as Record<string, unknown>;
+    expect(observedChatBody).toMatchObject({
         message: "用非 Codex 主 Agent 启动一个验证任务。",
         project_id: projectId,
         continue_chat: true,
@@ -2374,46 +2488,18 @@ describe("voice bootstrap routes", () => {
           model: "qwen3.6",
           base_url: "http://127.0.0.1:5000",
         },
-      });
-      expect(fakeNode.requests.map((item) => `${item.resource_type}:${item.operation}`)).toEqual([
-        "container:list",
-        "container:create",
-        "container:start",
-      ]);
-      const createRequest = fakeNode.requests.find((item) => item.operation === "create");
-      expect(createRequest?.spec).toMatchObject({
-        name: `homerail-manager-agent-${projectId}`,
-        env: {
-          MANAGER_AGENT_MODE: "1",
-          MANAGER_AGENT_PORT: "9001",
-          PROJECT_ID: projectId,
-          PROJECT_WORKSPACE: "/workspace/project",
-        },
-        ports: [{
-          hostIp: "127.0.0.1",
-          hostPort: managerAgentHostPort(projectId),
-          containerPort: 9001,
-          protocol: "tcp",
-        }],
-        mount_policy: { allowed_host_roots: [workspaceDir] },
-      });
-      expect(createRequest?.spec.mounts).toEqual(expect.arrayContaining([
-        expect.objectContaining({ host: workspaceDir, container: "/workspace/project", mode: "rw" }),
-      ]));
+    });
 
-      const listed = await fetch(`${baseUrl}/api/voice-agent/sessions?project_id=${projectId}&limit=5`);
-      const listedBody = await listed.json() as {
+    const listed = await fetch(`${baseUrl}/api/voice-agent/sessions?project_id=${projectId}&limit=5`);
+    const listedBody = await listed.json() as {
         data: { sessions: Array<{ session_id: string; status: string; end_time: string | null; run_ids: string[] }> };
-      };
-      expect(listedBody.data.sessions).toContainEqual(expect.objectContaining({
-        session_id: createdBody.data.session_id,
-        status: "done",
-        end_time: expect.any(String),
-        run_ids: ["run-container-voice-123"],
-      }));
-    } finally {
-      await fakeNode.close();
-    }
+    };
+    expect(listedBody.data.sessions).toContainEqual(expect.objectContaining({
+      session_id: createdBody.data.session_id,
+      status: "done",
+      end_time: expect.any(String),
+      run_ids: ["run-host-voice-123"],
+    }));
   });
 
   it("passes the attached DAG run into later Manager follow-up turns", async () => {
@@ -2435,7 +2521,6 @@ describe("voice bootstrap routes", () => {
         commentary_texts: [],
         voice_surface: { progress: null, task_draft: null, widgets: [], remove_widget_ids: [] },
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     const port = await listen(server);
@@ -2491,7 +2576,6 @@ describe("voice bootstrap routes", () => {
       tool_calls: [{ id: "finish-1", name: "finish", input: { text: "真实 Manager Agent 回答" } }],
       tool_results: [],
       worker_id: "host-codex",
-      container_name: null,
     }));
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -2539,7 +2623,6 @@ describe("voice bootstrap routes", () => {
       tool_calls: [{ id: "finish-1", name: "finish", input: { text: verbose } }],
       tool_results: [],
       worker_id: "host-codex",
-      container_name: null,
     }));
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -2621,7 +2704,6 @@ describe("voice bootstrap routes", () => {
           remove_widget_ids: [],
         },
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     const port = await listen(server);
@@ -2726,7 +2808,6 @@ describe("voice bootstrap routes", () => {
         remove_widget_ids: [],
       },
       worker_id: "host-codex",
-      container_name: null,
     }));
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -2824,7 +2905,6 @@ describe("voice bootstrap routes", () => {
         voice_ui_rules_sources: ["baseline:test"],
       },
       worker_id: "host-codex",
-      container_name: null,
     }));
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -2880,7 +2960,6 @@ describe("voice bootstrap routes", () => {
       tool_calls: [],
       tool_results: [],
       worker_id: "host-codex",
-      container_name: null,
     }));
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -2926,7 +3005,6 @@ describe("voice bootstrap routes", () => {
       tool_calls: [],
       tool_results: [],
       worker_id: "host-codex",
-      container_name: null,
     }));
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -2945,7 +3023,7 @@ describe("voice bootstrap routes", () => {
     const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "确认，开始执行这个 DAG review。" }),
+      body: JSON.stringify({ text: "确认，请继续分析这个 review。" }),
     });
     const body = await turn.json() as {
       data: {
@@ -2981,7 +3059,6 @@ describe("voice bootstrap routes", () => {
       tool_calls: [],
       tool_results: [],
       worker_id: "host-codex",
-      container_name: null,
     }));
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -3044,7 +3121,6 @@ describe("voice bootstrap routes", () => {
         tool_calls: [],
         tool_results: [],
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     const port = await listen(server);

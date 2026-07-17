@@ -5,9 +5,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { scaffoldPluginProject } from "homerail-plugin-sdk";
-import type {
-  HomerailPluginToolExecutionEnvelopeV1,
-  HomerailPluginTurnContextV1,
+import {
+  managerAgentPluginToolCallName,
+  type HomerailPluginToolExecutionEnvelopeV1,
+  type HomerailPluginTurnContextV1,
 } from "homerail-protocol";
 import { voiceCanonicalDocumentId } from "../src/generative-ui/canonical-voice-service.js";
 import { persistentGenerativeUiDocumentService } from "../src/generative-ui/shadow-service.js";
@@ -178,7 +179,7 @@ const harnesses: Harness[] = [{
         plugin_context: context,
         manager_skills: [],
       },
-      target: { runtime_placement: "container", worker_id: "golden-worker" },
+      target: { runtime_placement: "host_shell", worker_id: "golden-worker" },
     });
     const envelope = sealed.turn_envelope as Parameters<typeof _withManagerTurnEnvelopeForTest>[0];
     const tools = rawTools.map((tool) => ({
@@ -498,7 +499,12 @@ describe("Plugin Agent Tool -> canonical Action real prefer HTTP Golden", () => 
         issuedTurn.token,
       );
       const selectedDescriptor = routed.data.selected_context.tools[0]!;
-      const selectedTool = requireTool(managerTools.tools, selectedDescriptor.wire_id);
+      const modelToolName = managerAgentPluginToolCallName(
+        selectedDescriptor,
+        routed.data.selected_context.tools,
+      );
+      const selectedTool = requireTool(managerTools.tools, modelToolName);
+      expect(selectedTool.name).toBe(AGENT_TOOL_ID);
       const modelCallContext = { tool_call_id: "model_tool_call_prefer_golden_001" };
       const pendingAgent = toolHandlerEnvelope<ToolBusResponse>(
         await selectedTool.handler(agentArguments, modelCallContext),

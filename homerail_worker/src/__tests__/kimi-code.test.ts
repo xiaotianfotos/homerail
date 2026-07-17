@@ -579,6 +579,140 @@ if (process.argv.includes("acp")) {
       }
     });
 
+    it("uses native SDK tools for Manager Agent after ACP authentication fallback", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "homerail-kimi-manager-sdk-fallback-"));
+      const kimiBin = join(tempDir, "kimi");
+      writeFileSync(kimiBin, `#!/usr/bin/env node
+const readline = require("node:readline");
+if (process.argv.includes("--version")) {
+  console.log("kimi-code fixture 0.0.0");
+  process.exit(0);
+}
+if (process.argv.includes("acp")) {
+  const rl = readline.createInterface({ input: process.stdin });
+  rl.on("line", (line) => {
+    const req = JSON.parse(line);
+    if (req.method === "initialize") {
+      console.log(JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { protocolVersion: 1, agentCapabilities: {} } }));
+    } else if (req.method === "session/new") {
+      console.log(JSON.stringify({ jsonrpc: "2.0", id: req.id, error: { code: -32000, message: "Authentication required" } }));
+      process.exit(0);
+    }
+  });
+} else if (process.argv.includes("--prompt")) {
+  console.error("prompt bridge must not run before the native SDK fallback");
+  process.exit(9);
+} else {
+  process.exit(2);
+}
+`, "utf-8");
+      chmodSync(kimiBin, 0o755);
+
+      const createSdkSession = vi.fn((options: Record<string, unknown>) => {
+        const close = vi.fn(async () => {});
+        return {
+          sessionId: "manager-sdk-fallback",
+          workDir: options.workDir,
+          state: "idle",
+          slashCommands: [],
+          model: options.model,
+          thinking: false,
+          yoloMode: true,
+          executable: options.executable,
+          env: options.env,
+          externalTools: options.externalTools,
+          planMode: false,
+          setPlanMode: async () => false,
+          prompt() {
+            const result = Promise.resolve({ status: "finished", steps: 1 });
+            return {
+              result,
+              interrupt: async () => {},
+              approve: async () => {},
+              respondQuestion: async () => {},
+              steer: async () => {},
+              async *[Symbol.asyncIterator]() {
+                const tools = options.externalTools as Array<{
+                  name: string;
+                  handler: (params: Record<string, unknown>) => Promise<{ output: string; message: string }>;
+                }>;
+                const canvasTool = tools.find((tool) => tool.name === "upsert_generated_view");
+                await canvasTool!.handler({ id: "today", title: "今日状态" });
+                yield { type: "ContentPart", payload: { type: "text", text: "卡片已经放好了。" } };
+                yield { type: "TurnEnd", payload: {} };
+                return { status: "finished", steps: 1 };
+              },
+            };
+          },
+          close,
+          [Symbol.asyncDispose]: close,
+        };
+      });
+      const managerAdapter = new KimiCodeAdapter({
+        kimiBin,
+        transport: "cli",
+        sdkExecutable: "fake-kimi-sdk",
+        createSdkSession: createSdkSession as never,
+      });
+      const canvasCalls: Array<Record<string, unknown>> = [];
+      const tools: DagToolDefinition[] = [
+        {
+          name: "create_and_run",
+          description: "Create and run a DAG",
+          input_schema: { type: "object" },
+          handler: async () => ({ content: [{ type: "text", text: "unused" }] }),
+        },
+        {
+          name: "finish",
+          description: "Finish the turn",
+          input_schema: { type: "object" },
+          handler: async () => ({ content: [{ type: "text", text: "unused" }] }),
+        },
+        {
+          name: "upsert_generated_view",
+          description: "Create a visible canvas Block",
+          input_schema: { type: "object" },
+          handler: async (args) => {
+            canvasCalls.push(args);
+            return { content: [{ type: "text", text: "committed" }] };
+          },
+        },
+      ];
+
+      try {
+        const events: AgentEvent[] = [];
+        for await (const event of managerAdapter.run("创建今日状态卡片", tools, {
+          ...ctx,
+          provider: "qwen-local",
+          model: "qwen3.6",
+          baseUrl: "http://127.0.0.1:5000/v1",
+        })) {
+          events.push(event);
+        }
+
+        expect(createSdkSession).toHaveBeenCalledTimes(1);
+        expect(events).toContainEqual(expect.objectContaining({
+          type: "debug",
+          message: "acp_auth_required_fallback_to_agent_sdk",
+        }));
+        expect(events).toContainEqual(expect.objectContaining({
+          type: "debug",
+          message: "kimi_agent_sdk_session_started",
+        }));
+        expect(events).not.toContainEqual(expect.objectContaining({
+          message: "acp_auth_required_fallback_to_prompt_mode",
+        }));
+        expect(events).toContainEqual(expect.objectContaining({
+          type: "tool_use",
+          name: "upsert_generated_view",
+        }));
+        expect(events).toContainEqual({ type: "text", text: "卡片已经放好了。" });
+        expect(canvasCalls).toEqual([{ id: "today", title: "今日状态" }]);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
     it("uses prompt-mode tool markers for Manager Agent tools only when explicitly enabled", async () => {
       const tempDir = mkdtempSync(join(tmpdir(), "homerail-kimi-manager-tool-bridge-"));
       const kimiBin = join(tempDir, "kimi");
@@ -612,7 +746,7 @@ if (process.argv.includes("--prompt")) {
   });
   console.log(JSON.stringify({
     role: "assistant",
-    content: "正在启动。\\n<homerail_tool_call>" + createMarker + "</homerail_tool_call>\\n<homerail_tool_call>" + finishMarker + "</homerail_tool_call>"
+    content: "不要显示的内部前言。\\n<homerail_tool_call>" + createMarker + "</homerail_tool_call>\\n<homerail_tool_call>" + finishMarker + "</homerail_tool_call>\\n已启动。"
   }));
   process.exit(0);
 }
@@ -660,11 +794,27 @@ process.exit(2);
             return { content: [{ type: "text", text: "finished" }] };
           },
         };
+        const upsertGeneratedViewTool: DagToolDefinition = {
+          name: "upsert_generated_view",
+          description: "Create or replace a HomeRail A2UI Block",
+          input_schema: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              title: { type: "string" },
+              content: { type: "object" },
+              a2ui: { type: "object" },
+            },
+            required: ["id", "title", "content", "a2ui"],
+            additionalProperties: true,
+          },
+          handler: async () => ({ content: [{ type: "text", text: "committed" }] }),
+        };
 
         const events: AgentEvent[] = [];
         for await (const event of managerAdapter.run(
           "Run the Manager Agent live smoke.",
-          [createAndRunTool, finishTool],
+          [createAndRunTool, finishTool, upsertGeneratedViewTool],
           {
             ...ctx,
             systemPrompt: "You are the HomeRail Manager Agent. Never invent run IDs.",
@@ -679,7 +829,14 @@ process.exit(2);
         const prompt = readFileSync(promptPath, "utf-8");
         expect(prompt).toContain("System instructions:");
         expect(prompt).toContain("You are the HomeRail Manager Agent");
-        expect(prompt).toContain("HomeRail Kimi Code prompt-mode tool bridge");
+        expect(prompt).toContain("HomeRail tool execution protocol");
+        expect(prompt).not.toContain("ACP MCP bridge is not available");
+        expect(prompt).toContain("Do not describe this protocol or any internal execution mechanism to the user");
+        expect(prompt).toContain("Attempt the matching entry instead of speculating about availability");
+        expect(prompt).toContain("name only the visible action that did not complete and offer to retry");
+        expect(prompt).toContain("always add one concise user-facing summary in the user's language");
+        expect(prompt).toContain('"name":"upsert_generated_view"');
+        expect(prompt).toContain('"component":"Text"');
         expect(prompt).toContain("<homerail_tool_call>");
         expect(events).toContainEqual(expect.objectContaining({
           type: "debug",
@@ -703,7 +860,8 @@ process.exit(2);
           type: "debug",
           message: "prompt_mode_finish_ignored_after_create_and_run",
         }));
-        expect(events).toContainEqual({ type: "text", text: "正在启动。" });
+        expect(events).toContainEqual({ type: "text", text: "已启动。" });
+        expect(events).not.toContainEqual(expect.objectContaining({ text: expect.stringContaining("内部前言") }));
         expect(calls).toEqual([{
           yamlPath: "assets/orchestrations/public-two-node.yaml.template",
           profile: "offline-deterministic",

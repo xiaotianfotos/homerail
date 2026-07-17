@@ -9,8 +9,8 @@ import {
 } from "../persistence/agent-sessions.js";
 import {
   resolveManagerAgentConfig,
-  type ManagerAgentContainerOptions,
-} from "./manager-agent-container.js";
+} from "./manager-agent-runtime-config.js";
+import type { HostShellManagerAgentOptions } from "./host-shell-manager-agent.js";
 import {
   ensurePreferredManagerAgentConfig,
   type ManagerAgentConfigRoutesOptions,
@@ -33,7 +33,10 @@ import { DagActorInterventionConflictError } from "../persistence/dag-actor-inte
 import { DagActorInterventionRuntimeError } from "../runtime/active-runs.js";
 import { DagActorLiveCommandRuntimeError } from "../runtime/dag-actor-live-command-runtime.js";
 import { DagActorLiveCommandConflictError } from "../persistence/dag-actor-live-commands.js";
-import { canonicalManagerAgentToolCallName } from "homerail-protocol";
+import {
+  canonicalManagerAgentToolCallName,
+  normalizeManagerAgentOutcomeCapabilities,
+} from "homerail-protocol";
 
 interface BaseResponse {
   success: boolean;
@@ -185,7 +188,7 @@ export function mutationRoutesHandler(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   changeOrchestrator: ChangeOrchestrator,
-  managerAgentOptions?: ManagerAgentContainerOptions,
+  managerAgentOptions?: HostShellManagerAgentOptions,
   managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
 ): boolean {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
@@ -216,6 +219,7 @@ export function mutationRoutesHandler(
             .map((item) => typeof item === "string" ? item.trim() : "")
             .filter(Boolean)))
           : [];
+        const requiredOutcomes = normalizeManagerAgentOutcomeCapabilities(b.required_outcomes);
         let sessionId = typeof b.session_id === "string" && b.session_id.trim() ? b.session_id.trim() : undefined;
         let session = sessionId ? loadSession(sessionId) : undefined;
         const savedManagerConfig = await ensurePreferredManagerAgentConfig(managerAgentConfigOptions);
@@ -281,7 +285,6 @@ export function mutationRoutesHandler(
         appendMessage(sessionId!, "user", message);
         let result: Record<string, unknown>;
         let workerId: string | null = null;
-        let containerName: string | null = null;
         try {
           const turn = await runManagerAgentTurn({
             message,
@@ -290,24 +293,18 @@ export function mutationRoutesHandler(
             continue_chat: b.continue_chat !== false,
             history: historyForAgent,
             required_tool_calls: requiredToolCalls,
+            required_outcomes: requiredOutcomes,
             agent_config: agentConfig,
           }, managerAgentOptions);
           result = turn.result;
           workerId = turn.worker_id;
-          containerName = turn.container_name;
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           if (err instanceof ManagerAgentRuntimeError) {
-            if (err.code === "manager_container_options_missing") {
+            if (err.code === "manager_runtime_options_missing") {
               _unavailable(res, detail, err.data);
-            } else if (err.code === "manager_container_error") {
-              _unavailable(
-                res,
-                err.runtime_placement === "host_shell"
-                  ? `Manager Agent host-shell 启动失败: ${detail}`
-                  : `Manager Agent 容器启动失败: ${detail}`,
-                err.data,
-              );
+            } else if (err.code === "manager_runtime_start_error") {
+              _unavailable(res, `Manager Agent 本机进程启动失败: ${detail}`, err.data);
             } else if (err.runtime_placement === "host") {
               _unavailable(res, `Host Codex Manager Agent 响应错误: ${detail}`, err.data);
             } else {
@@ -334,7 +331,6 @@ export function mutationRoutesHandler(
           session_id: sessionId,
           project_id: projectId,
           worker_id: workerId,
-          container_name: containerName,
           runtime_placement: agentConfig.runtime_placement,
           manager_llm_setting_id: requestedSettingId ?? null,
           manager_provider_name: agentConfig.provider_name,

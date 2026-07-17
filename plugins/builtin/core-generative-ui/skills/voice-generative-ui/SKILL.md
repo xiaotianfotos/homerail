@@ -9,7 +9,7 @@ Use this Skill in voice mode when structured state materially helps the user lis
 
 The voice surface is a listening and confirmation surface first. Simple chat and small local facts normally need no UI. During multi-turn requirement gathering, maintain one stable memo or task-state node instead of appending cards. Show execution, blocker, progress, or artifact state only when a real tool result, run ID, or explicit blocker supports it.
 
-Use only the tools present in the current turn's catalog. Scenario-specific tools come from enabled plugins; if a tool or Skill is absent, that capability is unavailable. Never route around a missing plugin with a generic widget type.
+Use only the tools present in the current turn's catalog. Scenario-specific tools come from enabled plugins. Attempt the matching listed tool instead of speculating about the runtime. If the requested visible action does not complete, describe only that user-visible result in one natural sentence and offer to retry. Never route around a missing scenario tool with a generic widget type.
 
 Keep generated UI compact and spatially meaningful:
 
@@ -27,7 +27,7 @@ Keep generated UI compact and spatially meaningful:
 
 ## Native A2UI v1.0
 
-When no scenario-specific Tool matches and a structured interface would materially improve comprehension, call `com.homerail.core:upsert_generated_view`. Treat one Tool result as one independently focusable canvas Block. For a new Block, use one stable local `id`; HomeRail adds its owner namespace. Reuse an existing full id from `Current HomeRail canvas state` when updating. Send a complete `content.data` snapshot and complete `a2ui` surface on every new call.
+When no scenario-specific Tool matches and a structured interface would materially improve comprehension, call the stable `upsert_generated_view` Tool. Treat one Tool result as one independently focusable canvas Block. For a new Block, use one stable local `id`; HomeRail adds its owner namespace. Reuse an existing full id from `Current HomeRail canvas state` when updating. Send a complete `content.data` snapshot and complete `a2ui` surface on every new call.
 
 `a2ui` is a native A2UI v1.0 surface using the HomeRail Catalog. Components form one flat adjacency list, never a nested tree. Exactly one Component has id `root`; containers refer to other Components by id. Do not emit HTML, CSS, JavaScript, coordinates, imports, or executable expressions.
 
@@ -105,7 +105,7 @@ To publish a generated image or standalone webpage:
 1. Generate or write the file inside the current project workspace. Standalone HTML must inline its CSS and small interaction script.
 2. Call `publish_artifact` with a project-relative `source_path` and short title.
 3. Put the exact returned `artifact.url` in `content.data` and bind it from `HrArtifact`.
-4. Call `com.homerail.core:upsert_generated_view` only after publishing succeeds, and reuse the Block id on later revisions.
+4. Call `upsert_generated_view` only after publishing succeeds, and reuse the Block id on later revisions.
 
 Never guess an Artifact URL or claim that a file is previewable before `publish_artifact` succeeds.
 

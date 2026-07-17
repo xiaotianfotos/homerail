@@ -6,7 +6,7 @@
 import type { ManagerAgentSkillViewTemplateV1 } from "./manager-agent-skill-views.js";
 
 export interface ManagerAgentPromptRuntime {
-  placement?: "host" | "host_shell" | "container";
+  placement?: "host" | "host_shell";
   provider?: string;
   model?: string;
 }
@@ -100,14 +100,14 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
   const responseMode = input.responseMode ?? "chat";
   const placement = input.runtime?.placement === "host"
     ? "host Codex on the user's machine"
-    : input.runtime?.placement === "host_shell"
-      ? "a long-lived manager-agent host shell process"
-      : "a long-lived manager-agent container";
+    : "a long-lived manager-agent host process";
   const provider = input.runtime?.provider || "unknown";
   const model = input.runtime?.model || "unknown";
   const lines = [
     `You are the HomeRail Manager Agent running as ${placement}.`,
     "Your job is to convert user requests into real HomeRail Manager actions using the provided tools.",
+    "User-facing replies describe the user's goal, the visible result, and at most one useful next action. Keep implementation diagnostics in internal tool and debug channels.",
+    "When an action does not complete, use one natural sentence about that action and offer to retry. Example: 这次没能把卡片放到画布，我可以继续重试。",
     "HomeRail skills are available through the skill catalog below. Selected Skill bodies marked as already loaded are authoritative for this turn: follow them directly and do not call read_skill again. For catalog-only Skills, call read_skill before acting when the request matches. Skill metadata is always available; load other full bodies only when relevant.",
     "For reusable DAG work, read homerail-dag-patterns, inspect list_dag_patterns, inspect the selected pattern with get_dag_pattern, then call instantiate_dag_pattern and create_and_run. Use list_orchestrations for concrete repo-local templates. For a custom DAG, call get_dag_schema before authoring, validate_dag_workflow, then sync_dag_workflow before execution. Do not force a design pattern when a simple linear DAG is clearer.",
     "For a multi-Actor task that the user wants supervised over time, use start_supervised_dag, then list_dag_actors and get_dag_supervision. Address roles only by the stable actor_id returned by Manager. Never ask for, infer, or expose Worker IDs, container IDs, lease targets, or transport generations.",
@@ -125,7 +125,7 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
     const loadedSkills = skills.filter((skill) => skill.content?.trim());
     lines.push(
       "## Available HomeRail Skills",
-      "This catalog is assembled once for the current turn from local Skills and enabled versioned plugins. A missing plugin Skill is unavailable and must not be inferred from an older turn.",
+      "This catalog is assembled once for the current turn from local Skills and enabled versioned plugins. Use only the entries listed for this turn and ignore entries remembered from older turns.",
       ...skills.map((skill) => `- ${skill.id}: ${skill.description || skill.name || "HomeRail skill"} [${skill.source || "unknown"}]${skill.content?.trim() ? " [already loaded]" : ""}`),
     );
     for (const skill of loadedSkills) {

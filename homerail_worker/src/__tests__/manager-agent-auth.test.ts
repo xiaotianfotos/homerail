@@ -22,7 +22,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("container Manager Agent REST authentication", () => {
+describe("host Manager Agent REST authentication", () => {
   it("keeps the Manager credential out of shells and Agent backend environments", () => {
     const source = {
       HOMERAIL_MANAGER_ADMIN_TOKEN: TOKEN,
@@ -96,7 +96,7 @@ describe("container Manager Agent REST authentication", () => {
       HOMERAIL_MANAGER_TURN_PUBLIC_KEY: (publicKey.export({ format: "der", type: "spki" }) as Buffer).toString("base64url"),
       HOMERAIL_MANAGER_TURN_KEY_ID: "manager-test-key",
       HOMERAIL_MANAGER_TURN_ENVELOPE_REQUIRED: "1",
-      HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT: "container",
+      HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT: "host_shell",
       HOMERAIL_WORKER_ID: "worker-test",
       PROJECT_ID: "project-test",
     };
@@ -150,7 +150,7 @@ describe("container Manager Agent REST authentication", () => {
         expires_at: new Date(issued.getTime() + 60_000).toISOString(),
         payload_digest: createHash("sha256").update(managerAgentTurnPayloadDigestInput(request)).digest("hex"),
         scope: managerAgentTurnScopeFromPayload(request, {
-          runtime_placement: "container",
+          runtime_placement: "host_shell",
           worker_id: "worker-test",
         }),
       };
@@ -171,7 +171,7 @@ describe("container Manager Agent REST authentication", () => {
     vi.stubEnv("HOMERAIL_MANAGER_TURN_PUBLIC_KEY", (publicKey.export({ format: "der", type: "spki" }) as Buffer).toString("base64url"));
     vi.stubEnv("HOMERAIL_MANAGER_TURN_KEY_ID", "manager-route-key");
     vi.stubEnv("HOMERAIL_MANAGER_TURN_ENVELOPE_REQUIRED", "1");
-    vi.stubEnv("HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT", "container");
+    vi.stubEnv("HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT", "host_shell");
     vi.stubEnv("HOMERAIL_WORKER_ID", "worker-route");
     vi.stubEnv("PROJECT_ID", "project-route");
     const server = startManagerAgentServer(0);
@@ -208,7 +208,7 @@ function headerEnvelope(): ManagerAgentTurnEnvelopeV1 {
       expires_at: "2026-07-12T10:05:00.000Z",
       payload_digest: "a".repeat(64),
       scope: managerAgentTurnScopeFromPayload(payload, {
-        runtime_placement: "container",
+        runtime_placement: "host_shell",
         worker_id: "worker-header",
       }),
     },

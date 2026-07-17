@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveLocalNodeManagerWsUrl } from "../src/server/manager-agent-container.js";
+import { resolveLocalNodeManagerWsUrl } from "../src/server/local-docker-node.js";
 
 describe("managed local Docker Node", () => {
-  it("uses the host-reachable Manager URL instead of the container URL", () => {
+  it("uses the local Manager URL instead of a Docker-rewritten URL", () => {
     expect(resolveLocalNodeManagerWsUrl({
       managerRestUrl: "http://host.docker.internal:19191/api",
       localManagerUrl: "http://127.0.0.1:19191/api",

@@ -426,6 +426,12 @@ class NoToolAgent implements AgentClient {
   }
 }
 
+class NoTextAgent implements AgentClient {
+  async *run(): AsyncIterable<AgentEvent> {
+    yield { type: "done" };
+  }
+}
+
 class FailedRequiredToolAgent implements AgentClient {
   async *run(): AsyncIterable<AgentEvent> {
     yield {
@@ -1072,10 +1078,41 @@ describe("manager-agent server", () => {
       const body = await response.json() as { text?: string; run_id?: string };
       expect(response.status).toBe(200);
       expect(body.run_id).toBe("run-test-123");
-      expect(body.text).toBe("Started DAG run run-test-123.");
+      expect(body.text).toBe("Task started.");
+      expect(body.text).not.toContain("run-test-123");
     } finally {
       await close(server);
       await close(managerApi);
+    }
+  });
+
+  it("uses a neutral localized fallback when a voice turn emits no prose", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    registerAgentBackend("manager-agent-no-text-test", () => new NoTextAgent());
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "继续处理",
+          response_mode: "voice",
+          agent_config: { agent_type: "manager-agent-no-text-test", model: "test-model" },
+        }),
+      });
+      const body = await response.json() as { text?: string; spoken_text?: string };
+      expect(response.status).toBe(200);
+      expect(body.text).toBe("已处理。");
+      expect(body.spoken_text).toBe("已处理。");
+    } finally {
+      await close(server);
     }
   });
 

@@ -26,7 +26,7 @@ describe("Manager Agent turn envelope protocol", () => {
     },
   };
   const scope = managerAgentTurnScopeFromPayload(payload, {
-    runtime_placement: "container",
+    runtime_placement: "host_shell",
     worker_id: "worker-one",
   });
   const payloadDigest = createHash("sha256")

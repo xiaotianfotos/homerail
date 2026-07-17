@@ -10,7 +10,7 @@ import {
   validateManagerAgentTurnEnvelope,
   type ManagerAgentTurnEnvelopeV1,
 } from "homerail-protocol";
-import { forwardChatToManagerAgentContainer } from "../src/server/manager-agent-container.js";
+import { forwardChatToHostShellManagerAgent } from "../src/server/host-shell-manager-agent.js";
 import { getManagerAgentTurnEnvelopeAuthority } from "../src/server/manager-agent-turn-envelope.js";
 
 const servers: http.Server[] = [];
@@ -48,12 +48,11 @@ describe("Manager Agent signed turn envelope", () => {
         actions: [],
       },
     };
-    await expect(forwardChatToManagerAgentContainer({
-      containerId: "container-one",
-      nodeId: "node-one",
+    await expect(forwardChatToHostShellManagerAgent({
+      processId: 123,
       baseUrl: `http://127.0.0.1:${port}`,
-      containerName: "manager-agent-one",
       workerId: "worker-one",
+      processName: "manager-agent-host-one",
     }, payload)).resolves.toEqual({ text: "ok" });
 
     expect(observed).toBeDefined();
@@ -62,7 +61,7 @@ describe("Manager Agent signed turn envelope", () => {
       .update(managerAgentTurnPayloadDigestInput(observed!))
       .digest("hex");
     const expectedScope = managerAgentTurnScopeFromPayload(observed!, {
-      runtime_placement: "container",
+      runtime_placement: "host_shell",
       worker_id: "worker-one",
     });
     expect(validateManagerAgentTurnEnvelope(envelope, {

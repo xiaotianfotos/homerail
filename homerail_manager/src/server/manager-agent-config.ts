@@ -8,7 +8,7 @@ import {
   findActiveClaudeSdkCompatibleSetting,
   findActiveLlmRuntimeSetting,
 } from "../persistence/llm-settings.js";
-import { resolveManagerAgentConfig } from "./manager-agent-container.js";
+import { resolveManagerAgentConfig } from "./manager-agent-runtime-config.js";
 import { normalizeManagerAgentHarness } from "homerail-protocol";
 import { listCodexModels, type CodexModel, type CodexModelCatalog } from "./codex-models.js";
 import type { ManagerAgentConfig } from "../persistence/manager-agent-config.js";

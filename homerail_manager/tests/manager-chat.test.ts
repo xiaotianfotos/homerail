@@ -9,11 +9,13 @@ import { createServer } from "../src/server/http.js";
 import { _clearAllSessions, createSession as createAgentSession } from "../src/persistence/agent-sessions.js";
 import { closeDb } from "../src/persistence/db.js";
 import { createSetting, upsertProvider, _clearAllSettings as clearLlmSettings } from "../src/persistence/llm-settings.js";
-import { createProject } from "../src/persistence/projects-changes.js";
-import { ensureDefaultWorkspacePath } from "../src/config/env.js";
 import { _clearNodes } from "../src/node/registry.js";
 import { managerAgentRuntimePlacementForHarness } from "homerail-protocol";
-import { ensureManagerAgentContainer, resolveManagerAgentConfig } from "../src/server/manager-agent-container.js";
+import { resolveManagerAgentConfig } from "../src/server/manager-agent-runtime-config.js";
+import {
+  _forgetHostShellManagerAgentsForTest,
+  shutdownHostShellManagerAgents,
+} from "../src/server/host-shell-manager-agent.js";
 import {
   _compactDeltasForTest,
   _hostCodexVoiceToolCatalogForTest,
@@ -30,9 +32,7 @@ import {
 } from "../src/server/host-codex-manager-agent.js";
 import {
   findAvailableManagerAgentPort,
-  managerAgentHostPort,
-  registerFakeDockerNode,
-} from "./helpers/fake-manager-agent-node.js";
+} from "./helpers/test-host-shell-manager-agent.js";
 import type { CodexModelCatalog } from "../src/server/codex-models.js";
 
 const TEST_CODEX_MODEL_CATALOG: CodexModelCatalog = {
@@ -60,13 +60,57 @@ async function close(server: http.Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
+function installHostManagerStub(home: string, text: string): void {
+  const entry = path.join(home, `host-manager-${Date.now()}-${Math.random().toString(16).slice(2)}.cjs`);
+  fs.writeFileSync(entry, `
+    const http = require('node:http');
+    const port = Number(process.env.MANAGER_AGENT_PORT || '0');
+    const server = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'running',
+          service: 'manager-agent',
+          fingerprint: process.env.HOMERAIL_MANAGER_AGENT_FINGERPRINT,
+          process_id: process.pid,
+          project_id: process.env.PROJECT_ID || null,
+          worker_id: process.env.HOMERAIL_WORKER_ID,
+        }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/chat') {
+        let raw = '';
+        req.on('data', chunk => { raw += chunk; });
+        req.on('end', () => {
+          const body = raw ? JSON.parse(raw) : {};
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            text: ${JSON.stringify(text)},
+            session_id: body.session_id || 'host-manager-session',
+            run_id: null,
+            run_ids: [],
+            objective: { required: false, satisfied: true, tool_calls: [] },
+            tool_calls: [],
+            tool_results: [],
+            effective_config: body.agent_config,
+          }));
+        });
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    server.listen(port, '127.0.0.1');
+  `, "utf-8");
+  process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = entry;
+  process.env.HOMERAIL_MANAGER_AGENT_SHELL = process.platform === "win32" ? process.execPath : "/bin/sh";
+}
+
 describe("/api/manager/chat", () => {
   let server: http.Server;
   let tmpHome: string;
   let oldHome: string | undefined;
   let oldLocalNodeAutostart: string | undefined;
-  let oldManagerRuntime: string | undefined;
-  let oldManagerAgentPort: string | undefined;
+  let oldHostPort: string | undefined;
   let oldHostEntry: string | undefined;
   let oldHostShell: string | undefined;
   let oldDagMutationToken: string | undefined;
@@ -74,16 +118,14 @@ describe("/api/manager/chat", () => {
   beforeEach(async () => {
     oldHome = process.env.HOMERAIL_HOME;
     oldLocalNodeAutostart = process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
-    oldManagerRuntime = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
-    oldManagerAgentPort = process.env.HOMERAIL_MANAGER_AGENT_PORT;
+    oldHostPort = process.env.HOMERAIL_MANAGER_AGENT_HOST_PORT;
     oldHostEntry = process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
     oldHostShell = process.env.HOMERAIL_MANAGER_AGENT_SHELL;
     oldDagMutationToken = process.env.HOMERAIL_DAG_MUTATION_TOKEN;
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-chat-"));
     process.env.HOMERAIL_HOME = tmpHome;
     process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = "0";
-    process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "container";
-    process.env.HOMERAIL_MANAGER_AGENT_PORT = String(await findAvailableManagerAgentPort());
+    process.env.HOMERAIL_MANAGER_AGENT_HOST_PORT = String(await findAvailableManagerAgentPort());
     _clearActiveRuns();
     _clearAllSessions();
     _clearNodes();
@@ -100,15 +142,15 @@ describe("/api/manager/chat", () => {
     clearLlmSettings();
     _setHostCodexAgentEventRunnerForTest();
     _setHostCodexManagerAgentRunnerForTest();
+    await shutdownHostShellManagerAgents();
+    _forgetHostShellManagerAgentsForTest();
     await close(server);
     if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
     else process.env.HOMERAIL_HOME = oldHome;
     if (oldLocalNodeAutostart === undefined) delete process.env.HOMERAIL_LOCAL_NODE_AUTOSTART;
     else process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = oldLocalNodeAutostart;
-    if (oldManagerRuntime === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_RUNTIME;
-    else process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = oldManagerRuntime;
-    if (oldManagerAgentPort === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_PORT;
-    else process.env.HOMERAIL_MANAGER_AGENT_PORT = oldManagerAgentPort;
+    if (oldHostPort === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_HOST_PORT;
+    else process.env.HOMERAIL_MANAGER_AGENT_HOST_PORT = oldHostPort;
     if (oldHostEntry === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
     else process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = oldHostEntry;
     if (oldHostShell === undefined) delete process.env.HOMERAIL_MANAGER_AGENT_SHELL;
@@ -119,205 +161,8 @@ describe("/api/manager/chat", () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  it("fails explicitly when no docker-capable node can host Manager Agent", async () => {
-    createSetting({
-      provider_id: "kimi",
-      endpoint_id: "kimi_coding_plan",
-      model_name: "kimi-k2.7-code",
-      api_key: "pk-test-manager-chat",
-      is_active: true,
-      is_default: true,
-    });
-    const port = await listen(server);
-    const response = await fetch(`http://127.0.0.1:${port}/api/manager/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: "create a task",
-        manager_provider_name: "kimi",
-        manager_model_name: "kimi-k2.7-code",
-      }),
-    });
-
-    const body = await response.json() as {
-      success: boolean;
-      error?: string;
-    };
-
-    expect(response.status).toBe(503);
-    expect(body.success).toBe(false);
-    expect(body.error).toMatch(/container options|No connected docker-capable node/);
-
-    const list = await fetch(`http://127.0.0.1:${port}/api/manager/sessions?project_id=&limit=10`);
-    const listBody = await list.json() as { success: boolean; data: { sessions: unknown[] } };
-    expect(list.status).toBe(200);
-    expect(listBody.data.sessions).toHaveLength(1);
-  });
-
-  it("forwards non-Codex Manager Agent chat through the long-lived container path", async () => {
+  it("routes every non-Codex Manager Agent chat through a host process", async () => {
     await close(server);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-project-workspace-"));
-    const project = createProject({ name: "Manager Container Project", workspace_path: workspaceDir });
-    const projectId = project.id;
-    const observedChatBodies: Record<string, unknown>[] = [];
-    const fakeNode = registerFakeDockerNode(projectId, (body) => {
-      observedChatBodies.push(body);
-      return {
-        text: "container manager handled",
-        session_id: body.session_id,
-        run_id: "run-container-123",
-        run_ids: ["run-container-123"],
-        objective: {
-          required: true,
-          required_tool_calls: ["create_and_run"],
-          satisfied: true,
-          tool_calls: [{ name: "create_and_run", success: true }],
-        },
-        tool_calls: [{
-          id: "tool-1",
-          name: "mcp__dag-tools__create_and_run",
-          input: { yamlPath: "assets/orchestrations/test.yaml" },
-        }],
-        tool_results: [{ tool_use_id: "tool-1", content: "ok" }],
-      };
-    });
-    server = createServer(0);
-    upsertProvider({
-      id: "qwen36",
-      name: "Qwen3.6 Local",
-      default_model: "qwen3.6",
-      base_url: "http://127.0.0.1:5000",
-      anthropic_base_url: "http://127.0.0.1:5000",
-    });
-    const setting = createSetting({
-      provider_id: "qwen36",
-      endpoint_id: "qwen36_custom",
-      model_name: "qwen3.6",
-      api_key: "pk-test-manager-chat",
-      protocol: "anthropic_compatible",
-      base_url: "http://127.0.0.1:5000",
-      anthropic_base_url: "http://127.0.0.1:5000",
-      is_active: true,
-      is_default: true,
-    });
-    const port = await listen(server);
-    const baseUrl = `http://127.0.0.1:${port}`;
-
-    try {
-      const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ llm_setting_id: setting.id, harness: "claude_agent_sdk" }),
-      });
-      expect(saved.status).toBe(200);
-
-      const response = await fetch(`${baseUrl}/api/manager/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: "启动一个非 Codex Manager Agent 验证",
-          project_id: projectId,
-          required_tool_calls: ["create_and_run"],
-        }),
-      });
-      const body = await response.json() as {
-        success: boolean;
-        data: {
-          text: string;
-          run_id: string;
-          run_ids: string[];
-          worker_id: string;
-          container_name: string;
-          tool_calls: Array<{ name: string; runtime_name?: string }>;
-          objective: { required: boolean; required_tool_calls: string[]; satisfied: boolean };
-          manager_agent_config: { agent_type: string; provider_name: string; model: string; base_url: string };
-        };
-      };
-
-      expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
-      expect(body.data.text).toBe("container manager handled");
-      expect(body.data.run_id).toBe("run-container-123");
-      expect(body.data.run_ids).toEqual(["run-container-123"]);
-      expect(body.data.worker_id).toBe("manager-agent-container-test");
-      expect(body.data.container_name).toBe(`homerail-manager-agent-${projectId}`);
-      expect(body.data.tool_calls).toContainEqual(expect.objectContaining({
-        name: "create_and_run",
-        runtime_name: "mcp__dag-tools__create_and_run",
-      }));
-      expect(body.data.objective).toMatchObject({
-        required: true,
-        required_tool_calls: ["create_and_run"],
-        satisfied: true,
-      });
-      expect(body.data.manager_agent_config).toMatchObject({
-        agent_type: "claude-sdk",
-        provider_name: "qwen36",
-        model: "qwen3.6",
-        base_url: "http://127.0.0.1:5000",
-      });
-      expect(observedChatBodies).toHaveLength(1);
-      expect(observedChatBodies[0]).toMatchObject({
-        message: "启动一个非 Codex Manager Agent 验证",
-        project_id: projectId,
-        required_tool_calls: ["create_and_run"],
-        agent_config: {
-          agent_type: "claude-sdk",
-          provider_name: "qwen36",
-          model: "qwen3.6",
-          base_url: "http://127.0.0.1:5000",
-        },
-        manager_skills: expect.arrayContaining([
-          expect.objectContaining({ id: "homerail-dag-patterns", source: "home" }),
-        ]),
-        plugin_context: {
-          enabled_plugins: [],
-          skills: [],
-          tools: [],
-          actions: [],
-        },
-      });
-      expect((observedChatBodies[0].manager_skills as Array<{ source?: string }>)
-        .filter((skill) => skill.source === "plugin")).toEqual([]);
-      expect(fakeNode.requests.map((item) => `${item.resource_type}:${item.operation}`)).toEqual([
-        "container:list",
-        "container:create",
-        "container:start",
-      ]);
-      const createRequest = fakeNode.requests.find((item) => item.operation === "create");
-      expect(createRequest?.spec).toMatchObject({
-        image: "homerail-worker:latest",
-        name: `homerail-manager-agent-${projectId}`,
-        env: {
-          MANAGER_AGENT_MODE: "1",
-          MANAGER_AGENT_PORT: "9001",
-          PROJECT_ID: projectId,
-          PROJECT_WORKSPACE: "/workspace/project",
-          HOMERAIL_WORKER_ID: `manager-agent-${projectId}`,
-        },
-        ports: [{
-          hostIp: "127.0.0.1",
-          hostPort: managerAgentHostPort(projectId),
-          containerPort: 9001,
-          protocol: "tcp",
-        }],
-        workdir: "/workspace",
-        mount_policy: { allowed_host_roots: [workspaceDir] },
-      });
-      expect((createRequest?.spec.mounts as Array<{ container?: string; mode?: string }>)).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ container: "/workspace", mode: "rw" }),
-          expect.objectContaining({ host: workspaceDir, container: "/workspace/project", mode: "rw" }),
-        ]),
-      );
-    } finally {
-      await fakeNode.close();
-    }
-  });
-
-  it("routes non-Codex Manager Agent chat through a host-shell worker when configured", async () => {
-    await close(server);
-    process.env.HOMERAIL_MANAGER_AGENT_RUNTIME = "host-shell";
     process.env.HOMERAIL_MANAGER_AGENT_SHELL = process.platform === "win32" ? process.execPath : "/bin/sh";
     const hostEntry = path.join(tmpHome, "host-shell-worker.js");
     fs.writeFileSync(hostEntry, `
@@ -396,7 +241,6 @@ describe("/api/manager/chat", () => {
       data: {
         text: string;
         worker_id: string;
-        container_name: string;
         runtime_placement: string;
         manager_agent_config: { runtime_placement: string; agent_type: string };
       };
@@ -405,208 +249,11 @@ describe("/api/manager/chat", () => {
     expect(response.status).toBe(200);
     expect(body.data.text).toBe(`host shell handled via ${baseUrl}/api`);
     expect(body.data.worker_id).toBe("manager-agent-host-p-host-shell");
-    expect(body.data.container_name).toBe("homerail-manager-agent-host-p-host-shell");
     expect(body.data.runtime_placement).toBe("host_shell");
     expect(body.data.manager_agent_config).toMatchObject({
       runtime_placement: "host_shell",
       agent_type: "claude-sdk",
     });
-  });
-
-  it("mounts the HomeRail default workspace when no project is selected", async () => {
-    await close(server);
-    const observedChatBodies: Record<string, unknown>[] = [];
-    const fakeNode = registerFakeDockerNode("", (body) => {
-      observedChatBodies.push(body);
-      return {
-        text: "default workspace handled",
-        session_id: body.session_id,
-        run_id: null,
-        run_ids: [],
-        objective: { required: false, satisfied: true, tool_calls: [] },
-        tool_calls: [],
-        tool_results: [],
-      };
-    });
-    server = createServer(0);
-    upsertProvider({
-      id: "qwen36",
-      name: "Qwen3.6 Local",
-      default_model: "qwen3.6",
-      base_url: "http://127.0.0.1:5000",
-      anthropic_base_url: "http://127.0.0.1:5000",
-    });
-    const setting = createSetting({
-      provider_id: "qwen36",
-      endpoint_id: "qwen36_custom",
-      model_name: "qwen3.6",
-      api_key: "pk-test-manager-chat",
-      protocol: "anthropic_compatible",
-      base_url: "http://127.0.0.1:5000",
-      anthropic_base_url: "http://127.0.0.1:5000",
-      is_active: true,
-      is_default: true,
-    });
-    const port = await listen(server);
-    const baseUrl = `http://127.0.0.1:${port}`;
-
-    try {
-      const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ llm_setting_id: setting.id, harness: "claude_agent_sdk" }),
-      });
-      expect(saved.status).toBe(200);
-
-      const response = await fetch(`${baseUrl}/api/manager/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "没有项目时使用默认工作区" }),
-      });
-      expect(response.status).toBe(200);
-
-      const defaultWorkspace = ensureDefaultWorkspacePath();
-      expect(fs.existsSync(defaultWorkspace)).toBe(true);
-      expect(observedChatBodies[0]).toMatchObject({
-        message: "没有项目时使用默认工作区",
-      });
-      const createRequest = fakeNode.requests.find((item) => item.operation === "create");
-      expect(createRequest?.spec).toMatchObject({
-        name: "homerail-manager-agent-__default__",
-        env: {
-          PROJECT_ID: "",
-          PROJECT_WORKSPACE: "/workspace/project",
-          HOMERAIL_WORKER_ID: "manager-agent-__default__",
-        },
-        mount_policy: { allowed_host_roots: [defaultWorkspace] },
-      });
-      expect((createRequest?.spec.mounts as Array<{ host?: string; container?: string; mode?: string }>)).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ container: "/workspace", mode: "rw" }),
-          expect.objectContaining({ host: defaultWorkspace, container: "/workspace/project", mode: "rw" }),
-        ]),
-      );
-    } finally {
-      await fakeNode.close();
-    }
-  });
-
-  it("does not mount the manager process cwd for unknown project ids", async () => {
-    await close(server);
-    const projectId = `unknown-project-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const fakeNode = registerFakeDockerNode(projectId, () => ({
-      text: "container manager handled",
-      session_id: "unknown-project-session",
-      run_id: null,
-      run_ids: [],
-      objective: { required: false, satisfied: true, tool_calls: [] },
-      tool_calls: [],
-      tool_results: [],
-    }));
-    server = createServer(0);
-    upsertProvider({
-      id: "qwen36",
-      name: "Qwen3.6 Local",
-      default_model: "qwen3.6",
-      base_url: "http://127.0.0.1:5000",
-      anthropic_base_url: "http://127.0.0.1:5000",
-    });
-    const setting = createSetting({
-      provider_id: "qwen36",
-      endpoint_id: "qwen36_custom",
-      model_name: "qwen3.6",
-      api_key: "pk-test-manager-chat",
-      protocol: "anthropic_compatible",
-      base_url: "http://127.0.0.1:5000",
-      anthropic_base_url: "http://127.0.0.1:5000",
-      is_active: true,
-      is_default: true,
-    });
-    const port = await listen(server);
-    const baseUrl = `http://127.0.0.1:${port}`;
-
-    try {
-      const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ llm_setting_id: setting.id, harness: "claude_agent_sdk" }),
-      });
-      expect(saved.status).toBe(200);
-
-      const response = await fetch(`${baseUrl}/api/manager/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "只回复收到", project_id: projectId }),
-      });
-      expect(response.status).toBe(200);
-
-      const createRequest = fakeNode.requests.find((item) => item.operation === "create");
-      expect(createRequest?.spec).toMatchObject({
-        env: {
-          PROJECT_ID: projectId,
-          PROJECT_WORKSPACE: "",
-        },
-      });
-      expect(createRequest?.spec.mounts).toEqual([
-        expect.objectContaining({ container: "/workspace", mode: "rw" }),
-      ]);
-    } finally {
-      await fakeNode.close();
-    }
-  });
-
-  it("recreates an existing Manager Agent container when its runtime fingerprint is stale", async () => {
-    const projectId = "stale-fingerprint-project";
-    const fakeNode = registerFakeDockerNode(
-      projectId,
-      () => ({ text: "unused" }),
-      {
-        existingContainer: {
-          id: "stale-manager-agent-container",
-          name: `homerail-manager-agent-${projectId}`,
-          status: "running",
-          labels: {
-            "homerail.resource_type": "manager-agent",
-            "homerail.project_id": projectId,
-            "homerail.config_fingerprint": "stale",
-          },
-        },
-      },
-    );
-
-    try {
-      const result = await ensureManagerAgentContainer(projectId, {
-        managerRestUrl: "http://127.0.0.1:19191/api",
-        image: "homerail-worker:latest",
-      });
-
-      expect(result.containerId).toBe("manager-agent-container-test");
-      expect(fakeNode.requests.map((item) => `${item.resource_type}:${item.operation}`)).toEqual([
-        "container:list",
-        "container:inspect",
-        "container:stop",
-        "container:remove",
-        "container:create",
-        "container:start",
-      ]);
-      const createRequest = fakeNode.requests.find((item) => item.operation === "create");
-      expect(createRequest?.spec).toMatchObject({
-        name: `homerail-manager-agent-${projectId}`,
-        env: {
-          MANAGER_REST_URL: "http://127.0.0.1:19191/api",
-          PROJECT_ID: projectId,
-        },
-        labels: {
-          "homerail.resource_type": "manager-agent",
-          "homerail.project_id": projectId,
-        },
-      });
-      const labels = createRequest?.spec.labels as Record<string, string>;
-      expect(labels["homerail.config_fingerprint"]).toMatch(/^[a-f0-9]{16}$/);
-      expect(labels["homerail.config_fingerprint"]).not.toBe("stale");
-    } finally {
-      await fakeNode.close();
-    }
   });
 
   it("selects the Kimi Code CLI harness for Kimi Manager Agent settings", () => {
@@ -623,7 +270,7 @@ describe("/api/manager/chat", () => {
     const config = resolveManagerAgentConfig(undefined, "kimi", "kimi-k2.7-code");
 
     expect(config.agent_type).toBe("kimi_code");
-    expect(config.runtime_placement).toBe("container");
+    expect(config.runtime_placement).toBe("host_shell");
     expect(config.base_url).toBe("https://api.moonshot.ai/v1");
   });
 
@@ -642,7 +289,7 @@ describe("/api/manager/chat", () => {
     const config = resolveManagerAgentConfig(undefined, "kimi", "kimi-k2.7-code");
 
     expect(config.agent_type).toBe("kimi_code");
-    expect(config.runtime_placement).toBe("container");
+    expect(config.runtime_placement).toBe("host_shell");
     expect(config.base_url).toBe("https://api.kimi.com/coding/v1");
     expect(config.provider_name).toBe("kimi_cn");
     expect(config.model).toBe("kimi-for-coding");
@@ -666,15 +313,15 @@ describe("/api/manager/chat", () => {
       provider_name: "kimi_cn",
       model: "kimi-for-coding",
       agent_type: "kimi_code",
-      runtime_placement: "container",
+      runtime_placement: "host_shell",
       base_url: "https://api.kimi.com/coding/v1",
     });
   });
 
   it("keeps runtime placement as the only harness boundary", () => {
     expect(managerAgentRuntimePlacementForHarness("codex_appserver")).toBe("host");
-    expect(managerAgentRuntimePlacementForHarness("kimi_code")).toBe("container");
-    expect(managerAgentRuntimePlacementForHarness("claude_agent_sdk")).toBe("container");
+    expect(managerAgentRuntimePlacementForHarness("kimi_code")).toBe("host_shell");
+    expect(managerAgentRuntimePlacementForHarness("claude_agent_sdk")).toBe("host_shell");
   });
 
   it("selects claude-sdk only with an Anthropic-compatible Manager Agent endpoint", () => {
@@ -700,7 +347,7 @@ describe("/api/manager/chat", () => {
     const config = resolveManagerAgentConfig(undefined, "qwen36", "qwen3.6");
 
     expect(config.agent_type).toBe("claude-sdk");
-    expect(config.runtime_placement).toBe("container");
+    expect(config.runtime_placement).toBe("host_shell");
     expect(config.base_url).toBe("http://127.0.0.1:5000");
   });
 
@@ -733,6 +380,7 @@ describe("/api/manager/chat", () => {
   });
 
   it("uses persisted Manager Agent config when chat request has no runtime override", async () => {
+    installHostManagerStub(tmpHome, "persisted setting handled");
     upsertProvider({
       id: "qwen36",
       name: "Qwen3.6 Local",
@@ -766,7 +414,7 @@ describe("/api/manager/chat", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "只回复收到", project_id: "p1" }),
     });
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(200);
 
     const list = await fetch(`${baseUrl}/api/manager/sessions?project_id=p1&limit=10`);
     const listBody = await list.json() as {
@@ -789,19 +437,7 @@ describe("/api/manager/chat", () => {
 
   it("falls back to the current Manager Agent config when a continued session references a deleted setting", async () => {
     await close(server);
-    const observedChatBodies: Record<string, unknown>[] = [];
-    const fakeNode = registerFakeDockerNode("", (body) => {
-      observedChatBodies.push(body);
-      return {
-        text: "fallback setting handled",
-        session_id: body.session_id,
-        run_id: null,
-        run_ids: [],
-        objective: { required: false, satisfied: true, tool_calls: [] },
-        tool_calls: [],
-        tool_results: [],
-      };
-    });
+    installHostManagerStub(tmpHome, "fallback setting handled");
     server = createServer(0);
     upsertProvider({
       id: "qwen36",
@@ -830,42 +466,34 @@ describe("/api/manager/chat", () => {
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
 
-    try {
-      const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
+    const saved = await fetch(`${baseUrl}/api/manager-agent/config`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ llm_setting_id: setting.id, harness: "claude_agent_sdk" }),
-      });
-      expect(saved.status).toBe(200);
+    });
+    expect(saved.status).toBe(200);
 
-      const response = await fetch(`${baseUrl}/api/manager/chat`, {
+    const response = await fetch(`${baseUrl}/api/manager/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: "沿用旧会话但使用当前配置",
           session_id: "legacy-manager-session",
         }),
-      });
-      const body = await response.json() as {
+    });
+    const body = await response.json() as {
         data: {
           session_id: string;
           manager_agent_config: { provider_name: string; model: string };
         };
-      };
+    };
 
-      expect(response.status).toBe(200);
-      expect(body.data.session_id).not.toBe("legacy-manager-session");
-      expect(body.data.manager_agent_config).toMatchObject({
-        provider_name: "qwen36",
-        model: "qwen3.6",
-      });
-      expect(observedChatBodies[0]?.agent_config).toMatchObject({
-        provider_name: "qwen36",
-        model: "qwen3.6",
-      });
-    } finally {
-      await fakeNode.close();
-    }
+    expect(response.status).toBe(200);
+    expect(body.data.session_id).not.toBe("legacy-manager-session");
+    expect(body.data.manager_agent_config).toMatchObject({
+      provider_name: "qwen36",
+      model: "qwen3.6",
+    });
   });
 
   it("resolves codex_appserver as a Manager Agent harness without an LLM setting", () => {
@@ -1035,7 +663,6 @@ describe("/api/manager/chat", () => {
         tool_results: [],
         agent_errors: ["harness stream ended after completing the response"],
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     const port = await listen(server);
@@ -1057,7 +684,6 @@ describe("/api/manager/chat", () => {
       data: {
         text: string;
         worker_id: string;
-        container_name: string | null;
         agent_errors: string[];
         runtime_placement: string;
         manager_agent_config: { agent_type: string; runtime_placement: string };
@@ -1068,7 +694,6 @@ describe("/api/manager/chat", () => {
     expect(body.success).toBe(true);
     expect(body.data.text).toBe("host codex handled");
     expect(body.data.worker_id).toBe("host-codex");
-    expect(body.data.container_name).toBeNull();
     expect(body.data.agent_errors).toEqual(["harness stream ended after completing the response"]);
     expect(body.data.runtime_placement).toBe("host");
     expect(body.data.manager_agent_config.agent_type).toBe("codex_appserver");

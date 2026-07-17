@@ -15,7 +15,6 @@ import type { GenerativeUiCanvasContextV1 } from "homerail-protocol";
 const captured = vi.hoisted(() => ({
   host: [] as Array<Record<string, unknown>>,
   host_stream: [] as Array<Record<string, unknown>>,
-  container: [] as Array<Record<string, unknown>>,
   host_shell: [] as Array<Record<string, unknown>>,
   continuation_records: [] as Array<Record<string, unknown>>,
   continuation_acks: [] as string[],
@@ -33,19 +32,6 @@ vi.mock("../src/persistence/plugin-tool-continuations.js", () => ({
   releasePluginAgentToolContinuationLease: (leaseId: string) => {
     captured.continuation_releases.push(leaseId);
     return 1;
-  },
-}));
-
-vi.mock("../src/server/manager-agent-container.js", () => ({
-  ensureManagerAgentContainer: async () => ({
-    containerId: "container-test",
-    nodeId: "node-test",
-    baseUrl: "http://127.0.0.1:39001",
-    containerName: "manager-agent-container-test",
-  }),
-  forwardChatToManagerAgentContainer: async (_container: unknown, payload: Record<string, unknown>) => {
-    captured.container.push(structuredClone(payload));
-    return { text: "container result" };
   },
 }));
 
@@ -69,7 +55,27 @@ vi.mock("../src/server/host-codex-manager-agent.js", () => ({
   runHostCodexManagerAgentTurn: async (input: Record<string, unknown>) => {
     captured.host.push(structuredClone(input));
     if (String(input.message).includes("force-host-failure")) throw new Error("forced host failure");
-    return { text: "host result", worker_id: "host-codex", container_name: null };
+    if (String(input.message).includes("committed-canvas")) {
+      const contracts = input.outcome_contracts as Array<{ tool_names: string[] }>;
+      const toolName = contracts[0].tool_names[0];
+      return {
+        text: "host result",
+        worker_id: "host-codex",
+        objective: { required: false, satisfied: true },
+        tool_calls: [{ id: "call-canvas", name: toolName }],
+        tool_results: [{
+          tool_use_id: "call-canvas",
+          content: JSON.stringify({
+            success: true,
+            data: {
+              status: "committed",
+              result: { output_type: "ui_transaction", document_id: "doc-canvas", document_revision: 1 },
+            },
+          }),
+        }],
+      };
+    }
+    return { text: "host result", worker_id: "host-codex" };
   },
   runHostCodexManagerAgentTurnStream: async function* (input: Record<string, unknown>) {
     captured.host_stream.push(structuredClone(input));
@@ -77,7 +83,7 @@ vi.mock("../src/server/host-codex-manager-agent.js", () => ({
   },
 }));
 
-import type { ManagerAgentRuntimeConfig } from "../src/server/manager-agent-container.js";
+import type { ManagerAgentRuntimeConfig } from "../src/server/manager-agent-runtime-config.js";
 import { closeDb } from "../src/persistence/db.js";
 import { assemblePluginTurnContext, selectPluginTurnContext } from "../src/plugins/context-assembler.js";
 import { installHrpArchive } from "../src/plugins/package-lifecycle.js";
@@ -99,7 +105,7 @@ import {
   runManagerAgentTurnStream,
 } from "../src/server/manager-agent-runtime.js";
 
-function runtimeConfig(runtime_placement: "host" | "host_shell" | "container"): ManagerAgentRuntimeConfig {
+function runtimeConfig(runtime_placement: "host" | "host_shell"): ManagerAgentRuntimeConfig {
   return {
     provider_name: "test",
     model: "test-model",
@@ -178,7 +184,6 @@ describe("Manager Agent per-turn capability routing", () => {
     syncBuiltinPlugins();
     captured.host.length = 0;
     captured.host_stream.length = 0;
-    captured.container.length = 0;
     captured.host_shell.length = 0;
     captured.continuation_records.length = 0;
     captured.continuation_acks.length = 0;
@@ -192,7 +197,7 @@ describe("Manager Agent per-turn capability routing", () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  it("delivers the same selected Skill/Tool snapshot to host, host-shell, and container", async () => {
+  it("delivers the same selected Skill/Tool snapshot to host and host-shell", async () => {
     const turn = {
       message: "create a topic outline",
       response_mode: "voice" as const,
@@ -205,17 +210,10 @@ describe("Manager Agent per-turn capability routing", () => {
       { ...turn, agent_config: runtimeConfig("host_shell") },
       { managerRestUrl: "http://127.0.0.1:3000" },
     );
-    const container = await runManagerAgentTurn(
-      { ...turn, agent_config: runtimeConfig("container") },
-      { managerRestUrl: "http://127.0.0.1:3000" },
-    );
-
     const hostContext = pluginContext(captured.host[0]);
     expect(pluginContext(captured.host_shell[0])).toEqual(hostContext);
-    expect(pluginContext(captured.container[0])).toEqual(hostContext);
     expect(host.plugin_context).toEqual(hostContext);
     expect(hostShell.plugin_context).toEqual(hostContext);
-    expect(container.plugin_context).toEqual(hostContext);
     expect(hostContext.enabled_plugins.map((plugin) => plugin.id)).toEqual([
       "com.homerail.core",
       "com.homerail.topic-outline",
@@ -236,11 +234,8 @@ describe("Manager Agent per-turn capability routing", () => {
     expect(deliveredSkills.find((skill) => skill.id === "com.homerail.core:voice-generative-ui")?.content)
       .toContain("# Voice Generative UI");
     expect(captured.host_shell[0].manager_skills).toEqual(captured.host[0].manager_skills);
-    expect(captured.container[0].manager_skills).toEqual(captured.host[0].manager_skills);
     expect(pluginSkillIds(captured.host_shell[0])).toEqual(pluginSkillIds(captured.host[0]));
-    expect(pluginSkillIds(captured.container[0])).toEqual(pluginSkillIds(captured.host[0]));
-    expect(captured.container[0]).not.toHaveProperty("plugin_routing");
-    for (const payload of [captured.host[0], captured.host_shell[0], captured.container[0]]) {
+    for (const payload of [captured.host[0], captured.host_shell[0]]) {
       const token = payload.plugin_tool_turn_token;
       expect(token).toMatch(/^hrtoolturn1\./);
       expect(JSON.stringify(payload.plugin_context)).not.toContain(String(token));
@@ -248,6 +243,42 @@ describe("Manager Agent per-turn capability routing", () => {
       expect(JSON.stringify(payload.voice_system_contract ?? null)).not.toContain(String(token));
       expect(JSON.stringify(payload.voice_ui_rules ?? null)).not.toContain(String(token));
     }
+  });
+
+  it("resolves a stable canvas outcome to the live alias and verifies committed evidence", async () => {
+    const turn = await runManagerAgentTurn({
+      message: "committed-canvas",
+      response_mode: "voice",
+      generative_ui_mode: "prefer",
+      voice_session_id: "outcome-routing-session",
+      required_outcomes: ["canvas.view.committed"],
+      agent_config: runtimeConfig("host"),
+    });
+    expect(captured.host[0].outcome_contracts).toEqual([{
+      capability: "canvas.view.committed",
+      tool_names: ["upsert_generated_view"],
+    }]);
+    expect(turn.result.objective).toMatchObject({
+      required_outcomes: ["canvas.view.committed"],
+      satisfied: true,
+    });
+  });
+
+  it("rejects a model completion with no evidence for a required outcome", async () => {
+    await expect(runManagerAgentTurn({
+      message: "missing-canvas-evidence",
+      response_mode: "voice",
+      generative_ui_mode: "prefer",
+      voice_session_id: "outcome-missing-session",
+      required_outcomes: ["canvas.view.committed"],
+      agent_config: runtimeConfig("host"),
+    })).rejects.toMatchObject({
+      code: "manager_chat_error",
+      data: {
+        code: "required_outcomes_unsatisfied",
+        missing_outcomes: ["canvas.view.committed"],
+      },
+    });
   });
 
   it("injects leased confirmed Tool results once and releases the lease on Agent failure", async () => {
@@ -324,11 +355,11 @@ describe("Manager Agent per-turn capability routing", () => {
     };
     await runManagerAgentTurn({ ...turn, agent_config: runtimeConfig("host") });
     await runManagerAgentTurn(
-      { ...turn, agent_config: runtimeConfig("container") },
+      { ...turn, agent_config: runtimeConfig("host_shell") },
       { managerRestUrl: "http://127.0.0.1:3000" },
     );
 
-    for (const payload of [captured.host[0], captured.container[0]]) {
+    for (const payload of [captured.host[0], captured.host_shell[0]]) {
       expect(pluginContext(payload)).toMatchObject({
         enabled_plugins: [],
         skills: [],
@@ -339,7 +370,7 @@ describe("Manager Agent per-turn capability routing", () => {
       expect(payload).not.toHaveProperty("plugin_tool_turn_token");
       expect((payload.manager_skills as Array<{ id: string }>).map((skill) => skill.id)).toEqual(["local-test"]);
     }
-    expect(pluginContext(captured.container[0])).toEqual(pluginContext(captured.host[0]));
+    expect(pluginContext(captured.host_shell[0])).toEqual(pluginContext(captured.host[0]));
   });
 
   it("preserves explicit legacy context while a routing source remains a strict capability boundary", () => {
@@ -498,6 +529,43 @@ describe("Manager Agent per-turn capability routing", () => {
     });
   });
 
+  it("releases a continuation lease when streamed output misses a required outcome", async () => {
+    captured.continuation_records.push({
+      scope: { type: "voice_session", id: "stream-outcome-session" },
+      status: "leased",
+      delivery_attempts: 1,
+      created_at: "2026-07-11T00:00:00.000Z",
+      payload: {
+        continuation_version: 1,
+        request_id: "tool_continuation_stream_outcome_001",
+        request_digest: "b".repeat(64),
+        call_id: "call_continuation_stream_outcome_001",
+        status: "committed",
+        confirmation: "approved",
+      },
+    });
+
+    await expect(async () => {
+      for await (const _event of runManagerAgentTurnStream({
+        message: "create a canvas panel",
+        response_mode: "voice",
+        generative_ui_mode: "prefer",
+        voice_session_id: "stream-outcome-session",
+        required_outcomes: ["canvas.view.committed"],
+        agent_config: runtimeConfig("host"),
+      })) {
+        // Consume the stream so its postcondition and lease lifecycle run.
+      }
+    }).rejects.toMatchObject({
+      code: "manager_chat_error",
+      data: { code: "required_outcomes_unsatisfied" },
+    });
+    expect(captured.continuation_acks).toEqual([]);
+    expect(captured.continuation_releases).toEqual([
+      "continuation_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ]);
+  });
+
   it("always binds Core Generative UI in a prefer voice turn without relying on keyword routing", () => {
     const assets = resolveManagerAgentTurnAssets({
       message: "把这些发布数据整理得便于快速浏览",
@@ -547,7 +615,7 @@ describe("Manager Agent per-turn capability routing", () => {
         explicit_capability_id: `${installed.package.plugin_id}:compose-release-notes`,
         inputs: { title: "Release notes", version: "1.2.3" },
       },
-    })).rejects.toThrow(/trusted Registry HRP.*isolated container/);
+    })).rejects.toThrow(/Only bundled Plugin Agent assets/);
     expect(captured.host).toHaveLength(0);
 
     const full = assemblePluginTurnContext(undefined, { modality: "voice" });
@@ -559,12 +627,12 @@ describe("Manager Agent per-turn capability routing", () => {
       response_mode: "voice",
       generative_ui_mode: "prefer",
       voice_session_id: "external-plugin-session",
-      agent_config: runtimeConfig("container"),
+      agent_config: runtimeConfig("host_shell"),
       plugin_context: supplied,
-    })).toThrow(/trusted Registry HRP.*isolated container/);
+    })).toThrow(/Only bundled Plugin Agent assets/);
   });
 
-  it("admits only an enabled trusted Registry HRP to an isolated container Agent turn", () => {
+  it("keeps trusted Registry Agent assets out of the host Manager", () => {
     const source = path.resolve(import.meta.dirname, "../../plugins/examples/release-notes");
     const publisherKeys = generateKeyPairSync("ed25519");
     const registryKeys = generateKeyPairSync("ed25519");
@@ -624,23 +692,20 @@ describe("Manager Agent per-turn capability routing", () => {
     const supplied = selectPluginTurnContext(full, [
       `${signed.lock.plugin.id}:compose-release-notes`,
     ]);
-    const isolated = resolveManagerAgentTurnAssets({
+    expect(() => resolveManagerAgentTurnAssets({
       message: "create trusted release notes",
       response_mode: "voice",
       generative_ui_mode: "prefer",
       voice_session_id: "trusted-registry-agent-session",
-      agent_config: runtimeConfig("container"),
+      agent_config: runtimeConfig("host_shell"),
       plugin_context: supplied,
-    });
-    expect(isolated.plugin_context.enabled_plugins).toEqual([
-      expect.objectContaining({ id: signed.lock.plugin.id, version: signed.lock.plugin.version }),
-    ]);
+    })).toThrow(/Only bundled Plugin Agent assets/);
     expect(() => resolveManagerAgentTurnAssets({
       message: "same package on same-UID host",
       response_mode: "voice",
       agent_config: runtimeConfig("host"),
       plugin_context: supplied,
-    })).toThrow(/trusted Registry HRP.*isolated container/);
+    })).toThrow(/Only bundled Plugin Agent assets/);
 
     setPluginPublisherTrustAndRevokePackages({
       entry: {
@@ -656,8 +721,8 @@ describe("Manager Agent per-turn capability routing", () => {
     expect(() => resolveManagerAgentTurnAssets({
       message: "stale context after publisher revocation",
       response_mode: "voice",
-      agent_config: runtimeConfig("container"),
+      agent_config: runtimeConfig("host_shell"),
       plugin_context: supplied,
-    })).toThrow(/current registry|enabled|trusted Registry HRP/);
+    })).toThrow(/current registry|enabled|Only bundled Plugin Agent assets/);
   });
 });

@@ -7,6 +7,7 @@ import {
   HOMERAIL_MANAGER_TURN_HEADER,
   managerAgentTurnScopeFromPayload,
   managerAgentCommonToolCatalog,
+  managerAgentPluginToolCallName,
   type AgentToolDefinition,
   type GenerativeUiCanvasContextV1,
   type ManagerAgentResponseMode,
@@ -211,9 +212,10 @@ describe("Manager Agent deterministic result envelope parity", () => {
     for (const tools of [hostTools, workerTools]) {
       const names = tools.map((tool) => tool.name);
       expect(names).toContain("update_task_draft");
-      expect(names).toContain(context.tools.find(
+      const descriptor = context.tools.find(
         (tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view",
-      )!.wire_id);
+      )!;
+      expect(names).toContain(managerAgentPluginToolCallName(descriptor, context.tools));
       for (const name of forbidden) expect(names).not.toContain(name);
     }
     expect(catalogProjection(hostTools)).toEqual(catalogProjection(workerTools));
@@ -247,9 +249,10 @@ describe("Manager Agent deterministic result envelope parity", () => {
       undefined,
       [visualManagerSkill()],
     );
-    const generatedViewTool = context.tools.find(
+    const generatedViewDescriptor = context.tools.find(
       (tool) => tool.qualified_id === "com.homerail.core:upsert_generated_view",
-    )!.wire_id;
+    )!;
+    const generatedViewTool = managerAgentPluginToolCallName(generatedViewDescriptor, context.tools);
     const rawInput = {
       id: "profile-one",
       content: { data: { title: "Profile", value: 4 } },
@@ -381,7 +384,7 @@ describe("Manager Agent deterministic result envelope parity", () => {
         expires_at: "2026-07-15T00:05:00.000Z",
         payload_digest: "a".repeat(64),
         scope: managerAgentTurnScopeFromPayload(workerPayload, {
-          runtime_placement: "container",
+          runtime_placement: "host_shell",
           worker_id: "worker-parity",
         }),
       },
@@ -668,8 +671,9 @@ describe("Manager Agent deterministic result envelope parity", () => {
       sources: [{ title: "Architecture", url: "https://example.com/architecture", note: "Local design baseline" }],
       next_action: "Validate the fallback",
     };
-    const hostResult = await requireTool(hostTools, descriptor.wire_id).handler(input);
-    const workerResult = await requireTool(workerTools, descriptor.wire_id).handler(input);
+    const callName = managerAgentPluginToolCallName(descriptor, context.tools);
+    const hostResult = await requireTool(hostTools, callName).handler(input);
+    const workerResult = await requireTool(workerTools, callName).handler(input);
     expect(hostResult).toEqual(workerResult);
     expect(hostState.voiceSurface).toEqual(workerState.voiceSurface);
     expect(hostState.voiceSurface.pluginProjections).toHaveLength(1);

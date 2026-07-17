@@ -4,6 +4,7 @@
  */
 
 import type { AgentToolDefinition } from "./types.js";
+import type { HomerailPluginToolDescriptorV1 } from "./plugins/types.js";
 
 export const MANAGER_AGENT_WIDGET_FILE_TYPES = [
   "memo",
@@ -17,6 +18,22 @@ export const MANAGER_AGENT_WIDGET_FILE_TYPES = [
 export type ManagerAgentWidgetFileType = (typeof MANAGER_AGENT_WIDGET_FILE_TYPES)[number];
 
 export type ManagerAgentResponseMode = "chat" | "voice";
+
+export const MANAGER_AGENT_OUTCOME_CAPABILITIES = [
+  "canvas.view.committed",
+  "artifact.published",
+  "skill.loaded",
+  "dag.supervised.started",
+] as const;
+
+export type ManagerAgentOutcomeCapability = (typeof MANAGER_AGENT_OUTCOME_CAPABILITIES)[number];
+
+/** Manager-resolved, model-facing contract for one externally observable result. */
+export interface ManagerAgentOutcomeContract {
+  capability: ManagerAgentOutcomeCapability;
+  /** Calling any one of these Tools may satisfy the capability. */
+  tool_names: string[];
+}
 
 export const MANAGER_AGENT_DAG_ACTOR_INTERVENTION_OPERATIONS = [
   "interrupt",
@@ -269,6 +286,58 @@ export function managerAgentRequiredToolObjectivePrompt(value: unknown): string 
     `- Successfully call every required tool before the final response: ${names.join(", ")}.`,
     "- Do not merely describe, defer, or simulate these calls. The runtime verifies successful tool completion.",
   ].join("\n");
+}
+
+export function normalizeManagerAgentOutcomeCapabilities(value: unknown): ManagerAgentOutcomeCapability[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set<string>(MANAGER_AGENT_OUTCOME_CAPABILITIES);
+  return Array.from(new Set(
+    value
+      .map((item) => typeof item === "string" ? item.trim() : "")
+      .filter((item): item is ManagerAgentOutcomeCapability => allowed.has(item)),
+  ));
+}
+
+export function managerAgentOutcomeObjectivePrompt(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  const contracts = value.filter((item): item is ManagerAgentOutcomeContract => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const candidate = item as Partial<ManagerAgentOutcomeContract>;
+    return MANAGER_AGENT_OUTCOME_CAPABILITIES.includes(candidate.capability as ManagerAgentOutcomeCapability)
+      && Array.isArray(candidate.tool_names)
+      && candidate.tool_names.some((name) => typeof name === "string" && name.trim());
+  });
+  if (contracts.length === 0) return "";
+  return [
+    "HomeRail externally observable outcome contract for this turn:",
+    ...contracts.map((contract) =>
+      `- ${contract.capability}: successfully call one of [${contract.tool_names.join(", ")}].`),
+    "- A prose claim, plan, or filesystem-only output does not satisfy an outcome.",
+    "- HomeRail verifies committed Tool evidence after the turn and rejects unsupported completion claims.",
+  ].join("\n");
+}
+
+const MANAGER_AGENT_RESERVED_TOOL_NAMES = new Set<string>([
+  ...MANAGER_AGENT_COMMON_TOOL_NAMES,
+  ...MANAGER_AGENT_COMMON_VOICE_TOOL_NAMES,
+  "remove_generated_view",
+  "update_selected_generated_view",
+]);
+
+/**
+ * Prefer a readable stable local id when it is unambiguous in this turn. The
+ * descriptor wire id remains the authority used by the Manager Tool Bus.
+ */
+export function managerAgentPluginToolCallName(
+  descriptor: Pick<HomerailPluginToolDescriptorV1, "local_id" | "wire_id">,
+  descriptors: readonly Pick<HomerailPluginToolDescriptorV1, "local_id" | "wire_id">[],
+): string {
+  const localId = descriptor.local_id.trim();
+  const valid = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(localId);
+  const unique = descriptors.filter((item) => item.local_id.trim() === localId).length === 1;
+  return valid && unique && !MANAGER_AGENT_RESERVED_TOOL_NAMES.has(localId)
+    ? localId
+    : descriptor.wire_id;
 }
 
 export const HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL = "homerail_tool_call";

@@ -24,6 +24,8 @@ import {
   managerAgentToolSpec,
   managerAgentPluginOwnedLegacyWidgetType,
   managerAgentPluginSkillSnapshot,
+  managerAgentPluginToolCallName,
+  managerAgentOutcomeObjectivePrompt,
   managerAgentRequiredToolObjectivePrompt,
   managerAgentSkillViewToolDefinitions,
   matchingManagerAgentSkillViewToolDefinition,
@@ -44,6 +46,7 @@ import {
   type ManagerAgentToolName,
   type ManagerAgentPromptSkill,
   type ManagerAgentDagContextV1,
+  type ManagerAgentOutcomeContract,
   type ResolvedPrCloseoutInput,
   type GenerativeUiCanvasContextV1,
   type HomerailPluginTurnContextV1,
@@ -73,6 +76,7 @@ interface ChatRequest {
   response_mode?: "chat" | "voice";
   generative_ui_mode?: "off" | "shadow" | "prefer";
   required_tool_calls?: string[];
+  outcome_contracts?: ManagerAgentOutcomeContract[];
   history?: Array<{ role?: string; content?: string; timestamp?: string }>;
   canvas_context?: GenerativeUiCanvasContextV1;
   dag_context?: ManagerAgentDagContextV1;
@@ -1557,11 +1561,15 @@ export function createManagerTools(state: {
     }
   }
   for (const descriptor of responseMode === "voice" ? pluginContext?.tools ?? [] : []) {
-    if (tools.some((tool) => tool.name === descriptor.wire_id)) {
-      throw new Error(`Plugin Tool wire id collides with an existing Tool: ${descriptor.wire_id}`);
+    const preferredName = managerAgentPluginToolCallName(descriptor, pluginContext?.tools ?? []);
+    const callName = tools.some((tool) => tool.name === preferredName)
+      ? descriptor.wire_id
+      : preferredName;
+    if (tools.some((tool) => tool.name === callName)) {
+      throw new Error(`Plugin Tool call name collides with an existing Tool: ${callName}`);
     }
     tools.push({
-      name: descriptor.wire_id,
+      name: callName,
       description: descriptor.description,
       input_schema: structuredClone(descriptor.input_schema),
       async handler(args, context) {
@@ -1631,13 +1639,10 @@ function systemPrompt(
   voiceSystemContract?: ChatRequest["voice_system_contract"],
   skills?: ManagerAgentPromptSkill[],
 ): string {
-  const placement = process.env.HOMERAIL_MANAGER_AGENT_RUNTIME_PLACEMENT === "host_shell"
-    ? "host_shell"
-    : "container";
   return buildManagerAgentSystemPrompt({
     responseMode,
     runtime: {
-      placement,
+      placement: "host_shell",
       provider: config?.provider_name || "unknown",
       model: config?.model || config?.model_name || "unknown",
     },
@@ -1754,6 +1759,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     systemPrompt: [
       systemPrompt(config, responseMode, body.voice_ui_rules, body.voice_system_contract, body.manager_skills),
       managerAgentRequiredToolObjectivePrompt(requiredToolCalls),
+      managerAgentOutcomeObjectivePrompt(body.outcome_contracts),
     ].filter(Boolean).join("\n\n"),
     systemPromptMode: "append",
     provider: config.provider_name,
@@ -1819,10 +1825,12 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
   }
   const finalText = state.finalNotes.at(-1) || compactDeltas(texts) ||
     (timedOut && state.createdRunIds.length
-      ? `Manager Agent timed out after starting run ${state.createdRunIds.at(-1)}.`
+      ? responseMode === "voice" ? "任务已经开始，正在继续处理。" : "The task is running."
       : state.createdRunIds.length
-      ? `Started DAG run ${state.createdRunIds.at(-1)}.`
-      : "Manager Agent turn completed.");
+      ? responseMode === "voice" ? "任务已经开始。" : "Task started."
+      : responseMode === "voice"
+      ? "已处理。"
+      : "Done.");
   session.messages.push({ role: "user", content: message }, { role: "assistant", content: finalText });
   session.updated_at = new Date().toISOString();
   sessions.set(sessionId, session);

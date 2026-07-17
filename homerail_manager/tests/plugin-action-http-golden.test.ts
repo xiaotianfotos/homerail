@@ -98,7 +98,7 @@ const callerHarnesses: Array<{
           "PUT:/api/plugins/*/permissions",
         ],
       },
-      target: { runtime_placement: "container", worker_id: "action-golden-worker" },
+      target: { runtime_placement: "host_shell", worker_id: "action-golden-worker" },
     });
     return (pathname, init) => _withManagerTurnEnvelopeForTest(
       envelope,

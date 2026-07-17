@@ -290,7 +290,7 @@ export interface ManagerAgentReadiness {
   ready: boolean
   status: 'ready' | 'blocked'
   harness: ManagerAgentHarness
-  runtime_placement: 'host' | 'host_shell' | 'container' | null
+  runtime_placement: 'host' | 'host_shell' | null
   agent_type: string | null
   provider_name: string | null
   model_name: string | null
@@ -355,7 +355,7 @@ export async function getManagerAgentReadiness(): Promise<ManagerAgentReadiness>
 }
 
 export async function probeDockerWorkspaceMount(): Promise<DockerWorkspaceProbeResult> {
-  const res = await http.post<BaseResponse<DockerWorkspaceProbeResult>>('/api/manager-agent/docker-workspace-probe', {}) as unknown as BaseResponse<DockerWorkspaceProbeResult>
+  const res = await http.post<BaseResponse<DockerWorkspaceProbeResult>>('/api/dag/docker-workspace-probe', {}) as unknown as BaseResponse<DockerWorkspaceProbeResult>
   return res.data
 }
 

@@ -7,11 +7,13 @@ import { readManagerAgentConfig, type ManagerAgentConfig } from "../persistence/
 import { sendLifecycleRequest } from "../node/lifecycle-request.js";
 import { getHomerailHome } from "../config/env.js";
 import {
-  ensureLocalDockerNode,
   resolveManagerAgentConfig,
-  type ManagerAgentContainerOptions,
-} from "./manager-agent-container.js";
+} from "./manager-agent-runtime-config.js";
 import { hostShellDiagnostics } from "./host-shell-manager-agent.js";
+import {
+  ensureLocalDockerNode,
+  type LocalDockerNodeOptions,
+} from "./local-docker-node.js";
 import { readDagResourceStatus, type DagResourceStatus } from "./dag-resource-status.js";
 import { resolveCodexBinary, runCodexCommandSync } from "./codex-binary.js";
 import {
@@ -36,7 +38,7 @@ interface ManagerAgentReadiness {
   ready: boolean;
   status: "ready" | "blocked";
   harness: string;
-  runtime_placement: "host" | "host_shell" | "container" | null;
+  runtime_placement: "host" | "host_shell" | null;
   agent_type: string | null;
   provider_name: string | null;
   model_name: string | null;
@@ -44,11 +46,6 @@ interface ManagerAgentReadiness {
   checks: {
     config: boolean;
     codex?: CodexCheck;
-    docker_node?: {
-      required: boolean;
-      available: boolean;
-      node_ids: string[];
-    };
     docker_workspace?: {
       required: boolean;
       host_path: string;
@@ -117,10 +114,10 @@ function errorMessage(error: unknown): string {
 }
 
 async function probeDockerWorkspaceMount(
-  managerAgentOptions?: ManagerAgentContainerOptions,
+  options?: DockerWorkspaceProbeOptions,
 ): Promise<Record<string, unknown>> {
   const nodeId = dockerCapableNodeIds()[0]
-    ?? (managerAgentOptions ? await ensureLocalDockerNode(managerAgentOptions) : undefined);
+    ?? (options ? await ensureLocalDockerNode(options) : undefined);
   const workspaceRoot = dockerWorkspaceRoot();
   fs.mkdirSync(workspaceRoot, { recursive: true });
 
@@ -135,7 +132,7 @@ async function probeDockerWorkspaceMount(
     };
   }
 
-  const image = managerAgentOptions?.image ?? "homerail-worker:latest";
+  const image = options?.image ?? "homerail-worker:latest";
   const name = `homerail-docker-workspace-probe-${Date.now()}`;
   let containerId = "";
   try {
@@ -191,7 +188,6 @@ async function probeDockerWorkspaceMount(
 }
 
 export function managerAgentReadiness(
-  managerAgentOptions?: ManagerAgentContainerOptions,
   effectiveConfig?: ManagerAgentConfig,
 ): ManagerAgentReadiness {
   const config = effectiveConfig ?? readManagerAgentConfig();
@@ -218,7 +214,10 @@ export function managerAgentReadiness(
     ready: false,
     status: "blocked",
     harness: config.harness,
-    runtime_placement: runtimeConfig?.runtime_placement ?? null,
+    runtime_placement: runtimeConfig?.runtime_placement === "host"
+      || runtimeConfig?.runtime_placement === "host_shell"
+      ? runtimeConfig.runtime_placement
+      : null,
     agent_type: runtimeConfig?.agent_type ?? null,
     provider_name: runtimeConfig?.provider_name ?? config.provider_name,
     model_name: runtimeConfig?.model ?? config.model_name,
@@ -228,7 +227,7 @@ export function managerAgentReadiness(
       docker_workspace: {
         required: true,
         host_path: dockerWorkspaceRoot(),
-        probe_endpoint: "/api/manager-agent/docker-workspace-probe",
+        probe_endpoint: "/api/dag/docker-workspace-probe",
       },
       dag_resources: readDagResourceStatus(),
     },
@@ -260,24 +259,10 @@ export function managerAgentReadiness(
       });
     }
   } else {
-    const nodeIds = dockerCapableNodeIds();
-    readiness.checks.docker_node = {
-      required: true,
-      available: nodeIds.length > 0,
-      node_ids: nodeIds,
-    };
-    if (!managerAgentOptions) {
-      blockers.push({
-        code: "manager_container_options_missing",
-        message: "Manager Agent container execution is not enabled",
-      });
-    }
-    if (nodeIds.length === 0) {
-      blockers.push({
-        code: "docker_node_unavailable",
-        message: "No connected docker-capable node available",
-      });
-    }
+    blockers.push({
+      code: "manager_runtime_placement_invalid",
+      message: "Manager Agent must run on the host",
+    });
   }
 
   readiness.ready = blockers.length === 0;
@@ -288,8 +273,8 @@ export function managerAgentReadiness(
 export function managerAgentReadinessRoutesHandler(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  managerAgentOptions?: ManagerAgentContainerOptions,
   managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
+  dockerWorkspaceOptions?: DockerWorkspaceProbeOptions,
 ): boolean {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
   if (pathname === "/api/manager-agent/readiness") {
@@ -298,19 +283,19 @@ export function managerAgentReadinessRoutesHandler(
       return true;
     }
     void ensurePreferredManagerAgentConfig(managerAgentConfigOptions)
-      .then((config) => ok(res, "Manager Agent readiness checked", managerAgentReadiness(managerAgentOptions, config)))
+      .then((config) => ok(res, "Manager Agent readiness checked", managerAgentReadiness(config)))
       .catch((error) => json(res, 500, {
         success: false,
         message: error instanceof Error ? error.message : String(error),
       }));
     return true;
   }
-  if (pathname === "/api/manager-agent/docker-workspace-probe") {
+  if (pathname === "/api/dag/docker-workspace-probe") {
     if (req.method !== "POST") {
       methodNotAllowed(res);
       return true;
     }
-    void probeDockerWorkspaceMount(managerAgentOptions)
+    void probeDockerWorkspaceMount(dockerWorkspaceOptions)
       .then((data) => ok(res, "Docker workspace mount checked", data))
       .catch((err) => json(res, 500, {
         success: false,
@@ -320,4 +305,8 @@ export function managerAgentReadinessRoutesHandler(
     return true;
   }
   return false;
+}
+
+export interface DockerWorkspaceProbeOptions extends LocalDockerNodeOptions {
+  image?: string;
 }

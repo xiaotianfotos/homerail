@@ -1,13 +1,9 @@
 import {
-  ensureManagerAgentContainer,
-  forwardChatToManagerAgentContainer,
-  type ManagerAgentContainerOptions,
-  type ManagerAgentRuntimeConfig,
-} from "./manager-agent-container.js";
-import {
   ensureHostShellManagerAgent,
   forwardChatToHostShellManagerAgent,
+  type HostShellManagerAgentOptions,
 } from "./host-shell-manager-agent.js";
+import type { ManagerAgentRuntimeConfig } from "./manager-agent-runtime-config.js";
 import {
   HostCodexManagerAgentExecutionError,
   HostCodexManagerAgentObjectiveUnsatisfiedError,
@@ -38,11 +34,19 @@ import {
   type GenerativeUiCanvasContextV1,
   type ManagerAgentDagContextV1,
   type ManagerAgentRuntimePlacement,
+  type ManagerAgentOutcomeCapability,
+  type ManagerAgentOutcomeContract,
   type HomerailPluginTurnContextV1,
   type ManagerAgentSkillViewTemplateV1,
 } from "homerail-protocol";
+import {
+  assertManagerAgentOutcomeContractsResolvable,
+  enforceManagerAgentOutcomeContracts,
+  ManagerAgentOutcomeUnsatisfiedError,
+  resolveManagerAgentOutcomeContracts,
+} from "./manager-agent-outcomes.js";
 import type { GenerativeUiMode } from "../generative-ui/mode.js";
-import { getActivePlugin, isTrustedRegistryPluginAgentAsset } from "../persistence/plugins.js";
+import { getActivePlugin } from "../persistence/plugins.js";
 import {
   acknowledgePluginAgentToolContinuationLease,
   leasePluginAgentToolContinuations,
@@ -79,6 +83,8 @@ export interface RunManagerAgentTurnInput {
   dag_context?: ManagerAgentDagContextV1;
   history?: Array<{ role?: string; content?: string; timestamp?: string }>;
   required_tool_calls?: string[];
+  /** Stable product outcomes resolved to live Tools after Plugin selection. */
+  required_outcomes?: ManagerAgentOutcomeCapability[];
   agent_config: ManagerAgentRuntimeConfig;
   voice_ui_rules?: VoiceUiRules;
   manager_skills?: ManagerSkillSummary[];
@@ -91,9 +97,8 @@ export interface RunManagerAgentTurnInput {
 export interface RunManagerAgentTurnResult {
   result: Record<string, unknown>;
   worker_id: string | null;
-  container_name: string | null;
   runtime_placement: ManagerAgentRuntimePlacement;
-  /** Exact selected context delivered to the host/container for this turn. */
+  /** Exact selected context delivered to the host runtime for this turn. */
   plugin_context: HomerailPluginTurnContextV1;
 }
 
@@ -101,6 +106,7 @@ export interface ResolvedManagerAgentTurnAssets {
   plugin_context: HomerailPluginTurnContextV1;
   manager_skills: ResolvedManagerSkill[];
   route: PluginCapabilityRouteResult | null;
+  outcome_contracts: ManagerAgentOutcomeContract[];
 }
 
 export interface ResolvedManagerSkill extends ManagerSkillSummary {
@@ -114,8 +120,8 @@ export type RunManagerAgentTurnStreamEvent =
 
 export class ManagerAgentRuntimeError extends Error {
   readonly code:
-    | "manager_container_options_missing"
-    | "manager_container_error"
+    | "manager_runtime_options_missing"
+    | "manager_runtime_start_error"
     | "manager_chat_error";
   readonly runtime_placement: ManagerAgentRuntimePlacement;
   readonly data: Record<string, unknown>;
@@ -135,9 +141,8 @@ export class ManagerAgentRuntimeError extends Error {
 }
 
 export function managerAgentRuntimePlacement(config: ManagerAgentRuntimeConfig): ManagerAgentRuntimePlacement {
-  if (config.runtime_placement) return config.runtime_placement;
   const harness = normalizeManagerAgentHarness(config.agent_type);
-  return harness ? managerAgentRuntimePlacementForHarness(harness) : "container";
+  return harness ? managerAgentRuntimePlacementForHarness(harness) : "host_shell";
 }
 
 function scopedManagerSkills(
@@ -320,13 +325,11 @@ function resolveManagerSkillsForTurn(
 }
 
 /**
- * Host and host-shell Agents remain same-UID authority and accept only
- * bundled assets. The isolated container placement may additionally receive
- * active Registry assets whose HRP publisher is still exactly trusted.
+ * Manager Agents run with host authority and accept only bundled assets.
  */
 function assertAgentPromptTrust(
   context: HomerailPluginTurnContextV1,
-  placement: ManagerAgentRuntimePlacement,
+  _placement: ManagerAgentRuntimePlacement,
 ): void {
   const plugins = new Map<string, string>();
   for (const entry of [...context.skills, ...context.tools, ...context.actions]) {
@@ -336,22 +339,18 @@ function assertAgentPromptTrust(
   }
   for (const [pluginId, pluginVersion] of plugins) {
     const plugin = getActivePlugin(pluginId);
-    if (plugin?.source === "builtin") continue;
-    if (placement !== "container"
-      || !plugin
-      || plugin.plugin_version !== pluginVersion
-      || !plugin.activation.enabled
-      || !isTrustedRegistryPluginAgentAsset(pluginId, pluginVersion)) {
-      throw new Error(
-        `Installed Plugin Agent assets require an active trusted Registry HRP and isolated container placement: ${pluginId}`,
-      );
-    }
+    if (
+      plugin?.source === "builtin"
+      && plugin.plugin_version === pluginVersion
+      && plugin.activation.enabled
+    ) continue;
+    throw new Error(`Only bundled Plugin Agent assets can run in the host Manager: ${pluginId}`);
   }
 }
 
 /**
  * Resolve Plugin assets once before runtime placement. This is the parity
- * boundary shared by host Codex, host-shell and container workers.
+ * boundary shared by host Codex and host-shell workers.
  */
 export function resolveManagerAgentTurnAssets(
   input: RunManagerAgentTurnInput,
@@ -362,10 +361,18 @@ export function resolveManagerAgentTurnAssets(
       modality: input.response_mode === "voice" ? "voice" : "text",
     });
     assertAgentPromptTrust(pluginContext, placement);
+    const managerSkills = resolveManagerSkillsForTurn(input.manager_skills, pluginContext, input.message);
     return {
       plugin_context: pluginContext,
-      manager_skills: resolveManagerSkillsForTurn(input.manager_skills, pluginContext, input.message),
+      manager_skills: managerSkills,
       route: null,
+      outcome_contracts: resolveManagerAgentOutcomeContracts({
+        required_outcomes: input.required_outcomes,
+        response_mode: input.response_mode,
+        plugin_context: pluginContext,
+        manager_skills: managerSkills,
+        canvas_context: input.canvas_context,
+      }),
     };
   }
   const hints = input.plugin_routing;
@@ -396,11 +403,26 @@ export function resolveManagerAgentTurnAssets(
     ], route.permission_revision)
     : route.selected_context;
   assertAgentPromptTrust(selectedContext, placement);
+  const managerSkills = resolveManagerSkillsForTurn(input.manager_skills, selectedContext, input.message);
   return {
     plugin_context: selectedContext,
-    manager_skills: resolveManagerSkillsForTurn(input.manager_skills, selectedContext, input.message),
+    manager_skills: managerSkills,
     route,
+    outcome_contracts: resolveManagerAgentOutcomeContracts({
+      required_outcomes: input.required_outcomes,
+      response_mode: input.response_mode,
+      plugin_context: selectedContext,
+      manager_skills: managerSkills,
+      canvas_context: input.canvas_context,
+    }),
   };
+}
+
+function managerAgentRuntimeCauseData(err: unknown): Record<string, unknown> {
+  if (err instanceof HostCodexManagerAgentExecutionError
+    || err instanceof HostCodexManagerAgentObjectiveUnsatisfiedError
+    || err instanceof ManagerAgentOutcomeUnsatisfiedError) return err.data;
+  return {};
 }
 
 function pluginToolTurnToken(
@@ -429,12 +451,23 @@ function pluginToolTurnToken(
 
 async function runManagerAgentTurnOnce(
   input: RunManagerAgentTurnInput,
-  options?: ManagerAgentContainerOptions,
+  options?: HostShellManagerAgentOptions,
 ): Promise<RunManagerAgentTurnResult> {
   const runtimePlacement = managerAgentRuntimePlacement(input.agent_config);
   const turnAssets = resolveManagerAgentTurnAssets(input);
   const pluginContext = turnAssets.plugin_context;
   const managerSkills = turnAssets.manager_skills;
+  const outcomeContracts = turnAssets.outcome_contracts;
+  try {
+    assertManagerAgentOutcomeContractsResolvable(outcomeContracts);
+  } catch (err) {
+    throw new ManagerAgentRuntimeError(
+      "manager_chat_error",
+      err instanceof Error ? err.message : String(err),
+      runtimePlacement,
+      managerAgentRuntimeCauseData(err),
+    );
+  }
   const toolTurnToken = pluginToolTurnToken(input, pluginContext);
   if (runtimePlacement === "host") {
     try {
@@ -448,6 +481,7 @@ async function runManagerAgentTurnOnce(
         canvas_context: input.canvas_context,
         dag_context: input.dag_context,
         required_tool_calls: input.required_tool_calls,
+        ...(outcomeContracts.length ? { outcome_contracts: outcomeContracts } : {}),
         agent_config: input.agent_config,
         managerRestUrl: options?.managerRestUrl,
         response_mode: input.response_mode,
@@ -457,9 +491,8 @@ async function runManagerAgentTurnOnce(
         ...(toolTurnToken ? { plugin_tool_turn_token: toolTurnToken } : {}),
       });
       return {
-        result,
+        result: enforceManagerAgentOutcomeContracts(result, outcomeContracts),
         worker_id: typeof result.worker_id === "string" ? result.worker_id : "host-codex",
-        container_name: typeof result.container_name === "string" ? result.container_name : null,
         runtime_placement: runtimePlacement,
         plugin_context: pluginContext,
       };
@@ -471,10 +504,7 @@ async function runManagerAgentTurnOnce(
         {
           worker_id: "host-codex",
           project_id: input.project_id ?? null,
-          ...(err instanceof HostCodexManagerAgentExecutionError
-            || err instanceof HostCodexManagerAgentObjectiveUnsatisfiedError
-            ? err.data
-            : {}),
+          ...managerAgentRuntimeCauseData(err),
         },
       );
     }
@@ -482,78 +512,26 @@ async function runManagerAgentTurnOnce(
 
   if (!options) {
     throw new ManagerAgentRuntimeError(
-      "manager_container_options_missing",
-      runtimePlacement === "host_shell"
-        ? "Manager Agent host-shell options are not configured"
-        : "Manager Agent container options are not configured",
+      "manager_runtime_options_missing",
+      "Manager Agent host runtime options are not configured",
       runtimePlacement,
       { project_id: input.project_id ?? null },
     );
   }
 
-  if (runtimePlacement === "host_shell") {
-    let hostAgent;
-    try {
-      hostAgent = await ensureHostShellManagerAgent(input.project_id ?? undefined, options);
-    } catch (err) {
-      throw new ManagerAgentRuntimeError(
-        "manager_container_error",
-        err instanceof Error ? err.message : String(err),
-        runtimePlacement,
-        { project_id: input.project_id ?? null },
-      );
-    }
-    try {
-      const result = await forwardChatToHostShellManagerAgent(hostAgent, {
-        message: input.message,
-        project_id: input.project_id,
-        session_id: input.session_id,
-        voice_session_id: input.voice_session_id,
-        continue_chat: input.continue_chat,
-        response_mode: input.response_mode,
-        generative_ui_mode: input.generative_ui_mode,
-        history: input.history,
-        canvas_context: input.canvas_context,
-        dag_context: input.dag_context,
-        required_tool_calls: input.required_tool_calls,
-        agent_config: input.agent_config,
-        voice_ui_rules: input.voice_ui_rules,
-        voice_system_contract: input.response_mode === "voice" ? loadVoiceSystemContract() : undefined,
-        manager_skills: managerSkills,
-        plugin_context: pluginContext,
-        ...(toolTurnToken ? { plugin_tool_turn_token: toolTurnToken } : {}),
-      });
-      return {
-        result,
-        worker_id: hostAgent.workerId,
-        container_name: hostAgent.processName,
-        runtime_placement: runtimePlacement,
-        plugin_context: pluginContext,
-      };
-    } catch (err) {
-      throw new ManagerAgentRuntimeError(
-        "manager_chat_error",
-        err instanceof Error ? err.message : String(err),
-        runtimePlacement,
-        { worker_id: hostAgent.workerId, project_id: input.project_id ?? null },
-      );
-    }
-  }
-
-  let container;
+  let hostAgent;
   try {
-    container = await ensureManagerAgentContainer(input.project_id ?? undefined, options);
+    hostAgent = await ensureHostShellManagerAgent(input.project_id ?? undefined, options);
   } catch (err) {
     throw new ManagerAgentRuntimeError(
-      "manager_container_error",
+      "manager_runtime_start_error",
       err instanceof Error ? err.message : String(err),
       runtimePlacement,
       { project_id: input.project_id ?? null },
     );
   }
-
   try {
-    const result = await forwardChatToManagerAgentContainer(container, {
+    const result = await forwardChatToHostShellManagerAgent(hostAgent, {
       message: input.message,
       project_id: input.project_id,
       session_id: input.session_id,
@@ -565,6 +543,7 @@ async function runManagerAgentTurnOnce(
       canvas_context: input.canvas_context,
       dag_context: input.dag_context,
       required_tool_calls: input.required_tool_calls,
+      ...(outcomeContracts.length ? { outcome_contracts: outcomeContracts } : {}),
       agent_config: input.agent_config,
       voice_ui_rules: input.voice_ui_rules,
       voice_system_contract: input.response_mode === "voice" ? loadVoiceSystemContract() : undefined,
@@ -573,9 +552,8 @@ async function runManagerAgentTurnOnce(
       ...(toolTurnToken ? { plugin_tool_turn_token: toolTurnToken } : {}),
     });
     return {
-      result,
-      worker_id: container.containerId,
-      container_name: container.containerName,
+      result: enforceManagerAgentOutcomeContracts(result, outcomeContracts),
+      worker_id: hostAgent.workerId,
       runtime_placement: runtimePlacement,
       plugin_context: pluginContext,
     };
@@ -585,9 +563,9 @@ async function runManagerAgentTurnOnce(
       err instanceof Error ? err.message : String(err),
       runtimePlacement,
       {
+        worker_id: hostAgent.workerId,
         project_id: input.project_id ?? null,
-        container_id: container.containerId,
-        worker_id: container.containerId,
+        ...managerAgentRuntimeCauseData(err),
       },
     );
   }
@@ -621,7 +599,7 @@ function messageWithContinuations(
 
 export async function runManagerAgentTurn(
   input: RunManagerAgentTurnInput,
-  options?: ManagerAgentContainerOptions,
+  options?: HostShellManagerAgentOptions,
 ): Promise<RunManagerAgentTurnResult> {
   const lease = continuationLease(input);
   try {
@@ -639,7 +617,7 @@ export async function runManagerAgentTurn(
 
 export async function* runManagerAgentTurnStream(
   input: RunManagerAgentTurnInput,
-  options?: ManagerAgentContainerOptions,
+  options?: HostShellManagerAgentOptions,
 ): AsyncGenerator<RunManagerAgentTurnStreamEvent> {
   const runtimePlacement = managerAgentRuntimePlacement(input.agent_config);
   if (runtimePlacement !== "host") {
@@ -653,6 +631,8 @@ export async function* runManagerAgentTurnStream(
     const turnAssets = resolveManagerAgentTurnAssets(input);
     const pluginContext = turnAssets.plugin_context;
     const managerSkills = turnAssets.manager_skills;
+    const outcomeContracts = turnAssets.outcome_contracts;
+    assertManagerAgentOutcomeContractsResolvable(outcomeContracts);
     const toolTurnToken = pluginToolTurnToken(input, pluginContext);
     for await (const event of runHostCodexManagerAgentTurnStream({
       message: messageWithContinuations(input.message, lease.records),
@@ -664,6 +644,7 @@ export async function* runManagerAgentTurnStream(
       canvas_context: input.canvas_context,
       dag_context: input.dag_context,
       required_tool_calls: input.required_tool_calls,
+      ...(outcomeContracts.length ? { outcome_contracts: outcomeContracts } : {}),
       agent_config: input.agent_config,
       managerRestUrl: options?.managerRestUrl,
       response_mode: input.response_mode,
@@ -675,6 +656,7 @@ export async function* runManagerAgentTurnStream(
       if (event.type === "commentary") {
         yield { type: "commentary", text: event.text };
       } else if (event.type === "result") {
+        const result = enforceManagerAgentOutcomeContracts(event.result, outcomeContracts);
         if (lease.lease_id && !continuationAcknowledged) {
           acknowledgePluginAgentToolContinuationLease(lease.lease_id);
           continuationAcknowledged = true;
@@ -682,9 +664,8 @@ export async function* runManagerAgentTurnStream(
         yield {
           type: "result",
           result: {
-            result: event.result,
-            worker_id: typeof event.result.worker_id === "string" ? event.result.worker_id : "host-codex",
-            container_name: typeof event.result.container_name === "string" ? event.result.container_name : null,
+            result,
+            worker_id: typeof result.worker_id === "string" ? result.worker_id : "host-codex",
             runtime_placement: runtimePlacement,
             plugin_context: pluginContext,
           },
@@ -699,10 +680,7 @@ export async function* runManagerAgentTurnStream(
       {
         worker_id: "host-codex",
         project_id: input.project_id ?? null,
-        ...(err instanceof HostCodexManagerAgentExecutionError
-          || err instanceof HostCodexManagerAgentObjectiveUnsatisfiedError
-          ? err.data
-          : {}),
+        ...managerAgentRuntimeCauseData(err),
       },
     );
   } finally {

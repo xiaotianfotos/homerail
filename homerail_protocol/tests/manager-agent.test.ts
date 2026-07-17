@@ -29,10 +29,13 @@ import {
   formatHomeRailPromptToolCall,
   managerAgentDagCommandResult,
   managerAgentCommonToolCatalog,
+  managerAgentOutcomeObjectivePrompt,
+  managerAgentPluginToolCallName,
   managerAgentRequiredToolObjectivePrompt,
   managerAgentToolSpec,
   normalizeManagerAgentDagActorCommandInput,
   normalizeManagerAgentDagActorInterventionInput,
+  normalizeManagerAgentOutcomeCapabilities,
   normalizeManagerAgentRequiredToolCalls,
   parseHomeRailPromptHandoff,
   parseHomeRailPromptToolCalls,
@@ -73,6 +76,32 @@ describe("Manager Agent required tool objective", () => {
     expect(prompt).toContain("runtime verifies successful tool completion");
     expect(prompt).not.toMatch(/game|showcase|three-worker/i);
     expect(managerAgentRequiredToolObjectivePrompt(undefined)).toBe("");
+  });
+});
+
+describe("Manager Agent stable outcome contract", () => {
+  it("normalizes capabilities and renders an any-of Tool objective", () => {
+    expect(normalizeManagerAgentOutcomeCapabilities([
+      "canvas.view.committed",
+      "canvas.view.committed",
+      "artifact.published",
+      "unknown",
+    ])).toEqual(["canvas.view.committed", "artifact.published"]);
+    const prompt = managerAgentOutcomeObjectivePrompt([{
+      capability: "canvas.view.committed",
+      tool_names: ["upsert_generated_view", "skill_view_route"],
+    }]);
+    expect(prompt).toContain("one of [upsert_generated_view, skill_view_route]");
+    expect(prompt).toContain("filesystem-only output does not satisfy");
+  });
+
+  it("exposes a readable unique plugin alias while retaining wire ids for collisions", () => {
+    const unique = { local_id: "upsert_generated_view", wire_id: "p_123_upsert_generated_view" };
+    expect(managerAgentPluginToolCallName(unique, [unique])).toBe("upsert_generated_view");
+    const duplicate = { local_id: "upsert_generated_view", wire_id: "p_456_upsert_generated_view" };
+    expect(managerAgentPluginToolCallName(unique, [unique, duplicate])).toBe(unique.wire_id);
+    const reserved = { local_id: "finish", wire_id: "p_123_finish" };
+    expect(managerAgentPluginToolCallName(reserved, [reserved])).toBe(reserved.wire_id);
   });
 });
 
@@ -154,8 +183,8 @@ describe("Manager Agent harness contract", () => {
   it("declares the only Manager Agent runtime placement boundary", () => {
     expect(Object.values(ManagerAgentRuntimePlacement)).toEqual(["host", "host_shell", "container"]);
     expect(managerAgentRuntimePlacementForHarness("codex_appserver")).toBe("host");
-    expect(managerAgentRuntimePlacementForHarness("kimi_code")).toBe("container");
-    expect(managerAgentRuntimePlacementForHarness("claude_agent_sdk")).toBe("container");
+    expect(managerAgentRuntimePlacementForHarness("kimi_code")).toBe("host_shell");
+    expect(managerAgentRuntimePlacementForHarness("claude_agent_sdk")).toBe("host_shell");
   });
 
   it("maps public harness ids to runtime agent types", () => {
@@ -741,18 +770,20 @@ describe("Manager Agent harness contract", () => {
     expect(removed).toEqual(["written"]);
   });
 
-  it("builds one voice prompt contract for host and container harnesses", () => {
+  it("builds one voice prompt contract for host harnesses", () => {
     const prompt = buildManagerAgentSystemPrompt({
       responseMode: "voice",
-      runtime: { placement: "container", provider: "kimi", model: "kimi-code" },
+      runtime: { placement: "host_shell", provider: "kimi", model: "kimi-code" },
       voiceSystem: { source: "system:test", prompt: "VOICE_SYSTEM" },
       voiceUiRules: { sources: ["user:test"], hash: "abc123", prompt: "VOICE_RULES" },
     });
-    expect(prompt).toContain("manager-agent container");
+    expect(prompt).toContain("manager-agent host process");
     expect(prompt).toContain("VOICE_SYSTEM");
     expect(prompt).toContain("Voice UI rules hash: abc123");
     expect(prompt).toContain("VOICE_RULES");
     expect(prompt).toContain("Use tool-created widgets for generated UI");
+    expect(prompt).toContain("User-facing replies describe the user's goal, the visible result");
+    expect(prompt).toContain("这次没能把卡片放到画布，我可以继续重试。");
     expect(prompt).toContain("Commentary is spoken too");
     expect(prompt).toContain("never narrate Skill loading, tool names, read-only checks, rendering, or canvas updates");
     expect(prompt).toContain("inspect command_payload_contract");
@@ -836,11 +867,11 @@ describe("Manager Agent harness contract", () => {
     expect(prompt).toContain("pal-profile: Compact profile with a real icon.");
   });
 
-  it("describes host-shell manager agents separately from containers", () => {
+  it("describes non-Codex manager agents as host processes", () => {
     const prompt = buildManagerAgentSystemPrompt({
       runtime: { placement: "host_shell", provider: "kimi", model: "kimi-k2.7" },
     });
-    expect(prompt).toContain("manager-agent host shell process");
+    expect(prompt).toContain("manager-agent host process");
     expect(prompt).not.toContain("manager-agent container");
   });
 

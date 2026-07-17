@@ -111,7 +111,6 @@ function resultWithWidget(input: { session_id?: string }, data: Record<string, u
       remove_widget_ids: [],
     },
     worker_id: "host-codex",
-    container_name: null,
   };
 }
 
@@ -408,7 +407,6 @@ describe("Voice Generative UI shadow runtime", () => {
         plugin_projections: [envelope],
       },
       worker_id: "host-codex",
-      container_name: null,
     }));
     const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${sessionId}/turn`, {
       method: "POST",
@@ -502,7 +500,6 @@ describe("Voice Generative UI shadow runtime", () => {
         plugin_projections: [envelope],
       },
       worker_id: "host-codex",
-      container_name: null,
     }));
 
     const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${sessionId}/turn`, {
@@ -591,7 +588,6 @@ describe("Voice Generative UI shadow runtime", () => {
         plugin_projections: [pluginEnvelope],
       },
       worker_id: "host-codex",
-      container_name: null,
     });
 
     const tampered = structuredClone(envelope);
@@ -703,7 +699,6 @@ describe("Voice Generative UI shadow runtime", () => {
           plugin_projections: [envelope],
         },
         worker_id: "host-codex",
-        container_name: null,
       };
     });
     const response = await fetch(`${baseUrl}/api/voice-agent/sessions/${sessionId}/turn`, {

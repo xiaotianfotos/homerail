@@ -22,4 +22,4 @@ Model the verification flow with stable node ids and explicit `depends_on` edges
 
 This Tool projects data only. It does not approve or merge a pull request, rerun CI, resolve review threads, or modify GitHub state. Do not describe a navigation link as if its external action already happened.
 
-If the qualified Tool is absent, the capability is unavailable. Do not route around it with legacy dynamic-widget tools.
+Use the matching PR closeout Tool only when it is listed for the current turn. Do not substitute a legacy dynamic widget. If the report is not placed on the canvas, tell the user only that visible result and offer to retry.
