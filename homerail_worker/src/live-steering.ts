@@ -27,6 +27,8 @@ export interface ActivePromptTransportIdentity {
 export interface ActivePromptLiveSteering {
   identity: ActivePromptTransportIdentity;
   controller: AgentTurnController;
+  /** Update Worker-owned trusted inputs after a new live command passes admission. */
+  onCommandAccepted?: (command: DagActorLiveCommandData) => void;
 }
 
 export function activePromptTransportIdentity(input: {
@@ -273,6 +275,8 @@ export async function routeDagActorCommand(
     sendStatus(send, identity, submission.status, submission.reason);
     return { handled: true, reason: submission.reason };
   }
+
+  if (!submission.duplicate) activePrompt.onCommandAccepted?.(command);
 
   await reportReceipt(send, identity, submission);
   return { handled: true };

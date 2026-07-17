@@ -6,10 +6,12 @@
 
 import {
   normalizeManagerAgentRuntimeAgentType,
+  validateDagActorSurfaceMediaV1,
   type DagActorCheckpointV1,
   type DagAdvisorConfig,
   type DagNodeConfig,
   type DagWorkerSkillContextSummaryV1,
+  type DagWorkerSkillVisualDataContractV1,
 } from "homerail-protocol";
 import { createAgentClient } from "./agent/factory.js";
 import type { AgentEvent, AgentRunContext, AgentUsage } from "./agent/types.js";
@@ -25,7 +27,12 @@ import { completedActivityPayloadForHandoff, createDagActivityEmitter } from "./
 import {
   REPORT_SURFACE_STATE_PROMPT,
   REPORT_SURFACE_STATE_TOOL_NAME,
+  type PinnedSurfaceViewRegistry,
 } from "./dag-tools/report-surface-state.js";
+import {
+  createSurfaceMediaPublisher,
+  type SurfaceMediaDownloader,
+} from "./dag-tools/surface-media.js";
 
 export interface PromptJob {
   task: string;
@@ -45,6 +52,10 @@ export interface PromptJob {
   };
   actorCheckpoint?: DagActorCheckpointV1;
   skillContextSummary?: DagWorkerSkillContextSummaryV1;
+  pinnedSurfaceViews?: PinnedSurfaceViewRegistry;
+  pinnedSurfaceDataContracts?: ReadonlyMap<string, DagWorkerSkillVisualDataContractV1>;
+  /** Manager-dispatched structured inputs retained outside the model prompt. */
+  trustedInputs?: Readonly<Record<string, unknown[]>>;
 }
 
 export interface PromptRunnerDeps {
@@ -55,6 +66,7 @@ export interface PromptRunnerDeps {
   abortSignal?: AbortSignal;
   turnController?: AgentTurnController;
   registerInboxHandler?: (handler: (content: unknown) => void) => () => void;
+  surfaceMediaDownloader?: SurfaceMediaDownloader;
 }
 
 export type PromptRunResult =
@@ -232,6 +244,12 @@ export async function runPrompt(
     ? undefined
     : new Set<string>(job.dagConfig.allowed_dag_tools);
   const surfacePatchAllowed = allowedDagTools?.has(REPORT_SURFACE_STATE_TOOL_NAME) === true;
+  const surfaceMediaPublisher = surfacePatchAllowed
+    ? createSurfaceMediaPublisher(dagState, (media) => sendStream({
+        event: "dag_actor_surface_media",
+        media,
+      }), deps.surfaceMediaDownloader)
+    : undefined;
   const allDagTools = createDagTools(dagState, {
     advisorRunner: (advisor, question) => runAdvisorCall(advisor, question, workspace, deps.abortSignal),
     activityEmitter: (type, payload) => activityEmitter.emit(type, payload),
@@ -242,6 +260,10 @@ export async function runPrompt(
             surface_id,
             patch,
           }),
+          surfaceMediaPublisher,
+          pinnedSurfaceViews: job.pinnedSurfaceViews,
+          pinnedSurfaceDataContracts: job.pinnedSurfaceDataContracts,
+          trustedInputs: job.trustedInputs,
         }
       : {}),
   });
@@ -315,7 +337,16 @@ export async function runPrompt(
   }
 
   function sendStream(data: Record<string, unknown>) {
-    const redactedData = redactTelemetry(data) as Record<string, unknown>;
+    let redactedData: Record<string, unknown>;
+    if (data.event === "dag_actor_surface_media") {
+      const validation = validateDagActorSurfaceMediaV1(data.media);
+      if (!validation.valid) {
+        throw new Error(`invalid Actor surface media stream: ${validation.errors[0]?.message ?? "validation failed"}`);
+      }
+      redactedData = { event: "dag_actor_surface_media", media: data.media };
+    } else {
+      redactedData = redactTelemetry(data) as Record<string, unknown>;
+    }
     wsSend(
       JSON.stringify({
         type: "stream",

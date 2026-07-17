@@ -246,8 +246,57 @@ export function resolveDagWorkerSkillContext(input: {
   return createDagWorkerSkillContextV1(ids.map((id) => resolveSkill(id, input.options ?? {})));
 }
 
+function availableSurfaceViewIds(context: DagWorkerSkillContextV1): Set<string> {
+  const result = new Set<string>();
+  const localCounts = new Map<string, number>();
+  for (const skill of context.skills) {
+    for (const view of skill.visual_profile?.views ?? []) {
+      result.add(`${skill.id}:${view.id}`);
+      localCounts.set(view.id, (localCounts.get(view.id) ?? 0) + 1);
+    }
+  }
+  for (const [viewId, count] of localCounts) {
+    if (count === 1) result.add(viewId);
+  }
+  return result;
+}
+
+export function assertDagWorkerSurfaceViewAllowlist(input: {
+  agent_id: string;
+  context: DagWorkerSkillContextV1;
+  allowed_surface_views?: readonly string[];
+}): void {
+  if (input.allowed_surface_views === undefined) return;
+  if (!Array.isArray(input.allowed_surface_views) || input.allowed_surface_views.length > 64) {
+    throw new Error(`Workflow agent ${input.agent_id} allowed_surface_views must contain at most 64 ids`);
+  }
+  const ids = input.allowed_surface_views.map((viewId) => {
+    if (typeof viewId !== "string"
+      || !viewId
+      || viewId.trim() !== viewId
+      || viewId.length > 385
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(viewId)) {
+      throw new Error(`Workflow agent ${input.agent_id} contains an invalid allowed Surface view id`);
+    }
+    return viewId;
+  });
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`Workflow agent ${input.agent_id} contains duplicate allowed Surface view ids`);
+  }
+  const available = availableSurfaceViewIds(input.context);
+  const unknown = ids.filter((viewId) => !available.has(viewId)).sort();
+  if (unknown.length > 0) {
+    throw new Error(
+      `Workflow agent ${input.agent_id} allows unavailable pinned Surface view '${unknown[0]}'`,
+    );
+  }
+}
+
 export function resolveDeclaredDagWorkerSkillContexts(input: {
-  agents: Readonly<Record<string, { skills?: readonly string[] }>>;
+  agents: Readonly<Record<string, {
+    skills?: readonly string[];
+    allowed_surface_views?: readonly string[];
+  }>>;
   options?: DagWorkerSkillResolverOptions;
 }): Record<string, DagWorkerSkillContextV1> {
   const result: Record<string, DagWorkerSkillContextV1> = {};
@@ -257,6 +306,11 @@ export function resolveDeclaredDagWorkerSkillContexts(input: {
       agent_id: agentId,
       skills: agent.skills ?? [],
       options: input.options,
+    });
+    assertDagWorkerSurfaceViewAllowlist({
+      agent_id: agentId,
+      context,
+      allowed_surface_views: agent.allowed_surface_views,
     });
     runBytes += context.total_bytes;
     if (runBytes > DAG_WORKER_SKILL_RUN_MAX_BYTES) {

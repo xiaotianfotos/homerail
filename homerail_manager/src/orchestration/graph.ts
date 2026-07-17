@@ -16,6 +16,8 @@ export interface DAGAgentConfig {
   system?: string;
   description?: string;
   skills?: string[];
+  /** Exact pinned Skill view ids exposed through report_surface_state. */
+  allowed_surface_views?: string[];
   extra?: Record<string, unknown>;
 }
 

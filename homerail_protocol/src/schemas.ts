@@ -9,6 +9,7 @@ import {
 import { homerailPluginSchemas } from "./plugins/schemas.js";
 import { dagActivityEventV1Schema } from "./dag-activity.js";
 import { dagActorSurfacePatchV1Schema } from "./dag-actor-surface-patch.js";
+import { dagActorSurfaceMediaV1Schema } from "./dag-actor-surface-media.js";
 import {
   DAG_ACTOR_LIVE_COMMAND_PROTOCOL_VERSION,
   DAG_ACTOR_LIVE_COMMAND_SCHEMA_ID,
@@ -530,6 +531,7 @@ export const allSchemas: Record<string, Record<string, unknown>> = {
   ...homerailPluginSchemas,
   "dag-activity-event-v1": dagActivityEventV1Schema as Record<string, unknown>,
   "dag-actor-surface-patch-v1": dagActorSurfacePatchV1Schema as Record<string, unknown>,
+  "dag-actor-surface-media-v1": dagActorSurfaceMediaV1Schema as Record<string, unknown>,
   [DAG_TRANSPORT_FENCE_V1_SCHEMA_ID]: dagTransportFenceV1Schema as Record<string, unknown>,
   [DAG_TRANSPORT_FENCE_SCHEMA_ID]: dagTransportFenceV2Schema as Record<string, unknown>,
   [DAG_NODE_ERROR_SCHEMA_ID]: dagNodeErrorSchema as Record<string, unknown>,

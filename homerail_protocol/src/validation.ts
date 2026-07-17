@@ -20,6 +20,11 @@ import {
   type DagActorSurfacePatchV1,
 } from "./dag-actor-surface-patch.js";
 import {
+  DAG_ACTOR_SURFACE_MEDIA_EXTENSIONS,
+  DAG_ACTOR_SURFACE_MEDIA_V1_SCHEMA_ID,
+  type DagActorSurfaceMediaV1,
+} from "./dag-actor-surface-media.js";
+import {
   validateHomerailA2uiSurface,
   type A2uiComponentV1,
 } from "./generative-ui/index.js";
@@ -306,4 +311,33 @@ export function validateDagActorSurfacePatchV1(value: unknown): ValidationResult
     ...actorSurfaceSemanticErrors(patch),
   ];
   return { valid: semantic.length === 0, errors: semantic };
+}
+
+export function validateDagActorSurfaceMediaV1(value: unknown): ValidationResult {
+  const structural = validateMessage(value, DAG_ACTOR_SURFACE_MEDIA_V1_SCHEMA_ID);
+  if (!structural.valid) return structural;
+  const media = value as DagActorSurfaceMediaV1;
+  const expectedBase64Length = Math.ceil(media.size_bytes / 3) * 4;
+  if (media.content_base64.length !== expectedBase64Length) {
+    return {
+      valid: false,
+      errors: [{
+        path: "/content_base64",
+        message: "base64 length does not match size_bytes",
+        keyword: "mediaSize",
+      }],
+    };
+  }
+  const extension = DAG_ACTOR_SURFACE_MEDIA_EXTENSIONS[media.media_type];
+  if (media.artifact_name !== `actor-media-${media.sha256}.${extension}`) {
+    return {
+      valid: false,
+      errors: [{
+        path: "/artifact_name",
+        message: "artifact_name must be derived from media_type and sha256",
+        keyword: "mediaIdentity",
+      }],
+    };
+  }
+  return structural;
 }

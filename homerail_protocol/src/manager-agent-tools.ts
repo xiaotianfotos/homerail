@@ -1038,7 +1038,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   send_dag_actor_command: {
     name: "send_dag_actor_command",
-    description: "Atomically send between 1 and 128 commands to stable actor_id values in one request. For an active round, every item requires the latest expected_state_token and a stable idempotency_key. For a waiting round, supply expected_round_id to use the existing safe multiround resume path. Never accept or expose transient Worker or container IDs, lease, session, or generation identifiers.",
+    description: "Atomically send between 1 and 128 commands to stable actor_id values in one request. Call get_dag_supervision first. When an Actor advertises command_payload_contract fields, put every user-requested machine constraint at the advertised payload_path with the declared type; include an instruction for semantics, but never encode those constraints only in prose. For an active round, every item requires the latest expected_state_token and a stable idempotency_key. For a waiting round, supply expected_round_id to use the existing safe multiround resume path. Never accept or expose transient Worker or container IDs, lease, session, or generation identifiers.",
     input_schema: {
       type: "object",
       properties: {
@@ -1077,7 +1077,9 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
                 type: "string",
                 pattern: "^[0-9a-f]{64}$",
               },
-              payload: {},
+              payload: {
+                description: "Actor command payload. Preserve semantic instructions and populate any applicable typed paths advertised by this Actor's latest command_payload_contract.",
+              },
             },
             required: ["actor_id", "payload"],
             additionalProperties: false,

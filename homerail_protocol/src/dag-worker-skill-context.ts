@@ -4,6 +4,10 @@ import {
 } from "./generative-ui/validation.js";
 import type { HomerailA2uiSurfaceV1 } from "./generative-ui/a2ui.js";
 import { HOMERAIL_PLUGIN_ID_PATTERN } from "./plugins/types.js";
+import {
+  DAG_ACTOR_SURFACE_PATCH_PHASES,
+  type DagActorSurfacePatchPhaseV1,
+} from "./dag-actor-surface-patch.js";
 
 /** @version 1 */
 export const DAG_WORKER_SKILL_CONTEXT_VERSION = 1 as const;
@@ -20,11 +24,78 @@ export interface DagWorkerSkillPluginV1 {
   version: string;
 }
 
+export const DAG_WORKER_SKILL_VISUAL_DATA_FIELD_MODES = [
+  "source",
+  "source_prefix",
+  "presentation",
+] as const;
+export type DagWorkerSkillVisualDataFieldMode =
+  (typeof DAG_WORKER_SKILL_VISUAL_DATA_FIELD_MODES)[number];
+
+export const DAG_WORKER_SKILL_VISUAL_PRESENTATION_VALUE_TYPES = [
+  "string",
+  "number",
+  "integer",
+  "boolean",
+] as const;
+export type DagWorkerSkillVisualPresentationValueType =
+  (typeof DAG_WORKER_SKILL_VISUAL_PRESENTATION_VALUE_TYPES)[number];
+
+export interface DagWorkerSkillVisualPresentationValueSchemaV1 {
+  type: DagWorkerSkillVisualPresentationValueType;
+  enum?: Array<string | number | boolean>;
+  /** String-only upper bound. */
+  max_length?: number;
+}
+
+export interface DagWorkerSkillVisualDataSourceV1 {
+  /** Dispatch input port containing the immutable source value. */
+  input_port: string;
+  /** Deterministic value within the port mailbox; defaults to zero. */
+  value_index?: number;
+  /** Parse a string input as JSON before resolving pointer. */
+  encoding?: "value" | "json";
+  /** Optional exact prefix stripped before JSON parsing. */
+  json_prefix?: string;
+  /** RFC 6901 pointer within the decoded input value; defaults to the root. */
+  pointer?: string;
+}
+
+export interface DagWorkerSkillVisualFinalCountV1 {
+  /** Trusted dispatch or live-command field that selects the final prefix length. */
+  source: DagWorkerSkillVisualDataSourceV1;
+  /** Used when the source is absent, including the first round before any command. */
+  default: number | "source_length";
+}
+
+export interface DagWorkerSkillVisualDataFieldV1 {
+  /** Top-level body.data field materialized by the Worker. */
+  field: string;
+  mode: DagWorkerSkillVisualDataFieldMode;
+  /** RFC 6901 pointer relative to the data contract source. */
+  source_pointer?: string;
+  /** Maximum source prefix exposed by a source_prefix field. */
+  max_items?: number;
+  /** Optional Worker-owned final prefix length derived from trusted input. */
+  final_count?: DagWorkerSkillVisualFinalCountV1;
+  /** Provider-facing scalar schema for model-owned presentation values. */
+  value_schema?: DagWorkerSkillVisualPresentationValueSchemaV1;
+}
+
+export interface DagWorkerSkillVisualDataContractV1 {
+  source: DagWorkerSkillVisualDataSourceV1;
+  fields: DagWorkerSkillVisualDataFieldV1[];
+  /** Optional runtime-enforced update cadence for one active turn. */
+  required_phases?: DagActorSurfacePatchPhaseV1[];
+}
+
 export interface DagWorkerSkillVisualProfileV1 {
   profile_version: 1;
   views?: Array<{
     id: string;
     a2ui: HomerailA2uiSurfaceV1;
+    /** Optional deterministic projection from trusted dispatch input to body.data. */
+    data_contract?: DagWorkerSkillVisualDataContractV1;
   }>;
   data_fields?: string[];
   media_roles?: string[];
@@ -90,6 +161,21 @@ const SKILL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const PLUGIN_VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/;
 const PROFILE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const PROFILE_FIELD = /^[A-Za-z0-9_./-]{1,128}$/;
+const PROFILE_TOP_LEVEL_FIELD = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+const RESERVED_SURFACE_TOOL_INPUT_FIELDS = new Set([
+  "body",
+  "canvas_size",
+  "data",
+  "density",
+  "fallback",
+  "op",
+  "patch_id",
+  "patch_sequence",
+  "phase",
+  "preferred_visual",
+  "presentation_hint",
+  "view_id",
+]);
 const MAX_VISUAL_PROFILE_BYTES = 64 * 1024;
 
 const SHA256_INITIAL = new Uint32Array([
@@ -276,6 +362,227 @@ function assertStringArray(
   return result;
 }
 
+function assertJsonPointer(value: unknown, path: string): string {
+  const pointer = assertString(value, path, 0, 512);
+  if (pointer && !pointer.startsWith("/")) {
+    issue(path, "must be an RFC 6901 JSON Pointer", "format");
+  }
+  for (let index = 0; index < pointer.length; index += 1) {
+    if (pointer[index] !== "~") continue;
+    const escaped = pointer[index + 1];
+    if (escaped !== "0" && escaped !== "1") {
+      issue(path, "contains an invalid RFC 6901 escape", "format");
+    }
+    index += 1;
+  }
+  return pointer;
+}
+
+function parseVisualDataSource(value: unknown, path: string): DagWorkerSkillVisualDataSourceV1 {
+  if (!isRecord(value)) issue(path, "must be an object", "type");
+  exactKeys(value, ["input_port", "value_index", "encoding", "json_prefix", "pointer"], path);
+  const inputPort = assertString(value.input_port, `${path}/input_port`, 1, 128);
+  if (!PROFILE_ID.test(inputPort)) issue(`${path}/input_port`, "has an invalid port identifier", "pattern");
+  const encoding = value.encoding === undefined ? "value" : value.encoding;
+  if (encoding !== "value" && encoding !== "json") {
+    issue(`${path}/encoding`, "must be value or json", "enum");
+  }
+  let valueIndex: number | undefined;
+  if (value.value_index !== undefined) {
+    if (!Number.isSafeInteger(value.value_index) || Number(value.value_index) < 0 || Number(value.value_index) > 31) {
+      issue(`${path}/value_index`, "must be an integer between 0 and 31", "maximum");
+    }
+    valueIndex = Number(value.value_index);
+  }
+  let jsonPrefix: string | undefined;
+  if (value.json_prefix !== undefined) {
+    jsonPrefix = assertString(value.json_prefix, `${path}/json_prefix`, 1, 256);
+    if (encoding !== "json") issue(`${path}/json_prefix`, "requires encoding json", "dependentRequired");
+  }
+  const pointer = value.pointer === undefined ? undefined : assertJsonPointer(value.pointer, `${path}/pointer`);
+  return {
+    input_port: inputPort,
+    ...(valueIndex === undefined ? {} : { value_index: valueIndex }),
+    ...(value.encoding === undefined ? {} : { encoding }),
+    ...(jsonPrefix === undefined ? {} : { json_prefix: jsonPrefix }),
+    ...(pointer === undefined ? {} : { pointer }),
+  };
+}
+
+function parseVisualPresentationValueSchema(
+  value: unknown,
+  path: string,
+): DagWorkerSkillVisualPresentationValueSchemaV1 {
+  if (!isRecord(value)) issue(path, "must be an object", "type");
+  exactKeys(value, ["type", "enum", "max_length"], path);
+  if (!DAG_WORKER_SKILL_VISUAL_PRESENTATION_VALUE_TYPES.includes(
+    value.type as DagWorkerSkillVisualPresentationValueType,
+  )) {
+    issue(`${path}/type`, "must be string, number, integer, or boolean", "enum");
+  }
+  const type = value.type as DagWorkerSkillVisualPresentationValueType;
+  let maxLength: number | undefined;
+  if (value.max_length !== undefined) {
+    if (type !== "string") issue(`${path}/max_length`, "is only allowed for string values", "forbidden");
+    if (!Number.isSafeInteger(value.max_length) || Number(value.max_length) < 1 || Number(value.max_length) > 4_000) {
+      issue(`${path}/max_length`, "must be an integer between 1 and 4000", "maximum");
+    }
+    maxLength = Number(value.max_length);
+  }
+  let allowedValues: Array<string | number | boolean> | undefined;
+  if (value.enum !== undefined) {
+    if (!Array.isArray(value.enum) || value.enum.length < 1 || value.enum.length > 32) {
+      issue(`${path}/enum`, "must contain between 1 and 32 scalar values", "maxItems");
+    }
+    allowedValues = value.enum.map((entry, index) => {
+      const matches = type === "string"
+        ? typeof entry === "string" && (maxLength === undefined || entry.length <= maxLength)
+        : type === "boolean"
+          ? typeof entry === "boolean"
+          : type === "integer"
+            ? Number.isSafeInteger(entry)
+            : typeof entry === "number" && Number.isFinite(entry);
+      if (!matches) issue(`${path}/enum/${index}`, `must match presentation value type ${type}`, "type");
+      return entry as string | number | boolean;
+    });
+    if (new Set(allowedValues.map((entry) => stableStringify(entry))).size !== allowedValues.length) {
+      issue(`${path}/enum`, "must not contain duplicate values", "uniqueItems");
+    }
+  }
+  return {
+    type,
+    ...(allowedValues === undefined ? {} : { enum: allowedValues }),
+    ...(maxLength === undefined ? {} : { max_length: maxLength }),
+  };
+}
+
+function parseVisualDataField(value: unknown, path: string): DagWorkerSkillVisualDataFieldV1 {
+  if (!isRecord(value)) issue(path, "must be an object", "type");
+  exactKeys(value, ["field", "mode", "source_pointer", "max_items", "final_count", "value_schema"], path);
+  const field = assertString(value.field, `${path}/field`, 1, 128);
+  if (!PROFILE_TOP_LEVEL_FIELD.test(field)) {
+    issue(`${path}/field`, "must be a top-level data field identifier", "pattern");
+  }
+  if (!DAG_WORKER_SKILL_VISUAL_DATA_FIELD_MODES.includes(value.mode as DagWorkerSkillVisualDataFieldMode)) {
+    issue(`${path}/mode`, "must be source, source_prefix, or presentation", "enum");
+  }
+  const mode = value.mode as DagWorkerSkillVisualDataFieldMode;
+  const sourcePointer = value.source_pointer === undefined
+    ? undefined
+    : assertJsonPointer(value.source_pointer, `${path}/source_pointer`);
+  if (mode === "presentation") {
+    if (sourcePointer !== undefined) issue(`${path}/source_pointer`, "is forbidden for presentation fields", "forbidden");
+    if (value.max_items !== undefined) issue(`${path}/max_items`, "is forbidden for presentation fields", "forbidden");
+    if (value.final_count !== undefined) issue(`${path}/final_count`, "is forbidden for presentation fields", "forbidden");
+    const valueSchema = value.value_schema === undefined
+      ? undefined
+      : parseVisualPresentationValueSchema(value.value_schema, `${path}/value_schema`);
+    return { field, mode, ...(valueSchema === undefined ? {} : { value_schema: valueSchema }) };
+  }
+  if (value.value_schema !== undefined) issue(`${path}/value_schema`, "is only allowed for presentation fields", "forbidden");
+  if (sourcePointer === undefined) issue(`${path}/source_pointer`, "is required for source fields", "required");
+  let maxItems: number | undefined;
+  if (value.max_items !== undefined) {
+    if (mode !== "source_prefix") issue(`${path}/max_items`, "is only allowed for source_prefix", "forbidden");
+    if (!Number.isSafeInteger(value.max_items) || Number(value.max_items) < 1 || Number(value.max_items) > 100) {
+      issue(`${path}/max_items`, "must be an integer between 1 and 100", "maximum");
+    }
+    maxItems = Number(value.max_items);
+  }
+  let finalCount: DagWorkerSkillVisualFinalCountV1 | undefined;
+  if (value.final_count !== undefined) {
+    if (mode !== "source_prefix") issue(`${path}/final_count`, "is only allowed for source_prefix", "forbidden");
+    if (!isRecord(value.final_count)) issue(`${path}/final_count`, "must be an object", "type");
+    exactKeys(value.final_count, ["source", "default"], `${path}/final_count`);
+    const fallback = value.final_count.default;
+    if (fallback !== "source_length"
+      && (!Number.isSafeInteger(fallback) || Number(fallback) < 0 || Number(fallback) > 100)) {
+      issue(`${path}/final_count/default`, "must be source_length or an integer between 0 and 100", "maximum");
+    }
+    finalCount = {
+      source: parseVisualDataSource(value.final_count.source, `${path}/final_count/source`),
+      default: fallback === "source_length" ? fallback : Number(fallback),
+    };
+  }
+  return {
+    field,
+    mode,
+    source_pointer: sourcePointer,
+    ...(maxItems === undefined ? {} : { max_items: maxItems }),
+    ...(finalCount === undefined ? {} : { final_count: finalCount }),
+  };
+}
+
+function parseVisualDataContract(value: unknown, path: string): DagWorkerSkillVisualDataContractV1 {
+  if (!isRecord(value)) issue(path, "must be an object", "type");
+  exactKeys(value, ["source", "fields", "required_phases"], path);
+  if (!Array.isArray(value.fields) || value.fields.length < 1 || value.fields.length > 64) {
+    issue(`${path}/fields`, "must contain between 1 and 64 fields", "maxItems");
+  }
+  const fields = value.fields.map((entry, index) => parseVisualDataField(entry, `${path}/fields/${index}`));
+  if (new Set(fields.map((field) => field.field)).size !== fields.length) {
+    issue(`${path}/fields`, "must not contain duplicate field names", "uniqueItems");
+  }
+  fields.forEach((field, index) => {
+    if (field.mode !== "source" && RESERVED_SURFACE_TOOL_INPUT_FIELDS.has(field.field)) {
+      issue(
+        `${path}/fields/${index}/field`,
+        "must not collide with a reserved report_surface_state input field",
+        "reserved",
+      );
+    }
+  });
+  let requiredPhases: DagActorSurfacePatchPhaseV1[] | undefined;
+  if (value.required_phases !== undefined) {
+    if (!Array.isArray(value.required_phases) || value.required_phases.length < 2
+      || value.required_phases.length > DAG_ACTOR_SURFACE_PATCH_PHASES.length) {
+      issue(`${path}/required_phases`, "must contain between 2 and 5 phases", "maxItems");
+    }
+    requiredPhases = value.required_phases.map((phase, index) => {
+      if (!DAG_ACTOR_SURFACE_PATCH_PHASES.includes(phase as DagActorSurfacePatchPhaseV1)) {
+        issue(`${path}/required_phases/${index}`, "has an unsupported phase", "enum");
+      }
+      return phase as DagActorSurfacePatchPhaseV1;
+    });
+    if (new Set(requiredPhases).size !== requiredPhases.length) {
+      issue(`${path}/required_phases`, "must not contain duplicate phases", "uniqueItems");
+    }
+    if (requiredPhases[0] !== "started" || requiredPhases.at(-1) !== "final") {
+      issue(`${path}/required_phases`, "must start with started and end with final", "sequence");
+    }
+    for (let index = 1; index < requiredPhases.length; index += 1) {
+      if (DAG_ACTOR_SURFACE_PATCH_PHASES.indexOf(requiredPhases[index]!)
+        <= DAG_ACTOR_SURFACE_PATCH_PHASES.indexOf(requiredPhases[index - 1]!)) {
+        issue(`${path}/required_phases`, "must be strictly monotonic", "sequence");
+      }
+    }
+  }
+  return {
+    source: parseVisualDataSource(value.source, `${path}/source`),
+    fields,
+    ...(requiredPhases ? { required_phases: requiredPhases } : {}),
+  };
+}
+
+function visualDataKeys(a2ui: HomerailA2uiSurfaceV1): string[] {
+  const keys = new Set<string>();
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!isRecord(value)) return;
+    if (typeof value.path === "string" && value.path.startsWith("/actor_view/data/")) {
+      const encoded = value.path.slice("/actor_view/data/".length).split("/", 1)[0];
+      const key = encoded?.replace(/~1/g, "/").replace(/~0/g, "~");
+      if (key) keys.add(key);
+    }
+    Object.values(value).forEach(visit);
+  };
+  visit(a2ui);
+  return [...keys].sort();
+}
+
 function parseVisualProfile(value: unknown, path: string): DagWorkerSkillVisualProfileV1 {
   if (!isRecord(value)) issue(path, "must be an object", "type");
   exactKeys(value, [
@@ -297,7 +604,7 @@ function parseVisualProfile(value: unknown, path: string): DagWorkerSkillVisualP
     profile.views = value.views.map((entry, index) => {
       const entryPath = `${path}/views/${index}`;
       if (!isRecord(entry)) issue(entryPath, "must be an object", "type");
-      exactKeys(entry, ["id", "a2ui"], entryPath);
+      exactKeys(entry, ["id", "a2ui", "data_contract"], entryPath);
       const id = assertString(entry.id, `${entryPath}/id`, 1, 128);
       if (!PROFILE_ID.test(id)) issue(`${entryPath}/id`, "has an invalid identifier", "pattern");
       if (ids.has(id)) issue(`${path}/views`, `contains duplicate view id '${id}'`, "uniqueItems");
@@ -306,7 +613,25 @@ function parseVisualProfile(value: unknown, path: string): DagWorkerSkillVisualP
       if (!validation.valid || !validation.value) {
         issue(`${entryPath}/a2ui`, "failed HomeRail A2UI surface validation", "a2ui");
       }
-      return { id, a2ui: clone(validation.value) };
+      const dataContract = entry.data_contract === undefined
+        ? undefined
+        : parseVisualDataContract(entry.data_contract, `${entryPath}/data_contract`);
+      if (dataContract) {
+        const declared = new Set(dataContract.fields.map((field) => field.field));
+        const missing = visualDataKeys(validation.value).filter((field) => !declared.has(field));
+        if (missing.length > 0) {
+          issue(
+            `${entryPath}/data_contract/fields`,
+            `does not cover A2UI data field '${missing[0]}'`,
+            "required",
+          );
+        }
+      }
+      return {
+        id,
+        a2ui: clone(validation.value),
+        ...(dataContract ? { data_contract: dataContract } : {}),
+      };
     });
   }
   if (value.data_fields !== undefined) {

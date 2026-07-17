@@ -466,6 +466,15 @@ export const WorkflowSpecV1Schema = Type.Object({
         uniqueItems: true,
         maxItems: 8,
       })),
+      allowed_surface_views: Type.Optional(Type.Array(Type.String({
+        minLength: 1,
+        maxLength: 385,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      }), {
+        uniqueItems: true,
+        maxItems: 64,
+        description: "Exact digest-pinned Skill view ids exposed to this Agent.",
+      })),
     }, { additionalProperties: false }), { maxProperties: 256 }),
     nodes: Type.Record(Identifier, WorkflowNode, {
       minProperties: 1,

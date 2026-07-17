@@ -89,6 +89,7 @@ export interface CanonicalWorkflowIR {
     description?: string;
     system?: string;
     skills: string[];
+    allowed_surface_views?: string[];
   }>;
   pattern?: {
     id: string;
@@ -886,6 +887,9 @@ function compileV1(workflow: WorkflowSpecV1): CanonicalWorkflowIR {
         ...(agent.description ? { description: agent.description } : {}),
         ...(agent.system ? { system: agent.system } : {}),
         skills: [...(agent.skills ?? [])].sort(),
+        ...(agent.allowed_surface_views === undefined
+          ? {}
+          : { allowed_surface_views: [...agent.allowed_surface_views].sort() }),
       }])),
     ...(workflow.spec.pattern ? {
       pattern: {
@@ -1020,6 +1024,9 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
         ...(agent.description ? { description: agent.description } : {}),
         ...(agent.system ? { system: agent.system } : {}),
         skills: [...(agent.skills ?? [])].sort(),
+        ...(agent.allowed_surface_views === undefined
+          ? {}
+          : { allowed_surface_views: [...agent.allowed_surface_views].sort() }),
       }])),
     ...(parsed.meta.pattern ? {
       pattern: {
@@ -1339,6 +1346,9 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
     ...(agent.description ? { description: agent.description } : {}),
     ...(agent.system ? { system: agent.system } : {}),
     ...(agent.skills.length > 0 ? { skills: agent.skills } : {}),
+    ...(agent.allowed_surface_views === undefined
+      ? {}
+      : { allowed_surface_views: agent.allowed_surface_views }),
   } satisfies DAGAgentConfig]));
   const graph = { nodes: graphNodes, edges: runtimeEdges };
   assertGraphValid(graph);
@@ -1546,6 +1556,9 @@ export function canonicalWorkflowToV1Document(canonical: CanonicalWorkflowIR): R
         ...(agent.description ? { description: agent.description } : {}),
         ...(agent.system ? { system: agent.system } : {}),
         ...(agent.skills.length > 0 ? { skills: agent.skills } : {}),
+        ...(agent.allowed_surface_views === undefined
+          ? {}
+          : { allowed_surface_views: agent.allowed_surface_views }),
       }])),
       nodes: Object.fromEntries(canonical.nodes.map((node) => [node.id, authoringNode(node, canonical)])),
       edges,

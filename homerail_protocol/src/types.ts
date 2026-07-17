@@ -615,6 +615,8 @@ export interface DagNodeConfig {
   activity_sequence_start?: number;
   /** Last processed Actor surface body sequence for this generation. */
   surface_patch_sequence_start?: number;
+  /** Manager-attested final Surface milestone for the current correction turn. */
+  surface_reporting_complete?: boolean;
   advisors?: DagAdvisorConfig[];
   workspace_access?: DagWorkspaceAccess;
   /** Optional exact allowlist for backend-provided shell and file tools. */

@@ -12,6 +12,7 @@ export * from "./types.js";
 export * from "./dag-activity.js";
 export * from "./dag-worker-skill-context.js";
 export * from "./dag-actor-surface-patch.js";
+export * from "./dag-actor-surface-media.js";
 export * from "./codec.js";
 export * from "./schemas.js";
 export * from "./validation.js";

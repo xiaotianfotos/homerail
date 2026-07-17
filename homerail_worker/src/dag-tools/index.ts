@@ -3,7 +3,16 @@
  * @version 0.1.0
  */
 
-import type { AgentUsage, DagAdvisorConfig, DagNodeConfig, DagWorkspaceAccess, Edge } from "homerail-protocol";
+import type {
+  AgentUsage,
+  DagActorSurfacePatchPhaseV1,
+  DagAdvisorConfig,
+  DagActivityType,
+  DagNodeConfig,
+  DagWorkerSkillVisualDataContractV1,
+  DagWorkspaceAccess,
+  Edge,
+} from "homerail-protocol";
 import type { DagToolDefinition } from "../agent/types.js";
 import { createHandoffTool } from "./handoff.js";
 import { createSendMessageTool } from "./send-message.js";
@@ -14,9 +23,10 @@ import { createConsultAdvisorTool } from "./advisor.js";
 import { createReportActivityTool } from "./report-activity.js";
 import {
   createReportSurfaceStateTool,
+  type PinnedSurfaceViewRegistry,
   type SurfacePatchEmitter,
 } from "./report-surface-state.js";
-import type { DagActivityType } from "homerail-protocol";
+import type { SurfaceMediaPublisher } from "./surface-media.js";
 
 export interface AdvisorCallResult {
   text: string;
@@ -30,6 +40,10 @@ export interface DagToolsOptions {
     payload: Record<string, unknown>,
   ) => void;
   surfacePatchEmitter?: SurfacePatchEmitter;
+  surfaceMediaPublisher?: SurfaceMediaPublisher;
+  pinnedSurfaceViews?: PinnedSurfaceViewRegistry;
+  pinnedSurfaceDataContracts?: ReadonlyMap<string, DagWorkerSkillVisualDataContractV1>;
+  trustedInputs?: Readonly<Record<string, unknown[]>>;
 }
 
 /** Mutable state shared across all DAG tools for a single prompt run. */
@@ -44,6 +58,11 @@ export interface DagToolsState {
   surfaceId?: string;
   surfacePatchSequence: number;
   surfacePatchIds: Set<string>;
+  /** A pinned Skill contract requires its full Surface phase sequence before handoff. */
+  surfaceReportingRequired: boolean;
+  surfaceReportingComplete: boolean;
+  surfaceExpectedPhase?: DagActorSurfacePatchPhaseV1;
+  surfaceReportingFatalError?: { code: string; message: string };
   commandId?: string;
   graphNodes: string[];
   availablePorts: string[];
@@ -110,6 +129,8 @@ export function createDagToolsState(
       ? surfacePatchSequenceStart as number
       : 0,
     surfacePatchIds: new Set(),
+    surfaceReportingRequired: false,
+    surfaceReportingComplete: config.surface_reporting_complete === true,
     commandId: config.command_id,
     graphNodes: config.graph_nodes,
     availablePorts: [...ports].sort(),
@@ -142,7 +163,14 @@ export function createDagTools(state: DagToolsState, options: DagToolsOptions = 
     tools.push(createReportActivityTool(options.activityEmitter));
   }
   if (options.surfacePatchEmitter) {
-    tools.push(createReportSurfaceStateTool(state, options.surfacePatchEmitter));
+    tools.push(createReportSurfaceStateTool(
+      state,
+      options.surfacePatchEmitter,
+      options.surfaceMediaPublisher,
+      options.pinnedSurfaceViews,
+      options.pinnedSurfaceDataContracts,
+      options.trustedInputs,
+    ));
   }
   return tools;
 }

@@ -155,19 +155,19 @@ describe("DAG Actor surface patch persistence", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("migrates an old database to migration 29 exactly once and validates ownership", () => {
+  it("migrates an old database to migration 30 exactly once and validates ownership", () => {
     getDb().exec(`
       DROP TABLE dag_actor_surface_snapshots;
       DROP TABLE dag_actor_surface_views;
       DROP TABLE dag_actor_surface_patch_queue;
       DROP TABLE dag_actor_surface_patch_journal;
-      DELETE FROM schema_migrations WHERE version = 29;
+      DELETE FROM schema_migrations WHERE version = 30;
     `);
     closeDb();
 
     const migrated = getDb();
     expect(migrated.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 29 });
+      .toEqual({ version: 30 });
     expect(migrated.prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name LIKE 'dag_actor_surface_%'
@@ -182,7 +182,7 @@ describe("DAG Actor surface patch persistence", () => {
     expect(getDagActor(RUN_ID, ACTOR_ID)).toMatchObject({ node_id: NODE_ID, surface_id: SURFACE_ID });
 
     closeDb();
-    expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 29").get())
+    expect(getDb().prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 30").get())
       .toEqual({ count: 1 });
   });
 
@@ -190,7 +190,7 @@ describe("DAG Actor surface patch persistence", () => {
     getDb().exec("DROP TRIGGER trg_dag_actor_surface_patch_journal_no_update");
     closeDb();
     expect(() => getDb()).toThrow(
-      "Schema migration 29 is incomplete: trigger trg_dag_actor_surface_patch_journal_no_update is missing or invalid",
+      "Schema migration 30 is incomplete: trigger trg_dag_actor_surface_patch_journal_no_update is missing or invalid",
     );
   });
 

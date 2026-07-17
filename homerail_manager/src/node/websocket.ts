@@ -39,6 +39,7 @@ import {
 import { ingestDagActivityStream } from "../runtime/dag-activity-stream.js";
 import { handleDagActorLiveCommandStatus } from "../runtime/dag-actor-live-command-runtime.js";
 import { ingestDagActorSurfacePatchStream } from "../runtime/dag-actor-surface-patch-stream.js";
+import { ingestDagActorSurfaceMediaStream } from "../runtime/dag-actor-surface-media-stream.js";
 
 const WS_URL_PATTERN = /^\/ws\/projects\/([^\/]+)\/nodes\/([^\/]+)$/;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
@@ -552,6 +553,23 @@ export function setupNodeWebSocket(
             } catch (error) {
               console.warn(
                 `[homerail_manager] rejected DAG activity from node ${node_id}: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+            return;
+          }
+          if (msg.data.event === "dag_actor_surface_media") {
+            try {
+              if (!runId || !nodeId) throw new Error("Actor surface media transport identity is missing");
+              const sessionId = dataSessionId(msg.data);
+              if (!sessionId) throw new Error("Actor surface media transport session is missing");
+              if (!isCurrentDispatchTarget(runId, nodeId, "node", node_id)) {
+                throw new Error("Actor surface media source does not match the current dispatch target");
+              }
+              if (shouldIgnoreStaleSession(node_id, "dag_actor_surface_media", msg.data)) return;
+              ingestDagActorSurfaceMediaStream(msg.data, { runId, nodeId });
+            } catch (error) {
+              console.warn(
+                `[homerail_manager] rejected Actor surface media from node ${node_id}: ${error instanceof Error ? error.message : String(error)}`,
               );
             }
             return;

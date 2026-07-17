@@ -21,6 +21,8 @@ import {
   _clearActiveRuns,
   buildCurrentDispatchEnvelope,
   createActiveRun,
+  handoffActiveRun,
+  requestNodeCorrection,
 } from "../src/runtime/active-runs.js";
 import { ingestDagActorSurfacePatchStream } from "../src/runtime/dag-actor-surface-patch-stream.js";
 
@@ -61,11 +63,34 @@ describe("DAG Actor surface patch stream ingestion", () => {
 
   it("ingests a fenced patch idempotently and dispatches the durable body sequence", () => {
     const runId = "surface-stream-dispatch";
+    const skillDirectory = path.join(home, "skills", "surface-test");
+    const assetDirectory = path.join(skillDirectory, "assets", "homerail");
+    fs.mkdirSync(assetDirectory, { recursive: true });
+    fs.writeFileSync(path.join(skillDirectory, "SKILL.md"), "# Surface test\nUse the pinned view.", "utf8");
+    fs.writeFileSync(path.join(assetDirectory, "worker-visual-profile.json"), JSON.stringify({
+      profile_version: 1,
+      views: [{
+        id: "summary",
+        a2ui: {
+          version: HOMERAIL_A2UI_VERSION,
+          catalogId: HOMERAIL_A2UI_CATALOG_ID,
+          components: [{ id: "root", component: "Text", text: { path: "/actor_view/data/title" } }],
+        },
+        data_contract: {
+          source: { input_port: "mission", encoding: "json" },
+          fields: [{ field: "title", mode: "source", source_pointer: "/title" }],
+          required_phases: ["started", "partial", "final"],
+        },
+      }],
+    }), "utf8");
     createActiveRun(runId, parseDAGYaml(`
 name: surface-stream-dispatch
 workflow_id: surface-stream-dispatch
 agents:
-  worker: { agent_type: deterministic }
+  worker:
+    agent_type: deterministic
+    skills: [surface-test]
+    allowed_surface_views: [summary]
 nodes:
   research:
     agent: worker
@@ -77,6 +102,8 @@ nodes:
     outputs:
       done: { to: "" }
 `));
+    expect(() => handoffActiveRun(runId, "research", "done", { status: "ready" }))
+      .toThrow(/DAG_HANDOFF_SURFACE_INCOMPLETE/);
     const initial = buildCurrentDispatchEnvelope(runId, "research");
     expect(initial.ok).toBe(true);
     if (!initial.ok) return;
@@ -142,6 +169,39 @@ nodes:
     expect(resumed.envelope.activity).toMatchObject({
       actorId: "researcher",
       surfacePatchSequenceStart: 1,
+      surfaceReportingComplete: false,
     });
+
+    const finalPatch: DagActorSurfacePatchV1 = {
+      ...patch,
+      patch_id: "update-final",
+      patch_sequence: 2,
+      timestamp: patch.timestamp + 1,
+      phase: "final",
+      body: body("Final durable result"),
+    };
+    expect(ingestDagActorSurfacePatchStream({
+      ...stream,
+      patch: finalPatch,
+    }, { runId, nodeId: "research" })).toMatchObject({
+      appended: { inserted: true },
+      projected: { applied_count: 1 },
+    });
+    const ordinaryRedispatch = buildCurrentDispatchEnvelope(runId, "research");
+    expect(ordinaryRedispatch.ok).toBe(true);
+    if (!ordinaryRedispatch.ok) return;
+    expect(ordinaryRedispatch.envelope.activity.surfaceReportingComplete).toBe(false);
+
+    expect(requestNodeCorrection(runId, "research", "handoff contract mismatch")).toMatchObject({
+      status: "scheduled",
+    });
+    const correction = buildCurrentDispatchEnvelope(runId, "research");
+    expect(correction.ok).toBe(true);
+    if (!correction.ok) return;
+    expect(correction.envelope.activity).toMatchObject({
+      surfacePatchSequenceStart: 2,
+      surfaceReportingComplete: true,
+    });
+    expect(() => handoffActiveRun(runId, "research", "done", { status: "ready" })).not.toThrow();
   });
 });

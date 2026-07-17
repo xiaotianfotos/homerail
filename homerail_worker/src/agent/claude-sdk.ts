@@ -9,7 +9,10 @@
 import { AGENT_BUILTIN_TOOL_NAMES } from "homerail-protocol";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentClient, AgentEvent, AgentRunContext, AgentUsage, DagToolDefinition } from "./types.js";
-import { jsonSchemaObjectToZodRawShape } from "./json-schema-zod.js";
+import {
+  jsonSchemaObjectToZodRawShape,
+  normalizeJsonObjectStringsBySchema,
+} from "./json-schema-zod.js";
 import { sanitizedAgentChildEnv } from "./child-env.js";
 
 const HANDOFF_ONLY_THINKING_BUDGET = 2048;
@@ -370,7 +373,11 @@ export class ClaudeSdkAdapter implements AgentClient {
         const sdkTools = tools.map((t) =>
           sdk.tool(t.name, t.description, jsonSchemaObjectToZodRawShape(t.input_schema), async (args, extra) => {
             const toolCallId = sdkToolCallId(extra);
-            const res = await t.handler(args, toolCallId ? { tool_call_id: toolCallId } : undefined);
+            const normalizedArgs = normalizeJsonObjectStringsBySchema(args, t.input_schema);
+            const res = await t.handler(
+              normalizedArgs as Record<string, unknown>,
+              toolCallId ? { tool_call_id: toolCallId } : undefined,
+            );
             if (t.name === "handoff" && res.is_error !== true) {
               handoffStopRequested = true;
               inputQueue.close();

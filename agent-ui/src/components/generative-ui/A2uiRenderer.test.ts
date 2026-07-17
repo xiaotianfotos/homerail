@@ -228,9 +228,10 @@ describe('A2uiRenderer', () => {
   })
 
   it('renders passive Actor media, metrics, comparisons, timelines, and routes without active controls', () => {
+    const actorMediaUrl = `/api/runs/run-actor-01/artifacts/actor-media-${'a'.repeat(64)}.webp/content`
     const mounted = mount(surface([
       { id: 'root', component: 'Column', children: ['image', 'video', 'metric', 'timeline', 'comparison', 'route'] },
-      { id: 'image', component: 'Image', url: 'https://example.com/evidence.png', description: 'Evidence image' },
+      { id: 'image', component: 'Image', url: actorMediaUrl, description: 'Evidence image' },
       { id: 'video', component: 'Video', url: 'https://example.com/evidence.mp4' },
       { id: 'metric', component: 'HrMetric', label: 'Coverage', value: { path: '/coverage' }, unit: '%' },
       {
@@ -254,6 +255,11 @@ describe('A2uiRenderer', () => {
         { id: 'verify', label: 'Verify', dependsOn: ['collect'] },
       ],
     })
+
+    const actorImage = mounted.querySelector<HTMLImageElement>('[data-a2ui-id="image"]')
+    expect(actorImage?.tagName).toBe('IMG')
+    expect(actorImage?.getAttribute('src')).toBe(actorMediaUrl)
+    expect(actorImage?.dataset.unavailable).toBeUndefined()
 
     expect(mounted.querySelector<HTMLImageElement>('[data-a2ui-id="image"]')?.alt).toBe('Evidence image')
     expect(mounted.querySelector<HTMLVideoElement>('[data-a2ui-id="video"]')?.controls).toBe(true)

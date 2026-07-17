@@ -210,12 +210,19 @@ agents:
       Verify the supplied evidence against the acceptance contract.
     skills:
       - homerail-dag-ops
+    allowed_surface_views:
+      - verification-summary
 ```
 
 **Why**：同一种角色可能被多个 node 使用，模型绑定也应独立于拓扑。
 
 **How**：node 通过 `agent` 引用逻辑 role；RuntimeProfile 按 role 绑定模型。Agent 定义
 不能包含 provider、model 或 secret。
+
+`allowed_surface_views` 是该 Agent 的精确 Surface 工具白名单。每个值必须引用其
+digest-pinned Skill Context 中存在的视图；Manager 在准入和 dispatch 时校验，Worker
+只注册白名单内的 A2UI 视图与数据契约。它不是 prompt 建议，因此模型无法误用同一
+Skill 中属于其他角色的视图。省略该字段时保留旧行为，暴露该 Agent Skills 中的全部视图。
 
 ### 6.2 Node 是一次可调度行为或确定性控制点
 

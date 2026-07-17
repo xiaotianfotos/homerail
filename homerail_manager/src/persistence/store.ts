@@ -33,7 +33,7 @@ export interface SerializableRun {
   runInputTargets?: Array<{ node: string; port: string; contract?: string }>;
   initialPrompt?: string;
   nodeCount?: number;
-  agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; extra?: Record<string, unknown> }>;
+  agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; allowed_surface_views?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;
   workspaceRetention?: RunWorkspaceRetention;
   scorecard?: ScorecardPolicyConfig;

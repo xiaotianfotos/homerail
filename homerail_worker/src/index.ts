@@ -25,12 +25,17 @@ import {
   agentTurnControllerOptionsForBackend,
 } from "./agent/turn-controller.js";
 import { envelopeInputsToTaskText } from "./envelope-task.js";
+import { envelopeActivityToDagConfig } from "./envelope-activity.js";
 import {
   activePromptTransportIdentity,
   routeDagActorCommand,
   type ActivePromptLiveSteering,
 } from "./live-steering.js";
-import { prepareWorkerSkillContext } from "./worker-skill-context.js";
+import {
+  createWorkerSkillVisualDataContractRegistry,
+  createWorkerSkillVisualViewRegistry,
+  prepareWorkerSkillContext,
+} from "./worker-skill-context.js";
 import { DAG_ACTOR_SURFACE_PATCH_V1_CAPABILITY } from "./dag-tools/report-surface-state.js";
 
 // ── Env vars ─────────────────────────────────────────────────
@@ -174,13 +179,7 @@ client.on("task", async (msg) => {
         incoming_edges: [],
         graph_nodes: [nodeId],
         session_id: sessionId,
-        round_id: typeof activity?.roundId === "string" ? activity.roundId : undefined,
-        actor_id: typeof activity?.actorId === "string" ? activity.actorId : undefined,
-        generation: typeof activity?.generation === "number" ? activity.generation : undefined,
-        lease_generation: typeof activity?.leaseGeneration === "number" ? activity.leaseGeneration : undefined,
-        command_id: typeof activity?.commandId === "string" ? activity.commandId : undefined,
-        surface_id: typeof activity?.surfaceId === "string" ? activity.surfaceId : undefined,
-        activity_sequence_start: typeof activity?.sequenceStart === "number" ? activity.sequenceStart : 0,
+        ...envelopeActivityToDagConfig(activity),
         advisors: Array.isArray(envelope.advisors) ? envelope.advisors as DagAdvisorConfig[] : undefined,
         workspace_access: envelope.workspaceAccess && typeof envelope.workspaceAccess === "object"
           ? envelope.workspaceAccess as unknown as DagWorkspaceAccess
@@ -199,6 +198,7 @@ client.on("task", async (msg) => {
     preparedSkillContext = prepareWorkerSkillContext({
       systemPrompt: systemPromptValue,
       declaredSkills: envelope ? agentConfig.skills : undefined,
+      allowedSurfaceViews: envelope ? agentConfig.allowed_surface_views : undefined,
       skillContext: envelope?.skillContext,
       actorCheckpoint,
     });
@@ -233,6 +233,7 @@ client.on("task", async (msg) => {
     `[homerail_worker] task received: run=${runId} node=${dagConfig.node_id} backend=${backend} agent_type=${agentType} provider=${provider || "<unset>"} model=${model || "<unset>"}`,
   );
 
+  const trustedInputs = structuredClone(envelope?.inputs ?? {}) as Record<string, unknown[]>;
   const job: PromptJob = {
     task,
     sender,
@@ -246,6 +247,15 @@ client.on("task", async (msg) => {
     checkpointResume,
     actorCheckpoint,
     skillContextSummary: preparedSkillContext.summary,
+    pinnedSurfaceViews: createWorkerSkillVisualViewRegistry(
+      preparedSkillContext.context,
+      preparedSkillContext.allowedSurfaceViewIds,
+    ),
+    pinnedSurfaceDataContracts: createWorkerSkillVisualDataContractRegistry(
+      preparedSkillContext.context,
+      preparedSkillContext.allowedSurfaceViewIds,
+    ),
+    trustedInputs,
   };
 
   const abortController = new AbortController();
@@ -268,6 +278,14 @@ client.on("task", async (msg) => {
       commandId: dagConfig.command_id ?? "",
     }),
     controller: turnController,
+    onCommandAccepted: (command) => {
+      trustedInputs.command = [{
+        command_id: command.command_id,
+        round_id: command.round_id,
+        actor_id: command.actor_id,
+        payload: structuredClone(command.payload),
+      }];
+    },
     abortController,
     commandRoutes,
   };

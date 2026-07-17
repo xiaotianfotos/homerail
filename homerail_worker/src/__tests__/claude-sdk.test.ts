@@ -4,7 +4,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { AgentEvent, AgentRunContext, DagToolDefinition } from "../agent/types.js";
-import { jsonSchemaObjectToZodRawShape } from "../agent/json-schema-zod.js";
+import {
+  jsonSchemaObjectToZodRawShape,
+  normalizeJsonObjectStringsBySchema,
+} from "../agent/json-schema-zod.js";
 
 type TestZodParser = { parse: (value: unknown) => unknown };
 
@@ -819,8 +822,131 @@ describe("ClaudeSdkAdapter", () => {
     expect(shape.content.parse('{"data":{"ok":true}}')).toEqual({ data: { ok: true } });
     expect(shape.a2ui.parse(JSON.stringify(surface))).toEqual(surface);
     expect(shape.a2ui.parse(JSON.stringify(JSON.stringify(surface)))).toEqual(surface);
-    expect(() => shape.content.parse("[]")).toThrow();
-    expect(() => shape.a2ui.parse("not-json")).toThrow();
+    expect(shape.content.parse("[]")).toBe("[]");
+    expect(shape.a2ui.parse("not-json")).toBe("not-json");
+  });
+
+  it("keeps exact pinned data object-only in the provider-facing schema", () => {
+    const shape = jsonSchemaObjectToZodRawShape({
+      type: "object",
+      properties: {
+        data: {
+          type: "object",
+          properties: {
+            count: { type: "integer" },
+            label: { type: "string" },
+          },
+          required: ["count"],
+          additionalProperties: false,
+          "x-homerail-sdk-object-only": true,
+        },
+      },
+      required: ["data"],
+    }) as { data: TestZodParser };
+
+    expect(shape.data.parse({ count: 1, label: "Ready" })).toEqual({ count: 1, label: "Ready" });
+    expect(() => shape.data.parse('{"count":1,"label":"Ready"}')).toThrow();
+  });
+
+  it("normalizes JSON-encoded nested tool objects before the DAG handler", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        patch_id: { type: "string" },
+        body: {
+          type: "object",
+          properties: {
+            data: { type: "object", additionalProperties: true },
+            fallback: {
+              type: "object",
+              properties: { title: { type: "string" } },
+              required: ["title"],
+            },
+          },
+          required: ["data", "fallback"],
+        },
+      },
+      required: ["patch_id", "body"],
+    };
+
+    expect(normalizeJsonObjectStringsBySchema({
+      patch_id: "p-1",
+      body: JSON.stringify({
+        data: { ready: true },
+        fallback: JSON.stringify({ title: "Ready" }),
+      }),
+    }, schema)).toEqual({
+      patch_id: "p-1",
+      body: {
+        data: { ready: true },
+        fallback: { title: "Ready" },
+      },
+    });
+
+    const pinnedSchema = {
+      type: "object",
+      properties: {
+        phase: { type: "string" },
+        view_id: { type: "string" },
+        data: { type: "object", additionalProperties: true },
+        fallback: { anyOf: [{ type: "object" }, { type: "string" }] },
+        presentation_hint: { type: "object", additionalProperties: true },
+      },
+    };
+    expect(normalizeJsonObjectStringsBySchema({
+      phase: "started",
+      view_id: "summary",
+      data: '{"title":"Ready"},"fallback":"Ready summary"}',
+      presentation_hint: { canvas_size: "1x1" },
+    }, pinnedSchema)).toEqual({
+      phase: "started",
+      view_id: "summary",
+      data: { title: "Ready" },
+      fallback: "Ready summary",
+      presentation_hint: { canvas_size: "1x1" },
+    });
+
+    expect(normalizeJsonObjectStringsBySchema({
+      data: {
+        title: "Ready",
+        phase: "started",
+        view_id: "summary",
+        fallback: { title: "Ready summary" },
+        presentation_hint: { canvas_size: "1x1" },
+      },
+    }, {
+      ...pinnedSchema,
+      required: ["phase", "view_id", "data"],
+    })).toEqual({
+      phase: "started",
+      view_id: "summary",
+      data: { title: "Ready" },
+      fallback: { title: "Ready summary" },
+      presentation_hint: { canvas_size: "1x1" },
+    });
+
+    expect(normalizeJsonObjectStringsBySchema({
+      data: JSON.stringify({
+        title: "Route ready",
+        steps: [{ from: "alpha", to: "beta" }],
+        phase: "final",
+        view_id: "route",
+        fallback: { title: "Verified route" },
+      }),
+      presentation_hint: { canvas_size: "1x2" },
+    }, {
+      ...pinnedSchema,
+      required: ["phase", "view_id", "data"],
+    })).toEqual({
+      phase: "final",
+      view_id: "route",
+      data: {
+        title: "Route ready",
+        steps: [{ from: "alpha", to: "beta" }],
+      },
+      fallback: { title: "Verified route" },
+      presentation_hint: { canvas_size: "1x2" },
+    });
   });
 
   it("passes Zod tool shapes to the Claude SDK instead of raw JSON Schema", async () => {
@@ -870,5 +996,78 @@ describe("ClaudeSdkAdapter", () => {
     expect(schema.content.parse("artifact")).toBe("artifact");
     expect(schema).not.toHaveProperty("properties");
     expect(events.some((e) => e.type === "debug" && e.message === "mcp_server_registered")).toBe(true);
+  });
+
+  it("decodes SDK-preserved and sibling-packed JSON object strings before invoking a DAG tool", async () => {
+    let observedArgs: Record<string, unknown> | undefined;
+    const toolDef: DagToolDefinition = {
+      name: "surface_probe",
+      description: "surface probe",
+      input_schema: {
+        type: "object",
+        properties: {
+          patch_id: { type: "string" },
+          body: {
+            type: "object",
+            properties: {
+              data: { type: "object", additionalProperties: true },
+              fallback: {
+                type: "object",
+                properties: { title: { type: "string" } },
+                required: ["title"],
+              },
+            },
+            required: ["data", "fallback"],
+          },
+          fallback: {
+            type: "object",
+            properties: { title: { type: "string" } },
+            required: ["title"],
+          },
+        },
+        required: ["patch_id", "body"],
+      },
+      handler: async (args) => {
+        observedArgs = args;
+        return { content: [{ type: "text", text: "ok" }] };
+      },
+    };
+
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: { mcpServers?: Record<string, { tools?: Array<{ handler: Function }> }> } }) {
+        const server = params.options?.mcpServers?.["dag-tools"];
+        await server?.tools?.[0]?.handler({
+          patch_id: "p-1",
+          body: '{"data":{"ready":true},"fallback":{"title":"Nested"}},"fallback":{"title":"Ready"}}',
+        }, {});
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(opts: { name: string; tools?: Array<Record<string, unknown>> }) {
+        return opts;
+      },
+      tool(
+        name: string,
+        description: string,
+        inputSchema: Record<string, unknown>,
+        handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>,
+      ) {
+        return { name, description, inputSchema, handler };
+      },
+    }));
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    for await (const _event of adapter.run("test", [toolDef], ctx)) {
+      // Exhaust the adapter so the fake SDK invokes the registered tool.
+    }
+
+    expect(observedArgs).toEqual({
+      patch_id: "p-1",
+      body: {
+        data: { ready: true },
+        fallback: { title: "Nested" },
+      },
+      fallback: { title: "Ready" },
+    });
   });
 });

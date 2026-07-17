@@ -23,7 +23,8 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
     name: "handoff",
     description:
       "将工作成果交接给下游节点。**每轮只能调用一次**，调用后本轮立即结束。" +
-      "根据当前阶段选择正确的输出端口（port），提供交接内容（content）。",
+      "根据当前阶段选择正确的输出端口（port），提供交接内容（content）。" +
+      "若 pinned Surface 合同声明 required_phases，必须先完成整段 report_surface_state 序列；否则 handoff 会被拒绝。",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -84,6 +85,26 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
               text: `无效的输出端口: ${port}。可用端口: ${state.availablePorts.join(", ")}`,
             },
           ],
+          is_error: true,
+        };
+      }
+
+      if (state.surfaceReportingRequired && !state.surfaceReportingComplete) {
+        const fatal = state.surfaceReportingFatalError;
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              status: "rejected",
+              code: fatal ? "surface_reporting_blocked" : "surface_sequence_incomplete",
+              message: fatal?.message ?? "required Actor Surface phases are incomplete",
+              retryable: !fatal,
+              ...(state.surfaceExpectedPhase ? { expected_phase: state.surfaceExpectedPhase } : {}),
+              next_action: fatal
+                ? "Do not claim a successful handoff. End this turn so the runtime records the immutable Surface input-contract failure."
+                : `Call report_surface_state with phase ${state.surfaceExpectedPhase ?? "required by the pinned contract"} before handoff.`,
+            }),
+          }],
           is_error: true,
         };
       }

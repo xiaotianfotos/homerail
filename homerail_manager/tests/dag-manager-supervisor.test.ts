@@ -8,6 +8,7 @@ import {
   DAG_ACTOR_SURFACE_PATCH_SCHEMA_VERSION,
   HOMERAIL_A2UI_CATALOG_ID,
   HOMERAIL_A2UI_VERSION,
+  createDagWorkerSkillContextV1,
   type DagActivityEventV1,
   type DagActorSurfacePatchV1,
 } from "homerail-protocol";
@@ -35,8 +36,9 @@ import {
   markDagActorInterventionApplying,
 } from "../src/persistence/dag-actor-interventions.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { pinDagRunSkillContext } from "../src/persistence/dag-run-skill-contexts.js";
 import { createInitialDagRunRound } from "../src/persistence/dag-run-rounds.js";
-import { ensureRunDir } from "../src/persistence/store.js";
+import { ensureRunDir, loadRunMetadata, writeRunMetadata } from "../src/persistence/store.js";
 import { createServer } from "../src/server/http.js";
 import { _invokeHostCodexVoiceToolForTest } from "../src/server/host-codex-manager-agent.js";
 import {
@@ -98,6 +100,7 @@ function setupRun(
         actor_id: actorId,
         node_id: `node-${actorId}`,
         role: `${actorId} specialist`,
+        model_profile: { agent_id: actorId },
         surface_id: `surface:${actorId}`,
       });
       acquireDagActorLease({
@@ -257,6 +260,109 @@ describe("DAG Manager Supervisor", () => {
       { actor_id: "research", outcome: "completed" },
       { actor_id: "verify", outcome: "completed" },
     ]);
+  });
+
+  it("advertises only the selected pinned view's typed command payload controls", () => {
+    const runId = "supervisor-command-payload-contract";
+    setupRun(runId, ["research"]);
+    const visualView = (input: {
+      id: string;
+      field: string;
+      countField: string;
+      maxItems: number;
+      fallback: number | "source_length";
+    }) => ({
+      id: input.id,
+      a2ui: {
+        version: HOMERAIL_A2UI_VERSION,
+        catalogId: HOMERAIL_A2UI_CATALOG_ID,
+        components: [
+          { id: "root", component: "Column" as const, children: ["items", "phase"] },
+          {
+            id: "items",
+            component: "List" as const,
+            children: { path: `/actor_view/data/${input.field}`, componentId: "item" },
+          },
+          { id: "item", component: "Text" as const, text: { path: "label" } },
+          { id: "phase", component: "Text" as const, text: { path: "/actor_view/data/phase_text" } },
+        ],
+      },
+      data_contract: {
+        source: { input_port: "mission" },
+        fields: [
+          {
+            field: input.field,
+            mode: "source_prefix" as const,
+            source_pointer: `/${input.field}`,
+            max_items: input.maxItems,
+            final_count: {
+              source: { input_port: "command", pointer: `/payload/${input.countField}` },
+              default: input.fallback,
+            },
+          },
+          {
+            field: "phase_text",
+            mode: "presentation" as const,
+            value_schema: { type: "string" as const, max_length: 64 },
+          },
+        ],
+      },
+    });
+    const context = createDagWorkerSkillContextV1([{
+      id: "visual-control",
+      source: "home",
+      content: "# Visual control\nUse only trusted inputs.",
+      visual_profile: {
+        profile_version: 1,
+        views: [
+          visualView({
+            id: "route",
+            field: "steps",
+            countField: "steps_count",
+            maxItems: 8,
+            fallback: "source_length",
+          }),
+          visualView({
+            id: "alternatives",
+            field: "alternatives",
+            countField: "alternatives_count",
+            maxItems: 5,
+            fallback: 3,
+          }),
+        ],
+      },
+    }]);
+    pinDagRunSkillContext({ run_id: runId, agent_id: "research", context });
+    const metadata = loadRunMetadata(runId)!;
+    writeRunMetadata(runId, {
+      ...metadata,
+      agents: {
+        research: {
+          skills: ["visual-control"],
+          allowed_surface_views: ["route"],
+        },
+      },
+    });
+
+    const snapshot = getDagSupervisionSnapshot({
+      run_id: runId,
+      consumer_id: "payload-contract-reader",
+    });
+    expect(snapshot.actors[0]?.command_payload_contract).toEqual({
+      schema_version: 1,
+      fields: [{
+        purpose: "final_source_prefix_count",
+        payload_path: ["steps_count"],
+        type: "integer",
+        minimum: 0,
+        maximum: 8,
+        default: "source_length",
+        surface_data_fields: ["steps"],
+      }],
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("alternatives_count");
+    expect(listDagSupervisorActors(runId).actors[0]?.command_payload_contract)
+      .toEqual(snapshot.actors[0]?.command_payload_contract);
   });
 
   it("publishes a bounded round view without the private await node identity", () => {
@@ -583,6 +689,7 @@ describe("DAG Manager Supervisor", () => {
         apply_kind: "patch_components",
         body_revision: 1,
         visual_revision: 1,
+        summary: "Initial structure",
       },
       {
         patch_id: "surface-3",
@@ -591,6 +698,7 @@ describe("DAG Manager Supervisor", () => {
         phase: "verified",
         body_revision: 3,
         visual_revision: 3,
+        summary: "Verified output",
       },
       {
         patch_id: "surface-4",
@@ -602,6 +710,8 @@ describe("DAG Manager Supervisor", () => {
     expect(snapshot.milestone_digest.surface_patch_milestones)
       .not.toContainEqual(expect.objectContaining({ patch_id: "surface-2" }));
     expect(snapshot.milestone_digest.commentary).toHaveLength(1);
+    expect(snapshot.milestone_digest.commentary[0]).toContain("Initial structure");
+    expect(snapshot.milestone_digest.commentary[0]).toContain("Verified output");
     expect(JSON.stringify(snapshot)).not.toContain("sk-supervision-secret");
     expect(JSON.stringify(snapshot)).not.toContain("Rapid data refresh");
 

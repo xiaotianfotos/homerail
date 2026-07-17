@@ -222,6 +222,31 @@ describe("DAG Actor surface Projector", () => {
     now.mockRestore();
   });
 
+  it("rejects phase regression and keeps final closed within one round", () => {
+    setupActors(["research"]);
+    appendAndProject(patchFor({ sequence: 1, phase: "started" }));
+    appendAndProject(patchFor({ sequence: 2, phase: "partial" }));
+    appendAndProject(patchFor({ sequence: 3, phase: "started" }));
+
+    expect(getDagActorSurfaceView(RUN_ID, "research")).toMatchObject({
+      body_revision: 3,
+      visual_revision: 2,
+      phase: "partial",
+    });
+    expect(listDagActorSurfacePatchQueue({ run_id: RUN_ID, actor_id: "research" }).at(-1))
+      .toMatchObject({ status: "rejected", body_revision: 3 });
+
+    appendAndProject(patchFor({ sequence: 4, phase: "final" }));
+    appendAndProject(patchFor({ sequence: 5, phase: "partial" }));
+    flushDagActorSurfacePatches(RUN_ID, "research");
+    expect(getDagActorSurfaceView(RUN_ID, "research")).toMatchObject({
+      body_revision: 5,
+      phase: "final",
+    });
+    expect(listDagActorSurfacePatchQueue({ run_id: RUN_ID, actor_id: "research" }).at(-1))
+      .toMatchObject({ status: "rejected", body_revision: 5 });
+  });
+
   it("rejects unbrokered media without blocking the next contiguous patch", () => {
     setupActors(["research"]);
     appendAndProject(patchFor({ sequence: 1, media_uri: "https://example.com/private.png" }));

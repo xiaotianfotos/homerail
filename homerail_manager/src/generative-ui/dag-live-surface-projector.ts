@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  DAG_ACTOR_SURFACE_PATCH_PHASES,
   GENERATIVE_UI_IR_VERSION,
   GENERATIVE_UI_MAX_NODE_CONTENT_BYTES,
   HOMERAIL_A2UI_CATALOG_ID,
@@ -15,6 +16,7 @@ import {
   type DagActivityType,
   type DagActorSurfaceBodyV1,
   type DagActorSurfacePatchPhaseV1,
+  type DagActorSurfacePatchV1,
   type A2uiComponentV1,
   type GenerativeUiDocumentV1,
   type GenerativeUiNodeV1,
@@ -1882,12 +1884,14 @@ export function controlDagLiveSurface(input: {
   }).immediate();
 }
 
-function resolveActorBinding(value: unknown, body: DagActorSurfaceBodyV1): unknown {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const path = (value as { path?: unknown }).path;
-  if (typeof path !== "string" || !path.startsWith("/actor_view/data")) return undefined;
-  let current: unknown = { actor_view: { data: body.data } };
+interface ActorBindingScope {
+  inTemplate: boolean;
+  value: unknown;
+}
+
+function actorPointer(root: unknown, path: string): unknown {
+  if (!path.startsWith("/")) return undefined;
+  let current = root;
   for (const encoded of path.split("/").slice(1)) {
     const token = encoded.replace(/~1/g, "/").replace(/~0/g, "~");
     if (!current || typeof current !== "object") return undefined;
@@ -1899,6 +1903,45 @@ function resolveActorBinding(value: unknown, body: DagActorSurfaceBodyV1): unkno
     }
   }
   return current;
+}
+
+function resolveActorPath(path: string, body: DagActorSurfaceBodyV1, scope: ActorBindingScope): unknown {
+  const dataModel = { actor_view: { data: body.data } };
+  return path.startsWith("/")
+    ? actorPointer(dataModel, path)
+    : scope.inTemplate
+      ? actorPointer(scope.value, `/${path}`)
+      : undefined;
+}
+
+function resolveActorBinding(
+  value: unknown,
+  body: DagActorSurfaceBodyV1,
+  scope: ActorBindingScope,
+): unknown {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const path = (value as { path?: unknown }).path;
+  return typeof path === "string" ? resolveActorPath(path, body, scope) : undefined;
+}
+
+function actorComponentEdges(component: Record<string, unknown>): Array<{ id: string; templatePath?: string }> {
+  const children = component.children;
+  if (Array.isArray(children)) {
+    return children.filter((entry): entry is string => typeof entry === "string").map((id) => ({ id }));
+  }
+  if (children && typeof children === "object" && !Array.isArray(children)) {
+    const path = (children as Record<string, unknown>).path;
+    const id = (children as Record<string, unknown>).componentId;
+    return typeof path === "string" && typeof id === "string" ? [{ id, templatePath: path }] : [];
+  }
+  if (typeof component.child === "string") return [{ id: component.child }];
+  if (Array.isArray(component.tabs)) {
+    return component.tabs.flatMap((tab) => tab && typeof tab === "object" && typeof (tab as { child?: unknown }).child === "string"
+      ? [{ id: (tab as { child: string }).child }]
+      : []);
+  }
+  return [];
 }
 
 function assertBrokerArtifactUri(uri: unknown, runId: string): void {
@@ -1959,25 +2002,46 @@ function assertBrokerArtifactUri(uri: unknown, runId: string): void {
 }
 
 function assertBrokerAllowedBody(body: DagActorSurfaceBodyV1, runId: string): void {
-  for (const component of body.a2ui.components) {
+  if (body.a2ui.surfaceProperties?.iconUrl) {
+    assertBrokerArtifactUri(body.a2ui.surfaceProperties.iconUrl, runId);
+  }
+  const components = new Map<string, Record<string, unknown>>();
+  for (const component of body.a2ui.components as unknown as Record<string, unknown>[]) {
+    if (typeof component.id === "string") components.set(component.id, component);
+  }
+  const visit = (id: string, scope: ActorBindingScope, ancestors: ReadonlySet<string>): void => {
+    const component = components.get(id);
+    if (!component || ancestors.has(id)) return;
     switch (component.component) {
       case "Image":
       case "AudioPlayer":
-        assertBrokerArtifactUri(resolveActorBinding(component.url, body), runId);
+        assertBrokerArtifactUri(resolveActorBinding(component.url, body, scope), runId);
         break;
       case "Video":
-        assertBrokerArtifactUri(resolveActorBinding(component.url, body), runId);
+        assertBrokerArtifactUri(resolveActorBinding(component.url, body, scope), runId);
         if (component.posterUrl !== undefined) {
-          assertBrokerArtifactUri(resolveActorBinding(component.posterUrl, body), runId);
+          assertBrokerArtifactUri(resolveActorBinding(component.posterUrl, body, scope), runId);
         }
         break;
       case "HrArtifact":
-        assertBrokerArtifactUri(resolveActorBinding(component.uri, body), runId);
+        assertBrokerArtifactUri(resolveActorBinding(component.uri, body, scope), runId);
         break;
       default:
         break;
     }
-  }
+    const next = new Set(ancestors);
+    next.add(id);
+    for (const edge of actorComponentEdges(component)) {
+      if (!edge.templatePath) {
+        visit(edge.id, scope, next);
+        continue;
+      }
+      const items = resolveActorPath(edge.templatePath, body, scope);
+      if (!Array.isArray(items)) continue;
+      for (const item of items) visit(edge.id, { inTemplate: true, value: item }, next);
+    }
+  };
+  visit("root", { inTemplate: false, value: { actor_view: { data: body.data } } }, new Set());
   for (const reference of body.fallback.artifact_refs ?? []) {
     assertBrokerArtifactUri(reference.uri, runId);
   }
@@ -2112,6 +2176,26 @@ function coalescedActorPatchGroup(
   return group.length > 0 ? group : [first];
 }
 
+function assertMonotonicActorPatchPhase(
+  view: DagActorSurfaceViewRecord,
+  patch: DagActorSurfacePatchV1,
+): void {
+  if (!view.phase || view.round_id !== patch.round_id) return;
+  if (view.phase === "final") {
+    throw new DagLiveSurfaceProjectionError(
+      "a2ui_rejected",
+      `Actor Surface phase final already closed round ${patch.round_id}`,
+    );
+  }
+  if (DAG_ACTOR_SURFACE_PATCH_PHASES.indexOf(patch.phase)
+    < DAG_ACTOR_SURFACE_PATCH_PHASES.indexOf(view.phase)) {
+    throw new DagLiveSurfaceProjectionError(
+      "a2ui_rejected",
+      `Actor Surface phase cannot move backward from ${view.phase} to ${patch.phase}`,
+    );
+  }
+}
+
 function applyActorPatchGroup(group: QueuedDagActorSurfacePatch[]): number {
   const target = group.at(-1);
   if (!target) return 0;
@@ -2119,6 +2203,7 @@ function applyActorPatchGroup(group: QueuedDagActorSurfacePatch[]): number {
   if (view.body_revision + group.length !== target.patch.patch_sequence) {
     throw new DagLiveSurfaceProjectionError("projection_state_conflict", "Actor surface patch group is not contiguous");
   }
+  assertMonotonicActorPatchPhase(view, target.patch);
   for (const candidate of group) {
     assertCurrentActorPatchTarget(candidate, actor);
     if (candidate.patch.op === "replace_body") {
