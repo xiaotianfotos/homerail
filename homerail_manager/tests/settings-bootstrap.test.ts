@@ -114,6 +114,154 @@ describe("settings bootstrap routes", () => {
     expect(traversal.status).toBe(404);
   });
 
+  it("materializes only validated local Skill view templates from semantic data", async () => {
+    const skillDir = path.join(tmpHome, "skills", "route-skill");
+    const viewDir = path.join(skillDir, "assets", "homerail");
+    fs.mkdirSync(viewDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), [
+      "---",
+      "name: route-skill",
+      "description: Render verified routes",
+      "---",
+      "",
+      "# Route skill",
+    ].join("\n"));
+    fs.writeFileSync(path.join(viewDir, "view-templates.json"), JSON.stringify({
+      manifest_version: 1,
+      presenter: {
+        command: "node",
+        args: ["presenter.js"],
+        timeout_ms: 5000,
+      },
+      templates: [{
+        id: "route",
+        description: "Show one verified route.",
+        data_schema: {
+          type: "object",
+          properties: {
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            steps: { type: "array", maxItems: 12, items: { type: "string", maxLength: 200 } },
+          },
+          required: ["title", "steps"],
+          additionalProperties: false,
+        },
+        a2ui: {
+          version: "v1.0",
+          catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
+          components: [
+            { id: "root", component: "Column", children: ["title"] },
+            { id: "title", component: "Text", text: { path: "/data/title" } },
+          ],
+        },
+        defaults: {
+          surface: "result",
+          importance: "primary",
+          density: "summary",
+          canvas_size: "1x2",
+          persistence: "session",
+        },
+        allowed_canvas_sizes: ["1x2", "2x2"],
+      }],
+    }));
+    fs.writeFileSync(path.join(skillDir, "presenter.js"), [
+      "const [start, finish] = process.argv.slice(2);",
+      "process.stdout.write(JSON.stringify({",
+      "  template: 'route',",
+      "  id: `route-${start}-${finish}`,",
+      "  canvas_size: '1x2',",
+      "  data: { title: `${start} to ${finish}`, steps: [start, finish] },",
+      "  response_text: `${start} reaches ${finish}.`,",
+      "}));",
+    ].join("\n"));
+
+    const port = await listen(server);
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/skills/route-skill/views/route/materialize`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: "route-result",
+          canvas_size: "2x2",
+          data: { title: "Verified route", steps: ["start", "finish"] },
+        }),
+      },
+    );
+    const body = await response.json() as {
+      success: boolean;
+      data: { input: Record<string, unknown> };
+    };
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.input).toMatchObject({
+      id: "route-result",
+      title: "Verified route",
+      canvas_size: "2x2",
+      content: { data: { title: "Verified route", steps: ["start", "finish"] } },
+    });
+    expect((body.data.input.a2ui as Record<string, unknown>).components).toEqual([
+      { id: "root", component: "Column", children: ["title"] },
+      { id: "title", component: "Text", text: { path: "/data/title" } },
+    ]);
+
+    const presentedResponse = await fetch(
+      `http://127.0.0.1:${port}/api/skills/route-skill/views/present`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ argv: ["start", "finish"] }),
+      },
+    );
+    const presented = await presentedResponse.json() as {
+      success: boolean;
+      data: { input: Record<string, unknown>; template_id: string; response_text: string };
+    };
+    expect(presentedResponse.status).toBe(200);
+    expect(presented.success).toBe(true);
+    expect(presented.data).toMatchObject({
+      template_id: "route",
+      response_text: "start reaches finish.",
+      input: {
+        id: "route-start-finish",
+        title: "start to finish",
+        canvas_size: "1x2",
+        content: { data: { title: "start to finish", steps: ["start", "finish"] } },
+      },
+    });
+
+    const invalidArgv = await fetch(
+      `http://127.0.0.1:${port}/api/skills/route-skill/views/present`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ argv: ["start\nunsafe", "finish"] }),
+      },
+    );
+    expect(invalidArgv.status).toBe(400);
+
+    const invalid = await fetch(
+      `http://127.0.0.1:${port}/api/skills/route-skill/views/route/materialize`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: "route-result", data: { title: "Missing steps" } }),
+      },
+    );
+    expect(invalid.status).toBe(400);
+
+    const missing = await fetch(
+      `http://127.0.0.1:${port}/api/skills/route-skill/views/missing/materialize`,
+      { method: "POST", body: "{}" },
+    );
+    expect(missing.status).toBe(404);
+
+    const traversal = await fetch(
+      `http://127.0.0.1:${port}/api/skills/%2E%2E%2Fsecrets/views/route/materialize`,
+      { method: "POST", body: "{}" },
+    );
+    expect(traversal.status).toBe(404);
+  });
+
   it("returns asset diagnostics with concrete checks", async () => {
     const port = await listen(server);
     const response = await fetch(`http://127.0.0.1:${port}/api/assets/diagnostics`);

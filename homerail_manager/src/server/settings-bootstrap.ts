@@ -7,10 +7,15 @@ import { listPersistedRunIds, loadRunMetadata } from "../persistence/store.js";
 import { repoRoot, resolveAssetDirectory, resolveAssetRoot } from "../assets/root.js";
 import {
   ensureManagerSkillsInstalled,
+  executeManagerSkillViewPresenter,
   listManagerSkills,
   readManagerSkill,
+  readManagerSkillViewTemplates,
 } from "./manager-skills.js";
-import { isCanonicalHomerailPluginSemver } from "homerail-protocol";
+import {
+  isCanonicalHomerailPluginSemver,
+  materializeManagerAgentSkillViewTemplateInput,
+} from "homerail-protocol";
 
 interface BaseResponse {
   success: boolean;
@@ -554,6 +559,81 @@ export function settingsBootstrapHandler(
     } else {
       _ok(res, "Skill retrieved", skill);
     }
+    return true;
+  }
+
+  const skillViewMaterializeMatch = pathname.match(/^\/api\/skills\/([^/]+)\/views\/([^/]+)\/materialize$/);
+  if (skillViewMaterializeMatch && req.method === "POST") {
+    let skillId = "";
+    let templateId = "";
+    try {
+      skillId = decodeURIComponent(skillViewMaterializeMatch[1]);
+      templateId = decodeURIComponent(skillViewMaterializeMatch[2]);
+    } catch {
+      json(res, 400, { success: false, message: "Invalid Skill view identity", error: "Invalid Skill view identity" });
+      return true;
+    }
+    const template = readManagerSkillViewTemplates(skillId).find((candidate) => candidate.id === templateId);
+    if (!template) {
+      json(res, 404, { success: false, message: "Skill view template not found", error: "Skill view template not found" });
+      return true;
+    }
+    readJsonBody(req)
+      .then((body) => {
+        const input = materializeManagerAgentSkillViewTemplateInput(skillId, template, body);
+        _ok(res, "Skill view materialized", { input });
+      })
+      .catch((err) => json(res, 400, {
+        success: false,
+        message: err instanceof Error ? err.message : "Invalid Skill view input",
+        error: err instanceof Error ? err.message : "Invalid Skill view input",
+      }));
+    return true;
+  }
+
+  const skillViewPresentMatch = pathname.match(/^\/api\/skills\/([^/]+)\/views\/present$/);
+  if (skillViewPresentMatch && req.method === "POST") {
+    let skillId = "";
+    try {
+      skillId = decodeURIComponent(skillViewPresentMatch[1]);
+    } catch {
+      json(res, 400, { success: false, message: "Invalid Skill view identity", error: "Invalid Skill view identity" });
+      return true;
+    }
+    readJsonBody(req)
+      .then(async (body) => {
+        const presented = await executeManagerSkillViewPresenter(skillId, body.argv);
+        const templateId = typeof presented.template === "string" ? presented.template.trim() : "";
+        const id = typeof presented.id === "string" ? presented.id.trim() : "";
+        const data = presented.data && typeof presented.data === "object" && !Array.isArray(presented.data)
+          ? presented.data as Record<string, unknown>
+          : undefined;
+        const responseText = presented.response_text === undefined
+          ? ""
+          : typeof presented.response_text === "string"
+            ? presented.response_text.trim()
+            : "";
+        if (!templateId || !id || !data || responseText.length > 2_000) {
+          throw new Error("Skill view presenter returned an invalid visual contract");
+        }
+        const template = readManagerSkillViewTemplates(skillId).find((candidate) => candidate.id === templateId);
+        if (!template) throw new Error("Skill view presenter returned an unknown template");
+        const input = materializeManagerAgentSkillViewTemplateInput(skillId, template, {
+          id,
+          data,
+          ...(presented.canvas_size === undefined ? {} : { canvas_size: presented.canvas_size }),
+        });
+        _ok(res, "Skill view presented", {
+          input,
+          template_id: templateId,
+          ...(responseText ? { response_text: responseText } : {}),
+        });
+      })
+      .catch((err) => json(res, 400, {
+        success: false,
+        message: err instanceof Error ? err.message : "Invalid Skill view presenter request",
+        error: err instanceof Error ? err.message : "Invalid Skill view presenter request",
+      }));
     return true;
   }
 

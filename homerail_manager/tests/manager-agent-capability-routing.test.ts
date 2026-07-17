@@ -256,7 +256,7 @@ describe("Manager Agent per-turn capability routing", () => {
     });
     expect(captured.host[0].outcome_contracts).toEqual([{
       capability: "canvas.view.committed",
-      tool_names: ["upsert_generated_view"],
+      tool_names: ["upsert_generated_view", "skill_view_present", "skill_view_render"],
     }]);
     expect(turn.result.objective).toMatchObject({
       required_outcomes: ["canvas.view.committed"],

@@ -10,7 +10,11 @@ import {
   emptyGenerativeUiActionRegistry,
   GenerativeUiActionRegistry,
 } from '@/generative-ui/action-registry'
-import { resolveGenerativeUiFocusIndex, type GenerativeUiFocusDirection } from '@/generative-ui/focus-navigation'
+import {
+  focusGenerativeUiNode,
+  resolveGenerativeUiFocusIndex,
+  type GenerativeUiFocusDirection,
+} from '@/generative-ui/focus-navigation'
 import {
   emptyGenerativeUiRendererRegistry,
   GenerativeUiRendererRegistry,
@@ -161,14 +165,7 @@ function focus(direction: GenerativeUiFocusDirection): void {
 function focusNode(nodeId: string): boolean {
   const target = focusableNodes().find(element => element.dataset.generativeUiNode === nodeId)
   if (!target) return false
-  target.focus({ preventScroll: true })
-  target.scrollIntoView?.({
-    behavior: reducedMotionPreferred() ? 'auto' : 'smooth',
-    block: 'nearest',
-    inline: 'start',
-  })
-  const body = target.querySelector<HTMLElement>('.generative-ui-node-host__body')
-  body?.scrollTo?.({ top: body.scrollHeight, behavior: reducedMotionPreferred() ? 'auto' : 'smooth' })
+  focusGenerativeUiNode(target, reducedMotionPreferred() ? 'auto' : 'smooth')
   emit('focus-node', { node_id: nodeId })
   return true
 }

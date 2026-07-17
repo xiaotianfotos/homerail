@@ -1,5 +1,17 @@
 export type GenerativeUiFocusDirection = 'next' | 'previous' | 'first' | 'last'
 
+export function focusGenerativeUiNode(
+  target: HTMLElement,
+  behavior: ScrollBehavior,
+): void {
+  target.focus({ preventScroll: true })
+  target.scrollIntoView?.({
+    behavior,
+    block: 'nearest',
+    inline: 'start',
+  })
+}
+
 export function resolveGenerativeUiFocusIndex(
   currentIndex: number,
   itemCount: number,

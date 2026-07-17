@@ -68,6 +68,8 @@ describe("Manager Agent stable outcomes", () => {
     });
     expect(contracts).toHaveLength(1);
     expect(contracts[0].tool_names).toContain("upsert_generated_view");
+    expect(contracts[0].tool_names).toContain("skill_view_render");
+    expect(contracts[0].tool_names).toContain("skill_view_present");
     expect(contracts[0].tool_names.some((name) => name.startsWith("skill_view_route-skill_route_"))).toBe(true);
     expect(() => assertManagerAgentOutcomeContractsResolvable(contracts)).not.toThrow();
   });

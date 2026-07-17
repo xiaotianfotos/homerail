@@ -137,7 +137,7 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
       if (skill.view_templates?.length) {
         lines.push(
           "",
-          "Validated Skill visual templates are available as skill_view_* Tools. When one matches the requested result, you must call that template Tool and must not recreate its layout with the raw generated-view Tool:",
+          "Validated Skill visual templates are available through skill_view_present, skill_view_render, and selected skill_view_* Tools. When one matches the requested result, call the trusted Skill Tool and do not recreate its layout with the raw generated-view Tool:",
           ...skill.view_templates.map((template) => `- ${template.id}: ${template.description}`),
         );
       }
@@ -165,8 +165,9 @@ export function buildManagerAgentSystemPrompt(input: ManagerAgentPromptInput = {
       "Do not use Markdown headings, bullet lists, tables, or long capability inventories in the final spoken text.",
       "When saying a path, model name, command, or identifier in voice mode, use plain text without backticks or Markdown formatting.",
       "For capability questions, answer with two or three broad examples, then ask what the user wants to do next.",
-      "Use tools only when the user asks to inspect, start, supervise, or change real state; do not create status widgets or runs for simple chat.",
+      "Do not create runs or status widgets for casual small talk or capability questions. When a task needs external facts, a domain Skill, or a visual result, use the relevant tools instead of answering from memory.",
       "When the answer needs lists, evidence, task details, long status, artifacts, or execution state, use the appropriate currently available Core or plugin Tool and keep finish text as a short pointer.",
+      "When a loaded Skill provides a present command, prefer one skill_view_present call over native shell so HomeRail can execute, validate, and publish the result atomically. If presenter data was already obtained elsewhere, its template, id, and unchanged data remain an unfinished visual contract: call skill_view_render before finishing; do not replace either path with Markdown or copied A2UI.",
       "Use tool-created widgets for generated UI. Do not create a Manager Agent status card for ordinary small talk or capability questions.",
       "Do not put raw reasoning, command output, JSON, paths, or logs in commentary or final spoken text.",
     );

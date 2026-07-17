@@ -8,6 +8,7 @@ import {
   type HomerailA2uiSurfaceV1,
 } from "./generative-ui/index.js";
 import { validateHomerailPluginToolInput } from "./plugins/projection.js";
+import type { AgentToolDefinition } from "./types.js";
 
 export type ManagerAgentSkillViewSurfaceV1 = "task" | "execution" | "result" | "ambient";
 export type ManagerAgentSkillViewImportanceV1 = "critical" | "primary" | "secondary" | "ambient";
@@ -45,6 +46,95 @@ export interface ManagerAgentSkillWithViewsV1 {
   id: string;
   content?: string;
   view_templates?: ManagerAgentSkillViewTemplateV1[];
+}
+
+export const MANAGER_AGENT_SKILL_VIEW_RENDER_TOOL_NAME = "skill_view_render";
+export const MANAGER_AGENT_SKILL_VIEW_PRESENT_TOOL_NAME = "skill_view_present";
+
+export function managerAgentSkillViewPresentToolDefinition(): AgentToolDefinition {
+  return {
+    name: MANAGER_AGENT_SKILL_VIEW_PRESENT_TOOL_NAME,
+    description: [
+      "Run the trusted visual presenter shipped by an enabled local HomeRail Skill and publish its validated template in one call.",
+      "Use this instead of a native shell when the Skill gives a present command; pass only the argv tokens after the Skill's trusted base command.",
+      "Example: a Skill instruction 'present route A B --limit 4' becomes {skill_id:'catalog', argv:['present','route','A','B','--limit','4']}.",
+      "HomeRail executes without a shell, validates the returned template, id, canvas_size, and data, then commits the visual result.",
+      "After success, use the returned response_text as the short final answer; do not call skill_view_render again.",
+    ].join(" "),
+    input_schema: {
+      type: "object",
+      properties: {
+        skill_id: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "Enabled local Skill id that owns the trusted presenter and view templates.",
+        },
+        argv: {
+          type: "array",
+          minItems: 1,
+          maxItems: 32,
+          items: {
+            type: "string",
+            minLength: 1,
+            maxLength: 512,
+          },
+          description: "Presenter arguments exactly as specified by the loaded Skill, excluding its trusted base command.",
+        },
+      },
+      required: ["skill_id", "argv"],
+      additionalProperties: false,
+    },
+  };
+}
+
+export function managerAgentSkillViewRenderToolDefinition(): AgentToolDefinition {
+  return {
+    name: MANAGER_AGENT_SKILL_VIEW_RENDER_TOOL_NAME,
+    description: [
+      "Render or update a validated visual template owned by an enabled local HomeRail Skill.",
+      "Use the skill_id and template_id returned by the natively loaded Skill or its presenter,",
+      "and pass the presenter's semantic data unchanged. HomeRail owns and validates the A2UI layout.",
+      "A presenter result with template, id, and data is incomplete until this Tool succeeds.",
+      "Example: presenter {template:'route', id:'route-1', canvas_size:'1x2', data:X} from Skill 'catalog' becomes {skill_id:'catalog', template_id:'route', id:'route-1', canvas_size:'1x2', data:X}.",
+      "Do not answer it as Markdown or copy A2UI into the raw generated-view Tool.",
+    ].join(" "),
+    input_schema: {
+      type: "object",
+      properties: {
+        skill_id: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "Enabled local Skill id, for example the id shown in the HomeRail Skill catalog.",
+        },
+        template_id: {
+          type: "string",
+          pattern: "^[a-z0-9][a-z0-9_-]{0,63}$",
+          description: "Stable template id returned by the Skill presenter.",
+        },
+        id: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "Stable Block id. Reuse it for follow-up updates.",
+        },
+        data: {
+          type: "object",
+          maxProperties: 128,
+          additionalProperties: true,
+          description: "Semantic presenter data. Do not add, remove, recompute, or rearrange its fields.",
+        },
+        canvas_size: {
+          type: "string",
+          enum: ["1x1", "1x2", "2x2", "3x3"],
+          description: "Optional footprint override allowed by the selected template.",
+        },
+      },
+      required: ["skill_id", "template_id", "id", "data"],
+      additionalProperties: false,
+    },
+  };
 }
 
 function toolSlug(value: string, maxLength: number): string {
@@ -106,6 +196,25 @@ function templateToolInputSchema(template: ManagerAgentSkillViewTemplateV1): Rec
   };
 }
 
+function skillViewToolDefinition(
+  skillId: string,
+  template: ManagerAgentSkillViewTemplateV1,
+): ManagerAgentSkillViewToolDefinitionV1 {
+  return {
+    name: managerAgentSkillViewToolName(skillId, template.id),
+    description: [
+      `Render or update the selected ${skillId} result with its validated '${template.id}' visual template.`,
+      template.description,
+      "Provide semantic data only; HomeRail owns the layout. data.title is used as the Block title.",
+      "HomeRail A2UI formatString accepts only ${/absolute/pointer} and template-relative ${pointer} interpolation; escape a literal opener as \\${. Nested functions and other expressions are rejected.",
+      "Reuse the current selected Block id for follow-up updates. When this schema matches, use this Tool; the raw generated-view Tool rejects matching data so HomeRail can preserve this layout.",
+    ].join(" "),
+    input_schema: templateToolInputSchema(template),
+    skill_id: skillId,
+    template,
+  };
+}
+
 export function managerAgentSkillViewToolDefinitions(
   skills: readonly ManagerAgentSkillWithViewsV1[],
 ): ManagerAgentSkillViewToolDefinitionV1[] {
@@ -114,22 +223,11 @@ export function managerAgentSkillViewToolDefinitions(
   for (const skill of skills) {
     if (!skill.content?.trim()) continue;
     for (const template of skill.view_templates ?? []) {
-      const name = managerAgentSkillViewToolName(skill.id, template.id);
+      const definition = skillViewToolDefinition(skill.id, template);
+      const name = definition.name;
       if (names.has(name)) throw new Error(`Skill view Tool name collision: ${name}`);
       names.add(name);
-      definitions.push({
-        name,
-        description: [
-          `Render or update the selected ${skill.id} result with its validated '${template.id}' visual template.`,
-          template.description,
-          "Provide semantic data only; HomeRail owns the layout. data.title is used as the Block title.",
-          "HomeRail A2UI formatString accepts only ${/absolute/pointer} and template-relative ${pointer} interpolation; escape a literal opener as \\${. Nested functions and other expressions are rejected.",
-          "Reuse the current selected Block id for follow-up updates. When this schema matches, use this Tool; the raw generated-view Tool rejects matching data so HomeRail can preserve this layout.",
-        ].join(" "),
-        input_schema: templateToolInputSchema(template),
-        skill_id: skill.id,
-        template,
-      });
+      definitions.push(definition);
     }
   }
   return definitions;
@@ -139,6 +237,51 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+export function compactManagerAgentSkillViewPresentResult(
+  pluginResult: Record<string, unknown>,
+  responseText = "",
+): Record<string, unknown> {
+  const normalizedResponse = responseText.trim();
+  const projected = record(pluginResult.projection);
+  const projectedNode = record(projected?.node);
+  if (
+    pluginResult.execution_version === 1
+    && pluginResult.status === "projected"
+    && pluginResult.committed === false
+    && typeof projectedNode?.id === "string"
+  ) {
+    return {
+      execution_version: 1,
+      status: "projected",
+      committed: false,
+      node_id: projectedNode.id,
+      ...(normalizedResponse ? { response_text: normalizedResponse } : {}),
+    };
+  }
+  const data = record(pluginResult.data) ?? pluginResult;
+  const result = record(data.result);
+  const revision = Number(result?.document_revision);
+  if (
+    data.status !== "committed"
+    || result?.output_type !== "ui_transaction"
+    || typeof result.document_id !== "string"
+    || !Number.isSafeInteger(revision)
+    || revision < 1
+  ) throw new Error("Generated view Tool returned an invalid committed result");
+  return {
+    success: pluginResult.success !== false,
+    data: {
+      status: "committed",
+      result: {
+        output_type: "ui_transaction",
+        document_id: result.document_id,
+        document_revision: revision,
+      },
+      ...(normalizedResponse ? { response_text: normalizedResponse } : {}),
+    },
+  };
 }
 
 /**
@@ -199,4 +342,15 @@ export function materializeManagerAgentSkillViewInput(
     content,
     a2ui: structuredClone(a2uiValidation.value),
   };
+}
+
+export function materializeManagerAgentSkillViewTemplateInput(
+  skillId: string,
+  template: ManagerAgentSkillViewTemplateV1,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  return materializeManagerAgentSkillViewInput(
+    skillViewToolDefinition(skillId, template),
+    input,
+  );
 }
