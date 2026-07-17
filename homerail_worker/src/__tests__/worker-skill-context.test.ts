@@ -159,6 +159,20 @@ describe("Worker Skill Context", () => {
     expect(prepared.systemPrompt!.indexOf(SKILL_BODY))
       .toBeGreaterThan(prepared.systemPrompt!.indexOf("Original node instructions"));
     expect(JSON.stringify(prepared.summary)).not.toContain(SKILL_BODY);
+    expect(prepared.skillProjection).toMatchObject({
+      mode: "explicit",
+      definitions: [{ id: "review" }],
+    });
+    expect(prepared.skillProjection.definitions?.[0]?.content).toContain(SKILL_BODY);
+    expect(prepared.skillProjection.definitions?.[0]?.content).toContain(context.context_digest);
+    expect(prepared.skillProjection.directories).toBeUndefined();
+  });
+
+  it("uses an explicit empty projection when no Worker Skill snapshot is assigned", () => {
+    const prepared = prepareWorkerSkillContext({ systemPrompt: "Plain worker instructions" });
+
+    expect(prepared.skillProjection).toEqual({ mode: "explicit", definitions: [] });
+    expect(prepared.systemPrompt).toBe("Plain worker instructions");
   });
 
   it("keeps full visual views pinned outside the prompt and exposes stable view ids", () => {
@@ -260,6 +274,7 @@ describe("Worker Skill Context", () => {
         runId: "worker-skill-correction",
         dagConfig: dagConfig(),
         systemPrompt: prepared.systemPrompt,
+        skillProjection: prepared.skillProjection,
         skillContextSummary: prepared.summary,
         actorCheckpoint: checkpoint(context),
         llmBaseUrl: "https://llm.example.test/v1",
@@ -274,6 +289,7 @@ describe("Worker Skill Context", () => {
       expect(observedContext?.systemPromptMode).toBe("replace");
       expect(observedContext?.systemPrompt).toContain("DAG CONTRACT CORRECTION MODE");
       expect(observedContext?.systemPrompt).toContain(SKILL_BODY);
+      expect(observedContext?.skillProjection).toEqual(prepared.skillProjection);
 
       const audit = readFileSync(join(auditDir, "worker-skill-correction.jsonl"), "utf8");
       expect(audit).toContain(context.context_digest);

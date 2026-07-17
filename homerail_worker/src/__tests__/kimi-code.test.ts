@@ -3,7 +3,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { KimiCodeAdapter, _kimiSpawnOptionsForTest, redactSecrets } from "../agent/kimi-code.js";
@@ -401,10 +409,17 @@ process.exit(2);
       const captured: {
         options?: Record<string, unknown>;
         prompt?: string;
+        agentInstructions?: string;
+        skillDocument?: string;
       } = {};
       const close = vi.fn(async () => {});
       const createSdkSession = vi.fn((options: Record<string, unknown>) => {
         captured.options = options;
+        const shareDir = String(options.shareDir);
+        captured.agentInstructions = readFileSync(join(shareDir, "AGENTS.md"), "utf-8");
+        const skillsDir = String(options.skillsDir);
+        const skillDir = readdirSync(skillsDir)[0]!;
+        captured.skillDocument = readFileSync(join(skillsDir, skillDir, "SKILL.md"), "utf-8");
         return {
           sessionId: "sdk-session-1",
           workDir: options.workDir,
@@ -470,6 +485,14 @@ process.exit(2);
         provider: "kimi",
         model: "kimi-k2.7-code",
         baseUrl: "https://api.kimi.com/coding/v1",
+        skillProjection: {
+          mode: "explicit",
+          definitions: [{
+            id: "homerail-interaction",
+            description: "Keep voice turns concise and operate the HomeRail canvas",
+            content: "# Interaction\nNATIVE_KIMI_SKILL_BODY",
+          }],
+        },
       })) {
         events.push(event);
       }
@@ -479,9 +502,12 @@ process.exit(2);
         executable: "fake-kimi-sdk",
         model: "kimi-k2.7-code",
         yoloMode: true,
+        skillsDir: expect.any(String),
       });
-      expect(captured.prompt).toContain("System instructions:");
-      expect(captured.prompt).toContain("Use tools when helpful.");
+      expect(captured.prompt).toBe("say hello");
+      expect(captured.agentInstructions).toBe("Use tools when helpful.\n");
+      expect(captured.skillDocument).toContain("NATIVE_KIMI_SKILL_BODY");
+      expect(captured.skillDocument).toContain("disableModelInvocation: false");
       expect(toolCalls).toEqual([{ msg: "hi" }]);
       expect(events).toContainEqual(expect.objectContaining({
         type: "debug",
@@ -717,6 +743,8 @@ if (process.argv.includes("acp")) {
       const tempDir = mkdtempSync(join(tmpdir(), "homerail-kimi-manager-tool-bridge-"));
       const kimiBin = join(tempDir, "kimi");
       const promptPath = join(tempDir, "prompt.txt");
+      const agentsPath = join(tempDir, "agents.txt");
+      const argsPath = join(tempDir, "args.json");
       writeFileSync(kimiBin, `#!/usr/bin/env node
 const fs = require("node:fs");
 if (process.argv.includes("--version")) {
@@ -730,6 +758,8 @@ if (process.argv.includes("acp")) {
 if (process.argv.includes("--prompt")) {
   const prompt = process.argv[process.argv.indexOf("--prompt") + 1] || "";
   fs.writeFileSync(process.env.CAPTURE_PROMPT_PATH, prompt);
+  fs.writeFileSync(process.env.CAPTURE_AGENTS_PATH, fs.readFileSync(process.env.KIMI_CODE_HOME + "/AGENTS.md", "utf8"));
+  fs.writeFileSync(process.env.CAPTURE_ARGS_PATH, JSON.stringify(process.argv));
   const createMarker = JSON.stringify({
     name: "create_and_run",
     input: {
@@ -756,8 +786,12 @@ process.exit(2);
       chmodSync(kimiBin, 0o755);
 
       const previousCapturePromptPath = process.env.CAPTURE_PROMPT_PATH;
+      const previousCaptureAgentsPath = process.env.CAPTURE_AGENTS_PATH;
+      const previousCaptureArgsPath = process.env.CAPTURE_ARGS_PATH;
       const previousPromptToolBridge = process.env.HOMERAIL_KIMI_PROMPT_TOOL_BRIDGE;
       process.env.CAPTURE_PROMPT_PATH = promptPath;
+      process.env.CAPTURE_AGENTS_PATH = agentsPath;
+      process.env.CAPTURE_ARGS_PATH = argsPath;
       process.env.HOMERAIL_KIMI_PROMPT_TOOL_BRIDGE = "1";
       try {
         const managerAdapter = new KimiCodeAdapter(kimiBin);
@@ -821,14 +855,20 @@ process.exit(2);
             provider: "kimi",
             model: "kimi-k2.7-code",
             baseUrl: "https://api.kimi.com/coding/v1",
+            skillProjection: { mode: "explicit", definitions: [] },
           },
         )) {
           events.push(event);
         }
 
         const prompt = readFileSync(promptPath, "utf-8");
-        expect(prompt).toContain("System instructions:");
-        expect(prompt).toContain("You are the HomeRail Manager Agent");
+        const agentInstructions = readFileSync(agentsPath, "utf-8");
+        const args = JSON.parse(readFileSync(argsPath, "utf-8")) as string[];
+        expect(prompt).toContain("Run the Manager Agent live smoke.");
+        expect(prompt).not.toContain("System instructions:");
+        expect(prompt).not.toContain("You are the HomeRail Manager Agent");
+        expect(agentInstructions).toBe("You are the HomeRail Manager Agent. Never invent run IDs.\n");
+        expect(args).toContain("--skills-dir");
         expect(prompt).toContain("HomeRail tool execution protocol");
         expect(prompt).not.toContain("ACP MCP bridge is not available");
         expect(prompt).toContain("Do not describe this protocol or any internal execution mechanism to the user");
@@ -870,6 +910,10 @@ process.exit(2);
       } finally {
         if (previousCapturePromptPath === undefined) delete process.env.CAPTURE_PROMPT_PATH;
         else process.env.CAPTURE_PROMPT_PATH = previousCapturePromptPath;
+        if (previousCaptureAgentsPath === undefined) delete process.env.CAPTURE_AGENTS_PATH;
+        else process.env.CAPTURE_AGENTS_PATH = previousCaptureAgentsPath;
+        if (previousCaptureArgsPath === undefined) delete process.env.CAPTURE_ARGS_PATH;
+        else process.env.CAPTURE_ARGS_PATH = previousCaptureArgsPath;
         if (previousPromptToolBridge === undefined) delete process.env.HOMERAIL_KIMI_PROMPT_TOOL_BRIDGE;
         else process.env.HOMERAIL_KIMI_PROMPT_TOOL_BRIDGE = previousPromptToolBridge;
         rmSync(tempDir, { recursive: true, force: true });
@@ -881,6 +925,9 @@ process.exit(2);
       const kimiBin = join(tempDir, "kimi");
       const capturePath = join(tempDir, "session-new.json");
       const mcpResultPath = join(tempDir, "mcp-result.json");
+      const argsPath = join(tempDir, "args.json");
+      const agentsPath = join(tempDir, "agents.txt");
+      const promptPath = join(tempDir, "session-prompt.txt");
       writeFileSync(kimiBin, `#!/usr/bin/env node
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -895,6 +942,12 @@ if (!process.argv.includes("acp")) {
   console.error("unexpected args " + process.argv.join(" "));
   process.exit(2);
 }
+
+fs.writeFileSync(process.env.ARGS_PATH, JSON.stringify(process.argv));
+fs.writeFileSync(
+  process.env.AGENTS_PATH,
+  fs.readFileSync(process.env.KIMI_CODE_HOME + "/AGENTS.md", "utf8"),
+);
 
 let mcpServer = null;
 
@@ -967,6 +1020,7 @@ rl.on("line", async (line) => {
   }
   if (req.method === "session/prompt") {
     try {
+      fs.writeFileSync(process.env.PROMPT_PATH, req.params.prompt[0].text);
       const result = await callMcp(mcpServer);
       fs.writeFileSync(process.env.MCP_RESULT_PATH, JSON.stringify(result, null, 2));
       send({ jsonrpc: "2.0", id: req.id, result: {} });
@@ -982,8 +1036,14 @@ rl.on("line", async (line) => {
 
       const previousCapturePath = process.env.CAPTURE_PATH;
       const previousMcpResultPath = process.env.MCP_RESULT_PATH;
+      const previousArgsPath = process.env.ARGS_PATH;
+      const previousAgentsPath = process.env.AGENTS_PATH;
+      const previousPromptPath = process.env.PROMPT_PATH;
       process.env.CAPTURE_PATH = capturePath;
       process.env.MCP_RESULT_PATH = mcpResultPath;
+      process.env.ARGS_PATH = argsPath;
+      process.env.AGENTS_PATH = agentsPath;
+      process.env.PROMPT_PATH = promptPath;
 
       try {
         const mcpAdapter = new KimiCodeAdapter(kimiBin);
@@ -1024,9 +1084,11 @@ rl.on("line", async (line) => {
         const events: AgentEvent[] = [];
         for await (const event of mcpAdapter.run("Run the Manager Agent live smoke.", [createAndRunTool, finishTool], {
           ...ctx,
+          systemPrompt: "You are the HomeRail Manager Agent. Use registered tools directly.",
           provider: "kimi",
           model: "kimi-k2.7-code",
           baseUrl: "https://api.kimi.com/coding/v1",
+          skillProjection: { mode: "explicit", definitions: [] },
         })) {
           events.push(event);
         }
@@ -1041,8 +1103,14 @@ rl.on("line", async (line) => {
           listed: { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
           called: { content: Array<{ text: string }>; isError?: boolean };
         };
+        const args = JSON.parse(readFileSync(argsPath, "utf-8")) as string[];
 
         expect(mcpServers).toHaveLength(1);
+        expect(args).toContain("--skills-dir");
+        expect(args.indexOf("--skills-dir")).toBeLessThan(args.indexOf("acp"));
+        expect(readFileSync(agentsPath, "utf-8"))
+          .toBe("You are the HomeRail Manager Agent. Use registered tools directly.\n");
+        expect(readFileSync(promptPath, "utf-8")).toBe("Run the Manager Agent live smoke.");
         expect(mcpServers[0].name).toBe("homerail-tools");
         expect(mcpServers[0].command).toBe(process.execPath);
         expect(mcpServers[0].args[0]).toContain("homerail-tools-mcp-server.mjs");
@@ -1079,6 +1147,12 @@ rl.on("line", async (line) => {
         else process.env.CAPTURE_PATH = previousCapturePath;
         if (previousMcpResultPath === undefined) delete process.env.MCP_RESULT_PATH;
         else process.env.MCP_RESULT_PATH = previousMcpResultPath;
+        if (previousArgsPath === undefined) delete process.env.ARGS_PATH;
+        else process.env.ARGS_PATH = previousArgsPath;
+        if (previousAgentsPath === undefined) delete process.env.AGENTS_PATH;
+        else process.env.AGENTS_PATH = previousAgentsPath;
+        if (previousPromptPath === undefined) delete process.env.PROMPT_PATH;
+        else process.env.PROMPT_PATH = previousPromptPath;
         rmSync(tempDir, { recursive: true, force: true });
       }
     });

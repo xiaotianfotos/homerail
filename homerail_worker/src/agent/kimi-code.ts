@@ -7,10 +7,28 @@
  * @version 0.1.0
  */
 
-import type { AgentClient, AgentEvent, AgentRunContext, DagToolDefinition } from "./types.js";
+import type {
+  AgentClient,
+  AgentEvent,
+  AgentRunContext,
+  AgentSkillDefinition,
+  DagToolDefinition,
+} from "./types.js";
 import { spawn, type ChildProcess, type SpawnOptions } from "child_process";
 import { createHash, randomUUID } from "crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
 import { createRequire } from "module";
 import type { AddressInfo } from "net";
@@ -45,6 +63,108 @@ export function redactSecrets(str: string, secret: string): string {
 function tomlString(value: string): string {
   return JSON.stringify(value);
 }
+
+function safeKimiSkillName(id: string): string {
+  const base = id
+    .normalize("NFKC")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^[^A-Za-z0-9]+/, "")
+    .replace(/-+$/g, "")
+    .slice(0, 80) || "homerail-skill";
+  const digest = createHash("sha256").update(id).digest("hex").slice(0, 8);
+  return `${base}-${digest}`;
+}
+
+function skillBody(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("---\n")) return normalized.trim();
+  const end = normalized.indexOf("\n---\n", 4);
+  return end < 0 ? normalized.trim() : normalized.slice(end + 5).trim();
+}
+
+function writeProjectedSkill(root: string, definition: AgentSkillDefinition): void {
+  const name = safeKimiSkillName(definition.id);
+  const description = (definition.description || definition.name || `HomeRail Skill ${definition.id}`)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+  const dir = join(root, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "SKILL.md"), [
+    "---",
+    `name: ${JSON.stringify(name)}`,
+    `description: ${JSON.stringify(description || `HomeRail Skill ${definition.id}`)}`,
+    "type: prompt",
+    `whenToUse: ${JSON.stringify(description || `When this HomeRail task requires ${definition.id}`)}`,
+    "disableModelInvocation: false",
+    "---",
+    "",
+    `HomeRail Skill id: ${definition.id}`,
+    "",
+    skillBody(definition.content),
+    "",
+  ].join("\n"), { encoding: "utf-8", mode: 0o600 });
+}
+
+function prepareKimiRuntimeFiles(context: AgentRunContext, kimiHome: string): string[] {
+  const instructions = context.systemPrompt?.trim();
+  if (instructions) {
+    writeFileSync(join(kimiHome, "AGENTS.md"), `${instructions}\n`, {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+  }
+
+  const projection = context.skillProjection;
+  if (!projection) return [];
+  const directories: string[] = [];
+  for (const directory of projection.directories ?? []) {
+    const resolved = resolve(directory);
+    try {
+      if (statSync(resolved).isDirectory() && !directories.includes(resolved)) directories.push(resolved);
+    } catch {
+      // Explicit projections ignore unavailable roots and remain fail-closed.
+    }
+  }
+  if ((projection.definitions?.length ?? 0) > 0) {
+    const root = join(kimiHome, "homerail-skills");
+    mkdirSync(root, { recursive: true });
+    for (const definition of projection.definitions ?? []) writeProjectedSkill(root, definition);
+    directories.push(root);
+  }
+  if (directories.length === 0) {
+    const root = join(kimiHome, "homerail-skills-empty");
+    mkdirSync(root, { recursive: true });
+    directories.push(root);
+  }
+  return directories;
+}
+
+function mergedKimiSdkSkillsDir(directories: readonly string[], kimiHome: string): string | undefined {
+  if (directories.length <= 1) return directories[0];
+  const merged = join(kimiHome, "homerail-skills-merged");
+  mkdirSync(merged, { recursive: true });
+  for (const directory of directories) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const source = join(directory, entry.name);
+      const destination = join(merged, entry.name);
+      if (existsSync(destination)) continue;
+      const stat = statSync(source);
+      if (stat.isDirectory()) {
+        symlinkSync(source, destination, process.platform === "win32" ? "junction" : "dir");
+      } else if (stat.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        copyFileSync(source, destination);
+      }
+    }
+  }
+  return merged;
+}
+
+function kimiSkillArgs(directories: readonly string[]): string[] {
+  return directories.flatMap((directory) => ["--skills-dir", directory]);
+}
+
+export const _prepareKimiRuntimeFilesForTest = prepareKimiRuntimeFiles;
 
 function waitForChildClose(child: ChildProcess): Promise<number | null> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode);
@@ -304,6 +424,7 @@ export class KimiCodeAdapter implements AgentClient {
     const kimiHome = mkdtempSync(join(tmpdir(), "kimi-code-"));
     const env = this.buildKimiEnv(context, kimiHome);
     const configPath = this.writeKimiConfig(context, kimiHome);
+    const skillDirectories = prepareKimiRuntimeFiles(context, kimiHome);
 
     yield {
       type: "debug",
@@ -320,6 +441,9 @@ export class KimiCodeAdapter implements AgentClient {
         tool_names: tools.map((t) => t.name),
         workspace: context.workspace ?? process.cwd(),
         transport: this.transport,
+        has_agent_instructions: Boolean(context.systemPrompt?.trim()),
+        skill_directory_count: skillDirectories.length,
+        projected_skill_count: context.skillProjection?.definitions?.length ?? 0,
       },
     };
 
@@ -330,7 +454,16 @@ export class KimiCodeAdapter implements AgentClient {
       const cwd = context.workspace ?? process.cwd();
 
       if (this.transport === "sdk") {
-        for await (const event of this.runSdkMode(prompt, tools, context, env, effectiveModel, kimiHome, secret)) {
+        for await (const event of this.runSdkMode(
+          prompt,
+          tools,
+          context,
+          env,
+          effectiveModel,
+          kimiHome,
+          skillDirectories,
+          secret,
+        )) {
           yield event;
         }
         yield { type: "done" };
@@ -351,13 +484,26 @@ export class KimiCodeAdapter implements AgentClient {
             tool_names: tools.map((tool) => tool.name),
           },
         };
-        for await (const event of this.runPromptMode(prompt, tools, context, env, effectiveModel, secret)) {
+        for await (const event of this.runPromptMode(
+          prompt,
+          tools,
+          context,
+          env,
+          effectiveModel,
+          skillDirectories,
+          secret,
+        )) {
           yield event;
         }
         return;
       }
 
-      const childProcess = this.spawnKimi(["--model", effectiveModel, "acp"], {
+      const childProcess = this.spawnKimi([
+        "--model",
+        effectiveModel,
+        ...kimiSkillArgs(skillDirectories),
+        "acp",
+      ], {
         cwd,
         env: env as Record<string, string | undefined>,
         stdio: ["pipe", "pipe", "pipe"],
@@ -427,7 +573,7 @@ export class KimiCodeAdapter implements AgentClient {
 
         const promptRequest = rpc.sendRequest("session/prompt", {
           sessionId,
-          prompt: [{ type: "text", text: this.buildAgentPrompt(prompt, context.systemPrompt) }],
+          prompt: [{ type: "text", text: this.buildAgentPrompt(prompt) }],
         });
 
         let promptSettled = false;
@@ -519,6 +665,7 @@ export class KimiCodeAdapter implements AgentClient {
                 env,
                 effectiveModel,
                 kimiHome,
+                skillDirectories,
                 secret,
               )) {
                 yield event;
@@ -548,7 +695,16 @@ export class KimiCodeAdapter implements AgentClient {
               tool_count: tools.length,
             },
           };
-          for await (const event of this.runPromptMode(prompt, tools, context, env, effectiveModel, secret, true)) {
+          for await (const event of this.runPromptMode(
+            prompt,
+            tools,
+            context,
+            env,
+            effectiveModel,
+            skillDirectories,
+            secret,
+            true,
+          )) {
             yield event;
           }
           return;
@@ -846,6 +1002,7 @@ export class KimiCodeAdapter implements AgentClient {
     env: Record<string, string | undefined>,
     effectiveModel: string,
     kimiHome: string,
+    skillDirectories: readonly string[],
     secret: string,
   ): AsyncIterable<AgentEvent> {
     const cwd = context.workspace ?? process.cwd();
@@ -864,11 +1021,12 @@ export class KimiCodeAdapter implements AgentClient {
       executable: this.sdkExecutable,
       env: env as Record<string, string>,
       shareDir: kimiHome,
+      skillsDir: mergedKimiSdkSkillsDir(skillDirectories, kimiHome),
       yoloMode: true,
       externalTools: this.toSdkExternalTools(tools, executedTools),
       clientInfo: { name: "homerail-worker", version: "0.1.0" },
     });
-    const turn = session.prompt(this.buildAgentPrompt(prompt, context.systemPrompt));
+    const turn = session.prompt(this.buildAgentPrompt(prompt));
     let cancelled = false;
     let turnFinished = false;
     let interruptRequested = false;
@@ -1084,15 +1242,17 @@ export class KimiCodeAdapter implements AgentClient {
     context: AgentRunContext,
     env: Record<string, string | undefined>,
     effectiveModel: string,
+    skillDirectories: readonly string[],
     secret: string,
     forceToolBridge = false,
   ): AsyncIterable<AgentEvent> {
     const cwd = context.workspace ?? process.cwd();
     const toolMap = new Map<string, DagToolDefinition>(tools.map((tool) => [tool.name, tool]));
-    const promptText = this.buildPromptModePrompt(prompt, tools, context.systemPrompt, forceToolBridge);
+    const promptText = this.buildPromptModePrompt(prompt, tools, forceToolBridge);
     const child = this.spawnKimi([
       "--model",
       effectiveModel,
+      ...kimiSkillArgs(skillDirectories),
       "--prompt",
       promptText,
       "--output-format",
@@ -1257,26 +1417,17 @@ export class KimiCodeAdapter implements AgentClient {
     return names.has("create_and_run") && names.has("finish");
   }
 
-  private buildAgentPrompt(prompt: string, systemPrompt?: string): string {
-    const system = systemPrompt?.trim();
-    if (!system) return prompt;
-    return [
-      "System instructions:",
-      system,
-      "",
-      "User message:",
-      prompt,
-    ].join("\n");
+  private buildAgentPrompt(prompt: string): string {
+    return prompt;
   }
 
   private buildPromptModePrompt(
     prompt: string,
     tools: DagToolDefinition[],
-    systemPrompt?: string,
     forceToolBridge = false,
   ): string {
     const toolMap = new Map<string, DagToolDefinition>(tools.map((tool) => [tool.name, tool]));
-    const blocks = [this.buildAgentPrompt(prompt, systemPrompt)];
+    const blocks = [this.buildAgentPrompt(prompt)];
     if (this.shouldUsePromptToolBridge(tools, forceToolBridge)) {
       blocks.push(
         "",

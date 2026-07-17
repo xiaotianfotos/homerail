@@ -560,6 +560,7 @@ class SupervisionCommentaryAgent implements AgentClient {
 
 class PatternSkillAgent implements AgentClient {
   systemPrompt = "";
+  skillProjection: AgentRunContext["skillProjection"];
 
   async *run(
     _prompt: string,
@@ -567,6 +568,7 @@ class PatternSkillAgent implements AgentClient {
     context: AgentRunContext,
   ): AsyncIterable<AgentEvent> {
     this.systemPrompt = context.systemPrompt ?? "";
+    this.skillProjection = context.skillProjection;
     const calls: Array<{ name: string; input: Record<string, unknown> }> = [
       { name: "list_skills", input: {} },
       { name: "read_skill", input: { skill_id: "homerail-dag-patterns" } },
@@ -1570,9 +1572,18 @@ describe("manager-agent server", () => {
   it("loads a HomeRail skill, instantiates its DAG pattern, syncs it, and starts a run", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
     tmpDirs.push(workspace);
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-home-"));
+    tmpDirs.push(home);
+    fs.mkdirSync(path.join(home, "skills", "homerail-dag-patterns"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, "skills", "homerail-dag-patterns", "SKILL.md"),
+      "# DAG patterns\nUse the selected reusable pattern.",
+      "utf8",
+    );
     const agent = new PatternSkillAgent();
     registerAgentBackend("manager-agent-pattern-skill-test", () => agent);
     vi.stubEnv("PROJECT_WORKSPACE", workspace);
+    vi.stubEnv("HOMERAIL_HOME", home);
 
     const observed: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
     const managerApi = makePatternManagerApiServer(observed);
@@ -1620,6 +1631,11 @@ describe("manager-agent server", () => {
       expect(agent.systemPrompt).toContain("Successfully call every required tool");
       expect(agent.systemPrompt).toContain("instantiate_dag_pattern, create_and_run");
       expect(agent.systemPrompt).not.toMatch(/game|showcase|three-worker/i);
+      expect(agent.skillProjection).toEqual({
+        mode: "explicit",
+        directories: [path.join(home, "skills")],
+        definitions: [],
+      });
       expect(observed).toContainEqual(expect.objectContaining({
         method: "POST",
         path: "/api/dag/workflows/sync",

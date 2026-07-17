@@ -16,6 +16,24 @@ export interface DagToolDefinition extends AgentToolDefinition {
   }>;
 }
 
+/** A trusted Skill body projected into an agent backend for one turn. */
+export interface AgentSkillDefinition {
+  id: string;
+  name?: string;
+  description?: string;
+  content: string;
+}
+
+/**
+ * Explicit Skill visibility for one agent turn. Backends must not add ambient
+ * user or project Skills when this projection is present.
+ */
+export interface AgentSkillProjection {
+  mode: "explicit";
+  directories?: string[];
+  definitions?: AgentSkillDefinition[];
+}
+
 /** Token usage snapshot reported by the model backend. All fields optional —
  * different agent backends expose different subsets. The prompt-runner
  * accumulates these per node and forwards the totals to the manager. */
@@ -78,4 +96,6 @@ export interface AgentRunContext {
   handoffOnly?: boolean;
   /** Exact allowlist for backend-provided shell and file tools. */
   allowedBuiltinTools?: AgentBuiltinToolName[];
+  /** Trusted Skills visible to this turn. */
+  skillProjection?: AgentSkillProjection;
 }

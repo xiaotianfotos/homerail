@@ -247,6 +247,7 @@ client.on("task", async (msg) => {
     checkpointResume,
     actorCheckpoint,
     skillContextSummary: preparedSkillContext.summary,
+    skillProjection: preparedSkillContext.skillProjection,
     pinnedSurfaceViews: createWorkerSkillVisualViewRegistry(
       preparedSkillContext.context,
       preparedSkillContext.allowedSurfaceViewIds,

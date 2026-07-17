@@ -10,7 +10,12 @@ import {
   ManagerAgentTurnAuthenticationError,
   ManagerAgentTurnEnvelopeVerifier,
 } from "./turn-envelope.js";
-import type { AgentEvent, AgentRunContext, DagToolDefinition } from "../agent/types.js";
+import type {
+  AgentEvent,
+  AgentRunContext,
+  AgentSkillProjection,
+  DagToolDefinition,
+} from "../agent/types.js";
 import {
   buildManagerAgentSystemPrompt,
   canonicalManagerAgentToolCallName,
@@ -1698,6 +1703,34 @@ function applyExternalHistory(session: ChatSession, history: ChatRequest["histor
   }
 }
 
+function managerAgentSkillProjection(
+  skills: readonly ManagerAgentPromptSkill[] | undefined,
+): AgentSkillProjection {
+  const directories: string[] = [];
+  const home = process.env.HOMERAIL_HOME?.trim();
+  if (home) {
+    const root = path.join(home, "skills");
+    try {
+      if (fs.statSync(root).isDirectory()) directories.push(root);
+    } catch {
+      // The explicit empty projection still prevents ambient Kimi Skills.
+    }
+  }
+  const definitions = (skills ?? [])
+    .filter((skill) => skill.source === "plugin" && skill.content?.trim())
+    .map((skill) => ({
+      id: skill.id,
+      name: skill.name || skill.id,
+      description: skill.description || "Selected HomeRail plugin Skill",
+      content: skill.content!,
+    }));
+  return {
+    mode: "explicit",
+    directories,
+    definitions,
+  };
+}
+
 async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
   const message = typeof body.message === "string" ? body.message.trim() : "";
   if (!message) throw new Error("Missing required field: message");
@@ -1768,6 +1801,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     baseUrl: String(config.base_url || ""),
     workspace: projectWorkspace(),
     abortSignal: abortController.signal,
+    skillProjection: managerAgentSkillProjection(body.manager_skills),
   };
   try {
     for await (const event of agent.run(

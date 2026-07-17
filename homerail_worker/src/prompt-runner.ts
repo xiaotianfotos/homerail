@@ -14,7 +14,12 @@ import {
   type DagWorkerSkillVisualDataContractV1,
 } from "homerail-protocol";
 import { createAgentClient } from "./agent/factory.js";
-import type { AgentEvent, AgentRunContext, AgentUsage } from "./agent/types.js";
+import type {
+  AgentEvent,
+  AgentRunContext,
+  AgentSkillProjection,
+  AgentUsage,
+} from "./agent/types.js";
 import type { AgentTurnController } from "./agent/turn-controller.js";
 import { createDagTools, createDagToolsState, deliverInbox } from "./dag-tools/index.js";
 import type { DagToolsState } from "./dag-tools/index.js";
@@ -52,6 +57,7 @@ export interface PromptJob {
   };
   actorCheckpoint?: DagActorCheckpointV1;
   skillContextSummary?: DagWorkerSkillContextSummaryV1;
+  skillProjection?: AgentSkillProjection;
   pinnedSurfaceViews?: PinnedSurfaceViewRegistry;
   pinnedSurfaceDataContracts?: ReadonlyMap<string, DagWorkerSkillVisualDataContractV1>;
   /** Manager-dispatched structured inputs retained outside the model prompt. */
@@ -411,6 +417,7 @@ export async function runPrompt(
       turnController: deps.turnController,
       handoffOnly: correctionOnly,
       allowedBuiltinTools: job.dagConfig.allowed_builtin_tools,
+      skillProjection: job.skillProjection,
     };
     try {
       saveSession({
