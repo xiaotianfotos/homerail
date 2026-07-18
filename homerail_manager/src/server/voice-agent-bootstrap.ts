@@ -78,6 +78,8 @@ import { acceptPluginToolExecution } from "../plugins/execution-broker.js";
 import {
   publishVoiceArtifact,
   resolveVoiceArtifact,
+  resolveVoiceArtifactRevision,
+  VoiceArtifactRevisionConflictError,
 } from "./voice-artifacts.js";
 import {
   assembleLegacyWidgetReservations,
@@ -278,6 +280,10 @@ function created(res: http.ServerResponse, message: string, data?: unknown) {
 
 function badRequest(res: http.ServerResponse, message: string) {
   json(res, 400, { success: false, message, error: message });
+}
+
+function conflict(res: http.ServerResponse, message: string) {
+  json(res, 409, { success: false, message, error: message });
 }
 
 function notFound(res: http.ServerResponse, message: string) {
@@ -1884,6 +1890,9 @@ export function voiceAgentBootstrapHandler(
 
   const artifactPreview = pathname.match(/^\/api\/voice-agent\/sessions\/([^/]+)\/artifacts\/preview$/);
   const artifactPublish = pathname.match(/^\/api\/voice-agent\/sessions\/([^/]+)\/artifacts\/publish$/);
+  const artifactById = pathname.match(
+    /^\/api\/voice-agent\/sessions\/([^/]+)\/artifacts\/by-id\/([^/]+)\/preview$/,
+  );
   const artifactFile = pathname.match(/^\/api\/voice-agent\/sessions\/([^/]+)\/artifacts\/(.+)$/);
   if (method === "POST" && artifactPublish) {
     readJsonBody(req).then((body) => {
@@ -1892,24 +1901,36 @@ export function voiceAgentBootstrapHandler(
       if (!workspace) throw new HttpNotFoundError("Voice workspace not found");
       const sourcePath = typeof body.source_path === "string" ? body.source_path : "";
       if (!sourcePath) throw new HttpBadRequestError("Missing required field: source_path");
+      if (body.expected_revision !== undefined && typeof body.expected_revision !== "number") {
+        throw new HttpBadRequestError("expected_revision must be a number");
+      }
       const artifact = publishVoiceArtifact({
         session_id: sessionId,
         project_id: workspace.project_id,
         source_path: sourcePath,
         title: typeof body.title === "string" ? body.title : undefined,
+        artifact_id: typeof body.artifact_id === "string" ? body.artifact_id : undefined,
+        expected_revision: typeof body.expected_revision === "number" ? body.expected_revision : undefined,
       });
       ok(res, "Voice artifact published", { artifact });
     }).catch((cause) => {
       if (cause instanceof HttpNotFoundError) notFound(res, cause.message);
+      else if (cause instanceof VoiceArtifactRevisionConflictError) conflict(res, cause.message);
       else badRequest(res, cause instanceof Error ? cause.message : "Artifact publishing failed");
     });
     return true;
   }
-  if (method === "GET" && (artifactPreview || artifactFile)) {
+  if (method === "GET" && (artifactById || artifactPreview || artifactFile)) {
     try {
-      const sessionId = decodeURIComponent((artifactPreview ?? artifactFile)![1]);
-      const filePath = artifactPreview ? "index.html" : decodeURIComponent(artifactFile![2]);
-      const resolved = resolveVoiceArtifact(sessionId, filePath);
+      const sessionId = decodeURIComponent((artifactById ?? artifactPreview ?? artifactFile)![1]);
+      const revisionValue = url.searchParams.get("revision");
+      const revision = revisionValue === null ? undefined : Number(revisionValue);
+      const resolved = artifactById
+        ? resolveVoiceArtifactRevision(sessionId, decodeURIComponent(artifactById[2]), revision).path
+        : resolveVoiceArtifact(
+          sessionId,
+          artifactPreview ? "index.html" : decodeURIComponent(artifactFile![2]),
+        );
       const ext = path.extname(resolved).toLowerCase();
       const type = ext === ".html" ? "text/html; charset=utf-8"
         : ext === ".png" ? "image/png"
@@ -1919,6 +1940,7 @@ export function voiceAgentBootstrapHandler(
       res.writeHead(200, {
         "Content-Type": type,
         "X-Content-Type-Options": "nosniff",
+        "Cache-Control": artifactById ? "no-store" : "private, max-age=31536000, immutable",
         ...(ext === ".html" ? { "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-pointer-lock allow-popups" } : {}),
       });
       fs.createReadStream(resolved).pipe(res);

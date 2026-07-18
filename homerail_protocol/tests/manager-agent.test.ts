@@ -274,6 +274,10 @@ describe("Manager Agent harness contract", () => {
     expect(managerAgentToolSpec("write_widget_file").input_schema.properties).toMatchObject({
       widget_type: { type: "string", enum: MANAGER_AGENT_WIDGET_FILE_TYPES },
     });
+    expect(managerAgentToolSpec("publish_artifact").input_schema.properties).toMatchObject({
+      artifact_id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+      expected_revision: { type: "integer", minimum: 0 },
+    });
   });
 
   it("declares strict Manager Supervisor tool contracts", () => {

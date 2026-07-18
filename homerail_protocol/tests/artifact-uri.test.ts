@@ -10,6 +10,20 @@ describe("generative UI preview artifact URIs", () => {
     )).toBe(true);
   });
 
+  it("accepts stable, revision-addressed voice Artifact previews", () => {
+    expect(isSafeGenerativeUiPreviewUri(
+      "/api/voice-agent/sessions/session-one/artifacts/by-id/live-dashboard/preview?revision=2",
+    )).toBe(true);
+  });
+
+  it.each([
+    "/api/voice-agent/sessions/session-one/artifacts/by-id/live-dashboard/preview/extra",
+    "/api/voice-agent/sessions/session-one/artifacts/by-id/../preview?revision=2",
+    "/api/voice-agent/sessions/session-one/artifacts/by-id/live-dashboard/preview?revision=2\nscript",
+  ])("rejects an unsafe stable voice Artifact path: %s", (uri) => {
+    expect(isSafeGenerativeUiPreviewUri(uri)).toBe(false);
+  });
+
   it.each([
     `/api/runs/run-01/artifacts/actor-media-${sha256}.webp`,
     `/api/runs/run-01/artifacts/actor-media-${sha256}.svg/content`,

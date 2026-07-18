@@ -185,7 +185,7 @@ describe('A2uiRenderer', () => {
       },
       {
         id: 'html', component: 'HrArtifact', kind: 'html',
-        uri: '/api/voice-agent/sessions/session-one/artifacts/story.html',
+        uri: '/api/voice-agent/sessions/session-one/artifacts/by-id/story/preview?revision=2',
         title: 'Story page', description: 'Interactive draft',
       },
     ]), {
@@ -217,6 +217,7 @@ describe('A2uiRenderer', () => {
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts')
     expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer')
     expect(frame.getAttribute('allow')).toBe('')
+    expect(frame.getAttribute('src')).toContain('/artifacts/by-id/story/preview?revision=2')
 
     mounted.querySelector<HTMLButtonElement>('button.hr-a2ui__artifact')?.click()
     mounted.querySelector<HTMLButtonElement>('div.hr-a2ui__artifact > button')?.click()
@@ -315,6 +316,36 @@ describe('A2uiRenderer', () => {
     expect(detailsTab.getAttribute('aria-selected')).toBe('true')
     expect(document.activeElement).toBe(detailsTab)
     expect(root.querySelector('.hr-a2ui__tab-panel')?.textContent).toContain('Updated details')
+  })
+
+  it('refreshes an interactive Artifact in place when its revision URL changes', async () => {
+    const artifact = (revision: number) => surface([
+      { id: 'root', component: 'Column', children: ['preview'] },
+      {
+        id: 'preview', component: 'HrArtifact', kind: 'html', title: 'Live preview',
+        uri: `/api/voice-agent/sessions/session-one/artifacts/by-id/live-preview/preview?revision=${revision}`,
+      },
+    ])
+    const currentNode = ref(node(artifact(1)))
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp({
+      setup: () => () => h(A2uiRenderer, { node: currentNode.value, placement, context }),
+    })
+    app.use(i18n)
+    app.mount(root)
+
+    const frame = root.querySelector<HTMLIFrameElement>('[data-a2ui-id="preview"] iframe')!
+    currentNode.value = {
+      ...node(artifact(2)),
+      revision: 2,
+      updated_at: '2026-07-12T10:00:01.000Z',
+    }
+    await nextTick()
+    await nextTick()
+
+    expect(root.querySelector('[data-a2ui-id="preview"] iframe')).toBe(frame)
+    expect(frame.getAttribute('src')).toContain('preview?revision=2')
   })
 
   it('keeps invalid inputs editable, binds writable values, and disables failed actions', async () => {

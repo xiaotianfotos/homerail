@@ -1265,7 +1265,8 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
     name: "publish_artifact",
     description: [
       "Publish a generated PNG, JPEG, WebP, or standalone HTML file from the current project workspace to the current voice session.",
-      "Pass a project-relative source_path. The result returns a persistent browser-safe URL; bind that URL from a HomeRail A2UI HrArtifact component.",
+      "Pass a project-relative source_path. The result includes a stable artifact_id, revision, and preview_url; bind preview_url from a HomeRail A2UI HrArtifact component.",
+      "To update an existing Artifact in place, preserve artifact_id and pass the last returned revision as expected_revision. Keep the same A2UI Block/component identity and replace only its preview_url with the newly returned value.",
       "This tool publishes an existing file only. It does not generate content and never accepts paths outside the current project workspace.",
     ].join(" "),
     input_schema: {
@@ -1273,6 +1274,8 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
       properties: {
         source_path: { type: "string", minLength: 1, maxLength: 2048 },
         title: { type: "string", maxLength: 200 },
+        artifact_id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+        expected_revision: { type: "integer", minimum: 0 },
       },
       required: ["source_path"],
       additionalProperties: false,

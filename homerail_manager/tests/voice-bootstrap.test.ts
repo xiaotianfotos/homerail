@@ -1304,20 +1304,63 @@ describe("voice bootstrap routes", () => {
         body: JSON.stringify({ project_id: project.project_id }),
       });
       const createdBody = await created.json() as { data: { session_id: string } };
-      const published = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/artifacts/publish`, {
+      const publishUrl = `${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/artifacts/publish`;
+      const published = await fetch(publishUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source_path: "story.html", title: "AI story" }),
+        body: JSON.stringify({
+          source_path: "story.html",
+          title: "AI story",
+          artifact_id: "interactive-story",
+          expected_revision: 0,
+        }),
       });
-      const publishedBody = await published.json() as { data: { artifact: { url: string; kind: string } } };
+      const publishedBody = await published.json() as {
+        data: { artifact: { artifact_id: string; revision: number; url: string; preview_url: string; kind: string } };
+      };
       expect(published.status).toBe(200);
       expect(publishedBody.data.artifact.kind).toBe("html");
+      expect(publishedBody.data.artifact.revision).toBe(1);
 
       const preview = await fetch(`${baseUrl}${publishedBody.data.artifact.url}`);
       expect(preview.status).toBe(200);
       expect(preview.headers.get("content-security-policy"))
         .toBe("sandbox allow-scripts allow-forms allow-pointer-lock allow-popups");
       expect(await preview.text()).toContain("<h1>AI story</h1>");
+
+      fs.writeFileSync(
+        path.join(projectRoot, "story.html"),
+        "<!doctype html><title>Updated story</title><button id=next>Continue</button>",
+      );
+      const updated = await fetch(publishUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_path: "story.html",
+          title: "AI story",
+          artifact_id: publishedBody.data.artifact.artifact_id,
+          expected_revision: 1,
+        }),
+      });
+      const updatedBody = await updated.json() as typeof publishedBody;
+      expect(updatedBody.data.artifact).toMatchObject({ artifact_id: "interactive-story", revision: 2 });
+      expect(updatedBody.data.artifact.preview_url).not.toBe(publishedBody.data.artifact.preview_url);
+
+      const stablePreview = await fetch(`${baseUrl}${updatedBody.data.artifact.preview_url}`);
+      expect(stablePreview.status).toBe(200);
+      expect(stablePreview.headers.get("cache-control")).toBe("no-store");
+      expect(await stablePreview.text()).toContain("id=next");
+
+      const stale = await fetch(publishUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_path: "story.html",
+          artifact_id: "interactive-story",
+          expected_revision: 1,
+        }),
+      });
+      expect(stale.status).toBe(409);
     } finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });
     }

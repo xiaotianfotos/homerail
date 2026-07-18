@@ -45,8 +45,19 @@ export function isSafeGenerativeUiArtifactUri(value: unknown): value is string {
 /** Browser-renderable Artifact URLs are narrower than passive file refs. */
 export function isSafeGenerativeUiPreviewUri(value: unknown): value is string {
   if (!isSafeGenerativeUiArtifactUri(value)) return false;
+  if (value.startsWith("/")) {
+    const pathOnly = value.split(/[?#]/, 1)[0];
+    try {
+      if (pathOnly.split("/").some((segment) => {
+        const decoded = decodeURIComponent(segment);
+        return decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\\");
+      })) return false;
+    } catch {
+      return false;
+    }
+  }
   return /^https?:\/\//i.test(value)
-    || /^\/api\/voice-agent\/sessions\/[^/]+\/artifacts\/(?:preview|[^?#]+)$/i.test(value)
+    || /^\/api\/voice-agent\/sessions\/[^/?#]+\/artifacts\/(?:preview|[^/?#]+|by-id\/[^/?#]+\/preview)(?:[?#].*)?$/i.test(value)
     || /^\/artifacts\/[^/]+\/[^/]+\/preview(?:[?#].*)?$/i.test(value)
     || /^\/api\/plugins\/artifacts\/[^/]+\/[^/]+\/[a-f0-9]{64}$/i.test(value)
     || DAG_ACTOR_MEDIA_PREVIEW_URI.test(value);

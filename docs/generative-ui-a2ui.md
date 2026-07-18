@@ -53,6 +53,8 @@ An A2UI event name is only a trigger. It must match an action already declared b
 
 Artifact components carry passive references only. `HrArtifact` previews resolve through the existing broker and HTML sandbox. Basic image, video, and audio components may use validated HTTP(S) media references. `HrLink` is the only Core Catalog component that creates external navigation, and it accepts only credential-free HTTP(S) URLs opened with `noopener`, `noreferrer`, and a no-referrer policy. Executable schemes, credentials, data URLs, network shares, and unsafe local schemes are rejected. A function cannot create a new network or execution capability.
 
+Session Artifacts have a stable logical `artifact_id` and immutable numbered revisions. The first `publish_artifact` call returns revision 1. A later update must reuse the ID and pass the last revision as `expected_revision`; stale updates fail with HTTP 409. Each result includes an immutable `revision_url`, a stable `stable_url`, and a revision-addressed `preview_url`. A2UI should retain its Block and component IDs while replacing the `HrArtifact.uri` with the latest `preview_url`, so an interactive HTML preview refreshes without moving or recreating the surrounding surface.
+
 ## Runtime Invariants
 
 HomeRail applies stricter snapshot rules in addition to the official A2UI JSON Schema:

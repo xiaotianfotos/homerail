@@ -71,6 +71,8 @@ const CLEARABLE_TABLES = new Set([
   "manager_agent_config",
   "voice_agent_config",
   "voice_agent_sessions",
+  "voice_artifact_revisions",
+  "voice_artifacts",
   "generative_ui_user_overrides",
   "generative_ui_transactions",
   "generative_ui_documents",
@@ -1878,6 +1880,42 @@ function validateCredentialStoreSchemaV31(db: SqliteDatabase): void {
     if (!hasColumn(db, "execution_credentials", column)) {
       throw new Error(`Schema migration 31 is incomplete: execution_credentials is missing column ${column}`);
     }
+  }
+}
+
+function validateVoiceArtifactSchemaV32(db: SqliteDatabase): void {
+  if (!hasTable(db, "voice_artifacts") || !hasTable(db, "voice_artifact_revisions")) {
+    throw new Error("Schema migration 32 is incomplete: voice artifact tables are missing");
+  }
+  for (const column of [
+    "session_id",
+    "artifact_id",
+    "current_revision",
+    "current_digest",
+    "current_filename",
+  ]) {
+    if (!hasColumn(db, "voice_artifacts", column)) {
+      throw new Error(`Schema migration 32 is incomplete: voice_artifacts is missing column ${column}`);
+    }
+  }
+  for (const column of ["revision", "digest", "filename", "size_bytes", "created_at"]) {
+    if (!hasColumn(db, "voice_artifact_revisions", column)) {
+      throw new Error(`Schema migration 32 is incomplete: voice_artifact_revisions is missing column ${column}`);
+    }
+  }
+  const immutableTrigger = db.prepare(`
+    SELECT name FROM sqlite_master
+    WHERE type = 'trigger' AND name = 'trg_voice_artifact_revisions_no_update'
+  `).get();
+  if (!immutableTrigger) {
+    throw new Error("Schema migration 32 is incomplete: voice artifact revisions are mutable");
+  }
+  const revisionForeignKeys = new Set(
+    (db.prepare("PRAGMA foreign_key_list(voice_artifact_revisions)").all() as Array<{ table: string }>)
+      .map((entry) => entry.table),
+  );
+  if (!revisionForeignKeys.has("voice_artifacts")) {
+    throw new Error("Schema migration 32 is incomplete: voice artifact revision ownership is invalid");
   }
 }
 
@@ -3994,6 +4032,55 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       `);
     },
     validate: validateCredentialStoreSchemaV31,
+  },
+  {
+    version: 32,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS voice_artifacts (
+          session_id TEXT NOT NULL,
+          artifact_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('image', 'html')),
+          media_type TEXT NOT NULL,
+          current_revision INTEGER NOT NULL CHECK(current_revision >= 1),
+          current_digest TEXT NOT NULL CHECK(
+            length(current_digest) = 64 AND current_digest NOT GLOB '*[^0-9a-f]*'
+          ),
+          current_filename TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(session_id, artifact_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_voice_artifacts_session_updated
+          ON voice_artifacts(session_id, updated_at DESC, artifact_id);
+
+        CREATE TABLE IF NOT EXISTS voice_artifact_revisions (
+          session_id TEXT NOT NULL,
+          artifact_id TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK(revision >= 1),
+          title TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('image', 'html')),
+          media_type TEXT NOT NULL,
+          digest TEXT NOT NULL CHECK(length(digest) = 64 AND digest NOT GLOB '*[^0-9a-f]*'),
+          filename TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL CHECK(size_bytes >= 1),
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(session_id, artifact_id, revision),
+          FOREIGN KEY(session_id, artifact_id)
+            REFERENCES voice_artifacts(session_id, artifact_id)
+            ON UPDATE RESTRICT ON DELETE RESTRICT
+        );
+        CREATE INDEX IF NOT EXISTS idx_voice_artifact_revisions_digest
+          ON voice_artifact_revisions(session_id, artifact_id, digest);
+        CREATE TRIGGER IF NOT EXISTS trg_voice_artifact_revisions_no_update
+        BEFORE UPDATE ON voice_artifact_revisions
+        BEGIN
+          SELECT RAISE(ABORT, 'Voice artifact revisions are append-only');
+        END;
+      `);
+    },
+    validate: validateVoiceArtifactSchemaV32,
   },
 ];
 

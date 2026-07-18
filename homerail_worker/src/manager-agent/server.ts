@@ -1417,7 +1417,12 @@ export function createManagerTools(state: {
           `/voice-agent/sessions/${encodeURIComponent(state.voiceSessionId)}/artifacts/publish`,
           {
             method: "POST",
-            body: JSON.stringify({ source_path: sourcePath, title: args.title }),
+            body: JSON.stringify({
+              source_path: sourcePath,
+              title: args.title,
+              artifact_id: args.artifact_id,
+              expected_revision: args.expected_revision,
+            }),
           },
         );
         return { content: [{ type: "text", text: short(body, 4000) }] };
