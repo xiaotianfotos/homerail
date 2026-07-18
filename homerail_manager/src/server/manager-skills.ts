@@ -55,6 +55,7 @@ const MAX_SKILL_VIEW_PRESENTER_ARGUMENTS = 32;
 const MAX_SKILL_VIEW_PRESENTER_ARGUMENT_BYTES = 512;
 const MAX_SKILL_VIEW_PRESENTER_ARGUMENT_TOTAL_BYTES = 8 * 1024;
 const MAX_SKILL_VIEW_PRESENTER_OUTPUT_BYTES = 1024 * 1024;
+const MAX_SKILL_VIEW_PRESENTER_TIMEOUT_MS = 5 * 60 * 1000;
 const SKILL_VIEW_MANIFEST = path.join("assets", "homerail", "view-templates.json");
 const VIEW_SURFACES = new Set(["task", "execution", "result", "ambient"]);
 const VIEW_IMPORTANCE = new Set(["critical", "primary", "secondary", "ambient"]);
@@ -204,7 +205,7 @@ export function readManagerSkillViewPresenter(id: string): ManagerSkillViewPrese
     || args.length > 8
     || !Number.isInteger(timeoutMs)
     || timeoutMs < 1_000
-    || timeoutMs > 60_000
+    || timeoutMs > MAX_SKILL_VIEW_PRESENTER_TIMEOUT_MS
   ) return undefined;
   const normalizedArgs = args.map((item) => typeof item === "string" ? item : "");
   if (normalizedArgs.some((item) => (
