@@ -31,6 +31,13 @@ function transaction(documentId = "persistent-document", title = "Persistent not
   return compiled;
 }
 
+function expectContinuousSchemaMigrations(minLatestVersion = 30) {
+  const rows = getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all() as Array<{ version: number }>;
+  const latestVersion = rows.at(-1)?.version ?? 0;
+  expect(latestVersion).toBeGreaterThanOrEqual(minLatestVersion);
+  expect(rows).toEqual(Array.from({ length: latestVersion }, (_, index) => ({ version: index + 1 })));
+}
+
 describe("PersistentGenerativeUiDocumentService", () => {
   let previousHome: string | undefined;
   let tmpHome: string;
@@ -186,8 +193,7 @@ describe("PersistentGenerativeUiDocumentService", () => {
     `).run("legacy-v2", time0, legacyPayload);
     legacy.close();
 
-    expect(getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all())
-      .toEqual(Array.from({ length: 30 }, (_, index) => ({ version: index + 1 })));
+    expectContinuousSchemaMigrations();
     expect(getDb().prepare("SELECT data FROM voice_agent_sessions WHERE session_id = ?").get("legacy-v2"))
       .toEqual({ data: legacyPayload });
     expect(getDb().prepare(`
@@ -268,8 +274,7 @@ describe("PersistentGenerativeUiDocumentService", () => {
     `);
     mainDb.close();
 
-    expect(getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all())
-      .toEqual(Array.from({ length: 30 }, (_, index) => ({ version: index + 1 })));
+    expectContinuousSchemaMigrations();
     expect(getDb().prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name IN ('generative_ui_documents', 'generative_ui_user_overrides')
