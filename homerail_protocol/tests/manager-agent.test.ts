@@ -863,8 +863,14 @@ describe("Manager Agent harness contract", () => {
       }],
     });
 
-    expect(prompt).toContain("Validated Skill visual templates are available as skill_view_* Tools");
+    expect(prompt).toContain("Validated Skill visual templates are available through skill_view_present");
     expect(prompt).toContain("pal-profile: Compact profile with a real icon.");
+    expect(prompt).toContain("an unfinished visual contract");
+    expect(prompt).toContain("call skill_view_render");
+    expect(prompt).toContain("prefer one skill_view_present call over native shell");
+    expect(prompt).toContain("unchanged data");
+    expect(prompt).toContain("external facts, a domain Skill, or a visual result");
+    expect(prompt).not.toContain("Use tools only when the user asks to inspect");
   });
 
   it("describes non-Codex manager agents as host processes", () => {

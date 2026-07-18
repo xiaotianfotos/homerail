@@ -1,5 +1,7 @@
 import {
   canonicalManagerAgentToolCallName,
+  MANAGER_AGENT_SKILL_VIEW_PRESENT_TOOL_NAME,
+  MANAGER_AGENT_SKILL_VIEW_RENDER_TOOL_NAME,
   managerAgentPluginToolCallName,
   managerAgentSkillViewToolDefinitions,
   normalizeManagerAgentOutcomeCapabilities,
@@ -59,7 +61,11 @@ export function resolveManagerAgentOutcomeContracts(input: {
         ? input.plugin_context.tools.find((tool) => tool.qualified_id === CORE_GENERATED_VIEW_TOOL_ID)
         : undefined;
       if (!descriptor) return { capability, tool_names: [] };
-      const names = [managerAgentPluginToolCallName(descriptor, input.plugin_context.tools)];
+      const names = [
+        managerAgentPluginToolCallName(descriptor, input.plugin_context.tools),
+        MANAGER_AGENT_SKILL_VIEW_PRESENT_TOOL_NAME,
+        MANAGER_AGENT_SKILL_VIEW_RENDER_TOOL_NAME,
+      ];
       names.push(...managerAgentSkillViewToolDefinitions(input.manager_skills).map((definition) => definition.name));
       const selected = input.canvas_context?.selected_node_id
         ? input.canvas_context.nodes.find((node) => node.id === input.canvas_context?.selected_node_id)

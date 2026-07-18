@@ -20,6 +20,7 @@ import type { ManagerAgentRuntimeConfig } from "./manager-agent-runtime-config.j
 import {
   buildManagerAgentSystemPrompt,
   canonicalManagerAgentToolCallName,
+  compactManagerAgentSkillViewPresentResult,
   createManagerAgentWidgetFileTools,
   DEFAULT_PR_REVIEW_EXPECTED_USAGE,
   defaultPrReviewBudgetKey,
@@ -32,6 +33,8 @@ import {
   managerAgentPluginToolCallName,
   managerAgentOutcomeObjectivePrompt,
   managerAgentRequiredToolObjectivePrompt,
+  managerAgentSkillViewPresentToolDefinition,
+  managerAgentSkillViewRenderToolDefinition,
   managerAgentSkillViewToolDefinitions,
   matchingManagerAgentSkillViewToolDefinition,
   materializeManagerAgentSkillViewInput,
@@ -1700,6 +1703,66 @@ export function createManagerTools(state: {
     );
   };
   if (generatedViewDescriptor) {
+    tools.push({
+      ...managerAgentSkillViewPresentToolDefinition(),
+      async handler(args, context) {
+        const skillId = String(args.skill_id || "").trim();
+        if (!skillId) throw new Error("skill_view_present requires skill_id");
+        const body = await requestManager(
+          state.restUrl,
+          `/skills/${encodeURIComponent(skillId)}/views/present`,
+          {
+            method: "POST",
+            body: JSON.stringify({ argv: args.argv }),
+          },
+        );
+        const data = managerData(body);
+        const input = data.input;
+        if (!input || typeof input !== "object" || Array.isArray(input)) {
+          throw new Error("Manager returned an invalid presented Skill view");
+        }
+        const result = await invokePluginTool(generatedViewDescriptor, input as Record<string, unknown>, context);
+        const responseText = typeof data.response_text === "string" ? data.response_text.trim() : "";
+        const rawResult = result.content.map((item) => item.text).join("");
+        let resultBody: Record<string, unknown>;
+        try {
+          const parsed = JSON.parse(rawResult) as unknown;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid");
+          resultBody = parsed as Record<string, unknown>;
+        } catch {
+          throw new Error("Generated view Tool returned an invalid result");
+        }
+        return { content: [{
+          type: "text",
+          text: JSON.stringify(compactManagerAgentSkillViewPresentResult(resultBody, responseText)),
+        }] };
+      },
+    });
+    tools.push({
+      ...managerAgentSkillViewRenderToolDefinition(),
+      async handler(args, context) {
+        const skillId = String(args.skill_id || "").trim();
+        const templateId = String(args.template_id || "").trim();
+        if (!skillId || !templateId) throw new Error("skill_view_render requires skill_id and template_id");
+        const body = await requestManager(
+          state.restUrl,
+          `/skills/${encodeURIComponent(skillId)}/views/${encodeURIComponent(templateId)}/materialize`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              id: args.id,
+              data: args.data,
+              ...(args.canvas_size === undefined ? {} : { canvas_size: args.canvas_size }),
+            }),
+          },
+        );
+        const input = managerData(body).input;
+        if (!input || typeof input !== "object" || Array.isArray(input)) {
+          throw new Error("Manager returned an invalid materialized Skill view");
+        }
+        return invokePluginTool(generatedViewDescriptor, input as Record<string, unknown>, context);
+      },
+    });
     for (const definition of skillViewDefinitions) {
       if (tools.some((tool) => tool.name === definition.name)) {
         throw new Error(`Skill view Tool collides with an existing Tool: ${definition.name}`);

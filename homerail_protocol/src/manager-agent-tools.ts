@@ -5,6 +5,10 @@
 
 import type { AgentToolDefinition } from "./types.js";
 import type { HomerailPluginToolDescriptorV1 } from "./plugins/types.js";
+import {
+  MANAGER_AGENT_SKILL_VIEW_PRESENT_TOOL_NAME,
+  MANAGER_AGENT_SKILL_VIEW_RENDER_TOOL_NAME,
+} from "./manager-agent-skill-views.js";
 
 export const MANAGER_AGENT_WIDGET_FILE_TYPES = [
   "memo",
@@ -320,6 +324,8 @@ export function managerAgentOutcomeObjectivePrompt(value: unknown): string {
 const MANAGER_AGENT_RESERVED_TOOL_NAMES = new Set<string>([
   ...MANAGER_AGENT_COMMON_TOOL_NAMES,
   ...MANAGER_AGENT_COMMON_VOICE_TOOL_NAMES,
+  MANAGER_AGENT_SKILL_VIEW_PRESENT_TOOL_NAME,
+  MANAGER_AGENT_SKILL_VIEW_RENDER_TOOL_NAME,
   "remove_generated_view",
   "update_selected_generated_view",
 ]);

@@ -8,6 +8,7 @@ import {
   getManagerSkillsRoot,
   listManagerSkills,
   readManagerSkill,
+  readManagerSkillViewPresenter,
   readManagerSkillViewTemplates,
 } from "../src/server/manager-skills.js";
 
@@ -33,6 +34,11 @@ function writeA2uiTemplateManifest(root: string, id: string, overrides: Record<s
   const file = path.join(dir, "view-templates.json");
   fs.writeFileSync(file, JSON.stringify({
     manifest_version: 1,
+    presenter: {
+      command: "node",
+      args: ["presenter.js"],
+      timeout_ms: 5000,
+    },
     templates: [{
       id: "profile",
       description: "Compact entity profile.",
@@ -142,6 +148,12 @@ describe("Manager Agent skill discovery", () => {
     });
     expect(templates[0]).not.toHaveProperty("view");
     expect(templates[0]).not.toHaveProperty("allowed_canvas_sizes");
+    expect(readManagerSkillViewPresenter("visual-skill")).toMatchObject({
+      skill_root: fs.realpathSync(path.join(tmpHome, "skills", "visual-skill")),
+      command: "node",
+      args: ["presenter.js"],
+      timeout_ms: 5000,
+    });
 
     writeA2uiTemplateManifest(tmpHome, "visual-skill", { id: "../escape" });
     expect(readManagerSkillViewTemplates("visual-skill")).toEqual([]);
@@ -156,5 +168,6 @@ describe("Manager Agent skill discovery", () => {
     fs.symlinkSync(outside, file);
 
     expect(readManagerSkillViewTemplates("linked-view")).toEqual([]);
+    expect(readManagerSkillViewPresenter("linked-view")).toBeUndefined();
   });
 });

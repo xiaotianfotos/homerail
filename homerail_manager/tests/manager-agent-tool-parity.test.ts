@@ -231,13 +231,103 @@ describe("Manager Agent deterministic result envelope parity", () => {
       undefined,
       managerSkills,
     );
-    const hostSkillTools = hostTools.filter((tool) => tool.name.startsWith("skill_view_"));
-    const workerSkillTools = workerTools.filter((tool) => tool.name.startsWith("skill_view_"));
+    const hostSkillTools = hostTools.filter(
+      (tool) => tool.name.startsWith("skill_view_")
+        && tool.name !== "skill_view_render"
+        && tool.name !== "skill_view_present",
+    );
+    const workerSkillTools = workerTools.filter(
+      (tool) => tool.name.startsWith("skill_view_")
+        && tool.name !== "skill_view_render"
+        && tool.name !== "skill_view_present",
+    );
     expect(catalogProjection(hostSkillTools)).toEqual(catalogProjection(workerSkillTools));
     expect(hostSkillTools).toHaveLength(1);
 
     const input = { id: "profile-one", data: { title: "Profile", value: 4 } };
     expect(await hostSkillTools[0].handler(input)).toEqual(await workerSkillTools[0].handler(input));
+  });
+
+  it("materializes and executes a native Skill template identically in both harnesses", async () => {
+    const context = assemblePluginTurnContext(undefined, { modality: "voice" });
+    const { hostState, hostTools, workerTools } = createHarnessTools("voice", context);
+    hostState.restUrl = "https://manager.test/api";
+    vi.stubEnv("MANAGER_REST_URL", "https://manager.test/api");
+    const observed: Array<{ pathname: string; body: Record<string, unknown> }> = [];
+    const materialized = {
+      id: "route-one",
+      title: "Verified route",
+      surface: "result",
+      importance: "primary",
+      density: "summary",
+      canvas_size: "1x2",
+      persistence: "session",
+      content: { data: { title: "Verified route", steps: ["start", "finish"] } },
+      a2ui: {
+        version: "v1.0",
+        catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
+        components: [{ id: "root", component: "Text", text: { path: "/data/title" } }],
+      },
+    };
+    vi.stubGlobal("fetch", async (request: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof request === "string"
+        ? request
+        : request instanceof URL
+          ? request.toString()
+          : request.url;
+      observed.push({
+        pathname: new URL(rawUrl).pathname,
+        body: typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {},
+      });
+      return new Response(JSON.stringify({
+        success: true,
+        data: { input: materialized, response_text: "Route ready." },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const input = {
+      skill_id: "route skill /?#",
+      template_id: "route /?#",
+      id: "route-one",
+      data: { title: "Verified route", steps: ["start", "finish"] },
+      canvas_size: "1x2",
+    };
+    const hostResult = await requireTool(hostTools, "skill_view_render").handler(input);
+    const workerResult = await requireTool(workerTools, "skill_view_render").handler(input);
+    expect(hostResult).toEqual(workerResult);
+    const presenterInput = {
+      skill_id: "route skill /?#",
+      argv: ["present", "route", "start", "finish"],
+    };
+    const hostPresented = await requireTool(hostTools, "skill_view_present").handler(presenterInput);
+    const workerPresented = await requireTool(workerTools, "skill_view_present").handler(presenterInput);
+    expect(hostPresented).toEqual(workerPresented);
+    expect(JSON.parse(hostPresented.content[0]?.text || "{}") as Record<string, unknown>).toMatchObject({
+      status: "projected",
+      committed: false,
+      response_text: "Route ready.",
+    });
+    expect(observed).toEqual([
+      {
+        pathname: "/api/skills/route%20skill%20%2F%3F%23/views/route%20%2F%3F%23/materialize",
+        body: { id: "route-one", data: input.data, canvas_size: "1x2" },
+      },
+      {
+        pathname: "/api/skills/route%20skill%20%2F%3F%23/views/route%20%2F%3F%23/materialize",
+        body: { id: "route-one", data: input.data, canvas_size: "1x2" },
+      },
+      {
+        pathname: "/api/skills/route%20skill%20%2F%3F%23/views/present",
+        body: { argv: presenterInput.argv },
+      },
+      {
+        pathname: "/api/skills/route%20skill%20%2F%3F%23/views/present",
+        body: { argv: presenterInput.argv },
+      },
+    ]);
   });
 
   it("rejects raw generated-view submissions already owned by a loaded Skill template", async () => {

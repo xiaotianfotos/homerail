@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import YAML from "yaml";
@@ -40,9 +41,20 @@ export interface ManagerSkillInstallResult {
   errors: Array<{ id: string; message: string }>;
 }
 
+export interface ManagerSkillViewPresenter {
+  skill_root: string;
+  command: string;
+  args: string[];
+  timeout_ms: number;
+}
+
 const MAX_SKILL_BYTES = 256 * 1024;
 const MAX_SKILL_VIEW_MANIFEST_BYTES = 256 * 1024;
 const MAX_SKILL_VIEW_TEMPLATES = 8;
+const MAX_SKILL_VIEW_PRESENTER_ARGUMENTS = 32;
+const MAX_SKILL_VIEW_PRESENTER_ARGUMENT_BYTES = 512;
+const MAX_SKILL_VIEW_PRESENTER_ARGUMENT_TOTAL_BYTES = 8 * 1024;
+const MAX_SKILL_VIEW_PRESENTER_OUTPUT_BYTES = 1024 * 1024;
 const SKILL_VIEW_MANIFEST = path.join("assets", "homerail", "view-templates.json");
 const VIEW_SURFACES = new Set(["task", "execution", "result", "ambient"]);
 const VIEW_IMPORTANCE = new Set(["critical", "primary", "secondary", "ambient"]);
@@ -140,30 +152,148 @@ function localSkillRoot(id: string): string | undefined {
   return undefined;
 }
 
-export function readManagerSkillViewTemplates(id: string): ManagerAgentSkillViewTemplateV1[] {
+function readSkillViewManifest(id: string): {
+  skill_root: string;
+  manifest: Record<string, unknown>;
+} | undefined {
   const normalized = id.trim();
   if (!normalized || normalized.includes(":") || normalized.includes("/") || normalized.includes("\\") || normalized === "." || normalized === "..") {
-    return [];
+    return undefined;
   }
   ensureManagerSkillsInstalled();
   const skillRoot = localSkillRoot(normalized);
-  if (!skillRoot) return [];
+  if (!skillRoot) return undefined;
   const file = path.join(skillRoot, SKILL_VIEW_MANIFEST);
   try {
     const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.size > MAX_SKILL_VIEW_MANIFEST_BYTES) return [];
-    const parsed = record(JSON.parse(fs.readFileSync(file, "utf8")));
-    if (parsed?.manifest_version !== 1 || !Array.isArray(parsed.templates) || parsed.templates.length > MAX_SKILL_VIEW_TEMPLATES) {
-      return [];
-    }
-    const templates = parsed.templates.map(parseSkillViewTemplate);
-    if (templates.some((template) => template === undefined)) return [];
-    const valid = templates as ManagerAgentSkillViewTemplateV1[];
-    if (new Set(valid.map((template) => template.id)).size !== valid.length) return [];
-    return valid;
+    if (!stat.isFile() || stat.size > MAX_SKILL_VIEW_MANIFEST_BYTES) return undefined;
+    const manifest = record(JSON.parse(fs.readFileSync(file, "utf8")));
+    if (manifest?.manifest_version !== 1) return undefined;
+    return { skill_root: fs.realpathSync(skillRoot), manifest };
   } catch {
+    return undefined;
+  }
+}
+
+export function readManagerSkillViewTemplates(id: string): ManagerAgentSkillViewTemplateV1[] {
+  const loaded = readSkillViewManifest(id);
+  if (!loaded || !Array.isArray(loaded.manifest.templates) || loaded.manifest.templates.length > MAX_SKILL_VIEW_TEMPLATES) {
     return [];
   }
+  const templates = loaded.manifest.templates.map(parseSkillViewTemplate);
+  if (templates.some((template) => template === undefined)) return [];
+  const valid = templates as ManagerAgentSkillViewTemplateV1[];
+  if (new Set(valid.map((template) => template.id)).size !== valid.length) return [];
+  return valid;
+}
+
+export function readManagerSkillViewPresenter(id: string): ManagerSkillViewPresenter | undefined {
+  const loaded = readSkillViewManifest(id);
+  const presenter = record(loaded?.manifest.presenter);
+  if (!loaded || !presenter) return undefined;
+  const command = typeof presenter.command === "string" ? presenter.command.trim() : "";
+  const args = Array.isArray(presenter.args) ? presenter.args : [];
+  const timeoutMs = presenter.timeout_ms === undefined ? 30_000 : Number(presenter.timeout_ms);
+  if (
+    !command
+    || command.length > 200
+    || path.isAbsolute(command)
+    || command.includes("/")
+    || command.includes("\\")
+    || /[\u0000-\u001f\u007f]/.test(command)
+    || args.length > 8
+    || !Number.isInteger(timeoutMs)
+    || timeoutMs < 1_000
+    || timeoutMs > 60_000
+  ) return undefined;
+  const normalizedArgs = args.map((item) => typeof item === "string" ? item : "");
+  if (normalizedArgs.some((item) => (
+    !item
+    || Buffer.byteLength(item, "utf8") > MAX_SKILL_VIEW_PRESENTER_ARGUMENT_BYTES
+    || /[\u0000\r\n]/.test(item)
+  ))) return undefined;
+  return {
+    skill_root: loaded.skill_root,
+    command,
+    args: normalizedArgs,
+    timeout_ms: timeoutMs,
+  };
+}
+
+function normalizeSkillViewPresenterArgv(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_SKILL_VIEW_PRESENTER_ARGUMENTS) {
+    throw new Error("Skill view presenter argv must contain 1 to 32 arguments");
+  }
+  const argv = value.map((item) => typeof item === "string" ? item : "");
+  if (argv.some((item) => (
+    !item
+    || Buffer.byteLength(item, "utf8") > MAX_SKILL_VIEW_PRESENTER_ARGUMENT_BYTES
+    || /[\u0000\r\n]/.test(item)
+  ))) throw new Error("Skill view presenter argv contains an invalid argument");
+  if (Buffer.byteLength(argv.join("\0"), "utf8") > MAX_SKILL_VIEW_PRESENTER_ARGUMENT_TOTAL_BYTES) {
+    throw new Error("Skill view presenter argv is too large");
+  }
+  return argv;
+}
+
+function skillViewPresenterEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { HOMERAIL_HOME: getHomerailHome() };
+  for (const key of [
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "SystemRoot",
+    "WINDIR",
+    "PATHEXT",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+  ]) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return env;
+}
+
+export async function executeManagerSkillViewPresenter(
+  id: string,
+  argvValue: unknown,
+): Promise<Record<string, unknown>> {
+  const presenter = readManagerSkillViewPresenter(id);
+  if (!presenter) throw new Error("Skill view presenter not found");
+  const argv = normalizeSkillViewPresenterArgv(argvValue);
+  const stdout = await new Promise<string>((resolve, reject) => {
+    execFile(
+      presenter.command,
+      [...presenter.args, ...argv],
+      {
+        cwd: presenter.skill_root,
+        env: skillViewPresenterEnv(),
+        timeout: presenter.timeout_ms,
+        maxBuffer: MAX_SKILL_VIEW_PRESENTER_OUTPUT_BYTES,
+        windowsHide: true,
+        encoding: "utf8",
+      },
+      (error, value) => {
+        if (!error) {
+          resolve(value);
+          return;
+        }
+        const killed = (error as NodeJS.ErrnoException & { killed?: boolean }).killed;
+        reject(new Error(killed ? "Skill view presenter timed out" : "Skill view presenter failed"));
+      },
+    );
+  });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout.trim());
+  } catch {
+    throw new Error("Skill view presenter returned invalid JSON");
+  }
+  const output = record(parsed);
+  if (!output) throw new Error("Skill view presenter returned an invalid result");
+  return output;
 }
 
 function scanSkills(root: string, source: ManagerSkillSummary["source"]): ManagerSkillDetail[] {
