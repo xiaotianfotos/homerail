@@ -8,6 +8,7 @@ import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import {
   _clearDagWorkflowTablesForTest,
+  getDagRuntimeProfile,
   upsertDagRuntimeProfileFromYaml,
   upsertDagWorkflowFromYaml,
 } from "../src/persistence/dag-workflows.js";
@@ -100,6 +101,9 @@ default:
       workflowId: "db-workflow",
       profile: "qwen-main",
       prompt: "plan",
+      expectedWorkflowRevision: 1,
+      expectedCanonicalHash: synced.workflow.canonical_hash,
+      expectedProfileUpdatedAt: getDagRuntimeProfile("db-workflow", "qwen-main")!.updated_at,
     });
 
     expect(result.workflowId).toBe("db-workflow");
@@ -121,6 +125,20 @@ default:
       yaml_text: WORKFLOW_YAML.replace("Plan and hand off.", "Plan, verify, and hand off."),
     });
     expect(updated.workflow.head_revision).toBe(2);
+    expect(() => orchestrator.createAndRun({
+      workflowId: "db-workflow",
+      profile: "qwen-main",
+      expectedWorkflowRevision: 1,
+      expectedCanonicalHash: synced.workflow.canonical_hash,
+      expectedProfileUpdatedAt: getDagRuntimeProfile("db-workflow", "qwen-main")!.updated_at,
+    })).toThrow(/workflow revision conflict/);
+    expect(() => orchestrator.createAndRun({
+      workflowId: "db-workflow",
+      profile: "qwen-main",
+      expectedWorkflowRevision: updated.workflow.head_revision,
+      expectedCanonicalHash: updated.workflow.canonical_hash,
+      expectedProfileUpdatedAt: "stale-profile-version",
+    })).toThrow(/profile version conflict/);
     expect(loadRunMetadata(result.runId)).toMatchObject({
       workflowRevision: 1,
       canonicalHash: synced.workflow.canonical_hash,
@@ -150,5 +168,17 @@ default:
   model: qwen3.6
 `,
     })).toThrow(/must reference DB model_alias or llm_setting_id/);
+
+    expect(() => upsertDagRuntimeProfileFromYaml({
+      yaml_text: `
+profile_id: mismatched
+workflow_id: another-workflow
+default:
+  agent_type: claude-sdk
+`,
+      workflow_id: "db-workflow",
+      expected_workflow_id: "db-workflow",
+      expected_profile_id: "mismatched",
+    })).toThrow(/workflow identity mismatch/);
   });
 });

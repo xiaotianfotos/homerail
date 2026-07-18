@@ -807,6 +807,7 @@ edges:
     ]) {
       expect(requiresDagMutationAuthorization(pathname, "POST"), pathname).toBe(true);
     }
+    expect(requiresDagMutationAuthorization("/api/skills/palquery/views/present", "POST")).toBe(false);
     expect(requiresDagMutationAuthorization("/api/runs/run-1/node/node-1/approval", "POST")).toBe(false);
     expect(requiresDagMutationAuthorization("/api/dag/validate", "POST")).toBe(false);
     expect(requiresDagMutationAuthorization("/api/runs", "GET")).toBe(false);

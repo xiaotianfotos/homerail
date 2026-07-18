@@ -111,6 +111,7 @@ export interface ResolvedManagerAgentTurnAssets {
 
 export interface ResolvedManagerSkill extends ManagerSkillSummary {
   content?: string;
+  asset_root?: string;
   view_templates?: ManagerAgentSkillViewTemplateV1[];
 }
 
@@ -292,7 +293,7 @@ function inlineMatchingLocalSkills(
     .filter((candidate) => candidate.score >= MIN_LOCAL_SKILL_MATCH_SCORE)
     .sort((left, right) => right.score - left.score || left.skill.id.localeCompare(right.skill.id));
 
-  const selected = new Map<string, string>();
+  const selected = new Map<string, { content: string; asset_root?: string }>();
   let totalChars = 0;
   for (const candidate of candidates) {
     if (selected.size >= MAX_INLINE_LOCAL_SKILLS) break;
@@ -300,15 +301,20 @@ function inlineMatchingLocalSkills(
     const content = detail?.content?.trim();
     if (!content || content.length > MAX_INLINE_LOCAL_SKILL_CHARS) continue;
     if (totalChars + content.length > MAX_INLINE_LOCAL_SKILL_TOTAL_CHARS) continue;
-    selected.set(candidate.skill.id, content);
+    selected.set(candidate.skill.id, { content, asset_root: detail?.asset_root });
     totalChars += content.length;
   }
 
   if (selected.size === 0) return skills;
   return skills.map((skill) => {
-    const content = selected.get(skill.id);
-    return content
-      ? { ...skill, content, view_templates: readManagerSkillViewTemplates(skill.id) }
+    const selectedSkill = selected.get(skill.id);
+    return selectedSkill
+      ? {
+        ...skill,
+        content: selectedSkill.content,
+        asset_root: selectedSkill.asset_root,
+        view_templates: readManagerSkillViewTemplates(skill.id),
+      }
       : skill;
   });
 }

@@ -1113,7 +1113,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   send_dag_actor_command: {
     name: "send_dag_actor_command",
-    description: "Atomically send between 1 and 128 commands to stable actor_id values in one request. Call get_dag_supervision first. When an Actor advertises command_payload_contract fields, put every user-requested machine constraint at the advertised payload_path with the declared type; include an instruction for semantics, but never encode those constraints only in prose. For an active round, every item requires the latest expected_state_token and a stable idempotency_key. For a waiting round, supply expected_round_id to use the existing safe multiround resume path. Never accept or expose transient Worker or container IDs, lease, session, or generation identifiers.",
+    description: "Atomically send between 1 and 128 commands to stable actor_id values in one request. Call get_dag_supervision first. When an Actor advertises command_payload_contract fields, put every user-requested machine constraint at the advertised payload_path with the declared type; include an instruction for semantics, but never encode those constraints only in prose. For an active round, every item requires the latest expected_state_token and a stable idempotency_key. For a waiting run, copy current_round.round_id exactly into the top-level expected_round_id beside run_id and commands; never put expected_round_id inside a command. If a round conflict occurs, read supervision again instead of guessing another round. Never accept or expose transient Worker or container IDs, lease, session, or generation identifiers.",
     input_schema: {
       type: "object",
       properties: {
@@ -1192,7 +1192,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   complete_dag_run: {
     name: "complete_dag_run",
-    description: "Complete the expected round of a supervised DAG run whose actors are addressed by stable actor_id only; never expose transient Worker or container IDs.",
+    description: "End a waiting supervised DAG run only when the user explicitly asks to end, close, or finish that run. This is not an error-recovery action and must not be used after a command validation or round conflict. Copy current_round.round_id from fresh supervision into expected_round_id. The run is supervised through stable actor_id values; never expose transient Worker or container IDs.",
     input_schema: {
       type: "object",
       properties: {
@@ -1205,7 +1205,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   invoke_run: {
     name: "invoke_run",
-    description: "Invoke or tick an existing DAG run.",
+    description: "Invoke or tick a non-terminal DAG run when runtime status indicates it needs dispatch. Do not use this to recover a completed or cancelled run, and do not use it after a command validation error.",
     input_schema: {
       type: "object",
       properties: { runId: { type: "string" } },

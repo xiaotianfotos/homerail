@@ -146,6 +146,7 @@ import {
   type DagActorInterventionRecord,
 } from "../persistence/dag-actor-interventions.js";
 import {
+  initializeDagLiveSurfaceRoster,
   resetDagLiveSurfaceActorBody,
   supersedeDagLiveSurfaceForIntervention,
 } from "../generative-ui/dag-live-surface-projector.js";
@@ -534,9 +535,19 @@ function _ensureLogicalActor(run: ActiveRun, node: DAGGraphNode): DagActorRecord
 
 function _registerLogicalActors(run: ActiveRun): void {
   _assertLogicalActorIdentities(run.dagRun.graph.nodes);
+  const actorsByNode = new Map<string, DagActorRecord>();
   for (const node of run.dagRun.graph.nodes) {
-    if (!_isGatewayNode(node)) _ensureLogicalActor(run, node);
+    if (!_isGatewayNode(node)) actorsByNode.set(node.node_id, _ensureLogicalActor(run, node));
   }
+  const roster: DagActorRecord[] = [];
+  const rosterIds = new Set<string>();
+  for (const target of run.runInputTargets ?? []) {
+    const actor = actorsByNode.get(target.node);
+    if (!actor || rosterIds.has(actor.actor_id)) continue;
+    rosterIds.add(actor.actor_id);
+    roster.push(actor);
+  }
+  if (roster.length > 1) initializeDagLiveSurfaceRoster(roster, run.createdAt);
 }
 
 function _bindLogicalActorSession(

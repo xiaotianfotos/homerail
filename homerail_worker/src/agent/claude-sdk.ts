@@ -8,6 +8,18 @@
 
 import { AGENT_BUILTIN_TOOL_NAMES } from "homerail-protocol";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import type { AgentClient, AgentEvent, AgentRunContext, AgentUsage, DagToolDefinition } from "./types.js";
 import {
   jsonSchemaObjectToZodRawShape,
@@ -17,6 +29,95 @@ import { sanitizedAgentChildEnv } from "./child-env.js";
 
 const HANDOFF_ONLY_THINKING_BUDGET = 2048;
 const HANDOFF_STOP = Symbol("claude-sdk-handoff-stop");
+
+interface ClaudeSkillProjectionRuntime {
+  configDir: string;
+  skillCount: number;
+  cleanup: () => void;
+}
+
+function projectedSkillName(value: string, fallback: string): string {
+  const normalized = value
+    .normalize("NFKC")
+    .replace(/[^A-Za-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
+  return normalized || fallback;
+}
+
+function linkOrCopySkill(source: string, destination: string): void {
+  try {
+    symlinkSync(source, destination, process.platform === "win32" ? "junction" : "dir");
+  } catch {
+    cpSync(source, destination, { recursive: true, force: false, errorOnExist: true });
+  }
+}
+
+function prepareClaudeSkillProjection(context: AgentRunContext): ClaudeSkillProjectionRuntime | undefined {
+  const projection = context.skillProjection;
+  if (!projection) return undefined;
+  const configuredRoot = process.env.HOMERAIL_HOME?.trim();
+  const parent = configuredRoot
+    ? join(configuredRoot, "runtime", "claude-skill-projections")
+    : join(tmpdir(), "homerail-claude-skill-projections");
+  mkdirSync(parent, { recursive: true });
+  const configDir = mkdtempSync(join(parent, `${process.pid}-`));
+  const skillsDir = join(configDir, "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  const names = new Set<string>();
+
+  for (const directory of projection.directories ?? []) {
+    const root = resolve(directory);
+    let entries;
+    try {
+      entries = readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const source = join(root, entry.name);
+      let resolvedSource: string;
+      try {
+        resolvedSource = resolve(source);
+        if (!statSync(join(resolvedSource, "SKILL.md")).isFile()) continue;
+      } catch {
+        continue;
+      }
+      const name = projectedSkillName(entry.name, `skill-${names.size + 1}`);
+      if (names.has(name)) continue;
+      linkOrCopySkill(resolvedSource, join(skillsDir, name));
+      names.add(name);
+    }
+  }
+
+  for (const definition of projection.definitions ?? []) {
+    const baseName = projectedSkillName(definition.name || definition.id, `skill-${names.size + 1}`);
+    let name = baseName;
+    let suffix = 2;
+    while (names.has(name)) name = `${baseName}-${suffix++}`;
+    const skillDir = join(skillsDir, name);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), [
+      "---",
+      `name: ${JSON.stringify(name)}`,
+      `description: ${JSON.stringify(definition.description || `HomeRail Skill ${definition.id}`)}`,
+      "---",
+      "",
+      definition.content.trim(),
+      "",
+    ].join("\n"), { encoding: "utf8", mode: 0o600 });
+    names.add(name);
+  }
+
+  return {
+    configDir,
+    skillCount: names.size,
+    cleanup: () => rmSync(configDir, { recursive: true, force: true }),
+  };
+}
+
+export const _prepareClaudeSkillProjectionForTest = prepareClaudeSkillProjection;
 
 interface SdkModule {
   query(params: {
@@ -301,6 +402,7 @@ export class ClaudeSdkAdapter implements AgentClient {
     let timeout: NodeJS.Timeout | null = null;
     let stderrTail = "";
     let externalAbortHandler: (() => void) | null = null;
+    let skillRuntime: ClaudeSkillProjectionRuntime | undefined;
     let handoffStopRequested = false;
     let resolveHandoffStop: (() => void) | null = null;
     const handoffStop = new Promise<typeof HANDOFF_STOP>((resolve) => {
@@ -326,6 +428,7 @@ export class ClaudeSdkAdapter implements AgentClient {
         ? Math.min(this.thinkingBudget, HANDOFF_ONLY_THINKING_BUDGET)
         : this.thinkingBudget;
       const systemPromptMode = context.systemPromptMode ?? "append";
+      skillRuntime = prepareClaudeSkillProjection(context);
       const options: Record<string, unknown> = {
         model: effectiveModel,
         maxThinkingTokens: effectiveThinkingBudget,
@@ -335,8 +438,11 @@ export class ClaudeSdkAdapter implements AgentClient {
         allowDangerouslySkipPermissions: true,
         cwd: context.workspace ?? process.cwd(),
         stderr: (data: string) => appendStderr(data),
-        env: authEnv.env,
-        settingSources: [],
+        env: skillRuntime
+          ? { ...authEnv.env, CLAUDE_CONFIG_DIR: skillRuntime.configDir }
+          : authEnv.env,
+        settingSources: skillRuntime?.skillCount ? ["user"] : [],
+        skills: skillRuntime?.skillCount ? "all" : [],
         strictMcpConfig: true,
       };
       if (this.maxTurns !== null) {
@@ -428,6 +534,7 @@ export class ClaudeSdkAdapter implements AgentClient {
           timeout_ms: this.queryTimeoutMs > 0 ? this.queryTimeoutMs : null,
           external_abort_signal: Boolean(context.abortSignal),
           builtin_tools: builtinTools,
+          projected_skill_count: skillRuntime?.skillCount ?? 0,
           handoff_only: context.handoffOnly === true,
         },
       };
@@ -580,6 +687,8 @@ export class ClaudeSdkAdapter implements AgentClient {
         context.abortSignal.removeEventListener("abort", externalAbortHandler);
       }
       sdkAbortController = null;
+      skillRuntime?.cleanup();
+      skillRuntime = undefined;
     }
 
     yield {

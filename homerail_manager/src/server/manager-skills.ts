@@ -32,6 +32,8 @@ export interface ManagerSkillSummary {
 
 export interface ManagerSkillDetail extends ManagerSkillSummary {
   content: string;
+  /** Canonical root for local Skill-owned references and scripts. */
+  asset_root?: string;
 }
 
 export interface ManagerSkillInstallResult {
@@ -55,6 +57,7 @@ const MAX_SKILL_VIEW_PRESENTER_ARGUMENTS = 32;
 const MAX_SKILL_VIEW_PRESENTER_ARGUMENT_BYTES = 512;
 const MAX_SKILL_VIEW_PRESENTER_ARGUMENT_TOTAL_BYTES = 8 * 1024;
 const MAX_SKILL_VIEW_PRESENTER_OUTPUT_BYTES = 1024 * 1024;
+const MAX_SKILL_DAG_ASSET_BYTES = 2 * 1024 * 1024;
 const MAX_SKILL_VIEW_PRESENTER_TIMEOUT_MS = 5 * 60 * 1000;
 const SKILL_VIEW_MANIFEST = path.join("assets", "homerail", "view-templates.json");
 const VIEW_SURFACES = new Set(["task", "execution", "result", "ambient"]);
@@ -297,6 +300,38 @@ export async function executeManagerSkillViewPresenter(
   return output;
 }
 
+export function readManagerSkillDagAsset(
+  id: string,
+  assetPathValue: unknown,
+): { text: string; source_path: string } {
+  const presenter = readManagerSkillViewPresenter(id);
+  if (!presenter) throw new Error("Skill view presenter not found");
+  const assetPath = typeof assetPathValue === "string" ? assetPathValue.trim() : "";
+  if (!assetPath || assetPath.length > 4096 || /[\u0000-\u001f\u007f]/.test(assetPath)) {
+    throw new Error("Skill DAG asset path is invalid");
+  }
+  const root = fs.realpathSync(presenter.skill_root);
+  const candidate = path.isAbsolute(assetPath) ? path.resolve(assetPath) : path.resolve(root, assetPath);
+  let resolved: string;
+  try {
+    resolved = fs.realpathSync(candidate);
+  } catch {
+    throw new Error("Skill DAG asset was not found");
+  }
+  const relative = path.relative(root, resolved);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Skill DAG asset must stay inside the enabled Skill");
+  }
+  const stat = fs.statSync(resolved);
+  if (!stat.isFile() || stat.size > MAX_SKILL_DAG_ASSET_BYTES) {
+    throw new Error("Skill DAG asset is invalid or too large");
+  }
+  return {
+    text: fs.readFileSync(resolved, "utf8"),
+    source_path: `skill:${id}/${relative.split(path.sep).join("/")}`,
+  };
+}
+
 function scanSkills(root: string, source: ManagerSkillSummary["source"]): ManagerSkillDetail[] {
   if (!fs.existsSync(root)) return [];
   let entries: fs.Dirent[];
@@ -320,6 +355,7 @@ function scanSkills(root: string, source: ManagerSkillSummary["source"]): Manage
         source,
         enabled: true as const,
         content,
+        asset_root: fs.realpathSync(path.join(root, entry.name)),
       }];
     })
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -380,7 +416,7 @@ export function listManagerSkills(
   }
   const local = Array.from(byId.values())
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map(({ content: _content, ...summary }) => summary);
+    .map(({ content: _content, asset_root: _assetRoot, ...summary }) => summary);
   const plugin = (pluginContext?.skills ?? []).map((skill): ManagerSkillSummary => ({
     id: skill.qualified_id,
     name: skill.local_id,
