@@ -5,6 +5,7 @@ import type { LLMSetting } from '@/api/services/llm-settings-api'
 import type { Provider } from '@/api/types/orchestration-v2.types'
 import { agentSettingsApi } from '@/api/agent'
 import { probeModels } from '@/api/services/providers-api'
+import { testVoiceEndpoints } from '@/api/services/voice-api'
 import CustomProviderManager from './CustomProviderManager.vue'
 import EditModelForm, { type EditModelPayload } from './EditModelForm.vue'
 import ModelForm, { type ModelFormPayload } from './ModelForm.vue'
@@ -13,8 +14,25 @@ vi.mock('@/api/services/providers-api', () => ({
   probeModels: vi.fn(async () => ({ models: [] }))
 }))
 
+vi.mock('@/api/services/voice-api', () => ({
+  testVoiceEndpoints: vi.fn(async (endpoints: Array<{ id: string; kind: string; url: string }>) => ({
+    success: true,
+    data: {
+      ok: true,
+      results: endpoints.map(endpoint => ({
+        ...endpoint,
+        ok: true,
+        reachable: true,
+        status_code: endpoint.kind === 'http' ? 400 : undefined,
+        message: 'reachable'
+      }))
+    }
+  }))
+}))
+
 vi.mock('@/api/agent', () => ({
   agentSettingsApi: {
+    createProvider: vi.fn(async () => ({ success: true })),
     deleteProvider: vi.fn(async () => ({ success: true })),
     updateProvider: vi.fn(async () => ({ success: true }))
   }
@@ -354,6 +372,47 @@ describe('model purpose forms', () => {
     expect(nameInput.value).toBe('Unsaved provider name')
   })
 
+  it('creates a provider before any model is known', async () => {
+    const root = await mount(CustomProviderManager, {
+      providers: [],
+      settings: []
+    })
+    const providerId = root.querySelector<HTMLInputElement>('input[placeholder="custom-openai"]')!
+    const baseUrl = root.querySelector<HTMLInputElement>(
+      'input[placeholder="https://api.example.com/v1"]'
+    )!
+    const displayName = Array.from(root.querySelectorAll<HTMLInputElement>('input')).find(
+      input => input !== providerId && input !== baseUrl
+    )!
+
+    providerId.value = 'model-later'
+    providerId.dispatchEvent(new Event('input'))
+    displayName.value = 'Model Later'
+    displayName.dispatchEvent(new Event('input'))
+    baseUrl.value = 'https://models.example/v1'
+    baseUrl.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(root.textContent).not.toContain('默认模型')
+    const save = Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find(
+      button => button.textContent?.trim() === '保存'
+    )!
+    expect(save.disabled).toBe(false)
+    save.click()
+    await nextTick()
+    await nextTick()
+
+    expect(agentSettingsApi.createProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'model-later',
+        name: 'Model Later',
+        base_url: 'https://models.example/v1'
+      })
+    )
+    expect(vi.mocked(agentSettingsApi.createProvider).mock.calls[0]?.[0])
+      .not.toHaveProperty('default_model')
+  })
+
   it('derives and saves HTTP and WebSocket endpoints for an ASR provider', async () => {
     const root = await mount(CustomProviderManager, {
       providers: [asrProvider],
@@ -361,10 +420,10 @@ describe('model purpose forms', () => {
     })
 
     expect(
-      root.querySelector<HTMLInputElement>('[data-testid="provider-asr-http-url"]')?.placeholder
+      root.querySelector<HTMLInputElement>('[data-testid="provider-asr-http-url"]')?.value
     ).toBe('http://192.168.100.10:5002/v1/audio/transcriptions')
     expect(
-      root.querySelector<HTMLInputElement>('[data-testid="provider-asr-realtime-url"]')?.placeholder
+      root.querySelector<HTMLInputElement>('[data-testid="provider-asr-realtime-url"]')?.value
     ).toBe('ws://192.168.100.10:5002/v1/realtime')
     expect(root.textContent).not.toContain('各协议接入地址')
     expect(root.querySelector('input[placeholder="Chat Completions URL"]')).toBeNull()
@@ -387,6 +446,60 @@ describe('model purpose forms', () => {
         asr_realtime_url: 'ws://192.168.100.10:5002/v1/realtime'
       })
     )
+  })
+
+  it('updates derived voice endpoints with Base URL and preserves a custom override', async () => {
+    const root = await mount(CustomProviderManager, {
+      providers: [asrProvider],
+      settings: [asrSetting]
+    })
+    const baseInput = Array.from(root.querySelectorAll<HTMLInputElement>('input')).find(
+      input => input.value === asrProvider.base_url
+    )!
+    const httpInput = root.querySelector<HTMLInputElement>('[data-testid="provider-asr-http-url"]')!
+    const wsInput = root.querySelector<HTMLInputElement>('[data-testid="provider-asr-realtime-url"]')!
+
+    wsInput.value = 'ws://speech.example/custom-realtime'
+    wsInput.dispatchEvent(new Event('input'))
+    baseInput.value = 'https://speech.example:7443'
+    baseInput.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(httpInput.value).toBe('https://speech.example:7443/v1/audio/transcriptions')
+    expect(wsInput.value).toBe('ws://speech.example/custom-realtime')
+    expect(root.textContent).toContain('恢复自动')
+
+    Array.from(root.querySelectorAll<HTMLButtonElement>('button'))
+      .find(button => button.textContent?.trim() === '恢复自动')!
+      .click()
+    await nextTick()
+    expect(wsInput.value).toBe('wss://speech.example:7443/v1/realtime')
+  })
+
+  it('tests the derived HTTP and WebSocket endpoints with one action', async () => {
+    const root = await mount(CustomProviderManager, {
+      providers: [asrProvider],
+      settings: [asrSetting]
+    })
+
+    root.querySelector<HTMLButtonElement>('[data-testid="provider-test-voice-endpoints"]')!.click()
+    await nextTick()
+    await nextTick()
+
+    expect(testVoiceEndpoints).toHaveBeenCalledWith([
+      {
+        id: 'asr_http',
+        kind: 'http',
+        url: 'http://192.168.100.10:5002/v1/audio/transcriptions'
+      },
+      {
+        id: 'asr_realtime',
+        kind: 'websocket',
+        url: 'ws://192.168.100.10:5002/v1/realtime'
+      }
+    ])
+    expect(root.querySelector('[data-testid="provider-endpoint-test-result"]')?.textContent)
+      .toContain('端点可用')
   })
 
   it('keeps saved voice endpoints when a provider capability is disabled', async () => {

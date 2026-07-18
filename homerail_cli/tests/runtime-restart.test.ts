@@ -22,6 +22,7 @@ const ENV_KEYS = [
   "HOMERAIL_MANAGER_PORT",
   "HOMERAIL_MANAGER_HOST",
   "HOMERAIL_MANAGER_PUBLIC_URL",
+  "HOMERAIL_MANAGER_ADMIN_ORIGINS",
   "HOMERAIL_TEST_MANAGER_SHUTDOWN_DELAY_MS",
 ] as const;
 
@@ -128,12 +129,19 @@ describe("runtime restart --manager-only", () => {
       const starts = readFileSync(join(tempHome, "manager-starts.jsonl"), "utf-8")
         .trim()
         .split("\n")
-        .map((line) => JSON.parse(line) as { pid: number; home: string; host: string; port: number });
+        .map((line) => JSON.parse(line) as {
+          pid: number;
+          home: string;
+          host: string;
+          port: number;
+          origins: string;
+        });
       expect(starts.at(-1)).toMatchObject({
         pid: status.managerPid,
         home: tempHome,
         host: "127.0.0.1",
         port: managerPort,
+        origins: "http://localhost:19193,https://127.0.0.1:19192",
       });
     },
   );
@@ -336,7 +344,13 @@ const host = process.env.HOMERAIL_MANAGER_HOST || "127.0.0.1";
 const port = Number(process.env.HOMERAIL_MANAGER_PORT);
 fs.appendFileSync(
   path.join(home, "manager-starts.jsonl"),
-  JSON.stringify({ pid: process.pid, home, host, port }) + "\\n",
+  JSON.stringify({
+    pid: process.pid,
+    home,
+    host,
+    port,
+    origins: process.env.HOMERAIL_MANAGER_ADMIN_ORIGINS,
+  }) + "\\n",
 );
 
 const server = http.createServer((request, response) => {

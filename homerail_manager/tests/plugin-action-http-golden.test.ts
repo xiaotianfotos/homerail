@@ -290,14 +290,18 @@ describe("Plugin Action real HTTP golden scenario", () => {
   });
 
   it.each(callerHarnesses)(
-    "$name caller uses the same authenticated HTTP Action contract and commits exactly once",
+    "$name caller uses the same HTTP Action contract and commits exactly once",
     async ({ create }) => {
       const caller = create(baseUrl);
       const unauthenticated = await fetch(`${baseUrl}/api/plugins/actions`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: "{}",
       });
-      expect(unauthenticated.status).toBe(401);
+      // Admin-token authentication is intentionally disabled for this release.
+      // The endpoint therefore reaches Action-envelope validation instead of
+      // rejecting the request at the HTTP trust boundary.
+      expect(unauthenticated.status).toBe(400);
 
       const snapshot = scanPluginSource(sourceRoot);
       expect(snapshot.issues).toEqual([expect.objectContaining({

@@ -86,75 +86,75 @@
 :root[data-hr-theme='paper'] {
   color-scheme: light;
 
-  --hr-bg: #f5f6f8;
-  --hr-bg-raised: #ffffff;
-  --hr-surface-1: #ffffff;
-  --hr-surface-2: #f1f3f5;
-  --hr-surface-3: #e7ebef;
-  --hr-panel: #ffffff;
-  --hr-control: #f6f7f8;
-  --hr-control-hover: #eef1f3;
-  --hr-control-active: #e4e9ed;
-  --hr-overlay: rgba(17, 24, 39, 0.28);
-  --hr-code-bg: #f6f8fa;
+  --hr-bg: #e9edef;
+  --hr-bg-raised: #eef1f2;
+  --hr-surface-1: #f4f5f5;
+  --hr-surface-2: #eaedef;
+  --hr-surface-3: #dde3e6;
+  --hr-panel: #f7f8f7;
+  --hr-control: #eceff0;
+  --hr-control-hover: #e3e8ea;
+  --hr-control-active: #dbe2e5;
+  --hr-overlay: rgba(38, 50, 58, 0.28);
+  --hr-code-bg: #e5e9eb;
 
-  --hr-border: #dfe3e8;
-  --hr-border-strong: #c9d0d8;
+  --hr-border: #cbd3d8;
+  --hr-border-strong: #aebbc3;
 
-  --hr-text-1: #172033;
-  --hr-text-2: #405168;
-  --hr-text-3: #536477;
-  --hr-text-4: #5d6c7f;
-  --hr-on-strong: #ffffff;
+  --hr-text-1: #26323a;
+  --hr-text-2: #46545e;
+  --hr-text-3: #65737d;
+  --hr-text-4: #89949c;
+  --hr-on-strong: #f7fbfb;
 
-  --hr-accent: #076d7a;
-  --hr-accent-hover: #055d68;
-  --hr-accent-soft: #edf7f8;
-  --hr-accent-border: #b8dce1;
-  --hr-on-accent: #ffffff;
+  --hr-accent: #2e727a;
+  --hr-accent-hover: #245f66;
+  --hr-accent-soft: #dbe9ea;
+  --hr-accent-border: #a9c9cd;
+  --hr-on-accent: #f7fbfb;
 
-  --hr-speaking: #5b5bd6;
-  --hr-speaking-soft: #f1f0ff;
-  --hr-speaking-border: #d8d5ff;
-  --hr-success: #147a5b;
-  --hr-success-soft: #ecf8f3;
-  --hr-success-border: #bfe6d5;
-  --hr-warning: #8a5a00;
-  --hr-warning-soft: #fff7e6;
-  --hr-warning-border: #ead39b;
-  --hr-danger: #b4232a;
-  --hr-danger-soft: #fff0f1;
-  --hr-danger-border: #efc1c5;
-  --hr-info: #1f63b5;
-  --hr-info-soft: #eef5ff;
-  --hr-info-border: #c7daf5;
+  --hr-speaking: #656b9d;
+  --hr-speaking-soft: #e3e4ee;
+  --hr-speaking-border: #c1c3d6;
+  --hr-success: #3e755f;
+  --hr-success-soft: #deebe5;
+  --hr-success-border: #acd0c1;
+  --hr-warning: #876825;
+  --hr-warning-soft: #f0e8d5;
+  --hr-warning-border: #dac897;
+  --hr-danger: #a15258;
+  --hr-danger-soft: #f0e0e1;
+  --hr-danger-border: #dcb7ba;
+  --hr-info: #456f98;
+  --hr-info-soft: #e0e8ef;
+  --hr-info-border: #b6cadc;
 
-  --hr-focus-ring: rgba(7, 109, 122, 0.22);
-  --hr-selection: rgba(7, 109, 122, 0.16);
-  --hr-scrollbar: rgba(64, 81, 104, 0.2);
-  --hr-scrollbar-hover: rgba(64, 81, 104, 0.34);
-  --hr-ambient-accent: rgba(7, 109, 122, 0.035);
-  --hr-ambient-info: rgba(31, 99, 181, 0.025);
-  --hr-canvas-ambient-primary: rgba(7, 109, 122, 0.025);
-  --hr-canvas-ambient-secondary: rgba(20, 122, 91, 0.018);
-  --hr-decorative-accent-soft: #fbfdfd;
+  --hr-focus-ring: rgba(46, 114, 122, 0.25);
+  --hr-selection: rgba(46, 114, 122, 0.18);
+  --hr-scrollbar: rgba(70, 84, 94, 0.2);
+  --hr-scrollbar-hover: rgba(70, 84, 94, 0.34);
+  --hr-ambient-accent: rgba(46, 114, 122, 0.028);
+  --hr-ambient-info: rgba(69, 111, 152, 0.02);
+  --hr-canvas-ambient-primary: rgba(46, 114, 122, 0.02);
+  --hr-canvas-ambient-secondary: rgba(62, 117, 95, 0.014);
+  --hr-decorative-accent-soft: #eef3f3;
   --hr-decorative-accent-border: var(--hr-border);
-  --hr-decorative-speaking-soft: #fbfbfe;
+  --hr-decorative-speaking-soft: #f0f0f4;
   --hr-decorative-speaking-border: var(--hr-border);
-  --hr-settings-sidebar: #edf0f3;
-  --hr-settings-card: #f7f8fa;
-  --hr-settings-card-hover: #eef2f5;
-  --hr-settings-divider: #cfd6de;
-  --hr-settings-active: #dff1f3;
-  --hr-settings-active-border: #78bdc6;
+  --hr-settings-sidebar: #e4e9eb;
+  --hr-settings-card: #f1f3f3;
+  --hr-settings-card-hover: #e7ebed;
+  --hr-settings-divider: #bcc7cd;
+  --hr-settings-active: #d7e6e8;
+  --hr-settings-active-border: #8db7bc;
 
   --hr-radius-lg: 14px;
   --hr-radius-md: 10px;
   --hr-radius-sm: 8px;
 
-  --hr-shadow-panel: 0 1px 2px rgba(17, 24, 39, 0.04), 0 10px 30px rgba(17, 24, 39, 0.055);
-  --hr-shadow-floating: 0 18px 48px rgba(17, 24, 39, 0.16), 0 2px 8px rgba(17, 24, 39, 0.06);
-  --hr-shadow-accent: 0 8px 22px rgba(17, 24, 39, 0.08);
+  --hr-shadow-panel: 0 1px 2px rgba(37, 50, 58, 0.04), 0 12px 34px rgba(37, 50, 58, 0.07);
+  --hr-shadow-floating: 0 20px 54px rgba(37, 50, 58, 0.14), 0 2px 8px rgba(37, 50, 58, 0.06);
+  --hr-shadow-accent: 0 8px 22px rgba(37, 50, 58, 0.08);
 }
 
 ::selection {

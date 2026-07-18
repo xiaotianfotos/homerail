@@ -27,7 +27,6 @@ import {
   loadLocalConfig,
   loadLocalSecrets,
   managerWsUrl,
-  resolveConfiguredManagerAdminToken,
 } from "../local-config.js";
 import {
   HOMERAIL_UI_ADMIN_PROXY_ENABLED,
@@ -236,17 +235,16 @@ export function resolveUiAdminProxyProcessEnv(
     uiOrigin,
     uiBindHost: options.uiBindHost,
     managerUrl: options.managerUrl,
-    adminToken: options.unsafeNoAdminToken ? undefined : options.adminToken,
-    unsafeAllowPublicNoAuth: options.unsafeNoAdminToken,
+    adminToken: undefined,
+    unsafeAllowPublicNoAuth: true,
   });
   return {
     [HOMERAIL_UI_ORIGIN]: uiOrigin,
     [HOMERAIL_UI_ADMIN_PROXY_ENABLED]: policy.enabled ? "1" : "0",
-    // Explicitly erase an inherited credential outside the loopback boundary.
-    HOMERAIL_MANAGER_ADMIN_TOKEN: policy.enabled && !options.unsafeNoAdminToken ? options.adminToken || "" : "",
-    ...(options.unsafeNoAdminToken
-      ? { [HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH]: "1" }
-      : {}),
+    // Admin-token authentication is disabled for this release. Explicitly
+    // erase inherited/local secrets for both the static and Vite UI proxies.
+    HOMERAIL_MANAGER_ADMIN_TOKEN: "",
+    [HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH]: "1",
   };
 }
 
@@ -280,7 +278,6 @@ export function registerRuntimeCommands(program: Command): void {
     .option("--rebuild-worker-image", "Force rebuilding homerail-worker:latest before DAG provisioning")
     .option("--host <host>", "Manager bind host")
     .option("--public", "Bind Manager publicly and bind Agent UI to the machine access IP")
-    .option("--unsafe-no-admin-token", "UNSAFE: allow unauthenticated public Manager/UI access for trusted test networks")
     .option("--public-url <url>", "Public Manager access URL advertised to Agent UI")
     .option("--ui", "Also start the Agent UI server")
     .option("--ui-host <host>", "Agent UI bind host")
@@ -330,7 +327,6 @@ export function registerRuntimeCommands(program: Command): void {
     .option("--rebuild-worker-image", "Force rebuilding homerail-worker:latest before DAG provisioning")
     .option("--host <host>", "Manager bind host")
     .option("--public", "Bind Manager publicly and bind Agent UI to the machine access IP")
-    .option("--unsafe-no-admin-token", "UNSAFE: allow unauthenticated public Manager/UI access for trusted test networks")
     .option("--public-url <url>", "Public Manager access URL advertised to Agent UI")
     .option("--ui", "Also start the Agent UI server")
     .option("--ui-host <host>", "Agent UI bind host")
@@ -439,7 +435,6 @@ export function registerRuntimeCommands(program: Command): void {
     .option("--host <host>", "Agent UI bind host")
     .option("--port <port>", "Agent UI HTTPS port")
     .option("--public", "Bind Agent UI to the machine access IP")
-    .option("--unsafe-no-admin-token", "UNSAFE: allow public UI mutations without a Manager admin token")
     .option("--public-url <url>", "Public Agent UI access URL shown in status")
     .option("--enable-text-mode", "Enable the temporary Agent UI text mode")
     .action(async (opts: UiStartOpts) => {
@@ -499,12 +494,6 @@ async function startRuntime(
   const printMessage = (message: string): void => {
     if (!globalOpts.json) console.log(message);
   };
-  if (opts.unsafeNoAdminToken && !opts.public) {
-    throw new Error("--unsafe-no-admin-token requires --public");
-  }
-  if (opts.unsafeNoAdminToken) {
-    console.warn("WARNING: public Manager and Agent UI authentication is disabled for this test runtime.");
-  }
   const cfg = loadLocalConfig();
   const assetRoot = configuredAssetRoot(cfg);
   const assetEnv: Record<string, string> = assetRoot ? { HOMERAIL_ASSET_DIR: assetRoot } : {};
@@ -527,16 +516,28 @@ async function startRuntime(
       && previousManagerState.publicUrl !== previousManagerState.accessUrl,
     );
   const managerPort = previousManagerState?.port ?? configuredManagerPort(cfg);
+  const runningUi = managerOnly ? getUiStatus() : undefined;
   const uiBindHost = opts.public && !opts.uiHost ? detectedMachineHost() : configuredUiHost(cfg, opts.uiHost);
   const uiHttpsPort = configuredUiPort(cfg, opts.uiPort);
   const uiHttpPort = configuredUiHttpPort(cfg);
   const secrets = loadLocalSecrets();
-  const managerAdminOrigins = mergeManagerAdminOrigins(
-    process.env[MANAGER_ADMIN_ORIGINS_ENV] ?? secrets[MANAGER_ADMIN_ORIGINS_ENV],
-    [
+  const preserveRunningUiOrigins = Boolean(
+    managerOnly
+    && runningUi?.uiPidRunning
+    && !opts.public
+    && !opts.uiHost
+    && !opts.uiPort
+    && !opts.uiPublicUrl,
+  );
+  const uiOrigins = preserveRunningUiOrigins && runningUi
+    ? [runningUi.uiHttpsPublicUrl || runningUi.uiHttpsUrl, runningUi.uiHttpPublicUrl || runningUi.uiHttpUrl]
+    : [
       configuredUiPublicUrl(cfg, uiBindHost, uiHttpsPort, opts.uiPublicUrl),
       configuredUiHttpPublicUrl(cfg, uiBindHost, uiHttpPort),
-    ],
+    ];
+  const managerAdminOrigins = mergeManagerAdminOrigins(
+    process.env[MANAGER_ADMIN_ORIGINS_ENV] ?? secrets[MANAGER_ADMIN_ORIGINS_ENV],
+    uiOrigins,
   );
   const client = new HomeRailClient({ baseUrl: managerLocalUrl, timeoutMs: globalOpts.requestTimeout });
 
@@ -550,12 +551,8 @@ async function startRuntime(
       HOMERAIL_MANAGER_PORT: String(managerPort),
       HOMERAIL_MANAGER_HOST: managerHost,
       HOMERAIL_MANAGER_ADMIN_ORIGINS: managerAdminOrigins,
-      ...(opts.unsafeNoAdminToken
-        ? {
-          HOMERAIL_MANAGER_ADMIN_TOKEN: "",
-          [HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH]: "1",
-        }
-        : {}),
+      HOMERAIL_MANAGER_ADMIN_TOKEN: "",
+      [HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH]: "1",
       ...(hasExplicitManagerPublicUrl ? { HOMERAIL_MANAGER_PUBLIC_URL: managerPublicUrl } : {}),
       HOMERAIL_PROJECT_ID: cfg.node?.projectId || "p1",
       ...assetEnv,
@@ -790,9 +787,6 @@ function startService(name: RuntimeServiceName, relativeScript: string, env: Rec
 
 async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Promise<UiStatus> {
   ensureHomerailHome();
-  if (opts.unsafeNoAdminToken && !opts.public) {
-    throw new Error("--unsafe-no-admin-token requires --public");
-  }
   const cfg = loadLocalConfig();
 
   const host = opts.public && !opts.host ? detectedMachineHost() : configuredUiHost(cfg, opts.host);
@@ -913,8 +907,8 @@ function startUiProcess(opts: StartUiProcessOpts): number {
     uiBindHost: opts.host,
     uiPublicUrl: opts.publicUrl,
     managerUrl: managerHttp,
-    adminToken: resolveConfiguredManagerAdminToken(),
-    unsafeNoAdminToken: opts.unsafeNoAdminToken,
+    adminToken: undefined,
+    unsafeNoAdminToken: true,
   });
 
   let child: import("child_process").ChildProcess;

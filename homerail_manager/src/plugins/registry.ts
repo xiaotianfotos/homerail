@@ -4,6 +4,7 @@ import type {
 import {
   getPluginRegistryState,
   getActivePlugin,
+  repairLegacyBuiltinPluginPackages,
   setPluginEnabled,
   syncPluginPackage,
   type ActivePluginRecord,
@@ -43,6 +44,7 @@ export interface SyncBuiltinPluginsResult {
 }
 
 export function syncBuiltinPlugins(root = getBuiltinPluginRoot()): SyncBuiltinPluginsResult {
+  repairLegacyBuiltinPluginPackages();
   const descriptors: HomerailResolvedPluginDescriptorV1[] = listBuiltinPluginPackageRoots(root)
     .map((packageRoot) => loadPluginPackage(packageRoot, {
       source: "builtin",

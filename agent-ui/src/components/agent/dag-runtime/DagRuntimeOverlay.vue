@@ -8,7 +8,7 @@
  * 渐进返回：○ detail→graph→list→退出。
  */
 
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
 import { useDagRuntime } from './useDagRuntime'
@@ -24,6 +24,11 @@ import type { VoiceGamepadButtonIntent, VoiceGamepadDirectionIntent } from '@/co
 
 type OverlayView = 'run_list' | 'dag_graph'
 
+const props = defineProps<{
+  initialRunId?: string
+  captureMode?: boolean
+}>()
+
 const emit = defineEmits<{
   close: []
 }>()
@@ -38,7 +43,7 @@ const selectedRunId = ref<string | null>(null)
 const focusedRunIndex = ref(0)
 const focusedNodeId = ref<string | null>(null)
 const selectedNodeId = ref<string | null>(null)
-const physicsPaused = ref(false)
+const physicsPaused = ref(Boolean(props.captureMode))
 const canvasRef = ref<InstanceType<typeof DagRuntimeCanvas> | null>(null)
 const drawerRef = ref<InstanceType<typeof DagNodeDetailDrawer> | null>(null)
 
@@ -166,13 +171,36 @@ function confirmRunFocus(): void {
   if (run) selectRun(run.runId)
 }
 
+let runLoadSequence = 0
+
 function selectRun(runId: string): void {
   selectedRunId.value = runId
-  // 加载该 run 的 DAG 拓扑到 store（活跃 run 实时更新，历史 run 静态）
-  void store.switchToRun(runId)
   view.value = 'dag_graph'
-  // 焦点初始化：第一个 running 节点，否则第一个节点
+  focusedNodeId.value = null
+  selectedNodeId.value = null
+  const sequence = ++runLoadSequence
+  void loadSelectedRun(runId, sequence)
+}
+
+async function loadSelectedRun(runId: string, sequence: number): Promise<void> {
+  await store.switchToRun(runId)
+  if (sequence !== runLoadSequence || selectedRunId.value !== runId) return
+  if (!store.dagExecution || store.nodes.length === 0) {
+    // A short display suffix or unknown id must not masquerade as an idle
+    // 0/0 graph. Return to the real run list, where only complete ids can be
+    // selected.
+    selectedRunId.value = null
+    view.value = 'run_list'
+    await refreshRuns()
+    return
+  }
   initNodeFocus()
+  await nextTick()
+  if (props.captureMode) {
+    physicsPaused.value = true
+    canvasRef.value?.fitCanvasGraph()
+    canvasRef.value?.freezeLayout()
+  }
 }
 
 // ============================================================================
@@ -244,8 +272,9 @@ function resetPanels(): void {
 const PANEL_ORDER: PanelKey[] = ['task', 'logs']
 
 /** 方块(■)：展开/折叠当前聚焦的面板 */
-function togglePanel(): void {
-  const cur = panelFocus.value
+function togglePanel(panel = panelFocus.value): void {
+  panelFocus.value = panel
+  const cur = panel
   const next = new Set(expandedPanels.value)
   if (next.has(cur)) next.delete(cur)
   else next.add(cur)
@@ -309,6 +338,16 @@ watch(physicsPaused, (paused) => {
   else canvasRef.value?.wakeLayout()
 })
 
+watch(
+  () => props.captureMode,
+  async (enabled) => {
+    if (!enabled) return
+    physicsPaused.value = true
+    await nextTick()
+    canvasRef.value?.freezeLayout()
+  },
+)
+
 // 列表加载后，焦点默认在第一个（或当前 run）
 watch(runs, (list) => {
   if (!list.length) return
@@ -325,11 +364,25 @@ watch(() => store.nodes.length, () => {
   if (view.value === 'dag_graph' && !focusedNodeId.value) initNodeFocus()
 })
 
-onMounted(() => {
+watch(
+  () => props.initialRunId,
+  (runId) => {
+    if (!runId || runId === selectedRunId.value) return
+    selectRun(runId)
+  },
+  { immediate: true },
+)
+
+onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
+  if (props.captureMode) {
+    await nextTick()
+    canvasRef.value?.freezeLayout()
+  }
 })
 
 onUnmounted(() => {
+  runLoadSequence += 1
   window.removeEventListener('keydown', onKeydown)
   store.selectNode(null)
 })
@@ -370,6 +423,7 @@ onUnmounted(() => {
           <DagRuntimeCanvas
             ref="canvasRef"
             :metrics="metrics"
+            :reduced-motion="captureMode"
             :focused-node-id="focusedNodeId"
             :selected-node-id="selectedNodeId"
             @select-node="(id) => { selectedNodeId = id; if (id) { store.selectNode(id); resetPanels() } }"
@@ -393,6 +447,7 @@ onUnmounted(() => {
           :panel-focus="panelFocus"
           :expanded-panels="expandedPanels"
           @close="closeDetail"
+          @toggle-panel="togglePanel"
         />
       </template>
 

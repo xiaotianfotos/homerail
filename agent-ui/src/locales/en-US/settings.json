@@ -19,6 +19,7 @@
     "git": "Manage Git server tokens. Projects and repositories are linked when adding a directory.",
     "providers": "Manage providers, model capabilities, and locally encrypted model settings.",
     "voice": "Configure voice output and button controls.",
+    "skills": "Inspect capabilities detected from the static Skills directory.",
     "plugins": "Inspect resolved plugin capabilities and enable or disable optional scenes.",
     "default": "Configure local capabilities used by HomeRail Agent UI."
   },
@@ -34,8 +35,8 @@
           "description": "A focused dark instrument panel with cyan accents."
         },
         "paper": {
-          "label": "Paper light",
-          "description": "A calm neutral workspace with crisp white surfaces."
+          "label": "Soft Paper",
+          "description": "A low-glare workspace with misty slate tones and soft surfaces."
         }
       }
     },
@@ -87,6 +88,7 @@
   },
   "plugins": {
     "registry": "Plugin registry",
+    "detected": "{count} detected",
     "revision": "Registry revision {revision}",
     "enabled": "Enabled",
     "disabled": "Disabled",
@@ -102,6 +104,17 @@
     "empty": "No plugins are installed.",
     "loadFailed": "Failed to load the plugin registry",
     "updateFailed": "Failed to update the plugin state"
+  },
+  "skills": {
+    "catalog": "Static Skill catalog",
+    "detected": "{count} detected",
+    "scanning": "Scanning the Skills directory",
+    "sources": {
+      "home": "Local asset",
+      "repo": "Bundled asset"
+    },
+    "empty": "No Skills were detected.",
+    "loadFailed": "Failed to load the Skill catalog"
   },
   "git": {
     "tokenStatus": "Token status",
@@ -175,10 +188,16 @@
       "defaultModel": "Default model",
       "protocolUrls": "Protocol-specific URLs",
       "voiceEndpoints": "Voice endpoints",
+      "voiceEndpointsHint": "Derived from Base URL by default; edit a field to use a custom path.",
       "ttsHttp": "TTS speech HTTP",
       "ttsStreamingHttp": "TTS streaming HTTP",
       "asrHttp": "ASR transcription HTTP",
       "asrRealtimeWs": "ASR realtime WebSocket",
+      "restoreDerived": "Use derived URL",
+      "testEndpoints": "Test endpoints",
+      "testingEndpoints": "Testing...",
+      "endpointTestPassed": "Endpoints available",
+      "endpointTestFailed": "Some endpoints unavailable",
       "references": "{count} model settings use this provider",
       "saved": "Custom provider saved",
       "deleted": "Custom provider deleted",

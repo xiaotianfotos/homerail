@@ -46,12 +46,12 @@ describe("Generative UI mode Manager and Voice config wiring", () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  it("defaults config and newly created Voice sessions to off", async () => {
+  it("defaults config and newly created Voice sessions to prefer", async () => {
     const port = await listen(server);
     const configResponse = await fetch(`http://127.0.0.1:${port}/api/manager-agent/config`);
     const configBody = await configResponse.json() as { data: { generative_ui_mode: string } };
     expect(configResponse.status).toBe(200);
-    expect(configBody.data.generative_ui_mode).toBe("off");
+    expect(configBody.data.generative_ui_mode).toBe("prefer");
 
     const sessionResponse = await fetch(`http://127.0.0.1:${port}/api/voice-agent/sessions`, {
       method: "POST",
@@ -60,7 +60,7 @@ describe("Generative UI mode Manager and Voice config wiring", () => {
     });
     const sessionBody = await sessionResponse.json() as { data: { generative_ui_mode: string } };
     expect(sessionResponse.status).toBe(201);
-    expect(sessionBody.data.generative_ui_mode).toBe("off");
+    expect(sessionBody.data.generative_ui_mode).toBe("prefer");
   });
 
   it("persists shadow and snapshots it on new Voice sessions", async () => {
@@ -136,7 +136,7 @@ describe("Generative UI mode Manager and Voice config wiring", () => {
     expect(sessionBody.data.generative_ui_mode).toBe("off");
   });
 
-  it("enables prefer without making it the default and exposes only a non-empty canonical projection", async () => {
+  it("uses prefer by default and exposes only a non-empty canonical projection", async () => {
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
     const saveResponse = await fetch(`${baseUrl}/api/manager-agent/config`, {
@@ -231,7 +231,7 @@ describe("Generative UI mode Manager and Voice config wiring", () => {
 
     const storedResponse = await fetch(`${baseUrl}/api/manager-agent/config`);
     const storedBody = await storedResponse.json() as { data: { generative_ui_mode: string } };
-    expect(storedBody.data.generative_ui_mode).toBe("off");
+    expect(storedBody.data.generative_ui_mode).toBe("prefer");
   });
 
   it("does not persist Manager or Voice config patches under an invalid environment override", async () => {

@@ -156,6 +156,9 @@ describe("legacy show_dynamic_widget goldens", () => {
           harness: "codex_appserver",
           model_name: "gpt-5.5",
           reasoning_effort: "low",
+          // This golden intentionally freezes the legacy-only compatibility
+          // path now that canonical Generative UI is the product default.
+          generative_ui_mode: "off",
         }),
       });
       expect(configured.status).toBe(200);

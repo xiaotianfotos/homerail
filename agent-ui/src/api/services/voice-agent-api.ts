@@ -55,7 +55,7 @@ export interface VoiceConversationMessage {
   text: string
   spoken_text?: string
   created_at: string
-  channel?: 'final' | 'commentary'
+  channel?: 'final' | 'commentary' | 'progress'
   kind?: 'message' | 'error'
 }
 
@@ -165,6 +165,11 @@ export interface VoiceSpeechEvent {
   text: string
 }
 
+export interface VoiceProgressEvent {
+  id: string
+  text: string
+}
+
 export interface VoiceManagerResult {
   [key: string]: unknown
   text?: string
@@ -197,6 +202,7 @@ export interface VoiceConfirmResponse {
 export type VoiceStreamEvent =
   | { type: 'workspace'; workspace: VoiceWorkspace }
   | { type: 'speech'; event: VoiceSpeechEvent; workspace?: VoiceWorkspace }
+  | { type: 'progress'; event: VoiceProgressEvent; workspace?: VoiceWorkspace }
   | { type: 'done'; workspace: VoiceWorkspace; spoken_text?: string; voice_events?: VoiceSpeechEvent[]; suggested_action?: 'confirm' | null; manager?: VoiceManagerResult; manager_status?: VoiceManagerStatus }
   | { type: 'error'; message: string; workspace?: VoiceWorkspace }
   | GenerativeUiStreamEventV1

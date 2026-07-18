@@ -24,13 +24,22 @@ const router = createRouter({
     {
       path: '/dag/run/:runId',
       name: 'DAGRun',
-      redirect: route => ({
-        path: '/agent',
-        query: {
-          runId: route.params.runId as string,
-          tab: 'topology',
-        },
-      }),
+      redirect: route => {
+        const runId = route.params.runId as string
+        if (route.query.capture === '1') {
+          return {
+            path: '/agent',
+            query: { captureRun: runId },
+          }
+        }
+        return {
+          path: '/agent',
+          query: {
+            runId,
+            tab: 'topology',
+          },
+        }
+      },
     },
     {
       path: '/:pathMatch(.*)*',

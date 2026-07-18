@@ -47,6 +47,21 @@ interface VoiceModelBody {
   access_token?: unknown;
 }
 
+type VoiceEndpointProbeKind = "http" | "websocket";
+
+interface VoiceEndpointProbeCandidate {
+  id: string;
+  kind: VoiceEndpointProbeKind;
+  url: string;
+}
+
+interface VoiceEndpointProbeResult extends VoiceEndpointProbeCandidate {
+  ok: boolean;
+  reachable: boolean;
+  status_code?: number;
+  message: string;
+}
+
 interface VoiceSpeechBody {
   text?: unknown;
   voice?: unknown;
@@ -67,6 +82,7 @@ const LEGACY_ARK_TTS_DEFAULT_VOICE = "zh_female_shuangkuaisisi_moon_bigtts";
 const DEFAULT_TTS_OUTPUT_CHANNELS = ["commentary", "final"];
 const TTS_OUTPUT_CHANNELS = new Set(["commentary", "final"]);
 const MIMO_TTS_VOICES = new Set(["mimo_default", "冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean"]);
+const VOICE_ENDPOINT_PROBE_TIMEOUT_MS = 5_000;
 
 function json(res: http.ServerResponse, status: number, body: BaseResponse) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -646,6 +662,115 @@ function _catalogVoiceConnectionNotVerified(models: string[]): Record<string, un
   };
 }
 
+function _voiceEndpointProbeCandidates(body: unknown): VoiceEndpointProbeCandidate[] {
+  if (!body || typeof body !== "object") throw new Error("Invalid endpoint probe request");
+  const endpoints = (body as Record<string, unknown>).endpoints;
+  if (!Array.isArray(endpoints) || endpoints.length === 0 || endpoints.length > 4) {
+    throw new Error("Endpoint probe requires between 1 and 4 endpoints");
+  }
+  return endpoints.map((candidate, index) => {
+    if (!candidate || typeof candidate !== "object") throw new Error(`Invalid endpoint at index ${index}`);
+    const record = candidate as Record<string, unknown>;
+    const id = _stringField(record.id);
+    const kind = record.kind === "http" || record.kind === "websocket" ? record.kind : undefined;
+    const value = _stringField(record.url);
+    if (!id || id.length > 64 || !kind || !value || value.length > 2_048) {
+      throw new Error(`Invalid endpoint at index ${index}`);
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new Error(`Endpoint ${id} is not a valid absolute URL`);
+    }
+    const validProtocol = kind === "http"
+      ? parsed.protocol === "http:" || parsed.protocol === "https:"
+      : parsed.protocol === "ws:" || parsed.protocol === "wss:";
+    if (!validProtocol) throw new Error(`Endpoint ${id} uses the wrong protocol for ${kind}`);
+    if (parsed.username || parsed.password) throw new Error(`Endpoint ${id} must not contain URL credentials`);
+    return { id, kind, url: parsed.toString() };
+  });
+}
+
+async function _probeHttpVoiceEndpoint(
+  candidate: VoiceEndpointProbeCandidate,
+): Promise<VoiceEndpointProbeResult> {
+  try {
+    // HEAD verifies routing without uploading audio or triggering synthesis.
+    // A 4xx auth/method response still proves that the endpoint exists.
+    const response = await fetch(candidate.url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(VOICE_ENDPOINT_PROBE_TIMEOUT_MS),
+    });
+    await response.body?.cancel().catch(() => {});
+    const status = response.status;
+    const ok = status >= 200 && status < 500 && status !== 404;
+    return {
+      ...candidate,
+      ok,
+      reachable: true,
+      status_code: status,
+      message: ok
+        ? status >= 400 ? "Endpoint is reachable and requested input or authentication" : "Endpoint is reachable"
+        : `Endpoint returned HTTP ${status}`,
+    };
+  } catch (error) {
+    return {
+      ...candidate,
+      ok: false,
+      reachable: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function _probeWebSocketVoiceEndpoint(
+  candidate: VoiceEndpointProbeCandidate,
+): Promise<VoiceEndpointProbeResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: VoiceEndpointProbeResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const socket = new WebSocket(candidate.url, {
+      handshakeTimeout: VOICE_ENDPOINT_PROBE_TIMEOUT_MS,
+    });
+    socket.once("open", () => {
+      finish({ ...candidate, ok: true, reachable: true, message: "WebSocket handshake succeeded" });
+      socket.close();
+    });
+    socket.once("unexpected-response", (_request, response) => {
+      const status = response.statusCode ?? 0;
+      response.resume();
+      const ok = status >= 200 && status < 500 && status !== 404 && status !== 405;
+      finish({
+        ...candidate,
+        ok,
+        reachable: true,
+        status_code: status || undefined,
+        message: ok
+          ? "WebSocket endpoint is reachable and requires authentication or handshake parameters"
+          : `WebSocket handshake returned HTTP ${status || "unknown"}`,
+      });
+    });
+    socket.once("error", (error) => {
+      finish({ ...candidate, ok: false, reachable: false, message: error.message });
+    });
+    socket.once("close", () => {
+      finish({ ...candidate, ok: false, reachable: true, message: "WebSocket closed before the handshake completed" });
+    });
+  });
+}
+
+function _probeVoiceEndpoint(candidate: VoiceEndpointProbeCandidate): Promise<VoiceEndpointProbeResult> {
+  return candidate.kind === "http"
+    ? _probeHttpVoiceEndpoint(candidate)
+    : _probeWebSocketVoiceEndpoint(candidate);
+}
+
 function _isMimoTts(runtime: { baseUrl: string; model: string }): boolean {
   return runtime.model.startsWith(DEFAULT_MIMO_TTS_MODEL)
     || (runtime.baseUrl.includes("xiaomimimo.com") && runtime.model.includes("tts"));
@@ -824,6 +949,22 @@ export function voiceRoutesHandler(
       })
       .catch((err) => {
         _serverError(res, err instanceof Error ? err.message : "Invalid JSON body");
+      });
+    return true;
+  }
+
+  if (pathname === "/api/voice/endpoints/test" && req.method === "POST") {
+    _readJsonBody(req)
+      .then(async (body) => {
+        const candidates = _voiceEndpointProbeCandidates(body);
+        const results = await Promise.all(candidates.map(_probeVoiceEndpoint));
+        _ok(res, "Voice endpoint test result", {
+          ok: results.every((result) => result.ok),
+          results,
+        });
+      })
+      .catch((err) => {
+        _badRequest(res, err instanceof Error ? err.message : "Invalid JSON body");
       });
     return true;
   }

@@ -126,15 +126,15 @@ describe("Manager HTTP mutation trust gate", () => {
     expect(emptyOrigin.status).toBe(403);
   });
 
-  it("requires a constant-time Bearer credential when a token is configured", async () => {
+  it("ignores configured admin credentials while token authentication is disabled", async () => {
     process.env[HOMERAIL_MANAGER_ADMIN_TOKEN] = VALID_TOKEN;
     await start();
 
-    expect((await fetch(`${baseUrl}/api/plugins/install`, { method: "POST" })).status).toBe(401);
+    expect((await fetch(`${baseUrl}/api/plugins/install`, { method: "POST" })).status).toBe(415);
     expect((await fetch(`${baseUrl}/api/plugins/install`, {
       method: "POST",
       headers: { Authorization: "Bearer definitely-wrong" },
-    })).status).toBe(401);
+    })).status).toBe(415);
     expect((await fetch(`${baseUrl}/api/plugins/install`, {
       method: "POST",
       headers: { Authorization: `Bearer ${VALID_TOKEN}` },
@@ -142,7 +142,7 @@ describe("Manager HTTP mutation trust gate", () => {
     expect((await fetch(`${baseUrl}/api/plugins`)).status).toBe(200);
   });
 
-  it("allows scoped DAG mutation tokens without granting general Manager mutation access", async () => {
+  it("keeps scoped DAG mutation tokens independent from disabled Manager admin auth", async () => {
     process.env[HOMERAIL_MANAGER_ADMIN_TOKEN] = VALID_TOKEN;
     process.env.HOMERAIL_DAG_MUTATION_TOKEN = "dag-mutation-secret";
     await start();
@@ -173,28 +173,28 @@ describe("Manager HTTP mutation trust gate", () => {
       method: "POST",
       headers: { "X-Homerail-Dag-Token": "dag-mutation-secret" },
     });
-    expect(generalMutation.status).toBe(401);
+    expect(generalMutation.status).toBe(415);
   });
 
-  it("fails server creation closed for LAN/public configuration without a strong token", () => {
+  it("starts LAN/public configurations without an admin token", () => {
     process.env.HOMERAIL_MANAGER_HOST = "0.0.0.0";
-    expect(() => createServer(0, undefined, undefined, false)).toThrow(HOMERAIL_MANAGER_ADMIN_TOKEN);
+    expect(() => createServer(0, undefined, undefined, false)).not.toThrow();
 
     process.env[HOMERAIL_MANAGER_ADMIN_TOKEN] = "short";
-    expect(() => createServer(0, undefined, undefined, false)).toThrow("32-4096");
+    expect(() => createServer(0, undefined, undefined, false)).not.toThrow();
 
     process.env.HOMERAIL_MANAGER_HOST = "127.0.0.1";
     delete process.env[HOMERAIL_MANAGER_ADMIN_TOKEN];
     process.env.HOMERAIL_MANAGER_PUBLIC_URL = "https://manager.example.test";
-    expect(() => createServer(0, undefined, undefined, false)).toThrow(HOMERAIL_MANAGER_ADMIN_TOKEN);
+    expect(() => createServer(0, undefined, undefined, false)).not.toThrow();
   });
 
-  it("allows LAN operation only with the correct token", async () => {
+  it("allows LAN operation without a token", async () => {
     process.env.HOMERAIL_MANAGER_HOST = "0.0.0.0";
     process.env[HOMERAIL_MANAGER_ADMIN_TOKEN] = VALID_TOKEN;
     await start();
 
-    expect((await fetch(`${baseUrl}/api/plugins/install`, { method: "POST" })).status).toBe(401);
+    expect((await fetch(`${baseUrl}/api/plugins/install`, { method: "POST" })).status).toBe(415);
     expect((await fetch(`${baseUrl}/api/plugins/install`, {
       method: "POST",
       headers: { Authorization: `Bearer ${VALID_TOKEN}` },
@@ -227,6 +227,35 @@ describe("Manager HTTP mutation trust gate", () => {
       body: "{}",
     });
     expect(testCli.status).toBe(404);
+  });
+
+  it("auto-trusts the bundled same-origin loopback UI proxy without configuration", async () => {
+    await start();
+
+    const proxiedUi = await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "POST",
+      headers: {
+        Origin: "https://192.168.100.10:19192",
+        "Sec-Fetch-Site": "same-origin",
+      },
+    });
+    expect(proxiedUi.status).toBe(415);
+    expect(proxiedUi.headers.get("access-control-allow-origin")).toBe("https://192.168.100.10:19192");
+
+    const crossSite = await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "POST",
+      headers: {
+        Origin: "https://evil.example",
+        "Sec-Fetch-Site": "cross-site",
+      },
+    });
+    expect(crossSite.status).toBe(403);
+
+    const directBrowser = await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "POST",
+      headers: { Origin: "https://192.168.100.10:19192" },
+    });
+    expect(directBrowser.status).toBe(403);
   });
 
   it("supports exact trusted UI origins and secure mutation preflights", async () => {
@@ -287,17 +316,17 @@ describe("Manager HTTP mutation trust gate", () => {
     expect(() => createPluginHttpTrustPolicy({ allowedOrigins: "https://ui.example/path" })).toThrow("exact");
   });
 
-  it("allows a public no-Origin CLI equivalent only with Bearer auth", async () => {
+  it("allows a public no-Origin CLI equivalent without Bearer auth", async () => {
     process.env.HOMERAIL_MANAGER_HOST = "0.0.0.0";
     process.env[HOMERAIL_MANAGER_ADMIN_TOKEN] = VALID_TOKEN;
     await start();
 
-    const deniedCurl = await fetch(`${baseUrl}/api/not-yet-registered`, {
+    const unauthenticatedCurl = await fetch(`${baseUrl}/api/not-yet-registered`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
-    expect(deniedCurl.status).toBe(401);
+    expect(unauthenticatedCurl.status).toBe(404);
 
     const authenticatedCurl = await fetch(`${baseUrl}/api/not-yet-registered`, {
       method: "PATCH",
@@ -311,7 +340,7 @@ describe("Manager HTTP mutation trust gate", () => {
     expect(authenticatedCurl.headers.get("access-control-allow-origin")).toBeNull();
   });
 
-  it("keeps the Host Manager Agent mutation path authenticated against the real public gate", async () => {
+  it("keeps the Host Manager Agent mutation path working without an admin token", async () => {
     process.env.HOMERAIL_MANAGER_HOST = "0.0.0.0";
     process.env[HOMERAIL_MANAGER_ADMIN_TOKEN] = VALID_TOKEN;
     await start();
@@ -325,7 +354,7 @@ describe("Manager HTTP mutation trust gate", () => {
     await expect(_requestManagerForTest(`${baseUrl}/api`, "/plugins/install", {
       method: "POST",
       body: "{}",
-    })).rejects.toThrow("Manager API 401");
+    })).rejects.toThrow("Manager API 415");
   });
 
   it("classifies IPv4 and IPv6 loopback conservatively", () => {

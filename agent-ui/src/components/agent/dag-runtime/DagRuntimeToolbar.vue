@@ -162,6 +162,7 @@ const statusItems = computed(() => [
     <div class="flex items-center gap-1.5">
       <button
         v-if="showBack"
+        data-testid="dag-run-list"
         class="flex h-9 items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-3 text-xs text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
         :title="t('dag.toolbar.back')"
         @click="emit('back')"
@@ -170,6 +171,7 @@ const statusItems = computed(() => [
         <span class="hidden sm:inline">{{ t('dag.toolbar.runList') }}</span>
       </button>
       <button
+        data-testid="dag-physics-toggle"
         class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
         :title="physicsPaused ? t('dag.toolbar.resumePhysics') : t('dag.toolbar.pausePhysics')"
         @click="physicsPaused = !physicsPaused"
@@ -178,6 +180,7 @@ const statusItems = computed(() => [
         <Pause v-else class="h-3.5 w-3.5" />
       </button>
       <button
+        data-testid="dag-reset-view"
         class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
         :title="t('dag.toolbar.resetView')"
         @click="emit('fit-view')"

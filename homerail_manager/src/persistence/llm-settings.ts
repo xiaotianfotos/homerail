@@ -975,19 +975,21 @@ function _customEndpointForProvider(provider: ProviderInfo): ProviderEndpointPre
     supports_audio_input: provider.supports_audio_input ?? false,
     supports_image_input: provider.supports_image_input ?? false,
     supports_video_input: provider.supports_video_input ?? false,
-    models: [
-      {
-        id: provider.default_model,
-        display_name: provider.default_model,
-        supports_llm: provider.supports_llm ?? true,
-        supports_asr: provider.supports_asr ?? false,
-        supports_tts: provider.supports_tts ?? false,
-        supports_audio_input: provider.supports_audio_input ?? false,
-        supports_image_input: provider.supports_image_input ?? false,
-        supports_video_input: provider.supports_video_input ?? false,
-        recommended: true,
-      },
-    ],
+    models: provider.default_model
+      ? [
+          {
+            id: provider.default_model,
+            display_name: provider.default_model,
+            supports_llm: provider.supports_llm ?? true,
+            supports_asr: provider.supports_asr ?? false,
+            supports_tts: provider.supports_tts ?? false,
+            supports_audio_input: provider.supports_audio_input ?? false,
+            supports_image_input: provider.supports_image_input ?? false,
+            supports_video_input: provider.supports_video_input ?? false,
+            recommended: true,
+          },
+        ]
+      : [],
   };
 }
 
@@ -1011,7 +1013,6 @@ export function upsertProvider(input: ProviderInput): ProviderInfo {
   if (!id) throw new Error("Missing required field: id");
   if (_isReadonlyProvider(id) || findCatalogProvider(id)) throw new Error(`Cannot override built-in provider: ${id}`);
   const defaultModel = input.default_model?.trim() ?? "";
-  if (!defaultModel) throw new Error("Missing required field: default_model");
   const provider: ProviderInfo = {
     id,
     name: input.name?.trim() || id,

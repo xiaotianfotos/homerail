@@ -291,7 +291,7 @@ export function llmSettingsRoutesHandler(
     }
     const models = Array.from(new Set((provider.endpoints ?? []).flatMap((endpoint) =>
       endpoint.models.length ? endpoint.models.map((model) => model.id) : [endpoint.default_model]
-    )));
+    ).filter(Boolean)));
     _ok(res, "Provider models retrieved", {
       provider_id: provider.id,
       provider_name: provider.name,
@@ -305,7 +305,7 @@ export function llmSettingsRoutesHandler(
     for (const provider of getDefaultProviders()) {
       models[provider.id] = Array.from(new Set((provider.endpoints ?? []).flatMap((endpoint) =>
         endpoint.models.length ? endpoint.models.map((model) => model.id) : [endpoint.default_model]
-      )));
+      ).filter(Boolean)));
     }
     _ok(res, "Common models retrieved", { models });
     return true;

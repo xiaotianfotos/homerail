@@ -1535,8 +1535,16 @@ function setupVoiceStatusSubscription(): void {
   if (voiceStatusUnsub) return
   try {
     voiceWs.connect()
-    voiceStatusUnsub = voiceWs.on<unknown>('voice:session_status', () => {
+    voiceStatusUnsub = voiceWs.on<unknown>('voice:session_status', payload => {
       void loadVoiceSessionShortcuts()
+      const status = payload as { voiceSessionId?: string }
+      if (
+        status.voiceSessionId === workspace.value?.session_id &&
+        !loading.value &&
+        !managerSubmitting.value
+      ) {
+        void refreshWorkspace(true)
+      }
     })
     pluginRegistryUnsub = voiceWs.on<unknown>('plugin:registry_changed', () => {
       if (generativeUiShadowPreviewActive.value) {
@@ -2422,14 +2430,15 @@ function clearSubmittedTranscriptOnAssistant(
   if (hasNewAssistant) clearSubmittedTranscript()
 }
 
-async function refreshWorkspace(): Promise<void> {
+async function refreshWorkspace(speakNew = false): Promise<void> {
   const sessionId = workspace.value?.session_id
   if (!sessionId) return
   try {
     const res = await getVoiceSession(sessionId)
     workspace.value = res.data
     clearSubmittedTranscriptOnAssistant(workspace.value)
-    rememberSpokenAssistantMessages(workspace.value)
+    if (speakNew) queueNewAssistantSpeech(workspace.value)
+    else rememberSpokenAssistantMessages(workspace.value)
   } catch {}
 }
 
@@ -2444,7 +2453,7 @@ function applyStatusFocus(): void {
 async function refreshManagerStatus(): Promise<void> {
   const sessionId = workspace.value?.session_id
   if (!sessionId || !workspace.value) return
-  if (workspaceTerminal.value) return
+  if (workspaceTerminal.value && !workspace.value.manager_run_id) return
   if (!workspace.value.manager_session_id && !workspace.value.manager_run_id) {
     const shouldRefreshWorkspace = Boolean(dagProgressWidget.value)
     if (!shouldRefreshWorkspace) return
@@ -2890,6 +2899,14 @@ async function handleVoiceStreamEvent(
     applyStreamWorkspace((event as { workspace?: VoiceWorkspace }).workspace, optimisticId)
     return null
   }
+  if (event.type === 'progress') {
+    const payload = event as { workspace?: VoiceWorkspace; event?: { id: string; text: string } }
+    // Progress is already persisted in the streamed workspace. It deliberately
+    // bypasses VoiceSpeechEvent so ordinary Claude AssistantMessages are shown
+    // without being reclassified as commentary or sent to TTS.
+    applyStreamWorkspace(payload.workspace, optimisticId)
+    return null
+  }
   if (event.type === 'speech') {
     const payload = event as { workspace?: VoiceWorkspace; event?: VoiceSpeechEvent }
     applyStreamWorkspace(payload.workspace, optimisticId)
@@ -3313,6 +3330,7 @@ function rememberSpeechEvents(events: VoiceSpeechEvent[]): void {
 function queueNewAssistantSpeech(nextWorkspace: VoiceWorkspace | null | undefined): void {
   const candidates = (nextWorkspace?.conversation ?? []).filter(
     item =>
+      item.channel !== 'progress' &&
       isVoiceConversationMessageSpeakable(item) &&
       !spokenAssistantMessageIds.value.has(item.id) &&
       voiceConversationMessageSpeechText(item)
@@ -3323,7 +3341,7 @@ function queueNewAssistantSpeech(nextWorkspace: VoiceWorkspace | null | undefine
   spokenAssistantMessageIds.value = next
   const messages = candidates.filter(item => {
     const speechText = voiceConversationMessageSpeechText(item)
-    const event = { channel: item.channel || 'final', text: speechText }
+    const event = { channel: item.channel === 'commentary' ? 'commentary' : 'final', text: speechText }
     if (!hasRecentVoiceSpeechEvent(speechEventKeySeenAt, event)) return true
     recordTtsDebug(
       'tts_workspace_fallback_deduped',
@@ -3335,10 +3353,11 @@ function queueNewAssistantSpeech(nextWorkspace: VoiceWorkspace | null | undefine
   backgroundSpeechQueue = backgroundSpeechQueue
     .then(async () => {
       for (const item of messages) {
+        const channel = item.channel === 'commentary' ? 'commentary' : 'final'
         enqueueSpeechEvent(
           {
             id: item.id,
-            channel: item.channel || 'final',
+            channel,
             text: voiceConversationMessageSpeechText(item)
           },
           'workspace'
@@ -4988,7 +5007,7 @@ function summarizeTask(value: string): string {
           </aside>
         </div>
         <section
-          class="voice-stage relative m-6 flex min-h-0 flex-col overflow-hidden rounded-[28px] p-6"
+          class="voice-stage relative mx-6 my-0 flex min-h-0 flex-col overflow-hidden rounded-[28px] p-6"
           :class="{ 'voice-stage--status-active': Boolean(processingText) }"
         >
           <div
@@ -5539,7 +5558,7 @@ function summarizeTask(value: string): string {
 
         <aside
           v-if="!isPhonePortrait"
-          class="min-w-0 overflow-hidden py-6 pr-6 transition-opacity duration-300"
+          class="min-w-0 overflow-hidden py-0 pr-6 transition-opacity duration-300"
           :class="effectiveDetailsOpen ? 'opacity-100' : 'pointer-events-none opacity-0'"
         >
           <section class="voice-records">
@@ -5567,6 +5586,7 @@ function summarizeTask(value: string): string {
                 :class="[
                   item.role === 'user' ? 'voice-thread-item--user' : 'voice-thread-item--assistant',
                   item.channel === 'commentary' ? 'voice-thread-item--commentary' : '',
+                  item.channel === 'progress' ? 'voice-thread-item--progress' : '',
                   item.kind === 'error' ? 'voice-thread-item--error' : ''
                 ]"
                 :title="item.text"
@@ -5577,6 +5597,9 @@ function summarizeTask(value: string): string {
                 </span>
                 <span v-if="item.channel === 'commentary'" class="voice-thread-item__channel"
                   >commentary</span
+                >
+                <span v-if="item.channel === 'progress'" class="voice-thread-item__channel"
+                  >progress</span
                 >
                 {{ item.text }}
               </div>
@@ -6951,11 +6974,11 @@ function summarizeTask(value: string): string {
   flex: 0 0 auto;
   gap: 9px;
   height: 36px;
-  border: 1px solid var(--vc-danger-border);
+  border: 1px solid var(--vc-accent-border);
   border-radius: 9999px;
-  background: var(--vc-danger-soft);
+  background: var(--vc-accent-soft);
   padding: 0 14px 0 11px;
-  color: var(--vc-danger);
+  color: var(--vc-accent);
   font-size: 13px;
   font-weight: 700;
   transition:
@@ -6964,8 +6987,8 @@ function summarizeTask(value: string): string {
 }
 
 .voice-agent-run-button:hover {
-  border-color: var(--vc-danger);
-  background: color-mix(in srgb, var(--vc-danger) 16%, transparent);
+  border-color: var(--vc-accent);
+  background: color-mix(in srgb, var(--vc-accent) 16%, transparent);
 }
 
 .voice-agent-run-button__text {
@@ -6990,7 +7013,7 @@ function summarizeTask(value: string): string {
   width: 18px;
   align-items: center;
   justify-content: center;
-  border: 2px solid var(--vc-danger-border);
+  border: 2px solid var(--vc-accent-border);
   border-top-color: currentColor;
   border-radius: 9999px;
   animation: voice-agent-run-spin 0.9s linear infinite;
@@ -7517,6 +7540,12 @@ function summarizeTask(value: string): string {
 .voice-thread-item--commentary {
   border-left-color: var(--vc-speaking-border);
   background: var(--vc-speaking-soft);
+}
+
+.voice-thread-item--progress {
+  border-left-color: var(--vc-border);
+  background: color-mix(in srgb, var(--vc-panel) 80%, var(--vc-bg));
+  color: var(--vc-text-2);
 }
 
 .voice-thread-item__channel {

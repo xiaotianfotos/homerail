@@ -10,10 +10,10 @@ import {
 } from "../src/generative-ui/mode.js";
 
 describe("Generative UI mode parser", () => {
-  it("defaults missing and blank values to off", () => {
-    expect(parseGenerativeUiMode(undefined)).toBe("off");
-    expect(parseGenerativeUiMode(null)).toBe("off");
-    expect(parseGenerativeUiMode("  ")).toBe("off");
+  it("defaults missing and blank values to prefer", () => {
+    expect(parseGenerativeUiMode(undefined)).toBe("prefer");
+    expect(parseGenerativeUiMode(null)).toBe("prefer");
+    expect(parseGenerativeUiMode("  ")).toBe("prefer");
   });
 
   it("accepts normalized off, shadow, and prefer while keeping strict reserved", () => {
@@ -46,7 +46,7 @@ describe("Generative UI mode parser", () => {
     expect(resolveSessionGenerativeUiMode("shadow", "shadow")).toBe("shadow");
     expect(resolveSessionGenerativeUiMode("shadow", "off")).toBe("off");
     expect(resolveSessionGenerativeUiMode("off", "shadow")).toBe("off");
-    expect(resolveSessionGenerativeUiMode(undefined, "shadow")).toBe("off");
+    expect(resolveSessionGenerativeUiMode(undefined, "shadow")).toBe("prefer");
     expect(resolveSessionGenerativeUiMode("prefer", "prefer")).toBe("prefer");
     expect(resolveSessionGenerativeUiMode("prefer", "off")).toBe("off");
   });

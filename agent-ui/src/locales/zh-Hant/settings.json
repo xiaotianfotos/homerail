@@ -19,6 +19,7 @@
     "git": "管理 Git Server token。項目和倉庫在新增目錄時關聯。",
     "providers": "維護供應商、模型能力和本地加密保存的模型配置。",
     "voice": "配置語音播報和按鍵控制。",
+    "skills": "查看從靜態 Skills 目錄偵測到的能力說明。",
     "plugins": "查看已解析的外掛能力，並啓用或停用可選場景。",
     "default": "配置 HomeRail Agent UI 使用的本地能力。"
   },
@@ -34,8 +35,8 @@
           "description": "帶青藍強調色的專注深色儀表介面。"
         },
         "paper": {
-          "label": "紙張淺色",
-          "description": "以中性色和清晰白色層級構成的舒適工作區。"
+          "label": "柔霧淺色",
+          "description": "以低亮度青灰和柔和表面構成的耐看工作區。"
         }
       }
     },
@@ -87,6 +88,7 @@
   },
   "plugins": {
     "registry": "外掛註冊表",
+    "detected": "已偵測 {count} 個",
     "revision": "註冊表修訂 {revision}",
     "enabled": "已啓用",
     "disabled": "已停用",
@@ -102,6 +104,17 @@
     "empty": "沒有已安裝的外掛。",
     "loadFailed": "外掛註冊表載入失敗",
     "updateFailed": "外掛狀態更新失敗"
+  },
+  "skills": {
+    "catalog": "靜態 Skill 目錄",
+    "detected": "已偵測 {count} 個",
+    "scanning": "正在掃描 Skills 目錄",
+    "sources": {
+      "home": "本機資產",
+      "repo": "內建資產"
+    },
+    "empty": "沒有偵測到 Skill。",
+    "loadFailed": "Skill 目錄載入失敗"
   },
   "git": {
     "tokenStatus": "Token 狀態",
@@ -175,10 +188,16 @@
       "defaultModel": "默認模型",
       "protocolUrls": "各協議接入地址",
       "voiceEndpoints": "語音服務端點",
+      "voiceEndpointsHint": "默認隨 Base URL 自動更新；直接編輯即可使用自定義路徑。",
       "ttsHttp": "TTS 語音合成 HTTP",
       "ttsStreamingHttp": "TTS 串流合成 HTTP",
       "asrHttp": "ASR 轉寫 HTTP",
       "asrRealtimeWs": "ASR 即時 WebSocket",
+      "restoreDerived": "恢復自動",
+      "testEndpoints": "測試端點",
+      "testingEndpoints": "測試中...",
+      "endpointTestPassed": "端點可用",
+      "endpointTestFailed": "部分端點不可用",
       "references": "有 {count} 個模型配置使用此供應商",
       "saved": "自定義供應商已保存",
       "deleted": "自定義供應商已刪除",

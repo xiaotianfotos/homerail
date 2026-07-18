@@ -8,7 +8,10 @@ export const GENERATIVE_UI_MODES = ["off", "shadow", "prefer"] as const;
 
 export type GenerativeUiMode = (typeof GENERATIVE_UI_MODES)[number];
 
-export const DEFAULT_GENERATIVE_UI_MODE: GenerativeUiMode = "off";
+// Canonical plugin UI is the normal product path. `off` remains available as
+// an explicit operator kill switch, but an empty installation or configuration
+// must never silently fall back to the legacy-only canvas.
+export const DEFAULT_GENERATIVE_UI_MODE: GenerativeUiMode = "prefer";
 export const GENERATIVE_UI_MODE_ENV = "HOMERAIL_GENERATIVE_UI_MODE";
 
 export type GenerativeUiModeSource = "configured" | "environment";
@@ -88,9 +91,10 @@ export function resolveConfiguredGenerativeUiModeDetails(
 }
 
 /**
- * Resolve an existing session without silently upgrading it. Sessions created
- * before the snapshot field existed remain off. A current global `off` always
- * wins so operators can disable projection work immediately.
+ * Resolve an existing session from its immutable rollout snapshot. Sessions
+ * created before the snapshot field existed adopt the current product default.
+ * A current global `off` always wins so operators can disable projection work
+ * immediately.
  */
 export function resolveSessionGenerativeUiMode(
   sessionSnapshotValue: unknown,

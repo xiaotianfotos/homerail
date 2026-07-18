@@ -11,6 +11,7 @@ import { ref, watch, computed, onUnmounted, type ComputedRef } from 'vue'
 import { dagApi } from '@/api/services/dag-api'
 import { convertDagMessages } from '@/utils/dag-message-converter'
 import { eventBus } from '@/utils/eventBus'
+import { formatRepositoryPayloadForDisplay } from '@/components/agent/dag-runtime/dagRuntimePresentation'
 import type { ClaudeMessage } from '@/api/types/run.types'
 import type { DAGChatMessage } from '@/api/types/dag.types'
 import type { DAGNodeMessageEvent } from '@/utils/eventBus'
@@ -39,7 +40,7 @@ export function useDagNodeMessages(
         ? await dagApi.getDagManagerChat(runId)
         : await dagApi.getDagNodeChat(runId, nodeId)
 
-      messages.value = convertDagMessages(chatMsgs)
+      messages.value = formatRepositoryPayloadForDisplay(convertDagMessages(chatMsgs))
     } catch (e: any) {
       error.value = e?.message || 'Failed to load chat'
       messages.value = []
@@ -75,7 +76,7 @@ export function useDagNodeMessages(
     if (!runId || !nodeId) return
     if (event.dag_run_id !== runId || event.node_id !== nodeId) return
 
-    const converted = convertDagMessages([event.message])
+    const converted = formatRepositoryPayloadForDisplay(convertDagMessages([event.message]))
     if (converted.length > 0) {
       messages.value = [...messages.value, ...converted]
     }

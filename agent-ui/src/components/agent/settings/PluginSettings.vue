@@ -87,6 +87,12 @@ onMounted(() => { void refresh() })
         <div class="flex items-center gap-2 text-sm font-semibold text-[var(--hr-text-1)]">
           <Boxes class="h-4 w-4 text-[var(--hr-accent)]" />
           {{ t('settings.plugins.registry') }}
+          <span
+            data-testid="agent-settings-plugins-count"
+            class="rounded-full bg-[var(--hr-accent-soft)] px-2 py-0.5 text-xs text-[var(--hr-accent)]"
+          >
+            {{ t('settings.plugins.detected', { count: registry?.plugins.length ?? 0 }) }}
+          </span>
         </div>
         <p class="mt-1 text-xs text-[var(--hr-text-3)]">
           {{ t('settings.plugins.revision', { revision: registry?.registry_revision ?? 0 }) }}

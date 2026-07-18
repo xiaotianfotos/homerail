@@ -9,7 +9,7 @@ import {
 const TOKEN = "ui-proxy-admin-token-0123456789abcdef";
 
 describe("Agent UI admin proxy trust", () => {
-  it("enables a computed loopback-only proxy with an exact self Origin", () => {
+  it("enables the no-admin-token proxy with an exact self Origin", () => {
     const env = resolveUiAdminProxyProcessEnv({
       uiBindHost: "127.0.0.1",
       uiPublicUrl: "https://localhost:19192",
@@ -19,7 +19,8 @@ describe("Agent UI admin proxy trust", () => {
     expect(env).toEqual({
       HOMERAIL_UI_ORIGIN: "https://localhost:19192",
       HOMERAIL_UI_ADMIN_PROXY_ENABLED: "1",
-      HOMERAIL_MANAGER_ADMIN_TOKEN: TOKEN,
+      HOMERAIL_MANAGER_ADMIN_TOKEN: "",
+      HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH: "1",
     });
 
     const policy = createUiAdminProxyPolicy({
@@ -48,7 +49,7 @@ describe("Agent UI admin proxy trust", () => {
       .toMatchObject({ allowed: false });
   });
 
-  it("fails LAN and public plaintext mutation proxy modes closed and erases the token", () => {
+  it("enables LAN UI mutation proxying without forwarding a token", () => {
     expect(resolveUiAdminProxyProcessEnv({
       uiBindHost: "0.0.0.0",
       uiPublicUrl: "http://192.168.1.8:19193",
@@ -56,8 +57,9 @@ describe("Agent UI admin proxy trust", () => {
       adminToken: TOKEN,
     })).toEqual({
       HOMERAIL_UI_ORIGIN: "http://192.168.1.8:19193",
-      HOMERAIL_UI_ADMIN_PROXY_ENABLED: "0",
+      HOMERAIL_UI_ADMIN_PROXY_ENABLED: "1",
       HOMERAIL_MANAGER_ADMIN_TOKEN: "",
+      HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH: "1",
     });
     expect(resolveUiAdminProxyProcessEnv({
       uiBindHost: "127.0.0.1",

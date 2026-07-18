@@ -6,6 +6,12 @@ export const HOMERAIL_MANAGER_ADMIN_TOKEN = "HOMERAIL_MANAGER_ADMIN_TOKEN";
 export const HOMERAIL_MANAGER_ADMIN_ORIGINS = "HOMERAIL_MANAGER_ADMIN_ORIGINS";
 export const HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH = "HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH";
 export const MIN_ADMIN_TOKEN_BYTES = 32;
+/**
+ * Manager admin-token authentication is intentionally disabled for this
+ * release. Keep the dormant implementation in place so a later release can
+ * restore it deliberately without conflating it with DAG/Worker credentials.
+ */
+export const MANAGER_ADMIN_TOKEN_AUTH_ENABLED: boolean = false;
 
 const MAX_ADMIN_TOKEN_BYTES = 4 * 1024;
 const API_PREFIX = "/api";
@@ -43,21 +49,25 @@ export interface PluginHttpTrustPolicy {
   }) => boolean;
 }
 
-/**
- * Freeze the Manager mutation trust boundary when the HTTP server is created.
- * A Manager exposed beyond loopback must never start without an independently
- * configured admin credential.
- */
+/** Freeze the Manager HTTP policy when the server is created. */
 export function createPluginHttpTrustPolicy(
   options: PluginHttpTrustPolicyOptions = {},
 ): PluginHttpTrustPolicy {
   const bindHost = (options.bindHost ?? "127.0.0.1").trim() || "127.0.0.1";
-  const adminToken = validateAdminToken(options.adminToken);
+  const adminToken = MANAGER_ADMIN_TOKEN_AUTH_ENABLED
+    ? validateAdminToken(options.adminToken)
+    : undefined;
   const publiclyReachable = !isLoopbackHost(bindHost) || Boolean(options.publicUrl?.trim());
   const unsafeAllowUnauthenticatedPublic = Boolean(
-    publiclyReachable && !adminToken && options.unsafeAllowUnauthenticatedPublic,
+    !MANAGER_ADMIN_TOKEN_AUTH_ENABLED
+    || (publiclyReachable && !adminToken && options.unsafeAllowUnauthenticatedPublic),
   );
-  if (publiclyReachable && !adminToken && !unsafeAllowUnauthenticatedPublic) {
+  if (
+    MANAGER_ADMIN_TOKEN_AUTH_ENABLED
+    && publiclyReachable
+    && !adminToken
+    && !unsafeAllowUnauthenticatedPublic
+  ) {
     throw new Error(
       `${HOMERAIL_MANAGER_ADMIN_TOKEN} must contain at least ${MIN_ADMIN_TOKEN_BYTES} bytes `
       + "before Manager can bind beyond loopback or advertise a public URL",
@@ -101,7 +111,13 @@ export function pluginHttpTrustHandler(
   const rawOrigin = req.headers.origin;
   const origin = singleHeader(rawOrigin);
   if (rawOrigin !== undefined) {
-    if (!origin || !policy.allowedOrigins.includes(origin)) {
+    if (
+      !origin
+      || (
+        !policy.allowedOrigins.includes(origin)
+        && !isTrustedLoopbackUiProxyRequest(req, origin)
+      )
+    ) {
       req.resume();
       deny(res, 403, "Manager mutation Origin is not trusted");
       return true;
@@ -142,7 +158,7 @@ export function pluginHttpTrustHandler(
 
   // Loopback keeps a zero-configuration path for a local, non-browser CLI.
   // Configuring a token opts loopback into auth too; public/LAN always has one.
-  if (policy.adminToken) {
+  if (MANAGER_ADMIN_TOKEN_AUTH_ENABLED && policy.adminToken) {
     const turnCredential = singleHeader(req.headers[HOMERAIL_MANAGER_TURN_HEADER]);
     if (turnCredential && policy.turnAuthorizer?.(turnCredential, method, pathname)) return false;
     if (policy.scopedMutationAuthorizer?.({
@@ -266,6 +282,38 @@ function isBrowserFetch(req: http.IncomingMessage): boolean {
   // emits Sec-Fetch-Mode even for CLI calls, so Mode alone cannot distinguish
   // a browser from the supported no-Origin CLI path.
   return req.headers["sec-fetch-site"] !== undefined;
+}
+
+/**
+ * Treat the bundled UI proxy as the default browser mutation boundary. The
+ * browser must have reached that proxy as a same-origin request and the proxy
+ * must connect to Manager over loopback. This keeps the normal UI usable even
+ * when its LAN address changes, while direct LAN or cross-site browser
+ * requests still require an explicit Origin allowlist.
+ */
+function isTrustedLoopbackUiProxyRequest(
+  req: http.IncomingMessage,
+  origin: string,
+): boolean {
+  if (
+    !req.socket.remoteAddress
+    || !isLoopbackHost(req.socket.remoteAddress)
+    || singleHeader(req.headers["sec-fetch-site"])?.toLowerCase() !== "same-origin"
+  ) return false;
+  try {
+    const parsed = new URL(origin);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:")
+      && !parsed.username
+      && !parsed.password
+      && parsed.pathname === "/"
+      && !parsed.search
+      && !parsed.hash
+      && parsed.origin === origin
+    );
+  } catch {
+    return false;
+  }
 }
 
 function appendVary(res: http.ServerResponse, value: string): void {

@@ -18,6 +18,15 @@ describe('appearance contract', () => {
     }
   })
 
+  it('keeps the paper appearance on subdued surfaces instead of pure white', () => {
+    const css = source('styles/hr-theme.css')
+    const paper = css.slice(css.indexOf(":root[data-hr-appearance='paper']"), css.indexOf('::selection'))
+
+    expect(paper).toContain('--hr-bg: #e9edef')
+    expect(paper).toContain('--hr-panel: #f7f8f7')
+    expect(paper).not.toMatch(/--hr-(?:bg-raised|surface-1|panel):\s*#fff(?:fff)?\b/i)
+  })
+
   it('prepaints the stored appearance before the application entry module', () => {
     const html = readFileSync(resolve(sourceRoot, '../index.html'), 'utf8')
     expect(html.indexOf('homerail.appearance')).toBeGreaterThan(-1)

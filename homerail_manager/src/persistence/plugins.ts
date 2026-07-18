@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   validateHomerailPluginManifest,
   type HomerailResolvedPluginDescriptorV1,
@@ -7,7 +8,11 @@ import {
   validateHrpPublisherTrustEntry,
   type HrpSignatureFileV1,
 } from "homerail-plugin-sdk";
-import { validateResolvedPluginDescriptor, pluginJsonDigest } from "../plugins/descriptor.js";
+import {
+  pluginDescriptorPackageDigest,
+  validateResolvedPluginDescriptor,
+  pluginJsonDigest,
+} from "../plugins/descriptor.js";
 import { encodeJson, getDb, parseJsonRow } from "./db.js";
 import { nowIso } from "./time.js";
 
@@ -268,6 +273,130 @@ function decodePackage(row: PluginPackageRow): PluginPackageRecord {
   };
 }
 
+const LEGACY_BUILTIN_SCHEMA_MAX_PROPERTIES = 128;
+const LEGACY_BUILTIN_SCHEMA_POLICY_ERROR = /^resolved schema violates policy at .+\/additionalProperties: objects must be closed or bound maxProperties <= 128$/;
+
+function boundLegacyOpenSchemaObjects(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.reduce((changed, item) => boundLegacyOpenSchemaObjects(item) || changed, false);
+  }
+  if (!value || typeof value !== "object") return false;
+  const object = value as Record<string, unknown>;
+  let changed = false;
+  if (
+    object.type === "object"
+    && (object.additionalProperties === undefined || object.additionalProperties === true)
+    && object.maxProperties === undefined
+  ) {
+    object.additionalProperties = true;
+    object.maxProperties = LEGACY_BUILTIN_SCHEMA_MAX_PROPERTIES;
+    changed = true;
+  }
+  for (const nested of Object.values(object)) {
+    if (boundLegacyOpenSchemaObjects(nested)) changed = true;
+  }
+  return changed;
+}
+
+function repairLegacyBuiltinSchemaPolicyPackage(row: PluginPackageRow): PluginPackageRow | undefined {
+  if (row.source !== "builtin") return undefined;
+  const manifest = parseJsonRow<unknown>(row.manifest_json);
+  const descriptor = parseJsonRow<HomerailResolvedPluginDescriptorV1>(row.resolved_descriptor_json);
+  const manifestValidation = validateHomerailPluginManifest(manifest);
+  const errors = validateResolvedPluginDescriptor(descriptor);
+  if (
+    !manifestValidation.valid
+    || !manifestValidation.value
+    || errors.length === 0
+    || errors.some((error) => !LEGACY_BUILTIN_SCHEMA_POLICY_ERROR.test(error))
+    || descriptor.manifest.id !== row.plugin_id
+    || descriptor.manifest.version !== row.plugin_version
+    || descriptor.manifest.manifest_version !== row.manifest_version
+    || descriptor.package_digest !== row.package_digest
+    || descriptor.manifest_digest !== pluginJsonDigest(manifestValidation.value, 512 * 1024)
+    || JSON.stringify(descriptor.manifest) !== JSON.stringify(manifestValidation.value)
+  ) return undefined;
+
+  const repaired = structuredClone(descriptor);
+  let changed = false;
+  for (const schema of repaired.schemas) {
+    const archived = repaired.referenced_files.find((entry) => entry.path === schema.file);
+    if (!archived) return undefined;
+    const bytes = Buffer.from(archived.content, "base64");
+    if (
+      createHash("sha256").update(bytes).digest("hex") !== archived.digest
+      || archived.digest !== schema.digest
+    ) return undefined;
+    let archivedSchema: unknown;
+    try {
+      archivedSchema = JSON.parse(bytes.toString("utf8"));
+    } catch {
+      return undefined;
+    }
+    if (pluginJsonDigest(archivedSchema) !== pluginJsonDigest(schema.schema)) return undefined;
+    const schemaChanged = boundLegacyOpenSchemaObjects(archivedSchema);
+    const resolvedChanged = boundLegacyOpenSchemaObjects(schema.schema);
+    if (schemaChanged !== resolvedChanged || pluginJsonDigest(archivedSchema) !== pluginJsonDigest(schema.schema)) {
+      return undefined;
+    }
+    if (!schemaChanged) continue;
+    const encoded = Buffer.from(JSON.stringify(archivedSchema), "utf8");
+    const digest = createHash("sha256").update(encoded).digest("hex");
+    schema.digest = digest;
+    archived.digest = digest;
+    archived.content = encoded.toString("base64");
+    changed = true;
+  }
+  if (!changed) return undefined;
+  const { package_digest: _packageDigest, ...unsigned } = repaired;
+  repaired.package_digest = pluginDescriptorPackageDigest(unsigned);
+  if (validateResolvedPluginDescriptor(repaired).length) return undefined;
+  return {
+    ...row,
+    package_digest: repaired.package_digest,
+    resolved_descriptor_json: encodeJson(repaired),
+  };
+}
+
+/** Upgrade archived application-owned descriptors when a newer protocol adds
+ * a bounded-schema safety rule. External packages never cross this repair
+ * path, and every repaired descriptor must pass the complete current
+ * validation contract before it is persisted. */
+export function repairLegacyBuiltinPluginPackages(): number {
+  return getDb().transaction(() => {
+    const rows = getDb().prepare(`
+      SELECT plugin_id, plugin_version, manifest_version, package_digest,
+             manifest_json, resolved_descriptor_json, source, installed_at
+      FROM plugin_packages WHERE source = 'builtin'
+      ORDER BY plugin_id, plugin_version
+    `).all() as PluginPackageRow[];
+    let repairedCount = 0;
+    for (const row of rows) {
+      try {
+        decodePackage(row);
+        continue;
+      } catch {
+        const repaired = repairLegacyBuiltinSchemaPolicyPackage(row);
+        if (!repaired) continue;
+        const result = getDb().prepare(`
+          UPDATE plugin_packages
+          SET package_digest = ?, resolved_descriptor_json = ?
+          WHERE plugin_id = ? AND plugin_version = ? AND source = 'builtin'
+        `).run(
+          repaired.package_digest,
+          repaired.resolved_descriptor_json,
+          repaired.plugin_id,
+          repaired.plugin_version,
+        );
+        if (result.changes !== 1) throw new Error(`Builtin plugin repair conflict: ${row.plugin_id}@${row.plugin_version}`);
+        decodePackage(repaired);
+        repairedCount += 1;
+      }
+    }
+    return repairedCount;
+  }).immediate();
+}
+
 function decodeActivation(row: PluginActivationRow): PluginActivationRecord {
   if (
     !Number.isInteger(row.revision)
@@ -470,13 +599,22 @@ export function syncPluginPackage(input: {
       WHERE plugin_id = ? AND plugin_version = ?
     `).get(manifest.id, manifest.version) as PluginPackageRow | undefined;
     if (existingPackage) {
-      const decoded = decodePackage(existingPackage);
-      if (decoded.package_digest !== input.descriptor.package_digest) {
-        if (
-          input.refresh_builtin !== true
-          || input.source !== "builtin"
-          || decoded.source !== "builtin"
-        ) {
+      const canRefreshBuiltin = input.refresh_builtin === true
+        && input.source === "builtin"
+        && existingPackage.source === "builtin";
+      let decoded: PluginPackageRecord | undefined;
+      try {
+        decoded = decodePackage(existingPackage);
+      } catch (cause) {
+        // Bundled packages are re-resolved from the trusted application tree
+        // before they reach this boundary. That current descriptor must be
+        // able to repair an older same-version builtin whose persisted wire
+        // shape predates a stricter protocol contract. Installed and
+        // development packages still fail closed on any invalid record.
+        if (!canRefreshBuiltin) throw cause;
+      }
+      if (!decoded || decoded.package_digest !== input.descriptor.package_digest) {
+        if (!canRefreshBuiltin) {
           throw new Error(`Plugin package digest collision: ${manifest.id}@${manifest.version}`);
         }
         const refreshed = getDb().prepare(`

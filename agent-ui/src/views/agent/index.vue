@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAgentStore } from '@/stores/agent-store'
 import AgentChatPanel from '@/components/agent/AgentChatPanel.vue'
@@ -20,6 +20,14 @@ const textModeEnabled = flagEnabled(import.meta.env.VITE_HOMERAIL_ENABLE_TEXT_MO
 const voiceOnlyMode = !textModeEnabled
 const { status: onboardingStatus, refresh: refreshOnboarding } = useOnboardingStatus()
 
+const captureRunId = computed(() => {
+  const raw = route.query.captureRun
+  if (typeof raw !== 'string') return null
+  const runId = raw.trim()
+  return /^[A-Za-z0-9._-]{1,128}$/.test(runId) ? runId : null
+})
+const captureMode = computed(() => route.query.capture === '1' || Boolean(captureRunId.value))
+
 store.initialize()
 
 function flagEnabled(value: unknown): boolean {
@@ -38,7 +46,7 @@ onMounted(async () => {
   if (voiceOnlyMode || isMobileVoiceEntry()) store.voiceCockpitOpen = true
   // 检测配置状态，缺配则弹出新手引导
   await refreshOnboarding()
-  if (onboardingStatus.value.needsOnboarding && !store.onboardingDismissed) {
+  if (!captureMode.value && onboardingStatus.value.needsOnboarding && !store.onboardingDismissed) {
     store.openOnboarding()
   }
 })
@@ -61,6 +69,16 @@ watch(
   },
   { immediate: true },
 )
+
+watch(
+  captureRunId,
+  (runId) => {
+    if (!runId) return
+    store.closeOnboarding()
+    store.runtimeOverlayOpen = true
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -68,6 +86,8 @@ watch(
 
   <DagRuntimeOverlay
     v-else-if="store.runtimeOverlayOpen"
+    :initial-run-id="captureRunId ?? undefined"
+    :capture-mode="captureMode"
     @close="store.runtimeOverlayOpen = false"
   />
 

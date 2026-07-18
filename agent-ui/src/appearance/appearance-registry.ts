@@ -152,12 +152,12 @@ registerAppearance({
   colorScheme: 'light',
   labelKey: 'settings.general.appearance.options.paper.label',
   descriptionKey: 'settings.general.appearance.options.paper.description',
-  themeColor: '#f5f6f8',
+  themeColor: '#e9edef',
   preview: {
-    background: '#f5f6f8',
-    panel: '#ffffff',
-    accent: '#076d7a',
-    text: '#172033',
+    background: '#e9edef',
+    panel: '#f7f8f7',
+    accent: '#2e727a',
+    text: '#26323a',
   },
 })
 

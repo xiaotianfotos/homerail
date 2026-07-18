@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Bot, Loader2, Mic, Plus, Trash2, Volume2 } from 'lucide-vue-next'
+import { Bot, Loader2, Mic, Plus, RotateCcw, Trash2, Volume2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { agentSettingsApi } from '@/api/agent'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
+import {
+  testVoiceEndpoints,
+  type VoiceEndpointProbeCandidate,
+  type VoiceEndpointProbeResult
+} from '@/api/services/voice-api'
 import type { Provider } from '@/api/types/orchestration-v2.types'
 import { useToast } from '@/components/controls/useToast'
 import CapabilityToggle from './CapabilityToggle.vue'
@@ -27,9 +32,11 @@ const selectedId = ref('')
 const creating = ref(false)
 const createRequested = ref(false)
 const saving = ref(false)
+const testingEndpoints = ref(false)
+const endpointTestResults = ref<VoiceEndpointProbeResult[]>([])
+const endpointTestError = ref('')
 const providerId = ref('')
 const providerName = ref('')
-const defaultModel = ref('')
 const baseUrl = ref('')
 const chatCompletionsBaseUrl = ref('')
 const responsesBaseUrl = ref('')
@@ -38,6 +45,10 @@ const ttsHttpUrl = ref('')
 const ttsStreamingUrl = ref('')
 const asrHttpUrl = ref('')
 const asrRealtimeUrl = ref('')
+const ttsHttpAutomatic = ref(true)
+const ttsStreamingAutomatic = ref(true)
+const asrHttpAutomatic = ref(true)
+const asrRealtimeAutomatic = ref(true)
 const supportsLlm = ref(true)
 const supportsAsr = ref(false)
 const supportsTts = ref(false)
@@ -80,11 +91,80 @@ const defaultTtsStreamingUrl = computed(() => voiceEndpoint('audio/speech/stream
 const defaultAsrHttpUrl = computed(() => voiceEndpoint('audio/transcriptions'))
 const defaultAsrRealtimeUrl = computed(realtimeWsEndpoint)
 
+watch(defaultTtsHttpUrl, value => {
+  if (ttsHttpAutomatic.value) ttsHttpUrl.value = value
+})
+watch(defaultTtsStreamingUrl, value => {
+  if (ttsStreamingAutomatic.value) ttsStreamingUrl.value = value
+})
+watch(defaultAsrHttpUrl, value => {
+  if (asrHttpAutomatic.value) asrHttpUrl.value = value
+})
+watch(defaultAsrRealtimeUrl, value => {
+  if (asrRealtimeAutomatic.value) asrRealtimeUrl.value = value
+})
+
+watch(
+  [ttsHttpUrl, ttsStreamingUrl, asrHttpUrl, asrRealtimeUrl],
+  () => {
+    endpointTestResults.value = []
+    endpointTestError.value = ''
+  }
+)
+
+function loadVoiceEndpoint(
+  savedValue: string | undefined,
+  derivedValue: string,
+  target: typeof ttsHttpUrl,
+  automatic: typeof ttsHttpAutomatic
+): void {
+  const saved = savedValue?.trim() ?? ''
+  automatic.value = !saved || saved === derivedValue
+  target.value = automatic.value ? derivedValue : saved
+}
+
+type VoiceEndpointField = 'tts_http' | 'tts_streaming' | 'asr_http' | 'asr_realtime'
+
+function voiceEndpointState(field: VoiceEndpointField): {
+  target: typeof ttsHttpUrl
+  automatic: typeof ttsHttpAutomatic
+  derived: string
+} {
+  if (field === 'tts_http') {
+    return { target: ttsHttpUrl, automatic: ttsHttpAutomatic, derived: defaultTtsHttpUrl.value }
+  }
+  if (field === 'tts_streaming') {
+    return {
+      target: ttsStreamingUrl,
+      automatic: ttsStreamingAutomatic,
+      derived: defaultTtsStreamingUrl.value
+    }
+  }
+  if (field === 'asr_http') {
+    return { target: asrHttpUrl, automatic: asrHttpAutomatic, derived: defaultAsrHttpUrl.value }
+  }
+  return {
+    target: asrRealtimeUrl,
+    automatic: asrRealtimeAutomatic,
+    derived: defaultAsrRealtimeUrl.value
+  }
+}
+
+function setEndpointOverride(field: VoiceEndpointField): void {
+  const endpoint = voiceEndpointState(field)
+  endpoint.automatic.value = endpoint.target.value.trim() === endpoint.derived
+}
+
+function restoreEndpoint(field: VoiceEndpointField): void {
+  const endpoint = voiceEndpointState(field)
+  endpoint.automatic.value = true
+  endpoint.target.value = endpoint.derived
+}
+
 function draftSignature(): string {
   return JSON.stringify({
     providerId: providerId.value,
     providerName: providerName.value,
-    defaultModel: defaultModel.value,
     baseUrl: baseUrl.value,
     chatCompletionsBaseUrl: chatCompletionsBaseUrl.value,
     responsesBaseUrl: responsesBaseUrl.value,
@@ -116,16 +196,35 @@ function loadProvider(provider: Provider): void {
   selectedId.value = provider.id
   providerId.value = provider.id
   providerName.value = provider.name
-  defaultModel.value = provider.default_model ?? ''
   baseUrl.value = provider.base_url ?? ''
   chatCompletionsBaseUrl.value = provider.chat_completions_base_url ?? ''
   responsesBaseUrl.value = provider.responses_base_url ?? ''
   anthropicBaseUrl.value = provider.anthropic_base_url ?? ''
   const endpoint = provider.endpoints?.[0]
-  ttsHttpUrl.value = provider.tts_http_url ?? endpoint?.tts_http_url ?? ''
-  ttsStreamingUrl.value = provider.tts_realtime_url ?? endpoint?.tts_realtime_url ?? ''
-  asrHttpUrl.value = provider.asr_async_url ?? endpoint?.asr_async_url ?? ''
-  asrRealtimeUrl.value = provider.asr_realtime_url ?? endpoint?.asr_realtime_url ?? ''
+  loadVoiceEndpoint(
+    provider.tts_http_url ?? endpoint?.tts_http_url,
+    defaultTtsHttpUrl.value,
+    ttsHttpUrl,
+    ttsHttpAutomatic
+  )
+  loadVoiceEndpoint(
+    provider.tts_realtime_url ?? endpoint?.tts_realtime_url,
+    defaultTtsStreamingUrl.value,
+    ttsStreamingUrl,
+    ttsStreamingAutomatic
+  )
+  loadVoiceEndpoint(
+    provider.asr_async_url ?? endpoint?.asr_async_url,
+    defaultAsrHttpUrl.value,
+    asrHttpUrl,
+    asrHttpAutomatic
+  )
+  loadVoiceEndpoint(
+    provider.asr_realtime_url ?? endpoint?.asr_realtime_url,
+    defaultAsrRealtimeUrl.value,
+    asrRealtimeUrl,
+    asrRealtimeAutomatic
+  )
   const configuredModels = props.settings.filter(setting => setting.provider_id === provider.id)
   supportsLlm.value = configuredModels.length
     ? configuredModels.some(setting => setting.supports_llm)
@@ -146,15 +245,18 @@ function startCreate(): void {
   selectedId.value = ''
   providerId.value = ''
   providerName.value = ''
-  defaultModel.value = ''
   baseUrl.value = ''
   chatCompletionsBaseUrl.value = ''
   responsesBaseUrl.value = ''
   anthropicBaseUrl.value = ''
-  ttsHttpUrl.value = ''
-  ttsStreamingUrl.value = ''
-  asrHttpUrl.value = ''
-  asrRealtimeUrl.value = ''
+  ttsHttpAutomatic.value = true
+  ttsStreamingAutomatic.value = true
+  asrHttpAutomatic.value = true
+  asrRealtimeAutomatic.value = true
+  ttsHttpUrl.value = defaultTtsHttpUrl.value
+  ttsStreamingUrl.value = defaultTtsStreamingUrl.value
+  asrHttpUrl.value = defaultAsrHttpUrl.value
+  asrRealtimeUrl.value = defaultAsrRealtimeUrl.value
   supportsLlm.value = true
   supportsAsr.value = false
   supportsTts.value = false
@@ -176,7 +278,6 @@ const canSave = computed(() =>
   Boolean(
     providerId.value.trim() &&
     providerName.value.trim() &&
-    defaultModel.value.trim() &&
     baseUrl.value.trim() &&
     (supportsLlm.value || supportsAsr.value || supportsTts.value)
   )
@@ -186,6 +287,66 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+const endpointProbeCandidates = computed<VoiceEndpointProbeCandidate[]>(() => {
+  const endpoints: VoiceEndpointProbeCandidate[] = []
+  if (supportsAsr.value) {
+    endpoints.push({ id: 'asr_http', kind: 'http', url: asrHttpUrl.value.trim() })
+    endpoints.push({ id: 'asr_realtime', kind: 'websocket', url: asrRealtimeUrl.value.trim() })
+  }
+  if (supportsTts.value) {
+    endpoints.push({ id: 'tts_http', kind: 'http', url: ttsHttpUrl.value.trim() })
+    endpoints.push({ id: 'tts_streaming', kind: 'http', url: ttsStreamingUrl.value.trim() })
+  }
+  return endpoints.filter(endpoint => Boolean(endpoint.url))
+})
+
+const canTestEndpoints = computed(() =>
+  endpointProbeCandidates.value.length > 0 && endpointProbeCandidates.value.every(endpoint => {
+    try {
+      const parsed = new URL(endpoint.url)
+      return endpoint.kind === 'http'
+        ? parsed.protocol === 'http:' || parsed.protocol === 'https:'
+        : parsed.protocol === 'ws:' || parsed.protocol === 'wss:'
+    } catch {
+      return false
+    }
+  })
+)
+
+const endpointTestPassed = computed(() =>
+  endpointTestResults.value.length > 0 && endpointTestResults.value.every(result => result.ok)
+)
+
+function endpointLabel(id: VoiceEndpointProbeResult['id']): string {
+  const labels: Record<string, string> = {
+    asr_http: t('settings.models.providers.asrHttp'),
+    asr_realtime: t('settings.models.providers.asrRealtimeWs'),
+    tts_http: t('settings.models.providers.ttsHttp'),
+    tts_streaming: t('settings.models.providers.ttsStreamingHttp')
+  }
+  return labels[id] ?? id
+}
+
+function endpointResultText(result: VoiceEndpointProbeResult): string {
+  const status = !result.ok && result.status_code ? ` (${result.status_code})` : ''
+  return `${endpointLabel(result.id)}${status} ${result.ok ? '✓' : '✕'}`
+}
+
+async function testEndpoints(): Promise<void> {
+  if (!canTestEndpoints.value || testingEndpoints.value) return
+  testingEndpoints.value = true
+  endpointTestResults.value = []
+  endpointTestError.value = ''
+  try {
+    const response = await testVoiceEndpoints(endpointProbeCandidates.value)
+    endpointTestResults.value = response.data?.results ?? []
+  } catch (error) {
+    endpointTestError.value = messageOf(error)
+  } finally {
+    testingEndpoints.value = false
+  }
+}
+
 async function save(): Promise<void> {
   if (!canSave.value || saving.value) return
   saving.value = true
@@ -193,7 +354,6 @@ async function save(): Promise<void> {
   normalizeVoiceBaseUrl()
   const payload = {
     name: providerName.value.trim(),
-    default_model: defaultModel.value.trim(),
     base_url: baseUrl.value.trim(),
     chat_completions_base_url: chatCompletionsBaseUrl.value.trim() || undefined,
     responses_base_url: responsesBaseUrl.value.trim() || undefined,
@@ -344,26 +504,15 @@ const addOptions = [
             />
           </label>
         </div>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="space-y-1">
-            <span class="text-xs text-[var(--hr-text-3)]">Base URL</span>
-            <input
-              v-model="baseUrl"
-              class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
-              placeholder="https://api.example.com/v1"
-              @blur="normalizeVoiceBaseUrl"
-            />
-          </label>
-          <label class="space-y-1">
-            <span class="text-xs text-[var(--hr-text-3)]">{{
-              t('settings.models.providers.defaultModel')
-            }}</span>
-            <input
-              v-model="defaultModel"
-              class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
-            />
-          </label>
-        </div>
+        <label class="block space-y-1">
+          <span class="text-xs text-[var(--hr-text-3)]">Base URL</span>
+          <input
+            v-model="baseUrl"
+            class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+            placeholder="https://api.example.com/v1"
+            @blur="normalizeVoiceBaseUrl"
+          />
+        </label>
         <details v-if="supportsLlm" class="border-t border-[var(--hr-border)] pt-3">
           <summary class="cursor-pointer text-xs text-[var(--hr-text-3)]">
             {{ t('settings.models.providers.protocolUrls') }}
@@ -387,56 +536,155 @@ const addOptions = [
           </div>
         </details>
         <div v-if="supportsTts || supportsAsr" class="space-y-3 border-t border-[var(--hr-border)] pt-4">
-          <div class="text-xs text-[var(--hr-text-3)]">
-            {{ t('settings.models.providers.voiceEndpoints') }}
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div class="text-xs text-[var(--hr-text-3)]">
+                {{ t('settings.models.providers.voiceEndpoints') }}
+              </div>
+              <div class="mt-1 text-[11px] text-[var(--hr-text-3)]">
+                {{ t('settings.models.providers.voiceEndpointsHint') }}
+              </div>
+            </div>
+            <button
+              type="button"
+              data-testid="provider-test-voice-endpoints"
+              class="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--hr-border-strong)] px-2.5 text-xs text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
+              :disabled="!canTestEndpoints || testingEndpoints"
+              @click="testEndpoints"
+            >
+              <Loader2 v-if="testingEndpoints" class="h-3.5 w-3.5 animate-spin" />
+              {{
+                testingEndpoints
+                  ? t('settings.models.providers.testingEndpoints')
+                  : t('settings.models.providers.testEndpoints')
+              }}
+            </button>
           </div>
           <div v-if="supportsTts" class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-1">
-              <span class="text-xs text-[var(--hr-text-3)]">{{
-                t('settings.models.providers.ttsHttp')
-              }}</span>
+            <div class="space-y-1">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs text-[var(--hr-text-3)]">{{
+                  t('settings.models.providers.ttsHttp')
+                }}</span>
+                <button
+                  v-if="!ttsHttpAutomatic"
+                  type="button"
+                  class="inline-flex items-center gap-1 text-[10px] text-[var(--hr-accent)] hover:underline"
+                  @click="restoreEndpoint('tts_http')"
+                >
+                  <RotateCcw class="h-3 w-3" />
+                  {{ t('settings.models.providers.restoreDerived') }}
+                </button>
+              </div>
               <input
                 v-model="ttsHttpUrl"
+                name="tts_http_url"
                 data-testid="provider-tts-http-url"
+                :aria-label="t('settings.models.providers.ttsHttp')"
                 class="h-9 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
-                :placeholder="defaultTtsHttpUrl"
+                @input="setEndpointOverride('tts_http')"
               />
-            </label>
-            <label class="space-y-1">
-              <span class="text-xs text-[var(--hr-text-3)]">{{
-                t('settings.models.providers.ttsStreamingHttp')
-              }}</span>
+            </div>
+            <div class="space-y-1">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs text-[var(--hr-text-3)]">{{
+                  t('settings.models.providers.ttsStreamingHttp')
+                }}</span>
+                <button
+                  v-if="!ttsStreamingAutomatic"
+                  type="button"
+                  class="inline-flex items-center gap-1 text-[10px] text-[var(--hr-accent)] hover:underline"
+                  @click="restoreEndpoint('tts_streaming')"
+                >
+                  <RotateCcw class="h-3 w-3" />
+                  {{ t('settings.models.providers.restoreDerived') }}
+                </button>
+              </div>
               <input
                 v-model="ttsStreamingUrl"
+                name="tts_streaming_url"
                 data-testid="provider-tts-streaming-url"
+                :aria-label="t('settings.models.providers.ttsStreamingHttp')"
                 class="h-9 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
-                :placeholder="defaultTtsStreamingUrl"
+                @input="setEndpointOverride('tts_streaming')"
               />
-            </label>
+            </div>
           </div>
           <div v-if="supportsAsr" class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-1">
-              <span class="text-xs text-[var(--hr-text-3)]">{{
-                t('settings.models.providers.asrHttp')
-              }}</span>
+            <div class="space-y-1">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs text-[var(--hr-text-3)]">{{
+                  t('settings.models.providers.asrHttp')
+                }}</span>
+                <button
+                  v-if="!asrHttpAutomatic"
+                  type="button"
+                  class="inline-flex items-center gap-1 text-[10px] text-[var(--hr-accent)] hover:underline"
+                  @click="restoreEndpoint('asr_http')"
+                >
+                  <RotateCcw class="h-3 w-3" />
+                  {{ t('settings.models.providers.restoreDerived') }}
+                </button>
+              </div>
               <input
                 v-model="asrHttpUrl"
+                name="asr_http_url"
                 data-testid="provider-asr-http-url"
+                :aria-label="t('settings.models.providers.asrHttp')"
                 class="h-9 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
-                :placeholder="defaultAsrHttpUrl"
+                @input="setEndpointOverride('asr_http')"
               />
-            </label>
-            <label class="space-y-1">
-              <span class="text-xs text-[var(--hr-text-3)]">{{
-                t('settings.models.providers.asrRealtimeWs')
-              }}</span>
+            </div>
+            <div class="space-y-1">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs text-[var(--hr-text-3)]">{{
+                  t('settings.models.providers.asrRealtimeWs')
+                }}</span>
+                <button
+                  v-if="!asrRealtimeAutomatic"
+                  type="button"
+                  class="inline-flex items-center gap-1 text-[10px] text-[var(--hr-accent)] hover:underline"
+                  @click="restoreEndpoint('asr_realtime')"
+                >
+                  <RotateCcw class="h-3 w-3" />
+                  {{ t('settings.models.providers.restoreDerived') }}
+                </button>
+              </div>
               <input
                 v-model="asrRealtimeUrl"
+                name="asr_realtime_url"
                 data-testid="provider-asr-realtime-url"
+                :aria-label="t('settings.models.providers.asrRealtimeWs')"
                 class="h-9 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
-                :placeholder="defaultAsrRealtimeUrl"
+                @input="setEndpointOverride('asr_realtime')"
               />
-            </label>
+            </div>
+          </div>
+          <div
+            v-if="endpointTestResults.length"
+            data-testid="provider-endpoint-test-result"
+            class="rounded-md border px-3 py-2 text-xs"
+            :class="
+              endpointTestPassed
+                ? 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)]'
+                : 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
+            "
+          >
+            <span class="font-medium">{{
+              endpointTestPassed
+                ? t('settings.models.providers.endpointTestPassed')
+                : t('settings.models.providers.endpointTestFailed')
+            }}</span>
+            <span class="ml-1">
+              {{ endpointTestResults.map(endpointResultText).join(' · ') }}
+            </span>
+          </div>
+          <div
+            v-else-if="endpointTestError"
+            data-testid="provider-endpoint-test-error"
+            class="rounded-md border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-3 py-2 text-xs text-[var(--hr-danger)]"
+          >
+            {{ endpointTestError }}
           </div>
         </div>
         <div class="space-y-2">

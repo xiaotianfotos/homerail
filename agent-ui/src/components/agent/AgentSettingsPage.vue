@@ -24,6 +24,8 @@ import {
 import ModelSettings from './settings/ModelSettings.vue'
 import GeneralSettings from './settings/GeneralSettings.vue'
 import StorageRetentionSettings from './settings/StorageRetentionSettings.vue'
+import PluginSettings from './settings/PluginSettings.vue'
+import SkillSettings from './settings/SkillSettings.vue'
 import {
   listProjects,
   listProjectStorages,
@@ -40,9 +42,6 @@ import {
   getMemoryStats,
   createMemory,
   deleteMemory,
-  deleteSkill,
-  listSkills,
-  uploadSkill,
   listVoiceModels,
   testVoiceConnection,
   getExperienceGraphSummary,
@@ -109,7 +108,7 @@ import { useToast } from '@/components/controls/useToast'
 import type { MemoryItem, MemoryStats } from '@/api/types/memory.types'
 import type { Node } from '@/api/types/node.types'
 import type { Project, ProjectStorage } from '@/api/types/project.types'
-import type { Provider, Skill } from '@/api/types/orchestration-v2.types'
+import type { Provider } from '@/api/types/orchestration-v2.types'
 
 type SettingsTab =
   | 'general'
@@ -120,6 +119,7 @@ type SettingsTab =
   | 'voice'
   | 'device'
   | 'skills'
+  | 'plugins'
   | 'mcp'
   | 'memory'
 
@@ -143,7 +143,6 @@ const nodes = ref<Node[]>([])
 const gitServers = ref<GitServer[]>([])
 const providers = ref<Provider[]>([])
 const llmSettings = ref<LLMSetting[]>([])
-const skills = ref<Skill[]>([])
 const mcpServers = ref<MCPServer[]>([])
 const memories = ref<MemoryItem[]>([])
 const memoryStats = ref<MemoryStats | null>(null)
@@ -272,7 +271,6 @@ const gitPlatformOptions: Array<{ value: 'github' | 'gitlab' | 'gitea'; label: s
   { value: 'github', label: 'GitHub' },
   { value: 'gitlab', label: 'GitLab' },
 ]
-const skillFile = ref<File | null>(null)
 const newMcp = ref({
   name: '',
   type: 'STDIO' as MCPServerType,
@@ -295,10 +293,11 @@ const tabs = computed<Array<{ id: SettingsTab; label: string; icon: typeof Setti
   { id: 'voice', label: t('settings.tabs.voice'), icon: Volume2 },
   { id: 'device', label: t('settings.tabs.device'), icon: Network },
   { id: 'skills', label: t('settings.tabs.skills'), icon: Package },
+  { id: 'plugins', label: t('settings.tabs.plugins'), icon: Package },
   { id: 'mcp', label: t('settings.tabs.mcp'), icon: Network },
   { id: 'memory', label: t('settings.tabs.memory'), icon: Brain },
 ])
-const hiddenSettingsTabs = new Set<SettingsTab>(['workspace', 'nodes', 'skills', 'mcp', 'memory'])
+const hiddenSettingsTabs = new Set<SettingsTab>(['workspace', 'nodes', 'mcp', 'memory'])
 const visibleTabs = computed(() =>
   tabs.value.filter(tab => !hiddenSettingsTabs.has(tab.id) && (tab.id !== 'device' || androidTvLocalSettingsVisible.value))
 )
@@ -308,6 +307,8 @@ const activeTabDescription = computed(() => {
   if (activeTab.value === 'git') return t('settings.descriptions.git')
   if (activeTab.value === 'providers') return t('settings.descriptions.providers')
   if (activeTab.value === 'voice') return t('settings.descriptions.voice')
+  if (activeTab.value === 'skills') return t('settings.descriptions.skills')
+  if (activeTab.value === 'plugins') return t('settings.descriptions.plugins')
   if (activeTab.value === 'device') return ''
   return t('settings.descriptions.default')
 })
@@ -708,28 +709,6 @@ function splitRepo(repoName?: string | null): string {
   return repoName || '未绑定仓库'
 }
 
-function skillRuntimeStatus(skill: Skill): string {
-  if (skill.upload_status !== 'installed') return '未安装完成'
-  if (skill.runtime_status === 'runtime_available') return 'runtime 可用'
-  if (skill.runtime_status === 'unavailable_with_reason') return skill.runtime_message || 'runtime 不可用'
-  return 'runtime 可用性未验证'
-}
-
-function skillRuntimeStatusLabel(skill: Skill): string {
-  if (skill.upload_status !== 'installed') return skill.upload_status
-  if (skill.runtime_status === 'runtime_available') return 'runtime_available'
-  if (skill.runtime_status === 'unavailable_with_reason') return 'unavailable_with_reason'
-  return 'installed'
-}
-
-function skillRuntimeStatusClass(skill: Skill): string {
-  if (skill.upload_status === 'error') return 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
-  if (skill.upload_status === 'installing') return 'bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
-  if (skill.runtime_status === 'runtime_available') return 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]'
-  if (skill.runtime_status === 'unavailable_with_reason') return 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
-  return 'bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
-}
-
 function mcpRuntimeStatusClass(server: MCPServer): string {
   const status = server.runtime_status ?? 'unknown'
   if (status === 'runtime_available') return 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]'
@@ -764,7 +743,6 @@ async function refreshAll(): Promise<void> {
       gitRes,
       providerRes,
       modelRes,
-      skillRes,
       mcpRes,
       memoryRes,
       statsRes,
@@ -782,7 +760,6 @@ async function refreshAll(): Promise<void> {
       agentSettingsApi.listGitServers(true).catch(() => null),
       agentSettingsApi.listProviders().catch(() => null),
       agentSettingsApi.listLLMSettings().catch(() => null),
-      hiddenSettingsTabs.has('skills') ? Promise.resolve(null) : listSkills({ limit: 200 }).catch(() => null),
       hiddenSettingsTabs.has('mcp') ? Promise.resolve(null) : agentSettingsApi.listMCPServers().catch(() => null),
       hiddenSettingsTabs.has('memory') ? Promise.resolve(null) : listMemories({ top_k: 100, query: memoryQuery.value || undefined, kind: memoryKind.value || undefined }).catch(() => null),
       hiddenSettingsTabs.has('memory') ? Promise.resolve(null) : getMemoryStats().catch(() => null),
@@ -801,7 +778,6 @@ async function refreshAll(): Promise<void> {
     gitServers.value = gitRes?.data?.servers ?? []
     providers.value = providerRes?.data?.providers ?? []
     llmSettings.value = modelRes?.data?.settings ?? []
-    skills.value = skillRes?.data?.skills ?? []
     mcpServers.value = mcpRes?.data?.servers ?? []
     memories.value = memoryRes?.data?.memories ?? []
     memoryStats.value = statsRes?.data ?? null
@@ -1056,24 +1032,6 @@ async function removeGit(server: GitServer): Promise<void> {
   if (!window.confirm(t('settings.git.deleteConfirm', { name: server.name }))) return
   await runAction(`delete-git-${server.server_id}`, async () => {
     await agentSettingsApi.deleteGitServer(server.server_id, false)
-    await refreshAll()
-  })
-}
-
-async function uploadSelectedSkill(): Promise<void> {
-  if (!skillFile.value) return
-  await runAction('upload-skill', async () => {
-    await uploadSkill(skillFile.value!)
-    skillFile.value = null
-    await refreshAll()
-    setNotice('Skill 已上传')
-  })
-}
-
-async function removeSkill(skill: Skill): Promise<void> {
-  if (!window.confirm(`删除 Skill ${skill.name}？`)) return
-  await runAction(`delete-skill-${skill.id}`, async () => {
-    await deleteSkill(skill.id)
     await refreshAll()
   })
 }
@@ -1446,10 +1404,6 @@ async function removeMemory(memory: MemoryItem): Promise<void> {
     await deleteMemory(memory.id)
     await refreshMemory()
   })
-}
-
-function onSkillFileChange(event: Event): void {
-  skillFile.value = (event.target as HTMLInputElement).files?.[0] ?? null
 }
 
 onMounted(() => {
@@ -2098,37 +2052,9 @@ onUnmounted(() => {
           </section>
         </section>
 
-        <section v-if="activeTab === 'skills'" data-testid="agent-settings-section-skills" class="mt-10 space-y-6">
-          <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
-            <h2 class="font-semibold">导入 Skill</h2>
-            <div class="mt-3 flex flex-wrap items-center gap-3">
-              <input data-testid="agent-settings-skill-upload-input" type="file" accept=".zip,.tar.gz,.tgz" class="text-sm text-[var(--hr-text-2)] disabled:opacity-40" disabled @change="onSkillFileChange" />
-              <button data-testid="agent-settings-skill-upload-submit" class="rounded-md bg-[var(--hr-accent)] px-3 py-2 text-sm text-[var(--hr-on-accent)] disabled:opacity-40" disabled @click="uploadSelectedSkill">上传</button>
-            </div>
-            <div data-testid="agent-settings-skills-upload-tracked-gap" class="mt-3 rounded-md border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] p-3 text-sm text-[var(--hr-warning)]">
-              Skill 上传在 TS Manager 中仍是 tracked unsupported；不要把未实现的 POST /api/skills 暴露成可点击操作。
-            </div>
-          </div>
-          <div class="grid gap-3 md:grid-cols-2">
-            <div v-for="skill in skills" :key="skill.id" class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
-              <div class="flex items-start justify-between gap-3">
-                <div>
-                  <div class="font-medium">{{ skill.name }}</div>
-                  <div class="mt-1 text-sm text-[var(--hr-text-3)]">{{ skill.description || '无描述' }}</div>
-                </div>
-                <button class="rounded-md border border-[var(--hr-danger-border)] px-2 py-1.5 text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)]" @click="removeSkill(skill)"><Trash2 class="h-4 w-4" /></button>
-              </div>
-              <div class="mt-3 flex flex-wrap gap-2 text-xs">
-                <span class="rounded-full bg-[var(--hr-success-soft)] px-2 py-1 text-[var(--hr-success)]">{{ skill.upload_status }}</span>
-                <span :data-testid="`agent-settings-skill-runtime-status-${skill.id}`" class="rounded-full px-2 py-1" :class="skillRuntimeStatusClass(skill)">{{ skillRuntimeStatusLabel(skill) }}</span>
-              </div>
-              <div v-if="skill.upload_status === 'installed' && skill.runtime_status === 'unavailable_with_reason'" :data-testid="`agent-settings-skill-availability-diagnostic-${skill.id}`" class="mt-2 rounded border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-2 py-1 text-xs text-[var(--hr-danger)]">
-                {{ skillRuntimeStatus(skill) }}
-              </div>
-            </div>
-          </div>
-          <div v-if="!skills.length" data-testid="agent-settings-skills-empty-state" class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4 text-sm text-[var(--hr-text-3)]">暂无 Skill。</div>
-        </section>
+        <SkillSettings v-if="activeTab === 'skills'" />
+
+        <PluginSettings v-if="activeTab === 'plugins'" />
 
         <section v-if="activeTab === 'mcp'" data-testid="agent-settings-section-mcp" class="mt-10 space-y-6">
           <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4" data-testid="agent-settings-asset-diagnostics">

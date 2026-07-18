@@ -11,6 +11,15 @@ describe('AgentVoiceCockpit responsive layout', () => {
     expect(cockpitSource).toContain('padding-top: 44px;')
   })
 
+  it('aligns the desktop stage and records panel with the sidebar rail', () => {
+    expect(cockpitSource).toContain(
+      'class="voice-stage relative mx-6 my-0 flex min-h-0 flex-col overflow-hidden rounded-[28px] p-6"'
+    )
+    expect(cockpitSource).toContain(
+      'class="min-w-0 overflow-hidden py-0 pr-6 transition-opacity duration-300"'
+    )
+  })
+
   it('keeps model selection independent from incomplete onboarding status', () => {
     expect(cockpitSource).toContain('data-testid="voice-model-config-button"')
     expect(cockpitSource).toContain('data-testid="voice-onboarding-status-button"')
@@ -45,5 +54,23 @@ describe('AgentVoiceCockpit responsive layout', () => {
     )
     expect(enqueue).toContain('if (!voiceOutputEnabled.value)')
     expect(enqueue).toContain('reason=output_disabled')
+  })
+
+  it('uses the appearance accent rather than danger colors for the active Agent state', () => {
+    const activeButtonStyles = cockpitSource.slice(
+      cockpitSource.indexOf('.voice-agent-run-button {'),
+      cockpitSource.indexOf('/* Caption strip'),
+    )
+    expect(activeButtonStyles).toContain('border: 1px solid var(--vc-accent-border);')
+    expect(activeButtonStyles).toContain('background: var(--vc-accent-soft);')
+    expect(activeButtonStyles).toContain('color: var(--vc-accent);')
+    expect(activeButtonStyles).not.toContain('var(--vc-danger')
+  })
+
+  it('renders Claude progress as a non-speech conversation channel', () => {
+    expect(cockpitSource).toContain("if (event.type === 'progress')")
+    expect(cockpitSource).toContain("item.channel !== 'progress'")
+    expect(cockpitSource).toContain("item.channel === 'progress' ? 'voice-thread-item--progress' : ''")
+    expect(cockpitSource).toContain('>progress</span')
   })
 })

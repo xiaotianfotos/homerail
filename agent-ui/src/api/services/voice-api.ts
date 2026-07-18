@@ -68,6 +68,26 @@ export interface VoiceModelsRequest {
   token?: string
 }
 
+export type VoiceEndpointProbeKind = 'http' | 'websocket'
+
+export interface VoiceEndpointProbeCandidate {
+  id: string
+  kind: VoiceEndpointProbeKind
+  url: string
+}
+
+export interface VoiceEndpointProbeResult extends VoiceEndpointProbeCandidate {
+  ok: boolean
+  reachable: boolean
+  status_code?: number
+  message: string
+}
+
+export interface VoiceEndpointProbeResponse {
+  ok: boolean
+  results: VoiceEndpointProbeResult[]
+}
+
 export async function getVoiceSettings(): Promise<BaseResponse<VoiceSettings>> {
   return http.get<BaseResponse<VoiceSettings>>('/api/voice/') as unknown as Promise<BaseResponse<VoiceSettings>>
 }
@@ -102,6 +122,14 @@ export async function testVoiceConnection(
     base_url: baseUrl,
     token,
   } satisfies VoiceModelsRequest) as unknown as Promise<BaseResponse<VoiceModelsResponse>>
+}
+
+export async function testVoiceEndpoints(
+  endpoints: VoiceEndpointProbeCandidate[],
+): Promise<BaseResponse<VoiceEndpointProbeResponse>> {
+  return http.post<BaseResponse<VoiceEndpointProbeResponse>>('/api/voice/endpoints/test', {
+    endpoints,
+  }) as unknown as Promise<BaseResponse<VoiceEndpointProbeResponse>>
 }
 
 export async function transcribeVoice(
@@ -154,6 +182,7 @@ export const voiceApi = {
   updateVoiceSettings,
   listVoiceModels,
   testVoiceConnection,
+  testVoiceEndpoints,
   transcribeVoice,
   speechStream,
   createAsrRealtimeSocket,

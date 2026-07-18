@@ -32,6 +32,14 @@ vi.mock('./settings/StorageRetentionSettings.vue', () => ({
   default: { template: '<section data-testid="mock-storage-retention-settings" />' }
 }))
 
+vi.mock('./settings/PluginSettings.vue', () => ({
+  default: { template: '<section data-testid="agent-settings-section-plugins" />' }
+}))
+
+vi.mock('./settings/SkillSettings.vue', () => ({
+  default: { template: '<section data-testid="agent-settings-section-skills" />' }
+}))
+
 vi.mock('@/api/agent', () => ({
   listProjects: vi.fn(() => Promise.resolve({ data: { projects: [] } })),
   listProjectStorages: vi.fn(() => Promise.resolve({ data: { storages: [] } })),
@@ -280,7 +288,7 @@ describe('AgentSettingsPage Android TV WireGuard settings', () => {
     app.unmount()
   })
 
-  it('keeps plugin management hidden from user settings', async () => {
+  it('exposes plugin and static Skill catalogs in user settings', async () => {
     setBridge({
       isAndroidTV: () => false,
       getWireGuardConfig: () => '{}',
@@ -294,8 +302,18 @@ describe('AgentSettingsPage Android TV WireGuard settings', () => {
     const { app, root } = mountSettings()
     await flush()
 
-    expect(root.querySelector('[data-testid="agent-settings-tab-plugins"]')).toBeNull()
-    expect(root.querySelector('[data-testid="agent-settings-section-plugins"]')).toBeNull()
+    const skillTab = root.querySelector<HTMLButtonElement>('[data-testid="agent-settings-tab-skills"]')
+    const pluginTab = root.querySelector<HTMLButtonElement>('[data-testid="agent-settings-tab-plugins"]')
+    expect(skillTab).not.toBeNull()
+    expect(pluginTab).not.toBeNull()
+
+    skillTab!.click()
+    await nextTick()
+    expect(root.querySelector('[data-testid="agent-settings-section-skills"]')).not.toBeNull()
+
+    pluginTab!.click()
+    await nextTick()
+    expect(root.querySelector('[data-testid="agent-settings-section-plugins"]')).not.toBeNull()
     app.unmount()
   })
 

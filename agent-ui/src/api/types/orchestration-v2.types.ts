@@ -295,7 +295,7 @@ export interface ProviderEndpointPreset {
 export interface CreateProviderRequest {
   id: string
   name?: string
-  default_model: string
+  default_model?: string
   base_url?: string
   chat_completions_base_url?: string
   responses_base_url?: string

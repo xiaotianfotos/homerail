@@ -18,6 +18,7 @@ import { getAgentPersona, fmtTokens, contextBarColor, contextUsageText } from '@
 import { cn } from '@/lib/utils'
 import { http } from '@/api/clients/http-client'
 import { renderMarkdown } from '@/utils/message-formatter'
+import { formatRepositoryReferencesForDisplay } from './dagRuntimePresentation'
 import MessageList from '@/components/message/MessageList.vue'
 import type { DAGRunMetrics } from '@/api/types/dag.types'
 import { X, ChevronDown, ChevronUp, FileText, MessageSquare, Wrench, AlertTriangle, Coins, Clock } from 'lucide-vue-next'
@@ -36,6 +37,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
+  'toggle-panel': [panel: PanelKey]
 }>()
 
 const store = useAgentStore()
@@ -80,10 +82,13 @@ async function fetchTaskDetail(runId: string, nodeId: string): Promise<void> {
       // inputs.prompt 是用户任务（数组），agentConfig.system 是节点职责
       const inputs = c.inputs ?? {}
       const promptArr = inputs.prompt
-      taskPrompt.value = Array.isArray(promptArr)
+      const prompt = Array.isArray(promptArr)
         ? promptArr.map(String).join('\n')
         : (typeof promptArr === 'string' ? promptArr : '')
-      taskSystem.value = typeof c.agentConfig?.system === 'string' ? c.agentConfig.system : ''
+      taskPrompt.value = formatRepositoryReferencesForDisplay(prompt)
+      taskSystem.value = typeof c.agentConfig?.system === 'string'
+        ? formatRepositoryReferencesForDisplay(c.agentConfig.system)
+        : ''
     } else {
       taskPrompt.value = ''
       taskSystem.value = ''
@@ -169,7 +174,7 @@ defineExpose({ scrollBy })
   <transition name="drawer-slide">
     <aside
       v-if="open && node"
-      class="dag-detail-drawer pointer-events-auto absolute right-0 top-0 z-30 flex h-full w-[min(94vw,520px)] flex-col border-l-2 border-[var(--hr-border-strong)] bg-[var(--hr-panel)] backdrop-blur-2xl"
+      class="dag-detail-drawer pointer-events-auto absolute bottom-0 right-0 top-[88px] z-30 flex w-[min(94vw,520px)] flex-col border-l-2 border-t border-[var(--hr-border-strong)] bg-[var(--hr-panel)] backdrop-blur-2xl"
     >
       <!-- 头部 -->
       <div class="flex items-center gap-3 border-b-2 border-[var(--hr-border)] px-6 py-4 flex-shrink-0">
@@ -225,15 +230,16 @@ defineExpose({ scrollBy })
 
       <!-- 面板：任务详情 -->
       <button
+        data-testid="dag-detail-task-toggle"
         :class="cn(
           'flex items-center gap-2.5 px-6 py-3 text-left transition-colors flex-shrink-0 border-b border-[var(--hr-border)]',
           isPanelFocused('task') ? 'bg-[var(--hr-accent-soft)]' : 'hover:bg-[var(--hr-surface-1)]'
         )"
-        @click="$emit('close')"
+        @click="emit('toggle-panel', 'task')"
       >
         <FileText class="h-4 w-4 flex-shrink-0" :class="isPanelFocused('task') ? 'text-[var(--hr-accent)]' : 'text-[var(--hr-text-3)]'" />
         <span class="flex-1 text-sm font-medium" :class="isPanelFocused('task') ? 'text-[var(--hr-accent)]' : 'text-[var(--hr-text-2)]'">{{ t('dag.detail.task') }}</span>
-        <span v-if="isPanelFocused('task')" class="rounded bg-[var(--hr-accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--hr-accent)]">{{ t('dag.detail.collapse') }}</span>
+        <span v-if="isPanelExpanded('task')" class="rounded bg-[var(--hr-accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--hr-accent)]">{{ t('dag.detail.collapse') }}</span>
         <component :is="isPanelExpanded('task') ? ChevronUp : ChevronDown" class="h-4 w-4 text-[var(--hr-text-3)]" />
       </button>
       <div v-if="isPanelExpanded('task')" ref="taskScrollRef" class="dag-task-detail flex-shrink-0 overflow-y-auto border-b border-[var(--hr-border)] px-6 py-4 max-h-[40vh]">
@@ -254,14 +260,16 @@ defineExpose({ scrollBy })
 
       <!-- 面板：聊天日志 -->
       <button
+        data-testid="dag-detail-logs-toggle"
         :class="cn(
           'flex items-center gap-2.5 px-6 py-3 text-left transition-colors flex-shrink-0 border-b border-[var(--hr-border)]',
           isPanelFocused('logs') ? 'bg-[var(--hr-accent-soft)]' : 'hover:bg-[var(--hr-surface-1)]'
         )"
+        @click="emit('toggle-panel', 'logs')"
       >
         <MessageSquare class="h-4 w-4 flex-shrink-0" :class="isPanelFocused('logs') ? 'text-[var(--hr-accent)]' : 'text-[var(--hr-text-3)]'" />
         <span class="flex-1 text-sm font-medium" :class="isPanelFocused('logs') ? 'text-[var(--hr-accent)]' : 'text-[var(--hr-text-2)]'">{{ t('dag.detail.logs') }}</span>
-        <span v-if="isPanelFocused('logs')" class="rounded bg-[var(--hr-accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--hr-accent)]">{{ t('dag.detail.collapse') }}</span>
+        <span v-if="isPanelExpanded('logs')" class="rounded bg-[var(--hr-accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--hr-accent)]">{{ t('dag.detail.collapse') }}</span>
         <component :is="isPanelExpanded('logs') ? ChevronUp : ChevronDown" class="h-4 w-4 text-[var(--hr-text-3)]" />
       </button>
       <div v-if="isPanelExpanded('logs')" ref="logScrollRef" class="dag-chat-log min-h-0 flex-1 overflow-y-auto px-4 py-3">

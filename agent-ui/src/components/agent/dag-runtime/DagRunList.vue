@@ -98,6 +98,8 @@ watch(() => props.focusedIndex, async (idx) => {
         v-for="(run, idx) in runs"
         :key="run.runId"
         :data-run-idx="idx"
+        :data-run-id="run.runId"
+        :data-testid="`dag-run-${run.runId}`"
         :class="cn(
           'group relative mb-3 flex w-full items-center gap-4 rounded-2xl border px-5 py-5 text-left transition-all duration-150',
           'min-h-[76px]',

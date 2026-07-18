@@ -95,6 +95,8 @@ describe('PluginSettings', () => {
     expect(topic.disabled).toBe(false)
     expect(mounted.textContent).toContain('Topic Outline')
     expect(mounted.textContent).toContain('1 tool')
+    expect(mounted.querySelector('[data-testid="agent-settings-plugins-count"]')?.textContent)
+      .toContain('2')
 
     topic.checked = false
     topic.dispatchEvent(new Event('change', { bubbles: true }))

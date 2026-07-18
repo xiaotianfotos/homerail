@@ -212,6 +212,32 @@ describe("custom LLM providers", () => {
     expect(stored).toContain("manager_encrypted");
   });
 
+  it("creates a provider before its models are known", async () => {
+    const port = await listen(server);
+    const createResponse = await fetch(`http://127.0.0.1:${port}/api/llm/providers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "model-later",
+        name: "Model Later",
+        base_url: "https://models.example/v1",
+        supports_llm: true,
+      }),
+    });
+    const createBody = await createResponse.json() as {
+      data: { default_model: string; endpoints: Array<{ models: unknown[] }> };
+    };
+
+    expect(createResponse.status).toBe(201);
+    expect(createBody.data.default_model).toBe("");
+    expect(createBody.data.endpoints[0]?.models).toEqual([]);
+
+    const modelsResponse = await fetch(`http://127.0.0.1:${port}/api/llm/providers/model-later/models`);
+    const modelsBody = await modelsResponse.json() as { data: { models: string[] } };
+    expect(modelsResponse.status).toBe(200);
+    expect(modelsBody.data.models).toEqual([]);
+  });
+
   it("updates custom providers without clearing omitted fields", async () => {
     const port = await listen(server);
     const createResponse = await fetch(`http://127.0.0.1:${port}/api/llm/providers`, {

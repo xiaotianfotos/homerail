@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
- * DagRuntimeCanvas — 全屏 Canvas 力导向 DAG 可视化。
+ * DagRuntimeCanvas — 全屏 Canvas 分层 DAG 可视化。
  *
- * 物理模型与交互参考 ExperienceGraphExplorer（中心引力 / 节点斥力 /
- * 边弹簧 / 阻尼 / 能量衰减 / pan / zoom / 拖拽 / hover / 选中），
- * 节点视觉替换为 DAG 节点：agent 角色色填充 + 状态光晕 + 工具调用 /
- * 失败 / token 徽章；边在 active 时叠加沿边流动的数据粒子。
+ * Dagre 负责稳定的从左到右分层，完整节点视觉边界参与布局；Canvas
+ * 保留阻尼缓动 / pan / zoom / 拖拽 / hover / 选中。节点视觉使用 agent
+ * 角色色填充 + 状态光晕 + 工具调用 / 失败 / token 徽章；边在 active
+ * 时叠加沿边流动的数据粒子。
  *
  * 数据源：useAgentStore 的 nodes/edges（实时 WS）+ useDagRuntime 的 metrics。
  */
@@ -20,6 +20,8 @@ import {
   readCanvasAppearancePalette,
   type CanvasAppearancePalette,
 } from '@/appearance/canvas-appearance'
+import { isDagCanvasClick, pinDagCanvasNode } from './dagRuntimeInteraction'
+import { dedupeDagRuntimeEdges, layoutDagRuntimeGraph } from './dagRuntimeLayout'
 
 interface RuntimeNode {
   id: string
@@ -31,6 +33,11 @@ interface RuntimeNode {
   vx: number
   vy: number
   r: number
+  targetX: number
+  targetY: number
+  layoutWidth: number
+  layoutHeight: number
+  manuallyPositioned: boolean
   metrics?: DAGNodeMetrics
 }
 
@@ -40,6 +47,7 @@ const props = defineProps<{
   metrics: DAGRunMetrics | null
   focusedNodeId: string | null
   selectedNodeId: string | null
+  reducedMotion?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -62,12 +70,13 @@ let zoom = 1
 let panX = 0
 let panY = 0
 let dragNode: RuntimeNode | null = null
+let dragStart: CanvasPoint | null = null
+let dragOffset: CanvasPoint | null = null
+let dragMoved = false
 let panDrag: CanvasPoint | null = null
 let layoutEnergy = 0
-let layoutCenterX = 0
-let layoutCenterY = 0
-// 数据流动粒子：每条 active 边一个沿边运动的进度 0..1
-const edgeFlow = new Map<string, number>()
+let layoutFrozen = false
+let metricsFitComplete = false
 let flowTick = 0
 let stopObservingAppearance: (() => void) | null = null
 let canvasPalette: CanvasAppearancePalette = readCanvasAppearancePalette()
@@ -101,57 +110,59 @@ function nodeRadius(node: DAGTaskNode, metrics?: DAGNodeMetrics): number {
   return Math.min(38, base + Math.log2(total / 1000 + 1) * 2.5)
 }
 
+function badgeTexts(metrics?: DAGNodeMetrics): string[] {
+  if (!metrics) return []
+  const badges: string[] = []
+  if (metrics.tool_calls > 0) badges.push(`🔧${metrics.tool_calls}`)
+  if (metrics.tool_failures > 0) badges.push(`✗${metrics.tool_failures}`)
+  if (metrics.tokens) {
+    const total = metrics.tokens.input + metrics.tokens.output + metrics.tokens.cache_read
+    if (total > 0) badges.push(fmtTokens(total))
+  }
+  return badges
+}
+
+function measuredTextWidth(
+  ctx: CanvasRenderingContext2D | null | undefined,
+  text: string,
+  font: string,
+): number {
+  if (!ctx) return text.length * 7
+  ctx.save()
+  ctx.font = font
+  const width = ctx.measureText(text).width
+  ctx.restore()
+  return width
+}
+
+function nodeVisualSize(
+  agentName: string,
+  radius: number,
+  metrics: DAGNodeMetrics | undefined,
+  ctx: CanvasRenderingContext2D | null | undefined,
+): { width: number; height: number } {
+  const label = getAgentPersona(agentName).name
+  const labelWidth = measuredTextWidth(ctx, label, '600 11px Inter, ui-sans-serif, system-ui, sans-serif')
+  const badges = badgeTexts(metrics)
+  const badgeWidth = badges.reduce((total, badge, index) => (
+    total
+    + measuredTextWidth(ctx, badge, '600 11px ui-monospace, SFMono-Regular, Menlo, monospace')
+    + 12
+    + (index > 0 ? 4 : 0)
+  ), 0)
+
+  // 徽章组在节点上方居中，完整边界仍参与布局，但不会因为右侧徽章
+  // 被镜像成双倍空白，从而在复杂 DAG 中制造过宽的列间距。
+  const horizontalReach = Math.max(radius + 8, labelWidth / 2 + 8, badgeWidth / 2 + 8)
+  return {
+    width: Math.max(88, horizontalReach * 2),
+    height: Math.max(92, (radius + 21) * 2),
+  }
+}
+
 // ============================================================================
 // 图构建（store.nodes/edges + metrics → RuntimeNode[]）
 // ============================================================================
-
-/** 计算每个节点的拓扑深度（列号）。
- *  无入边的节点（DAG 起点，如 plan）depth=0，沿后继方向递增。
- *  用于初始从左到右排列；对回环节点用 max(前驱)+1 兜底。 */
-function computeTopoDepth(nodeIds: string[], edges: { source: string; target: string }[]): Map<string, number> {
-  const depth = new Map<string, number>()
-  // 入边表：target → [source,...]
-  const incoming = new Map<string, string[]>()
-  for (const id of nodeIds) incoming.set(id, [])
-  for (const e of edges) {
-    if (!incoming.has(e.target)) incoming.set(e.target, [])
-    incoming.get(e.target)!.push(e.source)
-  }
-  // 出边表：source → [target,...]
-  const outgoing = new Map<string, string[]>()
-  for (const id of nodeIds) outgoing.set(id, [])
-  for (const e of edges) {
-    if (!outgoing.has(e.source)) outgoing.set(e.source, [])
-    outgoing.get(e.source)!.push(e.target)
-  }
-
-  // Kahn：入度为 0 的起点 depth=0，逐层推进
-  const inDegree = new Map<string, number>()
-  for (const id of nodeIds) inDegree.set(id, incoming.get(id)!.length)
-  const queue: string[] = nodeIds.filter(id => inDegree.get(id) === 0)
-  for (const id of queue) depth.set(id, 0)
-
-  let processed = queue.length
-  while (queue.length) {
-    const cur = queue.shift()!
-    const curDepth = depth.get(cur) ?? 0
-    for (const next of outgoing.get(cur) ?? []) {
-      // 后继深度 = max(已有, 当前+1)
-      depth.set(next, Math.max(depth.get(next) ?? 0, curDepth + 1))
-      inDegree.set(next, (inDegree.get(next) ?? 0) - 1)
-      if (inDegree.get(next) === 0) queue.push(next)
-      processed++
-    }
-  }
-  // 兜底：环或孤立节点（Kahn 没覆盖的）按前驱 max+1 或 0
-  for (const id of nodeIds) {
-    if (!depth.has(id)) {
-      const preds = incoming.get(id) ?? []
-      depth.set(id, preds.length ? Math.max(...preds.map(p => depth.get(p) ?? 0)) + 1 : 0)
-    }
-  }
-  return depth
-}
 
 function rebuildGraph(fit = false): void {
   const storeNodes = store.nodes
@@ -169,125 +180,144 @@ function rebuildGraph(fit = false): void {
   const rect = canvasRef.value?.getBoundingClientRect()
   const centerX = rect ? rect.width / 2 : 0
   const centerY = rect ? rect.height / 2 : 0
+  const ctx = canvasRef.value?.getContext('2d')
+  const nodeIds = new Set(storeNodes.map(node => node.id))
+  const validEdges = storeEdges.filter(edge => (
+    nodeIds.has(edge.source) && nodeIds.has(edge.target)
+  ))
+  const displayEdges = dedupeDagRuntimeEdges(validEdges)
 
-  // 按拓扑深度分列：depth=0 的节点（无入边，如 plan）在最左，
-  // depth 沿后继方向递增。这样初始位置就形成从左到右的布局，
-  // 力导向只需消除重叠，不会把节点打散成螺旋。
-  const depthMap = computeTopoDepth(storeNodes.map(n => n.id), storeEdges)
-  const COLUMN_WIDTH = 220
-  const ROW_HEIGHT = 130
-  // 每列已放置的节点数，用于同列竖向错开
-  const placedPerDepth = new Map<number, number>()
-  const maxDepth = Math.max(0, ...depthMap.values())
-
-  const nodes = storeNodes.map((node) => {
+  const drafts = storeNodes.map((node) => {
     const old = previous.get(node.id)
-    const depth = depthMap.get(node.id) ?? 0
-    // 居中整列：以 centerX 为中线左右展开
-    const colX = centerX + (depth - maxDepth / 2) * COLUMN_WIDTH
-    // 同列节点竖向交替错开，避免完全重叠
-    const placed = placedPerDepth.get(depth) ?? 0
-    placedPerDepth.set(depth, placed + 1)
-    const sameDepthCount = storeNodes.filter(n => (depthMap.get(n.id) ?? 0) === depth).length
-    const yOffset = sameDepthCount > 1
-      ? (placed - (sameDepthCount - 1) / 2) * ROW_HEIGHT
-      : 0
     const m = metricsMap[node.id]
+    const radius = nodeRadius(node, m)
+    const visualSize = nodeVisualSize(node.agent_name, radius, m, ctx)
     return {
       id: node.id,
       label: node.name,
       agentName: node.agent_name,
       status: node.status,
-      x: old?.x ?? colX,
-      y: old?.y ?? centerY + yOffset,
+      x: old?.x ?? centerX,
+      y: old?.y ?? centerY,
       vx: old?.vx ?? 0,
       vy: old?.vy ?? 0,
-      r: nodeRadius(node, m),
+      r: radius,
+      targetX: old?.targetX ?? centerX,
+      targetY: old?.targetY ?? centerY,
+      layoutWidth: visualSize.width,
+      layoutHeight: visualSize.height,
+      manuallyPositioned: old?.manuallyPositioned ?? false,
       metrics: m,
     }
   })
 
+  const positions = layoutDagRuntimeGraph(
+    drafts.map(node => ({ id: node.id, width: node.layoutWidth, height: node.layoutHeight })),
+    displayEdges,
+  )
+  const nodes = drafts.map((node) => {
+    const position = positions.get(node.id) ?? { x: 0, y: 0 }
+    // Metrics and status refreshes rebuild the runtime graph frequently. Once
+    // a user has moved a node, retain that manual anchor instead of replacing
+    // it with the freshly calculated Dagre position.
+    if (!node.manuallyPositioned) {
+      node.targetX = centerX + position.x
+      node.targetY = centerY + position.y
+    }
+    if (!previous.has(node.id)) {
+      node.x = node.targetX
+      node.y = node.targetY
+    }
+    return node
+  })
+
   canvasNodes.value = nodes
   nodeById = new Map(nodes.map(n => [n.id, n]))
-  canvasEdges.value = storeEdges.filter(e => nodeById.has(e.source) && nodeById.has(e.target))
-  setLayoutCenter()
-  wakeLayout()
+  canvasEdges.value = displayEdges
+  scheduleLayout()
   if (fit) {
+    if (props.metrics) metricsFitComplete = true
     void nextTick(() => {
       resizeCanvas()
-      fitCanvasGraph()
+      fitCanvasGraph(true)
     })
   }
 }
 
-function setLayoutCenter(): void {
-  const nodes = canvasNodes.value
-  if (!nodes.length) {
-    const rect = canvasRef.value?.getBoundingClientRect()
-    layoutCenterX = rect ? rect.width / 2 : 0
-    layoutCenterY = rect ? rect.height / 2 : 0
-    return
-  }
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const n of nodes) {
-    minX = Math.min(minX, n.x); minY = Math.min(minY, n.y)
-    maxX = Math.max(maxX, n.x); maxY = Math.max(maxY, n.y)
-  }
-  layoutCenterX = (minX + maxX) / 2
-  layoutCenterY = (minY + maxY) / 2
+function scheduleLayout(): void {
+  if (!layoutFrozen) layoutEnergy = 1
 }
 
-function wakeLayout(): void { layoutEnergy = 1 }
+function wakeLayout(): void {
+  layoutFrozen = false
+  layoutEnergy = 1
+}
+
 function freezeLayout(): void {
+  layoutFrozen = true
   layoutEnergy = 0
   for (const n of canvasNodes.value) { n.vx = 0; n.vy = 0 }
 }
 
 // ============================================================================
-// 物理模拟（中心引力 + 节点斥力 + 边弹簧 + 阻尼）
+// 布局动画（Dagre 锚点 + 完整视觉边界碰撞 + 阻尼）
 // ============================================================================
 
 function tickLayout(): void {
   const nodes = canvasNodes.value
-  if (layoutEnergy <= 0 || panDrag || dragNode || nodes.length === 0) return
+  if (layoutFrozen || layoutEnergy <= 0 || panDrag || dragNode || nodes.length === 0) return
 
   for (const n of nodes) {
-    n.vx += (layoutCenterX - n.x) * 0.0004 * layoutEnergy
-    n.vy += (layoutCenterY - n.y) * 0.0004 * layoutEnergy
+    if (n.manuallyPositioned) continue
+    n.vx += (n.targetX - n.x) * 0.045 * layoutEnergy
+    n.vy += (n.targetY - n.y) * 0.045 * layoutEnergy
   }
 
-  const repulsion = Math.max(10, 340 / Math.max(1, Math.sqrt(nodes.length)))
+  // 动画途中或手动拖拽后也不允许完整视觉包围盒互相穿透。
   for (let i = 0; i < nodes.length; i += 1) {
     for (let j = i + 1; j < nodes.length; j += 1) {
       const a = nodes[i], b = nodes[j]
+      // A manually placed node is an explicit user override. Do not let the
+      // automatic collision pass move it (or endlessly fight its anchor).
+      if (a.manuallyPositioned || b.manuallyPositioned) continue
       const dx = b.x - a.x, dy = b.y - a.y
-      const d2 = Math.max(120, dx * dx + dy * dy)
-      const force = (repulsion / d2) * layoutEnergy
-      a.vx -= dx * force; a.vy -= dy * force
-      b.vx += dx * force; b.vy += dy * force
+      const overlapX = (a.layoutWidth + b.layoutWidth) / 2 - Math.abs(dx)
+      const overlapY = (a.layoutHeight + b.layoutHeight) / 2 - Math.abs(dy)
+      if (overlapX <= 0 || overlapY <= 0) continue
+
+      if (overlapX < overlapY) {
+        const direction = dx === 0 ? (a.id < b.id ? 1 : -1) : Math.sign(dx)
+        const impulse = overlapX * 0.08 * layoutEnergy
+        a.vx -= direction * impulse
+        b.vx += direction * impulse
+      } else {
+        const direction = dy === 0 ? (a.id < b.id ? 1 : -1) : Math.sign(dy)
+        const impulse = overlapY * 0.08 * layoutEnergy
+        a.vy -= direction * impulse
+        b.vy += direction * impulse
+      }
     }
   }
 
-  for (const edge of canvasEdges.value) {
-    const a = nodeById.get(edge.source), b = nodeById.get(edge.target)
-    if (!a || !b) continue
-    const dx = b.x - a.x, dy = b.y - a.y
-    const dist = Math.max(1, Math.hypot(dx, dy))
-    const target = 150
-    const force = (dist - target) * 0.009 * layoutEnergy
-    const fx = (dx / dist) * force, fy = (dy / dist) * force
-    a.vx += fx; a.vy += fy
-    b.vx -= fx; b.vy -= fy
-  }
-
   let maxVelocity = 0
+  let maxDistance = 0
   for (const n of nodes) {
-    if (n === dragNode) continue
-    n.vx *= 0.78; n.vy *= 0.78
+    if (n === dragNode || n.manuallyPositioned) continue
+    n.vx *= 0.72; n.vy *= 0.72
     maxVelocity = Math.max(maxVelocity, Math.hypot(n.vx, n.vy))
     n.x += n.vx; n.y += n.vy
+    maxDistance = Math.max(maxDistance, Math.hypot(n.targetX - n.x, n.targetY - n.y))
   }
-  layoutEnergy = maxVelocity < 0.03 ? 0 : layoutEnergy * 0.985
+  if (maxVelocity < 0.02 && maxDistance < 0.25) {
+    for (const n of nodes) {
+      if (n.manuallyPositioned) continue
+      n.x = n.targetX
+      n.y = n.targetY
+      n.vx = 0
+      n.vy = 0
+    }
+    layoutEnergy = 0
+  }
 }
 
 // ============================================================================
@@ -296,7 +326,7 @@ function tickLayout(): void {
 
 function drawGraph(): void {
   tickLayout()
-  flowTick += 1
+  if (!props.reducedMotion) flowTick += 1
   const canvas = canvasRef.value
   const ctx = canvas?.getContext('2d')
   const rect = canvas?.getBoundingClientRect()
@@ -341,7 +371,7 @@ function drawEdges(ctx: CanvasRenderingContext2D): void {
     drawArrowHead(ctx, source.x, source.y, target.x, target.y, target.r)
 
     // 数据流动粒子（目标 running 时，沿边运动的发光点）
-    if (targetRunning) {
+    if (targetRunning && !props.reducedMotion) {
       const phase = ((flowTick * 0.012) + (i * 0.31)) % 1
       const px = source.x + (target.x - source.x) * phase
       const py = source.y + (target.y - source.y) * phase
@@ -374,7 +404,7 @@ function drawArrowHead(ctx: CanvasRenderingContext2D, fromX: number, fromY: numb
 }
 
 function drawNodes(ctx: CanvasRenderingContext2D): void {
-  const pulse = 0.5 + 0.5 * Math.sin(flowTick * 0.08)
+  const pulse = props.reducedMotion ? 0.5 : 0.5 + 0.5 * Math.sin(flowTick * 0.08)
   for (const node of canvasNodes.value) {
     const persona = getAgentPersona(node.agentName)
     const glow = statusGlow(node.status)
@@ -463,10 +493,14 @@ function drawBadges(ctx: CanvasRenderingContext2D, node: RuntimeNode): void {
   ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, monospace'
   ctx.textAlign = 'left'
   ctx.textBaseline = 'middle'
-  let bx = node.x + node.r * 0.5
+  const badgeWidths = badges.map(badge => ctx.measureText(badge.text).width + 12)
+  const groupWidth = badgeWidths.reduce((total, width) => total + width, 0)
+    + Math.max(0, badgeWidths.length - 1) * 4
+  let bx = node.x - groupWidth / 2
   let by = node.y - node.r - 10
-  for (const badge of badges) {
-    const w = ctx.measureText(badge.text).width + 12
+  for (let index = 0; index < badges.length; index += 1) {
+    const badge = badges[index]
+    const w = badgeWidths[index]
     ctx.fillStyle = canvasPalette.panel
     roundRect(ctx, bx, by - 8, w, 16, 8)
     ctx.fill()
@@ -505,21 +539,35 @@ function resizeCanvas(): void {
   ctx?.setTransform(ratio, 0, 0, ratio, 0, 0)
 }
 
-function fitCanvasGraph(): void {
+function fitCanvasGraph(useTargets = false): void {
   const nodes = canvasNodes.value
-  const rect = canvasRef.value?.getBoundingClientRect()
-  if (!nodes.length || !rect) return
+  const canvas = canvasRef.value
+  const rect = canvas?.getBoundingClientRect()
+  if (!nodes.length || !canvas || !rect) return
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const n of nodes) {
-    minX = Math.min(minX, n.x - n.r); minY = Math.min(minY, n.y - n.r)
-    maxX = Math.max(maxX, n.x + n.r); maxY = Math.max(maxY, n.y + n.r)
+    const x = useTargets ? n.targetX : n.x
+    const y = useTargets ? n.targetY : n.y
+    minX = Math.min(minX, x - n.layoutWidth / 2)
+    minY = Math.min(minY, y - n.layoutHeight / 2)
+    maxX = Math.max(maxX, x + n.layoutWidth / 2)
+    maxY = Math.max(maxY, y + n.layoutHeight / 2)
   }
   const pad = 80
   const w = maxX - minX + pad * 2
   const h = maxY - minY + pad * 2
-  zoom = Math.min(1.2, Math.min(rect.width / w, rect.height / h))
+  // The canvas fills the overlay and therefore also extends behind its
+  // absolute toolbar. Fit into the visible area below the real toolbar box so
+  // top badges/edges never disappear beneath it on high-DPI capture screens.
+  const toolbar = canvas.closest('.dag-runtime-overlay')?.querySelector('.dag-runtime-toolbar')
+  const toolbarRect = toolbar?.getBoundingClientRect()
+  const topInset = toolbarRect
+    ? Math.max(0, Math.min(rect.height, toolbarRect.bottom - rect.top))
+    : 0
+  const availableHeight = Math.max(1, rect.height - topInset)
+  zoom = Math.min(1.2, Math.min(rect.width / w, availableHeight / h))
   panX = rect.width / 2 - ((minX + maxX) / 2) * zoom
-  panY = rect.height / 2 - ((minY + maxY) / 2) * zoom
+  panY = topInset + availableHeight / 2 - ((minY + maxY) / 2) * zoom
 }
 
 // ============================================================================
@@ -546,6 +594,9 @@ function onMouseDown(evt: MouseEvent): void {
   const hit = nodeAt(point)
   if (hit) {
     dragNode = hit
+    dragStart = { x: evt.clientX, y: evt.clientY }
+    dragOffset = { x: point.x - hit.x, y: point.y - hit.y }
+    dragMoved = false
   } else {
     panDrag = { x: evt.clientX - panX, y: evt.clientY - panY }
   }
@@ -553,12 +604,13 @@ function onMouseDown(evt: MouseEvent): void {
 
 function onMouseMove(evt: MouseEvent): void {
   if (dragNode) {
+    if (dragStart && isDagCanvasClick(dragStart, { x: evt.clientX, y: evt.clientY })) return
+    dragMoved = true
     const point = canvasPoint(evt)
-    dragNode.x = point.x
-    dragNode.y = point.y
-    dragNode.vx = 0
-    dragNode.vy = 0
-    wakeLayout()
+    pinDagCanvasNode(dragNode, {
+      x: point.x - (dragOffset?.x ?? 0),
+      y: point.y - (dragOffset?.y ?? 0),
+    })
     return
   }
   if (panDrag) {
@@ -580,15 +632,19 @@ function onMouseMove(evt: MouseEvent): void {
 function onMouseUp(evt: MouseEvent): void {
   // 点击（未拖动）→ 焦点 + 选中
   if (dragNode) {
-    const point = canvasPoint(evt)
-    const moved = Math.hypot(dragNode.x - point.x, dragNode.y - point.y)
-    if (moved < 2) {
+    // Compare pointer travel, not pointer-to-node-center distance. The latter
+    // made only a few pixels around the visual center clickable even though
+    // the whole node correctly advertised a pointer cursor.
+    if (!dragMoved && dragStart && isDagCanvasClick(dragStart, { x: evt.clientX, y: evt.clientY })) {
       // 点击同一节点：选中它（同时设焦点）
       emit('focus-node', dragNode.id)
       const newId = selectedNodeId.value === dragNode.id ? null : dragNode.id
       emit('select-node', newId)
     }
     dragNode = null
+    dragStart = null
+    dragOffset = null
+    dragMoved = false
     return
   }
   if (panDrag) {
@@ -615,13 +671,24 @@ function onWheel(evt: WheelEvent): void {
   zoom = newZoom
 }
 
+function onMouseLeave(): void {
+  panDrag = null
+  dragNode = null
+  dragStart = null
+  dragOffset = null
+  dragMoved = false
+}
+
 // ============================================================================
 // 生命周期
 // ============================================================================
 
 watch(
   () => [store.nodes, store.edges, props.metrics],
-  () => { rebuildGraph(false) },
+  () => {
+    const shouldFitMetrics = Boolean(props.metrics) && !metricsFitComplete
+    rebuildGraph(shouldFitMetrics)
+  },
   { deep: true },
 )
 
@@ -675,12 +742,14 @@ defineExpose({ fitCanvasGraph, freezeLayout, wakeLayout, setFocus, applyPan, app
 <template>
   <canvas
     ref="canvasRef"
+    data-testid="dag-runtime-canvas"
+    aria-label="DAG runtime graph"
     class="dag-runtime-canvas absolute inset-0 h-full w-full"
     style="cursor: grab"
     @mousedown="onMouseDown"
     @mousemove="onMouseMove"
     @mouseup="onMouseUp"
-    @mouseleave="panDrag = null; dragNode = null"
+    @mouseleave="onMouseLeave"
     @wheel="onWheel"
   />
 </template>

@@ -19,6 +19,7 @@
     "git": "管理 Git Server token。项目和仓库在新增目录时关联。",
     "providers": "维护供应商、模型能力和本地加密保存的模型配置。",
     "voice": "配置语音播报和按键控制。",
+    "skills": "查看从静态 Skills 目录检测到的能力说明。",
     "plugins": "查看已解析的插件能力，并启用或停用可选场景。",
     "default": "配置 HomeRail Agent UI 使用的本地能力。"
   },
@@ -34,8 +35,8 @@
           "description": "带青蓝强调色的专注深色仪表界面。"
         },
         "paper": {
-          "label": "纸张浅色",
-          "description": "以中性色和清晰白色层级构成的舒适工作区。"
+          "label": "柔雾浅色",
+          "description": "以低亮度青灰和柔和表面构成的耐看工作区。"
         }
       }
     },
@@ -87,6 +88,7 @@
   },
   "plugins": {
     "registry": "插件注册表",
+    "detected": "已检测 {count} 个",
     "revision": "注册表修订 {revision}",
     "enabled": "已启用",
     "disabled": "已停用",
@@ -102,6 +104,17 @@
     "empty": "没有已安装的插件。",
     "loadFailed": "插件注册表加载失败",
     "updateFailed": "插件状态更新失败"
+  },
+  "skills": {
+    "catalog": "静态 Skill 目录",
+    "detected": "已检测 {count} 个",
+    "scanning": "正在扫描 Skills 目录",
+    "sources": {
+      "home": "本地资产",
+      "repo": "内置资产"
+    },
+    "empty": "没有检测到 Skill。",
+    "loadFailed": "Skill 目录加载失败"
   },
   "git": {
     "tokenStatus": "Token 状态",
@@ -175,10 +188,16 @@
       "defaultModel": "默认模型",
       "protocolUrls": "各协议接入地址",
       "voiceEndpoints": "语音服务端点",
+      "voiceEndpointsHint": "默认随 Base URL 自动更新；直接编辑即可使用自定义路径。",
       "ttsHttp": "TTS 语音合成 HTTP",
       "ttsStreamingHttp": "TTS 流式合成 HTTP",
       "asrHttp": "ASR 转写 HTTP",
       "asrRealtimeWs": "ASR 实时 WebSocket",
+      "restoreDerived": "恢复自动",
+      "testEndpoints": "测试端点",
+      "testingEndpoints": "测试中...",
+      "endpointTestPassed": "端点可用",
+      "endpointTestFailed": "部分端点不可用",
       "references": "有 {count} 个模型配置使用此供应商",
       "saved": "自定义供应商已保存",
       "deleted": "自定义供应商已删除",
