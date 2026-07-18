@@ -15,6 +15,7 @@ import {
 } from "../src/persistence/dag-actor-live-commands.js";
 import { registerDagActor } from "../src/persistence/dag-actors.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { expectCurrentSchemaMigrationVersion } from "./schema-migration-helpers.js";
 import { ensureRunDir } from "../src/persistence/store.js";
 
 const token = "a".repeat(64);
@@ -71,7 +72,7 @@ describe("durable DAG Actor live commands", () => {
   }
 
   it("creates, validates, and reapplies migration 28 on repeated startup", () => {
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 30 });
+    expectCurrentSchemaMigrationVersion();
     expect(getDb().prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     getDb().exec(`
       DROP TABLE dag_actor_live_commands;

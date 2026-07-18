@@ -26,6 +26,7 @@ import {
 import { getDagActor, registerDagActor } from "../src/persistence/dag-actors.js";
 import { clearTables, closeDb, getDb } from "../src/persistence/db.js";
 import { ensureRunDir } from "../src/persistence/store.js";
+import { expectCurrentSchemaMigrationVersion } from "./schema-migration-helpers.js";
 
 function checkpoint(overrides: Partial<DagActorCheckpointV1> = {}): DagActorCheckpointV1 {
   return {
@@ -99,8 +100,7 @@ describe("DAG actor lease persistence", () => {
 
   it("creates and revalidates the strict actor lease schema on a fresh database", () => {
     const db = getDb();
-    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 30 });
+    expectCurrentSchemaMigrationVersion(db);
     expect(db.prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name IN (

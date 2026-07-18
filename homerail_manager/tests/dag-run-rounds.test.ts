@@ -12,6 +12,7 @@ import {
   registerDagActor,
 } from "../src/persistence/dag-actors.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { expectSchemaMigrationRange } from "./schema-migration-helpers.js";
 import {
   createInitialDagRunRound,
   DagRunRoundConflictError,
@@ -134,19 +135,7 @@ describe("DAG run round persistence", () => {
     closeDb();
 
     const migrated = getDb();
-    expect(migrated.prepare("SELECT version FROM schema_migrations WHERE version >= 21 ORDER BY version").all())
-      .toEqual([
-        { version: 21 },
-        { version: 22 },
-        { version: 23 },
-        { version: 24 },
-        { version: 25 },
-        { version: 26 },
-        { version: 27 },
-        { version: 28 },
-        { version: 29 },
-        { version: 30 },
-      ]);
+    expectSchemaMigrationRange(21, migrated);
     expect(migrated.prepare("SELECT * FROM dag_actor_commands ORDER BY command_id").all())
       .toEqual(expectedRows);
     expect(migrated.prepare("PRAGMA foreign_key_check").all()).toEqual([]);

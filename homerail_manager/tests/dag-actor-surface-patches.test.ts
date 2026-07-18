@@ -26,6 +26,7 @@ import {
 } from "../src/persistence/dag-actors.js";
 import { acquireDagActorLease, ensureDagActorLease } from "../src/persistence/dag-actor-leases.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { expectCurrentSchemaMigrationVersion } from "./schema-migration-helpers.js";
 import { createInitialDagRunRound } from "../src/persistence/dag-run-rounds.js";
 import { ensureRunDir } from "../src/persistence/store.js";
 
@@ -166,8 +167,7 @@ describe("DAG Actor surface patch persistence", () => {
     closeDb();
 
     const migrated = getDb();
-    expect(migrated.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 30 });
+    expectCurrentSchemaMigrationVersion(migrated);
     expect(migrated.prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name LIKE 'dag_actor_surface_%'

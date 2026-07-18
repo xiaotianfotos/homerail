@@ -9,6 +9,7 @@ import {
   verifyHrpArchive,
 } from "homerail-plugin-sdk";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { expectCurrentSchemaMigrationVersion } from "./schema-migration-helpers.js";
 import {
   getPluginDistributionRevision,
   listPluginPublisherTrust,
@@ -147,8 +148,6 @@ describe("plugin publisher trust persistence", () => {
       expect.objectContaining({ state: "trusted", revision: 1 }),
     ]);
     expect(listPluginPublisherTrustEvents()).toHaveLength(1);
-    expect(getDb().prepare(
-      "SELECT MAX(version) AS version FROM schema_migrations",
-    ).get()).toEqual({ version: 30 });
+    expectCurrentSchemaMigrationVersion();
   });
 });

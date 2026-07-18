@@ -12,6 +12,7 @@ import {
 } from "homerail-plugin-sdk";
 import { GenerativeUiKindRegistry } from "../src/generative-ui/kind-registry.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { expectCurrentSchemaMigrationVersion } from "./schema-migration-helpers.js";
 import {
   getPluginPermissionRevision,
   getActivePlugin,
@@ -260,7 +261,7 @@ describe("external plugin package lifecycle", () => {
       expect.objectContaining({ plugin_version: "1.1.0", active: false, enabled: false }),
       expect.objectContaining({ plugin_version: "1.2.0", active: false, enabled: false }),
     ]));
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 30 });
+    expectCurrentSchemaMigrationVersion();
     expect(inspectInstalledPlugin("com.example.release-notes")).toMatchObject({ healthy: true, issues: [] });
   });
 
@@ -454,8 +455,7 @@ describe("external plugin package lifecycle", () => {
     closeDb();
 
     expect(getPluginRegistryState().revision).toBe(101);
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 30 });
+    expectCurrentSchemaMigrationVersion();
   });
 
   it("rejects a stale uninstall when an inactive version was installed concurrently", () => {

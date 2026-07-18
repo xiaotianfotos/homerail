@@ -15,6 +15,7 @@ import {
 } from "../src/persistence/dag-actor-interventions.js";
 import { registerDagActor } from "../src/persistence/dag-actors.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { expectCurrentSchemaMigrationVersion, expectSchemaMigrationRange } from "./schema-migration-helpers.js";
 import { ensureRunDir } from "../src/persistence/store.js";
 
 describe("DAG actor intervention persistence", () => {
@@ -44,7 +45,7 @@ describe("DAG actor intervention persistence", () => {
   });
 
   it("creates and validates the strict intervention and dispatch-fence schemas on fresh and upgraded databases", () => {
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 30 });
+    expectCurrentSchemaMigrationVersion();
     expect(getDb().prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     getDb().exec(`
       DROP TABLE dag_actor_dispatch_exclusions;
@@ -98,14 +99,7 @@ describe("DAG actor intervention persistence", () => {
     closeDb();
 
     const migrated = getDb();
-    expect(migrated.prepare(
-      "SELECT version FROM schema_migrations WHERE version >= 27 ORDER BY version",
-    ).all()).toEqual([
-      { version: 27 },
-      { version: 28 },
-      { version: 29 },
-      { version: 30 },
-    ]);
+    expectSchemaMigrationRange(27, migrated);
     expect(migrated.prepare(`
       SELECT agent_id, context_json FROM dag_run_skill_contexts
       WHERE run_id = ? AND agent_id = ?

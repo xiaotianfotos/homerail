@@ -13,6 +13,7 @@ import {
   sourceFilesForPack,
 } from "homerail-plugin-sdk";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { expectCurrentSchemaMigrationVersion } from "./schema-migration-helpers.js";
 import {
   getPluginRegistrySource,
   listPluginRegistryReleases,
@@ -235,8 +236,7 @@ describe("signed remote plugin registry", () => {
     ]);
     expect(listPluginRegistryUpdateAttempts("stable.example").filter((attempt) => attempt.status === "failed"))
       .toHaveLength(3);
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 30 });
+    expectCurrentSchemaMigrationVersion();
   });
 
   it("rejects signed catalog releases whose payload or publisher digest disagrees with the HRP", () => {

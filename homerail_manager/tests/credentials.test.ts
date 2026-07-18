@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dispatchEnvelopeAuditView } from "../src/orchestration/ws-dispatch-adapter.js";
 import { parseWorkflowSource } from "../src/orchestration/workflow-spec-v1.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { expectCurrentSchemaMigrationVersion } from "./schema-migration-helpers.js";
 import {
   createCredential,
   deleteCredential,
@@ -114,7 +115,7 @@ describe("generic credential store", () => {
       "deleted",
     ]);
     expect(JSON.stringify(listCredentialAuditEvents("demo-api"))).not.toContain(secret);
-    expect(getDb().prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 31 });
+    expectCurrentSchemaMigrationVersion(undefined, 31);
   });
 
   it("does not reinterpret legacy encrypted_credentials rows as execution credentials", () => {
