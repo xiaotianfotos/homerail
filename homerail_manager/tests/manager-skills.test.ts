@@ -159,6 +159,24 @@ describe("Manager Agent skill discovery", () => {
     expect(readManagerSkillViewTemplates("visual-skill")).toEqual([]);
   });
 
+  it("allows explicitly bounded long-running trusted presenters", () => {
+    writeSkill(tmpHome, "research-skill", "research-skill", "Source-audited research workflow");
+    const file = writeA2uiTemplateManifest(tmpHome, "research-skill");
+    const manifest = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    manifest.presenter = {
+      command: "node",
+      args: ["presenter.js"],
+      timeout_ms: 300_000,
+    };
+    fs.writeFileSync(file, JSON.stringify(manifest), "utf8");
+
+    expect(readManagerSkillViewPresenter("research-skill")?.timeout_ms).toBe(300_000);
+
+    (manifest.presenter as Record<string, unknown>).timeout_ms = 300_001;
+    fs.writeFileSync(file, JSON.stringify(manifest), "utf8");
+    expect(readManagerSkillViewPresenter("research-skill")).toBeUndefined();
+  });
+
   it("does not follow an A2UI template manifest symlink outside the Skill package", () => {
     writeSkill(tmpHome, "linked-view", "linked-view", "Linked visual result workflow");
     const outside = path.join(tmpHome, "outside-template.json");
