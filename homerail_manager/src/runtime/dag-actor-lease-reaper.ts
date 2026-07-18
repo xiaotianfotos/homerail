@@ -6,10 +6,12 @@ import {
   listDagProvisionedWorkers,
   listExpiredDagActorLeases,
   releaseDagActorLease,
+  transitionDagProvisionedWorker,
 } from "../persistence/dag-actor-leases.js";
 import { listDagActors } from "../persistence/dag-actors.js";
 import { listPersistedRunIds, loadRunMetadata } from "../persistence/store.js";
 import type { DagRunStatus } from "../persistence/status.js";
+import { getWorker } from "../worker/registry.js";
 import { loadDagActorLeaseSettings } from "../config/dag-actor-lease-settings.js";
 import {
   deprovisionProvisionedWorker,
@@ -95,6 +97,48 @@ export async function reapDagActorLeases(
         && lease.lease_generation === worker.lease_generation
         && (lease.target_type === "worker" || lease.target_type === "provisioned_worker")
         && lease.target_id === worker.worker_id;
+      if (
+        stillOwned
+        && runStatus(worker.run_id) === "waiting"
+        && lease.idle_deadline! > now
+        && !getWorker(worker.worker_id)
+      ) {
+        try {
+          transitionDagProvisionedWorker({
+            run_id: worker.run_id,
+            actor_id: worker.actor_id,
+            lease_generation: worker.lease_generation,
+            worker_id: worker.worker_id,
+            expected_status: "active",
+            status: "failed",
+            expected_version: worker.version,
+            now,
+            failure: {
+              reason: "provisioned_worker_disconnected",
+              message: "Provisioned Worker is no longer connected while its actor is waiting",
+            },
+          });
+          releaseDagActorLease({
+            run_id: lease.run_id,
+            actor_id: lease.actor_id,
+            lease_generation: lease.lease_generation,
+            target_type: lease.target_type!,
+            target_id: lease.target_id!,
+            expected_version: lease.version,
+            now,
+          });
+          report.released++;
+          emit("dag:actor_lease_released", {
+            runId: lease.run_id,
+            actorId: lease.actor_id,
+            leaseGeneration: lease.lease_generation,
+            reason: "provisioned_worker_disconnected",
+          });
+        } catch {
+          // A concurrent command, reconnect, or cleanup changed the durable row.
+          continue;
+        }
+      }
       if (stillOwned) continue;
     }
     report.worker_cleanup_attempted++;

@@ -1755,6 +1755,7 @@ export function createManagerTools(state: {
             typeof data.response_text === "string" ? data.response_text : "",
           );
           state.createdRunIds.push(String(compact.run_id));
+          state.objectiveToolCalls.push({ name: "skill_view_present", success: true });
           state.objectiveToolCalls.push({ name: "start_supervised_dag", success: true });
           return { content: [{ type: "text", text: JSON.stringify(compact) }] };
         }
@@ -1773,6 +1774,7 @@ export function createManagerTools(state: {
         } catch {
           throw new Error("Generated view Tool returned an invalid result");
         }
+        state.objectiveToolCalls.push({ name: "skill_view_present", success: true });
         return { content: [{
           type: "text",
           text: JSON.stringify(compactManagerAgentSkillViewPresentResult(resultBody, responseText)),
@@ -2182,10 +2184,23 @@ function buildHostCodexManagerAgentResult(
   );
   const missingRequiredToolCalls = requiredToolCalls.filter((name) => !successfulRequiredToolCalls.has(name));
   if (missingRequiredToolCalls.length > 0) {
+    const callsById = new Map(toolCalls.map((call) => [call.id, call]));
     throw new HostCodexManagerAgentObjectiveUnsatisfiedError({
       required_tool_calls: requiredToolCalls,
       missing_tool_calls: missingRequiredToolCalls,
       observed_tool_calls: toolCalls.map((item) => item.name),
+      observed_tool_call_details: toolCalls.map((item) => ({
+        id: item.id,
+        name: item.name,
+        input: short(item.input, 1000),
+      })),
+      failed_tool_results: toolResults
+        .filter((item) => item.is_error === true)
+        .map((item) => ({
+          tool_use_id: item.tool_use_id,
+          name: callsById.get(item.tool_use_id)?.name ?? null,
+          content: short(item.content, 1000),
+        })),
       objective_tool_calls: state.objectiveToolCalls,
       run_ids: state.createdRunIds,
     });

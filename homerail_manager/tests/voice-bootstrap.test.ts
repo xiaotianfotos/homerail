@@ -2648,6 +2648,70 @@ describe("voice bootstrap routes", () => {
     expect(body.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
   });
 
+  it("passes explicit required tool objectives through voice turns", async () => {
+    const seenRequiredToolCalls: Array<string[] | undefined> = [];
+    _setHostCodexManagerAgentRunnerForTest(async (input) => {
+      seenRequiredToolCalls.push(input.required_tool_calls);
+      return {
+        text: "已调用指定工具。",
+        spoken_text: "已调用指定工具。",
+        session_id: input.session_id || "host-session-required-tools",
+        run_id: null,
+        run_ids: [],
+        objective: {
+          required: true,
+          required_tool_calls: input.required_tool_calls ?? [],
+          satisfied: true,
+          tool_calls: [{ name: "skill_view_present", success: true }],
+        },
+        tool_calls: [{ id: "tool-1", name: "skill_view_present", input: { skill_id: "palquery", argv: ["present", "copilot"] } }],
+        tool_results: [{ tool_use_id: "tool-1", content: "{}" }],
+        worker_id: "host-codex",
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5", reasoning_effort: "low" }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    const turn = await fetch(`${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: "用 palquery 启动三面板。",
+        required_tool_calls: ["skill_view_present", "skill_view_present"],
+      }),
+    });
+    const body = await turn.json() as {
+      data: {
+        manager: {
+          objective: {
+            required?: boolean;
+            required_tool_calls?: string[];
+            satisfied?: boolean;
+          } | null;
+        };
+      };
+    };
+
+    expect(turn.status).toBe(200);
+    expect(seenRequiredToolCalls).toEqual([["skill_view_present"]]);
+    expect(body.data.manager.objective).toMatchObject({
+      required: true,
+      required_tool_calls: ["skill_view_present"],
+      satisfied: true,
+    });
+  });
+
   it("does not synthesize generated UI from verbose manager output without voice tools", async () => {
     const verbose = [
       "## Manager Agent",

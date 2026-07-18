@@ -662,7 +662,7 @@ export function normalizeManagerAgentDagActorCommandInput(
       const idempotencyKey = command.idempotency_key === undefined
         ? undefined
         : dagActorCommandIdentifier(command.idempotency_key, `commands[${index}].idempotency_key`);
-      const expectedStateToken = command.expected_state_token === undefined
+      const expectedStateToken = expectedRoundId !== undefined || command.expected_state_token === undefined
         ? undefined
         : dagActorCommandStateToken(command.expected_state_token, `commands[${index}].expected_state_token`);
       return {
@@ -684,7 +684,7 @@ export function normalizeManagerAgentDagActorCommandInput(
 
   const actorId = dagActorCommandIdentifier(args.actor_id, "actor_id");
   const idempotencyKey = dagActorCommandIdentifier(args.idempotency_key, "idempotency_key");
-  const expectedStateToken = args.expected_state_token === undefined
+  const expectedStateToken = expectedRoundId !== undefined || args.expected_state_token === undefined
     ? undefined
     : dagActorCommandStateToken(args.expected_state_token, "expected_state_token");
   if (!hasOwnProperty(args, "payload") || args.payload === undefined) {

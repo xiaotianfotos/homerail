@@ -428,8 +428,14 @@ describe("Manager Agent deterministic result envelope parity", () => {
     });
     expect(hostState.createdRunIds).toEqual(["run-three"]);
     expect(workerState.createdRunIds).toEqual(["run-three"]);
-    expect(hostState.objectiveToolCalls).toEqual([{ name: "start_supervised_dag", success: true }]);
-    expect(workerState.objectiveToolCalls).toEqual([{ name: "start_supervised_dag", success: true }]);
+    expect(hostState.objectiveToolCalls).toEqual([
+      { name: "skill_view_present", success: true },
+      { name: "start_supervised_dag", success: true },
+    ]);
+    expect(workerState.objectiveToolCalls).toEqual([
+      { name: "skill_view_present", success: true },
+      { name: "start_supervised_dag", success: true },
+    ]);
   });
 
   it("rejects raw generated-view submissions already owned by a loaded Skill template", async () => {
