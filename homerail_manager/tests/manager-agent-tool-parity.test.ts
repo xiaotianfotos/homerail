@@ -330,6 +330,114 @@ describe("Manager Agent deterministic result envelope parity", () => {
     ]);
   });
 
+  it("starts a Skill-owned supervised DAG in the same presenter Tool call", async () => {
+    const context = assemblePluginTurnContext(undefined, { modality: "voice" });
+    const { hostState, workerState, hostTools, workerTools } = createHarnessTools("voice", context);
+    hostState.restUrl = "https://manager.test/api";
+    vi.stubEnv("MANAGER_REST_URL", "https://manager.test/api");
+    const observed: Array<{ pathname: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (request: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof request === "string"
+        ? request
+        : request instanceof URL
+          ? request.toString()
+          : request.url;
+      const pathname = new URL(rawUrl).pathname;
+      observed.push({
+        pathname,
+        body: typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {},
+      });
+      const data = pathname.endsWith("/views/present")
+        ? {
+            mode: "supervised_dag",
+            launch: {
+              workflow_id: "three-worker",
+              profile: "local-model",
+              prompt: "verified evidence",
+              workflow_revision: 3,
+              canonical_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              profile_updated_at: "2026-07-18T00:00:00.000Z",
+            },
+            response_text: "Three panels are updating.",
+          }
+        : { run_id: "run-three", dispatched: 3 };
+      return new Response(JSON.stringify({ success: true, data }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const input = { skill_id: "route-skill", argv: ["present", "copilot"] };
+    const hostResult = await requireTool(hostTools, "skill_view_present").handler(input);
+    const workerPayload = {
+      project_id: "project-parity",
+      session_id: "session-parity",
+      response_mode: "voice" as const,
+      manager_api_scopes: [
+        "POST:/api/skills/*/views/present",
+        "POST:/api/runs/create-and-run",
+      ],
+    };
+    const workerTurn: ManagerAgentTurnEnvelopeV1 = {
+      claims: {
+        turn_envelope_version: 1,
+        issuer: "homerail-manager",
+        audience: "homerail-manager-agent-worker",
+        key_id: "manager-parity-key",
+        turn_id: "turn-skill-dag",
+        issued_at: "2026-07-15T00:00:00.000Z",
+        expires_at: "2026-07-15T00:05:00.000Z",
+        payload_digest: "b".repeat(64),
+        scope: managerAgentTurnScopeFromPayload(workerPayload, {
+          runtime_placement: "host_shell",
+          worker_id: "worker-parity",
+        }),
+      },
+      signature: "B".repeat(86),
+    };
+    const workerResult = await _withManagerTurnEnvelopeForTest(
+      workerTurn,
+      () => requireTool(workerTools, "skill_view_present").handler(input),
+    );
+    expect(hostResult).toEqual(workerResult);
+    expect(JSON.parse(hostResult.content[0]?.text || "{}") as Record<string, unknown>).toEqual({
+      mode: "supervised_dag",
+      run_id: "run-three",
+      workflow_id: "three-worker",
+      workflow_revision: 3,
+      canonical_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      profile: "local-model",
+      response_text: "Three panels are updating.",
+    });
+    expect(observed.map((entry) => entry.pathname)).toEqual([
+      "/api/skills/route-skill/views/present",
+      "/api/runs/create-and-run",
+      "/api/skills/route-skill/views/present",
+      "/api/runs/create-and-run",
+    ]);
+    const launchBodies = observed.filter((entry) => entry.pathname.endsWith("/create-and-run")).map((entry) => entry.body);
+    expect(launchBodies).toHaveLength(2);
+    expect(launchBodies[0]).toEqual(launchBodies[1]);
+    expect(launchBodies[0]).toMatchObject({
+      workflow_id: "three-worker",
+      workflow_revision: 3,
+      canonical_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      profile: "local-model",
+      profile_updated_at: "2026-07-18T00:00:00.000Z",
+      prompt: "verified evidence",
+      runId: expect.stringMatching(/^skill_[a-f0-9]{32}$/),
+    });
+    expect(hostState.createdRunIds).toEqual(["run-three"]);
+    expect(workerState.createdRunIds).toEqual(["run-three"]);
+    expect(hostState.objectiveToolCalls).toEqual([
+      { name: "skill_view_present", success: true },
+      { name: "start_supervised_dag", success: true },
+    ]);
+    expect(workerState.objectiveToolCalls).toEqual([
+      { name: "skill_view_present", success: true },
+      { name: "start_supervised_dag", success: true },
+    ]);
+  });
+
   it("rejects raw generated-view submissions already owned by a loaded Skill template", async () => {
     const context = assemblePluginTurnContext(undefined, { modality: "voice" });
     const { hostTools, workerTools } = createHarnessTools(

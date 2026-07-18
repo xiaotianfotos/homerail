@@ -12,6 +12,7 @@ import {
   DagLiveSurfaceProjectionError,
   getDagLiveSurfaceDocument,
   getDagLiveSurfaceProjection,
+  initializeDagLiveSurfaceRoster,
   isDagLiveSurfaceProjectionNode,
   listDagLiveSurfaceGenerationHistory,
   listDagLiveSurfaceProjections,
@@ -259,6 +260,44 @@ describe("DAG Live Surface Projector", () => {
       actor: { id: "research", node_id: "research" },
       state: { summary: "source found", sequence: 2 },
     });
+  });
+
+  it("pins concurrent Actor surfaces to workflow order before racing updates", () => {
+    const runId = "ordered-roster";
+    ensureRunDir(runId);
+    const actors = ["research", "build", "verify"].map((actorId) => {
+      register(runId, actorId);
+      return getDagActor(runId, actorId)!;
+    });
+
+    const initial = initializeDagLiveSurfaceRoster(actors, BASE_TIME)!;
+    expect(initial.revision).toBe(1);
+    expect(initial.nodes.map((node) => node.id)).toEqual([
+      "surface:research",
+      "surface:build",
+      "surface:verify",
+    ]);
+    expect(initial.nodes.map((node) => node.revision)).toEqual([1, 1, 1]);
+    expect(listDagLiveSurfaceProjections(runId).map((projection) => projection.surface_revision))
+      .toEqual([0, 0, 0]);
+    expect(initializeDagLiveSurfaceRoster(actors, BASE_TIME + 1)).toEqual(initial);
+
+    for (const actorId of ["verify", "research", "build"]) {
+      appendAndProject(activity({
+        run_id: runId,
+        actor_id: actorId,
+        sequence: 1,
+        type: "started",
+        payload: { message: `${actorId} started` },
+      }));
+    }
+    const updated = getDagLiveSurfaceDocument(runId)!;
+    expect(updated.nodes.map((node) => node.id)).toEqual([
+      "surface:research",
+      "surface:build",
+      "surface:verify",
+    ]);
+    expect(updated.nodes.map((node) => node.revision)).toEqual([2, 2, 2]);
   });
 
   it("queues out-of-order activity, deduplicates replay, and rejects late generations", () => {

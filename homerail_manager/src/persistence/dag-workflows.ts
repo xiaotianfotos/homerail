@@ -452,6 +452,12 @@ function _parseProfileYaml(yamlText: string, workflowIdOverride?: string): Omit<
   };
 }
 
+export function inspectDagRuntimeProfileYaml(
+  yamlText: string,
+): Omit<DagRuntimeProfile, "profile_key" | "created_at" | "updated_at"> {
+  return _parseProfileYaml(yamlText);
+}
+
 function _assertProfileHasNoProviderModel(root: Record<string, unknown>): void {
   const failures: string[] = [];
   const checkEntry = (prefix: string, value: unknown) => {
@@ -494,8 +500,25 @@ export function upsertDagRuntimeProfileFromYaml(input: {
   yaml_text: string;
   workflow_id?: string;
   source_path?: string;
+  expected_workflow_id?: string;
+  expected_profile_id?: string;
 }): { profile: DagRuntimeProfile; created: boolean } {
+  const declared = input.expected_workflow_id || input.expected_profile_id
+    ? _parseProfileYaml(input.yaml_text)
+    : undefined;
+  if (input.expected_workflow_id && declared?.workflow_id !== input.expected_workflow_id) {
+    throw new Error(`Runtime profile workflow identity mismatch: expected ${input.expected_workflow_id}, got ${declared?.workflow_id}`);
+  }
+  if (input.expected_profile_id && declared?.profile_id !== input.expected_profile_id) {
+    throw new Error(`Runtime profile identity mismatch: expected ${input.expected_profile_id}, got ${declared?.profile_id}`);
+  }
   const parsed = _parseProfileYaml(input.yaml_text, input.workflow_id);
+  if (input.expected_workflow_id && parsed.workflow_id !== input.expected_workflow_id) {
+    throw new Error(`Runtime profile workflow identity mismatch: expected ${input.expected_workflow_id}, got ${parsed.workflow_id}`);
+  }
+  if (input.expected_profile_id && parsed.profile_id !== input.expected_profile_id) {
+    throw new Error(`Runtime profile identity mismatch: expected ${input.expected_profile_id}, got ${parsed.profile_id}`);
+  }
   const workflow = getDagWorkflow(parsed.workflow_id);
   if (!workflow) {
     throw new Error(`DAG workflow not found in database: ${parsed.workflow_id}. Run hr dag sync first.`);

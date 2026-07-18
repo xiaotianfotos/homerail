@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { closeDb } from "../src/persistence/db.js";
+import { getDagRuntimeProfile, getDagWorkflow } from "../src/persistence/dag-workflows.js";
 import { _clearAllPersistence } from "../src/persistence/store.js";
 import { _clearActiveRuns, createActiveRun } from "../src/runtime/active-runs.js";
 import { createServer } from "../src/server/http.js";
@@ -165,6 +166,18 @@ describe("settings bootstrap routes", () => {
     }));
     fs.writeFileSync(path.join(skillDir, "presenter.js"), [
       "const [start, finish] = process.argv.slice(2);",
+      "if (['dag', 'escape', 'workflow-mismatch', 'profile-mismatch', 'symlink-escape'].includes(start)) {",
+      "  process.stdout.write(JSON.stringify({",
+      "    mode: 'supervised_dag',",
+      "    workflow_id: 'skill-dag',",
+      "    workflow_path: start === 'escape' ? '../../secret.yaml' : start === 'workflow-mismatch' ? 'assets/homerail/mismatched-workflow.yaml' : start === 'symlink-escape' ? 'assets/homerail/linked-workflow.yaml' : 'assets/homerail/workflow.yaml',",
+      "    profile_id: 'skill-profile',",
+      "    profile_path: start === 'profile-mismatch' ? 'assets/homerail/mismatched-profile.yaml' : 'assets/homerail/profile.yaml',",
+      "    workflow_prompt: 'verified mission',",
+      "    response_text: 'Workers started.',",
+      "  }));",
+      "  return;",
+      "}",
       "process.stdout.write(JSON.stringify({",
       "  template: 'route',",
       "  id: `route-${start}-${finish}`,",
@@ -173,6 +186,43 @@ describe("settings bootstrap routes", () => {
       "  response_text: `${start} reaches ${finish}.`,",
       "}));",
     ].join("\n"));
+    fs.writeFileSync(path.join(viewDir, "workflow.yaml"), [
+      "name: skill-dag",
+      "workflow_id: skill-dag",
+      "agents:",
+      "  worker:",
+      "    agent_type: claude-sdk",
+      "    system: HANDOFF port=done content=ok",
+      "nodes:",
+      "  work:",
+      "    agent: worker",
+      "    after: []",
+      "    outputs:",
+      "      done:",
+      "        to: ''",
+    ].join("\n"));
+    fs.writeFileSync(path.join(viewDir, "profile.yaml"), [
+      "profile_id: skill-profile",
+      "workflow_id: skill-dag",
+      "default:",
+      "  agent_type: claude-sdk",
+    ].join("\n"));
+    fs.writeFileSync(path.join(viewDir, "mismatched-workflow.yaml"), [
+      "name: another-dag",
+      "workflow_id: another-dag",
+      "agents: {}",
+      "nodes: {}",
+    ].join("\n"));
+    fs.writeFileSync(path.join(viewDir, "mismatched-profile.yaml"), [
+      "profile_id: skill-profile",
+      "workflow_id: another-dag",
+      "default:",
+      "  agent_type: claude-sdk",
+    ].join("\n"));
+    fs.writeFileSync(path.join(tmpHome, "secret.yaml"), "workflow_id: escaped\n");
+    if (process.platform !== "win32") {
+      fs.symlinkSync(path.join(tmpHome, "secret.yaml"), path.join(viewDir, "linked-workflow.yaml"));
+    }
 
     const port = await listen(server);
     const response = await fetch(
@@ -228,6 +278,84 @@ describe("settings bootstrap routes", () => {
         content: { data: { title: "start to finish", steps: ["start", "finish"] } },
       },
     });
+
+    const dagResponse = await fetch(
+      `http://127.0.0.1:${port}/api/skills/route-skill/views/present`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ argv: ["dag"] }),
+      },
+    );
+    const dagPresented = await dagResponse.json() as {
+      success: boolean;
+      data: Record<string, unknown>;
+    };
+    expect(dagResponse.status).toBe(200);
+    expect(dagPresented.data).toMatchObject({
+      mode: "supervised_dag",
+      launch: {
+        workflow_id: "skill-dag",
+        profile: "skill-profile",
+        prompt: "verified mission",
+        workflow_revision: 1,
+        canonical_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        profile_updated_at: expect.any(String),
+      },
+      workflow_revision: 1,
+      response_text: "Workers started.",
+    });
+    expect(getDagWorkflow("skill-dag")?.source_path).toBe("skill:route-skill/assets/homerail/workflow.yaml");
+    expect(getDagRuntimeProfile("skill-dag", "skill-profile")?.source_path)
+      .toBe("skill:route-skill/assets/homerail/profile.yaml");
+
+    const escapedDag = await fetch(
+      `http://127.0.0.1:${port}/api/skills/route-skill/views/present`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ argv: ["escape"] }),
+      },
+    );
+    expect(escapedDag.status).toBe(400);
+
+    const workflowBeforeMismatch = getDagWorkflow("skill-dag");
+    const mismatchedWorkflow = await fetch(
+      `http://127.0.0.1:${port}/api/skills/route-skill/views/present`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ argv: ["workflow-mismatch"] }),
+      },
+    );
+    expect(mismatchedWorkflow.status).toBe(400);
+    expect(getDagWorkflow("skill-dag")).toEqual(workflowBeforeMismatch);
+    expect(getDagWorkflow("another-dag")).toBeUndefined();
+
+    const profileBeforeMismatch = getDagRuntimeProfile("skill-dag", "skill-profile");
+    const mismatchedProfile = await fetch(
+      `http://127.0.0.1:${port}/api/skills/route-skill/views/present`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ argv: ["profile-mismatch"] }),
+      },
+    );
+    expect(mismatchedProfile.status).toBe(400);
+    expect(getDagWorkflow("skill-dag")).toEqual(workflowBeforeMismatch);
+    expect(getDagRuntimeProfile("skill-dag", "skill-profile")).toEqual(profileBeforeMismatch);
+
+    if (process.platform !== "win32") {
+      const symlinkEscape = await fetch(
+        `http://127.0.0.1:${port}/api/skills/route-skill/views/present`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ argv: ["symlink-escape"] }),
+        },
+      );
+      expect(symlinkEscape.status).toBe(400);
+    }
 
     const invalidArgv = await fetch(
       `http://127.0.0.1:${port}/api/skills/route-skill/views/present`,

@@ -435,6 +435,8 @@ describe("Manager Agent per-turn capability routing", () => {
     });
     expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.content)
       .toContain("LOCAL_SKILL_BODY_LOADED");
+    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.asset_root)
+      .toBe(fs.realpathSync(path.join(tmpHome, "skills", "palquery")));
     expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.view_templates)
       .toEqual([expect.objectContaining({
         id: "result",

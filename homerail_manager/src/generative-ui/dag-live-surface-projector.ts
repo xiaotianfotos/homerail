@@ -561,6 +561,89 @@ function ensureProjection(actor: DagActorRecord, timestamp: number): DagLiveSurf
   return requireProjection(actor.run_id, actor.actor_id);
 }
 
+/**
+ * Materialize concurrent entry Actors in workflow order before any Worker can
+ * race to publish its first activity. Later updates patch these stable nodes.
+ */
+export function initializeDagLiveSurfaceRoster(
+  actors: readonly DagActorRecord[],
+  timestamp = Date.now(),
+): GenerativeUiDocumentV1 | undefined {
+  if (actors.length === 0) return undefined;
+  const runId = actors[0].run_id;
+  if (actors.some((actor) => actor.run_id !== runId)) {
+    throw new DagLiveSurfaceProjectionError("identity_mismatch", "DAG live surface roster spans multiple runs");
+  }
+  const actorIds = new Set<string>();
+  const surfaceIds = new Set<string>();
+  for (const actor of actors) {
+    if (actorIds.has(actor.actor_id) || surfaceIds.has(actor.surface_id)) {
+      throw new DagLiveSurfaceProjectionError("identity_mismatch", "DAG live surface roster contains duplicate identities");
+    }
+    actorIds.add(actor.actor_id);
+    surfaceIds.add(actor.surface_id);
+  }
+
+  return getDb().transaction(() => {
+    const projections = actors.map((actor) => {
+      const projection = ensureProjection(actor, timestamp);
+      ensureDagActorSurfaceView({ actor, document_id: projection.document_id, now: timestamp });
+      return projection;
+    });
+    const document = persistentGenerativeUiDocumentService.get(
+      projections[0].document_id,
+      scopeFor(runId),
+    );
+    if (!document) throw new Error(`A2UI document not found: ${projections[0].document_id}`);
+    const existingIds = new Set(document.nodes.map((node) => node.id));
+    const operations = actors.flatMap((actor, index) => {
+      const projection = projections[index];
+      if (existingIds.has(projection.surface_id)) return [];
+      const event: DagActivityEventV1 = {
+        schema_version: 1,
+        event_id: `roster:${actor.actor_id}:g${actor.generation}`,
+        run_id: runId,
+        round_id: "roster",
+        node_id: actor.node_id,
+        actor_id: actor.actor_id,
+        generation: actor.generation,
+        surface_id: actor.surface_id,
+        sequence: 0,
+        timestamp,
+        type: "started",
+        payload: { message: "Waiting to start" },
+      };
+      const projected = buildProjectedNode({
+        actor,
+        projection: { ...projection, surface_revision: -1 },
+        event,
+        received_at: timestamp,
+      });
+      return [{ op: "put" as const, node: projected.node }];
+    });
+    if (operations.length === 0) return document;
+    const rosterDigest = createHash("sha256")
+      .update(JSON.stringify(actors.map((actor) => [actor.actor_id, actor.surface_id])))
+      .digest("hex");
+    const result = persistentGenerativeUiDocumentService.apply({
+      ir_version: GENERATIVE_UI_IR_VERSION,
+      transaction_id: `dag-live-surface-roster-${rosterDigest}`,
+      document_id: document.document_id,
+      base_revision: document.revision,
+      actor: { type: GenerativeUiActorType.SYSTEM, id: PROJECTOR_ID },
+      operations,
+      created_at: new Date(timestamp).toISOString(),
+    }, scopeFor(runId));
+    if (result.status !== "applied" && result.status !== "duplicate") {
+      throw new DagLiveSurfaceProjectionError(
+        result.status === "conflict" ? "a2ui_revision_conflict" : "a2ui_rejected",
+        "DAG live surface roster could not be materialized",
+      );
+    }
+    return result.document;
+  })();
+}
+
 function assertJournalIdentity(entry: DagActivityJournalEntry, actor: DagActorRecord): void {
   const { event } = entry;
   if (

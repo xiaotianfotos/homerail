@@ -3,6 +3,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { AgentEvent, AgentRunContext, DagToolDefinition } from "../agent/types.js";
 import {
   jsonSchemaObjectToZodRawShape,
@@ -400,6 +403,78 @@ describe("ClaudeSdkAdapter", () => {
       type: "debug",
       data: expect.objectContaining({ system_prompt_mode: "append" }),
     });
+  });
+
+  it("projects only HomeRail Skills into an isolated native Claude Skill directory", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-claude-skills-test-"));
+    const home = path.join(root, "home");
+    const localSkill = path.join(home, "skills", "local-guide");
+    fs.mkdirSync(path.join(localSkill, "references"), { recursive: true });
+    fs.writeFileSync(path.join(localSkill, "SKILL.md"), [
+      "---",
+      "name: local-guide",
+      "description: Local guide",
+      "---",
+      "",
+      "Read references/details.md when needed.",
+    ].join("\n"));
+    fs.writeFileSync(path.join(localSkill, "references", "details.md"), "trusted details\n");
+    vi.stubEnv("HOMERAIL_HOME", home);
+    const captured: Record<string, unknown>[] = [];
+    let localBody = "";
+    let referenceBody = "";
+    let inlineBody = "";
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: Record<string, unknown> }) {
+        const options = params.options ?? {};
+        captured.push(options);
+        const configDir = (options.env as Record<string, string>).CLAUDE_CONFIG_DIR;
+        localBody = fs.readFileSync(path.join(configDir, "skills", "local-guide", "SKILL.md"), "utf8");
+        referenceBody = fs.readFileSync(path.join(configDir, "skills", "local-guide", "references", "details.md"), "utf8");
+        inlineBody = fs.readFileSync(path.join(configDir, "skills", "inline-guide", "SKILL.md"), "utf8");
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(_opts: { name: string; tools?: Array<Record<string, unknown>> }) {
+        return { type: "sdk", name: _opts.name };
+      },
+      tool(name: string) {
+        return { name };
+      },
+    }));
+
+    try {
+      const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+      const adapter = new ClaudeSdkAdapter();
+      const events: AgentEvent[] = [];
+      for await (const event of adapter.run("test", [], {
+        ...ctx,
+        skillProjection: {
+          mode: "explicit",
+          directories: [path.join(home, "skills")],
+          definitions: [{
+            id: "plugin:inline-guide",
+            name: "inline-guide",
+            description: "Inline guide",
+            content: "Use the trusted inline procedure.",
+          }],
+        },
+      })) events.push(event);
+
+      expect(captured[0].settingSources).toEqual(["user"]);
+      expect(captured[0].skills).toBe("all");
+      expect(localBody).toContain("Read references/details.md");
+      expect(referenceBody).toBe("trusted details\n");
+      expect(inlineBody).toContain("Use the trusted inline procedure.");
+      const configDir = (captured[0].env as Record<string, string>).CLAUDE_CONFIG_DIR;
+      expect(configDir).toContain(path.join(home, "runtime", "claude-skill-projections"));
+      expect(fs.existsSync(configDir)).toBe(false);
+      expect(events.find((event) => event.type === "debug" && event.message === "query_start")).toMatchObject({
+        type: "debug",
+        data: expect.objectContaining({ projected_skill_count: 2 }),
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("respects env vars", async () => {

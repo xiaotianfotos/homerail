@@ -56,6 +56,9 @@ export interface CreateRunRequest {
   prompt?: string;
   llmSettingId?: string;
   admissionSource?: string;
+  expectedWorkflowRevision?: number;
+  expectedCanonicalHash?: string;
+  expectedProfileUpdatedAt?: string;
 }
 
 export interface CreateRunResponse {
@@ -264,6 +267,12 @@ function _loadDagForRequest(request: CreateRunRequest): ParsedDAG {
     if (!workflow) {
       throw new Error(`DAG workflow not found in database: ${workflowId}. Run hr dag sync first.`);
     }
+    if (request.expectedWorkflowRevision !== undefined && workflow.head_revision !== request.expectedWorkflowRevision) {
+      throw new Error(`DAG workflow revision conflict: expected ${request.expectedWorkflowRevision}, got ${workflow.head_revision}`);
+    }
+    if (request.expectedCanonicalHash && workflow.canonical_hash !== request.expectedCanonicalHash) {
+      throw new Error("DAG workflow canonical hash conflict");
+    }
     return parseStoredDagWorkflow(workflow);
   }
   if (!request.yamlPath) {
@@ -275,16 +284,27 @@ function _loadDagForRequest(request: CreateRunRequest): ParsedDAG {
 
 function _applyRuntimeProfile(parsed: ParsedDAG, request: CreateRunRequest): ParsedDAG {
   const profileName = request.profile?.trim();
-  if (!profileName) return parsed;
+  if (!profileName) {
+    if (request.expectedProfileUpdatedAt) {
+      throw new Error("DAG runtime profile version requires a database-backed profile");
+    }
+    return parsed;
+  }
   const workflowId = request.workflowId?.trim() || parsed.meta.workflow_id;
   if (workflowId) {
     const dbProfile = getDagRuntimeProfile(workflowId, profileName);
     if (dbProfile) {
+      if (request.expectedProfileUpdatedAt && dbProfile.updated_at !== request.expectedProfileUpdatedAt) {
+        throw new Error("DAG runtime profile version conflict");
+      }
       return applyDagRuntimeProfile(parsed, resolveDagRuntimeProfile(dbProfile));
     }
     if (!parsed.meta.runtime_profiles?.[profileName]) {
       throw new Error(`DAG runtime profile not found in database for workflow '${workflowId}': ${profileName}. Run hr profile sync first.`);
     }
+  }
+  if (request.expectedProfileUpdatedAt) {
+    throw new Error("DAG runtime profile version requires a database-backed profile");
   }
   return _applyProfile(parsed, profileName);
 }

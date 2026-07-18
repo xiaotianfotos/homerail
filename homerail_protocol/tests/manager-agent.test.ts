@@ -465,6 +465,8 @@ describe("Manager Agent harness contract", () => {
     const validate = new Ajv({ strict: true }).compile(spec.input_schema);
     expect(spec.description).toContain("command_payload_contract");
     expect(spec.description).toContain("never encode those constraints only in prose");
+    expect(spec.description).toContain("top-level expected_round_id");
+    expect(spec.description).toContain("read supervision again instead of guessing");
     const commandItems = spec.input_schema.properties?.commands?.items as {
       properties?: { payload?: { description?: string } };
     };
@@ -494,6 +496,10 @@ describe("Manager Agent harness contract", () => {
         payload: index,
       })),
     })).toBe(true);
+
+    expect(managerAgentToolSpec("complete_dag_run").description).toContain("only when the user explicitly asks");
+    expect(managerAgentToolSpec("complete_dag_run").description).toContain("not an error-recovery action");
+    expect(managerAgentToolSpec("invoke_run").description).toContain("Do not use this to recover a completed or cancelled run");
 
     const invalidInputs = [
       { ...legacy, expected_round_id: "" },
@@ -825,11 +831,14 @@ describe("Manager Agent harness contract", () => {
         description: "Build structured voice UI.",
         source: "plugin",
         content: "Use the bound Core Tool once and require a committed result.",
+        asset_root: "/trusted/skills/voice-generative-ui",
       }],
     });
 
     expect(prompt).toContain("com.homerail.core:voice-generative-ui: Build structured voice UI. [plugin] [already loaded]");
     expect(prompt).toContain("## Loaded HomeRail Skill: com.homerail.core:voice-generative-ui");
+    expect(prompt).toContain('Trusted Skill asset root: "/trusted/skills/voice-generative-ui"');
+    expect(prompt).toContain("Resolve relative Skill references and scripts from this root.");
     expect(prompt).toContain("Use the bound Core Tool once and require a committed result.");
     expect(prompt).toContain("do not call read_skill again");
   });

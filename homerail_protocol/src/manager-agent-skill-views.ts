@@ -55,11 +55,11 @@ export function managerAgentSkillViewPresentToolDefinition(): AgentToolDefinitio
   return {
     name: MANAGER_AGENT_SKILL_VIEW_PRESENT_TOOL_NAME,
     description: [
-      "Run the trusted visual presenter shipped by an enabled local HomeRail Skill and publish its validated template in one call.",
+      "Run the trusted presenter shipped by an enabled local HomeRail Skill and publish its validated visual or start its supervised DAG in one call.",
       "Use this instead of a native shell when the Skill gives a present command; pass only the argv tokens after the Skill's trusted base command.",
       "Example: a Skill instruction 'present route A B --limit 4' becomes {skill_id:'catalog', argv:['present','route','A','B','--limit','4']}.",
-      "HomeRail executes without a shell, validates the returned template, id, canvas_size, and data, then commits the visual result.",
-      "After success, use the returned response_text as the short final answer; do not call skill_view_render again.",
+      "HomeRail executes without a shell. Visual results are validated and committed; supervised DAG results may load only Workflow/Profile assets inside that Skill before the run starts.",
+      "After success, use the returned response_text as the short final answer; do not call skill_view_render or start_supervised_dag again.",
     ].join(" "),
     input_schema: {
       type: "object",
@@ -85,6 +85,73 @@ export function managerAgentSkillViewPresentToolDefinition(): AgentToolDefinitio
       required: ["skill_id", "argv"],
       additionalProperties: false,
     },
+  };
+}
+
+export interface ManagerAgentSkillSupervisedDagLaunchV1 {
+  workflow_id: string;
+  prompt: string;
+  workflow_revision: number;
+  canonical_hash: string;
+  profile?: string;
+  profile_updated_at?: string;
+}
+
+export function normalizeManagerAgentSkillSupervisedDagLaunch(
+  value: Record<string, unknown>,
+): ManagerAgentSkillSupervisedDagLaunchV1 | undefined {
+  if (value.mode !== "supervised_dag") return undefined;
+  const launch = record(value.launch);
+  const workflowId = typeof launch?.workflow_id === "string" ? launch.workflow_id.trim() : "";
+  const prompt = typeof launch?.prompt === "string" ? launch.prompt : "";
+  const profile = typeof launch?.profile === "string" ? launch.profile.trim() : "";
+  const workflowRevision = Number(launch?.workflow_revision);
+  const canonicalHash = typeof launch?.canonical_hash === "string" ? launch.canonical_hash.trim() : "";
+  const profileUpdatedAt = typeof launch?.profile_updated_at === "string" ? launch.profile_updated_at.trim() : "";
+  if (
+    !workflowId
+    || workflowId.length > 200
+    || !prompt.trim()
+    || prompt.length > 24_000
+    || !Number.isSafeInteger(workflowRevision)
+    || workflowRevision < 1
+    || !/^[a-f0-9]{64}$/.test(canonicalHash)
+    || profile.length > 200
+    || Boolean(profile) !== Boolean(profileUpdatedAt)
+  ) {
+    throw new Error("Manager returned an invalid supervised Skill DAG launch");
+  }
+  return {
+    workflow_id: workflowId,
+    prompt,
+    workflow_revision: workflowRevision,
+    canonical_hash: canonicalHash,
+    ...(profile ? { profile } : {}),
+    ...(profileUpdatedAt ? { profile_updated_at: profileUpdatedAt } : {}),
+  };
+}
+
+export function compactManagerAgentSkillSupervisedDagResult(
+  result: Record<string, unknown>,
+  launch: ManagerAgentSkillSupervisedDagLaunchV1,
+  responseText = "",
+): Record<string, unknown> {
+  const data = record(result.data) ?? result;
+  const runId = typeof data.run_id === "string" && data.run_id.trim()
+    ? data.run_id.trim()
+    : typeof data.runId === "string" && data.runId.trim()
+      ? data.runId.trim()
+      : "";
+  if (!runId) throw new Error("Manager did not return a supervised DAG run id");
+  const normalizedResponse = responseText.trim();
+  return {
+    mode: "supervised_dag",
+    run_id: runId,
+    workflow_id: launch.workflow_id,
+    workflow_revision: launch.workflow_revision,
+    canonical_hash: launch.canonical_hash,
+    ...(launch.profile ? { profile: launch.profile } : {}),
+    ...(normalizedResponse ? { response_text: normalizedResponse } : {}),
   };
 }
 

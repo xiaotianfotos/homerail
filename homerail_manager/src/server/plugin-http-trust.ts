@@ -10,7 +10,8 @@ export const MIN_ADMIN_TOKEN_BYTES = 32;
 const MAX_ADMIN_TOKEN_BYTES = 4 * 1024;
 const API_PREFIX = "/api";
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const PREFLIGHT_HEADERS = new Set(["authorization", "content-type", "if-none-match", HOMERAIL_MANAGER_TURN_HEADER]);
+const DAG_MUTATION_TOKEN_HEADER = "x-homerail-dag-token";
+const PREFLIGHT_HEADERS = new Set(["authorization", "content-type", "if-none-match", DAG_MUTATION_TOKEN_HEADER, HOMERAIL_MANAGER_TURN_HEADER]);
 
 export interface PluginHttpTrustPolicyOptions {
   bindHost?: string;
@@ -19,6 +20,12 @@ export interface PluginHttpTrustPolicyOptions {
   allowedOrigins?: string;
   unsafeAllowUnauthenticatedPublic?: boolean;
   turnAuthorizer?: (credential: string, method: string, pathname: string) => boolean;
+  scopedMutationAuthorizer?: (input: {
+    method: string;
+    pathname: string;
+    headers: http.IncomingHttpHeaders;
+    remoteAddress?: string;
+  }) => boolean;
 }
 
 export interface PluginHttpTrustPolicy {
@@ -28,6 +35,12 @@ export interface PluginHttpTrustPolicy {
   readonly allowedOrigins: readonly string[];
   readonly unsafeAllowUnauthenticatedPublic: boolean;
   readonly turnAuthorizer?: (credential: string, method: string, pathname: string) => boolean;
+  readonly scopedMutationAuthorizer?: (input: {
+    method: string;
+    pathname: string;
+    headers: http.IncomingHttpHeaders;
+    remoteAddress?: string;
+  }) => boolean;
 }
 
 /**
@@ -57,6 +70,7 @@ export function createPluginHttpTrustPolicy(
     allowedOrigins: Object.freeze(parseAllowedOrigins(options.allowedOrigins)),
     unsafeAllowUnauthenticatedPublic,
     turnAuthorizer: options.turnAuthorizer,
+    scopedMutationAuthorizer: options.scopedMutationAuthorizer,
   });
 }
 
@@ -131,6 +145,12 @@ export function pluginHttpTrustHandler(
   if (policy.adminToken) {
     const turnCredential = singleHeader(req.headers[HOMERAIL_MANAGER_TURN_HEADER]);
     if (turnCredential && policy.turnAuthorizer?.(turnCredential, method, pathname)) return false;
+    if (policy.scopedMutationAuthorizer?.({
+      method,
+      pathname,
+      headers: req.headers,
+      remoteAddress: req.socket.remoteAddress,
+    })) return false;
     const supplied = parseBearerToken(req.headers.authorization);
     if (!supplied) {
       req.resume();

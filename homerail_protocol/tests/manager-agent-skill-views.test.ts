@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MANAGER_AGENT_SKILL_VIEW_PRESENT_TOOL_NAME,
   MANAGER_AGENT_SKILL_VIEW_RENDER_TOOL_NAME,
+  compactManagerAgentSkillSupervisedDagResult,
   compactManagerAgentSkillViewPresentResult,
   managerAgentSkillViewPresentToolDefinition,
   managerAgentSkillViewRenderToolDefinition,
@@ -11,6 +12,7 @@ import {
   managerAgentSkillViewToolName,
   materializeManagerAgentSkillViewInput,
   materializeManagerAgentSkillViewTemplateInput,
+  normalizeManagerAgentSkillSupervisedDagLaunch,
   type ManagerAgentSkillViewTemplateV1,
 } from "../src/manager-agent-skill-views.js";
 
@@ -60,7 +62,47 @@ describe("Manager Agent Skill view templates", () => {
       },
     });
     expect(definition.description).toContain("without a shell");
-    expect(definition.description).toContain("do not call skill_view_render again");
+    expect(definition.description).toContain("start its supervised DAG in one call");
+    expect(definition.description).toContain("do not call skill_view_render or start_supervised_dag again");
+  });
+
+  it("normalizes and compacts a trusted supervised DAG launch", () => {
+    const launch = normalizeManagerAgentSkillSupervisedDagLaunch({
+      mode: "supervised_dag",
+      launch: {
+        workflow_id: "three-worker",
+        profile: "local-model",
+        prompt: "verified evidence",
+        workflow_revision: 3,
+        canonical_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        profile_updated_at: "2026-07-18T00:00:00.000Z",
+      },
+    });
+    expect(launch).toEqual({
+      workflow_id: "three-worker",
+      profile: "local-model",
+      prompt: "verified evidence",
+      workflow_revision: 3,
+      canonical_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      profile_updated_at: "2026-07-18T00:00:00.000Z",
+    });
+    expect(compactManagerAgentSkillSupervisedDagResult({
+      success: true,
+      data: { run_id: "run-three", dispatched: 3, internal: "omitted" },
+    }, launch!, "Three panels are updating.")).toEqual({
+      mode: "supervised_dag",
+      run_id: "run-three",
+      workflow_id: "three-worker",
+      workflow_revision: 3,
+      canonical_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      profile: "local-model",
+      response_text: "Three panels are updating.",
+    });
+    expect(normalizeManagerAgentSkillSupervisedDagLaunch({ mode: "visual" })).toBeUndefined();
+    expect(() => normalizeManagerAgentSkillSupervisedDagLaunch({
+      mode: "supervised_dag",
+      launch: { workflow_id: "three-worker", prompt: "" },
+    })).toThrow(/invalid supervised Skill DAG launch/);
   });
 
   it("keeps presenter Tool results compact while preserving committed evidence", () => {

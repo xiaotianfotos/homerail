@@ -37,6 +37,7 @@ import { resolveCodexBinary, runCodexCommandSync } from "./codex-binary.js";
 import {
   managerAgentRuntimePlacementForHarness,
   managerAgentPluginOwnedLegacyWidgetType,
+  normalizeManagerAgentRequiredToolCalls,
   normalizeManagerAgentHarness,
   type GenerativeUiNodeV1,
   type HomerailPluginTurnContextV1,
@@ -1501,6 +1502,7 @@ async function submitVoiceWorkspaceToManagerAgent(
   options?: HostShellManagerAgentOptions,
   realtimeHooks?: ManagerAgentRealtimeHooks,
   selectedNodeId?: string,
+  requiredToolCalls: string[] = [],
 ): Promise<ManagerAgentHandoffResult> {
   if (workspace.task_draft) workspace.task_draft.status = "submitted";
   workspace.pending_confirmations = [];
@@ -1560,6 +1562,7 @@ async function submitVoiceWorkspaceToManagerAgent(
       canvas_context: canvasContext,
       dag_context: workspaceDagContext(workspace),
       history: managerAgentHistory(workspace),
+      required_tool_calls: requiredToolCalls,
       agent_config: agentConfig,
       voice_ui_rules: voiceUiRules,
       plugin_routing: {
@@ -1698,6 +1701,7 @@ async function processTurn(
   realtimeHooks?: ManagerAgentRealtimeHooks,
   managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
   selectedNodeId?: string,
+  requiredToolCalls: string[] = [],
 ): Promise<VoiceTurnResult> {
   appendConversation(workspace, "user", text);
   ensureVoiceSessionTitle(workspace, text);
@@ -1712,6 +1716,7 @@ async function processTurn(
     options,
     realtimeHooks,
     selectedNodeId,
+    requiredToolCalls,
   );
 }
 
@@ -2006,6 +2011,7 @@ export function voiceAgentBootstrapHandler(
         }
         const projectIdPatch = typeof body.project_id === "string" ? body.project_id : null;
         const selectedNodeId = selectedGenerativeUiNodeId(body);
+        const requiredToolCalls = normalizeManagerAgentRequiredToolCalls(body.required_tool_calls);
         // workspace 必须在锁内重新读取：否则并发 turn 的第二个请求会拿着旧快照覆盖第一个的结果。
         const result = await withSessionLock(sessionId, async () => {
           const workspace = loadWorkspace(sessionId);
@@ -2021,6 +2027,7 @@ export function voiceAgentBootstrapHandler(
               undefined,
               managerAgentConfigOptions,
               selectedNodeId,
+              requiredToolCalls,
             );
             const saved = saveWorkspace(workspace);
             completeTurn(sessionId, saved.progress_brief?.status || "done");
@@ -2055,6 +2062,7 @@ export function voiceAgentBootstrapHandler(
         const text = typeof body.text === "string" ? body.text.trim() : "";
         const projectIdPatch = typeof body.project_id === "string" ? body.project_id : null;
         const selectedNodeId = selectedGenerativeUiNodeId(body);
+        const requiredToolCalls = normalizeManagerAgentRequiredToolCalls(body.required_tool_calls);
         res.writeHead(200, { "Content-Type": "application/x-ndjson" });
         if (!text) {
           streamLine(res, { type: "error", message: "Missing required field: text" });
@@ -2096,7 +2104,7 @@ export function voiceAgentBootstrapHandler(
                 }
                 streamLine(res, { type: "speech", event, workspace: saved });
               },
-            }, managerAgentConfigOptions, selectedNodeId);
+            }, managerAgentConfigOptions, selectedNodeId, requiredToolCalls);
             const saved = saveWorkspace(workspace);
             if (streamGenerativeUi) {
               generativeUiCursor = streamCommittedGenerativeUiTransactions(

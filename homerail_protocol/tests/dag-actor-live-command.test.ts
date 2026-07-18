@@ -84,6 +84,40 @@ describe("DAG Actor live-command protocol", () => {
         payload: { operation: "generic" },
       }],
     });
+    expect(normalizeManagerAgentDagActorCommandInput({
+      run_id: "run-1",
+      expected_round_id: "round-0001",
+      commands: [{
+        actor_id: "actor-1",
+        idempotency_key: "turn-2",
+        expected_state_token: "stale-token-from-previous-active-round",
+        payload: { operation: "generic" },
+      }],
+    })).toEqual({
+      run_id: "run-1",
+      expected_round_id: "round-0001",
+      commands: [{
+        actor_id: "actor-1",
+        idempotency_key: "turn-2",
+        payload: { operation: "generic" },
+      }],
+    });
+    expect(normalizeManagerAgentDagActorCommandInput({
+      run_id: "run-1",
+      expected_round_id: "round-0001",
+      actor_id: "actor-1",
+      idempotency_key: "turn-3",
+      expected_state_token: "stale-token-from-previous-active-round",
+      payload: { operation: "generic" },
+    })).toEqual({
+      run_id: "run-1",
+      expected_round_id: "round-0001",
+      commands: [{
+        actor_id: "actor-1",
+        idempotency_key: "turn-3",
+        payload: { operation: "generic" },
+      }],
+    });
     const spec = managerAgentToolSpec("send_dag_actor_command");
     expect(spec.input_schema.required).toEqual(["run_id", "commands"]);
     expect(JSON.stringify(spec)).not.toMatch(/showcase|researcher|writer|visual/i);

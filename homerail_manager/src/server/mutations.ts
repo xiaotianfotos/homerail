@@ -412,8 +412,29 @@ export function mutationRoutesHandler(
         const runId = typeof b.runId === "string" ? b.runId : undefined;
         const prompt = typeof b.prompt === "string" ? b.prompt : undefined;
         const llmSettingId = typeof b.llm_setting_id === "string" && b.llm_setting_id.trim() ? b.llm_setting_id.trim() : undefined;
+        const expectedWorkflowRevision = b.workflow_revision === undefined ? undefined : Number(b.workflow_revision);
+        const expectedCanonicalHash = typeof b.canonical_hash === "string" ? b.canonical_hash.trim() : undefined;
+        const expectedProfileUpdatedAt = typeof b.profile_updated_at === "string" ? b.profile_updated_at.trim() : undefined;
+        if (expectedWorkflowRevision !== undefined && (!Number.isSafeInteger(expectedWorkflowRevision) || expectedWorkflowRevision < 1)) {
+          _badRequest(res, "workflow_revision must be a positive integer");
+          return;
+        }
+        if (expectedCanonicalHash !== undefined && !/^[a-f0-9]{64}$/.test(expectedCanonicalHash)) {
+          _badRequest(res, "canonical_hash must be a SHA-256 digest");
+          return;
+        }
         try {
-          const result = changeOrchestrator.createAndRun({ yamlPath, workflowId, profile, runId, prompt, llmSettingId });
+          const result = changeOrchestrator.createAndRun({
+            yamlPath,
+            workflowId,
+            profile,
+            runId,
+            prompt,
+            llmSettingId,
+            expectedWorkflowRevision,
+            expectedCanonicalHash,
+            expectedProfileUpdatedAt,
+          });
           _created(res, "Run created and invoked", result);
         } catch (err) {
           _runCreationError(res, err);

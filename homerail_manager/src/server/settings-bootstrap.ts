@@ -9,9 +9,19 @@ import {
   ensureManagerSkillsInstalled,
   executeManagerSkillViewPresenter,
   listManagerSkills,
+  readManagerSkillDagAsset,
   readManagerSkill,
   readManagerSkillViewTemplates,
 } from "./manager-skills.js";
+import {
+  getDagRuntimeProfile,
+  getDagWorkflow,
+  inspectDagRuntimeProfileYaml,
+  upsertDagRuntimeProfileFromYaml,
+  upsertDagWorkflowFromYaml,
+} from "../persistence/dag-workflows.js";
+import { compileWorkflowSource } from "../orchestration/workflow-spec-v1.js";
+import { isDagMutationRequestAuthorized } from "./mutations.js";
 import {
   isCanonicalHomerailPluginSemver,
   materializeManagerAgentSkillViewTemplateInput,
@@ -603,6 +613,89 @@ export function settingsBootstrapHandler(
     readJsonBody(req)
       .then(async (body) => {
         const presented = await executeManagerSkillViewPresenter(skillId, body.argv);
+        if (presented.mode === "supervised_dag") {
+          const rawMutationHeader = req.headers["x-homerail-dag-token"];
+          const mutationHeader = Array.isArray(rawMutationHeader) ? rawMutationHeader[0] : rawMutationHeader;
+          if (!isDagMutationRequestAuthorized({
+            remoteAddress: req.socket.remoteAddress,
+            headerToken: mutationHeader,
+            configuredToken: process.env.HOMERAIL_DAG_MUTATION_TOKEN,
+          })) {
+            json(res, 403, {
+              success: false,
+              message: "Skill supervised DAG preparation requires DAG mutation authorization",
+              error: "Skill supervised DAG preparation requires DAG mutation authorization",
+            });
+            return;
+          }
+          const workflowId = typeof presented.workflow_id === "string" ? presented.workflow_id.trim() : "";
+          const prompt = typeof presented.workflow_prompt === "string" ? presented.workflow_prompt : "";
+          const profileId = typeof presented.profile_id === "string" ? presented.profile_id.trim() : "";
+          const hasProfilePath = presented.profile_path !== undefined;
+          const responseText = presented.response_text === undefined
+            ? ""
+            : typeof presented.response_text === "string"
+              ? presented.response_text.trim()
+              : "";
+          if (
+            !workflowId
+            || workflowId.length > 200
+            || !prompt.trim()
+            || prompt.length > 24_000
+            || responseText.length > 2_000
+            || Boolean(profileId) !== hasProfilePath
+          ) throw new Error("Skill view presenter returned an invalid supervised DAG contract");
+          const workflowAsset = readManagerSkillDagAsset(skillId, presented.workflow_path);
+          const compilation = compileWorkflowSource(workflowAsset.text);
+          if (!compilation.valid || !compilation.canonical || compilation.canonical.workflow_id !== workflowId) {
+            throw new Error("Skill DAG workflow identity does not match its trusted asset");
+          }
+          const existingWorkflow = getDagWorkflow(workflowId);
+          if (existingWorkflow && existingWorkflow.source_path !== workflowAsset.source_path) {
+            throw new Error("Skill DAG workflow identity is already owned by another source");
+          }
+          let profileAsset: ReturnType<typeof readManagerSkillDagAsset> | undefined;
+          if (profileId) {
+            profileAsset = readManagerSkillDagAsset(skillId, presented.profile_path);
+            const inspectedProfile = inspectDagRuntimeProfileYaml(profileAsset.text);
+            if (inspectedProfile.workflow_id !== workflowId || inspectedProfile.profile_id !== profileId) {
+              throw new Error("Skill DAG profile identity does not match its trusted asset");
+            }
+            const existingProfile = getDagRuntimeProfile(workflowId, profileId);
+            if (existingProfile && existingProfile.source_path !== profileAsset.source_path) {
+              throw new Error("Skill DAG profile identity is already owned by another source");
+            }
+          }
+          const workflowResult = upsertDagWorkflowFromYaml({
+            yaml_text: workflowAsset.text,
+            source_path: workflowAsset.source_path,
+          });
+          let profileUpdatedAt = "";
+          if (profileId) {
+            const profileResult = upsertDagRuntimeProfileFromYaml({
+              yaml_text: profileAsset!.text,
+              source_path: profileAsset!.source_path,
+              expected_workflow_id: workflowId,
+              expected_profile_id: profileId,
+            });
+            profileUpdatedAt = profileResult.profile.updated_at;
+          }
+          _ok(res, "Skill supervised DAG prepared", {
+            mode: "supervised_dag",
+            launch: {
+              workflow_id: workflowId,
+              prompt,
+              workflow_revision: workflowResult.workflow.head_revision,
+              canonical_hash: workflowResult.workflow.canonical_hash,
+              ...(profileId ? { profile: profileId } : {}),
+              ...(profileUpdatedAt ? { profile_updated_at: profileUpdatedAt } : {}),
+            },
+            workflow_revision: workflowResult.workflow.head_revision,
+            canonical_hash: workflowResult.workflow.canonical_hash,
+            ...(responseText ? { response_text: responseText } : {}),
+          });
+          return;
+        }
         const templateId = typeof presented.template === "string" ? presented.template.trim() : "";
         const id = typeof presented.id === "string" ? presented.id.trim() : "";
         const data = presented.data && typeof presented.data === "object" && !Array.isArray(presented.data)

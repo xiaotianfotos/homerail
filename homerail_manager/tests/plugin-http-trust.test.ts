@@ -142,6 +142,40 @@ describe("Manager HTTP mutation trust gate", () => {
     expect((await fetch(`${baseUrl}/api/plugins`)).status).toBe(200);
   });
 
+  it("allows scoped DAG mutation tokens without granting general Manager mutation access", async () => {
+    process.env[HOMERAIL_MANAGER_ADMIN_TOKEN] = VALID_TOKEN;
+    process.env.HOMERAIL_DAG_MUTATION_TOKEN = "dag-mutation-secret";
+    await start();
+
+    const dagMutation = await fetch(`${baseUrl}/api/runs/create-and-run`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Homerail-Dag-Token": "dag-mutation-secret",
+      },
+      body: "{}",
+    });
+    expect(dagMutation.status).not.toBe(401);
+    expect(dagMutation.status).not.toBe(403);
+
+    const skillPresenter = await fetch(`${baseUrl}/api/skills/missing-skill/views/present`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Homerail-Dag-Token": "dag-mutation-secret",
+      },
+      body: JSON.stringify({ argv: ["present"] }),
+    });
+    expect(skillPresenter.status).not.toBe(401);
+    expect(skillPresenter.status).not.toBe(403);
+
+    const generalMutation = await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "POST",
+      headers: { "X-Homerail-Dag-Token": "dag-mutation-secret" },
+    });
+    expect(generalMutation.status).toBe(401);
+  });
+
   it("fails server creation closed for LAN/public configuration without a strong token", () => {
     process.env.HOMERAIL_MANAGER_HOST = "0.0.0.0";
     expect(() => createServer(0, undefined, undefined, false)).toThrow(HOMERAIL_MANAGER_ADMIN_TOKEN);

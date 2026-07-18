@@ -214,6 +214,17 @@ export function createServer(
     turnAuthorizer: (credential, method, pathname) => (
       getManagerAgentTurnEnvelopeAuthority().authorizeApiRequest({ credential, method, pathname })
     ),
+    scopedMutationAuthorizer: ({ method, pathname, headers, remoteAddress }) => {
+      const skillViewPresent = method === "POST" && /^\/api\/skills\/[^/]+\/views\/present$/.test(pathname);
+      if (!requiresDagMutationAuthorization(pathname, method) && !skillViewPresent) return false;
+      const rawHeader = headers["x-homerail-dag-token"];
+      const headerToken = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+      return isDagMutationRequestAuthorized({
+        remoteAddress,
+        headerToken,
+        configuredToken: process.env.HOMERAIL_DAG_MUTATION_TOKEN,
+      });
+    },
   });
   const workerControlPlaneAuth = resolveWorkerControlPlaneAuth();
   const effectiveWorkerToken = wsOptions?.authToken?.trim()

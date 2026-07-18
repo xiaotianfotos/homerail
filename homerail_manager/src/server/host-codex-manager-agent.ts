@@ -20,6 +20,7 @@ import type { ManagerAgentRuntimeConfig } from "./manager-agent-runtime-config.j
 import {
   buildManagerAgentSystemPrompt,
   canonicalManagerAgentToolCallName,
+  compactManagerAgentSkillSupervisedDagResult,
   compactManagerAgentSkillViewPresentResult,
   createManagerAgentWidgetFileTools,
   DEFAULT_PR_REVIEW_EXPECTED_USAGE,
@@ -41,6 +42,7 @@ import {
   mergeManagerAgentPluginSkillCatalog,
   normalizeManagerAgentDagActorCommandInput,
   normalizeManagerAgentDagActorInterventionInput,
+  normalizeManagerAgentSkillSupervisedDagLaunch,
   normalizeManagerAgentRequiredToolCalls,
   executeHomerailPluginTool,
   homerailPluginTurnContextDigestInput,
@@ -96,6 +98,14 @@ function stablePluginModelCallIdentifiers(input: {
     request_id: `tool_${digest}`,
     call_id: `call_${createHash("sha256").update(rawCallId ?? digest).digest("hex")}`,
   };
+}
+
+function stableSkillPresenterRunId(sessionId: string | undefined, skillId: string, argv: unknown): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify([sessionId ?? "default", skillId, argv]))
+    .digest("hex")
+    .slice(0, 32);
+  return `skill_${digest}`;
 }
 
 interface VoiceSurfaceState {
@@ -1451,7 +1461,7 @@ export function createManagerTools(state: {
     },
     {
       name: "invoke_run",
-      description: "Invoke or tick an existing DAG run.",
+      description: "Invoke or tick a non-terminal DAG run when runtime status indicates it needs dispatch. Do not use this to recover a completed or cancelled run, and do not use it after a command validation error.",
       input_schema: {
         type: "object",
         properties: { runId: { type: "string" } },
@@ -1722,6 +1732,33 @@ export function createManagerTools(state: {
           },
         );
         const data = managerData(body);
+        const launch = normalizeManagerAgentSkillSupervisedDagLaunch(data);
+        if (launch) {
+          const runId = stableSkillPresenterRunId(state.sessionId, skillId, args.argv);
+          let started: Record<string, unknown>;
+          try {
+            started = await requestManager(state.restUrl, "/runs/create-and-run", {
+              method: "POST",
+              body: JSON.stringify({ ...launch, runId }),
+            }) as Record<string, unknown>;
+          } catch (error) {
+            try {
+              await requestManager(state.restUrl, `/runs/${encodeURIComponent(runId)}/status`);
+              started = { data: { run_id: runId } };
+            } catch {
+              throw error;
+            }
+          }
+          const compact = compactManagerAgentSkillSupervisedDagResult(
+            started,
+            launch,
+            typeof data.response_text === "string" ? data.response_text : "",
+          );
+          state.createdRunIds.push(String(compact.run_id));
+          state.objectiveToolCalls.push({ name: "skill_view_present", success: true });
+          state.objectiveToolCalls.push({ name: "start_supervised_dag", success: true });
+          return { content: [{ type: "text", text: JSON.stringify(compact) }] };
+        }
         const input = data.input;
         if (!input || typeof input !== "object" || Array.isArray(input)) {
           throw new Error("Manager returned an invalid presented Skill view");
@@ -1737,6 +1774,7 @@ export function createManagerTools(state: {
         } catch {
           throw new Error("Generated view Tool returned an invalid result");
         }
+        state.objectiveToolCalls.push({ name: "skill_view_present", success: true });
         return { content: [{
           type: "text",
           text: JSON.stringify(compactManagerAgentSkillViewPresentResult(resultBody, responseText)),
@@ -2146,10 +2184,23 @@ function buildHostCodexManagerAgentResult(
   );
   const missingRequiredToolCalls = requiredToolCalls.filter((name) => !successfulRequiredToolCalls.has(name));
   if (missingRequiredToolCalls.length > 0) {
+    const callsById = new Map(toolCalls.map((call) => [call.id, call]));
     throw new HostCodexManagerAgentObjectiveUnsatisfiedError({
       required_tool_calls: requiredToolCalls,
       missing_tool_calls: missingRequiredToolCalls,
       observed_tool_calls: toolCalls.map((item) => item.name),
+      observed_tool_call_details: toolCalls.map((item) => ({
+        id: item.id,
+        name: item.name,
+        input: short(item.input, 1000),
+      })),
+      failed_tool_results: toolResults
+        .filter((item) => item.is_error === true)
+        .map((item) => ({
+          tool_use_id: item.tool_use_id,
+          name: callsById.get(item.tool_use_id)?.name ?? null,
+          content: short(item.content, 1000),
+        })),
       objective_tool_calls: state.objectiveToolCalls,
       run_ids: state.createdRunIds,
     });
