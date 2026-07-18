@@ -9,6 +9,9 @@ import {
   validateDagActorSurfaceMediaV1,
   type DagActorCheckpointV1,
   type DagAdvisorConfig,
+  type DagCredentialBrokerCallRequest,
+  type DagCredentialBrokerCallResult,
+  type DagCredentialProjection,
   type DagNodeConfig,
   type DagWorkerSkillContextSummaryV1,
   type DagWorkerSkillVisualDataContractV1,
@@ -38,6 +41,10 @@ import {
   createSurfaceMediaPublisher,
   type SurfaceMediaDownloader,
 } from "./dag-tools/surface-media.js";
+import {
+  containsCredentialValue,
+  redactCredentialValues,
+} from "./credential-projection.js";
 
 export interface PromptJob {
   task: string;
@@ -62,6 +69,11 @@ export interface PromptJob {
   pinnedSurfaceDataContracts?: ReadonlyMap<string, DagWorkerSkillVisualDataContractV1>;
   /** Manager-dispatched structured inputs retained outside the model prompt. */
   trustedInputs?: Readonly<Record<string, unknown[]>>;
+  credentialEnv?: Readonly<Record<string, string>>;
+  credentialRedactionValues?: readonly string[];
+  credentialBrokerBindings?: ReadonlyArray<
+    Extract<DagCredentialProjection, { mode: "manager_broker" }>
+  >;
 }
 
 export interface PromptRunnerDeps {
@@ -73,6 +85,9 @@ export interface PromptRunnerDeps {
   turnController?: AgentTurnController;
   registerInboxHandler?: (handler: (content: unknown) => void) => () => void;
   surfaceMediaDownloader?: SurfaceMediaDownloader;
+  credentialBrokerCall?: (
+    request: DagCredentialBrokerCallRequest,
+  ) => Promise<DagCredentialBrokerCallResult>;
 }
 
 export type PromptRunResult =
@@ -169,7 +184,15 @@ export async function runPrompt(
   job: PromptJob,
   deps: PromptRunnerDeps,
 ): Promise<PromptRunResult> {
-  const { wsSend, agentBackend, auditDir } = deps;
+  const { wsSend: rawWsSend, agentBackend, auditDir } = deps;
+  const credentialRedactionValues = job.credentialRedactionValues ?? [];
+  const redactForTurn = (value: unknown): unknown => redactCredentialValues(
+    redactTelemetry(value),
+    credentialRedactionValues,
+  );
+  const wsSend = (data: string): void => {
+    rawWsSend(String(redactCredentialValues(data, credentialRedactionValues)));
+  };
   const sessionId = job.dagConfig.session_id ?? job.runId;
   const effectiveTask = job.actorCheckpoint
     ? [
@@ -190,8 +213,8 @@ export async function runPrompt(
         nodeId: job.dagConfig.node_id,
         sessionId,
         timestamp: Date.now(),
-        content: redactTelemetry(content),
-        metadata: redactTelemetry(metadata) as Record<string, unknown> | undefined,
+        content: redactForTurn(content),
+        metadata: redactForTurn(metadata) as Record<string, unknown> | undefined,
       });
     } catch {
       // Session transcript persistence is best-effort. The manager DB run
@@ -259,6 +282,9 @@ export async function runPrompt(
   const allDagTools = createDagTools(dagState, {
     advisorRunner: (advisor, question) => runAdvisorCall(advisor, question, workspace, deps.abortSignal),
     activityEmitter: (type, payload) => activityEmitter.emit(type, payload),
+    trustedInputs: job.trustedInputs,
+    credentialBrokerBindings: job.credentialBrokerBindings,
+    credentialBrokerCaller: deps.credentialBrokerCall,
     ...(surfacePatchAllowed
       ? {
           surfacePatchEmitter: ({ surface_id, patch }) => sendStream({
@@ -269,7 +295,6 @@ export async function runPrompt(
           surfaceMediaPublisher,
           pinnedSurfaceViews: job.pinnedSurfaceViews,
           pinnedSurfaceDataContracts: job.pinnedSurfaceDataContracts,
-          trustedInputs: job.trustedInputs,
         }
       : {}),
   });
@@ -323,7 +348,7 @@ export async function runPrompt(
 
   // Stream content via WS
   function sendContent(text: string) {
-    const redactedText = String(redactTelemetry(text));
+    const redactedText = String(redactForTurn(text));
     wsSend(
       JSON.stringify({
         type: "content",
@@ -351,7 +376,7 @@ export async function runPrompt(
       }
       redactedData = { event: "dag_actor_surface_media", media: data.media };
     } else {
-      redactedData = redactTelemetry(data) as Record<string, unknown>;
+      redactedData = redactForTurn(data) as Record<string, unknown>;
     }
     wsSend(
       JSON.stringify({
@@ -418,6 +443,7 @@ export async function runPrompt(
       handoffOnly: correctionOnly,
       allowedBuiltinTools: job.dagConfig.allowed_builtin_tools,
       skillProjection: job.skillProjection,
+      environmentVariables: job.credentialEnv,
     };
     try {
       saveSession({
@@ -437,12 +463,12 @@ export async function runPrompt(
       switch (event.type) {
         case "text":
           sendContent(event.text);
-          audit?.transcript.write({ event: "text", text: event.text });
-          appendSessionTranscript("text", event.text);
+          audit?.transcript.write({ event: "text", text: redactForTurn(event.text) });
+          appendSessionTranscript("text", redactForTurn(event.text));
           break;
         case "debug": {
-          const debugMessage = String(redactTelemetry(event.message));
-          const debugData = redactTelemetry(event.data ?? {}) as Record<string, unknown>;
+          const debugMessage = String(redactForTurn(event.message));
+          const debugData = redactForTurn(event.data ?? {}) as Record<string, unknown>;
           sendStream({
             event: "agent_debug",
             source: event.source,
@@ -476,13 +502,13 @@ export async function runPrompt(
           appendSessionTranscript("tool_use", undefined, {
             tool_name: event.name,
             tool_id: event.id,
-            tool_input: redactTelemetry(event.input),
+            tool_input: redactForTurn(event.input),
           });
           sendStream({
             event: "tool_use",
             tool_name: event.name,
             tool_id: event.id,
-            tool_input: redactTelemetry(event.input),
+            tool_input: redactForTurn(event.input),
           });
           if (event.name !== "report_activity" && event.name !== REPORT_SURFACE_STATE_TOOL_NAME) {
             activityEmitter.emit("tool_used", {
@@ -496,7 +522,7 @@ export async function runPrompt(
             event: "tool_use",
             tool_name: event.name,
             tool_id: event.id,
-            input: redactTelemetry(event.input),
+            input: redactForTurn(event.input),
             node_id: job.dagConfig.node_id,
             run_id: job.runId,
           });
@@ -505,13 +531,13 @@ export async function runPrompt(
           appendSessionTranscript("tool_result", undefined, {
             tool_use_id: event.tool_use_id,
             is_error: event.is_error,
-            result_preview: redactTelemetry(event.content),
+            result_preview: redactForTurn(event.content),
           });
           sendStream({
             event: "tool_result",
             tool_use_id: event.tool_use_id,
             is_error: event.is_error,
-            result_preview: redactTelemetry(event.content),
+            result_preview: redactForTurn(event.content),
           });
           if (toolNamesById.get(event.tool_use_id) !== "report_activity"
             && toolNamesById.get(event.tool_use_id) !== REPORT_SURFACE_STATE_TOOL_NAME) {
@@ -520,7 +546,7 @@ export async function runPrompt(
               tool_name: toolNamesById.get(event.tool_use_id) ?? "unknown",
               tool_id: event.tool_use_id,
               is_error: event.is_error === true,
-              result_preview: String(redactTelemetry(event.content)).slice(0, 4000),
+              result_preview: String(redactForTurn(event.content)).slice(0, 4000),
             });
           }
           audit?.toolEvents.write({
@@ -532,7 +558,7 @@ export async function runPrompt(
           });
           break;
         case "error":
-          errorMessage = String(redactTelemetry(event.message));
+          errorMessage = String(redactForTurn(event.message));
           sendContent(`[ERROR] ${errorMessage}`);
           audit?.transcript.write({ event: "error", message: errorMessage });
           appendSessionTranscript("error", errorMessage);
@@ -576,6 +602,12 @@ export async function runPrompt(
           sendNodeError(`DAG_WORKSPACE_POLICY_VIOLATION ${JSON.stringify(policyResult)}`);
         }
       }
+      if (workspaceValid && dagState.handoffData
+        && containsCredentialValue(dagState.handoffData, credentialRedactionValues)) {
+        dagState.yielded = false;
+        sendNodeError("DAG_CREDENTIAL_OUTPUT_REJECTED handoff reflected a turn-scoped credential");
+        workspaceValid = false;
+      }
       if (workspaceValid && dagState.handoffData) {
         const handoff = dagState.handoffData as Record<string, unknown>;
         activityEmitter.emit("completed", completedActivityPayloadForHandoff(handoff));
@@ -591,7 +623,7 @@ export async function runPrompt(
       }
     }
   } catch (err) {
-    const msg = String(redactTelemetry(err instanceof Error ? err.message : String(err)));
+    const msg = String(redactForTurn(err instanceof Error ? err.message : String(err)));
     sendContent(`[FATAL] ${msg}`);
     audit?.transcript.write({ event: "fatal", message: msg });
     appendSessionTranscript("fatal", msg);
@@ -643,7 +675,7 @@ export async function runPrompt(
   }
 
   function sendNodeError(message: string) {
-    const redactedMessage = String(redactTelemetry(message));
+    const redactedMessage = String(redactForTurn(message));
     promptResult = { status: "failed", reason: redactedMessage };
     if (!terminalActivityEmitted) {
       activityEmitter.emit("failed", { message: redactedMessage });

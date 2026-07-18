@@ -50,6 +50,11 @@ export interface ManagerCommandMessage {
   data: Record<string, unknown>;
 }
 
+export interface CredentialBrokerCallMessage {
+  type: "credential_broker_call";
+  data: DagCredentialBrokerCallRequest;
+}
+
 export interface DagActorLiveCommandStatusMessage {
   type: "dag_actor_command_status";
   data: DagActorLiveCommandStatusData;
@@ -97,6 +102,7 @@ export type IncomingWorkerMessage =
   | StreamMessage
   | ContentMessage
   | ManagerCommandMessage
+  | CredentialBrokerCallMessage
   | DagActorLiveCommandStatusMessage
   | NodeErrorMessage
   | SessionEndMessage
@@ -202,6 +208,26 @@ export function parseIncomingMessage(raw: unknown): IncomingWorkerMessage | null
         type: "manager_command",
         data: obj.data as Record<string, unknown>,
       };
+    case "credential_broker_call": {
+      if (typeof obj.data !== "object" || obj.data === null || Array.isArray(obj.data)) return null;
+      const data = obj.data as Record<string, unknown>;
+      if (
+        typeof data.request_id !== "string"
+        || typeof data.run_id !== "string"
+        || typeof data.node_id !== "string"
+        || typeof data.session_id !== "string"
+        || typeof data.credential_ref !== "string"
+        || typeof data.broker !== "string"
+        || typeof data.action !== "string"
+        || typeof data.input !== "object"
+        || data.input === null
+        || Array.isArray(data.input)
+      ) return null;
+      return {
+        type: "credential_broker_call",
+        data: data as unknown as DagCredentialBrokerCallRequest,
+      };
+    }
     case "dag_actor_command_status":
       if (typeof obj.data !== "object" || obj.data === null || Array.isArray(obj.data)) return null;
       return {
@@ -255,4 +281,7 @@ export function parseIncomingMessage(raw: unknown): IncomingWorkerMessage | null
       return null;
   }
 }
-import type { DagActorLiveCommandStatusData } from "homerail-protocol";
+import type {
+  DagActorLiveCommandStatusData,
+  DagCredentialBrokerCallRequest,
+} from "homerail-protocol";

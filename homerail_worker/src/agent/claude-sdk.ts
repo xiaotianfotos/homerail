@@ -644,6 +644,7 @@ export class ClaudeSdkAdapter implements AgentClient {
     const fromLlmBaseUrl = process.env.LLM_BASE_URL ?? "";
     const baseUrl = fromContextBaseUrl || fromAnthropicBaseUrl || fromLlmBaseUrl;
     const env = sanitizedAgentChildEnv();
+    Object.assign(env, context.environmentVariables ?? {});
     if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
     if (baseUrl) {
       env.ANTHROPIC_BASE_URL = baseUrl;

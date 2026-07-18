@@ -5,7 +5,7 @@ WORKDIR /app
 ENV PATH="/app/node_modules/.bin:${PATH}"
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates curl git \
+  && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client \
   && rm -rf /var/lib/apt/lists/*
 RUN npm install -g npm@11.6.2
 

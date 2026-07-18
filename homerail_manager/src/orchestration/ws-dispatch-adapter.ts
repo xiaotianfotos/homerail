@@ -33,6 +33,7 @@ import {
   recordNodeDispatchRetry,
 } from "../runtime/active-runs.js";
 import { getPort } from "../config/env.js";
+import { summarizeDagCredentialProjection } from "homerail-protocol";
 import {
   deprovisionProvisionedWorker,
   registerProvisionedWorker,
@@ -70,11 +71,14 @@ export interface WsDispatchAdapterOptions {
 }
 
 export function dispatchEnvelopeAuditView(envelope: DispatchEnvelope): unknown {
-  const { skillContext, ...withoutSkillContent } = envelope;
+  const { skillContext, credentialProjections, ...withoutSkillContent } = envelope;
   return redactTelemetry({
     ...withoutSkillContent,
     ...(skillContext
       ? { skillContext: summarizeDagWorkerSkillContextV1(skillContext) }
+      : {}),
+    ...(credentialProjections
+      ? { credentialProjections: credentialProjections.map(summarizeDagCredentialProjection) }
       : {}),
   });
 }

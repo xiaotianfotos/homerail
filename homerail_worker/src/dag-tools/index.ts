@@ -8,6 +8,7 @@ import type {
   DagActorSurfacePatchPhaseV1,
   DagAdvisorConfig,
   DagActivityType,
+  DagCredentialProjection,
   DagNodeConfig,
   DagWorkerSkillVisualDataContractV1,
   DagWorkspaceAccess,
@@ -27,6 +28,10 @@ import {
   type SurfacePatchEmitter,
 } from "./report-surface-state.js";
 import type { SurfaceMediaPublisher } from "./surface-media.js";
+import {
+  createCredentialBrokerCallTool,
+  type CredentialBrokerCaller,
+} from "./credential-broker.js";
 
 export interface AdvisorCallResult {
   text: string;
@@ -44,6 +49,10 @@ export interface DagToolsOptions {
   pinnedSurfaceViews?: PinnedSurfaceViewRegistry;
   pinnedSurfaceDataContracts?: ReadonlyMap<string, DagWorkerSkillVisualDataContractV1>;
   trustedInputs?: Readonly<Record<string, unknown[]>>;
+  credentialBrokerBindings?: ReadonlyArray<
+    Extract<DagCredentialProjection, { mode: "manager_broker" }>
+  >;
+  credentialBrokerCaller?: CredentialBrokerCaller;
 }
 
 /** Mutable state shared across all DAG tools for a single prompt run. */
@@ -161,6 +170,13 @@ export function createDagTools(state: DagToolsState, options: DagToolsOptions = 
   }
   if (options.activityEmitter) {
     tools.push(createReportActivityTool(options.activityEmitter));
+  }
+  if (options.credentialBrokerBindings?.length && options.credentialBrokerCaller) {
+    tools.push(createCredentialBrokerCallTool(
+      state,
+      options.credentialBrokerBindings,
+      options.credentialBrokerCaller,
+    ));
   }
   if (options.surfacePatchEmitter) {
     tools.push(createReportSurfaceStateTool(

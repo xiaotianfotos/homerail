@@ -36,6 +36,10 @@ import { ingestDagActivityStream } from "../runtime/dag-activity-stream.js";
 import { handleDagActorLiveCommandStatus } from "../runtime/dag-actor-live-command-runtime.js";
 import { ingestDagActorSurfacePatchStream } from "../runtime/dag-actor-surface-patch-stream.js";
 import { ingestDagActorSurfaceMediaStream } from "../runtime/dag-actor-surface-media-stream.js";
+import type {
+  DagCredentialBrokerCallRequest,
+  DagCredentialBrokerCallResult,
+} from "homerail-protocol";
 
 const WS_URL_PATTERN = /^\/ws\/projects\/([^\/]+)\/workers\/([^\/]+)$/;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
@@ -210,6 +214,10 @@ export interface WorkerWebSocketOptions {
     workerId: string,
     data: Record<string, unknown>,
   ) => { ok: boolean; result?: unknown; error?: string };
+  onCredentialBrokerCall?: (
+    workerId: string,
+    request: DagCredentialBrokerCallRequest,
+  ) => Promise<DagCredentialBrokerCallResult>;
   /** Fired once, after the first worker successfully registers. Used by the
    * cold-recovery boot path to re-dispatch READY nodes of recovered runs now
    * that a dispatch target exists. */
@@ -300,7 +308,7 @@ export function setupWorkerWebSocket(
       ws.on("close", cleanup);
       ws.on("error", cleanup);
 
-      ws.on("message", (raw: Buffer) => {
+      ws.on("message", async (raw: Buffer) => {
         let msg: IncomingWorkerMessage | null;
         let rawMessage: unknown;
         try {
@@ -688,6 +696,42 @@ export function setupWorkerWebSocket(
               type: "manager_command_result",
               data: result,
             }));
+          }
+          return;
+        }
+
+        if (msg.type === "credential_broker_call") {
+          let result: DagCredentialBrokerCallResult;
+          if (!isCurrentDagTransport(
+            worker_id,
+            "credential_broker_call",
+            { ...msg.data },
+            msg.data.session_id,
+          )) {
+            result = {
+              request_id: msg.data.request_id,
+              ok: false,
+              error: "Credential broker call has stale or invalid transport identity",
+            };
+          } else if (!options.onCredentialBrokerCall) {
+            result = {
+              request_id: msg.data.request_id,
+              ok: false,
+              error: "Credential broker handler unavailable",
+            };
+          } else {
+            try {
+              result = await options.onCredentialBrokerCall(worker_id, msg.data);
+            } catch {
+              result = {
+                request_id: msg.data.request_id,
+                ok: false,
+                error: "Credential broker call failed without exposing provider details",
+              };
+            }
+          }
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "credential_broker_result", data: result }));
           }
           return;
         }

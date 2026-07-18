@@ -700,7 +700,7 @@ describe("prompt runner", () => {
       const mockAgent: AgentClient = {
         run() {
           return (async function* () {
-            yield { type: "text" as const, text: "assistant sk-outputsecret12345" };
+            yield { type: "text" as const, text: "assistant sk-outputsecret12345 arbitrary-turn-value" };
             yield { type: "error" as const, message: "failure token=error-secret-value" };
             yield { type: "done" as const };
           })();
@@ -713,6 +713,7 @@ describe("prompt runner", () => {
         sender: "test",
         runId: "run-all-path-redaction",
         dagConfig: makeConfigWith({ session_id: "redacted-session" }),
+        credentialRedactionValues: ["arbitrary-turn-value"],
       }, {
         wsSend: (data) => sent.push(data),
         agentBackend: "test-all-path-redaction",
@@ -727,6 +728,7 @@ describe("prompt runner", () => {
       expect(evidence).not.toContain("task-secret-value");
       expect(evidence).not.toContain("sk-outputsecret12345");
       expect(evidence).not.toContain("error-secret-value");
+      expect(evidence).not.toContain("arbitrary-turn-value");
       expect(evidence).toContain("***REDACTED***");
       const resumableSession = readFileSync(
         join(tmpHome, "manager", "session-store", "redacted-session", "session.json"),
@@ -1097,5 +1099,37 @@ describe("prompt runner", () => {
       lease_generation: 9,
     });
     expect(parsed.map((msg) => msg.type)).toContain("SESSION_END");
+  });
+
+  it("rejects a handoff that reflects a turn-scoped credential", async () => {
+    delete process.env.LLM_BASE_URL;
+    const terminalMessages: string[] = [];
+    const result = await runPrompt({
+      task: "Initial user task wrapper",
+      sender: "test",
+      runId: "run-secret-handoff",
+      dagConfig: {
+        ...makeConfig(),
+        node_id: "secret_node",
+        agent_type: "deterministic",
+        graph_nodes: ["secret_node"],
+        outgoing_edges: [{ from_port: "done", to_node: "", to_port: "" }],
+      },
+      systemPrompt: "HANDOFF port=done content=prefix-arbitrary-turn-value-suffix",
+      credentialRedactionValues: ["arbitrary-turn-value"],
+    }, {
+      wsSend: () => {},
+      onTerminalMessage: (data) => terminalMessages.push(data),
+      agentBackend: "deterministic",
+    });
+
+    expect(result).toMatchObject({ status: "failed", reason: expect.stringContaining("DAG_CREDENTIAL_OUTPUT_REJECTED") });
+    const parsed = terminalMessages.map((message) => JSON.parse(message));
+    expect(parsed.some((message) => message.type === "response")).toBe(false);
+    expect(parsed).toContainEqual(expect.objectContaining({
+      type: "node_error",
+      data: expect.objectContaining({ message: expect.stringContaining("DAG_CREDENTIAL_OUTPUT_REJECTED") }),
+    }));
+    expect(terminalMessages.join("\n")).not.toContain("arbitrary-turn-value");
   });
 });

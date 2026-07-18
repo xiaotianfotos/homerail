@@ -573,6 +573,7 @@ export class CodexAppServerAdapter implements AgentClient {
 
   private buildEnv(context: AgentRunContext): Record<string, string | undefined> {
     const env = sanitizedAgentChildEnv();
+    Object.assign(env, context.environmentVariables ?? {});
 
     const apiKey = context.apiKey || process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || "";
     if (apiKey) {

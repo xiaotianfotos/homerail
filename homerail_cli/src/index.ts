@@ -19,6 +19,7 @@ import { registerRuntimeCommands } from "./commands/runtime.js";
 import { registerPatternsCommand } from "./commands/patterns.js";
 import { registerPluginCommand } from "./commands/plugin.js";
 import { DEFAULT_MANAGER_URL } from "./local-config.js";
+import { registerCredentialCommand } from "./commands/credential.js";
 
 export { HomeRailClient } from "./client.js";
 export type { BaseResponse, HomeRailClientOptions } from "./client.js";
@@ -36,6 +37,7 @@ export function createProgram(): Command {
   registerTemplatesCommand(program);
   registerPatternsCommand(program);
   registerPluginCommand(program);
+  registerCredentialCommand(program);
   registerRunCommand(program);
   registerRunsCommand(program);
   registerStatusCommand(program);

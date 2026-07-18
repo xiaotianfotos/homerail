@@ -6,6 +6,7 @@ import type {
   DagAgentToolName,
   DagWorkspaceAccess,
   DagWorkerSkillContextV1,
+  DagCredentialProjection,
 } from "homerail-protocol";
 
 export interface DispatchEnvelope {
@@ -36,6 +37,8 @@ export interface DispatchEnvelope {
   workspaceAccess?: DagWorkspaceAccess;
   allowedBuiltinTools?: AgentBuiltinToolName[];
   allowedDagTools?: DagAgentToolName[];
+  /** Turn-scoped secrets or opaque Manager-broker references. Never persist this field. */
+  credentialProjections?: DagCredentialProjection[];
   activity?: {
     roundId: string;
     actorId: string;

@@ -928,6 +928,7 @@ export class KimiCodeAdapter implements AgentClient {
    */
   buildKimiEnv(context: AgentRunContext, kimiHome: string): Record<string, string | undefined> {
     const env = sanitizedAgentChildEnv();
+    Object.assign(env, context.environmentVariables ?? {});
 
     // Isolated KIMI_CODE_HOME
     env.KIMI_CODE_HOME = kimiHome;

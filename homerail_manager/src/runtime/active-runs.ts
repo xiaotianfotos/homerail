@@ -45,6 +45,7 @@ import {
   type DagAdvisorConfig,
   type DagAgentToolName,
   type DagWorkspaceAccess,
+  type DagCredentialProjection,
 } from "homerail-protocol";
 import { resolveAgentRuntimeConfig } from "./agent-runtime-resolver.js";
 import {
@@ -85,6 +86,7 @@ import type { RunWorkspaceRetention } from "../persistence/types.js";
 import { getDagActivitySequenceCursor } from "../persistence/dag-activity-journal.js";
 import { getDagActorSurfaceView } from "../persistence/dag-actor-surface-patches.js";
 import { getDb } from "../persistence/db.js";
+import { getCredential, materializeCredential } from "../persistence/credentials.js";
 import {
   createInitialDagRunRound,
   getCurrentDagRunRound,
@@ -4325,6 +4327,96 @@ function _allowedDagTools(node: DAGGraphNode): DagAgentToolName[] | undefined {
   ));
 }
 
+function _credentialProjections(run: ActiveRun, node: DAGGraphNode): DagCredentialProjection[] {
+  const raw = _agentRuntimeConfig(node).credentials;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const projections: DagCredentialProjection[] = [];
+  const claimedEnv = new Set<string>();
+  const forbiddenEnv = /^(?:HOMERAIL_|MANAGER_|AGENT_BACKEND$|PATH$|HOME$|NODE_OPTIONS$|LD_|DYLD_|ANTHROPIC_|OPENAI_|KIMI_|LLM_)/;
+
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`Invalid credential binding on node ${node.node_id}`);
+    }
+    const binding = entry as Record<string, unknown>;
+    const credentialRef = String(binding.credential_ref ?? "");
+    const purpose = String(binding.purpose ?? "");
+    const inject = binding.inject;
+    if (!inject || typeof inject !== "object" || Array.isArray(inject)) {
+      throw new Error(`Credential binding '${credentialRef}' has no injection policy`);
+    }
+    const policy = inject as Record<string, unknown>;
+    const mode = String(policy.mode ?? "");
+    if (mode === "manager_broker") {
+      const record = getCredential(credentialRef);
+      if (!record || record.status !== "active") {
+        throw new Error(`Manager-broker credential is unavailable: ${credentialRef}`);
+      }
+      if (record.expires_at && Date.parse(record.expires_at) <= Date.now()) {
+        throw new Error(`Manager-broker credential is expired: ${credentialRef}`);
+      }
+      projections.push({
+        credential_ref: credentialRef,
+        purpose,
+        mode,
+        broker: String(policy.broker ?? ""),
+        allowed_actions: Array.isArray(policy.allowed_actions)
+          ? policy.allowed_actions.map(String)
+          : [],
+      });
+      continue;
+    }
+
+    const materialized = materializeCredential(credentialRef, {
+      actor: `dag:${run.runId}:${node.node_id}`,
+      run_id: run.runId,
+      node_id: node.node_id,
+      purpose,
+    });
+    if (mode === "env") {
+      const mappings = policy.mappings;
+      if (!mappings || typeof mappings !== "object" || Array.isArray(mappings)) {
+        throw new Error(`Credential binding '${credentialRef}' has invalid env mappings`);
+      }
+      const values: Record<string, string> = {};
+      for (const [secretField, rawEnv] of Object.entries(mappings)) {
+        const env = String(rawEnv);
+        if (forbiddenEnv.test(env)) throw new Error(`Credential binding cannot override reserved env '${env}'`);
+        if (claimedEnv.has(env)) throw new Error(`Credential env '${env}' is bound more than once on node ${node.node_id}`);
+        const secret = materialized.secret[secretField];
+        if (secret === undefined) {
+          throw new Error(`Credential '${credentialRef}' has no secret field '${secretField}'`);
+        }
+        claimedEnv.add(env);
+        values[env] = secret;
+      }
+      projections.push({ credential_ref: credentialRef, purpose, mode, values });
+      continue;
+    }
+    if (mode === "file" || mode === "stdin") {
+      const field = String(policy.field ?? "");
+      const env = String(policy.env ?? "");
+      if (forbiddenEnv.test(env)) throw new Error(`Credential binding cannot override reserved env '${env}'`);
+      if (claimedEnv.has(env)) throw new Error(`Credential env '${env}' is bound more than once on node ${node.node_id}`);
+      const content = materialized.secret[field];
+      if (content === undefined) throw new Error(`Credential '${credentialRef}' has no secret field '${field}'`);
+      claimedEnv.add(env);
+      projections.push({
+        credential_ref: credentialRef,
+        purpose,
+        mode,
+        field,
+        content,
+        filename: String(policy.filename ?? "credential"),
+        env,
+      });
+      continue;
+    }
+    throw new Error(`Credential binding '${credentialRef}' has unsupported mode '${mode}'`);
+  }
+  return projections;
+}
+
 function _requiredDispatchCapabilities(
   run: ActiveRun,
   node: DAGGraphNode,
@@ -4394,6 +4486,12 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
   if (!credentials.ok) return credentials;
   const advisorResolution = _advisorConfigs(run, node);
   if (!advisorResolution.ok) return advisorResolution;
+  let credentialProjections: DagCredentialProjection[];
+  try {
+    credentialProjections = _credentialProjections(run, node);
+  } catch (cause) {
+    return { ok: false, reason: cause instanceof Error ? cause.message : String(cause) };
+  }
 
   const inputs = _nodeInputs(run.dagRun, nodeId);
   const nodeSession = _ensureNodeSession(run, nodeId);
@@ -4461,6 +4559,7 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
       workspaceAccess: _workspaceAccess(node),
       allowedBuiltinTools: _allowedBuiltinTools(node),
       allowedDagTools: _allowedDagTools(node),
+      ...(credentialProjections.length > 0 ? { credentialProjections } : {}),
       activity: {
         roundId: run.currentRound.round_id,
         actorId,

@@ -504,11 +504,16 @@ describe("ClaudeSdkAdapter", () => {
     const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
     const adapter = new ClaudeSdkAdapter();
     const events: AgentEvent[] = [];
-    for await (const e of adapter.run("test", [], { ...ctx, apiKey: "anthropic-secret-value" })) {
+    for await (const e of adapter.run("test", [], {
+      ...ctx,
+      apiKey: "anthropic-secret-value",
+      environmentVariables: { SERVICE_TEST_TOKEN: "turn-scoped-value" },
+    })) {
       events.push(e);
     }
 
     expect((captured[0].env as Record<string, string>).ANTHROPIC_API_KEY).toBe("anthropic-secret-value");
+    expect((captured[0].env as Record<string, string>).SERVICE_TEST_TOKEN).toBe("turn-scoped-value");
     expect((captured[0].env as Record<string, string>).ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
     expect((captured[0].env as Record<string, string>).LLM_BASE_URL).toBe("https://api.anthropic.com");
     // Claude Code internal/background model + telemetry are pinned so gateway

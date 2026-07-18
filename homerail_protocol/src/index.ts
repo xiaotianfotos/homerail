@@ -11,6 +11,7 @@ export const PROTOCOL_VERSION = "0.1.0";
 export * from "./types.js";
 export * from "./dag-activity.js";
 export * from "./dag-worker-skill-context.js";
+export * from "./dag-credentials.js";
 export * from "./dag-actor-surface-patch.js";
 export * from "./dag-actor-surface-media.js";
 export * from "./codec.js";

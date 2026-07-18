@@ -52,6 +52,8 @@ import { startWorkspaceCleanupScheduler } from "../runtime/workspace-retention.j
 import { runArtifactRoutesHandler } from "./run-artifacts.js";
 import { startRunArtifactService } from "../runtime/run-artifact-service.js";
 import { startDagActorLeaseReaper } from "../runtime/dag-actor-lease-reaper.js";
+import { credentialRoutesHandler } from "./credentials.js";
+import { executeCredentialBrokerCall } from "../runtime/credential-broker.js";
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -344,6 +346,10 @@ export function createServer(
       return;
     }
 
+    if (credentialRoutesHandler(req, res)) {
+      return;
+    }
+
     if (memoryRoutesHandler(req, res)) {
       return;
     }
@@ -468,6 +474,7 @@ export function createServer(
         };
       }
     },
+    onCredentialBrokerCall: executeCredentialBrokerCall,
     onFirstWorkerRegistered: () => {
       // Consume waiting fallbacks first, dispatch their READY round nodes, then
       // retry only live commands that still have an active Worker target.

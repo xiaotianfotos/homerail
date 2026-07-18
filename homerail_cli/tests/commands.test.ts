@@ -68,6 +68,31 @@ beforeEach(() => {
   delete process.env.HOMERAIL_UI_SERVE_STATIC;
 });
 
+describe("credential command", () => {
+  it("lists only credential metadata", async () => {
+    mockFetch({
+      success: true,
+      data: {
+        credentials: [{
+          id: "deploy-ssh",
+          credential_type: "ssh_key",
+          name: "Deploy SSH",
+          status: "active",
+          version: 2,
+          secret_fields: ["private_key", "known_hosts"],
+        }],
+      },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const program = createProgram();
+    await program.parseAsync(["node", "homerail", "credential", "list"]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("deploy-ssh\tssh_key\tactive\tv2\tprivate_key,known_hosts");
+    expect(output).not.toContain("BEGIN PRIVATE KEY");
+  });
+});
+
 afterEach(() => {
   restoreEnv("HOMERAIL_HOME", previousHome);
   restoreEnv("HOMERAIL_CONFIG_PATH", previousConfigPath);

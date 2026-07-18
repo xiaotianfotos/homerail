@@ -127,6 +127,36 @@ const DagAgentToolName = Type.Union(
   DAG_AGENT_TOOL_NAMES.map((name) => Type.Literal(name)),
 );
 
+const CredentialBinding = Type.Object({
+  credential_ref: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" }),
+  purpose: Type.String({ minLength: 1, maxLength: 256 }),
+  inject: Type.Union([
+    Type.Object({
+      mode: Type.Literal("env"),
+      mappings: Type.Record(
+        Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z_][A-Za-z0-9_]*$" }),
+        Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Z_][A-Z0-9_]*$" }),
+        { minProperties: 1, maxProperties: 16 },
+      ),
+    }, { additionalProperties: false }),
+    Type.Object({
+      mode: Type.Union([Type.Literal("file"), Type.Literal("stdin")]),
+      field: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z_][A-Za-z0-9_]*$" }),
+      filename: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$" }),
+      env: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Z_][A-Z0-9_]*$" }),
+    }, { additionalProperties: false }),
+    Type.Object({
+      mode: Type.Literal("manager_broker"),
+      broker: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" }),
+      allowed_actions: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+        minItems: 1,
+        maxItems: 64,
+        uniqueItems: true,
+      }),
+    }, { additionalProperties: false }),
+  ]),
+}, { additionalProperties: false });
+
 const AgentNode = Type.Object({
   kind: Type.Literal("agent"),
   agent: Identifier,
@@ -141,6 +171,10 @@ const AgentNode = Type.Object({
     uniqueItems: true,
     maxItems: DAG_AGENT_TOOL_NAMES.length,
     description: "Exact allowlist for HomeRail DAG tools.",
+  })),
+  credentials: Type.Optional(Type.Array(CredentialBinding, {
+    maxItems: 16,
+    description: "Credential references and turn-scoped injection policy; secret values are never valid WorkflowSpec fields.",
   })),
   ...NodeBase,
 }, { additionalProperties: false });

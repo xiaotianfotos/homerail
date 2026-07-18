@@ -98,4 +98,6 @@ export interface AgentRunContext {
   allowedBuiltinTools?: AgentBuiltinToolName[];
   /** Trusted Skills visible to this turn. */
   skillProjection?: AgentSkillProjection;
+  /** Turn-scoped environment assembled from encrypted credential references. */
+  environmentVariables?: Readonly<Record<string, string>>;
 }

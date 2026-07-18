@@ -451,6 +451,7 @@ export const DAG_AGENT_TOOL_NAMES = [
   "get_graph_context",
   "manager_command",
   "consult_advisor",
+  "credential_broker_call",
   "report_activity",
   "report_surface_state",
 ] as const;

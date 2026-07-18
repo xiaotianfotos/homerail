@@ -8,6 +8,10 @@ import { WsClient } from "./ws-client.js";
 import { runPrompt } from "./prompt-runner.js";
 import type { PromptJob, PromptRunResult } from "./prompt-runner.js";
 import {
+  materializeCredentialProjections,
+  type MaterializedCredentialProjection,
+} from "./credential-projection.js";
+import {
   DAG_ACTOR_LIVE_COMMAND_CAPABILITY,
   DAG_TRANSPORT_FENCE_CAPABILITY,
   DAG_TRANSPORT_FENCE_V1_CAPABILITY,
@@ -17,6 +21,9 @@ import {
   type DagAgentToolName,
   type DagNodeConfig,
   type DagWorkspaceAccess,
+  type DagCredentialProjection,
+  type DagCredentialBrokerCallRequest,
+  type DagCredentialBrokerCallResult,
 } from "homerail-protocol";
 import { startManagerAgentServer } from "./manager-agent/server.js";
 import { resolveWorkerAgentBackend } from "./agent/backend-selection.js";
@@ -87,6 +94,28 @@ let activePrompt:
       deliverInbox?: (content: unknown) => void;
     })
   | null = null;
+
+const pendingCredentialBrokerCalls = new Map<string, {
+  resolve: (result: DagCredentialBrokerCallResult) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+function callCredentialBroker(
+  request: DagCredentialBrokerCallRequest,
+): Promise<DagCredentialBrokerCallResult> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingCredentialBrokerCalls.delete(request.request_id);
+      resolve({
+        request_id: request.request_id,
+        ok: false,
+        error: "Credential broker call timed out",
+      });
+    }, 30_000);
+    pendingCredentialBrokerCalls.set(request.request_id, { resolve, timer });
+    client.send(JSON.stringify({ type: "credential_broker_call", data: request }));
+  });
+}
 
 function stringField(data: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) {
@@ -234,6 +263,28 @@ client.on("task", async (msg) => {
   );
 
   const trustedInputs = structuredClone(envelope?.inputs ?? {}) as Record<string, unknown[]>;
+  let credentialProjection: MaterializedCredentialProjection;
+  try {
+    const projections = Array.isArray(envelope?.credentialProjections)
+      ? envelope.credentialProjections as DagCredentialProjection[]
+      : [];
+    credentialProjection = materializeCredentialProjections(projections);
+    if (credentialProjection.broker_refs.length > 0) {
+      trustedInputs.credential_brokers = credentialProjection.broker_refs.map((binding) => ({
+        credential_ref: binding.credential_ref,
+        purpose: binding.purpose,
+        broker: binding.broker,
+        allowed_actions: binding.allowed_actions,
+      }));
+    }
+  } catch (cause) {
+    const message = `Worker credential projection rejected: ${cause instanceof Error ? cause.message : String(cause)}`;
+    client.send(JSON.stringify({
+      type: "node_error",
+      data: { runId, nodeId, message, ...(sessionId ? { session_id: sessionId } : {}) },
+    }));
+    return;
+  }
   const job: PromptJob = {
     task,
     sender,
@@ -257,6 +308,9 @@ client.on("task", async (msg) => {
       preparedSkillContext.allowedSurfaceViewIds,
     ),
     trustedInputs,
+    credentialEnv: credentialProjection.env,
+    credentialRedactionValues: credentialProjection.redaction_values,
+    credentialBrokerBindings: credentialProjection.broker_refs,
   };
 
   const abortController = new AbortController();
@@ -303,6 +357,7 @@ client.on("task", async (msg) => {
       agentBackend: backend,
       abortSignal: abortController.signal,
       turnController,
+      credentialBrokerCall: callCredentialBroker,
       registerInboxHandler: (handler) => {
         if (activePrompt?.controller === turnController) {
           activePrompt.deliverInbox = handler;
@@ -321,6 +376,7 @@ client.on("task", async (msg) => {
     };
     console.error("[homerail_worker] prompt runner error:", err);
   } finally {
+    credentialProjection.cleanup();
     const closeResult = await turnController.close({
       outcome: promptResult.status === "completed" ? "completed" : "failed",
       ...(promptResult.status === "failed" ? { reason: promptResult.reason } : {}),
@@ -356,6 +412,21 @@ client.on("dag_actor_command", (msg) => {
     .finally(() => {
       prompt?.commandRoutes.delete(routing);
     });
+});
+
+client.on("credential_broker_result", (msg) => {
+  const data = (msg.data ?? msg) as Partial<DagCredentialBrokerCallResult>;
+  if (typeof data.request_id !== "string" || typeof data.ok !== "boolean") return;
+  const pending = pendingCredentialBrokerCalls.get(data.request_id);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingCredentialBrokerCalls.delete(data.request_id);
+  pending.resolve({
+    request_id: data.request_id,
+    ok: data.ok,
+    ...(data.result !== undefined ? { result: data.result } : {}),
+    ...(typeof data.error === "string" ? { error: data.error } : {}),
+  });
 });
 
 client.on("inject", (msg) => {
@@ -416,6 +487,11 @@ async function shutdown() {
     await Promise.allSettled([...prompt.commandRoutes]);
   }
   client.close();
+  for (const [requestId, pending] of pendingCredentialBrokerCalls) {
+    clearTimeout(pending.timer);
+    pending.resolve({ request_id: requestId, ok: false, error: "Worker shutting down" });
+  }
+  pendingCredentialBrokerCalls.clear();
   process.exit(0);
 }
 

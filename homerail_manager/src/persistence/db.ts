@@ -103,6 +103,7 @@ const CLEARABLE_TABLES = new Set([
   "container_volumes",
   "storage_usage_trackers",
   "encrypted_credentials",
+  "execution_credentials",
   "temporary_keys",
   "security_policies",
   "security_audit_logs",
@@ -1859,6 +1860,24 @@ function validateDagActorSurfacePatchSchemaV30(db: SqliteDatabase): void {
     || !viewForeignKeys.has("dag_actors")
     || !viewForeignKeys.has("generative_ui_documents")) {
     throw new Error("Schema migration 30 is incomplete: Actor surface ownership constraints are invalid");
+  }
+}
+
+function validateCredentialStoreSchemaV31(db: SqliteDatabase): void {
+  if (!hasTable(db, "execution_credentials") || !hasTable(db, "credential_audit_events")) {
+    throw new Error("Schema migration 31 is incomplete: credential store tables are missing");
+  }
+  for (const column of [
+    "status",
+    "version",
+    "expires_at",
+    "last_used_at",
+    "rotated_at",
+    "revoked_at",
+  ]) {
+    if (!hasColumn(db, "execution_credentials", column)) {
+      throw new Error(`Schema migration 31 is incomplete: execution_credentials is missing column ${column}`);
+    }
   }
 }
 
@@ -3923,6 +3942,58 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       END;
     `),
     validate: validateDagActorSurfacePatchSchemaV30,
+  },
+  {
+    version: 31,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS execution_credentials (
+          id TEXT PRIMARY KEY,
+          credential_type TEXT NOT NULL,
+          name TEXT NOT NULL,
+          encrypted_payload TEXT NOT NULL,
+          metadata TEXT,
+          status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'revoked')),
+          version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+          expires_at TEXT,
+          last_used_at TEXT,
+          rotated_at TEXT,
+          revoked_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_execution_credentials_status
+          ON execution_credentials(status, name, id);
+        CREATE TABLE IF NOT EXISTS credential_audit_events (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_id TEXT NOT NULL UNIQUE,
+          credential_id TEXT NOT NULL,
+          event_type TEXT NOT NULL CHECK(event_type IN (
+            'created', 'rotated', 'revoked', 'deleted', 'materialized', 'denied'
+          )),
+          actor TEXT NOT NULL,
+          run_id TEXT,
+          node_id TEXT,
+          purpose TEXT,
+          result TEXT NOT NULL CHECK(result IN ('success', 'denied', 'failed')),
+          detail TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_credential_audit_events_credential
+          ON credential_audit_events(credential_id, sequence);
+        CREATE TRIGGER IF NOT EXISTS trg_credential_audit_events_no_update
+        BEFORE UPDATE ON credential_audit_events
+        BEGIN
+          SELECT RAISE(ABORT, 'Credential audit events are append-only');
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_credential_audit_events_no_delete
+        BEFORE DELETE ON credential_audit_events
+        BEGIN
+          SELECT RAISE(ABORT, 'Credential audit events are append-only');
+        END;
+      `);
+    },
+    validate: validateCredentialStoreSchemaV31,
   },
 ];
 

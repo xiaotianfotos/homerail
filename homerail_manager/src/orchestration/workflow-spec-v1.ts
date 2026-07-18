@@ -396,6 +396,16 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
           "agent nodes with outputs must allow the handoff DAG tool",
         );
       }
+      if (
+        (node.credentials ?? []).some((binding) => binding.inject.mode === "manager_broker")
+        && !node.allowed_dag_tools?.includes("credential_broker_call")
+      ) {
+        add(
+          `${nodePath}/allowed_dag_tools`,
+          "DAG_SEMANTIC_CREDENTIAL_BROKER_TOOL_REQUIRED",
+          "agent nodes with manager_broker credentials must allow credential_broker_call",
+        );
+      }
     }
     for (const dependency of node.depends_on ?? []) {
       if (!nodes[dependency]) {
@@ -744,6 +754,7 @@ function canonicalNode(id: string, node: WorkflowSpecV1Node): CanonicalNode {
       ...(node.allowed_dag_tools !== undefined
         ? { allowed_dag_tools: [...node.allowed_dag_tools].sort() }
         : {}),
+      ...(node.credentials !== undefined ? { credentials: node.credentials } : {}),
     };
     return {
       ...base,
