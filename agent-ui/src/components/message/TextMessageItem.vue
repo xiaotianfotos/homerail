@@ -52,14 +52,14 @@ const itemClass = computed(() => ({
     <!-- 思考消息：折叠显示 -->
     <template v-if="isThinking">
       <div
-        class="thinking-header cursor-pointer flex items-center gap-1.5 px-1 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        class="thinking-header cursor-pointer flex items-center gap-1.5 px-1 py-1 text-xs text-[var(--hr-text-3)] hover:text-[var(--hr-text-1)] transition-colors"
         @click="thinkingExpanded = !thinkingExpanded"
       >
         <Brain class="h-3.5 w-3.5" />
         <ChevronRight class="h-3 w-3 transition-transform" :class="{ 'rotate-90': thinkingExpanded }" />
         <span class="font-medium">{{ thinkingExpanded ? '思考过程' : '查看思考过程' }}</span>
       </div>
-      <div v-if="thinkingExpanded" class="thinking-content ml-5 px-3 py-2 text-xs text-muted-foreground rounded max-h-[50vh] overflow-y-auto whitespace-pre-wrap border-l-2 border-muted">
+      <div v-if="thinkingExpanded" class="thinking-content ml-5 px-3 py-2 text-xs text-[var(--hr-text-3)] rounded max-h-[50vh] overflow-y-auto whitespace-pre-wrap border-l-2 border-[var(--hr-border-strong)]">
         {{ displayContent }}
       </div>
     </template>
@@ -90,8 +90,8 @@ const itemClass = computed(() => ({
 }
 
 .text-message-item.user-message {
-  background-color: rgba(59, 130, 246, 0.1);
-  border-left: 3px solid rgb(59, 130, 246);
+  background-color: var(--hr-accent-soft);
+  border-left: 3px solid var(--hr-accent);
 }
 
 .text-message-item.thinking-message {
@@ -110,7 +110,7 @@ const itemClass = computed(() => ({
 }
 
 .user-prompt {
-  color: rgb(59, 130, 246);
+  color: var(--hr-accent);
   font-weight: 600;
   font-size: 16px;
   flex-shrink: 0;
@@ -122,7 +122,7 @@ const itemClass = computed(() => ({
   border-radius: 50%;
   flex-shrink: 0;
   margin-top: 6px;
-  background-color: #ffffff;
+  background-color: var(--hr-text-2);
 }
 
 .text-content {
@@ -156,7 +156,7 @@ const itemClass = computed(() => ({
 }
 
 .thinking-content::-webkit-scrollbar-thumb {
-  background-color: rgba(107, 114, 128, 0.3);
+  background-color: var(--hr-border-strong);
   border-radius: 4px;
 }
 </style>

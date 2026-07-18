@@ -1474,43 +1474,43 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="agent-settings-shell relative flex h-screen flex-col overflow-hidden bg-[#080b0d] p-2 text-gray-100 md:flex-row md:p-4">
-    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_24%_12%,rgba(32,160,150,0.18),transparent_32%),radial-gradient(circle_at_82%_4%,rgba(84,201,216,0.12),transparent_28%)]" />
-    <aside class="relative z-10 flex w-full flex-shrink-0 flex-col rounded-t-[24px] border border-b-0 border-cyan-200/14 bg-black/26 shadow-2xl backdrop-blur-xl md:w-[224px] md:rounded-l-[30px] md:rounded-tr-none md:border-b md:border-r-0 xl:w-[338px]">
+  <div class="agent-settings-shell relative flex h-screen flex-col overflow-hidden bg-[var(--hr-bg)] p-2 text-gray-100 md:flex-row md:p-4">
+    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_24%_12%,color-mix(in_srgb,var(--hr-accent)_18%,transparent),transparent_32%),radial-gradient(circle_at_82%_4%,color-mix(in_srgb,var(--hr-accent)_12%,transparent),transparent_28%)]" />
+    <aside class="relative z-10 flex w-full flex-shrink-0 flex-col rounded-t-[24px] border border-b-0 border-[var(--hr-border)] bg-[var(--hr-surface-1)] shadow-2xl backdrop-blur-xl md:w-[224px] md:rounded-l-[30px] md:rounded-tr-none md:border-b md:border-r-0 xl:w-[338px]">
       <div class="hidden h-10 flex-shrink-0 md:block" />
       <div class="px-3 pt-3 md:px-4 md:pt-0">
-        <button class="flex h-11 w-full items-center gap-2 rounded-full border border-cyan-200/14 bg-cyan-200/[0.055] px-3 text-left text-base text-cyan-50 hover:bg-cyan-200/10 hover:text-white" @click="back">
+        <button class="flex h-11 w-full items-center gap-2 rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-left text-base text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-2)] hover:text-white" @click="back">
           <ArrowLeft class="h-4 w-4" />
           {{ t('settings.backToApp') }}
         </button>
       </div>
       <nav class="mt-3 flex flex-none gap-1 overflow-x-auto px-3 pb-2 text-sm md:mt-6 md:block md:flex-1 md:overflow-y-auto md:px-4 md:pb-0 md:text-[15px]">
-        <div class="mb-3 hidden px-1 text-[11px] tracking-[0.22em] text-cyan-200/45 md:block">HomeRail</div>
+        <div class="mb-3 hidden px-1 text-[11px] tracking-[0.22em] text-[var(--hr-text-3)] md:block">HomeRail</div>
         <button
           v-for="tab in visibleTabs"
           :key="tab.id"
           :data-testid="`agent-settings-tab-${tab.id}`"
           class="mb-1 flex h-10 w-auto flex-shrink-0 items-center gap-2 rounded-2xl px-3 text-left md:h-11 md:w-full md:gap-3"
-          :class="activeTab === tab.id ? 'border border-cyan-200/20 bg-cyan-200/12 text-white' : 'border border-transparent text-white/66 hover:border-white/10 hover:bg-white/[0.055] hover:text-white'"
+          :class="activeTab === tab.id ? 'border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-white' : 'border border-transparent text-white/66 hover:border-white/10 hover:bg-white/[0.055] hover:text-white'"
           @click="activeTab = tab.id"
         >
           <component :is="tab.icon" class="h-4 w-4" />
           {{ tab.label }}
         </button>
       </nav>
-      <div class="hidden border-t border-cyan-200/10 px-4 py-4 text-xs text-cyan-100/45 md:block">
+      <div class="hidden border-t border-[var(--hr-border)] px-4 py-4 text-xs text-[var(--hr-text-3)] md:block">
         API {{ apiBaseUrl }}
       </div>
     </aside>
 
-    <main class="relative z-10 min-h-0 min-w-0 flex-1 overflow-y-auto rounded-b-[24px] border border-cyan-200/14 bg-[#071012]/76 shadow-2xl backdrop-blur-xl md:rounded-bl-none md:rounded-r-[30px]">
+    <main class="relative z-10 min-h-0 min-w-0 flex-1 overflow-y-auto rounded-b-[24px] border border-[var(--hr-border)] bg-[var(--hr-panel)] shadow-2xl backdrop-blur-xl md:rounded-bl-none md:rounded-r-[30px]">
       <div class="mx-auto w-full max-w-[1040px] px-4 py-5 sm:px-5 sm:py-7 xl:px-10 xl:py-12">
         <div class="flex items-start justify-between gap-4">
           <div>
             <h1 class="text-2xl font-semibold tracking-normal text-white sm:text-3xl">{{ activeTabLabel }}</h1>
             <p v-if="activeTabDescription" class="mt-3 text-sm text-white/42">{{ activeTabDescription }}</p>
           </div>
-          <button class="flex h-10 flex-shrink-0 items-center gap-2 rounded-full border border-cyan-200/14 px-3 text-sm text-cyan-50 hover:bg-cyan-200/10 sm:h-11 sm:px-4" @click="refreshAll">
+          <button class="flex h-10 flex-shrink-0 items-center gap-2 rounded-full border border-[var(--hr-border)] px-3 text-sm text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-2)] sm:h-11 sm:px-4" @click="refreshAll">
             <Loader2 v-if="loading" class="h-4 w-4 animate-spin" />
             <RefreshCw v-else class="h-4 w-4" />
             {{ t('settings.actions.refresh') }}
@@ -1548,38 +1548,38 @@ onUnmounted(() => {
                   v-for="project in projects"
                   :key="project.id"
                   class="w-full rounded-md border px-3 py-2 text-left"
-                  :class="selectedProjectId === project.id ? 'border-blue-400 bg-blue-500/10' : 'border-white/10 bg-black/20 hover:bg-white/5'"
+                  :class="selectedProjectId === project.id ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)]' : 'border-white/10 bg-[var(--hr-surface-1)] hover:bg-white/5'"
                   @click="selectProject(project.id)"
                 >
                   <div class="truncate text-sm font-medium">{{ project.name }}</div>
                   <div class="mt-1 text-xs text-gray-500">{{ project.active_changes }} active changes</div>
                 </button>
-                <div v-if="!projects.length" data-testid="agent-settings-workspace-projects-empty" class="rounded-md border border-white/10 bg-black/20 p-3 text-sm text-gray-500">暂无 Project。</div>
+                <div v-if="!projects.length" data-testid="agent-settings-workspace-projects-empty" class="rounded-md border border-white/10 bg-[var(--hr-surface-1)] p-3 text-sm text-gray-500">暂无 Project。</div>
                 <div class="rounded-md border border-yellow-500/20 bg-yellow-500/5 p-3 text-sm text-yellow-100/80" data-testid="workspace-directory-import-tracked-unsupported">
                   本地目录导入 (directory import) 为后端 tracked unsupported 状态 — 未伪装为已实现。后端跟进: {{ workspaceSettings?.directory_import_next_action || 'Implement directory import/select API in TS Manager backend' }}
                 </div>
               </div>
               <div v-if="selectedProject" class="space-y-4">
                 <div class="grid gap-3 sm:grid-cols-2">
-                  <div class="rounded-md bg-black/20 p-3">
+                  <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
                     <div class="text-xs text-gray-500">Project ID</div>
                     <div class="mt-1 break-all font-mono text-sm">{{ selectedProject.id }}</div>
                   </div>
-                  <div class="rounded-md bg-black/20 p-3">
+                  <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
                     <div class="text-xs text-gray-500">Git</div>
                     <div class="mt-1 text-sm">{{ splitRepo(selectedProject.git_repo_name) }}</div>
                   </div>
-                  <div class="rounded-md bg-black/20 p-3">
+                  <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
                     <div class="text-xs text-gray-500">Storage</div>
                     <div class="mt-1 text-sm">{{ projectStorages.length }} 个挂载配置</div>
                   </div>
-                  <div class="rounded-md bg-black/20 p-3">
+                  <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
                     <div class="text-xs text-gray-500">Updated</div>
                     <div class="mt-1 text-sm">{{ formatDate(selectedProject.updated_at) }}</div>
                   </div>
                 </div>
                 <div class="space-y-2">
-                  <div v-for="storage in projectStorages" :key="storage.id" class="rounded-md border border-white/10 bg-black/20 p-3 text-sm">
+                  <div v-for="storage in projectStorages" :key="storage.id" class="rounded-md border border-white/10 bg-[var(--hr-surface-1)] p-3 text-sm">
                     <div class="font-medium">{{ storage.name }}</div>
                     <div class="mt-1 text-gray-500">{{ storage.storage_type }} · {{ storage.mount_point || storage.storage_path }}</div>
                   </div>
@@ -1976,7 +1976,7 @@ onUnmounted(() => {
                 </div>
                 <span
                   class="rounded-full px-3 py-1.5 text-sm"
-                  :class="voiceButtonBindingMode === 'hid' ? 'bg-cyan-500/10 text-cyan-100' : 'bg-emerald-500/10 text-emerald-100'"
+                  :class="voiceButtonBindingMode === 'hid' ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]' : 'bg-emerald-500/10 text-emerald-100'"
                 >
                   {{ voiceButtonBindingMode === 'hid' ? 'WebHID' : t('settings.voice.keyboardButton') }}
                 </span>
@@ -1984,20 +1984,20 @@ onUnmounted(() => {
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
                 <div class="min-w-0">
                   <div class="flex items-center gap-2 font-medium text-white/88">
-                    <Mic class="h-4 w-4 text-cyan-200/70" />
+                    <Mic class="h-4 w-4 text-[var(--hr-accent)]" />
                     {{ t('settings.voice.microphone') }}
                   </div>
                   <div class="mt-1 text-sm leading-6 text-white/44">
                     {{ t('settings.voice.microphoneDescription') }}
                   </div>
-                  <div v-if="voiceAudioInputStatus" class="mt-1 text-xs text-cyan-100/70">{{ voiceAudioInputStatus }}</div>
+                  <div v-if="voiceAudioInputStatus" class="mt-1 text-xs text-[var(--hr-text-2)]">{{ voiceAudioInputStatus }}</div>
                 </div>
                 <div class="flex min-w-0 items-center gap-2">
                   <select
                     v-if="voiceAudioInputSelectorVisible"
                     :value="selectedVoiceAudioInputDeviceId"
                     data-testid="agent-settings-voice-audio-input-select"
-                    class="h-10 min-w-[260px] rounded-lg border border-white/10 bg-black/[0.24] px-3 text-sm text-white/82 outline-none"
+                    class="h-10 min-w-[260px] rounded-lg border border-white/10 bg-[var(--hr-surface-1)] px-3 text-sm text-white/82 outline-none"
                     @change="selectVoiceAudioInput"
                   >
                     <option value="">{{ t('settings.voice.automatic') }}</option>
@@ -2011,7 +2011,7 @@ onUnmounted(() => {
                   </select>
                   <div
                     v-else-if="singleVoiceAudioInputDevice"
-                    class="max-w-[260px] truncate rounded-lg border border-white/10 bg-black/[0.18] px-3 py-2 text-sm text-white/66"
+                    class="max-w-[260px] truncate rounded-lg border border-white/10 bg-[var(--hr-surface-1)] px-3 py-2 text-sm text-white/66"
                     :title="singleVoiceAudioInputDevice.label"
                     data-testid="agent-settings-voice-audio-input-single"
                   >
@@ -2054,7 +2054,7 @@ onUnmounted(() => {
                       ? (voiceHidSecureContext ? t('settings.voice.secureAvailable') : t('settings.voice.secureRequired'))
                       : t('settings.voice.keyboardAvailable') }}
                   </div>
-                  <div v-if="voiceHidBindingStatus" class="mt-1 text-xs text-cyan-100/70">{{ voiceHidBindingStatus }}</div>
+                  <div v-if="voiceHidBindingStatus" class="mt-1 text-xs text-[var(--hr-text-2)]">{{ voiceHidBindingStatus }}</div>
                 </div>
                 <div class="flex items-center gap-2">
                   <button
@@ -2087,7 +2087,7 @@ onUnmounted(() => {
                     min="0.5"
                     max="6"
                     step="0.1"
-                    class="h-9 w-24 rounded-lg border border-white/10 bg-black/[0.24] px-3 text-sm text-white/82 outline-none"
+                    class="h-9 w-24 rounded-lg border border-white/10 bg-[var(--hr-surface-1)] px-3 text-sm text-white/82 outline-none"
                     @change="saveVoiceVadSilenceSetting"
                     @blur="saveVoiceVadSilenceSetting"
                   />
@@ -2202,7 +2202,7 @@ onUnmounted(() => {
                 <span class="rounded-full bg-yellow-500/10 px-2 py-0.5 text-xs text-yellow-200">tracked_gap: 经验图谱数据依赖后台 ingest</span>
               </div>
               <div class="mt-2 text-xs" :class="experienceGraphError ? 'text-red-300' : 'text-gray-500'">{{ experienceGraphError || (experienceGraph?.updated_at ? `更新于 ${formatDate(experienceGraph.updated_at)}` : experienceGraph?.reason || '等待自动 ingest') }}</div>
-              <button class="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-md border border-cyan-400/30 bg-cyan-400/10 text-sm text-cyan-100 hover:bg-cyan-400/15" @click="router.push('/agent/experience')">
+              <button class="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-md border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-sm text-[var(--hr-accent)] hover:bg-[color:color-mix(in_srgb,var(--hr-accent)_18%,transparent)]" @click="router.push('/agent/experience')">
                 <Network class="h-4 w-4" />
                 打开完整图谱
               </button>
@@ -2219,7 +2219,7 @@ onUnmounted(() => {
                   <RefreshCw class="h-4 w-4" />
                 </button>
               </div>
-              <div class="mt-3 rounded-md border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-100/80">
+              <div class="mt-3 rounded-md border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] px-3 py-2 text-xs text-[var(--hr-text-2)]">
                 这里展示的是运行经验图谱：Run 与模板、评分、失败根因和经验的关系。单次 DAG 原始拓扑仍在 DAG 运行页面查看。
               </div>
               <div class="mt-4 grid gap-2 sm:grid-cols-2">
@@ -2292,7 +2292,7 @@ onUnmounted(() => {
                 <span class="rounded-full px-2 py-1" :class="assetDiagnostics.exists ? 'bg-emerald-500/10 text-emerald-200' : 'bg-red-500/10 text-red-200'">
                   {{ assetDiagnostics.exists ? '目录存在' : '目录缺失' }}
                 </span>
-                <span v-if="assetDiagnostics.is_symlink" class="rounded-full bg-cyan-500/10 px-2 py-1 text-cyan-200">
+                <span v-if="assetDiagnostics.is_symlink" class="rounded-full bg-[var(--hr-accent-soft)] px-2 py-1 text-[var(--hr-accent)]">
                   symlink → {{ assetDiagnostics.symlink_target }}
                 </span>
                 <span v-if="assetDiagnostics.catalog_path" class="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">catalog.yaml</span>
@@ -2316,7 +2316,7 @@ onUnmounted(() => {
                     <div class="text-sm font-medium text-gray-200">DAG 模板目录</div>
                     <div class="mt-1 text-xs text-gray-500">默认只展示 catalog primary 模板；legacy/compat 不进入主要入口。</div>
                   </div>
-                  <span class="rounded-full bg-cyan-500/10 px-2 py-1 text-xs text-cyan-200">{{ orchestrationTemplates.length }} primary</span>
+                  <span class="rounded-full bg-[var(--hr-accent-soft)] px-2 py-1 text-xs text-[var(--hr-accent)]">{{ orchestrationTemplates.length }} primary</span>
                 </div>
                 <div v-if="orchestrationTemplatesError" class="mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{{ orchestrationTemplatesError }}</div>
                 <div class="mt-3 grid gap-2">
@@ -2324,7 +2324,7 @@ onUnmounted(() => {
                     v-for="template in orchestrationTemplates"
                     :key="template.id"
                     :data-testid="`agent-settings-orchestration-template-${template.id}`"
-                    class="rounded-md border border-white/10 bg-black/20 px-3 py-2"
+                    class="rounded-md border border-white/10 bg-[var(--hr-surface-1)] px-3 py-2"
                   >
                     <div class="flex items-start justify-between gap-3">
                       <div class="min-w-0">
@@ -2421,14 +2421,14 @@ onUnmounted(() => {
       <transition name="settings-git-panel">
         <aside v-if="gitDrawerOpen" class="settings-git-panel" data-testid="agent-settings-git-create-drawer" @click.stop>
           <form class="flex h-full flex-col" @submit.prevent="createGit">
-            <header class="flex shrink-0 items-center justify-between border-b border-cyan-200/10 px-5 py-4">
+            <header class="flex shrink-0 items-center justify-between border-b border-[var(--hr-border)] px-5 py-4">
               <div>
-                <div class="text-xs tracking-[0.18em] text-cyan-200/45">Git Server</div>
-                <h2 class="mt-1 text-base font-semibold text-cyan-50">{{ t('settings.git.drawerTitle') }}</h2>
+                <div class="text-xs tracking-[0.18em] text-[var(--hr-text-3)]">Git Server</div>
+                <h2 class="mt-1 text-base font-semibold text-[var(--hr-text-1)]">{{ t('settings.git.drawerTitle') }}</h2>
               </div>
               <button
                 type="button"
-                class="inline-flex h-9 w-9 items-center justify-center border border-cyan-200/14 text-gray-400 transition-colors hover:bg-cyan-200/10 hover:text-white"
+                class="inline-flex h-9 w-9 items-center justify-center border border-[var(--hr-border)] text-gray-400 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
                 @click="closeGitDrawer"
                 :title="t('settings.actions.close')"
               >
@@ -2498,7 +2498,7 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <footer class="flex shrink-0 justify-end gap-2 border-t border-cyan-200/10 px-5 py-4">
+            <footer class="flex shrink-0 justify-end gap-2 border-t border-[var(--hr-border)] px-5 py-4">
               <button
                 type="button"
                 class="h-10 border border-white/10 px-4 text-sm text-white/60 hover:bg-white/5 hover:text-white"
@@ -2529,8 +2529,8 @@ onUnmounted(() => {
 .agent-settings-shell {
   --settings-card-radius: 24px;
   --settings-control-radius: 18px;
-  --settings-field-bg: rgba(255, 255, 255, 0.045);
-  --settings-border: rgba(103, 232, 249, 0.14);
+  --settings-field-bg: var(--hr-surface-1);
+  --settings-border: var(--hr-border);
 }
 
 .agent-settings-shell :deep(section) {
@@ -2549,12 +2549,12 @@ onUnmounted(() => {
   border-color: var(--settings-border);
   border-radius: var(--settings-control-radius);
   background: var(--settings-field-bg);
-  color: rgba(255, 255, 255, 0.84);
+  color: var(--hr-text-1);
 }
 
 .agent-settings-shell :deep(input::placeholder),
 .agent-settings-shell :deep(textarea::placeholder) {
-  color: rgba(255, 255, 255, 0.32);
+  color: var(--hr-text-4);
 }
 
 .agent-settings-shell :deep(button) {
@@ -2567,9 +2567,9 @@ onUnmounted(() => {
 .agent-settings-shell :deep(textarea:focus-visible),
 .agent-settings-shell :deep(a:focus-visible),
 .agent-settings-shell :deep([tabindex]:focus-visible) {
-  outline: 2px solid rgba(103, 232, 249, 0.9);
+  outline: 2px solid var(--hr-accent);
   outline-offset: 3px;
-  box-shadow: 0 0 0 6px rgba(103, 232, 249, 0.12);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--hr-accent) 12%, transparent);
 }
 
 .agent-settings-shell :deep(section > div),
@@ -2581,7 +2581,7 @@ onUnmounted(() => {
 .agent-settings-shell :deep(section > .bg-\[\#252525\]),
 .agent-settings-shell :deep(.grid > .bg-\[\#252525\]),
 .agent-settings-shell :deep(.bg-\[\#343434\]) {
-  background: rgba(255, 255, 255, 0.042);
+  background: var(--hr-surface-1);
 }
 
 .settings-git-overlay {
@@ -2599,9 +2599,9 @@ onUnmounted(() => {
   bottom: 0;
   z-index: 80;
   width: min(560px, 94vw);
-  border-left: 1px solid rgba(103, 232, 249, 0.14);
-  background: rgba(7, 16, 18, 0.97);
-  color: rgba(255, 255, 255, 0.88);
+  border-left: 1px solid var(--hr-border);
+  background: var(--hr-panel);
+  color: var(--hr-text-1);
   box-shadow: -24px 0 80px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(24px);
 }

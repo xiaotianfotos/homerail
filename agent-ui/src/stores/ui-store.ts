@@ -53,6 +53,7 @@ export const useUiStore = defineStore('ui', () => {
   // --------------------------------------------------------------------------
 
   const theme = ref<Theme>('system')
+  const skin = useStorage<'cockpit' | 'paper'>('homerail.skin', 'cockpit')
   const sidebarCollapsed = ref(false)
   const isLoading = ref(false)
   const loadingMessage = ref<string>('')
@@ -104,6 +105,17 @@ export const useUiStore = defineStore('ui', () => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('omni_theme', newTheme)
       updateHtmlClass()
+    }
+  }
+
+  function setSkin(newSkin: 'cockpit' | 'paper') {
+    skin.value = newSkin
+    applySkinToDocument()
+  }
+
+  function applySkinToDocument() {
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.hrTheme = skin.value
     }
   }
 
@@ -201,6 +213,7 @@ export const useUiStore = defineStore('ui', () => {
 
       // Apply theme to HTML
       updateHtmlClass()
+      applySkinToDocument()
 
       const normalizedLocale = normalizeAppLocale(locale.value) ?? resolveInitialLocale()
       locale.value = normalizedLocale
@@ -228,6 +241,7 @@ export const useUiStore = defineStore('ui', () => {
   return {
     // State
     theme,
+    skin,
     sidebarCollapsed,
     isLoading,
     loadingMessage,
@@ -243,6 +257,7 @@ export const useUiStore = defineStore('ui', () => {
 
     // Actions
     setTheme,
+    setSkin,
     toggleSidebar,
     setSidebarCollapsed,
     setLoading,

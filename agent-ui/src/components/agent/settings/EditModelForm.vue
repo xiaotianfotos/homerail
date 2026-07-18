@@ -121,7 +121,7 @@ function submit(): void {
         <span class="text-xs text-gray-500">{{ t('settings.models.form.aliasPlaceholder') }}</span>
         <input
           v-model="displayName"
-          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
+          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         />
       </label>
     </section>
@@ -150,14 +150,14 @@ function submit(): void {
         <span class="text-xs text-gray-500">{{ t('settings.models.form.voice') }}</span>
         <input
           v-model="ttsVoice"
-          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
+          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         />
       </label>
       <label class="space-y-1">
         <span class="text-xs text-gray-500">{{ t('settings.models.edit.format') }}</span>
         <input
           v-model="ttsFormat"
-          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
+          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         />
       </label>
       <label class="space-y-1">
@@ -166,7 +166,7 @@ function submit(): void {
           v-model.number="ttsSampleRate"
           type="number"
           min="1"
-          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
+          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         />
       </label>
     </section>
@@ -176,7 +176,7 @@ function submit(): void {
       <input
         v-model="apiKey"
         type="password"
-        class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
+        class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         :placeholder="t('settings.models.form.keepKey')"
       />
     </label>
@@ -210,7 +210,7 @@ function submit(): void {
       </button>
       <button
         type="button"
-        class="inline-flex items-center gap-2 rounded-md bg-cyan-500 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-400 disabled:opacity-50"
+        class="inline-flex items-center gap-2 rounded-md bg-[var(--hr-accent)] px-4 py-2 text-sm font-medium text-[var(--hr-on-accent)] hover:bg-[color:color-mix(in_srgb,var(--hr-accent)_85%,white)] disabled:opacity-50"
         :disabled="submitting"
         @click="submit"
       >

@@ -26,7 +26,7 @@ const classes = computed(() => {
     llm: 'border-emerald-400/40 bg-emerald-400/10 text-emerald-100',
     asr: 'border-blue-400/40 bg-blue-400/10 text-blue-100',
     tts: 'border-orange-300/40 bg-orange-300/10 text-orange-100',
-    audio: 'border-cyan-400/40 bg-cyan-400/10 text-cyan-100',
+    audio: 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]',
     vision: 'border-violet-400/40 bg-violet-400/10 text-violet-100',
     video: 'border-fuchsia-400/40 bg-fuchsia-400/10 text-fuchsia-100',
   }

@@ -118,7 +118,7 @@ function statusClass(status: string): string {
     case 'waiting_for_command': return 'border-amber-300/30 bg-amber-300/10 text-amber-200'
     case 'completed': return 'border-blue-300/30 bg-blue-300/10 text-blue-200'
     case 'failed': return 'border-red-400/30 bg-red-500/15 text-red-300'
-    case 'ready': return 'border-cyan-200/25 bg-cyan-200/10 text-cyan-100'
+    case 'ready': return 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
     case 'skipped': return 'border-amber-300/25 bg-amber-300/10 text-amber-200'
     default: return 'border-white/10 bg-white/[0.04] text-white/45'
   }
@@ -169,10 +169,10 @@ defineExpose({ scrollBy })
   <transition name="drawer-slide">
     <aside
       v-if="open && node"
-      class="dag-detail-drawer pointer-events-auto absolute right-0 top-0 z-30 flex h-full w-[min(94vw,520px)] flex-col border-l-2 border-cyan-200/20 bg-[#070d12]/95 backdrop-blur-2xl"
+      class="dag-detail-drawer pointer-events-auto absolute right-0 top-0 z-30 flex h-full w-[min(94vw,520px)] flex-col border-l-2 border-[var(--hr-border-strong)] bg-[var(--hr-panel)] backdrop-blur-2xl"
     >
       <!-- 头部 -->
-      <div class="flex items-center gap-3 border-b-2 border-cyan-200/12 px-6 py-4 flex-shrink-0">
+      <div class="flex items-center gap-3 border-b-2 border-[var(--hr-border)] px-6 py-4 flex-shrink-0">
         <div
           class="flex h-12 w-12 items-center justify-center rounded-2xl flex-shrink-0"
           :style="{ backgroundColor: (persona?.color ?? '#888') + '22' }"
@@ -202,7 +202,7 @@ defineExpose({ scrollBy })
       </div>
 
       <!-- 指标条（紧凑） -->
-      <div v-if="nodeMetrics" class="flex items-center gap-4 px-6 py-2.5 flex-shrink-0 border-b border-cyan-200/10 text-sm">
+      <div v-if="nodeMetrics" class="flex items-center gap-4 px-6 py-2.5 flex-shrink-0 border-b border-[var(--hr-border)] text-sm">
         <span class="flex items-center gap-1.5">
           <Wrench class="h-3.5 w-3.5 text-blue-300/70" />
           <span class="font-mono font-semibold text-white/85">{{ nodeMetrics.tool_calls }}</span>
@@ -226,24 +226,24 @@ defineExpose({ scrollBy })
       <!-- 面板：任务详情 -->
       <button
         :class="cn(
-          'flex items-center gap-2.5 px-6 py-3 text-left transition-colors flex-shrink-0 border-b border-cyan-200/8',
-          isPanelFocused('task') ? 'bg-cyan-200/[0.08]' : 'hover:bg-white/[0.03]'
+          'flex items-center gap-2.5 px-6 py-3 text-left transition-colors flex-shrink-0 border-b border-[var(--hr-border)]',
+          isPanelFocused('task') ? 'bg-[var(--hr-accent-soft)]' : 'hover:bg-white/[0.03]'
         )"
         @click="$emit('close')"
       >
-        <FileText class="h-4 w-4 flex-shrink-0" :class="isPanelFocused('task') ? 'text-cyan-300' : 'text-white/40'" />
-        <span class="flex-1 text-sm font-medium" :class="isPanelFocused('task') ? 'text-cyan-100' : 'text-white/60'">{{ t('dag.detail.task') }}</span>
-        <span v-if="isPanelFocused('task')" class="rounded bg-cyan-200/15 px-1.5 py-0.5 text-[10px] text-cyan-200/70">{{ t('dag.detail.collapse') }}</span>
+        <FileText class="h-4 w-4 flex-shrink-0" :class="isPanelFocused('task') ? 'text-[var(--hr-accent)]' : 'text-white/40'" />
+        <span class="flex-1 text-sm font-medium" :class="isPanelFocused('task') ? 'text-[var(--hr-accent)]' : 'text-white/60'">{{ t('dag.detail.task') }}</span>
+        <span v-if="isPanelFocused('task')" class="rounded bg-[var(--hr-accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--hr-accent)]">{{ t('dag.detail.collapse') }}</span>
         <component :is="isPanelExpanded('task') ? ChevronUp : ChevronDown" class="h-4 w-4 text-white/40" />
       </button>
-      <div v-if="isPanelExpanded('task')" ref="taskScrollRef" class="dag-task-detail flex-shrink-0 overflow-y-auto border-b border-cyan-200/8 px-6 py-4 max-h-[40vh]">
+      <div v-if="isPanelExpanded('task')" ref="taskScrollRef" class="dag-task-detail flex-shrink-0 overflow-y-auto border-b border-[var(--hr-border)] px-6 py-4 max-h-[40vh]">
         <div v-if="taskSystem" class="mb-4">
           <div class="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">{{ t('dag.detail.role') }}</div>
           <div class="agent-markdown text-[15px] leading-relaxed text-white/75" v-html="renderMarkdown(taskSystem)" />
         </div>
         <div v-if="taskPrompt">
           <div class="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">{{ t('dag.detail.userTask') }}</div>
-          <div class="rounded-xl border border-cyan-200/18 bg-cyan-200/[0.07] px-5 py-4">
+          <div class="rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-5 py-4">
             <div class="agent-markdown text-[15px] leading-relaxed text-white/90" v-html="renderMarkdown(taskPrompt)" />
           </div>
         </div>
@@ -255,13 +255,13 @@ defineExpose({ scrollBy })
       <!-- 面板：聊天日志 -->
       <button
         :class="cn(
-          'flex items-center gap-2.5 px-6 py-3 text-left transition-colors flex-shrink-0 border-b border-cyan-200/8',
-          isPanelFocused('logs') ? 'bg-cyan-200/[0.08]' : 'hover:bg-white/[0.03]'
+          'flex items-center gap-2.5 px-6 py-3 text-left transition-colors flex-shrink-0 border-b border-[var(--hr-border)]',
+          isPanelFocused('logs') ? 'bg-[var(--hr-accent-soft)]' : 'hover:bg-white/[0.03]'
         )"
       >
-        <MessageSquare class="h-4 w-4 flex-shrink-0" :class="isPanelFocused('logs') ? 'text-cyan-300' : 'text-white/40'" />
-        <span class="flex-1 text-sm font-medium" :class="isPanelFocused('logs') ? 'text-cyan-100' : 'text-white/60'">{{ t('dag.detail.logs') }}</span>
-        <span v-if="isPanelFocused('logs')" class="rounded bg-cyan-200/15 px-1.5 py-0.5 text-[10px] text-cyan-200/70">{{ t('dag.detail.collapse') }}</span>
+        <MessageSquare class="h-4 w-4 flex-shrink-0" :class="isPanelFocused('logs') ? 'text-[var(--hr-accent)]' : 'text-white/40'" />
+        <span class="flex-1 text-sm font-medium" :class="isPanelFocused('logs') ? 'text-[var(--hr-accent)]' : 'text-white/60'">{{ t('dag.detail.logs') }}</span>
+        <span v-if="isPanelFocused('logs')" class="rounded bg-[var(--hr-accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--hr-accent)]">{{ t('dag.detail.collapse') }}</span>
         <component :is="isPanelExpanded('logs') ? ChevronUp : ChevronDown" class="h-4 w-4 text-white/40" />
       </button>
       <div v-if="isPanelExpanded('logs')" ref="logScrollRef" class="dag-chat-log min-h-0 flex-1 overflow-y-auto px-4 py-3">
@@ -306,8 +306,8 @@ defineExpose({ scrollBy })
   font-size: 1rem;
 }
 .dag-chat-log :deep(.user-message) {
-  background: rgba(103, 232, 249, 0.10);
-  border: 1px solid rgba(103, 232, 249, 0.22);
+  background: var(--hr-accent-soft);
+  border: 1px solid var(--hr-accent-border);
   border-radius: 16px 16px 16px 4px;
   padding: 12px 16px;
   max-width: 92%;
@@ -361,7 +361,7 @@ defineExpose({ scrollBy })
   margin: 0.2em 0;
 }
 .dag-task-detail .agent-markdown :deep(code) {
-  background: rgba(103, 232, 249, 0.12);
+  background: var(--hr-accent-soft);
   border-radius: 4px;
   padding: 0.1em 0.35em;
   font-size: 0.9em;
@@ -384,7 +384,7 @@ defineExpose({ scrollBy })
   font-weight: 600;
 }
 .dag-task-detail .agent-markdown :deep(a) {
-  color: rgb(103, 232, 249);
+  color: var(--hr-accent);
   text-decoration: underline;
 }
 </style>

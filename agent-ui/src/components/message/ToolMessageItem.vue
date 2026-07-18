@@ -175,13 +175,13 @@ function toggleExpand() {
 .tool-name {
   font-size: 15px;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--hr-text-1);
   white-space: nowrap;
 }
 
 .tool-summary {
   font-size: 14px;
-  color: #94a3b8;
+  color: var(--hr-text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -234,9 +234,9 @@ function toggleExpand() {
 }
 
 .tool-input {
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  color: #bfdbfe;
+  background: var(--hr-accent-soft);
+  border: 1px solid var(--hr-accent-border);
+  color: var(--hr-accent);
 }
 
 .tool-result {

@@ -482,7 +482,7 @@ function statusColor(status: string): string {
     case 'failed':
       return 'text-red-300'
     default:
-      return 'text-white/35'
+      return 'text-[var(--hr-text-3)]'
   }
 }
 
@@ -532,22 +532,22 @@ defineExpose({
 
 <template>
   <aside
-    class="voice-left-rail flex h-full min-h-0 w-[292px] shrink-0 flex-col border-r border-white/8 bg-white/[0.02] px-4 py-5"
+    class="voice-left-rail flex h-full min-h-0 w-[292px] shrink-0 flex-col border-r border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-4 py-5"
   >
     <div class="mb-4 flex items-center justify-between">
       <div class="min-w-0">
-        <div class="truncate text-xl font-semibold text-white">{{ t('voice.sidebar.workspace') }}</div>
+        <div class="truncate text-xl font-semibold text-[var(--hr-text-1)]">{{ t('voice.sidebar.workspace') }}</div>
       </div>
       <div class="flex items-center gap-2">
         <button
-          class="rounded-full border border-white/10 p-2 text-white/55 hover:bg-white/10 hover:text-white"
+          class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
           :title="t('voice.sidebar.collapse')"
           @click="emit('collapse')"
         >
           <PanelLeftClose class="h-4 w-4" />
         </button>
         <button
-          class="rounded-full border border-white/10 p-2 text-white/55 hover:bg-white/10 hover:text-white"
+          class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
           :title="t('voice.sidebar.addDirectory')"
           @click="createOpen = true"
         >
@@ -558,17 +558,17 @@ defineExpose({
 
     <div class="relative mb-4">
       <Search
-        class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35"
+        class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--hr-text-3)]"
       />
       <input
         v-model="projectQuery"
-        class="h-10 w-full rounded-full border border-white/10 bg-white/[0.035] pl-9 pr-3 text-sm text-white/80 outline-none placeholder:text-white/30 focus:border-[#4fd8e8]/40"
+        class="h-10 w-full rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] pl-9 pr-3 text-sm text-[var(--hr-text-1)] outline-none placeholder:text-[var(--hr-text-4)] focus:border-[var(--hr-accent-border)]"
         :placeholder="t('voice.sidebar.search')"
       />
     </div>
 
     <section class="flex min-h-0 flex-1 flex-col">
-      <div class="mb-2 flex items-center justify-between px-1 text-xs text-white/40">
+      <div class="mb-2 flex items-center justify-between px-1 text-xs text-[var(--hr-text-3)]">
         <span>{{ t('voice.sidebar.directories') }}</span>
         <Loader2 v-if="loadingProjects || voiceSessionsLoading" class="h-3.5 w-3.5 animate-spin" />
       </div>
@@ -581,8 +581,8 @@ defineExpose({
                 isGamepadFocused(projectGamepadId(project)) &&
                   'voice-session-sidebar__gamepad-focus',
                 project.id === store.managerProjectId
-                  ? 'border-[#4fd8e8]/35 bg-[#4fd8e8]/10 text-white'
-                  : 'border-transparent text-white/62 hover:border-white/15 hover:bg-white/[0.045] hover:text-white'
+                  ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
+                  : 'border-transparent text-[var(--hr-text-2)] hover:border-[var(--hr-border)] hover:bg-[var(--hr-surface-1)] hover:text-[var(--hr-text-1)]'
               )
             "
             :data-gamepad-sidebar-id="projectGamepadId(project)"
@@ -591,10 +591,10 @@ defineExpose({
             @click="selectProject(project)"
             @keydown.enter.prevent="selectProject(project)"
           >
-            <Folder class="h-4 w-4 shrink-0 text-white/40" />
+            <Folder class="h-4 w-4 shrink-0 text-[var(--hr-accent)]" />
             <div class="min-w-0 flex-1">
               <div class="truncate text-sm font-medium">{{ project.name }}</div>
-              <div class="mt-0.5 truncate text-[11px] text-white/35">
+              <div class="mt-0.5 truncate text-[11px] text-[var(--hr-text-4)]">
                 {{ projectPath(project) || project.id }}
               </div>
             </div>
@@ -602,14 +602,14 @@ defineExpose({
               class="absolute right-2 top-2 flex opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
             >
               <button
-                class="rounded-full p-1.5 text-white/40 hover:bg-white/10 hover:text-white"
+                class="rounded-full p-1.5 text-[var(--hr-text-3)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
                 :title="t('voice.sidebar.configureDirectory')"
                 @click="openProjectSettings(project, $event)"
               >
                 <Settings class="h-3.5 w-3.5" />
               </button>
               <button
-                class="rounded-full p-1.5 text-white/35 hover:bg-red-400/10 hover:text-red-200 disabled:opacity-45"
+                class="rounded-full p-1.5 text-[var(--hr-text-4)] hover:bg-red-400/10 hover:text-red-200 disabled:opacity-45"
                 :class="confirmDeleteProjectId === project.id ? 'bg-red-400/10 text-red-200 opacity-100' : ''"
                 :title="t('voice.sidebar.deleteDirectory')"
                 :disabled="deletingProjectId === project.id"
@@ -624,7 +624,7 @@ defineExpose({
           <div
             v-if="confirmDeleteProjectId === project.id"
             data-project-delete-confirm
-            class="mt-2 rounded-2xl border border-red-300/20 bg-[#170d10]/95 p-4 text-white shadow-xl shadow-black/25"
+            class="mt-2 rounded-2xl border border-red-300/20 bg-[var(--hr-panel)] p-4 text-[var(--hr-text-1)] shadow-xl shadow-black/25"
             @click.stop
           >
             <div class="flex items-start gap-3">
@@ -632,11 +632,11 @@ defineExpose({
                 <Trash2 class="h-4 w-4" />
               </div>
               <div class="min-w-0 flex-1">
-                <div class="text-sm font-semibold text-white">{{ t('voice.sidebar.removeDirectoryConfirm', { name: project.name }) }}</div>
-                <div class="mt-1 break-all font-mono text-xs text-white/42">
+                <div class="text-sm font-semibold text-[var(--hr-text-1)]">{{ t('voice.sidebar.removeDirectoryConfirm', { name: project.name }) }}</div>
+                <div class="mt-1 break-all font-mono text-xs text-[var(--hr-text-3)]">
                   {{ projectPath(project) || project.id }}
                 </div>
-                <div class="mt-3 space-y-1.5 text-xs leading-relaxed text-white/58">
+                <div class="mt-3 space-y-1.5 text-xs leading-relaxed text-[var(--hr-text-2)]">
                   <p>{{ t('voice.sidebar.removeDirectoryOnly') }}</p>
                   <p>{{ t('voice.sidebar.removeDirectoryKeepsData') }}</p>
                   <p>{{ t('voice.sidebar.removeDirectoryKeepsDag') }}</p>
@@ -656,7 +656,7 @@ defineExpose({
                 {{ t('voice.sidebar.removeReference') }}
               </button>
               <button
-                class="flex-1 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white/68 transition hover:bg-white/[0.08]"
+                class="flex-1 rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-4 py-2 text-sm text-[var(--hr-text-2)] transition hover:bg-[var(--hr-surface-2)]"
                 @click.stop="cancelProjectDelete"
               >
                 {{ t('settings.actions.cancel') }}
@@ -669,7 +669,7 @@ defineExpose({
               v-if="project.id === store.managerProjectId"
               :class="
                 cn(
-                  'flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-white/55 transition hover:bg-white/8 hover:text-white',
+                  'flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-[var(--hr-text-2)] transition hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]',
                   isGamepadFocused(newSessionGamepadId(project)) &&
                     'voice-session-sidebar__gamepad-focus'
                 )
@@ -689,8 +689,8 @@ defineExpose({
                   isGamepadFocused(sessionGamepadId(session)) &&
                     'voice-session-sidebar__gamepad-focus',
                   session.session_id === props.activeSessionId
-                    ? 'border-[#4fd8e8]/30 bg-[#4fd8e8]/10'
-                    : 'border-transparent hover:border-white/10 hover:bg-white/[0.04]'
+                    ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)]'
+                    : 'border-transparent hover:border-[var(--hr-border)] hover:bg-[var(--hr-surface-1)]'
                 )
               "
               :data-gamepad-sidebar-id="sessionGamepadId(session)"
@@ -711,14 +711,14 @@ defineExpose({
                   "
                 />
                 <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm text-white/76">{{ sessionLabel(session) }}</div>
+                  <div class="truncate text-sm text-[var(--hr-text-1)]">{{ sessionLabel(session) }}</div>
                 </div>
-                <span class="shrink-0 text-xs text-white/35">{{
+                <span class="shrink-0 text-xs text-[var(--hr-text-3)]">{{
                   timeAgo(session.start_time)
                 }}</span>
               </button>
               <button
-                class="shrink-0 rounded-full p-1.5 text-white/30 transition hover:bg-red-400/10 hover:text-red-200 group-hover/session:opacity-100 disabled:opacity-45"
+                class="shrink-0 rounded-full p-1.5 text-[var(--hr-text-4)] transition hover:bg-red-400/10 hover:text-red-200 group-hover/session:opacity-100 disabled:opacity-45"
                 :class="confirmDeleteSessionId === session.session_id ? 'opacity-100' : 'opacity-0'"
                 :title="t('voice.sidebar.deleteSession')"
                 :disabled="deletingSessionId === session.session_id"
@@ -733,9 +733,9 @@ defineExpose({
               <div
                 v-if="confirmDeleteSessionId === session.session_id"
                 data-session-delete-confirm
-                class="absolute right-0 top-full z-30 mt-1 w-48 rounded-2xl border border-white/10 bg-[#0b111b]/95 p-3 backdrop-blur-md"
+                class="absolute right-0 top-full z-30 mt-1 w-48 rounded-2xl border border-[var(--hr-border)] bg-[var(--hr-panel)] p-3 backdrop-blur-md"
               >
-                <p class="pb-2.5 text-xs leading-relaxed text-white/55">
+                <p class="pb-2.5 text-xs leading-relaxed text-[var(--hr-text-2)]">
                   {{ t('voice.sidebar.deleteSessionConfirm') }}
                 </p>
                 <div class="flex gap-2">
@@ -751,7 +751,7 @@ defineExpose({
                     {{ t('voice.sidebar.delete') }}
                   </button>
                   <button
-                    class="flex-1 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/60 transition hover:bg-white/[0.08]"
+                    class="flex-1 rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 py-1.5 text-xs text-[var(--hr-text-2)] transition hover:bg-[var(--hr-surface-2)]"
                     @click.stop="cancelSessionDelete"
                   >
                     {{ t('settings.actions.cancel') }}
@@ -769,8 +769,8 @@ defineExpose({
                     cn(
                       'flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-xs transition',
                       runId === store.currentRunId
-                        ? 'bg-[#4fd8e8]/12 text-[#d9f7fb]'
-                        : 'text-white/40 hover:bg-white/10 hover:text-white/70'
+                        ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
+                        : 'text-[var(--hr-text-3)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]/70'
                     )
                   "
                   @click="selectRun(runId)"
@@ -784,7 +784,7 @@ defineExpose({
               v-if="hiddenProjectSessionCount(project)"
               :class="
                 cn(
-                  'flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-white/42 transition hover:bg-white/[0.045] hover:text-white/70',
+                  'flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-[var(--hr-text-3)] transition hover:bg-[var(--hr-surface-1)] hover:text-[var(--hr-text-1)]',
                   isGamepadFocused(toggleSessionsGamepadId(project)) &&
                     'voice-session-sidebar__gamepad-focus'
                 )
@@ -803,7 +803,7 @@ defineExpose({
             </button>
             <div
               v-if="!voiceSessionsLoading && !projectSessions(project).length"
-              class="px-3 py-2 text-xs text-white/28"
+              class="px-3 py-2 text-xs text-[var(--hr-text-4)]"
             >
               {{ t('voice.sidebar.directoryEmpty') }}
             </div>
@@ -811,7 +811,7 @@ defineExpose({
         </div>
         <div
           v-if="!loadingProjects && !filteredProjects.length"
-          class="rounded-2xl border border-white/10 p-4 text-center text-xs text-white/35"
+          class="rounded-2xl border border-[var(--hr-border)] p-4 text-center text-xs text-[var(--hr-text-3)]"
         >
           {{ t('voice.sidebar.noDirectories') }}
         </div>
@@ -826,54 +826,54 @@ defineExpose({
     class="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 px-6 backdrop-blur-sm"
   >
     <section
-      class="w-[min(520px,92vw)] rounded-[24px] border border-white/10 bg-[#0b111b] p-5 text-white shadow-2xl"
+      class="w-[min(520px,92vw)] rounded-[24px] border border-[var(--hr-border)] bg-[var(--hr-panel)] p-5 text-[var(--hr-text-1)] shadow-2xl"
     >
       <div class="mb-5 flex items-start justify-between gap-4">
         <div>
-          <div class="text-xs tracking-[0.18em] text-[#4fd8e8]/60">{{ t('voice.sidebar.directories') }}</div>
+          <div class="text-xs tracking-[0.18em] text-[var(--hr-accent)]">{{ t('voice.sidebar.directories') }}</div>
           <h2 class="mt-1 text-xl font-semibold">{{ t('voice.project.configuration') }}</h2>
         </div>
         <button
-          class="rounded-full p-2 text-white/45 hover:bg-white/10 hover:text-white"
+          class="rounded-full p-2 text-[var(--hr-text-3)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
           @click="closeProjectSettings"
         >
           <X class="h-4 w-4" />
         </button>
       </div>
 
-      <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.name') }}</label>
+      <label class="mb-1 block text-xs text-[var(--hr-text-3)]">{{ t('voice.project.name') }}</label>
       <input
         v-model="editName"
-        class="mb-3 h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 text-sm outline-none focus:border-[#4fd8e8]/45"
+        class="mb-3 h-10 w-full rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         :placeholder="t('voice.project.namePlaceholder')"
       />
 
-      <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.description') }}</label>
+      <label class="mb-1 block text-xs text-[var(--hr-text-3)]">{{ t('voice.project.description') }}</label>
       <textarea
         v-model="editDescription"
-        class="mb-3 h-20 w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-[#4fd8e8]/45"
+        class="mb-3 h-20 w-full resize-none rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 py-2 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         :placeholder="t('voice.project.optional')"
       />
 
-      <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.path') }}</label>
+      <label class="mb-1 block text-xs text-[var(--hr-text-3)]">{{ t('voice.project.path') }}</label>
       <input
         v-model="editWorkspacePath"
-        class="mb-2 h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 font-mono text-sm outline-none focus:border-[#4fd8e8]/45"
+        class="mb-2 h-10 w-full rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 font-mono text-sm outline-none focus:border-[var(--hr-accent-border)]"
         placeholder="/path/to/directory"
       />
-      <div class="mb-5 text-xs text-white/35">
+      <div class="mb-5 text-xs text-[var(--hr-text-3)]">
         {{ t('voice.project.contextHint') }}
       </div>
 
-      <div class="mb-5 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
-        <div class="mb-3 flex items-center gap-2 text-sm font-medium text-white/80">
-          <GitBranch class="h-4 w-4 text-[#4fd8e8]/70" />
+      <div class="mb-5 rounded-2xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3">
+        <div class="mb-3 flex items-center gap-2 text-sm font-medium text-[var(--hr-text-1)]">
+          <GitBranch class="h-4 w-4 text-[var(--hr-accent)]" />
           {{ t('voice.project.gitRepository') }}
         </div>
-        <label class="mb-1 block text-xs text-white/45">Git Token</label>
+        <label class="mb-1 block text-xs text-[var(--hr-text-3)]">Git Token</label>
         <select
           :value="selectedGitServerId || ''"
-          class="mb-3 h-10 w-full rounded-xl border border-white/10 bg-[#101823] px-3 text-sm text-white/80 outline-none focus:border-[#4fd8e8]/45"
+          class="mb-3 h-10 w-full rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-sm text-[var(--hr-text-1)] outline-none focus:border-[var(--hr-accent-border)]"
           @change="handleGitServerChange"
         >
           <option value="">{{ t('voice.project.noGitToken') }}</option>
@@ -888,10 +888,10 @@ defineExpose({
           </option>
         </select>
 
-        <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.repository') }}</label>
+        <label class="mb-1 block text-xs text-[var(--hr-text-3)]">{{ t('voice.project.repository') }}</label>
         <select
           v-model="selectedRepoFullName"
-          class="h-10 w-full rounded-xl border border-white/10 bg-[#101823] px-3 text-sm text-white/80 outline-none focus:border-[#4fd8e8]/45 disabled:opacity-45"
+          class="h-10 w-full rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-sm text-[var(--hr-text-1)] outline-none focus:border-[var(--hr-accent-border)] disabled:opacity-45"
           :disabled="!selectedGitServerId || loadingRepos"
         >
           <option :value="null">{{ loadingRepos ? t('voice.project.loadingRepositories') : t('voice.project.noRepository') }}</option>
@@ -899,20 +899,20 @@ defineExpose({
             {{ repo.full_name }}
           </option>
         </select>
-        <div class="mt-2 text-xs text-white/35">
+        <div class="mt-2 text-xs text-[var(--hr-text-3)]">
           {{ t('voice.project.gitHint') }}
         </div>
       </div>
 
       <div class="flex justify-end gap-2">
         <button
-          class="rounded-full px-4 py-2 text-sm text-white/55 hover:bg-white/10 hover:text-white"
+          class="rounded-full px-4 py-2 text-sm text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
           @click="closeProjectSettings"
         >
           {{ t('settings.actions.cancel') }}
         </button>
         <button
-          class="flex items-center gap-2 rounded-full bg-[#4fd8e8] px-4 py-2 text-sm font-medium text-[#04222a] hover:bg-[#7ce6f2] disabled:opacity-45"
+          class="flex items-center gap-2 rounded-full bg-[var(--hr-accent)] px-4 py-2 text-sm font-medium text-[var(--hr-on-accent)] hover:opacity-85 disabled:opacity-45"
           :disabled="savingProject || !editName.trim()"
           @click="saveProjectSettings"
         >

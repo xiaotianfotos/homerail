@@ -310,7 +310,7 @@ const addOptions = [
           class="flex w-full items-center justify-between gap-2 rounded px-3 py-2.5 text-left text-sm"
           :class="
             selectedId === provider.id && !creating
-              ? 'bg-cyan-300/10 text-cyan-50'
+              ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
               : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
           "
           @click="loadProvider(provider)"
@@ -340,7 +340,7 @@ const addOptions = [
             <span class="text-xs text-gray-500">{{ t('settings.models.form.displayName') }}</span>
             <input
               v-model="providerName"
-              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
+              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
             />
           </label>
         </div>
@@ -349,7 +349,7 @@ const addOptions = [
             <span class="text-xs text-gray-500">Base URL</span>
             <input
               v-model="baseUrl"
-              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
+              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
               placeholder="https://api.example.com/v1"
               @blur="normalizeVoiceBaseUrl"
             />
@@ -360,7 +360,7 @@ const addOptions = [
             }}</span>
             <input
               v-model="defaultModel"
-              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
+              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
             />
           </label>
         </div>
@@ -398,7 +398,7 @@ const addOptions = [
               <input
                 v-model="ttsHttpUrl"
                 data-testid="provider-tts-http-url"
-                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-cyan-400/40"
+                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
                 :placeholder="defaultTtsHttpUrl"
               />
             </label>
@@ -409,7 +409,7 @@ const addOptions = [
               <input
                 v-model="ttsStreamingUrl"
                 data-testid="provider-tts-streaming-url"
-                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-cyan-400/40"
+                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
                 :placeholder="defaultTtsStreamingUrl"
               />
             </label>
@@ -422,7 +422,7 @@ const addOptions = [
               <input
                 v-model="asrHttpUrl"
                 data-testid="provider-asr-http-url"
-                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-cyan-400/40"
+                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
                 :placeholder="defaultAsrHttpUrl"
               />
             </label>
@@ -433,7 +433,7 @@ const addOptions = [
               <input
                 v-model="asrRealtimeUrl"
                 data-testid="provider-asr-realtime-url"
-                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-cyan-400/40"
+                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
                 :placeholder="defaultAsrRealtimeUrl"
               />
             </label>
@@ -506,7 +506,7 @@ const addOptions = [
           <span v-else />
           <button
             type="submit"
-            class="inline-flex items-center gap-2 rounded-md bg-cyan-500 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-400 disabled:opacity-40"
+            class="inline-flex items-center gap-2 rounded-md bg-[var(--hr-accent)] px-4 py-2 text-sm font-medium text-[var(--hr-on-accent)] hover:bg-[color:color-mix(in_srgb,var(--hr-accent)_85%,white)] disabled:opacity-40"
             :disabled="!canSave || saving"
           >
             <Loader2 v-if="saving" class="h-4 w-4 animate-spin" />

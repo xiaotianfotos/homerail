@@ -316,7 +316,7 @@ function capabilityList(
           class="flex h-10 items-center justify-between rounded-md border border-white/10 bg-[#343434] px-3 text-sm"
         >
           <span>Codex</span>
-          <span class="inline-flex items-center gap-1 text-xs text-cyan-200/70">
+          <span class="inline-flex items-center gap-1 text-xs text-[var(--hr-text-2)]">
             <LockKeyhole class="h-3.5 w-3.5" />
             {{ t('settings.models.autoDetected') }}
           </span>
@@ -417,7 +417,7 @@ function capabilityList(
               role="menuitem"
               @click="openCreate(option.id)"
             >
-              <component :is="option.icon" class="h-4 w-4 text-cyan-200/80" />
+              <component :is="option.icon" class="h-4 w-4 text-[var(--hr-accent)]" />
               <span>{{ option.label }}</span>
             </button>
           </div>
@@ -453,7 +453,7 @@ function capabilityList(
                 >
                 <span
                   v-if="codexModels.length"
-                  class="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-200"
+                  class="rounded-full bg-[var(--hr-accent-soft)] px-2 py-0.5 text-[10px] text-[var(--hr-accent)]"
                   >{{ t('settings.models.autoDetected') }}</span
                 >
                 <span class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">{{
@@ -714,15 +714,15 @@ function capabilityList(
         >
           <div class="flex h-full flex-col">
             <div
-              class="flex items-center justify-between border-b border-cyan-200/10 px-5 py-4 flex-shrink-0"
+              class="flex items-center justify-between border-b border-[var(--hr-border)] px-5 py-4 flex-shrink-0"
             >
-              <h2 class="text-base font-semibold text-cyan-50">
+              <h2 class="text-base font-semibold text-[var(--hr-text-1)]">
                 {{
                   editingSetting ? t('settings.models.editTitle') : t('settings.models.addTitle')
                 }}
               </h2>
               <button
-                class="rounded-md border border-cyan-200/14 px-3 py-1.5 text-sm text-gray-400 transition-colors hover:bg-cyan-200/10 hover:text-white"
+                class="rounded-md border border-[var(--hr-border)] px-3 py-1.5 text-sm text-gray-400 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
                 @click="closeDialog"
               >
                 {{ t('settings.actions.close') }}
@@ -771,10 +771,10 @@ function capabilityList(
   bottom: 0;
   width: min(640px, 94vw);
   z-index: 60;
-  /* 匹配设置页主题：#080b0d 基底 + #071012 主区 + 毛玻璃 */
-  background: rgba(7, 16, 18, 0.96);
+  /* 匹配设置页主题：--hr-bg 基底 + --hr-panel 主区 + 毛玻璃 */
+  background: var(--hr-panel);
   backdrop-filter: blur(24px);
-  border-left: 1px solid rgba(103, 232, 249, 0.12);
+  border-left: 1px solid var(--hr-border);
   box-shadow: -24px 0 80px rgba(0, 0, 0, 0.45);
 }
 

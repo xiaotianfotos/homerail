@@ -40,14 +40,14 @@ const roundLabel = computed(() => {
 }
 
 .round-line {
-  @apply flex-1 h-px bg-gradient-to-r from-transparent via-slate-200 dark:via-slate-700 to-transparent;
+  @apply flex-1 h-px bg-gradient-to-r from-transparent via-[var(--hr-border-strong)] to-transparent;
 }
 
 .round-badge {
-  @apply px-3 py-1 bg-slate-100 dark:bg-slate-800/50 rounded-md border border-slate-200 dark:border-slate-700 shadow-sm;
+  @apply px-3 py-1 bg-[var(--hr-surface-1)] rounded-md border border-[var(--hr-border)] shadow-sm;
 }
 
 .round-number {
-  @apply font-medium text-slate-600 dark:text-slate-400 text-xs tracking-wide;
+  @apply font-medium text-[var(--hr-text-2)] text-xs tracking-wide;
 }
 </style>

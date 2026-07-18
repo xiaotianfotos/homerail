@@ -153,7 +153,7 @@ function onNodeClick({ node }: { node: Node }) {
     >
       <template #node-dagNode="nodeProps">
         <div
-          class="px-3 py-2 rounded-lg border-2 bg-[#14141f] shadow-md min-w-[160px] transition-all cursor-pointer hover:shadow-lg"
+          class="px-3 py-2 rounded-lg border-2 bg-[var(--hr-bg-raised)] shadow-md min-w-[160px] transition-all cursor-pointer hover:shadow-lg"
           :class="[
             (statusStyle[nodeProps.data?.status]?.border || 'border-gray-400'),
             statusStyle[nodeProps.data?.status]?.shadow || '',
@@ -167,7 +167,7 @@ function onNodeClick({ node }: { node: Node }) {
               class="h-3.5 w-3.5"
               :style="{ color: getAgentPersona(nodeProps.data?.agentName || '').color }"
             />
-            <span class="font-medium text-sm text-gray-200 truncate">
+            <span class="font-medium text-sm text-[var(--hr-text-1)] truncate">
               {{ nodeProps.data?.label || nodeProps.id }}
             </span>
           </div>
@@ -177,22 +177,22 @@ function onNodeClick({ node }: { node: Node }) {
             <span
               v-if="nodeProps.data?.startedAt"
               class="text-[10px] font-mono"
-              :class="statusStyle[nodeProps.data?.status]?.text || 'text-gray-500'"
+              :class="statusStyle[nodeProps.data?.status]?.text || 'text-[var(--hr-text-3)]'"
             >
               {{ formatDuration(nodeProps.data?.startedAt, nodeProps.data?.completedAt) }}
             </span>
-            <span v-else class="text-[10px] font-mono text-gray-600">--</span>
+            <span v-else class="text-[10px] font-mono text-[var(--hr-text-4)]">--</span>
           </div>
 
           <!-- Context usage bar -->
           <div v-if="nodeProps.data?.contextUsagePct != null" class="mt-1">
             <div class="flex justify-between text-[9px]">
-              <span class="text-gray-500">ctx</span>
+              <span class="text-[var(--hr-text-3)]">ctx</span>
               <span :class="contextUsageText(nodeProps.data.contextUsagePct)">
                 {{ nodeProps.data.contextUsagePct }}%
               </span>
             </div>
-            <div class="h-1 rounded-full bg-gray-700 mt-0.5">
+            <div class="h-1 rounded-full bg-[var(--hr-surface-2)] mt-0.5">
               <div
                 class="h-full rounded-full transition-all"
                 :class="contextBarColor(nodeProps.data.contextUsagePct)"

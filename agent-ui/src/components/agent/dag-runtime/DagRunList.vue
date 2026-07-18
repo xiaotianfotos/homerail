@@ -70,7 +70,7 @@ watch(() => props.focusedIndex, async (idx) => {
   <div class="dag-run-list flex h-full flex-col">
     <!-- 标题 -->
     <div class="flex items-center gap-3 px-8 pb-4 pt-24 flex-shrink-0">
-      <Network class="h-6 w-6 text-cyan-200/60" />
+      <Network class="h-6 w-6 text-[var(--hr-accent)]" />
       <h2 class="text-xl font-semibold tracking-wide text-white/85">{{ t('dag.runList.title') }}</h2>
       <span class="ml-1 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-sm text-white/45">
         {{ runs.length }}
@@ -81,12 +81,12 @@ watch(() => props.focusedIndex, async (idx) => {
     <div ref="listRef" class="min-h-0 flex-1 overflow-y-auto px-6 pb-10">
       <!-- 加载态 -->
       <div v-if="loading && !runs.length" class="flex items-center justify-center py-12">
-        <Loader2 class="h-5 w-5 animate-spin text-cyan-200/40" />
+        <Loader2 class="h-5 w-5 animate-spin text-[var(--hr-accent)]" />
       </div>
 
       <!-- 空态 -->
       <div v-else-if="!runs.length" class="flex flex-col items-center justify-center py-16 text-center">
-        <Network class="mb-3 h-10 w-10 text-cyan-200/15" />
+        <Network class="mb-3 h-10 w-10 text-[var(--hr-text-4)]" />
         <div class="text-sm text-white/45">{{ t('dag.runList.empty') }}</div>
         <div class="mt-1 max-w-xs text-xs leading-5 text-white/25">
           {{ t('dag.runList.emptyDescription') }}
@@ -102,9 +102,9 @@ watch(() => props.focusedIndex, async (idx) => {
           'group relative mb-3 flex w-full items-center gap-4 rounded-2xl border px-5 py-5 text-left transition-all duration-150',
           'min-h-[76px]',
           idx === focusedIndex
-            ? 'border-cyan-200/45 bg-cyan-200/[0.10] scale-[1.015] shadow-[0_0_28px_rgba(103,232,249,0.16)]'
+            ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] scale-[1.015] shadow-[0_0_28px_color-mix(in_srgb,var(--hr-accent)_16%,transparent)]'
             : run.runId === currentRunId
-              ? 'border-cyan-200/22 bg-cyan-200/[0.04] hover:border-cyan-200/32'
+              ? 'border-[var(--hr-border-strong)] bg-[var(--hr-surface-1)] hover:border-[var(--hr-accent-border)]'
               : 'border-white/10 bg-white/[0.03] hover:border-white/18 hover:bg-white/[0.05]'
         )"
         @click="emit('select-run', run.runId)"
@@ -112,7 +112,7 @@ watch(() => props.focusedIndex, async (idx) => {
         <!-- 焦点指示条 -->
         <span
           v-if="idx === focusedIndex"
-          class="absolute left-0 top-1/2 h-10 w-[4px] -translate-y-1/2 rounded-r-full bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.7)]"
+          class="absolute left-0 top-1/2 h-10 w-[4px] -translate-y-1/2 rounded-r-full bg-[var(--hr-accent)] shadow-[0_0_10px_color-mix(in_srgb,var(--hr-accent)_70%,transparent)]"
         />
 
         <!-- 状态图标 -->
@@ -137,7 +137,7 @@ watch(() => props.focusedIndex, async (idx) => {
             </span>
             <span
               v-if="run.runId === currentRunId"
-              class="rounded-full border border-cyan-200/30 bg-cyan-200/10 px-1.5 py-0.5 text-[9px] font-medium text-cyan-100"
+              class="rounded-full border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--hr-accent)]"
             >
               {{ t('dag.runList.current') }}
             </span>

@@ -5,7 +5,11 @@
     :locale="uiStore.naiveLocale"
     :date-locale="uiStore.naiveDateLocale"
   >
-    <div id="app" class="h-screen w-full bg-background font-sans text-foreground overflow-hidden">
+    <div
+      id="app"
+      class="h-screen w-full font-sans overflow-hidden"
+      :style="{ background: 'var(--hr-bg)', color: 'var(--hr-text-1)' }"
+    >
       <router-view />
       <Toast />
     </div>

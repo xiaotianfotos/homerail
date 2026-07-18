@@ -316,10 +316,10 @@ function drawEdges(ctx: CanvasRenderingContext2D): void {
     const targetRunning = target.status === 'running'
     const edgeKey = `${edge.source}->${edge.target}`
 
-    // 主边线
+    // 主边线（active 高亮色与 --hr-accent 对齐；canvas 无法直接消费 CSS var，用等值 rgba）
     ctx.strokeStyle = targetRunning
       ? 'rgba(52, 211, 153, 0.55)'
-      : active ? 'rgba(103, 232, 249, 0.5)' : 'rgba(148, 163, 184, 0.22)'
+      : active ? 'rgba(79, 216, 232, 0.5)' : 'rgba(148, 163, 184, 0.22)'
     ctx.lineWidth = targetRunning ? 2 : active ? 1.8 : 1.1
     ctx.beginPath()
     ctx.moveTo(source.x, source.y)
@@ -373,9 +373,9 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
     // 焦点节点轻微放大（手柄导航反馈）
     const renderR = focused ? node.r * 1.12 : node.r
 
-    // 焦点外圈脉冲环（青色，手柄/键盘导航的醒目标记）
+    // 焦点外圈脉冲环（accent 色，手柄/键盘导航的醒目标记）
     if (focused) {
-      ctx.strokeStyle = `rgba(103, 232, 249, ${0.35 + pulse * 0.35})`
+      ctx.strokeStyle = `rgba(79, 216, 232, ${0.35 + pulse * 0.35})`
       ctx.lineWidth = 2.5
       ctx.beginPath()
       ctx.arc(node.x, node.y, renderR + 7 + pulse * 3, 0, Math.PI * 2)
@@ -401,9 +401,9 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
     // 状态描边
     ctx.lineWidth = active || focused || hovering ? 3 : 1.6
     ctx.strokeStyle = active
-      ? 'rgba(236, 254, 255, 0.96)'
+      ? 'rgba(237, 244, 252, 0.96)'
       : focused
-        ? 'rgba(103, 232, 249, 0.95)'
+        ? 'rgba(79, 216, 232, 0.95)'
         : `rgba(${glow.color}, 0.85)`
     ctx.stroke()
 
@@ -418,7 +418,7 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
 
     // 节点下方：标签
     if (zoom > 0.5) {
-      ctx.fillStyle = active ? 'rgba(236, 254, 255, 0.92)' : 'rgba(226, 232, 240, 0.72)'
+      ctx.fillStyle = active ? 'rgba(237, 244, 252, 0.92)' : 'rgba(226, 232, 240, 0.72)'
       ctx.font = '600 11px Inter, ui-sans-serif, system-ui, sans-serif'
       ctx.fillText(persona.name, node.x, node.y + node.r + 14)
     }
@@ -454,8 +454,8 @@ function drawBadges(ctx: CanvasRenderingContext2D, node: RuntimeNode): void {
   let by = node.y - node.r - 10
   for (const badge of badges) {
     const w = ctx.measureText(badge.text).width + 12
-    // 胶囊背景
-    ctx.fillStyle = 'rgba(9, 11, 13, 0.85)'
+    // 胶囊背景（近黑面板色，与 --hr-panel 对齐）
+    ctx.fillStyle = 'rgba(10, 15, 23, 0.85)'
     roundRect(ctx, bx, by - 8, w, 16, 8)
     ctx.fill()
     ctx.strokeStyle = badge.color

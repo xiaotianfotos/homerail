@@ -76,13 +76,13 @@ const statusItems = computed(() => [
 </script>
 
 <template>
-  <div class="dag-runtime-toolbar pointer-events-auto absolute left-0 right-0 top-0 z-20 flex items-center gap-5 border-b-2 border-cyan-200/15 bg-[#070d12]/90 px-6 py-4 backdrop-blur-2xl">
+  <div class="dag-runtime-toolbar pointer-events-auto absolute left-0 right-0 top-0 z-20 flex items-center gap-5 border-b-2 border-[var(--hr-border)] bg-[var(--hr-panel)] px-6 py-4 backdrop-blur-2xl">
     <!-- 列表态：精简，只显示大标题 + 数量 -->
     <template v-if="view === 'run_list'">
       <div class="flex items-center gap-3">
-        <Network class="h-7 w-7 text-cyan-200/70" />
+        <Network class="h-7 w-7 text-[var(--hr-accent)]" />
         <span class="text-2xl font-bold tracking-wide text-white/90">{{ t('dag.runList.title') }}</span>
-        <span class="rounded-full border border-cyan-200/20 bg-cyan-200/10 px-3 py-1 text-base font-medium text-cyan-100/80">
+        <span class="rounded-full border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] px-3 py-1 text-base font-medium text-[var(--hr-accent)]">
           {{ runsCount ?? 0 }}
         </span>
       </div>
@@ -94,13 +94,13 @@ const statusItems = computed(() => [
     <div class="flex min-w-0 items-center gap-3">
       <div class="flex flex-col">
         <div class="flex items-center gap-2.5">
-          <span class="text-base font-bold uppercase tracking-[0.18em] text-cyan-200/70">{{ t('dag.toolbar.runtime') }}</span>
+          <span class="text-base font-bold uppercase tracking-[0.18em] text-[var(--hr-accent)]">{{ t('dag.toolbar.runtime') }}</span>
           <span
             :class="cn(
               'rounded-full border px-3 py-1 text-sm font-medium',
               store.isRunning ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-200' :
               store.isWaiting ? 'border-amber-300/25 bg-amber-300/10 text-amber-200' :
-              store.isCompleted ? 'border-cyan-200/20 bg-cyan-200/10 text-cyan-100' :
+              store.isCompleted ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]' :
               store.isFailed ? 'border-red-400/30 bg-red-500/15 text-red-300' :
               'border-white/10 bg-white/[0.04] text-white/45'
             )"
@@ -119,7 +119,7 @@ const statusItems = computed(() => [
         <div class="h-2 overflow-hidden rounded-full bg-white/10">
           <div
             class="h-full rounded-full transition-all duration-500"
-            :class="store.isFailed ? 'bg-red-500' : 'bg-gradient-to-r from-cyan-400 to-emerald-400'"
+            :class="store.isFailed ? 'bg-red-500' : 'bg-gradient-to-r from-[var(--hr-accent)] to-emerald-400'"
             :style="{ width: `${progressPct}%` }"
           />
         </div>
@@ -162,7 +162,7 @@ const statusItems = computed(() => [
     <div class="flex items-center gap-1.5">
       <button
         v-if="showBack"
-        class="flex h-9 items-center gap-1.5 rounded-full border border-cyan-200/14 px-3 text-xs text-white/70 transition-colors hover:bg-cyan-200/10 hover:text-white"
+        class="flex h-9 items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-3 text-xs text-white/70 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
         :title="t('dag.toolbar.back')"
         @click="emit('back')"
       >
@@ -170,7 +170,7 @@ const statusItems = computed(() => [
         <span class="hidden sm:inline">{{ t('dag.toolbar.runList') }}</span>
       </button>
       <button
-        class="rounded-full border border-cyan-200/14 p-2 text-white/55 transition-colors hover:bg-cyan-200/10 hover:text-white"
+        class="rounded-full border border-[var(--hr-border)] p-2 text-white/55 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
         :title="physicsPaused ? t('dag.toolbar.resumePhysics') : t('dag.toolbar.pausePhysics')"
         @click="physicsPaused = !physicsPaused"
       >
@@ -178,14 +178,14 @@ const statusItems = computed(() => [
         <Pause v-else class="h-3.5 w-3.5" />
       </button>
       <button
-        class="rounded-full border border-cyan-200/14 p-2 text-white/55 transition-colors hover:bg-cyan-200/10 hover:text-white"
+        class="rounded-full border border-[var(--hr-border)] p-2 text-white/55 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
         :title="t('dag.toolbar.resetView')"
         @click="emit('fit-view')"
       >
         <Maximize2 class="h-3.5 w-3.5" />
       </button>
       <button
-        class="flex items-center gap-1.5 rounded-full border border-cyan-200/14 px-3 py-2 text-xs text-white/70 transition-colors hover:bg-red-500/15 hover:text-red-200"
+        class="flex items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-3 py-2 text-xs text-white/70 transition-colors hover:bg-red-500/15 hover:text-red-200"
         :title="t('dag.toolbar.closeEsc')"
         @click="emit('close')"
       >
@@ -197,7 +197,7 @@ const statusItems = computed(() => [
     <!-- 列表态的关闭按钮（图态的在上方 template 内） -->
     <button
       v-if="view === 'run_list'"
-      class="ml-auto flex items-center gap-1.5 rounded-full border border-cyan-200/14 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-red-500/15 hover:text-red-200"
+      class="ml-auto flex items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-4 py-2 text-sm text-white/70 transition-colors hover:bg-red-500/15 hover:text-red-200"
       :title="t('dag.toolbar.closeEsc')"
       @click="emit('close')"
     >

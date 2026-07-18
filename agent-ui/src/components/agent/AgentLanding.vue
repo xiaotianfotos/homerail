@@ -207,13 +207,13 @@ function openVoiceCockpit(): void {
 </script>
 
 <template>
-  <div class="flex flex-col items-center justify-center h-screen bg-[#0a0a0f] px-4">
+  <div class="flex flex-col items-center justify-center h-screen bg-[var(--hr-bg)] px-4">
     <!-- Title -->
     <div class="text-center mb-10">
-      <h1 class="text-4xl font-bold text-gray-100 tracking-tight mb-2">
+      <h1 class="text-4xl font-bold text-[var(--hr-text-1)] tracking-tight mb-2">
         HomeRail
       </h1>
-      <p class="text-sm text-gray-500">
+      <p class="text-sm text-[var(--hr-text-3)]">
         {{ t('shell.landing.tagline') }}
       </p>
     </div>
@@ -221,10 +221,10 @@ function openVoiceCockpit(): void {
     <!-- Input -->
     <div class="w-full max-w-[620px]">
       <div class="mb-2 flex items-center justify-end gap-2 text-xs">
-        <span class="text-gray-600">Manager</span>
+        <span class="text-[var(--hr-text-4)]">Manager</span>
         <select
           :value="store.managerProviderName"
-          class="h-8 rounded-md border border-gray-700/50 bg-gray-900 px-2 text-gray-300 outline-none"
+          class="h-8 rounded-md border border-[var(--hr-border)] bg-[var(--hr-bg-raised)] px-2 text-[var(--hr-text-2)] outline-none"
           :disabled="isSending || store.managerRuntimeLoading"
           @change="handleProviderChange"
         >
@@ -238,7 +238,7 @@ function openVoiceCockpit(): void {
         </select>
         <select
           v-model="store.managerModelName"
-          class="h-8 rounded-md border border-gray-700/50 bg-gray-900 px-2 text-gray-300 outline-none"
+          class="h-8 rounded-md border border-[var(--hr-border)] bg-[var(--hr-bg-raised)] px-2 text-[var(--hr-text-2)] outline-none"
           :disabled="isSending || store.managerRuntimeLoading"
           @change="handleModelChange"
         >
@@ -251,10 +251,10 @@ function openVoiceCockpit(): void {
           </option>
         </select>
       </div>
-      <div class="flex items-end gap-2 bg-gray-800/40 rounded-2xl border border-gray-700/40 p-3">
+      <div class="flex items-end gap-2 bg-[var(--hr-surface-1)] rounded-2xl border border-[var(--hr-border)] p-3">
         <textarea
           v-model="inputValue"
-          class="flex-1 resize-none bg-transparent text-sm text-gray-200 placeholder-gray-500 outline-none max-h-32 min-h-[48px] py-2 px-2"
+          class="flex-1 resize-none bg-transparent text-sm text-[var(--hr-text-1)] placeholder-[var(--hr-text-3)] outline-none max-h-32 min-h-[48px] py-2 px-2"
           :rows="2"
           :placeholder="t('shell.landing.placeholder')"
           :disabled="isSending"
@@ -263,8 +263,8 @@ function openVoiceCockpit(): void {
         <button
           class="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors"
           :class="isSending
-            ? 'bg-gray-700 text-gray-400'
-            : 'bg-blue-500 text-white hover:bg-blue-500/80'"
+            ? 'bg-[var(--hr-surface-2)] text-[var(--hr-text-3)]'
+            : 'bg-[var(--hr-accent)] text-[var(--hr-on-accent)] hover:opacity-85'"
           @click="isSending ? undefined : send()"
         >
           <Loader2 v-if="isSending" class="h-5 w-5 animate-spin" />
@@ -272,7 +272,7 @@ function openVoiceCockpit(): void {
         </button>
       </div>
       <button
-        class="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100 transition hover:bg-cyan-300/15"
+        class="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] px-4 py-3 text-sm text-[var(--hr-accent)] transition hover:bg-[color-mix(in_srgb,var(--hr-accent)_15%,transparent)]"
         @click="openVoiceCockpit"
       >
         <Mic class="h-4 w-4" />
@@ -285,7 +285,7 @@ function openVoiceCockpit(): void {
       <button
         v-for="hint in taskHints"
         :key="hint"
-        class="px-3 py-1.5 rounded-lg text-xs text-gray-500 bg-gray-800/30 border border-gray-700/30 hover:text-gray-300 hover:bg-gray-800/50 transition-colors"
+        class="px-3 py-1.5 rounded-lg text-xs text-[var(--hr-text-3)] bg-[var(--hr-surface-1)] border border-[var(--hr-border)] hover:text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-2)] transition-colors"
         @click="inputValue = hint"
       >
         {{ hint }}
@@ -294,7 +294,7 @@ function openVoiceCockpit(): void {
 
     <!-- History entry -->
     <button
-      class="flex items-center gap-1.5 mt-6 text-xs text-gray-600 hover:text-gray-400 transition-colors"
+      class="flex items-center gap-1.5 mt-6 text-xs text-[var(--hr-text-4)] hover:text-[var(--hr-text-3)] transition-colors"
       @click="enterHistory"
     >
       <History class="h-3.5 w-3.5" />

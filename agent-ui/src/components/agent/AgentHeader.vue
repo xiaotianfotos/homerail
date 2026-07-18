@@ -28,11 +28,11 @@ const selectedProject = () =>
 </script>
 
 <template>
-  <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-800/60 bg-gray-900/80 flex-shrink-0">
+  <div class="flex items-center justify-between px-4 py-2.5 border-b border-[var(--hr-border)] bg-[var(--hr-panel)] flex-shrink-0">
     <div class="flex items-center gap-3">
       <div class="flex items-center gap-2">
-        <Terminal class="h-4 w-4 text-cyan-400" />
-        <h1 class="text-sm font-semibold text-gray-100 tracking-wide">HomeRail Workspace</h1>
+        <Terminal class="h-4 w-4 text-[var(--hr-accent)]" />
+        <h1 class="text-sm font-semibold text-[var(--hr-text-1)] tracking-wide">HomeRail Workspace</h1>
       </div>
 
       <div class="relative">
@@ -40,8 +40,8 @@ const selectedProject = () =>
           :class="cn(
             'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors',
             store.managerProjectId
-              ? 'text-gray-200 bg-gray-800'
-              : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800'
+              ? 'text-[var(--hr-text-1)] bg-[var(--hr-surface-2)]'
+              : 'text-[var(--hr-text-3)] hover:text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-2)]'
           )"
           @click="projectOpen = !projectOpen"
         >
@@ -55,17 +55,17 @@ const selectedProject = () =>
         <div v-if="projectOpen" class="fixed inset-0 z-10" @click="projectOpen = false" />
         <div
           v-if="projectOpen"
-          class="absolute top-full left-0 mt-1 w-56 max-h-64 overflow-y-auto bg-gray-800 border border-gray-700/60 rounded-lg shadow-xl z-20 py-1"
+          class="absolute top-full left-0 mt-1 w-56 max-h-64 overflow-y-auto bg-[var(--hr-bg-raised)] border border-[var(--hr-border)] rounded-lg shadow-xl z-20 py-1"
         >
-          <div v-if="projects.length === 0" class="px-3 py-2 text-xs text-gray-500">{{ t('shell.header.noProjects') }}</div>
+          <div v-if="projects.length === 0" class="px-3 py-2 text-xs text-[var(--hr-text-3)]">{{ t('shell.header.noProjects') }}</div>
           <button
             v-for="p in projects"
             :key="p.id"
             :class="cn(
               'w-full text-left px-3 py-2 text-xs transition-colors flex items-center gap-2',
               store.managerProjectId === p.id
-                ? 'bg-blue-500/10 text-blue-400'
-                : 'text-gray-300 hover:bg-gray-700/60 hover:text-gray-100'
+                ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
+                : 'text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]'
             )"
             @click="store.managerProjectId = p.id; projectOpen = false"
           >
@@ -79,7 +79,7 @@ const selectedProject = () =>
       </div>
     </div>
 
-    <div class="text-xs text-gray-600">
+    <div class="text-xs text-[var(--hr-text-4)]">
       {{ store.currentRunId ? store.currentRunId.slice(-8) : '' }}
     </div>
   </div>

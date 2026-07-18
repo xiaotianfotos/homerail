@@ -4617,7 +4617,7 @@ function summarizeTask(value: string): string {
 <template>
   <div
     ref="cockpitRoot"
-    class="voice-cockpit fixed inset-0 z-50 bg-[#090b0d] text-white"
+    class="voice-cockpit fixed inset-0 z-50"
     :class="voiceCockpitClasses"
   >
     <div class="voice-cockpit__ambient" />
@@ -4923,7 +4923,7 @@ function summarizeTask(value: string): string {
           class="voice-runtime-pill voice-runtime-pill--gamepad flex h-9 items-center rounded-full border px-3 text-xs"
           :class="{
             'border-emerald-300/30 bg-emerald-300/10 text-emerald-100': voiceGamepadConnected,
-            'border-white/10 bg-white/[0.035] text-white/35': !voiceGamepadConnected,
+            'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-4)]': !voiceGamepadConnected,
             'voice-runtime-pill--gamepad-live': voiceGamepadLiveVisible
           }"
           :title="
@@ -4958,10 +4958,10 @@ function summarizeTask(value: string): string {
           />
           <aside
             v-else
-            class="flex h-full w-14 flex-col items-center border-r border-cyan-200/10 bg-black/20 py-4"
+            class="flex h-full w-14 flex-col items-center border-r border-[var(--hr-border)] bg-[var(--hr-surface-1)] py-4"
           >
             <button
-              class="rounded-full border border-cyan-200/14 p-2 text-cyan-100/55 transition-colors hover:bg-cyan-200/10 hover:text-white"
+              class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
               :title="t('voice.sidebar.expand')"
               @click="openSessionSidebar"
             >
@@ -4969,7 +4969,7 @@ function summarizeTask(value: string): string {
             </button>
             <div class="mt-4 flex flex-1 flex-col items-center gap-2 overflow-hidden">
               <button
-                class="rounded-full p-2 text-cyan-100/45 transition-colors hover:bg-cyan-200/10 hover:text-white"
+                class="rounded-full p-2 text-[var(--hr-text-3)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
                 :title="t('voice.sidebar.newSession')"
                 @click="createFreshVoiceSession"
               >
@@ -4978,7 +4978,7 @@ function summarizeTask(value: string): string {
               <button
                 v-for="session in voiceSessionShortcuts"
                 :key="session.session_id"
-                class="rounded-full p-2 text-cyan-100/35 transition-colors hover:bg-cyan-200/10 hover:text-white"
+                class="rounded-full p-2 text-[var(--hr-text-4)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
                 :title="session.title || session.prompt || t('voice.sidebar.newSession')"
                 @click="handleVoiceSessionSelected(session.session_id)"
               >
@@ -4993,7 +4993,7 @@ function summarizeTask(value: string): string {
         >
           <div
             v-if="processingText"
-            class="voice-stage__status pointer-events-none absolute right-5 top-5 z-10 rounded-full border border-white/10 bg-black/35 px-3 py-1.5 text-xs text-white/60 backdrop-blur"
+            class="voice-stage__status pointer-events-none absolute right-5 top-5 z-10 rounded-full border border-[var(--hr-border)] px-3 py-1.5 text-xs backdrop-blur"
           >
             {{ processingText }}
           </div>
@@ -5313,7 +5313,7 @@ function summarizeTask(value: string): string {
             </div>
           </div>
 
-          <div class="voice-control mt-5 border-t border-white/10 pt-4">
+          <div class="voice-control mt-5 border-t border-[var(--hr-border)] pt-4">
             <div class="voice-control__deck">
               <div v-if="!isTvCompactViewport" class="voice-composer__preferences">
                 <div class="voice-composer__mode" role="group" :aria-label="t('voice.composer.modeLabel')">
@@ -5862,30 +5862,32 @@ function summarizeTask(value: string): string {
    three surface levels, consistent hairline borders and radius scale.
    ========================================================================== */
 .voice-cockpit {
-  --vc-bg: #06080d;
-  --vc-surface-1: rgba(148, 178, 214, 0.055);
-  --vc-surface-2: rgba(148, 178, 214, 0.095);
-  --vc-panel: rgba(10, 15, 23, 0.92);
-  --vc-border: rgba(148, 178, 214, 0.1);
-  --vc-border-strong: rgba(148, 178, 214, 0.2);
-  --vc-text-1: rgba(237, 244, 252, 0.96);
-  --vc-text-2: rgba(222, 233, 246, 0.68);
-  --vc-text-3: rgba(206, 221, 238, 0.48);
-  --vc-text-4: rgba(206, 221, 238, 0.32);
-  --vc-accent: #4fd8e8;
-  --vc-accent-soft: rgba(79, 216, 232, 0.12);
-  --vc-accent-border: rgba(79, 216, 232, 0.28);
-  --vc-speaking: #818cf8;
-  --vc-speaking-soft: rgba(129, 140, 248, 0.12);
-  --vc-success: #34d399;
-  --vc-warning: #fbbf24;
-  --vc-danger: #f87171;
-  --vc-info: #7cb3ff;
-  --vc-radius-lg: 16px;
-  --vc-radius-md: 12px;
-  --vc-radius-sm: 9px;
-  --ambient-a: rgba(79, 216, 232, 0.09);
-  --ambient-b: rgba(79, 140, 232, 0.06);
+  /* Local aliases over the global --hr-* skin tokens (styles/hr-theme.css).
+     Switching `data-hr-theme` on <html> re-skins the whole cockpit. */
+  --vc-bg: var(--hr-bg);
+  --vc-surface-1: var(--hr-surface-1);
+  --vc-surface-2: var(--hr-surface-2);
+  --vc-panel: var(--hr-panel);
+  --vc-border: var(--hr-border);
+  --vc-border-strong: var(--hr-border-strong);
+  --vc-text-1: var(--hr-text-1);
+  --vc-text-2: var(--hr-text-2);
+  --vc-text-3: var(--hr-text-3);
+  --vc-text-4: var(--hr-text-4);
+  --vc-accent: var(--hr-accent);
+  --vc-accent-soft: var(--hr-accent-soft);
+  --vc-accent-border: var(--hr-accent-border);
+  --vc-speaking: var(--hr-speaking);
+  --vc-speaking-soft: var(--hr-speaking-soft);
+  --vc-success: var(--hr-success);
+  --vc-warning: var(--hr-warning);
+  --vc-danger: var(--hr-danger);
+  --vc-info: var(--hr-info);
+  --vc-radius-lg: var(--hr-radius-lg);
+  --vc-radius-md: var(--hr-radius-md);
+  --vc-radius-sm: var(--hr-radius-sm);
+  --ambient-a: color-mix(in srgb, var(--hr-accent) 9%, transparent);
+  --ambient-b: color-mix(in srgb, var(--hr-info) 7%, transparent);
   width: 100vw;
   height: 100vh;
   height: 100svh;
@@ -5901,7 +5903,7 @@ function summarizeTask(value: string): string {
 :global(html.voice-cockpit-root-active),
 :global(body.voice-cockpit-root-active),
 :global(#app.voice-cockpit-root-active) {
-  background: #06080d !important;
+  background: var(--hr-bg, #06080d) !important;
 }
 
 :global(html.voice-cockpit-root-active),
@@ -5912,19 +5914,19 @@ function summarizeTask(value: string): string {
 
 /* State theming — ambient light only, never hard color blocks. */
 .voice-cockpit--listening {
-  --ambient-a: rgba(79, 216, 232, 0.17);
-  --ambient-b: rgba(56, 189, 248, 0.1);
+  --ambient-a: color-mix(in srgb, var(--hr-accent) 17%, transparent);
+  --ambient-b: color-mix(in srgb, var(--hr-info) 10%, transparent);
 }
 
 .voice-cockpit--speaking {
-  --ambient-a: rgba(129, 140, 248, 0.15);
-  --ambient-b: rgba(99, 102, 241, 0.1);
+  --ambient-a: color-mix(in srgb, var(--hr-speaking) 15%, transparent);
+  --ambient-b: color-mix(in srgb, var(--hr-speaking) 10%, transparent);
 }
 
 .voice-cockpit--processing,
 .voice-cockpit--thinking {
-  --ambient-a: rgba(251, 191, 36, 0.1);
-  --ambient-b: rgba(79, 216, 232, 0.07);
+  --ambient-a: color-mix(in srgb, var(--hr-warning) 10%, transparent);
+  --ambient-b: color-mix(in srgb, var(--hr-accent) 7%, transparent);
 }
 
 .voice-cockpit__ambient {
@@ -6193,7 +6195,7 @@ function summarizeTask(value: string): string {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 22%),
     var(--vc-surface-1);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
+  box-shadow: var(--hr-shadow-panel);
   transition:
     background 260ms ease,
     box-shadow 360ms ease;
@@ -7894,12 +7896,12 @@ function summarizeTask(value: string): string {
   100% {
     box-shadow:
       0 0 0 0 rgba(79, 216, 232, 0.07),
-      0 24px 70px rgba(0, 0, 0, 0.32);
+      var(--hr-shadow-panel);
   }
   50% {
     box-shadow:
       0 0 0 4px rgba(79, 216, 232, 0.09),
-      0 28px 80px rgba(0, 0, 0, 0.36);
+      var(--hr-shadow-panel);
   }
 }
 
@@ -7908,12 +7910,12 @@ function summarizeTask(value: string): string {
   100% {
     box-shadow:
       0 0 0 0 rgba(251, 191, 36, 0.05),
-      0 24px 70px rgba(0, 0, 0, 0.32);
+      var(--hr-shadow-panel);
   }
   50% {
     box-shadow:
       0 0 0 4px rgba(251, 191, 36, 0.07),
-      0 28px 80px rgba(0, 0, 0, 0.36);
+      var(--hr-shadow-panel);
   }
 }
 
@@ -7922,12 +7924,12 @@ function summarizeTask(value: string): string {
   100% {
     box-shadow:
       0 0 0 0 rgba(129, 140, 248, 0.06),
-      0 24px 70px rgba(0, 0, 0, 0.32);
+      var(--hr-shadow-panel);
   }
   50% {
     box-shadow:
       0 0 0 4px rgba(129, 140, 248, 0.09),
-      0 28px 80px rgba(0, 0, 0, 0.36);
+      var(--hr-shadow-panel);
   }
 }
 

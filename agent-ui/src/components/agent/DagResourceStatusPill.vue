@@ -97,16 +97,16 @@ onBeforeUnmount(() => {
   height: 2.25rem;
   padding: 0 0.75rem;
   border-radius: 9999px;
-  border: 1px solid rgba(103, 232, 249, 0.22);
-  background: rgba(34, 211, 238, 0.08);
-  color: rgba(207, 250, 254, 0.95);
+  border: 1px solid var(--hr-accent-border);
+  background: var(--hr-accent-soft);
+  color: var(--hr-accent);
   font-size: 0.82rem;
   transition: background 160ms ease, border-color 160ms ease;
 }
 
 .dag-resource-status__button:hover {
-  border-color: rgba(103, 232, 249, 0.45);
-  background: rgba(34, 211, 238, 0.13);
+  border-color: var(--hr-accent);
+  background: color-mix(in srgb, var(--hr-accent) 18%, transparent);
 }
 
 .dag-resource-status__button--error {
@@ -125,14 +125,14 @@ onBeforeUnmount(() => {
   width: min(21rem, 76vw);
   padding: 0.75rem 0.85rem;
   border-radius: 0.65rem;
-  border: 1px solid rgba(103, 232, 249, 0.18);
-  background: rgba(8, 13, 18, 0.96);
+  border: 1px solid var(--hr-border-strong);
+  background: var(--hr-panel);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
-  color: rgba(255, 255, 255, 0.76);
+  color: var(--hr-text-2);
 }
 
 .dag-resource-status__tooltip strong {
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--hr-text-1);
   font-size: 0.82rem;
 }
 
@@ -144,7 +144,7 @@ onBeforeUnmount(() => {
 .dag-resource-status__tooltip em {
   font-size: 0.7rem;
   font-style: normal;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--hr-text-3);
   overflow-wrap: anywhere;
 }
 </style>

@@ -102,15 +102,15 @@ onMounted(load)
 
     <div v-if="storageInfo" class="mt-4 space-y-4">
       <div class="grid gap-3 sm:grid-cols-3">
-        <div class="rounded-md bg-black/20 p-3">
+        <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
           <div class="text-xs text-white/42">{{ t('settings.storage.dataRoot') }}</div>
           <div class="mt-1 break-all font-mono text-sm text-white/75">{{ storageInfo.data_root }}</div>
         </div>
-        <div class="rounded-md bg-black/20 p-3">
+        <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
           <div class="text-xs text-white/42">{{ t('settings.storage.runs') }}</div>
           <div class="mt-1 text-lg font-semibold">{{ storageInfo.runs_count }}</div>
         </div>
-        <div class="rounded-md bg-black/20 p-3">
+        <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
           <div class="text-xs text-white/42">{{ t('settings.storage.sessionsDir') }}</div>
           <div class="mt-1 break-all font-mono text-sm text-white/75">{{ storageInfo.sessions_dir }}</div>
         </div>
@@ -123,18 +123,18 @@ onMounted(load)
             <div class="mt-1 text-xs text-white/42">{{ t('settings.storage.autoCleanupDescription') }}</div>
           </div>
           <label class="flex shrink-0 items-center gap-2 whitespace-nowrap text-sm">
-            <input v-model="form.enabled" type="checkbox" class="h-4 w-4 accent-cyan-400" data-testid="agent-settings-workspace-retention-enabled" />
+            <input v-model="form.enabled" type="checkbox" class="h-4 w-4 accent-[var(--hr-accent)]" data-testid="agent-settings-workspace-retention-enabled" />
             {{ t('settings.actions.enable') }}
           </label>
         </div>
         <div class="mt-4 grid gap-3 sm:grid-cols-2">
           <label class="text-sm">
             <span class="text-white/55">{{ t('settings.storage.successDays') }}</span>
-            <input v-model.number="form.success_days" type="number" min="0" max="3650" step="1" class="mt-1 h-10 w-full rounded-md border border-white/10 bg-black/20 px-3 outline-none focus:border-cyan-400/60" data-testid="agent-settings-workspace-retention-success-days" />
+            <input v-model.number="form.success_days" type="number" min="0" max="3650" step="1" class="mt-1 h-10 w-full rounded-md border border-white/10 bg-[var(--hr-surface-1)] px-3 outline-none focus:border-[var(--hr-accent-border)]" data-testid="agent-settings-workspace-retention-success-days" />
           </label>
           <label class="text-sm">
             <span class="text-white/55">{{ t('settings.storage.failureDays') }}</span>
-            <input v-model.number="form.failure_days" type="number" min="0" max="3650" step="1" class="mt-1 h-10 w-full rounded-md border border-white/10 bg-black/20 px-3 outline-none focus:border-cyan-400/60" data-testid="agent-settings-workspace-retention-failure-days" />
+            <input v-model.number="form.failure_days" type="number" min="0" max="3650" step="1" class="mt-1 h-10 w-full rounded-md border border-white/10 bg-[var(--hr-surface-1)] px-3 outline-none focus:border-[var(--hr-accent-border)]" data-testid="agent-settings-workspace-retention-failure-days" />
           </label>
         </div>
         <div class="mt-4 flex flex-wrap justify-end gap-2">
@@ -148,7 +148,7 @@ onMounted(load)
             <Trash2 v-else class="mr-2 inline h-4 w-4" />
             {{ t('settings.storage.cleanupNow') }}
           </button>
-          <button class="h-9 rounded-md bg-cyan-500 px-4 text-sm font-medium text-black hover:bg-cyan-400 disabled:opacity-50" :disabled="saving !== null" data-testid="agent-settings-workspace-retention-save" @click="save">
+          <button class="h-9 rounded-md bg-[var(--hr-accent)] px-4 text-sm font-medium text-[var(--hr-on-accent)] hover:bg-[color:color-mix(in_srgb,var(--hr-accent)_85%,white)] disabled:opacity-50" :disabled="saving !== null" data-testid="agent-settings-workspace-retention-save" @click="save">
             <Loader2 v-if="saving === 'save'" class="mr-2 inline h-4 w-4 animate-spin" />
             <Save v-else class="mr-2 inline h-4 w-4" />
             {{ t('settings.storage.savePolicy') }}

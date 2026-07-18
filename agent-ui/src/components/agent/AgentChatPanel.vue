@@ -655,15 +655,15 @@ async function playBlob(blob: Blob): Promise<void> {
 
 <template>
   <div class="agent-chat-surface flex h-full flex-col bg-transparent">
-    <div class="agent-chat-header flex h-16 flex-shrink-0 items-center justify-between border-b border-cyan-200/10 px-6">
+    <div class="agent-chat-header flex h-16 flex-shrink-0 items-center justify-between border-b border-[var(--hr-border)] px-6">
       <div>
-        <div class="text-[11px] uppercase tracking-[0.22em] text-cyan-200/45">Manager</div>
+        <div class="text-[11px] uppercase tracking-[0.22em] text-[var(--hr-text-3)]">Manager</div>
         <div class="mt-1 text-lg font-semibold text-white">Runtime</div>
       </div>
       <div class="flex items-center gap-2 text-xs">
         <select
           :value="store.managerProviderName"
-          class="h-9 rounded-full border border-cyan-200/14 bg-white/[0.035] px-3 text-xs text-white/72 outline-none focus:border-cyan-200/35"
+          class="h-9 rounded-full border border-[var(--hr-border)] bg-white/[0.035] px-3 text-xs text-white/72 outline-none focus:border-[var(--hr-border-strong)]"
           :disabled="isSending || store.managerRuntimeLoading"
           @change="handleProviderChange"
         >
@@ -677,7 +677,7 @@ async function playBlob(blob: Blob): Promise<void> {
         </select>
         <select
           v-model="store.managerModelName"
-          class="h-9 rounded-full border border-cyan-200/14 bg-white/[0.035] px-3 text-xs text-white/72 outline-none focus:border-cyan-200/35"
+          class="h-9 rounded-full border border-[var(--hr-border)] bg-white/[0.035] px-3 text-xs text-white/72 outline-none focus:border-[var(--hr-border-strong)]"
           :disabled="isSending || store.managerRuntimeLoading"
           @change="handleModelChange"
         >
@@ -709,8 +709,8 @@ async function playBlob(blob: Blob): Promise<void> {
       <template v-for="msg in store.chatMessages" :key="msg.id">
         <!-- System / Assistant -->
         <div v-if="msg.role === 'system' || msg.role === 'assistant'" class="flex gap-3">
-          <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-2xl border border-cyan-200/18 bg-cyan-200/10">
-            <Bot class="h-4 w-4 text-cyan-200" />
+          <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-2xl border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)]">
+            <Bot class="h-4 w-4 text-[var(--hr-accent)]" />
           </div>
           <div class="flex-1 min-w-0 space-y-1">
             <!-- Text -->
@@ -719,11 +719,11 @@ async function playBlob(blob: Blob): Promise<void> {
             <!-- Thinking summary -->
             <div
               v-if="msg.type === 'thinking'"
-              class="inline-flex h-8 items-center gap-1.5 rounded-full border border-cyan-200/15 bg-cyan-200/5 px-3"
+              class="inline-flex h-8 items-center gap-1.5 rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3"
             >
-              <span class="h-1.5 w-1.5 rounded-full bg-cyan-200 animate-pulse" />
-              <span class="h-1.5 w-1.5 rounded-full bg-cyan-200 animate-pulse [animation-delay:120ms]" />
-              <span class="h-1.5 w-1.5 rounded-full bg-cyan-200 animate-pulse [animation-delay:240ms]" />
+              <span class="h-1.5 w-1.5 rounded-full bg-[var(--hr-accent)] animate-pulse" />
+              <span class="h-1.5 w-1.5 rounded-full bg-[var(--hr-accent)] animate-pulse [animation-delay:120ms]" />
+              <span class="h-1.5 w-1.5 rounded-full bg-[var(--hr-accent)] animate-pulse [animation-delay:240ms]" />
             </div>
 
             <!-- Tool Call -->
@@ -732,7 +732,7 @@ async function playBlob(blob: Blob): Promise<void> {
               :class="cn(
                 'overflow-hidden rounded-[20px] border',
                 isInvokeRun(msg) && extractRunId(msg)
-                  ? 'border-cyan-200/30 bg-cyan-200/[0.08] cursor-pointer hover:border-cyan-200/50'
+                  ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] cursor-pointer hover:border-[var(--hr-accent)]'
                   : 'border-white/10 bg-white/[0.035]'
               )"
               @click="isInvokeRun(msg) && extractRunId(msg) ? clickRunCard(extractRunId(msg)!) : undefined"
@@ -740,9 +740,9 @@ async function playBlob(blob: Blob): Promise<void> {
               <!-- invoke_run Run Card -->
               <template v-if="isInvokeRun(msg) && extractRunId(msg)">
                 <div class="flex items-center gap-2 px-3 py-2">
-                  <GitBranch class="h-4 w-4 text-cyan-200 flex-shrink-0" />
+                  <GitBranch class="h-4 w-4 text-[var(--hr-accent)] flex-shrink-0" />
                   <div class="flex-1 min-w-0">
-                    <div class="text-xs font-medium text-cyan-100">DAG Run</div>
+                    <div class="text-xs font-medium text-[var(--hr-accent)]">DAG Run</div>
                     <div class="text-[10px] text-white/35 font-mono">{{ extractRunId(msg)!.slice(-12) }}</div>
                   </div>
                   <ExternalLink class="h-3 w-3 text-white/35" />
@@ -756,7 +756,7 @@ async function playBlob(blob: Blob): Promise<void> {
                 >
                   <ChevronDown v-if="expandedToolCalls.has(msg.id)" class="h-3.5 w-3.5" />
                   <ChevronUp v-else class="h-3.5 w-3.5" />
-                  <Wrench class="h-3.5 w-3.5 text-cyan-200/80" />
+                  <Wrench class="h-3.5 w-3.5 text-[var(--hr-accent)]" />
                   <span class="text-white/35">{{ t('shell.chat.toolCalls') }}</span>
                   <span class="font-medium text-white/[0.86]">{{ msg.toolName }}</span>
                   <span v-if="msg.toolSummary" class="text-white/35">{{ msg.toolSummary }}</span>
@@ -784,7 +784,7 @@ async function playBlob(blob: Blob): Promise<void> {
                   </template>
                   <template v-if="msg.toolResult">
                     <div class="mt-2 text-white/55">Result</div>
-                    <div class="max-h-64 overflow-y-auto rounded-2xl border border-white/5 bg-black/20 p-2">{{ formatToolResult(msg.toolResult) }}</div>
+                    <div class="max-h-64 overflow-y-auto rounded-2xl border border-white/5 bg-[var(--hr-surface-1)] p-2">{{ formatToolResult(msg.toolResult) }}</div>
                   </template>
                 </div>
               </template>
@@ -803,32 +803,32 @@ async function playBlob(blob: Blob): Promise<void> {
             <User class="h-4 w-4 text-white/55" />
           </div>
           <div class="flex-1 min-w-0">
-            <div class="ml-auto max-w-[86%] rounded-[22px] rounded-tr-md border border-cyan-200/18 bg-cyan-200/12 px-4 py-3 text-sm leading-relaxed text-cyan-50 break-words">
+            <div class="ml-auto max-w-[86%] rounded-[22px] rounded-tr-md border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] px-4 py-3 text-sm leading-relaxed text-[var(--hr-text-1)] break-words">
               {{ msg.content }}
             </div>
           </div>
         </div>
       </template>
         <div v-if="store.managerResponding && !store.hasWsStreamed()" class="flex gap-3">
-          <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-2xl border border-cyan-200/18 bg-cyan-200/10">
-            <Bot class="h-4 w-4 text-cyan-200" />
+          <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-2xl border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)]">
+            <Bot class="h-4 w-4 text-[var(--hr-accent)]" />
           </div>
-          <div class="inline-flex h-8 items-center gap-1.5 rounded-full border border-cyan-200/15 bg-cyan-200/5 px-3">
-            <span class="h-1.5 w-1.5 rounded-full bg-cyan-200 animate-pulse" />
-            <span class="h-1.5 w-1.5 rounded-full bg-cyan-200 animate-pulse [animation-delay:120ms]" />
-            <span class="h-1.5 w-1.5 rounded-full bg-cyan-200 animate-pulse [animation-delay:240ms]" />
+          <div class="inline-flex h-8 items-center gap-1.5 rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3">
+            <span class="h-1.5 w-1.5 rounded-full bg-[var(--hr-accent)] animate-pulse" />
+            <span class="h-1.5 w-1.5 rounded-full bg-[var(--hr-accent)] animate-pulse [animation-delay:120ms]" />
+            <span class="h-1.5 w-1.5 rounded-full bg-[var(--hr-accent)] animate-pulse [animation-delay:240ms]" />
           </div>
         </div>
       </div>
     </div>
 
     <!-- Input Area -->
-    <div class="px-7 pb-6 pt-3 bg-gradient-to-t from-[#071012] via-[#071012]/92 to-[#071012]/20">
-      <div class="agent-chat-composer mx-auto flex max-w-[820px] items-end gap-2 rounded-[26px] border border-cyan-200/18 bg-black/35 p-3 shadow-2xl backdrop-blur-xl">
+    <div class="px-7 pb-6 pt-3 bg-gradient-to-t from-[var(--hr-bg)] via-[color-mix(in_srgb,var(--hr-bg)_92%,transparent)] to-[color-mix(in_srgb,var(--hr-bg)_20%,transparent)]">
+      <div class="agent-chat-composer mx-auto flex max-w-[820px] items-end gap-2 rounded-[26px] border border-[var(--hr-border)] bg-[var(--hr-panel)] p-3 shadow-2xl backdrop-blur-xl">
         <button
           :class="cn(
             'flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors',
-            voiceMode ? 'bg-cyan-200/15 text-cyan-100 hover:bg-cyan-200/20' : 'bg-transparent text-white/45 hover:bg-white/10 hover:text-white'
+            voiceMode ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)] hover:bg-[var(--hr-accent-border)]' : 'bg-transparent text-white/45 hover:bg-white/10 hover:text-white'
           )"
           :title="voiceMode ? t('shell.chat.voice.stop') : t('shell.chat.voice.start')"
           @click="toggleVoiceMode"
@@ -836,18 +836,18 @@ async function playBlob(blob: Blob): Promise<void> {
           <MicOff v-if="voiceMode" class="h-4 w-4" />
           <Mic v-else class="h-4 w-4" />
         </button>
-        <div v-if="voiceMode" class="min-h-[54px] w-[240px] shrink-0 rounded-[20px] border border-cyan-200/14 bg-black/22 px-3 py-2">
+        <div v-if="voiceMode" class="min-h-[54px] w-[240px] shrink-0 rounded-[20px] border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 py-2">
           <div class="flex h-8 items-center gap-1 overflow-hidden">
             <span
               v-for="(bar, index) in waveformBars"
               :key="index"
-              class="w-1 rounded-full bg-gradient-to-t from-teal-500 via-cyan-300 to-emerald-200 transition-[height,opacity] duration-75"
+              class="w-1 rounded-full bg-gradient-to-t from-teal-500 via-[var(--hr-accent)] to-emerald-200 transition-[height,opacity] duration-75"
               :style="{ height: `${Math.max(10, bar * 34)}px`, opacity: 0.38 + bar * 0.62 }"
             />
           </div>
           <div class="mt-1 flex items-center justify-between gap-3 text-[11px]">
             <span class="flex items-center gap-1.5 text-gray-400">
-              <AudioLines class="h-3.5 w-3.5 text-cyan-200" />
+              <AudioLines class="h-3.5 w-3.5 text-[var(--hr-accent)]" />
               {{ voiceStatus }}
             </span>
             <span class="font-mono text-gray-500">{{ voiceLevelPct }}</span>
@@ -870,7 +870,7 @@ async function playBlob(blob: Blob): Promise<void> {
             'flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors',
             isSending
               ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-              : 'bg-cyan-300 text-black hover:bg-cyan-200'
+              : 'bg-[var(--hr-accent)] text-[var(--hr-on-accent)] hover:bg-[color-mix(in_srgb,var(--hr-accent)_85%,white)]'
           )"
           :title="t('shell.chat.send')"
           @click="isSending ? undefined : sendMessage()"

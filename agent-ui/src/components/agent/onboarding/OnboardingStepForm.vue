@@ -695,8 +695,8 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
 }
 
 .onboarding-step-form__mode-tab--active {
-  background: rgba(103, 232, 249, 0.12);
-  color: rgba(207, 250, 254, 0.95);
+  background: var(--hr-accent-soft);
+  color: var(--hr-text-1);
 }
 
 /* 内置凭证 grid */
@@ -775,8 +775,8 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
 
 .onboarding-step-form__select:focus,
 .onboarding-step-form__input:focus {
-  border-color: rgba(103, 232, 249, 0.5);
-  background: rgba(103, 232, 249, 0.06);
+  border-color: color-mix(in srgb, var(--hr-accent) 50%, transparent);
+  background: var(--hr-accent-soft);
 }
 
 .onboarding-step-form__select:disabled {
@@ -838,16 +838,16 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
   gap: 0.4rem;
   padding: 0.5rem 1.1rem;
   border-radius: 9999px;
-  border: 1px solid rgba(103, 232, 249, 0.4);
-  background: rgba(103, 232, 249, 0.12);
-  color: rgba(207, 250, 254, 0.95);
+  border: 1px solid var(--hr-accent-border);
+  background: var(--hr-accent-soft);
+  color: var(--hr-text-1);
   font-size: 0.8rem;
   font-weight: 500;
   transition: background 160ms ease, transform 160ms ease;
 }
 
 .onboarding-step-form__submit:not(.onboarding-step-form__submit--disabled):hover {
-  background: rgba(103, 232, 249, 0.22);
+  background: color-mix(in srgb, var(--hr-accent) 22%, transparent);
   transform: translateY(-1px);
 }
 

@@ -351,7 +351,7 @@ watch(activePane, (pane) => {
         <!-- 当前阶段内容 -->
         <section v-if="activePane === 'models'" class="onboarding-wizard__body">
           <div class="onboarding-wizard__body-title">
-            <component :is="currentStep.icon" class="h-4 w-4 text-cyan-300" />
+            <component :is="currentStep.icon" class="h-4 w-4 text-[var(--hr-accent)]" />
             <span>{{ currentStep.title }}</span>
             <em>{{ currentStep.subtitle }}</em>
           </div>
@@ -418,13 +418,13 @@ watch(activePane, (pane) => {
 
         <section v-else class="onboarding-wizard__body">
           <div class="onboarding-wizard__body-title">
-            <Terminal class="h-4 w-4 text-cyan-300" />
+            <Terminal class="h-4 w-4 text-[var(--hr-accent)]" />
             <span>{{ t('onboarding.environment') }}</span>
             <em>{{ t('onboarding.environmentCheck.description') }}</em>
           </div>
 
           <div v-if="hostShellRequired" class="onboarding-wizard__docker-check">
-            <Terminal :class="cn('h-5 w-5', hostShellReady ? 'text-emerald-400' : 'text-cyan-300')" />
+            <Terminal :class="cn('h-5 w-5', hostShellReady ? 'text-emerald-400' : 'text-[var(--hr-accent)]')" />
             <div class="onboarding-wizard__docker-check-copy">
               <div class="onboarding-wizard__docker-check-title">Git Bash / host-shell</div>
               <div class="onboarding-wizard__docker-check-hint">{{ hostShellMessage }}</div>
@@ -435,7 +435,7 @@ watch(activePane, (pane) => {
           </div>
 
           <div class="onboarding-wizard__docker-check">
-            <FolderCheck :class="cn('h-5 w-5', dockerWorkspaceReady ? 'text-emerald-400' : 'text-cyan-300')" />
+            <FolderCheck :class="cn('h-5 w-5', dockerWorkspaceReady ? 'text-emerald-400' : 'text-[var(--hr-accent)]')" />
             <div class="onboarding-wizard__docker-check-copy">
               <div class="onboarding-wizard__docker-check-title">{{ t('onboarding.environmentCheck.dockerTitle') }}</div>
               <div class="onboarding-wizard__docker-check-hint">{{ dockerWorkspaceMessage }}</div>
@@ -546,8 +546,8 @@ watch(activePane, (pane) => {
   display: flex;
   flex-direction: column;
   border-radius: 22px;
-  border: 1px solid rgba(103, 232, 249, 0.18);
-  background: rgba(7, 13, 18, 0.94);
+  border: 1px solid var(--hr-accent-border);
+  background: var(--hr-panel);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03), 0 30px 90px rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -575,9 +575,9 @@ watch(activePane, (pane) => {
   height: 2rem;
   width: 2rem;
   border-radius: 0.6rem;
-  border: 1px solid rgba(103, 232, 249, 0.25);
-  background: rgba(103, 232, 249, 0.1);
-  color: rgba(103, 232, 249, 0.95);
+  border: 1px solid var(--hr-accent-border);
+  background: var(--hr-accent-soft);
+  color: var(--hr-accent);
 }
 
 .onboarding-wizard__title h2 {
@@ -630,8 +630,8 @@ watch(activePane, (pane) => {
 }
 
 .onboarding-wizard__tab--active {
-  border-color: rgba(103, 232, 249, 0.36);
-  background: rgba(103, 232, 249, 0.08);
+  border-color: var(--hr-accent-border);
+  background: var(--hr-accent-soft);
   color: rgba(255, 255, 255, 0.9);
 }
 
@@ -666,8 +666,8 @@ watch(activePane, (pane) => {
 }
 
 .onboarding-wizard__step--active {
-  border-color: rgba(103, 232, 249, 0.45);
-  background: rgba(103, 232, 249, 0.08);
+  border-color: var(--hr-accent-border);
+  background: var(--hr-accent-soft);
 }
 
 .onboarding-wizard__step--done {
@@ -690,8 +690,8 @@ watch(activePane, (pane) => {
 }
 
 .onboarding-wizard__step--active .onboarding-wizard__step-index {
-  background: rgba(103, 232, 249, 0.2);
-  color: rgba(207, 250, 254, 0.95);
+  background: color-mix(in srgb, var(--hr-accent) 20%, transparent);
+  color: var(--hr-text-1);
 }
 
 .onboarding-wizard__step--done .onboarding-wizard__step-index {
@@ -777,15 +777,15 @@ watch(activePane, (pane) => {
   width: 100%;
   padding: 0.65rem 0.72rem;
   border-radius: 0.6rem;
-  border: 1px solid rgba(103, 232, 249, 0.18);
-  background: rgba(34, 211, 238, 0.06);
+  border: 1px solid color-mix(in srgb, var(--hr-accent) 18%, transparent);
+  background: var(--hr-accent-soft);
   color: rgba(255, 255, 255, 0.9);
   text-align: left;
 }
 
 .onboarding-wizard__existing-agent:not(:disabled):hover {
-  border-color: rgba(103, 232, 249, 0.36);
-  background: rgba(34, 211, 238, 0.1);
+  border-color: var(--hr-accent-border);
+  background: color-mix(in srgb, var(--hr-accent) 16%, transparent);
 }
 
 .onboarding-wizard__existing-agent:disabled {
@@ -818,7 +818,7 @@ watch(activePane, (pane) => {
 
 .onboarding-wizard__existing-action {
   flex: 0 0 auto;
-  color: #67e8f9;
+  color: var(--hr-accent);
   font-size: 0.72rem;
   font-weight: 800;
 }
@@ -858,8 +858,8 @@ watch(activePane, (pane) => {
   gap: 0.65rem;
   padding: 0.7rem 0.8rem;
   border-radius: 0.7rem;
-  border: 1px solid rgba(103, 232, 249, 0.18);
-  background: rgba(34, 211, 238, 0.05);
+  border: 1px solid color-mix(in srgb, var(--hr-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--hr-accent) 5%, transparent);
 }
 
 .onboarding-wizard__docker-check-copy {
@@ -888,15 +888,15 @@ watch(activePane, (pane) => {
   justify-content: center;
   padding: 0.42rem 0.65rem;
   border-radius: 9999px;
-  border: 1px solid rgba(103, 232, 249, 0.22);
-  color: rgba(207, 250, 254, 0.92);
+  border: 1px solid var(--hr-accent-border);
+  color: var(--hr-text-1);
   font-size: 0.72rem;
   transition: background 160ms ease, border-color 160ms ease;
 }
 
 .onboarding-wizard__docker-check-button:not(:disabled):hover {
-  border-color: rgba(103, 232, 249, 0.45);
-  background: rgba(103, 232, 249, 0.1);
+  border-color: color-mix(in srgb, var(--hr-accent) 45%, transparent);
+  background: var(--hr-accent-soft);
 }
 
 .onboarding-wizard__docker-check-button:disabled {
@@ -980,16 +980,16 @@ watch(activePane, (pane) => {
   gap: 0.35rem;
   padding: 0.45rem 1rem;
   border-radius: 9999px;
-  border: 1px solid rgba(103, 232, 249, 0.4);
-  background: rgba(103, 232, 249, 0.14);
-  color: rgba(207, 250, 254, 0.95);
+  border: 1px solid var(--hr-accent-border);
+  background: var(--hr-accent-soft);
+  color: var(--hr-text-1);
   font-size: 0.78rem;
   font-weight: 500;
   transition: background 160ms ease, transform 160ms ease;
 }
 
 .onboarding-wizard__primary:not(.onboarding-wizard__primary--disabled):hover {
-  background: rgba(103, 232, 249, 0.24);
+  background: color-mix(in srgb, var(--hr-accent) 24%, transparent);
   transform: translateY(-1px);
 }
 

@@ -64,13 +64,13 @@ const tooltipText = computed(() => {
 <style scoped>
 .system-message-item {
   @apply flex items-center gap-2 px-4 py-2 rounded-lg;
-  @apply bg-gray-100 dark:bg-gray-800;
-  @apply text-base text-gray-500 dark:text-gray-400;
+  @apply bg-[var(--hr-surface-1)];
+  @apply text-base text-[var(--hr-text-3)];
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
 
 .system-icon {
-  @apply text-gray-400;
+  @apply text-[var(--hr-text-4)];
 }
 
 .system-text {

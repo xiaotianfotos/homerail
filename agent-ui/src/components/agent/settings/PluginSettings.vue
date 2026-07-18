@@ -82,10 +82,10 @@ onMounted(() => { void refresh() })
 
 <template>
   <section data-testid="agent-settings-section-plugins" class="mt-8 space-y-5">
-    <div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-200/12 bg-cyan-200/[0.045] px-4 py-3">
+    <div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-4 py-3">
       <div>
-        <div class="flex items-center gap-2 text-sm font-semibold text-cyan-50">
-          <Boxes class="h-4 w-4 text-cyan-200" />
+        <div class="flex items-center gap-2 text-sm font-semibold text-[var(--hr-text-1)]">
+          <Boxes class="h-4 w-4 text-[var(--hr-accent)]" />
           {{ t('settings.plugins.registry') }}
         </div>
         <p class="mt-1 text-xs text-white/45">
@@ -95,7 +95,7 @@ onMounted(() => { void refresh() })
       </div>
       <button
         data-testid="agent-settings-plugins-refresh"
-        class="inline-flex h-9 items-center gap-2 rounded-full border border-cyan-200/16 px-3 text-xs text-cyan-50 hover:bg-cyan-200/10 disabled:opacity-50"
+        class="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--hr-border)] px-3 text-xs text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-2)] disabled:opacity-50"
         :disabled="loading || saving !== null"
         @click="refresh"
       >
@@ -119,13 +119,13 @@ onMounted(() => { void refresh() })
         v-for="plugin in registry?.plugins ?? []"
         :key="`${plugin.id}@${plugin.version}`"
         :data-testid="`agent-settings-plugin-${plugin.id}`"
-        class="grid gap-4 rounded-2xl border border-white/10 bg-black/18 p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+        class="grid gap-4 rounded-2xl border border-white/10 bg-[var(--hr-surface-1)] p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
       >
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
             <h2 class="truncate font-semibold text-white/90">{{ plugin.name }}</h2>
             <span class="rounded-full bg-white/6 px-2 py-0.5 font-mono text-[10px] text-white/50">{{ plugin.version }}</span>
-            <span v-if="plugin.locked" class="inline-flex items-center gap-1 rounded-full bg-cyan-200/10 px-2 py-0.5 text-[10px] text-cyan-100/75">
+            <span v-if="plugin.locked" class="inline-flex items-center gap-1 rounded-full bg-[var(--hr-surface-2)] px-2 py-0.5 text-[10px] text-[var(--hr-text-2)]">
               <LockKeyhole class="h-3 w-3" /> {{ t('settings.plugins.core') }}
             </span>
           </div>
@@ -156,9 +156,9 @@ onMounted(() => { void refresh() })
           >
           <span
             aria-hidden="true"
-            class="relative inline-flex h-6 w-11 flex-none rounded-full border transition-colors duration-150 peer-focus-visible:ring-2 peer-focus-visible:ring-cyan-200/70 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-black"
+            class="relative inline-flex h-6 w-11 flex-none rounded-full border transition-colors duration-150 peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--hr-accent-border)] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-black"
             :class="[
-              plugin.enabled ? 'border-cyan-200/60 bg-cyan-300/80' : 'border-white/20 bg-white/10',
+              plugin.enabled ? 'border-[var(--hr-accent)] bg-[var(--hr-accent)]' : 'border-white/20 bg-white/10',
               plugin.locked || loading || saving !== null ? 'cursor-not-allowed opacity-45' : 'cursor-pointer',
             ]"
           >

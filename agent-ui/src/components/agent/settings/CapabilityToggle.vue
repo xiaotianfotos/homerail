@@ -32,7 +32,7 @@ const activeClasses = computed(() => {
     llm: 'border-emerald-400/50 bg-emerald-400/15 text-emerald-200 shadow-[0_0_12px_rgba(52,211,153,0.2)]',
     asr: 'border-blue-400/50 bg-blue-400/15 text-blue-200 shadow-[0_0_12px_rgba(96,165,250,0.2)]',
     tts: 'border-orange-300/50 bg-orange-300/15 text-orange-200 shadow-[0_0_12px_rgba(251,146,60,0.2)]',
-    audio: 'border-cyan-400/50 bg-cyan-400/15 text-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.2)]',
+    audio: 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)] shadow-[0_0_12px_color-mix(in_srgb,var(--hr-accent)_20%,transparent)]',
     vision: 'border-violet-400/50 bg-violet-400/15 text-violet-200 shadow-[0_0_12px_rgba(167,139,250,0.2)]',
     video: 'border-fuchsia-400/50 bg-fuchsia-400/15 text-fuchsia-200 shadow-[0_0_12px_rgba(232,121,249,0.2)]',
   }

@@ -140,7 +140,7 @@ const edgePath = (from: AnimNode, to: AnimNode) =>
 </script>
 
 <template>
-  <div class="flex items-center justify-center h-full w-full bg-[#0a0a0f] overflow-hidden">
+  <div class="flex items-center justify-center h-full w-full bg-[var(--hr-bg)] overflow-hidden">
     <svg :viewBox="`0 0 ${W} ${H}`" class="max-w-[700px] max-h-[80vh]" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <filter v-for="n in nodes" :key="'glow-' + n.id" :id="'glow-' + n.id" x="-50%" y="-50%" width="200%" height="200%">
@@ -158,7 +158,7 @@ const edgePath = (from: AnimNode, to: AnimNode) =>
 
       <!-- Background grid -->
       <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1a1a2e" stroke-width="0.5" />
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="var(--hr-border)" stroke-width="0.5" />
       </pattern>
       <rect width="100%" height="100%" fill="url(#grid)" opacity="0.3" />
 
@@ -218,7 +218,7 @@ const edgePath = (from: AnimNode, to: AnimNode) =>
         <text
           x="0" y="14"
           text-anchor="middle"
-          fill="#9ca3af"
+          fill="var(--hr-text-3)"
           font-size="9"
           font-family="system-ui, sans-serif"
         >
@@ -231,7 +231,7 @@ const edgePath = (from: AnimNode, to: AnimNode) =>
         v-if="elapsed > 5"
         x="50%" y="95%"
         text-anchor="middle"
-        fill="#4b5563"
+        fill="var(--hr-text-4)"
         font-size="11"
         font-family="system-ui, sans-serif"
       >

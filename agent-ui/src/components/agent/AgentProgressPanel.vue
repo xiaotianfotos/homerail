@@ -169,7 +169,7 @@ function stateColor(state: ProgressState): string {
   if (state === 'done') return 'text-emerald-400'
   if (state === 'running') return 'text-blue-400'
   if (state === 'failed') return 'text-red-400'
-  return 'text-gray-600'
+  return 'text-[var(--hr-text-4)]'
 }
 
 function fmtTokens(value: number): string {
@@ -365,11 +365,11 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-4 p-3">
-    <section class="rounded-md border border-gray-800/60 bg-gray-950/30 p-3">
+    <section class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3">
       <div class="flex items-center justify-between gap-3">
         <div>
-          <div class="text-xs font-medium text-gray-200">{{ t('agent.progress.title') }}</div>
-          <div class="mt-0.5 text-[10px] text-gray-600">
+          <div class="text-xs font-medium text-[var(--hr-text-1)]">{{ t('agent.progress.title') }}</div>
+          <div class="mt-0.5 text-[10px] text-[var(--hr-text-4)]">
             {{ store.currentRunId ? store.currentRunId.slice(-12) : t('agent.progress.noRun') }}
           </div>
         </div>
@@ -379,20 +379,20 @@ onUnmounted(() => {
             store.isFailed ? 'bg-red-500/15 text-red-300' :
             store.isCompleted ? 'bg-emerald-500/15 text-emerald-300' :
             store.isRunning ? 'bg-blue-500/15 text-blue-300' :
-            'bg-gray-800 text-gray-500'
+            'bg-[var(--hr-surface-2)] text-[var(--hr-text-3)]'
           )"
         >
           {{ store.dagExecution?.status ?? 'idle' }}
         </div>
       </div>
 
-      <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-gray-800">
+      <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--hr-surface-2)]">
         <div
           :class="cn('h-full rounded-full transition-all', store.isFailed ? 'bg-red-500' : 'bg-emerald-500')"
           :style="{ width: `${progressPercent}%` }"
         />
       </div>
-      <div class="mt-2 flex justify-between text-[10px] text-gray-500">
+      <div class="mt-2 flex justify-between text-[10px] text-[var(--hr-text-3)]">
         <span>{{ progressPercent }}%</span>
         <span>{{ t('agent.progress.workerRatio', { completed: completedCount, total: store.nodes.length }) }}</span>
       </div>
@@ -402,15 +402,15 @@ onUnmounted(() => {
       <div
         v-for="item in progressItems"
         :key="item.key"
-        class="flex items-start gap-2 rounded-md px-2 py-2 hover:bg-gray-900/50"
+        class="flex items-start gap-2 rounded-md px-2 py-2 hover:bg-[var(--hr-surface-2)]"
       >
         <component
           :is="stateIcon(item.state)"
           :class="cn('mt-0.5 h-3.5 w-3.5 flex-shrink-0', stateColor(item.state), item.state === 'running' && 'animate-spin')"
         />
         <div class="min-w-0 flex-1">
-          <div class="text-[11px] font-medium text-gray-300">{{ item.label }}</div>
-          <div class="mt-0.5 truncate text-[10px] text-gray-600">{{ item.detail }}</div>
+          <div class="text-[11px] font-medium text-[var(--hr-text-1)]">{{ item.label }}</div>
+          <div class="mt-0.5 truncate text-[10px] text-[var(--hr-text-4)]">{{ item.detail }}</div>
         </div>
       </div>
     </section>
@@ -435,39 +435,39 @@ onUnmounted(() => {
     </section>
 
     <section class="grid grid-cols-2 gap-2">
-      <div class="rounded-md border border-gray-800/60 bg-gray-950/30 p-3">
-        <div class="mb-2 flex items-center gap-1.5 text-[10px] text-gray-500">
+      <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3">
+        <div class="mb-2 flex items-center gap-1.5 text-[10px] text-[var(--hr-text-3)]">
           <TerminalSquare class="h-3 w-3" />
           {{ t('agent.progress.tokens') }}
         </div>
-        <div class="space-y-1 text-[11px] text-gray-300">
+        <div class="space-y-1 text-[11px] text-[var(--hr-text-1)]">
           <div class="flex justify-between"><span>in</span><span>{{ fmtTokens(tokenTotals.input) }}</span></div>
           <div class="flex justify-between"><span>out</span><span>{{ fmtTokens(tokenTotals.output) }}</span></div>
           <div class="flex justify-between"><span>cache</span><span>{{ fmtTokens(tokenTotals.cacheRead + tokenTotals.cacheWrite) }}</span></div>
         </div>
       </div>
-      <div class="rounded-md border border-gray-800/60 bg-gray-950/30 p-3">
-        <div class="mb-2 flex items-center gap-1.5 text-[10px] text-gray-500">
+      <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3">
+        <div class="mb-2 flex items-center gap-1.5 text-[10px] text-[var(--hr-text-3)]">
           <CircleDollarSign class="h-3 w-3" />
           {{ t('agent.progress.cost') }}
         </div>
-        <div class="text-lg font-semibold text-gray-200">{{ fmtCost(audit?.total_cost_usd) }}</div>
-        <div class="mt-1 text-[10px] text-gray-600">
+        <div class="text-lg font-semibold text-[var(--hr-text-1)]">{{ fmtCost(audit?.total_cost_usd) }}</div>
+        <div class="mt-1 text-[10px] text-[var(--hr-text-4)]">
           {{ t('agent.progress.agents', { count: audit?.total_agents ?? store.nodes.length }) }}
         </div>
       </div>
     </section>
 
-    <section class="rounded-md border border-gray-800/60 bg-gray-950/30 p-3">
+    <section class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3">
       <div class="mb-3 flex items-center justify-between gap-3">
-        <div class="flex items-center gap-1.5 text-[10px] text-gray-500">
+        <div class="flex items-center gap-1.5 text-[10px] text-[var(--hr-text-3)]">
           <ShieldCheck class="h-3 w-3" />
           {{ t('agent.progress.items.scorecard') }}
         </div>
         <div
           :class="cn(
             'rounded-full px-2 py-0.5 text-[10px] font-medium',
-            !scorecard ? 'bg-gray-800 text-gray-500' :
+            !scorecard ? 'bg-[var(--hr-surface-2)] text-[var(--hr-text-3)]' :
             scorecard.passed ? 'bg-emerald-500/15 text-emerald-300' :
             'bg-red-500/15 text-red-300'
           )"
@@ -487,32 +487,32 @@ onUnmounted(() => {
           <div class="mt-0.5 truncate text-[10px] text-red-300">{{ failure.rule }}</div>
         </button>
       </div>
-      <div v-else class="mb-3 text-[11px] text-gray-500">
+      <div v-else class="mb-3 text-[11px] text-[var(--hr-text-3)]">
         {{ scorecardLoading ? t('agent.progress.scorecardLoading') : scorecardError || t('agent.progress.scorecardClean') }}
       </div>
 
-      <div class="mb-2 flex items-center gap-1.5 text-[10px] text-gray-500">
+      <div class="mb-2 flex items-center gap-1.5 text-[10px] text-[var(--hr-text-3)]">
         <ShieldCheck class="h-3 w-3" />
         {{ t('agent.progress.workerEvidence') }}
       </div>
       <div class="grid grid-cols-2 gap-2 text-[11px]">
-        <div class="rounded bg-gray-900/60 px-2 py-1.5">
-          <div class="text-gray-500">{{ t('agent.progress.toolCalls') }}</div>
-          <div class="mt-0.5 text-gray-200">{{ toolTotals.toolUse }}</div>
+        <div class="rounded bg-[var(--hr-surface-2)] px-2 py-1.5">
+          <div class="text-[var(--hr-text-3)]">{{ t('agent.progress.toolCalls') }}</div>
+          <div class="mt-0.5 text-[var(--hr-text-1)]">{{ toolTotals.toolUse }}</div>
         </div>
-        <div class="rounded bg-gray-900/60 px-2 py-1.5">
-          <div class="text-gray-500">{{ t('agent.progress.toolResults') }}</div>
-          <div class="mt-0.5 text-gray-200">{{ toolTotals.toolResult }}</div>
+        <div class="rounded bg-[var(--hr-surface-2)] px-2 py-1.5">
+          <div class="text-[var(--hr-text-3)]">{{ t('agent.progress.toolResults') }}</div>
+          <div class="mt-0.5 text-[var(--hr-text-1)]">{{ toolTotals.toolResult }}</div>
         </div>
       </div>
     </section>
 
-    <section class="rounded-md border border-gray-800/60 bg-gray-950/30 p-3">
-      <div class="mb-2 flex items-center gap-1.5 text-[10px] text-gray-500">
+    <section class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3">
+      <div class="mb-2 flex items-center gap-1.5 text-[10px] text-[var(--hr-text-3)]">
         <Clock class="h-3 w-3" />
         {{ t('agent.progress.background') }}
       </div>
-      <div class="text-[11px] text-gray-500">
+      <div class="text-[11px] text-[var(--hr-text-3)]">
         {{ auditLoading ? t('agent.progress.auditLoading') : auditError || t('agent.progress.backgroundQuiet') }}
       </div>
     </section>

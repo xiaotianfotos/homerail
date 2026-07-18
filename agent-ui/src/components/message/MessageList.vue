@@ -734,8 +734,8 @@ watch(() => renderList.value.length, (newLength, oldLength) => {
     <div class="message-list">
       <!-- Loading State -->
       <div v-if="loading" class="loading-state">
-        <div class="inline-block h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-        <p class="text-sm text-muted-foreground mt-2">加载消息中...</p>
+        <div class="inline-block h-6 w-6 border-2 border-[var(--hr-accent)] border-t-transparent rounded-full animate-spin"></div>
+        <p class="text-sm text-[var(--hr-text-3)] mt-2">加载消息中...</p>
       </div>
 
       <!-- Empty State -->
@@ -744,7 +744,7 @@ watch(() => renderList.value.length, (newLength, oldLength) => {
         class="empty-state"
       >
         <slot name="empty">
-          <p class="text-sm text-muted-foreground">{{ emptyText || '暂无消息' }}</p>
+          <p class="text-sm text-[var(--hr-text-3)]">{{ emptyText || '暂无消息' }}</p>
         </slot>
       </div>
 
@@ -820,7 +820,7 @@ watch(() => renderList.value.length, (newLength, oldLength) => {
 
 /* 轮次导航栏 - 固定在 ScrollArea 顶部 */
 .round-nav-fixed {
-  @apply flex items-center gap-3 px-4 py-2 bg-white/95 dark:bg-gray-900/95 backdrop-blur border-b border-gray-200 dark:border-gray-700;
+  @apply flex items-center gap-3 px-4 py-2 bg-[var(--hr-panel)] backdrop-blur border-b border-[var(--hr-border)];
   position: sticky;
   top: 0;
   z-index: 50;
@@ -830,11 +830,11 @@ watch(() => renderList.value.length, (newLength, oldLength) => {
 }
 
 .round-nav-title {
-  @apply text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap;
+  @apply text-xs font-medium text-[var(--hr-text-3)] whitespace-nowrap;
 }
 
 .round-count {
-  @apply bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded;
+  @apply bg-[var(--hr-surface-2)] px-2 py-0.5 rounded;
 }
 
 .round-nav-buttons {
@@ -843,12 +843,12 @@ watch(() => renderList.value.length, (newLength, oldLength) => {
 
 .round-nav-btn {
   @apply w-6 h-6 text-xs font-medium rounded transition-all;
-  @apply bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400;
-  @apply hover:bg-primary hover:text-white;
+  @apply bg-[var(--hr-surface-1)] text-[var(--hr-text-2)];
+  @apply hover:bg-[var(--hr-accent)] hover:text-[var(--hr-on-accent)];
 }
 
 .round-nav-btn.active {
-  @apply bg-primary text-white;
+  @apply bg-[var(--hr-accent)] text-[var(--hr-on-accent)];
 }
 
 .message-list {

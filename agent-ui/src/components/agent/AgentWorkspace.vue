@@ -80,7 +80,7 @@ function statusColor(status: string): string {
     case 'running': return 'text-emerald-400'
     case 'completed': return 'text-blue-400'
     case 'failed': return 'text-red-400'
-    default: return 'text-gray-500'
+    default: return 'text-[var(--hr-text-3)]'
   }
 }
 
@@ -173,8 +173,8 @@ onBeforeUnmount(stopExperienceIngestPoll)
 <template>
   <div class="agent-workspace flex h-full flex-col bg-transparent">
     <!-- Header: title + DAG summary -->
-    <div class="flex-shrink-0 border-b border-cyan-200/10 px-4 py-3">
-      <div class="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-cyan-200/45">{{ t('agent.inspector.title') }}</div>
+    <div class="flex-shrink-0 border-b border-[var(--hr-border)] px-4 py-3">
+      <div class="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-[var(--hr-text-3)]">{{ t('agent.inspector.title') }}</div>
 
       <!-- DAG run summary (compact) -->
       <div v-if="store.dagExecution" class="flex flex-wrap items-center gap-2 text-[10px]">
@@ -182,7 +182,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
           :class="cn(
             'rounded-full border px-2 py-1 font-medium',
             store.isRunning ? 'border-emerald-300/20 bg-emerald-300/10 text-emerald-200' :
-            store.isCompleted ? 'border-cyan-200/20 bg-cyan-200/10 text-cyan-100' :
+            store.isCompleted ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]' :
             store.isFailed ? 'bg-red-500/15 text-red-400' :
             'border-white/10 bg-white/[0.04] text-white/45'
           )"
@@ -222,14 +222,14 @@ onBeforeUnmount(stopExperienceIngestPoll)
     </div>
 
     <!-- Tab bar -->
-    <div class="flex flex-shrink-0 gap-1 overflow-x-auto border-b border-cyan-200/10 px-3 py-2">
+    <div class="flex flex-shrink-0 gap-1 overflow-x-auto border-b border-[var(--hr-border)] px-3 py-2">
       <button
         v-for="tab in tabs"
         :key="tab.key"
         :class="cn(
           'flex items-center gap-1.5 px-3 py-1.5 text-[11px] transition-colors border-b-2',
           store.inspectorTab === tab.key
-            ? 'rounded-full border-cyan-200/20 bg-cyan-200/12 text-cyan-100'
+            ? 'rounded-full border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
             : 'rounded-full border-transparent text-white/[0.42] hover:bg-white/[0.08] hover:text-white/70'
         )"
         @click="store.inspectorTab = tab.key"
@@ -246,13 +246,13 @@ onBeforeUnmount(stopExperienceIngestPoll)
         class="flex h-full items-center justify-center px-4"
       >
         <div class="max-w-[220px] text-center">
-          <Activity class="mx-auto mb-3 h-7 w-7 text-cyan-100/25" />
+          <Activity class="mx-auto mb-3 h-7 w-7 text-[var(--hr-text-4)]" />
           <div class="text-xs font-medium text-white/45">{{ t('shell.workspace.emptyTitle') }}</div>
           <div class="mt-1 text-[11px] leading-5 text-white/32">
             {{ t('shell.workspace.emptyDescription') }}
           </div>
           <button
-            class="mt-4 rounded-full border border-cyan-200/14 px-3 py-1.5 text-[11px] text-cyan-100/55 transition-colors hover:bg-cyan-200/10 hover:text-white"
+            class="mt-4 rounded-full border border-[var(--hr-border)] px-3 py-1.5 text-[11px] text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
             @click="store.settingsPageOpen = true"
           >
             {{ t('shell.workspace.openSettings') }}
@@ -279,8 +279,8 @@ onBeforeUnmount(stopExperienceIngestPoll)
       <div v-else-if="store.inspectorTab === 'nodes'">
         <div v-if="store.nodes.length === 0" class="flex items-center justify-center h-full">
           <div class="text-center space-y-2">
-            <Bot class="h-8 w-8 mx-auto opacity-15 text-gray-600" />
-            <div class="text-xs text-gray-600">{{ t('agent.inspector.noNodes') }}</div>
+            <Bot class="h-8 w-8 mx-auto opacity-15 text-[var(--hr-text-4)]" />
+            <div class="text-xs text-[var(--hr-text-4)]">{{ t('agent.inspector.noNodes') }}</div>
           </div>
         </div>
 
@@ -291,7 +291,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
             :class="cn(
             'mx-2 my-1 flex w-[calc(100%-1rem)] items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left transition-colors',
             store.selectedNodeId === node.id
-                ? 'border-cyan-200/24 bg-cyan-200/10'
+                ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)]'
                 : 'border-transparent hover:border-white/10 hover:bg-white/[0.04]'
             )"
             @click="selectNode(node.id)"
@@ -359,7 +359,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
         <!-- No node selected -->
         <div v-if="!store.selectedNode" class="flex-1 flex items-center justify-center">
           <div class="text-center space-y-2">
-            <FileText class="h-8 w-8 mx-auto opacity-20 text-cyan-100" />
+            <FileText class="h-8 w-8 mx-auto opacity-20 text-[var(--hr-text-1)]" />
             <div class="text-xs text-white/35">{{ t('agent.inspector.selectNodeLogs') }}</div>
           </div>
         </div>
@@ -367,7 +367,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
         <!-- Node selected: show log header + messages -->
         <template v-else>
           <!-- Log header with node info -->
-          <div class="flex items-center gap-2 border-b border-cyan-200/10 bg-white/[0.025] px-3 py-2.5 flex-shrink-0">
+          <div class="flex items-center gap-2 border-b border-[var(--hr-border)] bg-white/[0.025] px-3 py-2.5 flex-shrink-0">
             <div
               class="w-6 h-6 rounded-xl flex items-center justify-center"
               :style="{ backgroundColor: getAgentPersona(store.selectedNode.agent_name).color + '22' }"
@@ -391,7 +391,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
               <span :class="cn('text-[10px]', contextUsageText(store.selectedNode.context_usage_pct))">
                 {{ store.selectedNode.context_usage_pct }}%
               </span>
-              <div class="w-10 h-1 rounded-full bg-gray-700">
+              <div class="w-10 h-1 rounded-full bg-[var(--hr-surface-2)]">
                 <div
                   class="h-full rounded-full transition-all"
                   :class="contextBarColor(store.selectedNode.context_usage_pct)"
@@ -416,9 +416,9 @@ onBeforeUnmount(stopExperienceIngestPoll)
     <!-- Bottom: token summary for selected node -->
     <div
       v-if="store.selectedNode?.token_usage"
-      class="flex-shrink-0 border-t border-gray-800/40 px-3 py-1.5 bg-gray-900/40"
+      class="flex-shrink-0 border-t border-[var(--hr-border)] px-3 py-1.5 bg-[var(--hr-surface-1)]"
     >
-      <div class="flex items-center gap-3 text-[10px] text-gray-500">
+      <div class="flex items-center gap-3 text-[10px] text-[var(--hr-text-3)]">
         <span>Tokens:</span>
         <span>in {{ fmtTokens(store.selectedNode.token_usage.input_tokens) }}</span>
         <span>out {{ fmtTokens(store.selectedNode.token_usage.output_tokens) }}</span>
@@ -430,7 +430,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
 
 <style scoped>
 .agent-workspace {
-  --workspace-radius: 22px;
+  --workspace-radius: var(--hr-radius-lg);
 }
 
 .agent-workspace :deep(button),
@@ -442,7 +442,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
 }
 
 .agent-workspace :deep(.border-b) {
-  border-color: rgba(103, 232, 249, 0.1);
+  border-color: var(--hr-border);
 }
 
 .agent-workspace :deep(.px-3.py-2),

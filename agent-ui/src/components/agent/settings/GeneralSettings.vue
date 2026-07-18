@@ -22,7 +22,7 @@ function selectLocale(nextLocale: AppLocale): void {
 
     <div class="border-y border-white/10 py-6">
       <div class="flex items-start gap-3">
-        <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-cyan-200/15 bg-cyan-200/[0.06] text-cyan-100/75">
+        <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-2)]">
           <Languages class="h-4 w-4" />
         </div>
         <div class="min-w-0 flex-1">
@@ -35,7 +35,7 @@ function selectLocale(nextLocale: AppLocale): void {
               :key="option.code"
               class="flex min-h-16 items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors"
               :class="uiStore.locale === option.code
-                ? 'border-cyan-200/40 bg-cyan-200/10 text-white'
+                ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-white'
                 : 'border-white/10 bg-white/[0.025] text-white/62 hover:border-white/20 hover:bg-white/[0.05] hover:text-white/85'"
               :data-testid="`agent-settings-language-${option.code}`"
               type="button"
@@ -47,7 +47,7 @@ function selectLocale(nextLocale: AppLocale): void {
                 <span class="block text-sm font-medium">{{ option.label }}</span>
                 <span class="mt-0.5 block text-xs text-white/38">{{ t(option.translationKey) }}</span>
               </span>
-              <Check v-if="uiStore.locale === option.code" class="h-4 w-4 flex-shrink-0 text-cyan-200" />
+              <Check v-if="uiStore.locale === option.code" class="h-4 w-4 flex-shrink-0 text-[var(--hr-accent)]" />
             </button>
           </div>
         </div>

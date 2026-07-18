@@ -694,14 +694,14 @@ async function submit(): Promise<void> {
             />
             <input
               v-model="searchQuery"
-              class="h-8 w-44 rounded-lg border border-white/10 bg-[#343434] pl-7 pr-2 text-xs text-gray-200 outline-none focus:border-cyan-400/40"
+              class="h-8 w-44 rounded-lg border border-white/10 bg-[#343434] pl-7 pr-2 text-xs text-gray-200 outline-none focus:border-[var(--hr-accent-border)]"
               :placeholder="t('settings.models.form.search')"
             />
           </div>
         </div>
 
         <div
-          class="max-h-64 space-y-3 overflow-y-auto rounded-xl border border-white/8 bg-black/20 p-3"
+          class="max-h-64 space-y-3 overflow-y-auto rounded-xl border border-white/8 bg-[var(--hr-surface-1)] p-3"
         >
           <div v-for="group in groupedCredentials" :key="group.provider.id">
             <div
@@ -717,7 +717,7 @@ async function submit(): Promise<void> {
                 :class="[
                   'flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all',
                   isSelectedCredentialOption(item)
-                    ? 'border-cyan-400/50 bg-cyan-400/10 shadow-[0_0_16px_rgba(34,211,238,0.12)]'
+                    ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] shadow-[0_0_16px_color-mix(in_srgb,var(--hr-accent)_12%,transparent)]'
                     : 'border-white/8 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]'
                 ]"
                 @click="selectCredential(item)"
@@ -726,13 +726,13 @@ async function submit(): Promise<void> {
                   :class="[
                     'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border',
                     isSelectedCredentialOption(item)
-                      ? 'border-cyan-400 bg-cyan-400'
+                      ? 'border-[var(--hr-accent)] bg-[var(--hr-accent)]'
                       : 'border-white/25'
                   ]"
                 >
                   <span
                     v-if="isSelectedCredentialOption(item)"
-                    class="h-1.5 w-1.5 rounded-full bg-black"
+                    class="h-1.5 w-1.5 rounded-full bg-[var(--hr-on-accent)]"
                   />
                 </span>
                 <div class="min-w-0 flex-1">
@@ -804,7 +804,7 @@ async function submit(): Promise<void> {
             t('settings.models.form.availableModels')
           }}</span>
           <div class="flex items-center gap-2">
-            <span v-if="probing" class="flex items-center gap-1 text-[11px] text-cyan-300/70">
+            <span v-if="probing" class="flex items-center gap-1 text-[11px] text-[var(--hr-accent)]">
               <Loader2 class="h-3 w-3 animate-spin" /> {{ t('settings.models.form.probing') }}
             </span>
             <span v-else-if="probedModels.length" class="text-[11px] text-emerald-300/60">
@@ -813,7 +813,7 @@ async function submit(): Promise<void> {
             <button
               v-if="canProbeModels && !probing"
               type="button"
-              class="flex items-center gap-1 text-[11px] text-gray-500 transition-colors hover:text-cyan-300"
+              class="flex items-center gap-1 text-[11px] text-gray-500 transition-colors hover:text-[var(--hr-accent)]"
               :title="t('settings.models.form.reprobe')"
               @click="runProbe"
             >
@@ -839,7 +839,7 @@ async function submit(): Promise<void> {
               'flex min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-all',
               m.probed
                 ? 'border-emerald-400/25 bg-emerald-400/[0.04] text-emerald-200/75 hover:border-emerald-400/45'
-                : 'border-white/10 bg-white/[0.02] text-gray-300 hover:border-cyan-400/35 hover:bg-cyan-400/[0.06]'
+                : 'border-white/10 bg-white/[0.02] text-gray-300 hover:border-[var(--hr-accent-border)] hover:bg-[var(--hr-accent-soft)]'
             ]"
             @click="addModel(m.id)"
           >
@@ -850,7 +850,7 @@ async function submit(): Promise<void> {
               }}</span>
             </span>
             <span
-              class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-cyan-300/25 bg-cyan-300/10 text-cyan-100"
+              class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]"
             >
               <Plus class="h-3.5 w-3.5" />
             </span>
@@ -858,7 +858,7 @@ async function submit(): Promise<void> {
         </div>
         <div
           v-else
-          class="rounded-lg border border-white/8 bg-black/15 px-3 py-4 text-center text-xs text-gray-500"
+          class="rounded-lg border border-white/8 bg-[var(--hr-surface-1)] px-3 py-4 text-center text-xs text-gray-500"
         >
           {{ t('settings.models.form.allAdded') }}
         </div>
@@ -866,7 +866,7 @@ async function submit(): Promise<void> {
         <!-- 已配置模型列表（每个模型提交为一个独立配置，共用同一个 key）-->
         <div
           v-if="selectedModels.size > 0"
-          class="space-y-2 rounded-lg border border-white/8 bg-black/20 p-3"
+          class="space-y-2 rounded-lg border border-white/8 bg-[var(--hr-surface-1)] p-3"
         >
           <div class="flex items-center justify-between gap-3">
             <div class="text-[11px] text-gray-500">
@@ -886,7 +886,7 @@ async function submit(): Promise<void> {
             </span>
             <input
               :value="model.alias"
-              class="h-8 flex-1 rounded-md border border-white/10 bg-[#343434] px-2 text-xs text-gray-200 outline-none focus:border-cyan-400/40"
+              class="h-8 flex-1 rounded-md border border-white/10 bg-[#343434] px-2 text-xs text-gray-200 outline-none focus:border-[var(--hr-accent-border)]"
               :placeholder="t('settings.models.form.aliasPlaceholder')"
               @input="setModelAlias(model.id, ($event.target as HTMLInputElement).value)"
             />
@@ -932,7 +932,7 @@ async function submit(): Promise<void> {
         <button
           v-if="canReuseCredential"
           type="button"
-          class="font-normal text-cyan-300/70 transition-colors hover:text-cyan-200"
+          class="font-normal text-[color:color-mix(in_srgb,var(--hr-accent)_70%,transparent)] transition-colors hover:text-[var(--hr-accent)]"
           @click.prevent="useNewApiKey = false"
         >
           {{ t('settings.models.form.useSavedKey') }}
@@ -941,7 +941,7 @@ async function submit(): Promise<void> {
       <input
         v-model="apiKey"
         type="password"
-        class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-cyan-400/40"
+        class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         :placeholder="representativeEndpoint?.key_hint || 'sk-...'"
       />
     </label>
@@ -955,7 +955,7 @@ async function submit(): Promise<void> {
       </div>
       <div class="flex flex-wrap gap-2">
         <span
-          class="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-2.5 py-1 text-xs font-medium uppercase text-cyan-100"
+          class="rounded-full border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] px-2.5 py-1 text-xs font-medium uppercase text-[var(--hr-accent)]"
           >{{ purpose }}</span
         >
         <template v-if="purpose === 'llm'">
@@ -1013,7 +1013,7 @@ async function submit(): Promise<void> {
         :class="[
           'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all',
           canSubmit && !isSubmitting
-            ? 'bg-cyan-500 text-white hover:bg-cyan-400'
+            ? 'bg-[var(--hr-accent)] text-[var(--hr-on-accent)] hover:bg-[color:color-mix(in_srgb,var(--hr-accent)_85%,white)]'
             : 'cursor-not-allowed bg-gray-700 text-gray-500'
         ]"
         @click="submit"

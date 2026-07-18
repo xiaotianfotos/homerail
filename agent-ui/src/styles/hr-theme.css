@@ -1,0 +1,77 @@
+/* ==========================================================================
+   HomeRail theme tokens ("skins")
+
+   A skin is only a set of CSS custom properties. Components must consume
+   the --hr-* tokens (via `var(--hr-...)`) instead of hardcoded colors for
+   the skin swap to reach them. Switch skins by setting
+   `document.documentElement.dataset.hrTheme`, e.g. "cockpit" | "paper".
+   ========================================================================== */
+
+:root,
+:root[data-hr-theme='cockpit'] {
+  color-scheme: dark;
+
+  --hr-bg: #06080d;
+  --hr-bg-raised: #0a0f18;
+  --hr-surface-1: rgba(148, 178, 214, 0.055);
+  --hr-surface-2: rgba(148, 178, 214, 0.095);
+  --hr-panel: rgba(10, 15, 23, 0.92);
+  --hr-border: rgba(148, 178, 214, 0.1);
+  --hr-border-strong: rgba(148, 178, 214, 0.2);
+
+  --hr-text-1: rgba(237, 244, 252, 0.96);
+  --hr-text-2: rgba(222, 233, 246, 0.68);
+  --hr-text-3: rgba(206, 221, 238, 0.48);
+  --hr-text-4: rgba(206, 221, 238, 0.32);
+
+  --hr-accent: #4fd8e8;
+  --hr-accent-soft: rgba(79, 216, 232, 0.12);
+  --hr-accent-border: rgba(79, 216, 232, 0.28);
+  --hr-on-accent: #04222a;
+
+  --hr-speaking: #818cf8;
+  --hr-speaking-soft: rgba(129, 140, 248, 0.12);
+  --hr-success: #34d399;
+  --hr-warning: #fbbf24;
+  --hr-danger: #f87171;
+  --hr-info: #7cb3ff;
+
+  --hr-radius-lg: 16px;
+  --hr-radius-md: 12px;
+  --hr-radius-sm: 9px;
+
+  --hr-shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.32);
+}
+
+/* Proof-of-concept light skin. Token-driven components follow automatically;
+   components with remaining hardcoded dark colors will be migrated over time. */
+:root[data-hr-theme='paper'] {
+  color-scheme: light;
+
+  --hr-bg: #eef2f6;
+  --hr-bg-raised: #ffffff;
+  --hr-surface-1: rgba(15, 40, 70, 0.045);
+  --hr-surface-2: rgba(15, 40, 70, 0.08);
+  --hr-panel: rgba(255, 255, 255, 0.94);
+  --hr-border: rgba(15, 40, 70, 0.12);
+  --hr-border-strong: rgba(15, 40, 70, 0.22);
+
+  --hr-text-1: rgba(13, 24, 38, 0.94);
+  --hr-text-2: rgba(13, 24, 38, 0.68);
+  --hr-text-3: rgba(13, 24, 38, 0.5);
+  --hr-text-4: rgba(13, 24, 38, 0.36);
+
+  --hr-accent: #0899ab;
+  --hr-accent-soft: rgba(8, 153, 171, 0.1);
+  --hr-accent-border: rgba(8, 153, 171, 0.32);
+  --hr-on-accent: #f2feff;
+
+  --hr-speaking: #6366f1;
+  --hr-speaking-soft: rgba(99, 102, 241, 0.1);
+  --hr-success: #0d9f6e;
+  --hr-warning: #b47b0a;
+  --hr-danger: #dc4444;
+  --hr-info: #3b82f6;
+
+  --hr-shadow-panel: 0 18px 50px rgba(15, 40, 70, 0.12);
+}
