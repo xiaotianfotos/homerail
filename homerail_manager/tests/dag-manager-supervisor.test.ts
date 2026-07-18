@@ -217,7 +217,7 @@ describe("DAG Manager Supervisor", () => {
       actor_id: "research",
       tools_used: ["web.search"],
     });
-    expect(snapshot.milestone_digest.commentary).toHaveLength(1);
+    expect(snapshot.milestone_digest.status_texts).toHaveLength(1);
     expect(snapshot.round_summary).toMatchObject({
       round_id: "round-0001",
       complete: false,
@@ -239,7 +239,7 @@ describe("DAG Manager Supervisor", () => {
     expect(serialized).not.toContain("\"generation\"");
 
     const repeated = getDagSupervisionSnapshot({ run_id: runId, consumer_id: "manager-session-a" });
-    expect(repeated.milestone_digest).toMatchObject({ milestones: [], commentary: [] });
+    expect(repeated.milestone_digest).toMatchObject({ milestones: [], status_texts: [] });
     const independent = getDagSupervisionSnapshot({ run_id: runId, consumer_id: "manager-session-b" });
     expect(independent.milestone_digest.milestones).toHaveLength(3);
 
@@ -582,7 +582,7 @@ describe("DAG Manager Supervisor", () => {
     expect(repeated.milestone_digest).toMatchObject({
       milestones: [],
       intervention_milestones: [],
-      commentary: [],
+      status_texts: [],
     });
   });
 
@@ -598,7 +598,7 @@ describe("DAG Manager Supervisor", () => {
       has_more: false,
       suppressed_progress_events: 100,
       milestones: [],
-      commentary: [],
+      status_texts: [],
     });
     expect(JSON.stringify(snapshot).length).toBeLessThan(32_000);
   });
@@ -709,9 +709,9 @@ describe("DAG Manager Supervisor", () => {
     ]);
     expect(snapshot.milestone_digest.surface_patch_milestones)
       .not.toContainEqual(expect.objectContaining({ patch_id: "surface-2" }));
-    expect(snapshot.milestone_digest.commentary).toHaveLength(1);
-    expect(snapshot.milestone_digest.commentary[0]).toContain("Initial structure");
-    expect(snapshot.milestone_digest.commentary[0]).toContain("Verified output");
+    expect(snapshot.milestone_digest.status_texts).toHaveLength(1);
+    expect(snapshot.milestone_digest.status_texts[0]).toContain("Initial structure");
+    expect(snapshot.milestone_digest.status_texts[0]).toContain("Verified output");
     expect(JSON.stringify(snapshot)).not.toContain("sk-supervision-secret");
     expect(JSON.stringify(snapshot)).not.toContain("Rapid data refresh");
 
@@ -720,7 +720,7 @@ describe("DAG Manager Supervisor", () => {
       consumer_id: "surface-supervisor",
     });
     expect(repeated.milestone_digest.surface_patch_milestones).toEqual([]);
-    expect(repeated.milestone_digest.commentary).toEqual([]);
+    expect(repeated.milestone_digest.status_texts).toEqual([]);
   });
 
   it("bounds milestone summaries and digest batches for Manager context", () => {
@@ -831,9 +831,7 @@ describe("DAG Manager Supervisor", () => {
         { managerRestUrl, sessionId: "supervisor-host-session" },
       );
       expect(supervised.result.content[0].text).toContain("Primary source confirmed");
-      expect(supervised.voiceSurface.commentaryTexts).toEqual([
-        "research specialist发现：Primary source confirmed",
-      ]);
+      expect(supervised.voiceSurface).not.toHaveProperty("commentaryTexts");
 
       const focused = await _invokeHostCodexVoiceToolForTest(
         "focus_dag_actor",

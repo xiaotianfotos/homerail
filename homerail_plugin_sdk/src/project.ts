@@ -15,6 +15,7 @@ import {
   analyzeHomerailPluginSchemaPolicy,
   decodeHomerailPluginUtf8,
   collectHomerailPluginFileReferences,
+  parseDagWorkerSkillVisualProfileV1,
   validateHomerailDeclarativeRenderer,
   validateHomerailDirectUiProjection,
   validateHomerailPluginCompatibility,
@@ -131,7 +132,10 @@ function expectedPayloadPaths(manifest: HomerailPluginManifestV1): string[] {
     .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
 }
 
-export function validatePluginSkill(skillId: string, contentValue: Buffer | string): void {
+export function validatePluginSkill(
+  skillId: string,
+  contentValue: Buffer | string,
+): { name: string; description: string } {
   const byteLength = Buffer.isBuffer(contentValue)
     ? contentValue.byteLength
     : Buffer.byteLength(contentValue, "utf8");
@@ -160,7 +164,12 @@ export function validatePluginSkill(skillId: string, contentValue: Buffer | stri
   if (typeof metadata.description !== "string" || !metadata.description.trim()) {
     throw new Error(`Plugin Skill ${skillId} needs a non-empty frontmatter description`);
   }
+  const description = metadata.description.replace(/\s+/g, " ").trim();
+  if (description.length > 1024) {
+    throw new Error(`Plugin Skill ${skillId} frontmatter description exceeds 1024 characters`);
+  }
   if (!content.slice(end + 4).trim()) throw new Error(`Plugin Skill ${skillId} has no instructions`);
+  return { name: skillId, description };
 }
 
 function validateSchema(content: Buffer, label: string): Record<string, unknown> {
@@ -439,6 +448,14 @@ export function validatePluginFiles(inputFiles: ReadonlyMap<string, Buffer>, roo
     if (!content) continue;
     try {
       validatePluginSkill(skill.id, content);
+      if (skill.visual_profile) {
+        const profile = files.get(skill.visual_profile);
+        if (!profile) throw new Error(`Plugin Skill ${skill.id} visual profile is missing`);
+        parseDagWorkerSkillVisualProfileV1(JSON.parse(decodeHomerailPluginUtf8(
+          profile,
+          skill.visual_profile,
+        )));
+      }
     } catch (cause) {
       issues.push({ path: skill.path, message: cause instanceof Error ? cause.message : String(cause), severity: "error" });
     }

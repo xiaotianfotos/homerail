@@ -56,8 +56,10 @@ import {
   completeTurn,
   getTurnStatus,
   registerTurn,
+  updateTurnStatus,
   withSessionLock,
 } from "./voice-session-registry.js";
+import { getDagSupervisionSnapshot } from "../runtime/dag-manager-supervisor.js";
 import {
   resolveConfiguredGenerativeUiMode,
   resolveConfiguredGenerativeUiModeDetails,
@@ -84,7 +86,6 @@ import {
 } from "./voice-artifacts.js";
 import {
   assembleLegacyWidgetReservations,
-  assemblePluginTurnContext,
 } from "../plugins/context-assembler.js";
 
 interface BaseResponse {
@@ -168,7 +169,7 @@ interface VoiceWorkspace {
     text: string;
     spoken_text?: string;
     created_at: string;
-    channel?: "final" | "commentary";
+    channel?: "final" | "commentary" | "progress";
     kind?: "message" | "error";
   }>;
   debug_events: Array<{ id: string; level: "debug" | "info" | "warning" | "error"; code: string; message: string; created_at: string }>;
@@ -187,6 +188,7 @@ interface VoiceTurnResult {
   spoken_text: string;
   suggested_action: "confirm" | null;
   commentary_texts?: string[];
+  progress_texts?: string[];
 }
 
 interface ManagerAgentHandoffResult extends VoiceTurnResult {
@@ -200,9 +202,16 @@ interface RealtimeSpeechEvent {
   text: string;
 }
 
+interface RealtimeProgressEvent {
+  id: string;
+  text: string;
+}
+
 interface ManagerAgentRealtimeHooks {
   onSpeech?: (event: RealtimeSpeechEvent) => void;
+  onProgress?: (event: RealtimeProgressEvent) => void;
   streamedCommentaryTexts?: Set<string>;
+  streamedProgressTexts?: Set<string>;
 }
 
 const DEFAULT_VOICE_AGENT_CONFIG = {
@@ -681,6 +690,63 @@ function workspaceDagContext(workspace: VoiceWorkspace): ManagerAgentDagContextV
   };
 }
 
+function refreshWorkspaceDagSupervision(workspace: VoiceWorkspace): void {
+  const runId = workspaceRunIds(workspace).at(-1);
+  if (!runId) return;
+  try {
+    const snapshot = getDagSupervisionSnapshot({
+      run_id: runId,
+      consumer_id: `voice-workspace:${workspace.session_id}`,
+      max_milestones: 12,
+    });
+    const statusTexts = snapshot.milestone_digest.status_texts
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 6);
+
+    const status = snapshot.run_status.trim().toLowerCase();
+    const active = new Set(["created", "queued", "pending", "ready", "running"]);
+    const waiting = new Set(["waiting", "waiting_for_command"]);
+    const completed = new Set(["completed", "succeeded", "done"]);
+    const failed = new Set(["failed", "error"]);
+    const cancelled = new Set(["cancelled", "canceled"]);
+    const latestStatusText = statusTexts.at(-1);
+    if (active.has(status)) {
+      workspace.ended_at = null;
+      workspace.progress_brief = {
+        status: "running",
+        short_text: shortText(latestStatusText || "DAG 正在执行。", 80),
+        updated_at: now(),
+      };
+    } else if (waiting.has(status)) {
+      workspace.ended_at = null;
+      workspace.progress_brief = {
+        // DAG runs use `waiting`, while persisted voice sessions intentionally
+        // use the non-terminal `running` state until the user closes the
+        // session. Keeping the two status domains separate also keeps Manager
+        // polling alive for follow-up Actor commands.
+        status: "running",
+        short_text: shortText(latestStatusText || "DAG 正在等待后续指令。", 80),
+        updated_at: now(),
+      };
+    } else if (completed.has(status) || failed.has(status) || cancelled.has(status)) {
+      const terminalStatus = completed.has(status) ? "done" : failed.has(status) ? "error" : "cancelled";
+      workspace.progress_brief = {
+        status: terminalStatus,
+        short_text: shortText(
+          latestStatusText
+            || (completed.has(status) ? "DAG 已完成。" : failed.has(status) ? "DAG 执行失败。" : "DAG 已取消。"),
+          80,
+        ),
+        updated_at: now(),
+      };
+      workspace.ended_at ??= now();
+    }
+  } catch {
+    // A stale or deleted attached run must not make the voice workspace unreadable.
+  }
+}
+
 function syncWorkspaceRunIds(workspace: VoiceWorkspace, runIds: string[]): void {
   const unique = Array.from(new Set(runIds.map((item) => item.trim()).filter(Boolean)));
   workspace.manager_run_ids = unique;
@@ -865,7 +931,7 @@ function appendConversation(
   workspace: VoiceWorkspace,
   role: "user" | "assistant" | "system",
   text: string,
-  channel: "final" | "commentary" = "final",
+  channel: "final" | "commentary" | "progress" = "final",
   kind: "message" | "error" = "message",
   spokenText?: string,
 ) {
@@ -1251,11 +1317,8 @@ function applyVoiceSurfaceFromResult(
   return changed;
 }
 
-function voiceSpokenText(raw: string, runIds: string[], status: string): string {
-  const clean = cleanSpokenText(raw);
-  if (runIds.length) return "已启动执行，我会继续跟进。";
-  if (status === "blocked" || status === "failed") return "处理被阻塞，原因已放到屏幕上。";
-  return shortText(clean || "已处理。", 80);
+function voiceSpokenText(raw: string): string {
+  return shortText(cleanSpokenText(raw), 80);
 }
 
 function appendDebugEvent(
@@ -1454,27 +1517,33 @@ function confirmedTaskMessage(workspace: VoiceWorkspace, fallbackText = ""): str
   return sections.join("\n");
 }
 
-function voicePluginRoutingInputs(workspace: VoiceWorkspace, message: string): Record<string, unknown> {
-  const title = workspace.task_draft?.title ?? workspace.session_title ?? shortText(message, 80);
-  return {
-    message,
-    text: message,
-    ...(title ? { title } : {}),
-    ...(workspace.task_draft?.request ? { request: workspace.task_draft.request } : {}),
-    ...(workspace.task_draft?.acceptance.length ? { acceptance: workspace.task_draft.acceptance } : {}),
-    ...(workspace.task_draft?.constraints.length ? { constraints: workspace.task_draft.constraints } : {}),
-    ...(workspace.session_slate ? { session_slate: workspace.session_slate } : {}),
-    ...(workspace.active_objective ? { active_objective: workspace.active_objective } : {}),
-  };
+function managerAgentHistory(
+  workspace: Pick<VoiceWorkspace, "conversation">,
+  currentMessage?: string,
+): Array<{ role: string; content: string; timestamp?: string }> {
+  const messages = (workspace.conversation ?? [])
+    .filter((item) => (
+      item.role === "user"
+      || (item.role === "assistant"
+        && item.channel !== "commentary"
+        && item.channel !== "progress"
+        && item.kind !== "error")
+    ));
+  const last = messages.at(-1);
+  if (
+    currentMessage?.trim()
+    && last?.role === "user"
+    && last.text.trim() === currentMessage.trim()
+  ) messages.pop();
+  return messages.slice(-24)
+    .map((item) => ({
+      role: item.role,
+      content: item.text,
+      timestamp: item.created_at,
+    }));
 }
 
-function managerAgentHistory(workspace: VoiceWorkspace): Array<{ role: string; content: string; timestamp?: string }> {
-  return (workspace.conversation ?? []).slice(-24).map((item) => ({
-    role: item.role,
-    content: item.text,
-    timestamp: item.created_at,
-  }));
-}
+export const _managerAgentHistoryForTest = managerAgentHistory;
 
 function markManagerAgentBlocker(workspace: VoiceWorkspace, code: string, message: string): ManagerAgentHandoffResult {
   appendDebugEvent(workspace, code, message, "error");
@@ -1491,7 +1560,7 @@ function markManagerAgentBlocker(workspace: VoiceWorkspace, code: string, messag
   };
   removeWidget(workspace, "manager-agent-blocker");
   removeWidget(workspace, "manager-run");
-  appendConversation(workspace, "assistant", displayText, "final", "error");
+  appendConversation(workspace, "system", displayText, "final", "error");
   return { spoken_text: "", suggested_action: null, manager: { error: message, code }, manager_status: managerStatus(workspace) };
 }
 
@@ -1543,14 +1612,6 @@ async function submitVoiceWorkspaceToManagerAgent(
         selectedNodeId,
       )
       : undefined;
-    const pluginRoutingSource = assemblePluginTurnContext(undefined, {
-      modality: "voice",
-      include_agent_tools: generativeUiMode === "prefer" || generativeUiMode === "shadow",
-      legacy_compatibility_mode: !(
-        effectiveGenerativeUiShadowEnabled(workspace)
-        || effectiveGenerativeUiPreferEnabled(workspace)
-      ),
-    });
     const turnInput: RunManagerAgentTurnInput = {
       message,
       project_id: workspace.project_id ?? undefined,
@@ -1561,25 +1622,30 @@ async function submitVoiceWorkspaceToManagerAgent(
       generative_ui_mode: generativeUiMode,
       canvas_context: canvasContext,
       dag_context: workspaceDagContext(workspace),
-      history: managerAgentHistory(workspace),
+      history: managerAgentHistory(workspace, message),
       required_tool_calls: requiredToolCalls,
       agent_config: agentConfig,
       voice_ui_rules: voiceUiRules,
-      plugin_routing: {
-        inputs: voicePluginRoutingInputs(workspace, message),
-        source_context: pluginRoutingSource,
-      },
     };
-    if (realtimeHooks?.onSpeech) {
+    if (realtimeHooks?.onSpeech || realtimeHooks?.onProgress) {
       let streamResult: Awaited<ReturnType<typeof runManagerAgentTurn>> | undefined;
       for await (const event of runManagerAgentTurnStream(turnInput, options)) {
         if (event.type === "commentary") {
           const text = String(event.text || "").trim();
           if (!text) continue;
-          const spokenText = shortText(text, 120);
+          const spokenText = shortText(cleanSpokenText(text) || text, 120);
           appendConversation(workspace, "assistant", text, "commentary", "message", spokenText);
           realtimeHooks.streamedCommentaryTexts?.add(text);
-          realtimeHooks.onSpeech({ id: generateId("speech-"), channel: "commentary", text: spokenText });
+          realtimeHooks.onSpeech?.({ id: generateId("speech-"), channel: "commentary", text: spokenText });
+        } else if (event.type === "progress") {
+          const text = String(event.text || "").trim();
+          if (!text) continue;
+          const progressEvent = { id: generateId("progress-"), text };
+          // Claude progress is a native AssistantMessage, but it is not a
+          // final answer and must never fall through to voice/TTS playback.
+          appendConversation(workspace, "assistant", text, "progress", "message", "");
+          realtimeHooks.streamedProgressTexts?.add(text);
+          realtimeHooks.onProgress?.(progressEvent);
         } else if (event.type === "result") {
           streamResult = event.result;
         }
@@ -1612,20 +1678,20 @@ async function submitVoiceWorkspaceToManagerAgent(
     return markManagerAgentBlocker(workspace, "manager_chat_error", detail);
   }
 
-  const reply = typeof result.text === "string" && result.text.trim()
-    ? result.text.trim()
-    : "主 Agent 已处理。";
-  const surface = objectValue(result.voice_surface);
-  const surfaceCommentary = Array.isArray(surface?.commentary_texts) ? surface.commentary_texts : [];
+  const reply = typeof result.text === "string" ? result.text.trim() : "";
+  if (!reply) throw new Error("Manager Agent completed without an authored final response");
   const alreadyStreamed = realtimeHooks?.streamedCommentaryTexts ?? new Set<string>();
+  const alreadyStreamedProgress = realtimeHooks?.streamedProgressTexts ?? new Set<string>();
+  const progressMessages = (Array.isArray(result.progress_texts) ? result.progress_texts : [])
+    .map((item) => String(item || "").trim())
+    .filter((item) => item && !alreadyStreamedProgress.has(item));
   const commentaryMessages = [
     ...(Array.isArray(result.commentary_texts) ? result.commentary_texts : []),
-    ...surfaceCommentary,
   ]
     .map((item) => String(item || "").trim())
     .filter((item) => item && !alreadyStreamed.has(item))
     .slice(0, 6)
-    .map((text) => ({ text, spokenText: shortText(text, 120) }));
+    .map((text) => ({ text, spokenText: shortText(cleanSpokenText(text) || text, 120) }));
   const agentErrors = Array.isArray(result.agent_errors)
     ? result.agent_errors.map((item) => shortText(String(item || "").trim(), 500)).filter(Boolean).slice(0, 10)
     : [];
@@ -1656,13 +1722,14 @@ async function submitVoiceWorkspaceToManagerAgent(
   applyVoiceSurfaceFromResult(workspace, result, reply, pluginContext!);
   const spoken = voiceSpokenText(
     typeof result.spoken_text === "string" && result.spoken_text.trim() ? result.spoken_text.trim() : reply,
-    runIds,
-    workspace.progress_brief.status || status,
   );
   // 生成式 UI 只能来自 Agent 显式返回的 voice_surface.widgets/show_* 工具结果；
   // Manager 执行状态只写 progress_brief/manager_run_id，不在这里程序化插入 status widget。
   removeWidget(workspace, "manager-run");
   removeWidget(workspace, "manager-agent-blocker");
+  for (const progress of progressMessages) {
+    appendConversation(workspace, "assistant", progress, "progress", "message", "");
+  }
   for (const commentary of commentaryMessages) {
     appendConversation(
       workspace,
@@ -1677,6 +1744,7 @@ async function submitVoiceWorkspaceToManagerAgent(
   return {
     spoken_text: spoken,
     suggested_action: null,
+    progress_texts: progressMessages,
     commentary_texts: commentaryMessages.map((item) => item.spokenText),
     manager: {
       text: reply,
@@ -1982,7 +2050,10 @@ export function voiceAgentBootstrapHandler(
   if (managerStatusMatch && method === "POST") {
     const workspace = loadWorkspace(decodeURIComponent(managerStatusMatch[1]));
     if (!workspace) notFound(res, "Voice workspace not found");
-    else ok(res, "Manager status refreshed", { workspace: saveWorkspace(workspace), manager_status: managerStatus(workspace) });
+    else {
+      refreshWorkspaceDagSupervision(workspace);
+      ok(res, "Manager status refreshed", { workspace: saveWorkspace(workspace), manager_status: managerStatus(workspace) });
+    }
     return true;
   }
 
@@ -2091,10 +2162,25 @@ export function voiceAgentBootstrapHandler(
           registerTurn(sessionId, "running");
           try {
             const streamedCommentaryTexts = new Set<string>();
+            const streamedProgressTexts = new Set<string>();
             const r = await processTurn(workspace, text, managerAgentOptions, {
               streamedCommentaryTexts,
+              streamedProgressTexts,
+              onProgress: (event) => {
+                const saved = saveWorkspace(workspace);
+                updateTurnStatus(sessionId, saved.progress_brief?.status || "running", "workspace");
+                if (streamGenerativeUi) {
+                  generativeUiCursor = streamCommittedGenerativeUiTransactions(
+                    res,
+                    sessionId,
+                    generativeUiCursor,
+                  );
+                }
+                streamLine(res, { type: "progress", event, workspace: saved });
+              },
               onSpeech: (event) => {
                 const saved = saveWorkspace(workspace);
+                updateTurnStatus(sessionId, saved.progress_brief?.status || "running", "workspace");
                 if (streamGenerativeUi) {
                   generativeUiCursor = streamCommittedGenerativeUiTransactions(
                     res,
@@ -2225,6 +2311,7 @@ export function voiceAgentBootstrapHandler(
           registerTurn(sessionId, "submitted");
           try {
             const streamedCommentaryTexts = new Set<string>();
+            const streamedProgressTexts = new Set<string>();
             const r = await submitVoiceWorkspaceToManagerAgent(
               workspace,
               confirmedTaskMessage(workspace),
@@ -2232,6 +2319,18 @@ export function voiceAgentBootstrapHandler(
               managerAgentOptions,
               {
                 streamedCommentaryTexts,
+                streamedProgressTexts,
+                onProgress: (event) => {
+                  const saved = saveWorkspace(workspace);
+                  if (streamGenerativeUi) {
+                    generativeUiCursor = streamCommittedGenerativeUiTransactions(
+                      res,
+                      sessionId,
+                      generativeUiCursor,
+                    );
+                  }
+                  streamLine(res, { type: "progress", event, workspace: saved });
+                },
                 onSpeech: (event) => {
                   const saved = saveWorkspace(workspace);
                   if (streamGenerativeUi) {

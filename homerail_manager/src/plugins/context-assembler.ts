@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
+  decodeHomerailPluginUtf8,
   homerailPluginTurnContextDigestInput,
+  parseDagWorkerSkillVisualProfileV1,
+  type DagWorkerSkillVisualProfileV1,
   type HomerailPluginResolvedHandlerV1,
   type HomerailPluginSkillDescriptorV1,
   type HomerailPluginModality,
@@ -104,11 +107,15 @@ export function assemblePluginTurnContext(
     modality?: HomerailPluginModality;
     legacy_compatibility_mode?: boolean;
     include_agent_tools?: boolean;
+    /** Manager Agent prompt boundary: expose every enabled bundled asset, never installed prompt content. */
+    builtin_agent_assets_only?: boolean;
   } = {},
 ): HomerailPluginTurnContextV1 {
   if (!state) ensureBuiltinPluginsSynced();
   const registry = state ?? getPluginRegistryState();
-  const plugins = enabledPlugins(registry);
+  const plugins = enabledPlugins(registry).filter((plugin) => (
+    !options.builtin_agent_assets_only || plugin.source === "builtin"
+  ));
   const skills: HomerailPluginSkillDescriptorV1[] = [];
   const tools: HomerailPluginToolDescriptorV1[] = [];
   const actions: HomerailPluginTurnContextV1["actions"] = [];
@@ -133,7 +140,7 @@ export function assemblePluginTurnContext(
         capability_ids: skillCapabilities
           .map((capability) => qualified(manifest.id, capability.id))
           .sort(),
-        description: declaration.description,
+        description: skill.description ?? declaration.description ?? `HomeRail Skill ${skill.id}`,
         digest: skill.digest,
       });
     }
@@ -298,7 +305,19 @@ export function assertCurrentPluginTurnContextSubset(
 export interface ArchivedPluginSkill {
   descriptor: HomerailPluginSkillDescriptorV1;
   content: string;
+  visual_profile?: DagWorkerSkillVisualProfileV1;
   registry_fingerprint: string;
+}
+
+function archivedSkillVisualProfile(
+  plugin: PluginPackageRecord,
+  pathValue: string | undefined,
+): DagWorkerSkillVisualProfileV1 | undefined {
+  if (!pathValue) return undefined;
+  const archived = plugin.descriptor.referenced_files.find((entry) => entry.path === pathValue);
+  if (!archived) throw new Error(`Missing archived Worker visual profile: ${plugin.plugin_id}:${pathValue}`);
+  const bytes = Buffer.from(archived.content, "base64");
+  return parseDagWorkerSkillVisualProfileV1(JSON.parse(decodeHomerailPluginUtf8(bytes, pathValue)));
 }
 
 export interface ExactArchivedPluginSkillRef {
@@ -332,10 +351,13 @@ export function readExactArchivedPluginSkill(
         .filter((capability) => capability.skill === reference.local_id)
         .map((capability) => qualified(plugin.plugin_id, capability.id))
         .sort(),
-      description: declaration.description,
+      description: skill.description ?? declaration.description ?? `HomeRail Skill ${reference.local_id}`,
       digest: skill.digest,
     },
     content: skill.content,
+    ...(declaration.visual_profile
+      ? { visual_profile: archivedSkillVisualProfile(plugin, declaration.visual_profile) }
+      : {}),
     registry_fingerprint: getPluginRegistryState().fingerprint,
   };
 }
@@ -364,10 +386,13 @@ export function readArchivedPluginSkill(
         .filter((capability) => capability.skill === localId)
         .map((capability) => qualified(plugin.plugin_id, capability.id))
         .sort(),
-      description: declaration.description,
+      description: skill.description ?? declaration.description ?? `HomeRail Skill ${localId}`,
       digest: skill.digest,
     },
     content: skill.content,
+    ...(declaration.visual_profile
+      ? { visual_profile: archivedSkillVisualProfile(plugin, declaration.visual_profile) }
+      : {}),
     registry_fingerprint: registry.fingerprint,
   };
 }

@@ -147,7 +147,10 @@ export interface HomerailPluginCapabilityV1 {
 export interface HomerailPluginSkillV1 {
   id: string;
   path: string;
-  description: string;
+  /** @deprecated Skill YAML frontmatter is the canonical discovery description. */
+  description?: string;
+  /** Optional digest-pinned Worker Surface profile owned by this Skill. */
+  visual_profile?: string;
 }
 
 export interface HomerailPluginSchemaV1 {
@@ -950,6 +953,8 @@ export interface HomerailResolvedPluginSkillV1 {
   path: string;
   digest: string;
   content: string;
+  /** Canonical normalized YAML frontmatter description for native discovery. */
+  description?: string;
 }
 
 /** Immutable archive unit. Historical validation never follows package paths. */

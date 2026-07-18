@@ -26,7 +26,6 @@ import { assemblePluginTurnContext } from "../src/plugins/context-assembler.js";
 import { syncBuiltinPlugins } from "../src/plugins/registry.js";
 
 interface VoiceSurfaceState {
-  commentaryTexts: string[];
   progress: Record<string, unknown> | null;
   taskDraft: Record<string, unknown> | null;
   widgets: Record<string, unknown>[];
@@ -40,7 +39,6 @@ interface ComparableTool extends AgentToolDefinition {
 
 function createVoiceSurface(): VoiceSurfaceState {
   return {
-    commentaryTexts: [],
     progress: null,
     taskDraft: null,
     widgets: [],
@@ -493,7 +491,6 @@ describe("Manager Agent deterministic result envelope parity", () => {
       {
         name: "update_voice_surface",
         input: {
-          commentary_texts: ["checking parity"],
           progress: { status: "running", short_text: "checking" },
           remove_widget_ids: ["dynamic-parity"],
         },

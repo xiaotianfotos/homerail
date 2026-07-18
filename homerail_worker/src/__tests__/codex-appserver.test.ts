@@ -228,12 +228,72 @@ describe("CodexAppServerAdapter", () => {
     await consumePromise;
 
     const textEvents = events.filter((e) => e.type === "text");
-    expect(textEvents).toHaveLength(2);
-    expect((textEvents[0] as { text: string }).text).toBe("Hello ");
-    expect((textEvents[1] as { text: string }).text).toBe("world");
+    expect(textEvents).toHaveLength(1);
+    expect((textEvents[0] as { text: string }).text).toBe("Hello world");
 
     const doneEvents = events.filter((e) => e.type === "done");
     expect(doneEvents).toHaveLength(1);
+  }, 15000);
+
+  it("emits only native commentary-phase agent messages as commentary", async () => {
+    const mockProc = createMockProcess();
+    setupMocksWithFs(mockProc);
+
+    const { CodexAppServerAdapter } = await import("../agent/codex-appserver.js");
+    const adapter = new CodexAppServerAdapter();
+    const events: AgentEvent[] = [];
+    const consumePromise = (async () => {
+      for await (const event of adapter.run("hi", [], ctx)) events.push(event);
+    })();
+
+    const reqs = await waitForStdinRequests(mockProc, 1);
+    writeResponse(mockProc, reqs[0].id as number, {});
+    const reqs2 = await waitForStdinRequests(mockProc, 2);
+    writeResponse(mockProc, reqs2[1].id as number, { thread_id: "t1" });
+    const reqs3 = await waitForStdinRequests(mockProc, 3);
+    writeResponse(mockProc, reqs3[2].id as number, { turn_id: "tr1" });
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    writeNotification(mockProc, "item/started", {
+      item: { type: "agentMessage", id: "commentary-1", text: "", phase: "commentary" },
+    });
+    writeNotification(mockProc, "item/agentMessage/delta", {
+      itemId: "commentary-1",
+      delta: "正在核对真实状态。",
+    });
+    writeNotification(mockProc, "item/completed", {
+      item: { type: "agentMessage", id: "commentary-1", text: "正在核对真实状态。", phase: "commentary" },
+    });
+    writeNotification(mockProc, "item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-1",
+      delta: "private reasoning",
+    });
+    writeNotification(mockProc, "item/started", {
+      item: { type: "agentMessage", id: "final-1", text: "", phase: "final_answer" },
+    });
+    writeNotification(mockProc, "item/agentMessage/delta", {
+      itemId: "final-1",
+      delta: "已经完成。",
+    });
+    writeNotification(mockProc, "item/completed", {
+      item: { type: "agentMessage", id: "final-1", text: "已经完成。", phase: "final_answer" },
+    });
+    writeNotification(mockProc, "turn/completed", {});
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const closeReq = findRequest(mockProc, "thread/unsubscribe");
+    if (closeReq) writeResponse(mockProc, closeReq.id as number, {});
+    await consumePromise;
+
+    expect(events.filter((event) => event.type === "commentary")).toEqual([
+      { type: "commentary", text: "正在核对真实状态。" },
+    ]);
+    expect(events.filter((event) => event.type === "text")).toEqual([
+      { type: "text", text: "已经完成。" },
+    ]);
+    expect(events.filter((event) => event.type === "thinking")).toEqual([
+      { type: "thinking", text: "private reasoning" },
+    ]);
   }, 15000);
 
   it("emits thinking from reasoning/textDelta notifications", async () => {

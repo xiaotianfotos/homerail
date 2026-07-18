@@ -51,7 +51,7 @@ describe("ClaudeSdkAdapter", () => {
     vi.unstubAllEnvs();
   });
 
-  it("emits thinking, text, tool_use, tool_result from assistant message", async () => {
+  it("preserves tool-bearing assistant messages as progress and end-turn messages as final text", async () => {
     vi.doMock("@anthropic-ai/claude-agent-sdk", () =>
       makeFakeSdk([
         {
@@ -63,6 +63,14 @@ describe("ClaudeSdkAdapter", () => {
               { type: "tool_use", id: "call-1", name: "echo", input: { msg: "hi" } },
               { type: "tool_result", id: "call-1", text: "echo: hi" },
             ],
+            stop_reason: "tool_use",
+          },
+        },
+        {
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "Done." }],
+            stop_reason: "end_turn",
           },
         },
         { type: "result", subtype: "success", is_error: false },
@@ -78,13 +86,21 @@ describe("ClaudeSdkAdapter", () => {
 
     const types = events.map((e) => e.type);
     expect(types).toContain("thinking");
+    expect(types).toContain("progress");
     expect(types).toContain("text");
     expect(types).toContain("tool_use");
     expect(types).toContain("tool_result");
     expect(types.at(-1)).toBe("done");
+    expect(events.filter((event) => event.type === "progress")).toEqual([
+      { type: "progress", text: "I will use echo." },
+    ]);
+    expect(events.filter((event) => event.type === "text")).toEqual([
+      { type: "text", text: "Done." },
+    ]);
     expect(events.filter((e) => e.type === "debug").map((e) => e.message)).toEqual([
       "mcp_server_not_registered",
       "query_start",
+      "sdk_message",
       "sdk_message",
       "sdk_message",
       "query_done",
@@ -477,6 +493,133 @@ describe("ClaudeSdkAdapter", () => {
     }
   });
 
+  it("keeps native Claude Skills and resumes the same Manager Agent session", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-claude-manager-session-"));
+    const home = path.join(root, "home");
+    const skillRoot = path.join(home, "skills", "palquery");
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(path.join(skillRoot, "SKILL.md"), [
+      "---",
+      "name: palquery",
+      "description: Palquery",
+      "---",
+      "",
+      "Use the Palquery presenter and supervised DAG tools.",
+    ].join("\n"));
+    vi.stubEnv("HOMERAIL_HOME", home);
+    const captured: Record<string, unknown>[] = [];
+    const projectedBodies: string[] = [];
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: Record<string, unknown> }) {
+        const options = params.options ?? {};
+        captured.push(options);
+        const configDir = (options.env as Record<string, string>).CLAUDE_CONFIG_DIR;
+        projectedBodies.push(fs.readFileSync(
+          path.join(configDir, "skills", "voice-generative-ui", "SKILL.md"),
+          "utf8",
+        ));
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(_opts: { name: string; tools?: Array<Record<string, unknown>> }) {
+        return { type: "sdk", name: _opts.name };
+      },
+      tool(name: string) {
+        return { name };
+      },
+    }));
+
+    const sessionId = "019f0000-0000-7000-8000-000000000001";
+    try {
+      const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+      const adapter = new ClaudeSdkAdapter();
+      const baseContext: AgentRunContext = {
+        ...ctx,
+        sessionId,
+        persistSession: true,
+        skillProjection: {
+          mode: "explicit",
+          directories: [path.join(home, "skills")],
+          definitions: [{
+            id: "com.homerail.core:voice-generative-ui",
+            name: "voice-generative-ui",
+            description: "Build truthful UI.",
+            content: "First immutable Plugin Skill snapshot.",
+          }],
+        },
+      };
+      for await (const _event of adapter.run("first", [], baseContext)) {
+        // Drain the first native session turn.
+      }
+      for await (const _event of adapter.run("follow-up", [], {
+        ...baseContext,
+        resumeSession: true,
+        skillProjection: {
+          ...baseContext.skillProjection!,
+          definitions: [{
+            id: "com.homerail.core:voice-generative-ui",
+            name: "voice-generative-ui",
+            description: "Build truthful UI.",
+            content: "Second immutable Plugin Skill snapshot.",
+          }],
+        },
+      })) {
+        // Drain the resumed native session turn.
+      }
+
+      expect(captured).toHaveLength(2);
+      expect(captured[0]).toMatchObject({ sessionId, settingSources: ["user"], skills: "all" });
+      expect(captured[0]).not.toHaveProperty("resume");
+      expect(captured[1]).toMatchObject({ resume: sessionId, settingSources: ["user"], skills: "all" });
+      expect(captured[1]).not.toHaveProperty("sessionId");
+      const firstConfigDir = (captured[0].env as Record<string, string>).CLAUDE_CONFIG_DIR;
+      const secondConfigDir = (captured[1].env as Record<string, string>).CLAUDE_CONFIG_DIR;
+      expect(secondConfigDir).toBe(firstConfigDir);
+      expect(firstConfigDir).toBe(path.join(
+        home,
+        "runtime",
+        "claude-skill-projections",
+        "manager-sessions",
+        sessionId,
+      ));
+      expect(fs.readFileSync(path.join(firstConfigDir, "skills", "palquery", "SKILL.md"), "utf8"))
+        .toContain("Use the Palquery presenter");
+      expect(projectedBodies[0]).toContain("First immutable Plugin Skill snapshot.");
+      expect(projectedBodies[1]).toContain("Second immutable Plugin Skill snapshot.");
+      expect(projectedBodies[1]).not.toContain("First immutable Plugin Skill snapshot.");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not pass HomeRail DAG session identifiers to Claude Code", async () => {
+    const captured: Record<string, unknown>[] = [];
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: Record<string, unknown> }) {
+        captured.push(params.options ?? {});
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(_opts: { name: string; tools?: Array<Record<string, unknown>> }) {
+        return { type: "sdk", name: _opts.name };
+      },
+      tool(name: string) {
+        return { name };
+      },
+    }));
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    for await (const _event of adapter.run("DAG actor turn", [], {
+      ...ctx,
+      sessionId: "skill_example/basic_info/round-0001",
+    })) {
+      // Drain the DAG Actor turn.
+    }
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).not.toHaveProperty("sessionId");
+    expect(captured[0]).not.toHaveProperty("resume");
+  });
+
   it("respects env vars", async () => {
     vi.stubEnv("CLAUDE_MODEL", "claude-opus-4-20250514");
     vi.stubEnv("CLAUDE_THINKING_BUDGET", "32000");
@@ -678,11 +821,66 @@ describe("ClaudeSdkAdapter", () => {
 
     expect(captured[0].tools).toEqual(["Bash", "Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "LS"]);
     expect(captured[0].allowedTools).toEqual(["Bash", "Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "LS"]);
+    expect(captured[0].permissionMode).toBe("bypassPermissions");
+    expect(captured[0].allowDangerouslySkipPermissions).toBe(true);
     const queryStart = events.find((event) => event.type === "debug" && event.message === "query_start");
     expect(queryStart).toMatchObject({
       type: "debug",
       data: expect.objectContaining({
         builtin_tools: ["Bash", "Read", "Write", "Edit", "MultiEdit", "Grep", "Glob", "LS"],
+      }),
+    });
+  });
+
+  it("uses dontAsk for a host Manager Agent while pre-approving HomeRail MCP tools", async () => {
+    const captured: Record<string, unknown>[] = [];
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: Record<string, unknown> }) {
+        captured.push(params.options ?? {});
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(opts: { name: string; tools?: Array<Record<string, unknown>> }) {
+        return { type: "sdk", name: opts.name, tools: opts.tools ?? [] };
+      },
+      tool(name: string) {
+        return { name };
+      },
+    }));
+
+    const managerTool: DagToolDefinition = {
+      name: "list_orchestrations",
+      description: "List HomeRail orchestrations",
+      input_schema: { type: "object", properties: {} },
+      handler: async () => ({ content: [{ type: "text", text: "[]" }] }),
+    };
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    const events: AgentEvent[] = [];
+    for await (const event of adapter.run("inspect", [managerTool], {
+      ...ctx,
+      claudePermissionMode: "dontAsk",
+    })) {
+      events.push(event);
+    }
+
+    expect(captured[0].permissionMode).toBe("dontAsk");
+    expect(captured[0]).not.toHaveProperty("allowDangerouslySkipPermissions");
+    expect(captured[0].allowedTools).toEqual([
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "MultiEdit",
+      "Grep",
+      "Glob",
+      "LS",
+      "mcp__dag-tools__list_orchestrations",
+    ]);
+    expect(events.find((event) => event.type === "debug" && event.message === "query_start")).toMatchObject({
+      type: "debug",
+      data: expect.objectContaining({
+        permission_mode: "dontAsk",
+        allowed_tools: expect.arrayContaining(["Bash", "mcp__dag-tools__list_orchestrations"]),
       }),
     });
   });

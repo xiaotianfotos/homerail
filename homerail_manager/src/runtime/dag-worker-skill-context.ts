@@ -36,6 +36,7 @@ interface ArchivedWorkerSkill {
     digest: string;
   };
   content: string;
+  visual_profile?: DagWorkerSkillVisualProfileV1;
 }
 
 export interface DagWorkerSkillResolverOptions {
@@ -201,6 +202,9 @@ function resolvePluginSkill(
     source: "plugin",
     digest: archived.descriptor.digest,
     content: archived.content,
+    ...(archived.visual_profile === undefined
+      ? {}
+      : { visual_profile: structuredClone(archived.visual_profile) }),
     plugin: {
       id: pluginId,
       version: archived.descriptor.plugin_version,

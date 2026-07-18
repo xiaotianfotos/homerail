@@ -1,6 +1,7 @@
 import {
   ensureHostShellManagerAgent,
   forwardChatToHostShellManagerAgent,
+  streamChatFromHostShellManagerAgent,
   type HostShellManagerAgentOptions,
 } from "./host-shell-manager-agent.js";
 import type { ManagerAgentRuntimeConfig } from "./manager-agent-runtime-config.js";
@@ -15,17 +16,11 @@ import {
 import {
   listManagerSkills,
   readManagerSkill,
-  readManagerSkillViewTemplates,
   type ManagerSkillSummary,
 } from "./manager-skills.js";
 import {
-  routePluginCapabilities,
-  type PluginCapabilityRouteResult,
-} from "../plugins/capability-router.js";
-import {
   assemblePluginTurnContext,
   assertCurrentPluginTurnContextSubset,
-  selectPluginTurnContext,
 } from "../plugins/context-assembler.js";
 import { getPluginToolTurnAuthority } from "../plugins/action-bus.js";
 import {
@@ -56,15 +51,13 @@ import {
 
 export type ManagerAgentResponseMode = "chat" | "voice";
 
-const CORE_GENERATIVE_UI_CAPABILITY_ID = "com.homerail.core:voice-generative-ui";
-
 export interface ManagerAgentPluginRoutingInput {
   inputs?: Record<string, unknown>;
   explicit_plugin_id?: string;
   explicit_capability_id?: string;
   top_k?: number;
   prompt_byte_budget?: number;
-  /** Limit routing to an already assembled compatibility/mode boundary. */
+  /** Limit visible bundled assets to an already assembled compatibility/mode boundary. */
   source_context?: HomerailPluginTurnContextV1;
 }
 
@@ -90,7 +83,7 @@ export interface RunManagerAgentTurnInput {
   manager_skills?: ManagerSkillSummary[];
   /** Exact legacy/preselected context. When present it is forwarded unchanged. */
   plugin_context?: HomerailPluginTurnContextV1;
-  /** Router hints used only by Manager; they are never forwarded to a runtime. */
+  /** @deprecated Semantic hints no longer decide Skill or Tool visibility. */
   plugin_routing?: ManagerAgentPluginRoutingInput;
 }
 
@@ -105,18 +98,19 @@ export interface RunManagerAgentTurnResult {
 export interface ResolvedManagerAgentTurnAssets {
   plugin_context: HomerailPluginTurnContextV1;
   manager_skills: ResolvedManagerSkill[];
-  route: PluginCapabilityRouteResult | null;
   outcome_contracts: ManagerAgentOutcomeContract[];
 }
 
 export interface ResolvedManagerSkill extends ManagerSkillSummary {
   content?: string;
+  projection_content?: string;
   asset_root?: string;
   view_templates?: ManagerAgentSkillViewTemplateV1[];
 }
 
 export type RunManagerAgentTurnStreamEvent =
   | { type: "commentary"; text: string }
+  | { type: "progress"; text: string }
   | { type: "result"; result: RunManagerAgentTurnResult };
 
 export class ManagerAgentRuntimeError extends Error {
@@ -159,113 +153,8 @@ function scopedManagerSkills(
   return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-const MAX_INLINE_PLUGIN_SKILL_CHARS = 30_000;
-const MAX_INLINE_LOCAL_SKILL_CHARS = 30_000;
-const MAX_INLINE_LOCAL_SKILL_TOTAL_CHARS = 60_000;
-const MAX_INLINE_LOCAL_SKILLS = 2;
-const MIN_LOCAL_SKILL_MATCH_SCORE = 12;
-
-const SKILL_MATCH_STOP_WORDS = new Set([
-  "about",
-  "agent",
-  "answer",
-  "data",
-  "from",
-  "home",
-  "homerail",
-  "information",
-  "query",
-  "skill",
-  "the",
-  "this",
-  "tool",
-  "use",
-  "user",
-  "with",
-]);
-
-function compactSkillMatchText(value: string): string {
-  return value
-    .normalize("NFKC")
-    .toLocaleLowerCase()
-    .replace(/[\p{P}\p{S}\s_]+/gu, "");
-}
-
-function quotedSkillExamples(description: string): string[] {
-  const examples: string[] = [];
-  for (const pattern of [
-    /“([^”]{2,80})”/gu,
-    /‘([^’]{2,80})’/gu,
-    /"([^"]{2,80})"/gu,
-    /'([^']{2,80})'/gu,
-  ]) {
-    for (const match of description.matchAll(pattern)) examples.push(match[1]);
-  }
-  return examples;
-}
-
-function latinSkillMatchTokens(value: string): Set<string> {
-  return new Set(
-    (value.normalize("NFKC").toLocaleLowerCase().match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])
-      .filter((token) => !SKILL_MATCH_STOP_WORDS.has(token)),
-  );
-}
-
-function hanSkillMatchText(value: string): string {
-  return (value.normalize("NFKC").match(/\p{Script=Han}+/gu) ?? []).join("");
-}
-
-function longestSharedSubstringLength(left: string, right: string): number {
-  if (!left || !right) return 0;
-  const shorter = left.length <= right.length ? left : right;
-  const longer = left.length <= right.length ? right : left;
-  let previous = new Uint16Array(shorter.length + 1);
-  let longest = 0;
-  for (let longIndex = 1; longIndex <= longer.length; longIndex += 1) {
-    const current = new Uint16Array(shorter.length + 1);
-    for (let shortIndex = 1; shortIndex <= shorter.length; shortIndex += 1) {
-      if (longer[longIndex - 1] !== shorter[shortIndex - 1]) continue;
-      current[shortIndex] = previous[shortIndex - 1] + 1;
-      if (current[shortIndex] > longest) longest = current[shortIndex];
-    }
-    previous = current;
-  }
-  return longest;
-}
-
-function localSkillMatchScore(skill: ResolvedManagerSkill, utterance: string): number {
-  const compactUtterance = compactSkillMatchText(utterance);
-  if (!compactUtterance) return 0;
-
-  let score = 0;
-  for (const identity of [skill.id, skill.name]) {
-    const compactIdentity = compactSkillMatchText(identity);
-    if (compactIdentity.length >= 3 && compactUtterance.includes(compactIdentity)) score += 100;
-  }
-
-  for (const example of quotedSkillExamples(skill.description)) {
-    const compactExample = compactSkillMatchText(example);
-    if (compactExample.length >= 3 && compactUtterance.includes(compactExample)) score += 100;
-  }
-
-  const utteranceTokens = latinSkillMatchTokens(utterance);
-  const descriptionTokens = latinSkillMatchTokens(`${skill.name} ${skill.description}`);
-  for (const token of utteranceTokens) {
-    if (!descriptionTokens.has(token)) continue;
-    score += token.length >= 7 ? 12 : token.length >= 5 ? 8 : 4;
-  }
-
-  const sharedHanLength = longestSharedSubstringLength(
-    hanSkillMatchText(utterance),
-    hanSkillMatchText(skill.description),
-  );
-  if (sharedHanLength >= 6) score += 20;
-  else if (sharedHanLength === 5) score += 16;
-  else if (sharedHanLength === 4) score += 12;
-  return score;
-}
-
-function inlineSelectedPluginSkills(
+const MAX_PROJECTED_PLUGIN_SKILL_CHARS = 30_000;
+function projectPluginSkills(
   skills: ResolvedManagerSkill[],
   pluginContext: HomerailPluginTurnContextV1,
 ): ResolvedManagerSkill[] {
@@ -278,56 +167,16 @@ function inlineSelectedPluginSkills(
       plugin_version: descriptor.plugin_version,
       digest: descriptor.digest,
     });
-    if (!detail?.content || detail.content.length > MAX_INLINE_PLUGIN_SKILL_CHARS) return skill;
-    return { ...skill, content: detail.content };
-  });
-}
-
-function inlineMatchingLocalSkills(
-  skills: ResolvedManagerSkill[],
-  utterance: string,
-): ResolvedManagerSkill[] {
-  const candidates = skills
-    .filter((skill) => skill.source !== "plugin" && !skill.content?.trim())
-    .map((skill) => ({ skill, score: localSkillMatchScore(skill, utterance) }))
-    .filter((candidate) => candidate.score >= MIN_LOCAL_SKILL_MATCH_SCORE)
-    .sort((left, right) => right.score - left.score || left.skill.id.localeCompare(right.skill.id));
-
-  const selected = new Map<string, { content: string; asset_root?: string }>();
-  let totalChars = 0;
-  for (const candidate of candidates) {
-    if (selected.size >= MAX_INLINE_LOCAL_SKILLS) break;
-    const detail = readManagerSkill(candidate.skill.id);
-    const content = detail?.content?.trim();
-    if (!content || content.length > MAX_INLINE_LOCAL_SKILL_CHARS) continue;
-    if (totalChars + content.length > MAX_INLINE_LOCAL_SKILL_TOTAL_CHARS) continue;
-    selected.set(candidate.skill.id, { content, asset_root: detail?.asset_root });
-    totalChars += content.length;
-  }
-
-  if (selected.size === 0) return skills;
-  return skills.map((skill) => {
-    const selectedSkill = selected.get(skill.id);
-    return selectedSkill
-      ? {
-        ...skill,
-        content: selectedSkill.content,
-        asset_root: selectedSkill.asset_root,
-        view_templates: readManagerSkillViewTemplates(skill.id),
-      }
-      : skill;
+    if (!detail?.content || detail.content.length > MAX_PROJECTED_PLUGIN_SKILL_CHARS) return skill;
+    return { ...skill, projection_content: detail.content };
   });
 }
 
 function resolveManagerSkillsForTurn(
   provided: ManagerSkillSummary[] | undefined,
   pluginContext: HomerailPluginTurnContextV1,
-  utterance: string,
 ): ResolvedManagerSkill[] {
-  return inlineMatchingLocalSkills(
-    inlineSelectedPluginSkills(scopedManagerSkills(provided, pluginContext), pluginContext),
-    utterance,
-  );
+  return projectPluginSkills(scopedManagerSkills(provided, pluginContext), pluginContext);
 }
 
 /**
@@ -367,11 +216,10 @@ export function resolveManagerAgentTurnAssets(
       modality: input.response_mode === "voice" ? "voice" : "text",
     });
     assertAgentPromptTrust(pluginContext, placement);
-    const managerSkills = resolveManagerSkillsForTurn(input.manager_skills, pluginContext, input.message);
+    const managerSkills = resolveManagerSkillsForTurn(input.manager_skills, pluginContext);
     return {
       plugin_context: pluginContext,
       manager_skills: managerSkills,
-      route: null,
       outcome_contracts: resolveManagerAgentOutcomeContracts({
         required_outcomes: input.required_outcomes,
         response_mode: input.response_mode,
@@ -381,43 +229,25 @@ export function resolveManagerAgentTurnAssets(
       }),
     };
   }
-  const hints = input.plugin_routing;
   const modality = input.response_mode === "voice" ? "voice" : "text";
   const toolsBound = input.response_mode === "voice"
     && (input.generative_ui_mode === "prefer" || input.generative_ui_mode === "shadow");
-  const sourceContext = hints?.source_context ?? assemblePluginTurnContext(undefined, {
-    modality,
-    include_agent_tools: toolsBound,
-  });
-  const route = routePluginCapabilities({
-    utterance: input.message,
-    modality,
-    ...(hints?.inputs ? { inputs: hints.inputs } : {}),
-    ...(hints?.explicit_plugin_id ? { explicit_plugin_id: hints.explicit_plugin_id } : {}),
-    ...(hints?.explicit_capability_id ? { explicit_capability_id: hints.explicit_capability_id } : {}),
-    ...(hints?.top_k !== undefined ? { top_k: hints.top_k } : {}),
-    ...(hints?.prompt_byte_budget !== undefined ? { prompt_byte_budget: hints.prompt_byte_budget } : {}),
-  }, undefined, {
-    source_context: sourceContext,
-  });
-  const selectedContext = toolsBound
-    ? selectPluginTurnContext(sourceContext, [
-      ...new Set([
-        ...route.replay.selected_capability_ids,
-        CORE_GENERATIVE_UI_CAPABILITY_ID,
-      ]),
-    ], route.permission_revision)
-    : route.selected_context;
-  assertAgentPromptTrust(selectedContext, placement);
-  const managerSkills = resolveManagerSkillsForTurn(input.manager_skills, selectedContext, input.message);
+  const sourceContext = input.plugin_routing?.source_context
+    ? assertCurrentPluginTurnContextSubset(input.plugin_routing.source_context, undefined, { modality })
+    : assemblePluginTurnContext(undefined, {
+      modality,
+      include_agent_tools: toolsBound,
+      builtin_agent_assets_only: true,
+    });
+  assertAgentPromptTrust(sourceContext, placement);
+  const managerSkills = resolveManagerSkillsForTurn(input.manager_skills, sourceContext);
   return {
-    plugin_context: selectedContext,
+    plugin_context: sourceContext,
     manager_skills: managerSkills,
-    route,
     outcome_contracts: resolveManagerAgentOutcomeContracts({
       required_outcomes: input.required_outcomes,
       response_mode: input.response_mode,
-      plugin_context: selectedContext,
+      plugin_context: sourceContext,
       manager_skills: managerSkills,
       canvas_context: input.canvas_context,
     }),
@@ -453,6 +283,35 @@ function pluginToolTurnToken(
     scope: { type: "voice_session", id: scopeId },
     generative_ui_mode: "prefer",
   }).token;
+}
+
+function hostShellTurnPayload(input: RunManagerAgentTurnInput, resolved: {
+  message: string;
+  managerSkills: ResolvedManagerSkill[];
+  pluginContext: HomerailPluginTurnContextV1;
+  outcomeContracts: ManagerAgentOutcomeContract[];
+  toolTurnToken?: string;
+}): Record<string, unknown> {
+  return {
+    message: resolved.message,
+    project_id: input.project_id,
+    session_id: input.session_id,
+    voice_session_id: input.voice_session_id,
+    continue_chat: input.continue_chat,
+    response_mode: input.response_mode,
+    generative_ui_mode: input.generative_ui_mode,
+    history: input.history,
+    canvas_context: input.canvas_context,
+    dag_context: input.dag_context,
+    required_tool_calls: input.required_tool_calls,
+    ...(resolved.outcomeContracts.length ? { outcome_contracts: resolved.outcomeContracts } : {}),
+    agent_config: input.agent_config,
+    voice_ui_rules: input.voice_ui_rules,
+    voice_system_contract: input.response_mode === "voice" ? loadVoiceSystemContract() : undefined,
+    manager_skills: resolved.managerSkills,
+    plugin_context: resolved.pluginContext,
+    ...(resolved.toolTurnToken ? { plugin_tool_turn_token: resolved.toolTurnToken } : {}),
+  };
 }
 
 async function runManagerAgentTurnOnce(
@@ -537,26 +396,13 @@ async function runManagerAgentTurnOnce(
     );
   }
   try {
-    const result = await forwardChatToHostShellManagerAgent(hostAgent, {
+    const result = await forwardChatToHostShellManagerAgent(hostAgent, hostShellTurnPayload(input, {
       message: input.message,
-      project_id: input.project_id,
-      session_id: input.session_id,
-      voice_session_id: input.voice_session_id,
-      continue_chat: input.continue_chat,
-      response_mode: input.response_mode,
-      generative_ui_mode: input.generative_ui_mode,
-      history: input.history,
-      canvas_context: input.canvas_context,
-      dag_context: input.dag_context,
-      required_tool_calls: input.required_tool_calls,
-      ...(outcomeContracts.length ? { outcome_contracts: outcomeContracts } : {}),
-      agent_config: input.agent_config,
-      voice_ui_rules: input.voice_ui_rules,
-      voice_system_contract: input.response_mode === "voice" ? loadVoiceSystemContract() : undefined,
-      manager_skills: managerSkills,
-      plugin_context: pluginContext,
-      ...(toolTurnToken ? { plugin_tool_turn_token: toolTurnToken } : {}),
-    });
+      managerSkills,
+      pluginContext,
+      outcomeContracts,
+      toolTurnToken,
+    }));
     return {
       result: enforceManagerAgentOutcomeContracts(result, outcomeContracts),
       worker_id: hostAgent.workerId,
@@ -627,7 +473,82 @@ export async function* runManagerAgentTurnStream(
 ): AsyncGenerator<RunManagerAgentTurnStreamEvent> {
   const runtimePlacement = managerAgentRuntimePlacement(input.agent_config);
   if (runtimePlacement !== "host") {
-    yield { type: "result", result: await runManagerAgentTurn(input, options) };
+    if (!options) {
+      throw new ManagerAgentRuntimeError(
+        "manager_runtime_options_missing",
+        "Manager Agent host runtime options are not configured",
+        runtimePlacement,
+        { project_id: input.project_id ?? null },
+      );
+    }
+
+    const lease = continuationLease(input);
+    let continuationAcknowledged = false;
+    let hostAgent: Awaited<ReturnType<typeof ensureHostShellManagerAgent>> | undefined;
+    try {
+      const turnAssets = resolveManagerAgentTurnAssets(input);
+      const pluginContext = turnAssets.plugin_context;
+      const managerSkills = turnAssets.manager_skills;
+      const outcomeContracts = turnAssets.outcome_contracts;
+      assertManagerAgentOutcomeContractsResolvable(outcomeContracts);
+      const toolTurnToken = pluginToolTurnToken(input, pluginContext);
+      try {
+        hostAgent = await ensureHostShellManagerAgent(input.project_id ?? undefined, options);
+      } catch (err) {
+        throw new ManagerAgentRuntimeError(
+          "manager_runtime_start_error",
+          err instanceof Error ? err.message : String(err),
+          runtimePlacement,
+          { project_id: input.project_id ?? null },
+        );
+      }
+
+      let sawResult = false;
+      for await (const event of streamChatFromHostShellManagerAgent(hostAgent, hostShellTurnPayload(input, {
+        message: messageWithContinuations(input.message, lease.records),
+        managerSkills,
+        pluginContext,
+        outcomeContracts,
+        toolTurnToken,
+      }))) {
+        if (event.type === "progress") {
+          yield { type: "progress", text: event.text };
+          continue;
+        }
+        sawResult = true;
+        const result = enforceManagerAgentOutcomeContracts(event.result, outcomeContracts);
+        if (lease.lease_id && !continuationAcknowledged) {
+          acknowledgePluginAgentToolContinuationLease(lease.lease_id);
+          continuationAcknowledged = true;
+        }
+        yield {
+          type: "result",
+          result: {
+            result,
+            worker_id: hostAgent.workerId,
+            runtime_placement: runtimePlacement,
+            plugin_context: pluginContext,
+          },
+        };
+      }
+      if (!sawResult) throw new Error("Host-shell Manager Agent stream ended without a result");
+    } catch (err) {
+      if (err instanceof ManagerAgentRuntimeError) throw err;
+      throw new ManagerAgentRuntimeError(
+        "manager_chat_error",
+        err instanceof Error ? err.message : String(err),
+        runtimePlacement,
+        {
+          worker_id: hostAgent?.workerId ?? null,
+          project_id: input.project_id ?? null,
+          ...managerAgentRuntimeCauseData(err),
+        },
+      );
+    } finally {
+      if (lease.lease_id && !continuationAcknowledged) {
+        releasePluginAgentToolContinuationLease(lease.lease_id);
+      }
+    }
     return;
   }
 

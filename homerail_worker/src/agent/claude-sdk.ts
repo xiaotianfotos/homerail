@@ -29,6 +29,7 @@ import { sanitizedAgentChildEnv } from "./child-env.js";
 
 const HANDOFF_ONLY_THINKING_BUDGET = 2048;
 const HANDOFF_STOP = Symbol("claude-sdk-handoff-stop");
+const DAG_TOOLS_MCP_SERVER_NAME = "dag-tools";
 
 interface ClaudeSkillProjectionRuntime {
   configDir: string;
@@ -41,8 +42,15 @@ function projectedSkillName(value: string, fallback: string): string {
     .normalize("NFKC")
     .replace(/[^A-Za-z0-9_.-]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 120);
+    .slice(0, 64);
   return normalized || fallback;
+}
+
+function projectedSkillInstructions(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("---\n")) return normalized.trim();
+  const end = normalized.indexOf("\n---\n", 4);
+  return end < 0 ? normalized.trim() : normalized.slice(end + 5).trim();
 }
 
 function linkOrCopySkill(source: string, destination: string): void {
@@ -53,6 +61,15 @@ function linkOrCopySkill(source: string, destination: string): void {
   }
 }
 
+function persistentClaudeSessionId(context: AgentRunContext): string | undefined {
+  const sessionId = context.sessionId?.trim();
+  return context.persistSession === true
+    && sessionId !== undefined
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)
+    ? sessionId
+    : undefined;
+}
+
 function prepareClaudeSkillProjection(context: AgentRunContext): ClaudeSkillProjectionRuntime | undefined {
   const projection = context.skillProjection;
   if (!projection) return undefined;
@@ -61,8 +78,18 @@ function prepareClaudeSkillProjection(context: AgentRunContext): ClaudeSkillProj
     ? join(configuredRoot, "runtime", "claude-skill-projections")
     : join(tmpdir(), "homerail-claude-skill-projections");
   mkdirSync(parent, { recursive: true });
-  const configDir = mkdtempSync(join(parent, `${process.pid}-`));
+  const persistentSessionId = persistentClaudeSessionId(context);
+  const configDir = persistentSessionId
+    ? join(parent, "manager-sessions", persistentSessionId)
+    : mkdtempSync(join(parent, `${process.pid}-`));
+  if (persistentSessionId && context.resumeSession !== true) {
+    rmSync(configDir, { recursive: true, force: true });
+  }
+  mkdirSync(configDir, { recursive: true });
   const skillsDir = join(configDir, "skills");
+  // A persisted Claude session keeps its SDK state, but its native Skill
+  // catalog must still match the exact snapshot resolved for this turn.
+  rmSync(skillsDir, { recursive: true, force: true });
   mkdirSync(skillsDir, { recursive: true });
   const names = new Set<string>();
 
@@ -86,7 +113,8 @@ function prepareClaudeSkillProjection(context: AgentRunContext): ClaudeSkillProj
       }
       const name = projectedSkillName(entry.name, `skill-${names.size + 1}`);
       if (names.has(name)) continue;
-      linkOrCopySkill(resolvedSource, join(skillsDir, name));
+      const destination = join(skillsDir, name);
+      if (!statSync(destination, { throwIfNoEntry: false })) linkOrCopySkill(resolvedSource, destination);
       names.add(name);
     }
   }
@@ -95,25 +123,32 @@ function prepareClaudeSkillProjection(context: AgentRunContext): ClaudeSkillProj
     const baseName = projectedSkillName(definition.name || definition.id, `skill-${names.size + 1}`);
     let name = baseName;
     let suffix = 2;
-    while (names.has(name)) name = `${baseName}-${suffix++}`;
+    while (names.has(name)) {
+      const suffixText = String(suffix++);
+      name = `${baseName.slice(0, 63 - suffixText.length)}-${suffixText}`;
+    }
     const skillDir = join(skillsDir, name);
-    mkdirSync(skillDir, { recursive: true });
-    writeFileSync(join(skillDir, "SKILL.md"), [
-      "---",
-      `name: ${JSON.stringify(name)}`,
-      `description: ${JSON.stringify(definition.description || `HomeRail Skill ${definition.id}`)}`,
-      "---",
-      "",
-      definition.content.trim(),
-      "",
-    ].join("\n"), { encoding: "utf8", mode: 0o600 });
+    if (!statSync(skillDir, { throwIfNoEntry: false })) {
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(join(skillDir, "SKILL.md"), [
+        "---",
+        `name: ${JSON.stringify(name)}`,
+        `description: ${JSON.stringify((definition.description || `HomeRail Skill ${definition.id}`).slice(0, 1024))}`,
+        "---",
+        "",
+        projectedSkillInstructions(definition.content),
+        "",
+      ].join("\n"), { encoding: "utf8", mode: 0o600 });
+    }
     names.add(name);
   }
 
   return {
     configDir,
     skillCount: names.size,
-    cleanup: () => rmSync(configDir, { recursive: true, force: true }),
+    cleanup: () => {
+      if (!persistentSessionId) rmSync(configDir, { recursive: true, force: true });
+    },
   };
 }
 
@@ -424,6 +459,13 @@ export class ClaudeSdkAdapter implements AgentClient {
       const builtinTools = context.handoffOnly
         ? []
         : requestedBuiltinTools.filter((tool) => supportedBuiltinTools.has(tool));
+      const permissionMode = context.claudePermissionMode ?? "bypassPermissions";
+      const allowedTools = [
+        ...builtinTools,
+        ...(permissionMode === "dontAsk" && tools.length > 0
+          ? tools.map((tool) => `mcp__${DAG_TOOLS_MCP_SERVER_NAME}__${tool.name}`)
+          : []),
+      ];
       const effectiveThinkingBudget = context.handoffOnly
         ? Math.min(this.thinkingBudget, HANDOFF_ONLY_THINKING_BUDGET)
         : this.thinkingBudget;
@@ -433,9 +475,11 @@ export class ClaudeSdkAdapter implements AgentClient {
         model: effectiveModel,
         maxThinkingTokens: effectiveThinkingBudget,
         tools: builtinTools,
-        allowedTools: builtinTools,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        allowedTools,
+        permissionMode,
+        ...(permissionMode === "bypassPermissions"
+          ? { allowDangerouslySkipPermissions: true }
+          : {}),
         cwd: context.workspace ?? process.cwd(),
         stderr: (data: string) => appendStderr(data),
         env: skillRuntime
@@ -445,6 +489,11 @@ export class ClaudeSdkAdapter implements AgentClient {
         skills: skillRuntime?.skillCount ? "all" : [],
         strictMcpConfig: true,
       };
+      const nativeSessionId = persistentClaudeSessionId(context);
+      if (nativeSessionId) {
+        if (context.resumeSession) options.resume = nativeSessionId;
+        else options.sessionId = nativeSessionId;
+      }
       if (this.maxTurns !== null) {
         options.maxTurns = this.maxTurns;
       }
@@ -497,13 +546,17 @@ export class ClaudeSdkAdapter implements AgentClient {
             };
           }),
         );
-        const mcpServer = sdk.createSdkMcpServer({ name: "dag-tools", version: "0.1.0", tools: sdkTools });
-        options.mcpServers = { "dag-tools": mcpServer };
+        const mcpServer = sdk.createSdkMcpServer({
+          name: DAG_TOOLS_MCP_SERVER_NAME,
+          version: "0.1.0",
+          tools: sdkTools,
+        });
+        options.mcpServers = { [DAG_TOOLS_MCP_SERVER_NAME]: mcpServer };
         yield {
           type: "debug",
           source: "claude-sdk",
           message: "mcp_server_registered",
-          data: { server: "dag-tools", tool_names: tools.map((tool) => tool.name) },
+          data: { server: DAG_TOOLS_MCP_SERVER_NAME, tool_names: tools.map((tool) => tool.name) },
         };
       } else {
         yield {
@@ -534,6 +587,8 @@ export class ClaudeSdkAdapter implements AgentClient {
           timeout_ms: this.queryTimeoutMs > 0 ? this.queryTimeoutMs : null,
           external_abort_signal: Boolean(context.abortSignal),
           builtin_tools: builtinTools,
+          allowed_tools: allowedTools,
+          permission_mode: permissionMode,
           projected_skill_count: skillRuntime?.skillCount ?? 0,
           handoff_only: context.handoffOnly === true,
         },
@@ -799,11 +854,24 @@ export class ClaudeSdkAdapter implements AgentClient {
 
     switch (msg.type) {
       case "assistant": {
-        // Full assistant message with content blocks
+        // Claude Agent SDK preserves one model response as one AssistantMessage.
+        // Text in a response that also requests a tool is an authored progress
+        // update; text in an end-turn response is the authored final answer.
+        // Keep that boundary instead of flattening every response into one final.
         const blocks = msg.message?.content ?? [];
+        const text = blocks
+          .filter((block) => block.type === "text" && block.text)
+          .map((block) => block.text as string)
+          .join("");
+        const hasToolUse = blocks.some((block) => block.type === "tool_use")
+          || msg.message?.stop_reason === "tool_use";
+        let textEmitted = false;
         for (const block of blocks) {
-          if (block.type === "text" && block.text) {
-            events.push({ type: "text", text: block.text });
+          if (block.type === "text" && text && !textEmitted) {
+            events.push(hasToolUse
+              ? { type: "progress", text }
+              : { type: "text", text });
+            textEmitted = true;
           } else if (block.type === "thinking" && block.thinking) {
             events.push({ type: "thinking", text: block.thinking });
           } else if (block.type === "tool_use") {

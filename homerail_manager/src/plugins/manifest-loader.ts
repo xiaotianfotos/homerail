@@ -15,6 +15,7 @@ import {
   HomerailPluginRuntimeTrust,
   analyzeHomerailPluginSchemaPolicy,
   decodeHomerailPluginUtf8,
+  parseDagWorkerSkillVisualProfileV1,
   collectHomerailPluginFileReferences,
   validateHomerailDeclarativeRenderer,
   validateHomerailPluginCompatibility,
@@ -326,12 +327,19 @@ export function loadPluginPackage(
       throw new Error(`Plugin Skill ${declaration.id} exceeds ${HOMERAIL_PLUGIN_SKILL_MAX_BYTES} bytes`);
     }
     const content = decodeHomerailPluginUtf8(buffer, declaration.path);
-    validatePluginSkill(declaration.id, content);
+    const metadata = validatePluginSkill(declaration.id, content);
+    if (declaration.visual_profile) {
+      parseDagWorkerSkillVisualProfileV1(parseJsonObject(
+        buffers.get(declaration.visual_profile)!,
+        declaration.visual_profile,
+      ));
+    }
     return {
       id: declaration.id,
       path: declaration.path,
       digest: pluginTextDigest(content),
       content,
+      description: metadata.description,
     };
   });
   const schemaDigests = new Map(schemas.map((schema) => [schema.file, schema.digest]));

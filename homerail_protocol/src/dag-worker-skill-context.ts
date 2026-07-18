@@ -669,6 +669,13 @@ function parseVisualProfile(value: unknown, path: string): DagWorkerSkillVisualP
   return profile;
 }
 
+/** Parse one standalone, bounded Worker visual profile from a trusted package asset. */
+export function parseDagWorkerSkillVisualProfileV1(
+  value: unknown,
+): DagWorkerSkillVisualProfileV1 {
+  return parseVisualProfile(value, "/visual_profile");
+}
+
 function parsePlugin(value: unknown, path: string): DagWorkerSkillPluginV1 {
   if (!isRecord(value)) issue(path, "must be an object", "type");
   exactKeys(value, ["id", "version"], path);

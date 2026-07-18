@@ -704,10 +704,20 @@ describe("/api/manager/chat", () => {
       id: "homerail-dag-patterns",
       source: "home",
     }));
-    expect(seenSkills.filter((skill) => skill.source === "plugin")).toEqual([]);
+    expect(seenSkills.filter((skill) => skill.source === "plugin").map((skill) => skill.id)).toEqual([
+      "com.homerail.core:voice-generative-ui",
+      "com.homerail.pr-closeout:pr-closeout",
+    ]);
     expect(seenPluginContext).toMatchObject({
-      enabled_plugins: [],
-      skills: [],
+      enabled_plugins: [
+        { id: "com.homerail.core" },
+        { id: "com.homerail.pr-closeout" },
+        { id: "com.homerail.topic-outline" },
+      ],
+      skills: [
+        { qualified_id: "com.homerail.core:voice-generative-ui" },
+        { qualified_id: "com.homerail.pr-closeout:pr-closeout" },
+      ],
       tools: [],
       actions: [],
     });
@@ -850,8 +860,14 @@ describe("/api/manager/chat", () => {
 
   it("injects and enforces explicit required tool objectives on host Codex", async () => {
     let seenSystemPrompt = "";
+    let seenSessionId = "";
+    let seenPersistSession = false;
+    let seenSkillRoots: string[] = [];
     _setHostCodexAgentEventRunnerForTest(async function* (_prompt, _tools, context) {
       seenSystemPrompt = context.systemPrompt ?? "";
+      seenSessionId = context.sessionId ?? "";
+      seenPersistSession = context.persistSession === true;
+      seenSkillRoots = context.skillRoots ?? [];
       yield { type: "text", text: "I will start it later." };
       yield { type: "done" };
     });
@@ -888,8 +904,38 @@ describe("/api/manager/chat", () => {
       objective_tool_calls: [],
     });
     expect(seenSystemPrompt).toContain("Successfully call every required tool");
+    expect(seenSessionId).toMatch(/^session-/);
+    expect(seenPersistSession).toBe(true);
+    expect(seenSkillRoots).toContain(fs.realpathSync(path.join(tmpHome, "skills")));
     expect(seenSystemPrompt).toContain("start_supervised_dag");
     expect(seenSystemPrompt).not.toMatch(/game|showcase|three-worker/i);
+  });
+
+  it("prefers the native Codex final message over the compatibility finish tool text", async () => {
+    _setHostCodexAgentEventRunnerForTest(async function* (_prompt, tools) {
+      const finish = tools.find((candidate) => candidate.name === "finish");
+      if (!finish) throw new Error("finish tool missing");
+      await finish.handler({ text: "compatibility tool final" });
+      yield { type: "text", text: "native Codex final" };
+      yield { type: "done" };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5" }),
+    });
+
+    const response = await fetch(`${baseUrl}/api/manager/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "reply natively", project_id: "p-native-final" }),
+    });
+    const body = await response.json() as { data: { text: string } };
+
+    expect(response.status).toBe(200);
+    expect(body.data.text).toBe("native Codex final");
   });
 
   it("normalizes container-only manager URLs for host Codex tools", () => {
@@ -935,6 +981,8 @@ describe("/api/manager/chat", () => {
     expect(contract.prompt).toContain("Generated UI must come from voice tools");
     expect(contract.prompt).toContain("projection is successful only when the Tool result reports status committed");
     expect(contract.prompt).toContain("call update_selected_generated_view and do not ask the user to reselect it");
+    expect(contract.prompt).not.toContain("harness-native commentary message");
+    expect(contract.prompt).not.toContain("Use brief commentary messages");
     expect(contract.prompt).toContain("when the needed value is present there, use it and proceed");
 
     const prompt = _systemPromptForTest({
@@ -950,6 +998,10 @@ describe("/api/manager/chat", () => {
     expect(prompt).toContain("same Main Agent");
     expect(prompt).toContain("Generated UI must come from voice tools");
     expect(prompt).toContain("Voice UI rules sources:");
+    expect(prompt).toContain("Use brief commentary messages");
+    expect(prompt).toContain("harness-native commentary channel");
+    expect(prompt).toContain("about every 30 seconds");
+    expect(prompt).toContain("Never imitate commentary with a Tool call, synthetic UI event, or final-answer text");
   });
 
   it("renders a file-backed voice memo into a stable widget contract", () => {

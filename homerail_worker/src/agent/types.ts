@@ -47,6 +47,8 @@ export interface AgentUsage {
 /** Events emitted by an agent during execution. */
 export type AgentEvent =
   | { type: "text"; text: string }
+  | { type: "progress"; text: string }
+  | { type: "commentary"; text: string }
   | { type: "thinking"; text: string }
   | { type: "debug"; source: string; message: string; data?: Record<string, unknown> }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
@@ -88,7 +90,12 @@ export interface AgentRunContext {
   baseUrl: string;
   maxIterations?: number;
   workspace?: string;
+  /** Stable backend-native session id for multi-turn Manager Agent use. */
   sessionId?: string;
+  /** Resume the backend-native transcript identified by sessionId. */
+  resumeSession?: boolean;
+  /** Keep backend configuration and transcript storage across turns. */
+  persistSession?: boolean;
   abortSignal?: AbortSignal;
   /** Provider-neutral control plane for the currently executing agent turn. */
   turnController?: AgentTurnController;
@@ -96,6 +103,12 @@ export interface AgentRunContext {
   handoffOnly?: boolean;
   /** Exact allowlist for backend-provided shell and file tools. */
   allowedBuiltinTools?: AgentBuiltinToolName[];
+  /**
+   * Claude Agent SDK permission policy for this run. Docker DAG Workers use
+   * the adapter default (`bypassPermissions`); the host Manager Agent uses
+   * `dontAsk` with every exposed built-in and HomeRail MCP tool pre-approved.
+   */
+  claudePermissionMode?: "bypassPermissions" | "dontAsk";
   /** Trusted Skills visible to this turn. */
   skillProjection?: AgentSkillProjection;
   /** Turn-scoped environment assembled from encrypted credential references. */

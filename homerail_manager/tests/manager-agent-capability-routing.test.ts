@@ -16,6 +16,7 @@ const captured = vi.hoisted(() => ({
   host: [] as Array<Record<string, unknown>>,
   host_stream: [] as Array<Record<string, unknown>>,
   host_shell: [] as Array<Record<string, unknown>>,
+  host_shell_stream: [] as Array<Record<string, unknown>>,
   continuation_records: [] as Array<Record<string, unknown>>,
   continuation_acks: [] as string[],
   continuation_releases: [] as string[],
@@ -45,6 +46,11 @@ vi.mock("../src/server/host-shell-manager-agent.js", () => ({
   forwardChatToHostShellManagerAgent: async (_agent: unknown, payload: Record<string, unknown>) => {
     captured.host_shell.push(structuredClone(payload));
     return { text: "host-shell result" };
+  },
+  streamChatFromHostShellManagerAgent: async function* (_agent: unknown, payload: Record<string, unknown>) {
+    captured.host_shell_stream.push(structuredClone(payload));
+    yield { type: "progress", text: "host-shell progress" };
+    yield { type: "result", result: { text: "host-shell stream result" } };
   },
 }));
 
@@ -172,7 +178,7 @@ function writeHomeSkillA2uiTemplate(home: string, id: string): void {
   }), "utf8");
 }
 
-describe("Manager Agent per-turn capability routing", () => {
+describe("Manager Agent native Skill visibility", () => {
   let previousHome: string | undefined;
   let tmpHome: string;
 
@@ -197,7 +203,7 @@ describe("Manager Agent per-turn capability routing", () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  it("delivers the same selected Skill/Tool snapshot to host and host-shell", async () => {
+  it("delivers the same complete bundled Skill/Tool snapshot to host and host-shell", async () => {
     const turn = {
       message: "create a topic outline",
       response_mode: "voice" as const,
@@ -216,22 +222,32 @@ describe("Manager Agent per-turn capability routing", () => {
     expect(hostShell.plugin_context).toEqual(hostContext);
     expect(hostContext.enabled_plugins.map((plugin) => plugin.id)).toEqual([
       "com.homerail.core",
+      "com.homerail.pr-closeout",
       "com.homerail.topic-outline",
     ]);
     expect(hostContext.skills.map((skill) => skill.qualified_id)).toEqual([
       "com.homerail.core:voice-generative-ui",
+      "com.homerail.pr-closeout:pr-closeout",
       "com.homerail.topic-outline:topic-outline",
     ]);
     expect(hostContext.tools.map((tool) => tool.qualified_id)).toEqual([
       "com.homerail.core:upsert_generated_view",
+      "com.homerail.pr-closeout:upsert_pr_closeout",
       "com.homerail.topic-outline:upsert_topic_outline",
     ]);
     expect(pluginSkillIds(captured.host[0])).toEqual([
       "com.homerail.core:voice-generative-ui",
+      "com.homerail.pr-closeout:pr-closeout",
       "com.homerail.topic-outline:topic-outline",
     ]);
-    const deliveredSkills = captured.host[0].manager_skills as Array<{ id: string; content?: string }>;
-    expect(deliveredSkills.find((skill) => skill.id === "com.homerail.core:voice-generative-ui")?.content)
+    const deliveredSkills = captured.host[0].manager_skills as Array<{
+      id: string;
+      content?: string;
+      projection_content?: string;
+    }>;
+    const coreSkill = deliveredSkills.find((skill) => skill.id === "com.homerail.core:voice-generative-ui");
+    expect(coreSkill?.content).toBeUndefined();
+    expect(coreSkill?.projection_content)
       .toContain("# Voice Generative UI");
     expect(captured.host_shell[0].manager_skills).toEqual(captured.host[0].manager_skills);
     expect(pluginSkillIds(captured.host_shell[0])).toEqual(pluginSkillIds(captured.host[0]));
@@ -329,7 +345,7 @@ describe("Manager Agent per-turn capability routing", () => {
     expect(captured.continuation_releases).toEqual(["continuation_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]);
   });
 
-  it("keeps a zero-match turn empty and strips caller-supplied unmatched Plugin skills", async () => {
+  it("keeps bundled Skills visible without semantic matching and strips caller-supplied Plugin skills", async () => {
     const callerSkills = [{
       id: "local-test",
       name: "Local test",
@@ -361,19 +377,33 @@ describe("Manager Agent per-turn capability routing", () => {
 
     for (const payload of [captured.host[0], captured.host_shell[0]]) {
       expect(pluginContext(payload)).toMatchObject({
-        enabled_plugins: [],
-        skills: [],
+        enabled_plugins: [
+          { id: "com.homerail.core" },
+          { id: "com.homerail.pr-closeout" },
+          { id: "com.homerail.topic-outline" },
+        ],
         tools: [],
         actions: [],
       });
-      expect(pluginSkillIds(payload)).toEqual([]);
+      expect(pluginSkillIds(payload)).toEqual([
+        "com.homerail.core:voice-generative-ui",
+        "com.homerail.pr-closeout:pr-closeout",
+        "com.homerail.topic-outline:topic-outline",
+      ]);
       expect(payload).not.toHaveProperty("plugin_tool_turn_token");
-      expect((payload.manager_skills as Array<{ id: string }>).map((skill) => skill.id)).toEqual(["local-test"]);
+      const deliveredIds = (payload.manager_skills as Array<{ id: string }>).map((skill) => skill.id);
+      expect(deliveredIds).toEqual(expect.arrayContaining([
+        "local-test",
+        "com.homerail.core:voice-generative-ui",
+        "com.homerail.pr-closeout:pr-closeout",
+        "com.homerail.topic-outline:topic-outline",
+      ]));
+      expect(deliveredIds).not.toContain("com.example.unmatched:rogue");
     }
     expect(pluginContext(captured.host_shell[0])).toEqual(pluginContext(captured.host[0]));
   });
 
-  it("preserves explicit legacy context while a routing source remains a strict capability boundary", () => {
+  it("preserves explicit context and treats a compatibility source as the only visibility boundary", () => {
     const full = assemblePluginTurnContext(undefined, { modality: "voice" });
     const legacy = resolveManagerAgentTurnAssets({
       message: "unmatched legacy turn",
@@ -381,7 +411,7 @@ describe("Manager Agent per-turn capability routing", () => {
       agent_config: runtimeConfig("host"),
       plugin_context: full,
     });
-    expect(legacy.route).toBeNull();
+    expect(legacy).not.toHaveProperty("route");
     expect(legacy.plugin_context).toStrictEqual(full);
     expect(legacy.plugin_context).not.toBe(full);
     expect(legacy.manager_skills.filter((skill) => skill.source === "plugin").map((skill) => skill.id)).toEqual([
@@ -403,10 +433,14 @@ describe("Manager Agent per-turn capability routing", () => {
         source_context: compatibilitySource,
       },
     });
-    expect(bounded.route?.signals.explicit_target_unavailable).toBe(false);
-    expect(bounded.route?.candidates).toEqual([]);
-    expect(bounded.plugin_context.skills).toEqual([]);
-    expect(bounded.plugin_context.tools).toEqual([]);
+    expect(bounded).not.toHaveProperty("route");
+    expect(bounded.plugin_context).toStrictEqual(compatibilitySource);
+    expect(bounded.plugin_context.skills.map((skill) => skill.qualified_id)).toEqual([
+      "com.homerail.core:voice-generative-ui",
+    ]);
+    expect(bounded.plugin_context.tools.map((tool) => tool.qualified_id)).toEqual([
+      "com.homerail.core:upsert_generated_view",
+    ]);
 
     const tamperedSource = structuredClone(compatibilitySource);
     tamperedSource.skills[0].description = "tampered after assembly";
@@ -418,7 +452,7 @@ describe("Manager Agent per-turn capability routing", () => {
     })).toThrow(/digest verification/);
   });
 
-  it("preloads a matching local Skill body for a short natural utterance", () => {
+  it("keeps local Skills catalog-only so the selected Agent harness owns native discovery", () => {
     writeHomeSkill(
       tmpHome,
       "palquery",
@@ -433,20 +467,13 @@ describe("Manager Agent per-turn capability routing", () => {
       voice_session_id: "natural-local-skill",
       agent_config: runtimeConfig("host"),
     });
-    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.content)
-      .toContain("LOCAL_SKILL_BODY_LOADED");
-    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.asset_root)
-      .toBe(fs.realpathSync(path.join(tmpHome, "skills", "palquery")));
-    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.view_templates)
-      .toEqual([expect.objectContaining({
-        id: "result",
-        a2ui: expect.objectContaining({
-          version: "v1.0",
-          catalogId: "https://homerail.dev/a2ui/catalogs/core/v1",
-        }),
-      })]);
-    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.view_templates?.[0])
-      .not.toHaveProperty("view");
+    expect(routed.manager_skills.find((skill) => skill.id === "palquery")).toMatchObject({
+      id: "palquery",
+      source: "home",
+    });
+    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.content).toBeUndefined();
+    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.asset_root).toBeUndefined();
+    expect(routed.manager_skills.find((skill) => skill.id === "palquery")?.view_templates).toBeUndefined();
 
     const explicit = resolveManagerAgentTurnAssets({
       message: "阿努比斯怎么配？",
@@ -454,11 +481,10 @@ describe("Manager Agent per-turn capability routing", () => {
       agent_config: runtimeConfig("host"),
       plugin_context: assemblePluginTurnContext(undefined, { modality: "voice" }),
     });
-    expect(explicit.manager_skills.find((skill) => skill.id === "palquery")?.content)
-      .toContain("LOCAL_SKILL_BODY_LOADED");
+    expect(explicit.manager_skills.find((skill) => skill.id === "palquery")?.content).toBeUndefined();
   });
 
-  it("keeps local Skill preloading relevant and bounded", () => {
+  it("does not rank or preload local Skills from utterance text", () => {
     writeHomeSkill(tmpHome, "alpha", "分析资料；典型短问包括“分析这些结果”。", "# Alpha\n\nalpha-body");
     writeHomeSkill(tmpHome, "beta", "整理资料；典型短问包括“分析这些结果”。", "# Beta\n\nbeta-body");
     writeHomeSkill(tmpHome, "gamma", "复核资料；典型短问包括“分析这些结果”。", "# Gamma\n\ngamma-body");
@@ -481,12 +507,13 @@ describe("Manager Agent per-turn capability routing", () => {
       response_mode: "voice",
       agent_config: runtimeConfig("host"),
     });
-    expect(matching.manager_skills.filter((skill) => skill.content).map((skill) => skill.id)).toEqual([
+    expect(matching.manager_skills.map((skill) => skill.id)).toEqual(expect.arrayContaining([
       "alpha",
       "beta",
-    ]);
-    expect(matching.manager_skills.find((skill) => skill.id === "gamma")?.content).toBeUndefined();
-    expect(matching.manager_skills.find((skill) => skill.id === "oversized")?.content).toBeUndefined();
+      "gamma",
+      "oversized",
+    ]));
+    expect(matching.manager_skills.filter((skill) => skill.content)).toEqual([]);
   });
 
   it("uses the same selected context for the host streaming path", async () => {
@@ -518,17 +545,48 @@ describe("Manager Agent per-turn capability routing", () => {
     expect(captured.host_stream).toHaveLength(1);
     expect(captured.host_stream[0]?.canvas_context).toEqual(canvasContext);
     const context = pluginContext(captured.host_stream[0]);
-    expect(context.enabled_plugins.map((plugin) => plugin.id)).toEqual(["com.homerail.core"]);
+    expect(context.enabled_plugins.map((plugin) => plugin.id)).toEqual([
+      "com.homerail.core",
+      "com.homerail.pr-closeout",
+      "com.homerail.topic-outline",
+    ]);
     expect(context.skills.map((skill) => skill.qualified_id)).toEqual([
       "com.homerail.core:voice-generative-ui",
+      "com.homerail.pr-closeout:pr-closeout",
+      "com.homerail.topic-outline:topic-outline",
     ]);
     expect(context.tools.map((tool) => tool.qualified_id)).toEqual([
       "com.homerail.core:upsert_generated_view",
+      "com.homerail.pr-closeout:upsert_pr_closeout",
+      "com.homerail.topic-outline:upsert_topic_outline",
     ]);
     expect(events.at(-1)).toMatchObject({
       type: "result",
       result: { plugin_context: context },
     });
+  });
+
+  it("preserves host-shell progress as a separate streamed event", async () => {
+    const events = [];
+    for await (const event of runManagerAgentTurnStream({
+      message: "execute a multi-step check",
+      response_mode: "chat",
+      agent_config: runtimeConfig("host_shell"),
+    }, { managerRestUrl: "http://127.0.0.1:19191" })) events.push(event);
+
+    expect(events).toEqual([
+      { type: "progress", text: "host-shell progress" },
+      expect.objectContaining({
+        type: "result",
+        result: expect.objectContaining({
+          result: { text: "host-shell stream result" },
+          worker_id: "host-shell-test",
+          runtime_placement: "host_shell",
+        }),
+      }),
+    ]);
+    expect(captured.host_shell_stream).toHaveLength(1);
+    expect(captured.host_shell_stream[0]?.message).toBe("execute a multi-step check");
   });
 
   it("releases a continuation lease when streamed output misses a required outcome", async () => {
@@ -592,11 +650,13 @@ describe("Manager Agent per-turn capability routing", () => {
     });
     expect(assets.plugin_context.skills.map((skill) => skill.qualified_id)).toEqual([
       "com.homerail.core:voice-generative-ui",
+      "com.homerail.pr-closeout:pr-closeout",
+      "com.homerail.topic-outline:topic-outline",
     ]);
     expect(assets.plugin_context.tools).toEqual([]);
   });
 
-  it("keeps installed Plugin instructions out of every same-UID Agent prompt path", async () => {
+  it("ignores semantic requests for installed Plugin instructions and rejects explicitly supplied ones", async () => {
     const source = path.resolve(import.meta.dirname, "../../plugins/examples/release-notes");
     const snapshot = scanPluginSource(source);
     expect(snapshot.valid).toBe(true);
@@ -606,7 +666,7 @@ describe("Manager Agent per-turn capability routing", () => {
       expected_active_version: installed.package.plugin_version,
     });
 
-    await expect(runManagerAgentTurn({
+    await runManagerAgentTurn({
       message: "create release notes for version 1.2.3",
       response_mode: "voice",
       generative_ui_mode: "prefer",
@@ -617,8 +677,14 @@ describe("Manager Agent per-turn capability routing", () => {
         explicit_capability_id: `${installed.package.plugin_id}:compose-release-notes`,
         inputs: { title: "Release notes", version: "1.2.3" },
       },
-    })).rejects.toThrow(/Only bundled Plugin Agent assets/);
-    expect(captured.host).toHaveLength(0);
+    });
+    expect(captured.host).toHaveLength(1);
+    expect(pluginContext(captured.host[0]).enabled_plugins.map((plugin) => plugin.id)).not.toContain(
+      installed.package.plugin_id,
+    );
+    expect(pluginSkillIds(captured.host[0])).not.toContain(
+      `${installed.package.plugin_id}:release-notes`,
+    );
 
     const full = assemblePluginTurnContext(undefined, { modality: "voice" });
     const supplied = selectPluginTurnContext(full, [

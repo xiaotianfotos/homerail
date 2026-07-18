@@ -47,7 +47,7 @@ const MAX_MILESTONES = 12;
 const MAX_PENDING_TOOLS_PER_ACTOR = 8;
 const MAX_TOOL_NAME_LENGTH = 96;
 const MAX_MILESTONE_SUMMARY_LENGTH = 240;
-const MAX_COMMENTARY_LENGTH = 320;
+const MAX_STATUS_TEXT_LENGTH = 320;
 const MAX_COMMAND_PAYLOAD_FIELDS = 8;
 const MAX_COMMAND_PAYLOAD_PATH_DEPTH = 8;
 const MAX_COMMAND_PAYLOAD_PATH_SEGMENT_LENGTH = 96;
@@ -191,7 +191,7 @@ export interface DagSupervisionSnapshot {
     milestones: DagSupervisorMilestone[];
     intervention_milestones: DagSupervisorInterventionMilestone[];
     surface_patch_milestones: DagSupervisorSurfacePatchMilestone[];
-    commentary: string[];
+    status_texts: string[];
   };
 }
 
@@ -382,7 +382,7 @@ function milestoneFromEntry(
   };
 }
 
-function commentaryFor(milestones: DagSupervisorMilestone[]): string[] {
+function statusTextFor(milestones: DagSupervisorMilestone[]): string[] {
   if (milestones.length === 0) return [];
   const labels: Record<DagSupervisorMilestone["type"], string> = {
     finding: "发现",
@@ -394,10 +394,10 @@ function commentaryFor(milestones: DagSupervisorMilestone[]): string[] {
     `${milestone.role || milestone.actor_id}${labels[milestone.type]}：${shortText(milestone.summary, 88)}`
   ));
   const overflow = milestones.length > 3 ? `；另有 ${milestones.length - 3} 项里程碑` : "";
-  const commentary = `${segments.join("；")}${overflow}`;
-  return [commentary.length <= MAX_COMMENTARY_LENGTH
-    ? commentary
-    : `${commentary.slice(0, MAX_COMMENTARY_LENGTH - 1)}…`];
+  const statusText = `${segments.join("；")}${overflow}`;
+  return [statusText.length <= MAX_STATUS_TEXT_LENGTH
+    ? statusText
+    : `${statusText.slice(0, MAX_STATUS_TEXT_LENGTH - 1)}…`];
 }
 
 function interventionSummary(operation: DagActorInterventionOperation, status: DagActorInterventionStatus): string {
@@ -411,16 +411,16 @@ function interventionSummary(operation: DagActorInterventionOperation, status: D
   }
 }
 
-function interventionCommentary(milestones: DagSupervisorInterventionMilestone[]): string[] {
+function interventionStatusText(milestones: DagSupervisorInterventionMilestone[]): string[] {
   if (milestones.length === 0) return [];
   const text = milestones.slice(0, 3)
     .map((milestone) => `${milestone.role || milestone.actor_id}：${milestone.summary}`)
     .join("；");
   const overflow = milestones.length > 3 ? `；另有 ${milestones.length - 3} 项干预` : "";
-  const commentary = `${text}${overflow}`;
-  return [commentary.length <= MAX_COMMENTARY_LENGTH
-    ? commentary
-    : `${commentary.slice(0, MAX_COMMENTARY_LENGTH - 1)}…`];
+  const statusText = `${text}${overflow}`;
+  return [statusText.length <= MAX_STATUS_TEXT_LENGTH
+    ? statusText
+    : `${statusText.slice(0, MAX_STATUS_TEXT_LENGTH - 1)}…`];
 }
 
 type SupervisorAgentConfig = {
@@ -723,23 +723,23 @@ function surfacePatchSummary(input: {
   }
 }
 
-function surfacePatchCommentary(milestones: DagSupervisorSurfacePatchMilestone[]): string[] {
+function surfacePatchStatusText(milestones: DagSupervisorSurfacePatchMilestone[]): string[] {
   if (milestones.length === 0) return [];
   const text = milestones.slice(0, 3)
     .map((milestone) => `${milestone.role || milestone.actor_id}：${milestone.summary}`)
     .join("；");
   const overflow = milestones.length > 3 ? `；另有 ${milestones.length - 3} 项界面里程碑` : "";
-  const commentary = `${text}${overflow}`;
-  return [commentary.length <= MAX_COMMENTARY_LENGTH
-    ? commentary
-    : `${commentary.slice(0, MAX_COMMENTARY_LENGTH - 1)}…`];
+  const statusText = `${text}${overflow}`;
+  return [statusText.length <= MAX_STATUS_TEXT_LENGTH
+    ? statusText
+    : `${statusText.slice(0, MAX_STATUS_TEXT_LENGTH - 1)}…`];
 }
 
 function consumeSurfacePatchMilestones(input: {
   run_id: string;
   consumer_id: string;
   max_milestones?: number;
-}): { milestones: DagSupervisorSurfacePatchMilestone[]; commentary: string[]; has_more: boolean } {
+}): { milestones: DagSupervisorSurfacePatchMilestone[]; status_texts: string[]; has_more: boolean } {
   const runId = input.run_id;
   const consumer = assertIdentifier(input.consumer_id, "consumer_id", 512);
   const maxMilestones = assertMaxMilestones(input.max_milestones);
@@ -812,7 +812,7 @@ function consumeSurfacePatchMilestones(input: {
     });
     if (!updated.updated) throw new Error("Manager Supervisor surface cursor changed concurrently; retry status query");
   }
-  return { milestones, commentary: surfacePatchCommentary(milestones), has_more: hasMore };
+  return { milestones, status_texts: surfacePatchStatusText(milestones), has_more: hasMore };
 }
 
 function consumeMilestones(input: {
@@ -927,10 +927,10 @@ function consumeMilestones(input: {
     milestones,
     intervention_milestones: interventionMilestones,
     surface_patch_milestones: surfacePatchDigest.milestones,
-    commentary: [
-      ...commentaryFor(milestones),
-      ...interventionCommentary(interventionMilestones),
-      ...surfacePatchDigest.commentary,
+    status_texts: [
+      ...statusTextFor(milestones),
+      ...interventionStatusText(interventionMilestones),
+      ...surfacePatchDigest.status_texts,
     ],
   };
 }

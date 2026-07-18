@@ -49,6 +49,13 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+type CodexAssistantMessagePhase = "commentary" | "final_answer";
+
+interface CodexAssistantMessageState {
+  phase?: CodexAssistantMessagePhase;
+  deltas: string[];
+}
+
 /** Spawn a process with stdin/stdout/stderr piped. */
 function spawnProcess(bin: string, args: string[], env: Record<string, string | undefined>): ChildProcess {
   return spawn(bin, args, {
@@ -91,6 +98,7 @@ export class CodexAppServerAdapter implements AgentClient {
   private notifyWaiters: Array<() => void> = [];
   private codexBin: string;
   private tempDir: string | null = null;
+  private agentMessages = new Map<string, CodexAssistantMessageState>();
 
   constructor(codexBin?: string) {
     this.codexBin = codexBin ?? process.env.CODEX_BIN_PATH ?? DEFAULT_CODEX_BIN;
@@ -443,8 +451,11 @@ export class CodexAppServerAdapter implements AgentClient {
     switch (method) {
       case "item/agentMessage/delta": {
         const delta = payload.delta as string | undefined;
+        const itemId = typeof payload.itemId === "string" ? payload.itemId : "";
         if (delta) {
-          events.push({ type: "text", text: delta });
+          const state = this.agentMessages.get(itemId) ?? { deltas: [] };
+          state.deltas.push(delta);
+          this.agentMessages.set(itemId, state);
         }
         break;
       }
@@ -462,7 +473,15 @@ export class CodexAppServerAdapter implements AgentClient {
         const item = (payload.item as Record<string, unknown>) ?? payload;
         const root = (item.root as Record<string, unknown>) ?? item;
         const itemType = root.type as string;
-        if (itemType === "commandExecution") {
+        if (itemType === "agentMessage") {
+          const itemId = typeof root.id === "string" ? root.id : "";
+          const phase = root.phase === "commentary" || root.phase === "final_answer"
+            ? root.phase
+            : undefined;
+          const state = this.agentMessages.get(itemId) ?? { deltas: [] };
+          state.phase = phase;
+          this.agentMessages.set(itemId, state);
+        } else if (itemType === "commandExecution") {
           events.push({
             type: "tool_use",
             id: (root.id as string) ?? "",
@@ -484,7 +503,19 @@ export class CodexAppServerAdapter implements AgentClient {
         const item = (payload.item as Record<string, unknown>) ?? payload;
         const root = (item.root as Record<string, unknown>) ?? item;
         const itemType = root.type as string;
-        if (itemType === "commandExecution") {
+        if (itemType === "agentMessage") {
+          const itemId = typeof root.id === "string" ? root.id : "";
+          const state = this.agentMessages.get(itemId) ?? { deltas: [] };
+          const phase = root.phase === "commentary" || root.phase === "final_answer"
+            ? root.phase
+            : state.phase;
+          const completedText = typeof root.text === "string" ? root.text : "";
+          const text = completedText || state.deltas.join("");
+          this.agentMessages.delete(itemId);
+          if (text) events.push(phase === "commentary"
+            ? { type: "commentary", text }
+            : { type: "text", text });
+        } else if (itemType === "commandExecution") {
           const exitCode = (root.exitCode ?? root.exit_code) as number | null | undefined;
           events.push({
             type: "tool_result",
@@ -531,6 +562,13 @@ export class CodexAppServerAdapter implements AgentClient {
       }
 
       case "turn/completed": {
+        for (const [itemId, state] of this.agentMessages) {
+          const text = state.deltas.join("");
+          if (text) events.push(state.phase === "commentary"
+            ? { type: "commentary", text }
+            : { type: "text", text });
+          this.agentMessages.delete(itemId);
+        }
         events.push({ type: "turn_complete" });
         break;
       }

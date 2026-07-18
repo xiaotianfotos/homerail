@@ -22,6 +22,10 @@ export interface HostShellManagerAgent {
   processName: string;
 }
 
+export type HostShellManagerAgentStreamEvent =
+  | { type: "progress"; text: string }
+  | { type: "result"; result: Record<string, unknown> };
+
 interface HostShellHealth {
   fingerprint: string;
   processId: number | null;
@@ -136,6 +140,13 @@ function runtimeRoot(): string {
   const explicit = process.env.HOMERAIL_REPO_ROOT;
   if (explicit && fs.existsSync(explicit)) return path.resolve(explicit);
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+}
+
+function managerCliEntrypoint(): string | undefined {
+  const explicit = process.env.HOMERAIL_CLI_ENTRYPOINT;
+  if (explicit && fs.existsSync(explicit)) return path.resolve(explicit);
+  const candidate = path.join(runtimeRoot(), "homerail_cli", "dist", "cli.js");
+  return fs.existsSync(candidate) ? candidate : undefined;
 }
 
 export function hostShellWorkerEntryPath(): string | undefined {
@@ -402,6 +413,7 @@ async function ensureHostShellManagerAgentInternal(
   const projectWorkspace = resolveProjectWorkspace(projectId);
   const processCwd = projectWorkspace ?? prepareHostWorkspace(projectId);
   const resolvedManagerRestUrl = managerRestUrl(options);
+  const cliEntrypoint = managerCliEntrypoint();
   const url = baseUrl(projectId);
   const stateFile = runtimeStatePath(projectId);
   const env: Record<string, string> = {
@@ -416,6 +428,8 @@ async function ensureHostShellManagerAgentInternal(
     HOMERAIL_HOME: getHomerailHome(),
     HOMERAIL_MANAGER_AGENT_SHELL: diagnostics.shell_path,
     SHELL: diagnostics.shell_path,
+    HOMERAIL_MANAGER_URL: resolvedManagerRestUrl.replace(/\/api\/?$/, ""),
+    ...(cliEntrypoint ? { HOMERAIL_CLI_ENTRYPOINT: cliEntrypoint } : {}),
     ...getManagerAgentTurnEnvelopeAuthority().workerEnvironment(),
   };
   const fingerprint = hostFingerprint({
@@ -593,4 +607,44 @@ export async function forwardChatToHostShellManagerAgent(
   }
   if (!res.ok) throw new Error(`Host-shell Manager Agent HTTP ${res.status}: ${JSON.stringify(body).slice(0, 1000)}`);
   return body as Record<string, unknown>;
+}
+
+export async function* streamChatFromHostShellManagerAgent(
+  agent: HostShellManagerAgent,
+  payload: Record<string, unknown>,
+): AsyncGenerator<HostShellManagerAgentStreamEvent> {
+  const res = await fetch(`${agent.baseUrl}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(getManagerAgentTurnEnvelopeAuthority().seal({
+      payload,
+      target: { runtime_placement: "host_shell", worker_id: agent.workerId },
+    })),
+    signal: AbortSignal.timeout(300_000),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`Host-shell Manager Agent stream HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (event.type === "progress" && typeof event.text === "string") {
+        yield { type: "progress", text: event.text };
+      } else if (event.type === "result" && event.result && typeof event.result === "object") {
+        yield { type: "result", result: event.result as Record<string, unknown> };
+      } else if (event.type === "error") {
+        throw new Error(`Host-shell Manager Agent stream error: ${String(event.error || "unknown error")}`);
+      }
+    }
+    if (done) break;
+  }
 }

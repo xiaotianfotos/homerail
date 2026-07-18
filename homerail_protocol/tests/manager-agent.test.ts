@@ -123,6 +123,7 @@ describe("Manager Agent DAG context", () => {
     expect(prompt).toContain('"current_run_id":"run-current"');
     expect(prompt).toContain("first call get_dag_supervision");
     expect(prompt).toContain("send_dag_actor_command");
+    expect(prompt).toContain("proves only that the command was accepted or dispatched");
     expect(prompt).toContain("keep sibling Actors unchanged");
     expect(prompt).toContain("Do not create a replacement generated-view Block");
   });
@@ -233,6 +234,7 @@ describe("Manager Agent harness contract", () => {
     const chatNames = managerAgentCommonToolCatalog("chat").map((tool) => tool.name);
     const voiceNames = managerAgentCommonToolCatalog("voice").map((tool) => tool.name);
     expect(chatNames).toContain("create_and_run");
+    expect(chatNames).not.toContain("run_shell_command");
     expect(chatNames).toEqual(expect.arrayContaining([
       "list_skills",
       "read_skill",
@@ -783,7 +785,12 @@ describe("Manager Agent harness contract", () => {
   it("builds one voice prompt contract for host harnesses", () => {
     const prompt = buildManagerAgentSystemPrompt({
       responseMode: "voice",
-      runtime: { placement: "host_shell", provider: "kimi", model: "kimi-code" },
+      runtime: {
+        placement: "host_shell",
+        provider: "kimi",
+        model: "kimi-code",
+        harness: "codex_appserver",
+      },
       voiceSystem: { source: "system:test", prompt: "VOICE_SYSTEM" },
       voiceUiRules: { sources: ["user:test"], hash: "abc123", prompt: "VOICE_RULES" },
     });
@@ -795,9 +802,34 @@ describe("Manager Agent harness contract", () => {
     expect(prompt).toContain("User-facing replies describe the user's goal, the visible result");
     expect(prompt).toContain("这次没能把卡片放到画布，我可以继续重试。");
     expect(prompt).toContain("Commentary is spoken too");
-    expect(prompt).toContain("never narrate Skill loading, tool names, read-only checks, rendering, or canvas updates");
-    expect(prompt).toContain("inspect command_payload_contract");
-    expect(prompt).toContain("never leave a machine-readable constraint only inside instruction text");
+    expect(prompt).toContain("three or more tool calls");
+    expect(prompt).toContain("Use brief commentary messages");
+    expect(prompt).toContain("harness-native commentary channel");
+    expect(prompt).toContain("about every 30 seconds");
+    expect(prompt).toContain("If one tool runs longer than 30 seconds");
+    expect(prompt).toContain("Do not wait, sleep, split work, or slow execution merely to meet the cadence");
+    expect(prompt).toContain("Never imitate commentary with a Tool call, synthetic UI event, or final-answer text");
+    expect(prompt).toContain("Never narrate Skill loading, tool names, read-only checks, rendering, or canvas updates");
+    expect(prompt).toContain("follow its advertised command contracts exactly");
+    expect(prompt).toContain("Submit one atomic commands array for all affected Actors");
+  });
+
+  it("appends Claude SDK progress guidance without calling it commentary", () => {
+    const prompt = buildManagerAgentSystemPrompt({
+      responseMode: "voice",
+      runtime: {
+        placement: "host_shell",
+        provider: "home",
+        model: "qwen3.6",
+        harness: "claude_agent_sdk",
+      },
+      voiceSystem: { source: "system:test", prompt: "VOICE_SYSTEM" },
+    });
+
+    expect(prompt).toContain("Use brief progress updates as ordinary assistant messages");
+    expect(prompt).toContain("about every 30 seconds");
+    expect(prompt).toContain("not commentary and not final answers");
+    expect(prompt).not.toContain("harness-native commentary channel");
   });
 
   it("renders HomeRail skill metadata and the pattern-first DAG workflow", () => {
@@ -820,8 +852,15 @@ describe("Manager Agent harness contract", () => {
     expect(prompt).toContain("Available HomeRail Skills");
     expect(prompt).toContain("homerail-dag-patterns: Select and instantiate reusable DAG patterns. [home]");
     expect(prompt).toContain("custom-operator: Apply local operations policy. [home]");
-    expect(prompt).toContain("call read_skill before acting");
-    expect(prompt).toContain("instantiate_dag_pattern and create_and_run");
+    expect(prompt).toContain("Skill discovery belongs to the Agent harness");
+    expect(prompt).toContain("Use read_skill only when native discovery is unavailable");
+    expect(prompt).toContain("load homerail-dag-patterns");
+    expect(prompt).toContain("concrete presentation-aware supervised Workflow");
+    expect(prompt).toContain("harness-native shell and file tools");
+    expect(prompt).toContain("HomeRail CLI is a complete supported control surface");
+    expect(prompt).toContain("HOMERAIL_CLI_ENTRYPOINT");
+    expect(prompt).not.toContain("Do not use shell");
+    expect(prompt).not.toContain("run_shell_command");
   });
 
   it("embeds already-selected Skill bodies without asking the Agent to reload them", () => {
@@ -841,6 +880,24 @@ describe("Manager Agent harness contract", () => {
     expect(prompt).toContain("Resolve relative Skill references and scripts from this root.");
     expect(prompt).toContain("Use the bound Core Tool once and require a committed result.");
     expect(prompt).toContain("do not call read_skill again");
+  });
+
+  it("catalogs harness-native Skill projections without inlining their bodies", () => {
+    const prompt = buildManagerAgentSystemPrompt({
+      skills: [{
+        id: "com.homerail.core:voice-generative-ui",
+        description: "Build truthful generated interfaces and supervised live panels.",
+        source: "plugin",
+        projection_content: "NATIVE_SKILL_BODY_MUST_NOT_BE_IN_SYSTEM_PROMPT",
+      }],
+    });
+
+    expect(prompt).toContain(
+      "com.homerail.core:voice-generative-ui: Build truthful generated interfaces and supervised live panels. [plugin] [native]",
+    );
+    expect(prompt).not.toContain("NATIVE_SKILL_BODY_MUST_NOT_BE_IN_SYSTEM_PROMPT");
+    expect(prompt).toContain("Skill discovery belongs to the Agent harness");
+    expect(prompt).toContain("generic fan-out pattern does not imply Surfaces");
   });
 
   it("advertises validated Skill visual templates without embedding a model-authored layout", () => {

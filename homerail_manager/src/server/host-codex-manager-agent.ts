@@ -1,11 +1,11 @@
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { ensureDefaultWorkspacePath, getHomerailHome } from "../config/env.js";
-import { resolveAssetDirectory } from "../assets/root.js";
+import { repoRoot, resolveAssetDirectory } from "../assets/root.js";
 import { codexBinaryNotFoundMessage, resolveCodexBinary } from "./codex-binary.js";
 import {
   readWidgetFile,
@@ -109,7 +109,6 @@ function stableSkillPresenterRunId(sessionId: string | undefined, skillId: strin
 }
 
 interface VoiceSurfaceState {
-  commentaryTexts: string[];
   progress: Record<string, unknown> | null;
   taskDraft: Record<string, unknown> | null;
   widgets: Record<string, unknown>[];
@@ -135,6 +134,7 @@ interface VoiceMemo {
 
 type AgentEvent =
   | { type: "text"; text: string }
+  | { type: "commentary"; text: string }
   | { type: "thinking"; text: string }
   | { type: "debug"; source: string; message: string; data?: Record<string, unknown> }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
@@ -150,10 +150,15 @@ interface AgentRunContext {
   apiKey: string;
   baseUrl: string;
   workspace?: string;
-  maxIterations?: number;
+  sessionId?: string;
+  persistSession?: boolean;
+  skillRoots?: string[];
+  environmentVariables?: Record<string, string>;
   abortSignal?: AbortSignal;
   reasoning_effort?: ManagerAgentReasoningEffort;
   service_tier?: string | null;
+  /** Prompt without replayed chat history, used after resuming a persisted native thread. */
+  resumedPrompt?: string;
 }
 
 interface JsonRpcRequest {
@@ -167,6 +172,13 @@ interface JsonRpcNotification {
   jsonrpc: "2.0";
   method: string;
   params: Record<string, unknown>;
+}
+
+type CodexAssistantMessagePhase = "commentary" | "final_answer";
+
+interface CodexAssistantMessageState {
+  phase?: CodexAssistantMessagePhase;
+  deltas: string[];
 }
 
 interface JsonRpcResponse {
@@ -210,7 +222,7 @@ export type HostCodexManagerAgentRunner = (
 ) => Promise<Record<string, unknown>>;
 
 export type HostCodexManagerAgentStreamEvent =
-  | { type: "commentary"; text: string; source: "tool" | "voice_surface" }
+  | { type: "commentary"; text: string; source: "codex" }
   | { type: "result"; result: Record<string, unknown> };
 
 export type HostCodexManagerAgentStreamRunner = (
@@ -274,19 +286,45 @@ export function _buildCodexThreadStartParamsForTest(input: {
   sandbox: string;
   dynamicTools: Array<Record<string, unknown>>;
   reasoningEffort?: CodexReasoningEffort;
+  ephemeral?: boolean;
 }): Record<string, unknown> {
   return {
-    baseInstructions: input.systemPrompt ?? null,
-    developerInstructions: null,
+    // Preserve the model-native Codex contract. HomeRail supplements it.
+    baseInstructions: null,
+    developerInstructions: input.systemPrompt ?? null,
     cwd: input.cwd,
     model: input.model,
     modelProvider: input.provider || null,
     serviceTier: input.serviceTier ?? null,
     approvalPolicy: "never",
     sandbox: input.sandbox,
-    ephemeral: true,
+    ephemeral: input.ephemeral ?? true,
     dynamicTools: input.dynamicTools,
     tools: { web_search: { context_size: "medium" } },
+    ...(input.reasoningEffort ? { config: { model_reasoning_effort: input.reasoningEffort } } : {}),
+  };
+}
+
+export function _buildCodexThreadResumeParamsForTest(input: {
+  threadId: string;
+  systemPrompt?: string;
+  cwd: string;
+  model: string;
+  provider?: string;
+  serviceTier?: string | null;
+  sandbox: string;
+  reasoningEffort?: CodexReasoningEffort;
+}): Record<string, unknown> {
+  return {
+    threadId: input.threadId,
+    baseInstructions: null,
+    developerInstructions: input.systemPrompt ?? null,
+    cwd: input.cwd,
+    model: input.model,
+    modelProvider: input.provider || null,
+    serviceTier: input.serviceTier ?? null,
+    approvalPolicy: "never",
+    sandbox: input.sandbox,
     ...(input.reasoningEffort ? { config: { model_reasoning_effort: input.reasoningEffort } } : {}),
   };
 }
@@ -313,10 +351,90 @@ const CLIENT_NAME = "homerail_host_codex_manager_agent";
 const CLIENT_TITLE = "HomeRail Host Codex Manager Agent";
 const DEFAULT_CODEX_BIN = "codex";
 const RESPONSE_TIMEOUT_MS = 60_000;
+const NATIVE_THREAD_CONTRACT_VERSION = "developer-instructions-v1";
+
+interface HostCodexNativeSession {
+  threadId: string;
+  toolDigest: string;
+}
+
+const hostCodexNativeSessions = new Map<string, HostCodexNativeSession>();
+
+function hostCodexSessionName(sessionId: string, toolDigest: string): string {
+  const sessionDigest = createHash("sha256").update(sessionId).digest("hex").slice(0, 24);
+  return `homerail-manager:${sessionDigest}:${toolDigest.slice(0, 12)}`;
+}
+
+function resultThreadId(value: Record<string, unknown>): string | undefined {
+  return (value.thread_id as string | undefined)
+    ?? ((value.thread as Record<string, unknown> | undefined)?.id as string | undefined);
+}
 
 function managerAgentTurnTimeoutMs(): number {
   const raw = Number(process.env.MANAGER_AGENT_TURN_TIMEOUT_MS ?? "0");
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+}
+
+function projectedManagerSkillName(skill: ManagerAgentPromptSkill): string {
+  const base = (skill.name || skill.id)
+    .normalize("NFKC")
+    .replace(/[^A-Za-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 55) || "homerail-skill";
+  const digest = createHash("sha256").update(skill.id).digest("hex").slice(0, 8);
+  return `${base}-${digest}`;
+}
+
+function skillInstructionsWithoutFrontmatter(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("---\n")) return normalized.trim();
+  const end = normalized.indexOf("\n---\n", 4);
+  return end < 0 ? normalized.trim() : normalized.slice(end + 5).trim();
+}
+
+/** Materialize immutable Plugin Skill snapshots for Codex native discovery. */
+export function materializeHostCodexManagerPluginSkills(
+  skills: readonly ManagerAgentPromptSkill[] | undefined,
+): string | undefined {
+  const projected = (skills ?? []).filter((skill) => (
+    skill.source === "plugin" && Boolean(skill.projection_content?.trim())
+  ));
+  if (projected.length === 0) return undefined;
+  const snapshotDigest = createHash("sha256").update(JSON.stringify(projected.map((skill) => ({
+    id: skill.id,
+    description: skill.description ?? "",
+    content: skill.projection_content,
+  })))).digest("hex");
+  const root = path.join(
+    getHomerailHome(),
+    "runtime",
+    "codex-manager-plugin-skills",
+    snapshotDigest,
+  );
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  for (const skill of projected) {
+    const name = projectedManagerSkillName(skill);
+    const directory = path.join(root, name);
+    const file = path.join(directory, "SKILL.md");
+    if (fs.existsSync(file)) continue;
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const description = (skill.description || `HomeRail Skill ${skill.id}`)
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1024);
+    fs.writeFileSync(file, [
+      "---",
+      `name: ${JSON.stringify(name)}`,
+      `description: ${JSON.stringify(description)}`,
+      "---",
+      "",
+      `HomeRail Skill id: ${skill.id}`,
+      "",
+      skillInstructionsWithoutFrontmatter(skill.projection_content!),
+      "",
+    ].join("\n"), { encoding: "utf8", mode: 0o600 });
+  }
+  return root;
 }
 
 const SECRET_KEYS = [
@@ -695,17 +813,6 @@ function createLocalWidgetFileToolAdapter(): ManagerAgentWidgetFileToolAdapter {
   };
 }
 
-function safeCwd(root: string, raw?: unknown): string {
-  const resolvedRoot = path.resolve(root);
-  const requested = typeof raw === "string" && raw.trim()
-    ? path.resolve(resolvedRoot, raw)
-    : resolvedRoot;
-  if (requested !== resolvedRoot && !requested.startsWith(`${resolvedRoot}${path.sep}`)) {
-    throw new Error("cwd is outside project workspace");
-  }
-  return requested;
-}
-
 async function requestManager(restUrl: string, pathname: string, init?: RequestInit): Promise<unknown> {
   const url = `${restUrl}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
   const token = process.env.HOMERAIL_MANAGER_ADMIN_TOKEN || undefined;
@@ -782,31 +889,8 @@ export function managerAgentChildEnv(
   return env;
 }
 
-function execReadonly(
-  command: string,
-  cwd: string,
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    execFile("/bin/sh", ["-lc", command], {
-      cwd,
-      timeout: 20_000,
-      maxBuffer: 1024 * 1024,
-      encoding: "utf-8",
-      env: managerAgentChildEnv(),
-    }, (err, stdout, stderr) => {
-      const code = typeof (err as NodeJS.ErrnoException | null)?.code === "number"
-        ? Number((err as NodeJS.ErrnoException).code)
-        : err
-          ? 1
-          : 0;
-      resolve({ exitCode: code, stdout: short(stdout, 12000), stderr: short(stderr, 4000) });
-    });
-  });
-}
-
 function emptyVoiceSurface(): VoiceSurfaceState {
   return {
-    commentaryTexts: [],
     progress: null,
     taskDraft: null,
     widgets: [],
@@ -1318,15 +1402,6 @@ export function createManagerTools(state: {
             }),
           },
         ) as Record<string, unknown>;
-        const data = body.data as Record<string, unknown> | undefined;
-        const digest = data?.milestone_digest as Record<string, unknown> | undefined;
-        const commentary = Array.isArray(digest?.commentary) ? digest.commentary : [];
-        for (const value of commentary) {
-          const text = typeof value === "string" ? value.trim() : "";
-          if (text && !state.voiceSurface.commentaryTexts.includes(text)) {
-            state.voiceSurface.commentaryTexts.push(text);
-          }
-        }
         state.objectiveToolCalls.push({ name: "get_dag_supervision", success: true });
         return { content: [{ type: "text", text: short(body, 40000) }] };
       },
@@ -1503,23 +1578,6 @@ export function createManagerTools(state: {
       },
     },
     {
-      name: "run_shell_command",
-      description: "Run a short shell command inside the project workspace for trusted Manager Agent inspection tasks.",
-      input_schema: {
-        type: "object",
-        properties: {
-          command: { type: "string" },
-          cwd: { type: "string" },
-        },
-        required: ["command"],
-        additionalProperties: false,
-      },
-      async handler(args) {
-        const result = await execReadonly(String(args.command || ""), safeCwd(state.workspace, args.cwd));
-        return { content: [{ type: "text", text: JSON.stringify(result) }], is_error: result.exitCode !== 0 };
-      },
-    },
-    {
       name: "finish",
       description: "Finish the Manager Agent turn with a concise user-facing summary.",
       input_schema: {
@@ -1654,11 +1712,6 @@ export function createManagerTools(state: {
             .find(Boolean);
           if (pluginOwnedType) {
             throw new Error(`Plugin-owned Widget type requires its enabled plugin Tool: ${pluginOwnedType}`);
-          }
-          const commentary = Array.isArray(args.commentary_texts) ? args.commentary_texts : [];
-          for (const item of commentary) {
-            const text = String(item || "").trim();
-            if (text) state.voiceSurface.commentaryTexts.push(text);
           }
           if (args.progress && typeof args.progress === "object" && !Array.isArray(args.progress)) {
             state.voiceSurface.progress = args.progress as Record<string, unknown>;
@@ -1955,7 +2008,6 @@ const BUILTIN_VOICE_SYSTEM_CONTRACT = [
   "- When Current HomeRail canvas state contains selected_node_id and update_selected_generated_view is available, the selected generated-view Block's authoritative id, content, and reusable A2UI surface are already supplied. For requests that modify that Block, call update_selected_generated_view and do not ask the user to reselect it.",
   "- When remove_generated_view is available, use it to remove an obsolete generated-view Block by its exact id from Current HomeRail canvas state. Never route canonical Block removal through legacy Widget tools.",
   "- Before asking the user for a Block id, selected item content, or Artifact URL, inspect Current HomeRail canvas state. Its listed nodes are authoritative application context; when the needed value is present there, use it and proceed instead of asking for it again.",
-  "- Use commentary for short execution progress. Persist final answers and commentary as separate channels.",
   "- Keep final spoken text short, conversational, and in Chinese unless the user asks otherwise.",
   "- Put long status, checklists, evidence, task drafts, and artifacts into tool-created widgets instead of the spoken reply.",
   "- Generated UI must come from voice tools and the widget protocol. Do not infer business intent with hard-coded keywords or create UI from backend regex branches.",
@@ -2062,6 +2114,7 @@ function systemPrompt(
       placement: "host",
       provider: config.provider_name || "host-codex",
       model: config.model || "unknown",
+      harness: "codex_appserver",
     },
     voiceUiRules: responseMode === "voice" ? voiceUiRules ?? loadVoiceUiRules() : undefined,
     voiceSystem: responseMode === "voice" ? voiceSystemContract ?? loadVoiceSystemContract() : undefined,
@@ -2130,6 +2183,18 @@ export function _buildManagerAgentPromptForTest(input: {
 
 function compactDeltas(parts: string[]): string {
   return parts.join("").trim();
+}
+
+function nativeCommentaryMessages(parts: string[]): string[] {
+  return Array.from(new Set(
+    parts
+      .map((text) => text.trim())
+      .filter(Boolean),
+  ));
+}
+
+export function _nativeCommentaryMessagesForTest(parts: string[]): string[] {
+  return nativeCommentaryMessages(parts);
 }
 
 function successfulToolCallNames(
@@ -2205,13 +2270,18 @@ function buildHostCodexManagerAgentResult(
       run_ids: state.createdRunIds,
     });
   }
-  const finalText = state.finalNotes.at(-1) || compactDeltas(texts) || (responseMode === "voice"
-    ? "已处理。"
-    : "Done.");
-  const commentary = [
-    ...state.voiceSurface.commentaryTexts,
-    ...(compactDeltas(commentaryTexts) ? [compactDeltas(commentaryTexts)] : []),
-  ];
+  const finalText = compactDeltas(texts) || state.finalNotes.at(-1);
+  if (!finalText) {
+    throw new HostCodexManagerAgentExecutionError(
+      ["Codex app-server completed without an authored final response"],
+      {
+        observed_tool_calls: toolCalls.map((item) => item.name),
+        objective_tool_calls: state.objectiveToolCalls,
+        run_ids: state.createdRunIds,
+      },
+    );
+  }
+  const commentary = nativeCommentaryMessages(commentaryTexts);
   return {
     text: finalText,
     ...(responseMode === "voice"
@@ -2273,11 +2343,12 @@ async function* runHostCodexManagerAgentTurnEvents(
   const config = input.agent_config;
   const restUrl = managerRestUrl(input.managerRestUrl);
   const workspace = workspaceFromConfig(config);
+  const managerSessionId = input.session_id || `host-codex-${randomUUID()}`;
   const state = {
     restUrl,
     workspace,
     projectId: input.project_id ?? config.project_id,
-    sessionId: input.voice_session_id ?? input.session_id,
+    sessionId: input.voice_session_id ?? managerSessionId,
     createdRunIds: [] as string[],
     finalNotes: [] as string[],
     objectiveToolCalls: [] as Array<{ name: string; success: boolean; error?: string }>,
@@ -2292,7 +2363,6 @@ async function* runHostCodexManagerAgentTurnEvents(
   const commentaryTexts: string[] = [];
   const agentErrors: string[] = [];
   const requiredToolCalls = normalizeManagerAgentRequiredToolCalls(input.required_tool_calls);
-  let emittedVoiceSurfaceCommentaryCount = 0;
   const abortController = new AbortController();
   const turnTimeoutMs = managerAgentTurnTimeoutMs();
   const timeout = turnTimeoutMs > 0 ? setTimeout(() => abortController.abort(), turnTimeoutMs) : undefined;
@@ -2301,6 +2371,13 @@ async function* runHostCodexManagerAgentTurnEvents(
     input.history,
     message,
     input.continue_chat !== false,
+    input.canvas_context,
+    input.dag_context,
+  );
+  const resumedPrompt = buildPrompt(
+    undefined,
+    message,
+    false,
     input.canvas_context,
     input.dag_context,
   );
@@ -2323,9 +2400,28 @@ async function* runHostCodexManagerAgentTurnEvents(
     apiKey: config.api_key || "",
     baseUrl: config.base_url || "",
     workspace,
+    sessionId: state.sessionId,
+    persistSession: true,
+    skillRoots: (() => {
+      const roots: string[] = [];
+      const root = path.join(getHomerailHome(), "skills");
+      try {
+        if (fs.statSync(root).isDirectory()) roots.push(fs.realpathSync(root));
+      } catch {
+        // A native local Skill root is optional.
+      }
+      const pluginRoot = materializeHostCodexManagerPluginSkills(input.manager_skills);
+      if (pluginRoot) roots.push(pluginRoot);
+      return roots;
+    })(),
+    environmentVariables: {
+      HOMERAIL_CLI_ENTRYPOINT: path.join(repoRoot(), "homerail_cli", "dist", "cli.js"),
+      HOMERAIL_MANAGER_URL: restUrl.replace(/\/api\/?$/, ""),
+    },
     abortSignal: abortController.signal,
     reasoning_effort: config.reasoning_effort,
     service_tier: config.service_tier,
+    resumedPrompt,
   };
   const eventStream = hostAgentEventRunnerOverride
     ? hostAgentEventRunnerOverride(prompt, tools, context)
@@ -2334,17 +2430,16 @@ async function* runHostCodexManagerAgentTurnEvents(
     for await (const event of eventStream) {
       if (event.type === "text") {
         texts.push(event.text);
-      } else if (event.type === "thinking") {
+      } else if (event.type === "commentary") {
         commentaryTexts.push(event.text);
+        yield { type: "commentary", text: event.text, source: "codex" };
+      } else if (event.type === "thinking") {
+        // Reasoning is private model state. It must never be relabeled as
+        // user-facing commentary.
       } else if (event.type === "tool_use") {
         toolCalls.push({ id: event.id, name: event.name, input: event.input });
       } else if (event.type === "tool_result") {
         toolResults.push({ tool_use_id: event.tool_use_id, content: event.content, is_error: event.is_error });
-        const newSurfaceCommentary = state.voiceSurface.commentaryTexts.slice(emittedVoiceSurfaceCommentaryCount);
-        emittedVoiceSurfaceCommentaryCount = state.voiceSurface.commentaryTexts.length;
-        for (const text of newSurfaceCommentary) {
-          yield { type: "commentary", text, source: "voice_surface" };
-        }
       } else if (event.type === "error") {
         agentErrors.push(event.message);
       }
@@ -2359,14 +2454,10 @@ async function* runHostCodexManagerAgentTurnEvents(
       run_ids: state.createdRunIds,
     });
   }
-  const remainingSurfaceCommentary = state.voiceSurface.commentaryTexts.slice(emittedVoiceSurfaceCommentaryCount);
-  for (const text of remainingSurfaceCommentary) {
-    yield { type: "commentary", text, source: "voice_surface" };
-  }
   yield {
     type: "result",
     result: buildHostCodexManagerAgentResult(
-      input,
+      { ...input, session_id: managerSessionId },
       state,
       responseMode,
       voiceUiRules,
@@ -2415,6 +2506,8 @@ class HostCodexAppServerAdapter {
   private notifyWaiters: Array<() => void> = [];
   private codexBin: string;
   private codexNeedsShell = false;
+  private shuttingDown = false;
+  private agentMessages = new Map<string, CodexAssistantMessageState>();
 
   constructor(codexBin?: string) {
     this.codexBin = codexBin ?? process.env.HOMERAIL_CODEX_BIN ?? process.env.CODEX_BIN_PATH ?? DEFAULT_CODEX_BIN;
@@ -2425,7 +2518,6 @@ class HostCodexAppServerAdapter {
     tools: ToolDefinition[],
     context: AgentRunContext,
   ): AsyncIterable<AgentEvent> {
-    const maxIterations = context.maxIterations ?? 10;
     const toolMap = new Map<string, ToolDefinition>();
     for (const t of tools) toolMap.set(t.name, t);
     try {
@@ -2450,7 +2542,17 @@ class HostCodexAppServerAdapter {
       return;
     }
 
-    const abortHandler = context.abortSignal ? () => this.sendNotification("cancel", {}) : null;
+    let activeThreadId: string | undefined;
+    let activeTurnId: string | undefined;
+    const abortHandler = context.abortSignal ? () => {
+      if (!activeThreadId || !activeTurnId) return;
+      void this.sendRequest("turn/interrupt", {
+        threadId: activeThreadId,
+        turnId: activeTurnId,
+      }).catch((err) => {
+        this.enqueueProtocolError(`Failed to interrupt turn: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    } : null;
     if (abortHandler && context.abortSignal) {
       context.abortSignal.addEventListener("abort", abortHandler, { once: true });
     }
@@ -2459,10 +2561,10 @@ class HostCodexAppServerAdapter {
       stderr = `${stderr}${chunk.toString()}`.slice(-4000);
     });
     this.process.on("error", (err) => {
-      this.rejectAllPending(`Process error: ${err.message}`);
+      if (!this.shuttingDown) this.enqueueProtocolError(`Process error: ${err.message}`);
     });
     this.process.on("exit", (code) => {
-      this.rejectAllPending(`Process exited with code ${code}`);
+      if (!this.shuttingDown) this.enqueueProtocolError(`Process exited with code ${code}`);
     });
 
     try {
@@ -2488,29 +2590,110 @@ class HostCodexAppServerAdapter {
       yield this.debugEvent("appserver_initialized", this.redactSecrets(initResult));
       const dynamicTools = this.buildDynamicToolSpecs(tools);
       const cwd = context.workspace ?? process.cwd();
-      const threadResult = await this.sendRequest("thread/start", _buildCodexThreadStartParamsForTest({
-        systemPrompt: context.systemPrompt,
-        cwd,
-        model: context.model,
-        provider: context.provider,
-        serviceTier: context.service_tier,
-        sandbox: process.env.HOMERAIL_CODEX_MANAGER_SANDBOX || "workspace-write",
-        dynamicTools,
-        reasoningEffort: context.reasoning_effort,
-      }));
-      const threadId =
-        (threadResult.thread_id as string | undefined) ??
-        ((threadResult.thread as Record<string, unknown> | undefined)?.id as string | undefined);
-      if (!threadId) throw new Error("thread/start response did not include a thread id");
-      yield this.debugEvent("thread_created", { thread_id: threadId });
+      const skillRoots = Array.from(new Set((context.skillRoots ?? [])
+        .map((root) => path.resolve(root))
+        .filter((root) => {
+          try {
+            return fs.statSync(root).isDirectory();
+          } catch {
+            return false;
+          }
+        })));
+      if (skillRoots.length > 0) {
+        await this.sendRequest("skills/extraRoots/set", { extraRoots: skillRoots });
+        const skillList = await this.sendRequest("skills/list", { cwds: [cwd], forceReload: true });
+        const entries = Array.isArray(skillList.data) ? skillList.data as Array<Record<string, unknown>> : [];
+        const skillCount = entries.reduce((total, entry) => (
+          total + (Array.isArray(entry.skills) ? entry.skills.length : 0)
+        ), 0);
+        yield this.debugEvent("native_skills_ready", {
+          extra_root_count: skillRoots.length,
+          discovered_skill_count: skillCount,
+        });
+      }
 
-      let iteration = 0;
+      const sandbox = process.env.HOMERAIL_CODEX_MANAGER_SANDBOX || "danger-full-access";
+      const toolDigest = createHash("sha256").update(JSON.stringify({
+        instruction_transport: NATIVE_THREAD_CONTRACT_VERSION,
+        dynamic_tools: dynamicTools,
+      })).digest("hex");
+      const nativeSessionKey = context.persistSession && context.sessionId?.trim()
+        ? context.sessionId.trim()
+        : undefined;
+      const sessionName = nativeSessionKey ? hostCodexSessionName(nativeSessionKey, toolDigest) : undefined;
+      let session = nativeSessionKey ? hostCodexNativeSessions.get(nativeSessionKey) : undefined;
+      if (session?.toolDigest !== toolDigest) session = undefined;
+
+      if (!session && sessionName) {
+        try {
+          const listed = await this.sendRequest("thread/list", {
+            limit: 20,
+            sourceKinds: ["appServer"],
+            cwd,
+            searchTerm: sessionName,
+            useStateDbOnly: true,
+          });
+          const matches = Array.isArray(listed.data) ? listed.data as Array<Record<string, unknown>> : [];
+          const restored = matches.find((item) => item.name === sessionName && typeof item.id === "string");
+          if (restored) session = { threadId: String(restored.id), toolDigest };
+        } catch {
+          // A missing historical index must not block a new native Manager session.
+        }
+      }
+
+      let threadId: string | undefined;
+      let resumedNativeThread = false;
+      if (session) {
+        try {
+          const resumed = await this.sendRequest("thread/resume", _buildCodexThreadResumeParamsForTest({
+            threadId: session.threadId,
+            systemPrompt: context.systemPrompt,
+            cwd,
+            model: context.model,
+            provider: context.provider,
+            serviceTier: context.service_tier,
+            sandbox,
+            reasoningEffort: context.reasoning_effort,
+          }));
+          threadId = resultThreadId(resumed) ?? session.threadId;
+          resumedNativeThread = true;
+          yield this.debugEvent("thread_resumed", { thread_id: threadId });
+        } catch {
+          if (nativeSessionKey) hostCodexNativeSessions.delete(nativeSessionKey);
+        }
+      }
+
+      if (!threadId) {
+        const threadResult = await this.sendRequest("thread/start", _buildCodexThreadStartParamsForTest({
+          systemPrompt: context.systemPrompt,
+          cwd,
+          model: context.model,
+          provider: context.provider,
+          serviceTier: context.service_tier,
+          sandbox,
+          dynamicTools,
+          reasoningEffort: context.reasoning_effort,
+          ephemeral: !nativeSessionKey,
+        }));
+        threadId = resultThreadId(threadResult);
+        if (!threadId) throw new Error("thread/start response did not include a thread id");
+        if (sessionName) {
+          try {
+            await this.sendRequest("thread/name/set", { threadId, name: sessionName });
+          } catch {
+            // In-memory continuity still works when an older app-server cannot persist a name.
+          }
+        }
+        yield this.debugEvent("thread_created", { thread_id: threadId, persistent: Boolean(nativeSessionKey) });
+      }
+      if (nativeSessionKey) hostCodexNativeSessions.set(nativeSessionKey, { threadId, toolDigest });
+      activeThreadId = threadId;
+
       let turnComplete = false;
-      while (iteration < maxIterations && !turnComplete && !context.abortSignal?.aborted) {
-        iteration++;
+      while (!turnComplete && !context.abortSignal?.aborted) {
         const turnResult = await this.sendRequest("turn/start", _buildCodexTurnStartParamsForTest({
           threadId,
-          prompt: iteration === 1 ? prompt : undefined,
+          prompt: resumedNativeThread ? context.resumedPrompt ?? prompt : prompt,
           cwd,
           model: context.model,
           reasoningEffort: context.reasoning_effort,
@@ -2520,17 +2703,12 @@ class HostCodexAppServerAdapter {
           (turnResult.turn_id as string | undefined) ??
           ((turnResult.turn as Record<string, unknown> | undefined)?.id as string | undefined) ??
           "";
-        yield this.debugEvent("turn_started", { turn_id: turnId, iteration });
+        activeTurnId = turnId || undefined;
+        yield this.debugEvent("turn_started", { turn_id: turnId });
 
         turnComplete = false;
         while (!turnComplete) {
-          let notification: Record<string, unknown>;
-          try {
-            notification = await this.waitForNotification(120_000);
-          } catch {
-            yield { type: "error", message: "Timeout waiting for codex app-server notification" };
-            return;
-          }
+          const notification = await this.waitForNotification();
           const method = notification.method as string;
           const requestId = notification.id as number | undefined;
           const payload = notification.params as Record<string, unknown> | undefined;
@@ -2568,10 +2746,8 @@ class HostCodexAppServerAdapter {
           if (method === "turn/completed") turnComplete = true;
           if (method === "error") return;
         }
-        yield this.debugEvent("turn_completed", { turn_id: turnId, iteration });
-      }
-      if (iteration >= maxIterations) {
-        yield { type: "error", message: `Exceeded max iterations (${maxIterations})` };
+        activeTurnId = undefined;
+        yield this.debugEvent("turn_completed", { turn_id: turnId });
       }
       try {
         await this.sendRequest("thread/unsubscribe", { threadId });
@@ -2592,6 +2768,7 @@ class HostCodexAppServerAdapter {
 
   private buildEnv(context: AgentRunContext): Record<string, string | undefined> {
     const env = managerAgentChildEnv();
+    Object.assign(env, context.environmentVariables ?? {});
     if (context.apiKey) env.OPENAI_API_KEY = context.apiKey;
     if (context.baseUrl) env.OPENAI_BASE_URL = context.baseUrl;
     return env;
@@ -2635,9 +2812,7 @@ class HostCodexAppServerAdapter {
         return;
       }
       if ("method" in parsed) {
-        this.notifications.push(parsed as unknown as Record<string, unknown>);
-        const waiters = this.notifyWaiters.splice(0);
-        for (const waiter of waiters) waiter();
+        this.enqueueNotification(parsed as unknown as Record<string, unknown>);
       } else if ("id" in parsed && typeof parsed.id === "number") {
         const pending = this.pending.get(parsed.id);
         if (!pending) return;
@@ -2652,16 +2827,20 @@ class HostCodexAppServerAdapter {
     });
   }
 
-  private waitForNotification(timeoutMs: number): Promise<Record<string, unknown>> {
+  private enqueueNotification(notification: Record<string, unknown>): void {
+    this.notifications.push(notification);
+    this.notifyWaiters.shift()?.();
+  }
+
+  private enqueueProtocolError(message: string): void {
+    this.rejectAllPending(message);
+    this.enqueueNotification({ method: "error", params: { message } });
+  }
+
+  private waitForNotification(): Promise<Record<string, unknown>> {
     if (this.notifications.length > 0) return Promise.resolve(this.notifications.shift()!);
-    return new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const idx = this.notifyWaiters.indexOf(waiter);
-        if (idx >= 0) this.notifyWaiters.splice(idx, 1);
-        reject(new Error("Notification wait timed out"));
-      }, timeoutMs);
+    return new Promise<Record<string, unknown>>((resolve) => {
       const waiter = () => {
-        clearTimeout(timer);
         if (this.notifications.length > 0) resolve(this.notifications.shift()!);
       };
       this.notifyWaiters.push(waiter);
@@ -2677,6 +2856,7 @@ class HostCodexAppServerAdapter {
   }
 
   private shutdown(): void {
+    this.shuttingDown = true;
     try {
       this.rl?.close();
     } catch {
@@ -2699,7 +2879,12 @@ class HostCodexAppServerAdapter {
     switch (method) {
       case "item/agentMessage/delta": {
         const delta = payload.delta as string | undefined;
-        if (delta) events.push({ type: "text", text: delta });
+        const itemId = typeof payload.itemId === "string" ? payload.itemId : "";
+        if (delta) {
+          const state = this.agentMessages.get(itemId) ?? { deltas: [] };
+          state.deltas.push(delta);
+          this.agentMessages.set(itemId, state);
+        }
         break;
       }
       case "item/reasoning/textDelta":
@@ -2712,7 +2897,15 @@ class HostCodexAppServerAdapter {
         const item = (payload.item as Record<string, unknown>) ?? payload;
         const root = (item.root as Record<string, unknown>) ?? item;
         const itemType = root.type as string;
-        if (itemType === "commandExecution") {
+        if (itemType === "agentMessage") {
+          const itemId = typeof root.id === "string" ? root.id : "";
+          const phase = root.phase === "commentary" || root.phase === "final_answer"
+            ? root.phase
+            : undefined;
+          const state = this.agentMessages.get(itemId) ?? { deltas: [] };
+          state.phase = phase;
+          this.agentMessages.set(itemId, state);
+        } else if (itemType === "commandExecution") {
           events.push({
             type: "tool_use",
             id: (root.id as string) ?? "",
@@ -2740,7 +2933,19 @@ class HostCodexAppServerAdapter {
         const item = (payload.item as Record<string, unknown>) ?? payload;
         const root = (item.root as Record<string, unknown>) ?? item;
         const itemType = root.type as string;
-        if (itemType === "commandExecution") {
+        if (itemType === "agentMessage") {
+          const itemId = typeof root.id === "string" ? root.id : "";
+          const state = this.agentMessages.get(itemId) ?? { deltas: [] };
+          const phase = root.phase === "commentary" || root.phase === "final_answer"
+            ? root.phase
+            : state.phase;
+          const completedText = typeof root.text === "string" ? root.text : "";
+          const text = completedText || state.deltas.join("");
+          this.agentMessages.delete(itemId);
+          if (text) events.push(phase === "commentary"
+            ? { type: "commentary", text }
+            : { type: "text", text });
+        } else if (itemType === "commandExecution") {
           const exitCode = (root.exitCode ?? root.exit_code) as number | null | undefined;
           events.push({
             type: "tool_result",
@@ -2790,6 +2995,13 @@ class HostCodexAppServerAdapter {
         break;
       }
       case "turn/completed": {
+        for (const [itemId, state] of this.agentMessages) {
+          const text = state.deltas.join("");
+          if (text) events.push(state.phase === "commentary"
+            ? { type: "commentary", text }
+            : { type: "text", text });
+          this.agentMessages.delete(itemId);
+        }
         events.push({ type: "turn_complete" });
         break;
       }
@@ -2853,4 +3065,14 @@ export function _mapCodexAppServerNotificationForTest(
   return (adapter as unknown as {
     mapNotification: (notificationMethod: string, notificationPayload: Record<string, unknown> | undefined) => AgentEvent[];
   }).mapNotification(method, payload);
+}
+
+export function _mapCodexAppServerNotificationSequenceForTest(
+  notifications: Array<{ method: string; payload?: Record<string, unknown> }>,
+): AgentEvent[] {
+  const adapter = new HostCodexAppServerAdapter("codex");
+  const mapNotification = (adapter as unknown as {
+    mapNotification: (notificationMethod: string, notificationPayload: Record<string, unknown> | undefined) => AgentEvent[];
+  }).mapNotification.bind(adapter);
+  return notifications.flatMap(({ method, payload }) => mapNotification(method, payload));
 }

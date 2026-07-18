@@ -587,6 +587,25 @@ describe("HomeRail plugin project SDK", () => {
     });
   });
 
+  it("uses Skill YAML frontmatter as discovery metadata without duplicating it in the manifest", () => {
+    const root = temp("homerail-plugin-frontmatter-metadata");
+    scaffoldPluginProject(root, "com.example.frontmatter-metadata");
+    const manifestFile = path.join(root, "homerail.plugin.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")) as {
+      skills: Array<{ id: string; path: string; description?: string }>;
+    };
+    delete manifest.skills[0]?.description;
+    fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
+
+    const snapshot = scanPluginSource(root);
+    expect(snapshot.valid).toBe(true);
+    expect(snapshot.issues.filter((issue) => issue.severity === "error")).toEqual([]);
+    expect(snapshot.manifest.skills[0]).toEqual({
+      id: "compose-card",
+      path: "skills/compose-card/SKILL.md",
+    });
+  });
+
   it("rejects invalid UTF-8 consistently in source validation and packed archives", () => {
     const root = temp("homerail-plugin-invalid-utf8");
     scaffoldPluginProject(root, "com.example.invalid-utf8");

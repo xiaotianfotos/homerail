@@ -263,6 +263,16 @@ function semanticErrors(manifest: HomerailPluginManifestV1): HomerailPluginValid
         "skillPath",
       ));
     }
+    if (skill.visual_profile !== undefined && (
+      !isSafeHomerailPluginPackagePath(skill.visual_profile)
+      || !skill.visual_profile.endsWith(".json")
+    )) {
+      errors.push(error(
+        `/skills/${index}/visual_profile`,
+        "must be a package-relative JSON file",
+        "skillVisualProfilePath",
+      ));
+    }
   });
   manifest.schemas.forEach((schema, index) => {
     if (!isSafeHomerailPluginPackagePath(schema.file) || !schema.file.endsWith(".json")) {
@@ -611,7 +621,10 @@ export function collectHomerailPluginFileReferences(
   manifest: HomerailPluginManifestV1,
 ): string[] {
   const references = new Set<string>();
-  manifest.skills.forEach((skill) => references.add(skill.path));
+  manifest.skills.forEach((skill) => {
+    references.add(skill.path);
+    if (skill.visual_profile) references.add(skill.visual_profile);
+  });
   manifest.schemas.forEach((schema) => references.add(schema.file));
   manifest.kinds.forEach((kind) => kind.migrations.forEach((migration) => references.add(migration.file)));
   const addHandler = (handler: HomerailPluginHandlerV1) => {

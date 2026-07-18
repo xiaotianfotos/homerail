@@ -207,8 +207,9 @@ const skillSchema = {
     id: localId,
     path: packagePath,
     description: shortText,
+    visual_profile: packagePath,
   },
-  required: ["id", "path", "description"],
+  required: ["id", "path"],
   additionalProperties: false,
 } as const;
 
@@ -967,6 +968,7 @@ export const homerailResolvedPluginDescriptorSchema = {
           path: packagePath,
           digest: sha256Digest,
           content: { type: "string", maxLength: 262144 },
+          description: shortText,
         },
         required: ["id", "path", "digest", "content"],
         additionalProperties: false,

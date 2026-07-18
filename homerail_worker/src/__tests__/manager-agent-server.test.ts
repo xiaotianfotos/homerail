@@ -87,7 +87,7 @@ function makeSupervisorManagerApiServer(observed: ObservedSupervisorRequest[]): 
           ? {
             run_id: "run /?# supervised",
             milestone_digest: {
-              commentary: [
+              status_texts: [
                 "  研究 Actor 已确认关键依赖。  ",
                 "研究 Actor 已确认关键依赖。",
                 "",
@@ -460,6 +460,15 @@ class DeltaTextAgent implements AgentClient {
   }
 }
 
+class ProgressBoundaryAgent implements AgentClient {
+  async *run(): AsyncIterable<AgentEvent> {
+    yield { type: "progress", text: "正在检查输入。" };
+    yield { type: "progress", text: "输入已确认，正在验证结果。" };
+    yield { type: "text", text: "验证完成。" };
+    yield { type: "done" };
+  }
+}
+
 class ErrorAgent implements AgentClient {
   async *run(): AsyncIterable<AgentEvent> {
     yield { type: "error", message: "provider rejected the configured credential" };
@@ -518,6 +527,7 @@ class ToolCatalogAgent implements AgentClient {
   toolNames: string[] = [];
   systemPrompt = "";
   systemPromptMode: AgentRunContext["systemPromptMode"] = undefined;
+  claudePermissionMode: AgentRunContext["claudePermissionMode"] = undefined;
 
   async *run(
     _prompt: string,
@@ -527,6 +537,7 @@ class ToolCatalogAgent implements AgentClient {
     this.toolNames = tools.map((tool) => tool.name).sort();
     this.systemPrompt = context.systemPrompt ?? "";
     this.systemPromptMode = context.systemPromptMode;
+    this.claudePermissionMode = context.claudePermissionMode;
     yield { type: "text", text: "catalog captured" };
     yield { type: "done" };
   }
@@ -783,6 +794,48 @@ describe("manager-agent server", () => {
     } finally {
       await close(server);
       await close(managerApi);
+    }
+  });
+
+  it("streams progress message boundaries without folding them into the final answer", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    registerAgentBackend("manager-agent-progress-boundary-test", () => new ProgressBoundaryAgent());
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "执行一个多步验证",
+          agent_config: { agent_type: "manager-agent-progress-boundary-test", model: "test-model" },
+        }),
+      });
+      const events = (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+      expect(events.slice(0, 2)).toEqual([
+        { type: "progress", text: "正在检查输入。" },
+        { type: "progress", text: "输入已确认，正在验证结果。" },
+      ]);
+      expect(events[2]).toMatchObject({
+        type: "result",
+        result: {
+          text: "验证完成。",
+          progress_texts: ["正在检查输入。", "输入已确认，正在验证结果。"],
+        },
+      });
+      expect(JSON.stringify((events[2].result as Record<string, unknown>).text)).not.toContain("正在检查输入");
+    } finally {
+      await close(server);
     }
   });
 
@@ -1052,7 +1105,7 @@ describe("manager-agent server", () => {
     }
   });
 
-  it("uses a truthful run fallback when the agent only emits a tool call", async () => {
+  it("rejects a tool-only turn instead of fabricating an assistant final", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
     tmpDirs.push(workspace);
     registerAgentBackend("manager-agent-objective-success-no-text-test", () => new ObjectiveSuccessNoTextAgent());
@@ -1077,18 +1130,16 @@ describe("manager-agent server", () => {
           agent_config: { agent_type: "manager-agent-objective-success-no-text-test", model: "test-model" },
         }),
       });
-      const body = await response.json() as { text?: string; run_id?: string };
-      expect(response.status).toBe(200);
-      expect(body.run_id).toBe("run-test-123");
-      expect(body.text).toBe("Task started.");
-      expect(body.text).not.toContain("run-test-123");
+      const body = await response.json() as { error?: string };
+      expect(response.status).toBe(502);
+      expect(body.error).toBe("Agent completed without an authored final response");
     } finally {
       await close(server);
       await close(managerApi);
     }
   });
 
-  it("uses a neutral localized fallback when a voice turn emits no prose", async () => {
+  it("rejects a silent voice turn instead of fabricating localized prose", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
     tmpDirs.push(workspace);
     registerAgentBackend("manager-agent-no-text-test", () => new NoTextAgent());
@@ -1109,10 +1160,9 @@ describe("manager-agent server", () => {
           agent_config: { agent_type: "manager-agent-no-text-test", model: "test-model" },
         }),
       });
-      const body = await response.json() as { text?: string; spoken_text?: string };
-      expect(response.status).toBe(200);
-      expect(body.text).toBe("已处理。");
-      expect(body.spoken_text).toBe("已处理。");
+      const body = await response.json() as { error?: string };
+      expect(response.status).toBe(502);
+      expect(body.error).toBe("Agent completed without an authored final response");
     } finally {
       await close(server);
     }
@@ -1492,7 +1542,7 @@ describe("manager-agent server", () => {
       };
 
       expect(response.status).toBe(200);
-      expect(body.commentary_texts).toEqual(["研究 Actor 已确认关键依赖。"]);
+      expect(body.commentary_texts).toEqual([]);
       expect(body.tool_results).toHaveLength(2);
       expect(body.objective).toMatchObject({
         required: true,
@@ -1563,6 +1613,7 @@ describe("manager-agent server", () => {
       expect(agent.systemPrompt).toContain("Voice UI rules hash: rules-hash");
       expect(agent.systemPrompt).toContain("VOICE_RULES_TEST");
       expect(agent.systemPromptMode).toBe("append");
+      expect(agent.claudePermissionMode).toBe("dontAsk");
     } finally {
       await close(server);
       await close(managerApi);
@@ -1606,6 +1657,12 @@ describe("manager-agent server", () => {
             id: "homerail-dag-patterns",
             description: "Select reusable DAG patterns",
             source: "home",
+          }, {
+            id: "com.homerail.core:voice-generative-ui",
+            name: "voice-generative-ui",
+            description: "Build truthful generated interfaces.",
+            source: "plugin",
+            projection_content: "---\nname: voice-generative-ui\ndescription: Build truthful generated interfaces.\n---\n\nUse the pinned HomeRail visual contract.",
           }],
           agent_config: { agent_type: "manager-agent-pattern-skill-test", model: "test" },
         }),
@@ -1634,7 +1691,12 @@ describe("manager-agent server", () => {
       expect(agent.skillProjection).toEqual({
         mode: "explicit",
         directories: [path.join(home, "skills")],
-        definitions: [],
+        definitions: [{
+          id: "com.homerail.core:voice-generative-ui",
+          name: "voice-generative-ui",
+          description: "Build truthful generated interfaces.",
+          content: "---\nname: voice-generative-ui\ndescription: Build truthful generated interfaces.\n---\n\nUse the pinned HomeRail visual contract.",
+        }],
       });
       expect(observed).toContainEqual(expect.objectContaining({
         method: "POST",

@@ -103,7 +103,6 @@ export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
   "complete_dag_run",
   "invoke_run",
   "get_run_status",
-  "run_shell_command",
   "finish",
 ] as const;
 
@@ -768,7 +767,6 @@ const voiceMemoSchema = {
 const updateVoiceSurfaceSchema = {
   type: "object",
   properties: {
-    commentary_texts: { type: "array", maxItems: 6, items: { type: "string" } },
     progress: {
       type: "object",
       properties: {
@@ -1220,19 +1218,6 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
       type: "object",
       properties: { runId: { type: "string" } },
       required: ["runId"],
-      additionalProperties: false,
-    },
-  },
-  run_shell_command: {
-    name: "run_shell_command",
-    description: "Run a short shell command inside the project workspace for trusted Manager Agent inspection tasks.",
-    input_schema: {
-      type: "object",
-      properties: {
-        command: { type: "string" },
-        cwd: { type: "string" },
-      },
-      required: ["command"],
       additionalProperties: false,
     },
   },

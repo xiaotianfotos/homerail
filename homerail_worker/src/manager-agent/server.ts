@@ -2,10 +2,8 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createAgentClient } from "../agent/factory.js";
-import { sanitizedAgentChildEnv } from "../agent/child-env.js";
 import {
   ManagerAgentTurnAuthenticationError,
   ManagerAgentTurnEnvelopeVerifier,
@@ -100,11 +98,20 @@ interface ChatRequest {
   manager_api_scopes?: string[];
 }
 
+interface ManagerAgentChatHooks {
+  onProgress?: (text: string) => void;
+}
+
 interface ChatSession {
   session_id: string;
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   created_at: string;
   updated_at: string;
+}
+
+function validClaudeSessionId(value: unknown): value is string {
+  return typeof value === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
 }
 
 interface ToolTrace {
@@ -162,7 +169,6 @@ function stableSkillPresenterRunId(sessionId: string | undefined, skillId: strin
 }
 
 interface VoiceSurfaceState {
-  commentaryTexts: string[];
   progress: Record<string, unknown> | null;
   taskDraft: Record<string, unknown> | null;
   widgets: Record<string, unknown>[];
@@ -212,6 +218,29 @@ class ManagerAgentExecutionError extends Error {
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+function streamLine(res: http.ServerResponse, body: unknown): void {
+  res.write(`${JSON.stringify(body)}\n`);
+}
+
+function managerAgentErrorResponse(err: unknown): { status: number; body: Record<string, unknown> } {
+  if (err instanceof ManagerAgentTurnAuthenticationError
+    || err instanceof ManagerAgentTurnTimeoutError
+    || err instanceof ManagerAgentObjectiveUnsatisfiedError
+    || err instanceof ManagerAgentExecutionError) {
+    return {
+      status: err.statusCode,
+      body: {
+        error: err.message,
+        ...("data" in err ? { data: err.data } : {}),
+      },
+    };
+  }
+  return {
+    status: 500,
+    body: { error: err instanceof Error ? err.message : String(err) },
+  };
 }
 
 function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
@@ -432,36 +461,6 @@ function projectWorkspace(): string {
   return fs.existsSync(configured) ? configured : process.cwd();
 }
 
-function safeCwd(raw?: unknown): string {
-  const root = path.resolve(projectWorkspace());
-  const requested = typeof raw === "string" && raw.trim()
-    ? path.resolve(root, raw)
-    : root;
-  if (requested !== root && !requested.startsWith(`${root}${path.sep}`)) {
-    throw new Error("cwd is outside project workspace");
-  }
-  return requested;
-}
-
-function managerAgentShell(): { command: string; argsPrefix: string[] } {
-  const configured = process.env.HOMERAIL_MANAGER_AGENT_SHELL || process.env.SHELL;
-  if (configured && fs.existsSync(configured)) {
-    return { command: configured, argsPrefix: ["-lc"] };
-  }
-  if (process.platform === "win32") {
-    const candidates = [
-      "C:\\Program Files\\Git\\bin\\bash.exe",
-      "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
-      "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
-      "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe",
-    ];
-    const gitBash = candidates.find((candidate) => fs.existsSync(candidate));
-    if (gitBash) return { command: gitBash, argsPrefix: ["-lc"] };
-    return { command: "cmd.exe", argsPrefix: ["/d", "/s", "/c"] };
-  }
-  return { command: "/bin/sh", argsPrefix: ["-lc"] };
-}
-
 async function requestManager(pathname: string, init?: RequestInit): Promise<unknown> {
   const url = `${managerRestUrl()}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
   const envelope = activeManagerTurn.getStore();
@@ -536,30 +535,8 @@ function redactManagerCredential(
   return redacted;
 }
 
-function execReadonly(command: string, cwd: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const shell = managerAgentShell();
-    execFile(shell.command, [...shell.argsPrefix, command], {
-      cwd,
-      timeout: 20_000,
-      maxBuffer: 1024 * 1024,
-      encoding: "utf-8",
-      env: sanitizedAgentChildEnv(),
-      windowsHide: true,
-    }, (err, stdout, stderr) => {
-      const code = typeof (err as NodeJS.ErrnoException | null)?.code === "number"
-        ? Number((err as NodeJS.ErrnoException).code)
-        : err
-          ? 1
-          : 0;
-      resolve({ exitCode: code, stdout: short(stdout, 12000), stderr: short(stderr, 4000) });
-    });
-  });
-}
-
 function emptyVoiceSurface(): VoiceSurfaceState {
   return {
-    commentaryTexts: [],
     progress: null,
     taskDraft: null,
     widgets: [],
@@ -576,18 +553,6 @@ function managerData(body: unknown): Record<string, unknown> {
       : record;
   }
   return {};
-}
-
-function appendSupervisionCommentary(voiceSurface: VoiceSurfaceState, body: unknown): void {
-  const data = managerData(body);
-  const digest = data.milestone_digest && typeof data.milestone_digest === "object" && !Array.isArray(data.milestone_digest)
-    ? data.milestone_digest as Record<string, unknown>
-    : undefined;
-  const commentary = Array.isArray(digest?.commentary) ? digest.commentary : [];
-  for (const item of commentary) {
-    const text = typeof item === "string" ? item.trim() : "";
-    if (text && !voiceSurface.commentaryTexts.includes(text)) voiceSurface.commentaryTexts.push(text);
-  }
 }
 
 function dataRecord(body: unknown): Record<string, unknown> {
@@ -1181,7 +1146,6 @@ export function createManagerTools(state: {
             }),
           },
         );
-        appendSupervisionCommentary(state.voiceSurface, body);
         state.objectiveToolCalls.push({ name: "get_dag_supervision", success: true });
         return { content: [{ type: "text", text: short(body, 40000) }] };
       },
@@ -1350,24 +1314,6 @@ export function createManagerTools(state: {
       },
     },
     {
-      name: "run_shell_command",
-      description: "Run a short shell command inside the project workspace for trusted Manager Agent inspection tasks.",
-      input_schema: {
-        type: "object",
-        properties: {
-          command: { type: "string" },
-          cwd: { type: "string" },
-        },
-        required: ["command"],
-        additionalProperties: false,
-      },
-      async handler(args) {
-        const command = String(args.command || "");
-        const result = await execReadonly(command, safeCwd(args.cwd));
-        return { content: [{ type: "text", text: JSON.stringify(result) }], is_error: result.exitCode !== 0 };
-      },
-    },
-    {
       name: "finish",
       description: "Finish the Manager Agent turn with a concise user-facing summary.",
       input_schema: {
@@ -1501,11 +1447,6 @@ export function createManagerTools(state: {
             .find(Boolean);
           if (pluginOwnedType) {
             throw new Error(`Plugin-owned Widget type requires its enabled plugin Tool: ${pluginOwnedType}`);
-          }
-          const commentary = Array.isArray(args.commentary_texts) ? args.commentary_texts : [];
-          for (const item of commentary) {
-            const text = String(item || "").trim();
-            if (text) state.voiceSurface.commentaryTexts.push(text);
           }
           if (args.progress && typeof args.progress === "object" && !Array.isArray(args.progress)) {
             state.voiceSurface.progress = args.progress as Record<string, unknown>;
@@ -1754,6 +1695,7 @@ function systemPrompt(
       placement: "host_shell",
       provider: config?.provider_name || "unknown",
       model: config?.model || config?.model_name || "unknown",
+      harness: config?.agent_type || "unknown",
     },
     voiceUiRules: responseMode === "voice" && voiceUiRules?.prompt
       ? {
@@ -1821,12 +1763,12 @@ function managerAgentSkillProjection(
     }
   }
   const definitions = (skills ?? [])
-    .filter((skill) => skill.source === "plugin" && skill.content?.trim())
+    .filter((skill) => skill.source === "plugin" && skill.projection_content?.trim())
     .map((skill) => ({
       id: skill.id,
       name: skill.name || skill.id,
       description: skill.description || "Selected HomeRail plugin Skill",
-      content: skill.content!,
+      content: skill.projection_content!,
     }));
   return {
     mode: "explicit",
@@ -1835,10 +1777,22 @@ function managerAgentSkillProjection(
   };
 }
 
-async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
+async function handleChat(
+  body: ChatRequest,
+  hooks: ManagerAgentChatHooks = {},
+): Promise<Record<string, unknown>> {
   const message = typeof body.message === "string" ? body.message.trim() : "";
   if (!message) throw new Error("Missing required field: message");
-  const sessionId = body.session_id?.trim() || `manager-${randomUUID()}`;
+  const agentBackend = normalizeBackend(body.agent_config?.agent_type);
+  const claudeNativeSession = agentBackend === "claude-sdk";
+  const requestedSessionId = body.session_id?.trim();
+  const nativeSessionId = claudeNativeSession && validClaudeSessionId(requestedSessionId)
+    ? requestedSessionId.trim()
+    : undefined;
+  const resumeNativeSession = claudeNativeSession && Boolean(nativeSessionId);
+  const sessionId = claudeNativeSession
+    ? nativeSessionId ?? randomUUID()
+    : requestedSessionId || `manager-${randomUUID()}`;
   const now = new Date().toISOString();
   const session = sessions.get(sessionId) ?? {
     session_id: sessionId,
@@ -1860,6 +1814,8 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
   const toolCalls: ToolTrace[] = [];
   const toolResults: ToolResultTrace[] = [];
   const texts: string[] = [];
+  const progressTexts: string[] = [];
+  const commentaryTexts: string[] = [];
   const agentErrors: string[] = [];
   const responseMode = body.response_mode === "voice" ? "voice" : "chat";
   const requiredToolCalls = normalizeManagerAgentRequiredToolCalls(body.required_tool_calls);
@@ -1878,7 +1834,7 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     body.canvas_context,
     body.manager_skills,
   );
-  const agent = createAgentClient(normalizeBackend(body.agent_config?.agent_type));
+  const agent = createAgentClient(agentBackend);
   const config = body.agent_config ?? {};
   const model = String(config.model || config.model_name || "");
   const turnTimeoutMs = managerAgentTurnTimeoutMs();
@@ -1904,17 +1860,38 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     apiKey: String(config.api_key || ""),
     baseUrl: String(config.base_url || ""),
     workspace: projectWorkspace(),
+    claudePermissionMode: "dontAsk",
+    ...(claudeNativeSession
+      ? {
+        sessionId,
+        resumeSession: resumeNativeSession,
+        persistSession: true,
+      }
+      : {}),
     abortSignal: abortController.signal,
     skillProjection: managerAgentSkillProjection(body.manager_skills),
   };
   try {
     for await (const event of agent.run(
-      buildPrompt(session, message, continueChat, body.canvas_context, body.dag_context),
+      buildPrompt(
+        session,
+        message,
+        continueChat && !(claudeNativeSession && resumeNativeSession),
+        body.canvas_context,
+        body.dag_context,
+      ),
       tools,
       context,
     )) {
       if (event.type === "text") {
         texts.push(event.text);
+      } else if (event.type === "progress") {
+        const text = event.text.trim();
+        if (!text) continue;
+        progressTexts.push(text);
+        hooks.onProgress?.(text);
+      } else if (event.type === "commentary") {
+        commentaryTexts.push(event.text);
       } else if (event.type === "tool_use") {
         toolCalls.push({ id: event.id, name: event.name, input: event.input });
       } else if (event.type === "tool_result") {
@@ -1974,14 +1951,21 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
       run_ids: state.createdRunIds,
     });
   }
-  const finalText = state.finalNotes.at(-1) || compactDeltas(texts) ||
-    (timedOut && state.createdRunIds.length
-      ? responseMode === "voice" ? "任务已经开始，正在继续处理。" : "The task is running."
-      : state.createdRunIds.length
-      ? responseMode === "voice" ? "任务已经开始。" : "Task started."
-      : responseMode === "voice"
-      ? "已处理。"
-      : "Done.");
+  // Each Claude SDK `text` event now represents one complete end-turn
+  // AssistantMessage. Never concatenate it with earlier assistant messages:
+  // tool-bearing assistant messages are emitted separately as `progress`.
+  const finalText = (claudeNativeSession ? texts.at(-1)?.trim() : compactDeltas(texts))
+    || state.finalNotes.at(-1);
+  if (!finalText) {
+    throw new ManagerAgentExecutionError(
+      ["Agent completed without an authored final response"],
+      {
+        observed_tool_calls: toolCalls.map((item) => item.name),
+        objective_tool_calls: state.objectiveToolCalls,
+        run_ids: state.createdRunIds,
+      },
+    );
+  }
   session.messages.push({ role: "user", content: message }, { role: "assistant", content: finalText });
   session.updated_at = new Date().toISOString();
   sessions.set(sessionId, session);
@@ -2034,7 +2018,8 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
     tool_calls: toolCalls,
     tool_results: toolResults,
     ...(agentErrors.length ? { agent_errors: agentErrors } : {}),
-    commentary_texts: state.voiceSurface.commentaryTexts,
+    progress_texts: progressTexts.map((text) => text.trim()).filter(Boolean),
+    commentary_texts: commentaryTexts.map((text) => text.trim()).filter(Boolean),
     project_id: body.project_id ?? process.env.PROJECT_ID ?? null,
     plugin_context: pluginContext ? {
       registry_revision: pluginContext.registry_revision,
@@ -2045,6 +2030,18 @@ async function handleChat(body: ChatRequest): Promise<Record<string, unknown>> {
 
 export function startManagerAgentServer(port = Number(process.env.MANAGER_AGENT_PORT || "9001")): http.Server {
   const turnVerifier = new ManagerAgentTurnEnvelopeVerifier();
+  const authenticateAndHandle = (
+    body: unknown,
+    hooks: ManagerAgentChatHooks = {},
+  ): Promise<Record<string, unknown>> => {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new ManagerAgentTurnAuthenticationError("Manager Agent chat payload must be an object");
+    }
+    const envelope = turnVerifier.authenticate(body as Record<string, unknown>);
+    return envelope
+      ? activeManagerTurn.run(envelope, () => handleChat(body as ChatRequest, hooks))
+      : handleChat(body as ChatRequest, hooks);
+  };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", "http://localhost");
     if (req.method === "GET" && url.pathname === "/health") {
@@ -2058,36 +2055,33 @@ export function startManagerAgentServer(port = Number(process.env.MANAGER_AGENT_
       });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/chat/stream") {
+      res.writeHead(200, {
+        "Content-Type": "application/x-ndjson",
+        "Cache-Control": "no-cache",
+      });
+      readJsonBody(req)
+        .then((body) => authenticateAndHandle(body, {
+          onProgress: (text) => streamLine(res, { type: "progress", text }),
+        }))
+        .then((result) => {
+          streamLine(res, { type: "result", result });
+          res.end();
+        })
+        .catch((err) => {
+          const failure = managerAgentErrorResponse(err);
+          streamLine(res, { type: "error", status: failure.status, ...failure.body });
+          res.end();
+        });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/chat") {
       readJsonBody(req)
-        .then((body) => {
-          if (!body || typeof body !== "object" || Array.isArray(body)) {
-            throw new ManagerAgentTurnAuthenticationError("Manager Agent chat payload must be an object");
-          }
-          const envelope = turnVerifier.authenticate(body as Record<string, unknown>);
-          return envelope
-            ? activeManagerTurn.run(envelope, () => handleChat(body as ChatRequest))
-            : handleChat(body as ChatRequest);
-        })
+        .then((body) => authenticateAndHandle(body))
         .then((result) => json(res, 200, result))
         .catch((err) => {
-          if (err instanceof ManagerAgentTurnAuthenticationError) {
-            json(res, err.statusCode, { error: err.message });
-            return;
-          }
-          if (err instanceof ManagerAgentTurnTimeoutError) {
-            json(res, err.statusCode, { error: err.message, data: err.data });
-            return;
-          }
-          if (err instanceof ManagerAgentObjectiveUnsatisfiedError) {
-            json(res, err.statusCode, { error: err.message, data: err.data });
-            return;
-          }
-          if (err instanceof ManagerAgentExecutionError) {
-            json(res, err.statusCode, { error: err.message, data: err.data });
-            return;
-          }
-          json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+          const failure = managerAgentErrorResponse(err);
+          json(res, failure.status, failure.body);
         });
       return;
     }

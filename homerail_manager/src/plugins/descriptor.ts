@@ -111,7 +111,9 @@ export function validateResolvedPluginDescriptor(
   if (seenSkills.size !== expectedSkills.size) errors.push("resolved skills are incomplete");
 
   const expectedFiles = collectHomerailPluginFileReferences(descriptor.manifest);
-  const actualFiles = [...descriptor.referenced_files].sort((left, right) => left.path.localeCompare(right.path));
+  const actualFiles = [...descriptor.referenced_files].sort((left, right) => (
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  ));
   if (
     actualFiles.length !== expectedFiles.length
     || actualFiles.some((entry, index) => entry.path !== expectedFiles[index])

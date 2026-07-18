@@ -13,7 +13,7 @@ vi.mock("../src/server/edge-tts.js", async (importOriginal) => {
   };
 });
 
-import { _clearStoredConfig } from "../src/server/voice-agent-bootstrap.js";
+import { _clearStoredConfig, _managerAgentHistoryForTest } from "../src/server/voice-agent-bootstrap.js";
 import { _clearStoredVoiceSettings } from "../src/server/voice.js";
 import { BUILTIN_EDGE_TTS_MODEL, synthesizeEdgeTts } from "../src/server/edge-tts.js";
 import { _clearAllSettings, createSetting, listSettings, upsertProvider } from "../src/persistence/llm-settings.js";
@@ -144,6 +144,24 @@ async function readFirstNdjsonLine(response: Response): Promise<Record<string, u
 }
 
 describe("voice bootstrap routes", () => {
+  it("replays only prior user/final turns and never duplicates the current user message", () => {
+    const history = _managerAgentHistoryForTest({
+      conversation: [
+        { id: "u1", role: "user", text: "first", channel: "final", kind: "message", created_at: "2026-07-18T00:00:00Z" },
+        { id: "c1", role: "assistant", text: "codex commentary", channel: "commentary", kind: "message", created_at: "2026-07-18T00:00:01Z" },
+        { id: "p1", role: "assistant", text: "claude progress", channel: "progress", kind: "message", created_at: "2026-07-18T00:00:01Z" },
+        { id: "a1", role: "assistant", text: "first answer", channel: "final", kind: "message", created_at: "2026-07-18T00:00:02Z" },
+        { id: "e1", role: "system", text: "transport failed", channel: "final", kind: "error", created_at: "2026-07-18T00:00:03Z" },
+        { id: "u2", role: "user", text: "current", channel: "final", kind: "message", created_at: "2026-07-18T00:00:04Z" },
+      ],
+    }, "current");
+
+    expect(history).toEqual([
+      { role: "user", content: "first", timestamp: "2026-07-18T00:00:00Z" },
+      { role: "assistant", content: "first answer", timestamp: "2026-07-18T00:00:02Z" },
+    ]);
+  });
+
   let server: http.Server;
   let tmpHome: string;
   let oldHome: string | undefined;
@@ -532,7 +550,7 @@ describe("voice bootstrap routes", () => {
     expect(turnBody.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-agent-blocker" }));
     expect(turnBody.data.workspace.widgets).not.toContainEqual(expect.objectContaining({ id: "manager-run" }));
     expect(turnBody.data.workspace.conversation).toContainEqual(expect.objectContaining({
-      role: "assistant",
+      role: "system",
       kind: "error",
       text: "这次没能完成，我可以继续重试。",
     }));
@@ -1423,14 +1441,16 @@ describe("voice bootstrap routes", () => {
 
   it("streams Manager Agent commentary before the final done event", async () => {
     const fullCommentary = `正在检查项目：${"逐项核对完整的依赖、配置与运行日志。".repeat(8)}`;
+    const secondCommentary = "依赖已核对，正在检查运行状态。";
     _setHostCodexManagerAgentStreamRunnerForTest(async function* (input) {
-      yield { type: "commentary", text: fullCommentary, source: "tool" };
+      yield { type: "commentary", text: fullCommentary, source: "codex" };
+      yield { type: "commentary", text: secondCommentary, source: "codex" };
       yield {
         type: "result",
         result: {
           text: `handled ${input.message}`,
           spoken_text: "处理完成。",
-          commentary_texts: [fullCommentary],
+          commentary_texts: [fullCommentary, secondCommentary],
           session_id: input.session_id || "host-session-stream",
           run_id: null,
           run_ids: [],
@@ -1478,13 +1498,20 @@ describe("voice bootstrap routes", () => {
     expect(stream.status).toBe(200);
     expect(commentaryIndex).toBeGreaterThan(-1);
     expect(doneIndex).toBeGreaterThan(commentaryIndex);
-    expect(commentaryEvents).toHaveLength(1);
+    expect(commentaryEvents).toHaveLength(2);
     expect(commentaryEvents[0]?.event?.text?.length).toBeLessThanOrEqual(120);
     expect(commentaryEvents[0]?.event?.text).not.toBe(fullCommentary);
+    expect(commentaryEvents[1]?.event?.text).toBe(secondCommentary);
     expect(doneWorkspace?.conversation).toContainEqual(expect.objectContaining({
       role: "assistant",
       text: fullCommentary,
       spoken_text: commentaryEvents[0]?.event?.text,
+      channel: "commentary",
+    }));
+    expect(doneWorkspace?.conversation).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      text: secondCommentary,
+      spoken_text: secondCommentary,
       channel: "commentary",
     }));
   });
@@ -1582,6 +1609,63 @@ describe("voice bootstrap routes", () => {
       text: "hello",
       voice: "en-US-MichelleNeural",
     }));
+  });
+
+  it("tests explicit voice HTTP routes and WebSocket handshakes without sending audio", async () => {
+    let httpProbeCalls = 0;
+    const upstream = http.createServer((req, res) => {
+      if (req.method === "HEAD" && req.url === "/v1/audio/transcriptions") {
+        httpProbeCalls += 1;
+        res.writeHead(405, { Allow: "POST" });
+        res.end();
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    const websocket = new WebSocketServer({ server: upstream, path: "/v1/realtime" });
+    const upstreamPort = await listen(upstream);
+    const managerPort = await listen(server);
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${managerPort}/api/voice/endpoints/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoints: [
+            {
+              id: "asr_http",
+              kind: "http",
+              url: `http://127.0.0.1:${upstreamPort}/v1/audio/transcriptions`,
+            },
+            {
+              id: "asr_realtime",
+              kind: "websocket",
+              url: `ws://127.0.0.1:${upstreamPort}/v1/realtime`,
+            },
+          ],
+        }),
+      });
+      const body = await response.json() as {
+        success: boolean;
+        data: {
+          ok: boolean;
+          results: Array<{ id: string; ok: boolean; reachable: boolean; status_code?: number }>;
+        };
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(body.data.ok).toBe(true);
+      expect(body.data.results).toEqual([
+        expect.objectContaining({ id: "asr_http", ok: true, reachable: true, status_code: 405 }),
+        expect.objectContaining({ id: "asr_realtime", ok: true, reachable: true }),
+      ]);
+      expect(httpProbeCalls).toBe(1);
+    } finally {
+      for (const client of websocket.clients) client.terminate();
+      await closeWebSocket(websocket);
+      await close(upstream);
+    }
   });
 
   it("keeps an explicit built-in Edge selection ahead of configured TTS settings", async () => {
@@ -2270,7 +2354,7 @@ describe("voice bootstrap routes", () => {
     };
 
     expect(turn.status).toBe(200);
-    expect(body.data.spoken_text).toBe("已启动执行，我会继续跟进。");
+    expect(body.data.spoken_text).toBe("host codex handled: HomeRail 语音测试，请创建一个一句话任务摘要，不要执行真实操作。");
     expect(body.data.suggested_action).toBeNull();
     expect(body.data.manager.code).toBeUndefined();
     expect(body.data.manager.run_ids).toEqual(["run-host-codex"]);
@@ -2286,7 +2370,7 @@ describe("voice bootstrap routes", () => {
     expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
       role: "assistant",
       text: "host codex handled: HomeRail 语音测试，请创建一个一句话任务摘要，不要执行真实操作。",
-      spoken_text: "已启动执行，我会继续跟进。",
+      spoken_text: "host codex handled: HomeRail 语音测试，请创建一个一句话任务摘要，不要执行真实操作。",
       channel: "final",
     }));
     expect(body.data.workspace.progress_brief.status).toBe("done");
@@ -2401,7 +2485,7 @@ describe("voice bootstrap routes", () => {
     expect(body.data.manager.code).toBe("manager_chat_error");
     expect(body.data.workspace.progress_brief.status).toBe("error");
     expect(body.data.workspace.conversation).toContainEqual(expect.objectContaining({
-      role: "assistant",
+      role: "system",
       kind: "error",
       text: "这次没能完成，我可以继续重试。",
     }));
@@ -2500,7 +2584,7 @@ describe("voice bootstrap routes", () => {
     };
 
     expect(turn.status).toBe(200);
-    expect(body.data.spoken_text).toBe("已启动执行，我会继续跟进。");
+    expect(body.data.spoken_text).toBe("验证任务已启动。");
     expect(body.data.suggested_action).toBeNull();
     expect(body.data.manager.session_id).toBe("host-voice-session");
     expect(body.data.manager.run_id).toBe("run-host-voice-123");
@@ -2859,7 +2943,8 @@ describe("voice bootstrap routes", () => {
       expect(turn.status).toBe(200);
       expect(body.data.workspace.progress_brief.status).toBe(status);
       expect(body.data.manager.text).toBe(explanations[status]);
-      expect(body.data.spoken_text).toBe("处理被阻塞，原因已放到屏幕上。");
+      expect(body.data.spoken_text.length).toBeLessThanOrEqual(80);
+      expect(explanations[status].startsWith(body.data.spoken_text.replace(/…$/, ""))).toBe(true);
       expect(finalMessage).toMatchObject({
         role: "assistant",
         text: explanations[status],
