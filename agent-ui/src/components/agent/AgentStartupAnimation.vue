@@ -34,7 +34,15 @@ const props = withDefaults(defineProps<{
 const { t } = useI18n()
 
 const ICONS = [Target, Code2, Code2, TestTube2, TestTube2, ShieldCheck, Rocket]
-const COLORS = ['#a855f7', '#3b82f6', '#3b82f6', '#f59e0b', '#f59e0b', '#10b981', '#ef4444']
+const COLORS = [
+  'var(--hr-speaking)',
+  'var(--hr-info)',
+  'var(--hr-info)',
+  'var(--hr-warning)',
+  'var(--hr-warning)',
+  'var(--hr-success)',
+  'var(--hr-danger)',
+]
 const labels = computed(() => [
   t('shell.startup.roles.scout'),
   t('shell.startup.roles.engineerA'),
@@ -64,7 +72,7 @@ const nodes = computed<AnimNode[]>(() => {
     id: String(i),
     label,
     icon: ICONS[i] || Bot,
-    color: COLORS[i] || '#8a8a8a',
+    color: COLORS[i] || 'var(--hr-text-3)',
     x: positions[i]?.x ?? CX,
     y: positions[i]?.y ?? CY,
   }))
@@ -151,8 +159,8 @@ const edgePath = (from: AnimNode, to: AnimNode) =>
           </feMerge>
         </filter>
         <linearGradient id="edgeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.5" />
-          <stop offset="100%" stop-color="#10b981" stop-opacity="0.5" />
+          <stop offset="0%" stop-color="var(--hr-info)" stop-opacity="0.5" />
+          <stop offset="100%" stop-color="var(--hr-success)" stop-opacity="0.5" />
         </linearGradient>
       </defs>
 
@@ -205,7 +213,7 @@ const edgePath = (from: AnimNode, to: AnimNode) =>
         <!-- Node body -->
         <rect
           x="-22" y="-18" width="44" height="36" rx="10"
-          :fill="node.color + '15'"
+          :fill="`color-mix(in srgb, ${node.color} 12%, transparent)`"
           :stroke="node.color"
           stroke-width="1.5"
           :filter="pulseOpacity(ni) > 0.1 ? `url(#glow-${node.id})` : 'none'"

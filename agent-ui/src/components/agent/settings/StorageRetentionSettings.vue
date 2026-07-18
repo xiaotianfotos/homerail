@@ -90,37 +90,37 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="mt-5 rounded-lg border border-white/10 bg-white/[0.045] p-4" data-testid="agent-settings-storage-info">
+  <section class="mt-5 rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4" data-testid="agent-settings-storage-info">
     <div class="flex items-center justify-between gap-3">
       <div>
-        <h2 class="font-semibold text-white/88">{{ t('settings.storage.title') }}</h2>
-        <p class="mt-1 text-sm text-white/42">{{ t('settings.storage.description') }}</p>
+        <h2 class="font-semibold text-[var(--hr-text-1)]">{{ t('settings.storage.title') }}</h2>
+        <p class="mt-1 text-sm text-[var(--hr-text-3)]">{{ t('settings.storage.description') }}</p>
       </div>
-      <span v-if="storageInfo" class="rounded-full bg-emerald-500/10 px-2 py-1 text-xs text-emerald-200">{{ t('settings.storage.connected') }}</span>
-      <span v-else class="rounded-full bg-yellow-500/10 px-2 py-1 text-xs text-yellow-200">{{ t(loading ? 'settings.storage.loading' : 'settings.storage.unavailable') }}</span>
+      <span v-if="storageInfo" class="rounded-full bg-[var(--hr-success-soft)] px-2 py-1 text-xs text-[var(--hr-success)]">{{ t('settings.storage.connected') }}</span>
+      <span v-else class="rounded-full bg-[var(--hr-warning-soft)] px-2 py-1 text-xs text-[var(--hr-warning)]">{{ t(loading ? 'settings.storage.loading' : 'settings.storage.unavailable') }}</span>
     </div>
 
     <div v-if="storageInfo" class="mt-4 space-y-4">
       <div class="grid gap-3 sm:grid-cols-3">
         <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
-          <div class="text-xs text-white/42">{{ t('settings.storage.dataRoot') }}</div>
-          <div class="mt-1 break-all font-mono text-sm text-white/75">{{ storageInfo.data_root }}</div>
+          <div class="text-xs text-[var(--hr-text-3)]">{{ t('settings.storage.dataRoot') }}</div>
+          <div class="mt-1 break-all font-mono text-sm text-[var(--hr-text-2)]">{{ storageInfo.data_root }}</div>
         </div>
         <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
-          <div class="text-xs text-white/42">{{ t('settings.storage.runs') }}</div>
+          <div class="text-xs text-[var(--hr-text-3)]">{{ t('settings.storage.runs') }}</div>
           <div class="mt-1 text-lg font-semibold">{{ storageInfo.runs_count }}</div>
         </div>
         <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
-          <div class="text-xs text-white/42">{{ t('settings.storage.sessionsDir') }}</div>
-          <div class="mt-1 break-all font-mono text-sm text-white/75">{{ storageInfo.sessions_dir }}</div>
+          <div class="text-xs text-[var(--hr-text-3)]">{{ t('settings.storage.sessionsDir') }}</div>
+          <div class="mt-1 break-all font-mono text-sm text-[var(--hr-text-2)]">{{ storageInfo.sessions_dir }}</div>
         </div>
       </div>
 
-      <div class="border-t border-white/10 pt-4" data-testid="agent-settings-workspace-retention-form">
+      <div class="border-t border-[var(--hr-border)] pt-4" data-testid="agent-settings-workspace-retention-form">
         <div class="flex items-center justify-between gap-4">
           <div>
             <div class="text-sm font-medium">{{ t('settings.storage.autoCleanup') }}</div>
-            <div class="mt-1 text-xs text-white/42">{{ t('settings.storage.autoCleanupDescription') }}</div>
+            <div class="mt-1 text-xs text-[var(--hr-text-3)]">{{ t('settings.storage.autoCleanupDescription') }}</div>
           </div>
           <label class="flex shrink-0 items-center gap-2 whitespace-nowrap text-sm">
             <input v-model="form.enabled" type="checkbox" class="h-4 w-4 accent-[var(--hr-accent)]" data-testid="agent-settings-workspace-retention-enabled" />
@@ -129,21 +129,21 @@ onMounted(load)
         </div>
         <div class="mt-4 grid gap-3 sm:grid-cols-2">
           <label class="text-sm">
-            <span class="text-white/55">{{ t('settings.storage.successDays') }}</span>
-            <input v-model.number="form.success_days" type="number" min="0" max="3650" step="1" class="mt-1 h-10 w-full rounded-md border border-white/10 bg-[var(--hr-surface-1)] px-3 outline-none focus:border-[var(--hr-accent-border)]" data-testid="agent-settings-workspace-retention-success-days" />
+            <span class="text-[var(--hr-text-2)]">{{ t('settings.storage.successDays') }}</span>
+            <input v-model.number="form.success_days" type="number" min="0" max="3650" step="1" class="mt-1 h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 outline-none focus:border-[var(--hr-accent-border)]" data-testid="agent-settings-workspace-retention-success-days" />
           </label>
           <label class="text-sm">
-            <span class="text-white/55">{{ t('settings.storage.failureDays') }}</span>
-            <input v-model.number="form.failure_days" type="number" min="0" max="3650" step="1" class="mt-1 h-10 w-full rounded-md border border-white/10 bg-[var(--hr-surface-1)] px-3 outline-none focus:border-[var(--hr-accent-border)]" data-testid="agent-settings-workspace-retention-failure-days" />
+            <span class="text-[var(--hr-text-2)]">{{ t('settings.storage.failureDays') }}</span>
+            <input v-model.number="form.failure_days" type="number" min="0" max="3650" step="1" class="mt-1 h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 outline-none focus:border-[var(--hr-accent-border)]" data-testid="agent-settings-workspace-retention-failure-days" />
           </label>
         </div>
         <div class="mt-4 flex flex-wrap justify-end gap-2">
-          <button class="h-9 rounded-md border border-white/10 px-3 text-sm hover:bg-white/5 disabled:opacity-50" :disabled="saving !== null" data-testid="agent-settings-workspace-cleanup-preview" @click="cleanup(true)">
+          <button class="h-9 rounded-md border border-[var(--hr-border)] px-3 text-sm hover:bg-[var(--hr-surface-1)] disabled:opacity-50" :disabled="saving !== null" data-testid="agent-settings-workspace-cleanup-preview" @click="cleanup(true)">
             <Loader2 v-if="saving === 'preview'" class="mr-2 inline h-4 w-4 animate-spin" />
             <FileSearch v-else class="mr-2 inline h-4 w-4" />
             {{ t('settings.storage.preview') }}
           </button>
-          <button class="h-9 rounded-md border border-red-400/30 px-3 text-sm text-red-200 hover:bg-red-400/10 disabled:opacity-50" :class="cleanupConfirmOpen ? 'bg-red-400/10' : ''" :disabled="saving !== null" data-testid="agent-settings-workspace-cleanup-run" @click="cleanupConfirmOpen = !cleanupConfirmOpen">
+          <button class="h-9 rounded-md border border-[var(--hr-danger-border)] px-3 text-sm text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)] disabled:opacity-50" :class="cleanupConfirmOpen ? 'bg-[var(--hr-danger-soft)]' : ''" :disabled="saving !== null" data-testid="agent-settings-workspace-cleanup-run" @click="cleanupConfirmOpen = !cleanupConfirmOpen">
             <Loader2 v-if="saving === 'cleanup'" class="mr-2 inline h-4 w-4 animate-spin" />
             <Trash2 v-else class="mr-2 inline h-4 w-4" />
             {{ t('settings.storage.cleanupNow') }}

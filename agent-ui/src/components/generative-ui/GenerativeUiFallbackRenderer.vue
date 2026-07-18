@@ -41,15 +41,15 @@ const { t } = useI18n()
   display: grid;
   gap: 10px;
   min-height: 100%;
-  border: 1px solid rgba(116, 228, 227, 0.18);
+  border: 1px solid var(--hr-border);
   border-radius: 14px;
-  background: rgba(7, 23, 27, 0.72);
+  background: var(--hr-panel);
   padding: 14px;
-  color: rgba(235, 252, 251, 0.9);
+  color: var(--hr-text-1);
 }
 
 .generative-ui-fallback--unavailable {
-  border-color: rgba(251, 191, 36, 0.35);
+  border-color: var(--hr-warning-border);
 }
 
 .generative-ui-fallback header,
@@ -61,7 +61,7 @@ const { t } = useI18n()
 }
 
 .generative-ui-fallback header span {
-  color: #74e4e3;
+  color: var(--hr-accent);
   font-size: 11px;
   font-weight: 850;
   text-transform: uppercase;
@@ -71,7 +71,7 @@ const { t } = useI18n()
 .generative-ui-fallback small,
 .generative-ui-fallback dd {
   overflow-wrap: anywhere;
-  color: rgba(205, 231, 231, 0.55);
+  color: var(--hr-text-3);
   font-size: 10px;
   font-style: normal;
 }

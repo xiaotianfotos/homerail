@@ -25,6 +25,20 @@
   "general": {
     "title": "常规",
     "description": "这些设置只影响当前设备，并会自动保存。",
+    "appearance": {
+      "title": "外观",
+      "description": "选择视觉外观。外观插件只替换语义颜色，不改变组件行为。",
+      "options": {
+        "cockpit": {
+          "label": "驾驶舱蓝",
+          "description": "带青蓝强调色的专注深色仪表界面。"
+        },
+        "paper": {
+          "label": "纸张浅色",
+          "description": "以中性色和清晰白色层级构成的舒适工作区。"
+        }
+      }
+    },
     "language": {
       "title": "语言",
       "description": "选择 HomeRail 界面使用的语言。",

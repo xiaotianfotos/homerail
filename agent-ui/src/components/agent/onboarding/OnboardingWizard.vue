@@ -357,7 +357,7 @@ watch(activePane, (pane) => {
           </div>
 
           <div v-if="currentStep.id === 'agent' && agentRuntimeReady" class="onboarding-wizard__ready">
-            <Check class="h-5 w-5 text-emerald-400" />
+            <Check class="h-5 w-5 text-[var(--hr-success)]" />
             <div>
               <div class="onboarding-wizard__ready-title">{{ t('onboarding.runtime.ready') }}</div>
               <div class="onboarding-wizard__ready-hint">{{ t('onboarding.runtime.currentHarness', { harness: status.managerAgentHarness || 'manager_agent' }) }}</div>
@@ -398,7 +398,7 @@ watch(activePane, (pane) => {
 
           <!-- ASR / TTS 阶段：已完成 -->
           <div v-else-if="stepStatus(currentStep.id) === 'done'" class="onboarding-wizard__ready">
-            <Check class="h-5 w-5 text-emerald-400" />
+            <Check class="h-5 w-5 text-[var(--hr-success)]" />
             <div>
               <div class="onboarding-wizard__ready-title">{{ t('onboarding.runtime.stepReady', { step: currentStep.title }) }}</div>
               <div class="onboarding-wizard__ready-hint">{{ t('onboarding.runtime.nextAvailable') }}</div>
@@ -424,7 +424,7 @@ watch(activePane, (pane) => {
           </div>
 
           <div v-if="hostShellRequired" class="onboarding-wizard__docker-check">
-            <Terminal :class="cn('h-5 w-5', hostShellReady ? 'text-emerald-400' : 'text-[var(--hr-accent)]')" />
+            <Terminal :class="cn('h-5 w-5', hostShellReady ? 'text-[var(--hr-success)]' : 'text-[var(--hr-accent)]')" />
             <div class="onboarding-wizard__docker-check-copy">
               <div class="onboarding-wizard__docker-check-title">Git Bash / host-shell</div>
               <div class="onboarding-wizard__docker-check-hint">{{ hostShellMessage }}</div>
@@ -435,7 +435,7 @@ watch(activePane, (pane) => {
           </div>
 
           <div class="onboarding-wizard__docker-check">
-            <FolderCheck :class="cn('h-5 w-5', dockerWorkspaceReady ? 'text-emerald-400' : 'text-[var(--hr-accent)]')" />
+            <FolderCheck :class="cn('h-5 w-5', dockerWorkspaceReady ? 'text-[var(--hr-success)]' : 'text-[var(--hr-accent)]')" />
             <div class="onboarding-wizard__docker-check-copy">
               <div class="onboarding-wizard__docker-check-title">{{ t('onboarding.environmentCheck.dockerTitle') }}</div>
               <div class="onboarding-wizard__docker-check-hint">{{ dockerWorkspaceMessage }}</div>
@@ -531,7 +531,7 @@ watch(activePane, (pane) => {
 .onboarding-wizard-overlay__scrim {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.42);
+  background: var(--hr-overlay);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
@@ -548,7 +548,7 @@ watch(activePane, (pane) => {
   border-radius: 22px;
   border: 1px solid var(--hr-accent-border);
   background: var(--hr-panel);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03), 0 30px 90px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--hr-shadow-floating);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
 }
@@ -559,7 +559,7 @@ watch(activePane, (pane) => {
   align-items: center;
   justify-content: space-between;
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--hr-border);
 }
 
 .onboarding-wizard__title {
@@ -583,12 +583,12 @@ watch(activePane, (pane) => {
 .onboarding-wizard__title h2 {
   font-size: 0.95rem;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--hr-text-1);
 }
 
 .onboarding-wizard__title p {
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--hr-text-3);
   margin-top: 0.1rem;
 }
 
@@ -599,13 +599,13 @@ watch(activePane, (pane) => {
   height: 2rem;
   width: 2rem;
   border-radius: 0.5rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--hr-text-3);
   transition: color 160ms ease, background 160ms ease;
 }
 
 .onboarding-wizard__close:hover {
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--hr-text-1);
+  background: var(--hr-control-hover);
 }
 
 .onboarding-wizard__tabs {
@@ -623,8 +623,8 @@ watch(activePane, (pane) => {
   min-width: 6.5rem;
   padding: 0.42rem 0.85rem;
   border-radius: 0.55rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.58);
+  border: 1px solid var(--hr-border);
+  color: var(--hr-text-2);
   font-size: 0.76rem;
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
 }
@@ -632,15 +632,15 @@ watch(activePane, (pane) => {
 .onboarding-wizard__tab--active {
   border-color: var(--hr-accent-border);
   background: var(--hr-accent-soft);
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--hr-text-1);
 }
 
 .onboarding-wizard__tab-dot {
   height: 0.42rem;
   width: 0.42rem;
   border-radius: 9999px;
-  background: rgb(251, 191, 36);
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.14);
+  background: var(--hr-warning);
+  box-shadow: 0 0 0 3px var(--hr-warning-soft);
 }
 
 /* Stepper */
@@ -649,7 +649,7 @@ watch(activePane, (pane) => {
   align-items: stretch;
   gap: 0.4rem;
   padding: 0.75rem 1.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--hr-border);
 }
 
 .onboarding-wizard__step {
@@ -659,8 +659,8 @@ watch(activePane, (pane) => {
   gap: 0.5rem;
   padding: 0.5rem 0.7rem;
   border-radius: 0.6rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--hr-border);
+  background: var(--hr-surface-1);
   transition: border-color 160ms ease, background 160ms ease;
   text-align: left;
 }
@@ -671,8 +671,8 @@ watch(activePane, (pane) => {
 }
 
 .onboarding-wizard__step--done {
-  border-color: rgba(52, 211, 153, 0.35);
-  background: rgba(52, 211, 153, 0.06);
+  border-color: var(--hr-success-border);
+  background: var(--hr-success-soft);
 }
 
 .onboarding-wizard__step-index {
@@ -685,8 +685,8 @@ watch(activePane, (pane) => {
   border-radius: 9999px;
   font-size: 0.7rem;
   font-weight: 600;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.6);
+  background: var(--hr-control);
+  color: var(--hr-text-2);
 }
 
 .onboarding-wizard__step--active .onboarding-wizard__step-index {
@@ -695,8 +695,8 @@ watch(activePane, (pane) => {
 }
 
 .onboarding-wizard__step--done .onboarding-wizard__step-index {
-  background: rgba(52, 211, 153, 0.2);
-  color: rgba(167, 243, 208, 0.95);
+  background: var(--hr-success-soft);
+  color: var(--hr-success);
 }
 
 .onboarding-wizard__step-text {
@@ -709,7 +709,7 @@ watch(activePane, (pane) => {
 .onboarding-wizard__step-text strong {
   font-size: 0.8rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--hr-text-1);
 }
 
 .onboarding-wizard__step-optional {
@@ -717,8 +717,8 @@ watch(activePane, (pane) => {
   font-style: normal;
   padding: 0.05rem 0.35rem;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.4);
+  background: var(--hr-control);
+  color: var(--hr-text-3);
 }
 
 /* Body */
@@ -737,23 +737,23 @@ watch(activePane, (pane) => {
   gap: 0.5rem;
   font-size: 0.85rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--hr-text-1);
 }
 
 .onboarding-wizard__body-title em {
   font-size: 0.72rem;
   font-weight: 400;
   font-style: normal;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--hr-text-3);
   margin-left: 0.2rem;
 }
 
 .onboarding-wizard__codex-hint {
   padding: 0.6rem 0.75rem;
   border-radius: 0.6rem;
-  background: rgba(251, 191, 36, 0.06);
-  border: 1px solid rgba(251, 191, 36, 0.18);
-  color: rgba(254, 243, 199, 0.8);
+  background: var(--hr-warning-soft);
+  border: 1px solid var(--hr-warning-border);
+  color: var(--hr-warning);
   font-size: 0.75rem;
   line-height: 1.5;
 }
@@ -764,7 +764,7 @@ watch(activePane, (pane) => {
 }
 
 .onboarding-wizard__existing-title {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--hr-text-3);
   font-size: 0.72rem;
   font-weight: 700;
 }
@@ -779,7 +779,7 @@ watch(activePane, (pane) => {
   border-radius: 0.6rem;
   border: 1px solid color-mix(in srgb, var(--hr-accent) 18%, transparent);
   background: var(--hr-accent-soft);
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--hr-text-1);
   text-align: left;
 }
 
@@ -811,7 +811,7 @@ watch(activePane, (pane) => {
 }
 
 .onboarding-wizard__existing-agent em {
-  color: rgba(255, 255, 255, 0.48);
+  color: var(--hr-text-3);
   font-size: 0.68rem;
   font-style: normal;
 }
@@ -835,10 +835,10 @@ watch(activePane, (pane) => {
   align-items: center;
   padding: 0.55rem 0.65rem;
   border-radius: 0.55rem;
-  border: 1px solid rgba(251, 191, 36, 0.16);
-  background: rgba(251, 191, 36, 0.05);
+  border: 1px solid var(--hr-warning-border);
+  background: var(--hr-warning-soft);
   font-size: 0.72rem;
-  color: rgba(254, 243, 199, 0.82);
+  color: var(--hr-warning);
 }
 
 .onboarding-wizard__blocker span {
@@ -847,7 +847,7 @@ watch(activePane, (pane) => {
 }
 
 .onboarding-wizard__blocker code {
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--hr-text-3);
   font-size: 0.66rem;
 }
 
@@ -869,7 +869,7 @@ watch(activePane, (pane) => {
 .onboarding-wizard__docker-check-title {
   font-size: 0.78rem;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--hr-text-1);
 }
 
 .onboarding-wizard__docker-check-hint {
@@ -877,7 +877,7 @@ watch(activePane, (pane) => {
   overflow-wrap: anywhere;
   font-size: 0.7rem;
   line-height: 1.35;
-  color: rgba(255, 255, 255, 0.52);
+  color: var(--hr-text-3);
 }
 
 .onboarding-wizard__docker-check-button {
@@ -911,16 +911,16 @@ watch(activePane, (pane) => {
   min-width: 3.7rem;
   padding: 0.28rem 0.55rem;
   border-radius: 9999px;
-  border: 1px solid rgba(251, 191, 36, 0.25);
-  color: rgba(254, 243, 199, 0.85);
+  border: 1px solid var(--hr-warning-border);
+  color: var(--hr-warning);
   font-size: 0.7rem;
-  background: rgba(251, 191, 36, 0.06);
+  background: var(--hr-warning-soft);
 }
 
 .onboarding-wizard__check-pill--ready {
-  border-color: rgba(52, 211, 153, 0.28);
-  color: rgba(167, 243, 208, 0.92);
-  background: rgba(52, 211, 153, 0.07);
+  border-color: var(--hr-success-border);
+  color: var(--hr-success);
+  background: var(--hr-success-soft);
 }
 
 .onboarding-wizard__ready {
@@ -929,19 +929,19 @@ watch(activePane, (pane) => {
   gap: 0.6rem;
   padding: 0.8rem 0.9rem;
   border-radius: 0.7rem;
-  border: 1px solid rgba(52, 211, 153, 0.2);
-  background: rgba(52, 211, 153, 0.05);
+  border: 1px solid var(--hr-success-border);
+  background: var(--hr-success-soft);
 }
 
 .onboarding-wizard__ready-title {
   font-size: 0.82rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--hr-text-1);
 }
 
 .onboarding-wizard__ready-hint {
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--hr-text-3);
   margin-top: 0.15rem;
 }
 
@@ -951,7 +951,7 @@ watch(activePane, (pane) => {
   align-items: center;
   justify-content: space-between;
   padding: 0.85rem 1.25rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--hr-border);
 }
 
 .onboarding-wizard__footer-right {
@@ -963,15 +963,15 @@ watch(activePane, (pane) => {
 .onboarding-wizard__ghost {
   padding: 0.45rem 0.9rem;
   border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--hr-border);
+  color: var(--hr-text-2);
   font-size: 0.78rem;
   transition: background 160ms ease, color 160ms ease;
 }
 
 .onboarding-wizard__ghost:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.85);
+  background: var(--hr-control-hover);
+  color: var(--hr-text-1);
 }
 
 .onboarding-wizard__primary {
@@ -996,9 +996,9 @@ watch(activePane, (pane) => {
 .onboarding-wizard__primary--disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.5);
+  border-color: var(--hr-border);
+  background: var(--hr-control);
+  color: var(--hr-text-3);
 }
 
 /* Transition */

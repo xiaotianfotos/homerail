@@ -90,18 +90,18 @@ function submit(): void {
 
 <template>
   <div class="space-y-5 p-5">
-    <section class="space-y-3 border-b border-white/8 pb-5">
-      <div class="text-xs font-medium text-gray-400">{{ t('settings.models.edit.provider') }}</div>
+    <section class="space-y-3 border-b border-[var(--hr-border)] pb-5">
+      <div class="text-xs font-medium text-[var(--hr-text-2)]">{{ t('settings.models.edit.provider') }}</div>
       <div
-        class="flex min-h-11 items-center justify-between gap-3 rounded-md border border-white/10 bg-white/[0.025] px-3"
+        class="flex min-h-11 items-center justify-between gap-3 rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3"
       >
         <div class="min-w-0">
-          <div class="truncate text-sm text-gray-100">{{ setting.provider_name }}</div>
-          <div class="truncate text-[11px] text-gray-500">
+          <div class="truncate text-sm text-[var(--hr-text-1)]">{{ setting.provider_name }}</div>
+          <div class="truncate text-[11px] text-[var(--hr-text-3)]">
             {{ setting.provider_id }} · {{ setting.endpoint_name || setting.endpoint_id }}
           </div>
         </div>
-        <span class="inline-flex flex-shrink-0 items-center gap-1 text-xs text-gray-500">
+        <span class="inline-flex flex-shrink-0 items-center gap-1 text-xs text-[var(--hr-text-3)]">
           <LockKeyhole class="h-3.5 w-3.5" />
           {{ t('settings.models.readOnly') }}
         </span>
@@ -110,24 +110,24 @@ function submit(): void {
 
     <section class="grid gap-3 sm:grid-cols-2">
       <label class="space-y-1">
-        <span class="text-xs text-gray-500">{{ t('settings.models.form.modelName') }}</span>
+        <span class="text-xs text-[var(--hr-text-3)]">{{ t('settings.models.form.modelName') }}</span>
         <div
-          class="flex h-10 items-center rounded-md border border-white/8 bg-white/[0.02] px-3 font-mono text-sm text-gray-400"
+          class="flex h-10 items-center rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 font-mono text-sm text-[var(--hr-text-2)]"
         >
           {{ setting.model_name }}
         </div>
       </label>
       <label class="space-y-1">
-        <span class="text-xs text-gray-500">{{ t('settings.models.form.aliasPlaceholder') }}</span>
+        <span class="text-xs text-[var(--hr-text-3)]">{{ t('settings.models.form.aliasPlaceholder') }}</span>
         <input
           v-model="displayName"
-          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+          class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         />
       </label>
     </section>
 
     <section class="space-y-2">
-      <div class="text-xs font-medium text-gray-400">
+      <div class="text-xs font-medium text-[var(--hr-text-2)]">
         {{ t('settings.models.form.capabilities') }}
       </div>
       <div class="flex flex-wrap gap-2">
@@ -147,36 +147,36 @@ function submit(): void {
 
     <section v-if="setting.supports_tts" class="grid gap-3 sm:grid-cols-3">
       <label class="space-y-1">
-        <span class="text-xs text-gray-500">{{ t('settings.models.form.voice') }}</span>
+        <span class="text-xs text-[var(--hr-text-3)]">{{ t('settings.models.form.voice') }}</span>
         <input
           v-model="ttsVoice"
-          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+          class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         />
       </label>
       <label class="space-y-1">
-        <span class="text-xs text-gray-500">{{ t('settings.models.edit.format') }}</span>
+        <span class="text-xs text-[var(--hr-text-3)]">{{ t('settings.models.edit.format') }}</span>
         <input
           v-model="ttsFormat"
-          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+          class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         />
       </label>
       <label class="space-y-1">
-        <span class="text-xs text-gray-500">{{ t('settings.models.edit.sampleRate') }}</span>
+        <span class="text-xs text-[var(--hr-text-3)]">{{ t('settings.models.edit.sampleRate') }}</span>
         <input
           v-model.number="ttsSampleRate"
           type="number"
           min="1"
-          class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+          class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         />
       </label>
     </section>
 
     <label class="block space-y-1">
-      <span class="text-xs font-medium text-gray-400">API Key</span>
+      <span class="text-xs font-medium text-[var(--hr-text-2)]">API Key</span>
       <input
         v-model="apiKey"
         type="password"
-        class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+        class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         :placeholder="t('settings.models.form.keepKey')"
       />
     </label>
@@ -186,24 +186,24 @@ function submit(): void {
         <input
           v-model="isDefault"
           type="checkbox"
-          class="h-4 w-4 rounded border-white/20 bg-[#343434]"
+          class="h-4 w-4 rounded border-[var(--hr-border-strong)] bg-[var(--hr-control)]"
         />
-        <span class="text-sm text-gray-300">{{ t('settings.models.setDefault') }}</span>
+        <span class="text-sm text-[var(--hr-text-2)]">{{ t('settings.models.setDefault') }}</span>
       </label>
       <label class="flex cursor-pointer items-center gap-2">
         <input
           v-model="isActive"
           type="checkbox"
-          class="h-4 w-4 rounded border-white/20 bg-[#343434]"
+          class="h-4 w-4 rounded border-[var(--hr-border-strong)] bg-[var(--hr-control)]"
         />
-        <span class="text-sm text-gray-300">{{ t('settings.actions.enable') }}</span>
+        <span class="text-sm text-[var(--hr-text-2)]">{{ t('settings.actions.enable') }}</span>
       </label>
     </div>
 
     <div class="flex justify-end gap-2 pt-2">
       <button
         type="button"
-        class="rounded-md border border-white/10 px-4 py-2 text-sm text-gray-400 hover:bg-white/5"
+        class="rounded-md border border-[var(--hr-border)] px-4 py-2 text-sm text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)]"
         @click="emit('cancel')"
       >
         {{ t('settings.actions.cancel') }}

@@ -88,7 +88,7 @@ onMounted(() => { void refresh() })
           <Boxes class="h-4 w-4 text-[var(--hr-accent)]" />
           {{ t('settings.plugins.registry') }}
         </div>
-        <p class="mt-1 text-xs text-white/45">
+        <p class="mt-1 text-xs text-[var(--hr-text-3)]">
           {{ t('settings.plugins.revision', { revision: registry?.registry_revision ?? 0 }) }}
           <span v-if="registry" class="ml-2 font-mono">{{ registry.registry_fingerprint.slice(0, 12) }}</span>
         </p>
@@ -109,7 +109,7 @@ onMounted(() => { void refresh() })
       data-testid="agent-settings-plugins-error"
       role="alert"
       aria-live="polite"
-      class="rounded-xl border border-red-400/20 bg-red-400/8 px-4 py-3 text-sm text-red-200"
+      class="rounded-xl border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-4 py-3 text-sm text-[var(--hr-danger)]"
     >
       {{ error }}
     </p>
@@ -119,18 +119,18 @@ onMounted(() => { void refresh() })
         v-for="plugin in registry?.plugins ?? []"
         :key="`${plugin.id}@${plugin.version}`"
         :data-testid="`agent-settings-plugin-${plugin.id}`"
-        class="grid gap-4 rounded-2xl border border-white/10 bg-[var(--hr-surface-1)] p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+        class="grid gap-4 rounded-2xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
       >
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
-            <h2 class="truncate font-semibold text-white/90">{{ plugin.name }}</h2>
-            <span class="rounded-full bg-white/6 px-2 py-0.5 font-mono text-[10px] text-white/50">{{ plugin.version }}</span>
+            <h2 class="truncate font-semibold text-[var(--hr-text-1)]">{{ plugin.name }}</h2>
+            <span class="rounded-full bg-[var(--hr-surface-1)] px-2 py-0.5 font-mono text-[10px] text-[var(--hr-text-3)]">{{ plugin.version }}</span>
             <span v-if="plugin.locked" class="inline-flex items-center gap-1 rounded-full bg-[var(--hr-surface-2)] px-2 py-0.5 text-[10px] text-[var(--hr-text-2)]">
               <LockKeyhole class="h-3 w-3" /> {{ t('settings.plugins.core') }}
             </span>
           </div>
-          <p class="mt-1 break-all font-mono text-xs text-white/42">{{ plugin.id }}</p>
-          <div class="mt-3 flex flex-wrap gap-2 text-[11px] text-white/55">
+          <p class="mt-1 break-all font-mono text-xs text-[var(--hr-text-3)]">{{ plugin.id }}</p>
+          <div class="mt-3 flex flex-wrap gap-2 text-[11px] text-[var(--hr-text-2)]">
             <span>{{ t('settings.plugins.counts.capabilities', { count: plugin.capabilities.length }) }}</span>
             <span>{{ t('settings.plugins.counts.skills', { count: plugin.skills.length }) }}</span>
             <span>{{ t('settings.plugins.counts.tools', { count: plugin.tools.length }) }}</span>
@@ -139,7 +139,7 @@ onMounted(() => { void refresh() })
           </div>
         </div>
         <label class="inline-flex items-center justify-between gap-3 md:justify-end">
-          <span class="text-xs" :class="plugin.enabled ? 'text-emerald-200' : 'text-white/45'">
+          <span class="text-xs" :class="plugin.enabled ? 'text-[var(--hr-success)]' : 'text-[var(--hr-text-3)]'">
             {{ plugin.enabled ? t('settings.plugins.enabled') : t('settings.plugins.disabled') }}
           </span>
           <input
@@ -158,7 +158,7 @@ onMounted(() => { void refresh() })
             aria-hidden="true"
             class="relative inline-flex h-6 w-11 flex-none rounded-full border transition-colors duration-150 peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--hr-accent-border)] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-black"
             :class="[
-              plugin.enabled ? 'border-[var(--hr-accent)] bg-[var(--hr-accent)]' : 'border-white/20 bg-white/10',
+              plugin.enabled ? 'border-[var(--hr-accent)] bg-[var(--hr-accent)]' : 'border-[var(--hr-border-strong)] bg-[var(--hr-surface-2)]',
               plugin.locked || loading || saving !== null ? 'cursor-not-allowed opacity-45' : 'cursor-pointer',
             ]"
           >
@@ -171,7 +171,7 @@ onMounted(() => { void refresh() })
       </article>
     </div>
 
-    <p v-if="!loading && registry && !registry.plugins.length" class="rounded-2xl border border-dashed border-white/12 px-4 py-8 text-center text-sm text-white/40">
+    <p v-if="!loading && registry && !registry.plugins.length" class="rounded-2xl border border-dashed border-[var(--hr-border-strong)] px-4 py-8 text-center text-sm text-[var(--hr-text-3)]">
       {{ t('settings.plugins.empty') }}
     </p>
   </section>

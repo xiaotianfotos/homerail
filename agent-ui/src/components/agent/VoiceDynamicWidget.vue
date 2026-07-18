@@ -5,6 +5,7 @@ import XiaohongshuNoteWidget from './widgets/XiaohongshuNoteWidget.vue'
 import TopicOutlineWidget from './widgets/TopicOutlineWidget.vue'
 import SlideDeckWidget from './widgets/SlideDeckWidget.vue'
 import type { VoiceWidget } from '@/api/agent'
+import { useUiStore } from '@/stores/ui-store'
 
 type WidgetMetric = {
   label: string
@@ -56,6 +57,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
+const uiStore = useUiStore()
 
 const data = computed(() => props.widget.data ?? {})
 const uiState = computed(() => String(data.value.ui_state || 'visible'))
@@ -134,6 +136,17 @@ const chartValues = computed<WidgetChartValue[]>(() => {
   })).filter(item => item.label || item.value > 0)
 })
 const maxChartValue = computed(() => Math.max(1, ...chartValues.value.map(item => item.value)))
+const embeddedAppearance = computed(() => {
+  void uiStore.appearanceId
+  if (typeof document === 'undefined') {
+    return { colorScheme: uiStore.appearance.colorScheme, text: '#edf4fc' }
+  }
+  const styles = getComputedStyle(document.documentElement)
+  return {
+    colorScheme: uiStore.appearance.colorScheme,
+    text: styles.getPropertyValue('--hr-text-1').trim() || '#edf4fc',
+  }
+})
 const htmlDocument = computed(() => {
   const html = rawString(data.value.html, 20000)
   if (!html) return ''
@@ -146,10 +159,10 @@ const htmlDocument = computed(() => {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <base target="_blank">
 <style>
-:root { color-scheme: dark; }
+:root { color-scheme: ${embeddedAppearance.value.colorScheme}; }
 * { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; min-height: 100%; overflow: hidden; background: transparent; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-body { color: #f8ffff; }
+body { color: ${embeddedAppearance.value.text}; }
 ${css}
 </style>
 </head>
@@ -301,21 +314,21 @@ function clampNumber(value: unknown): number {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  border: 1px solid rgba(122, 255, 238, 0.18);
+  border: 1px solid var(--hr-accent-border);
   border-radius: 18px;
   padding: 18px;
   overflow: auto;
   background:
-    radial-gradient(circle at 78% 8%, rgba(128, 190, 255, 0.12), transparent 34%),
-    linear-gradient(135deg, rgba(19, 44, 50, 0.72), rgba(8, 13, 20, 0.82));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    radial-gradient(circle at 78% 8%, var(--hr-info-soft), transparent 34%),
+    var(--hr-panel);
+  box-shadow: inset 0 1px 0 var(--hr-surface-1);
 }
 
 .voice-dynamic-widget--embedded {
   min-height: 118px;
   border-radius: 12px;
   padding: 14px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--hr-surface-1);
 }
 
 .voice-dynamic-widget--compact {
@@ -332,7 +345,7 @@ function clampNumber(value: unknown): number {
 
 .voice-dynamic-widget__kicker {
   margin-bottom: 20px;
-  color: #74e4e3;
+  color: var(--hr-accent);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0;
@@ -348,7 +361,7 @@ function clampNumber(value: unknown): number {
 
 .voice-dynamic-widget__head h2 {
   margin: 0;
-  color: #f5fbff;
+  color: var(--hr-text-1);
   font-size: clamp(20px, 2vw, 30px);
   font-weight: 850;
   line-height: 1.12;
@@ -361,15 +374,15 @@ function clampNumber(value: unknown): number {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 5px 9px;
-  color: rgba(240, 255, 255, 0.82);
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--hr-text-2);
+  background: var(--hr-control);
   font-size: 11px;
   font-weight: 800;
 }
 
 .voice-dynamic-widget p {
   margin: 16px 0 0;
-  color: rgba(235, 244, 246, 0.78);
+  color: var(--hr-text-2);
   font-size: 14px;
   line-height: 1.7;
 }
@@ -411,29 +424,29 @@ function clampNumber(value: unknown): number {
 
 .voice-dynamic-widget__metric {
   min-height: 78px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-border);
   border-radius: 14px;
   padding: 13px;
-  background: rgba(0, 0, 0, 0.16);
+  background: var(--hr-surface-1);
 }
 
 .voice-dynamic-widget__metric strong {
   display: block;
-  color: #f9ffff;
+  color: var(--hr-text-1);
   font-size: 28px;
   line-height: 1;
 }
 
 .voice-dynamic-widget__metric small {
   margin-left: 3px;
-  color: rgba(224, 250, 250, 0.75);
+  color: var(--hr-text-2);
   font-size: 13px;
 }
 
 .voice-dynamic-widget__metric span {
   display: block;
   margin-top: 8px;
-  color: rgba(208, 232, 232, 0.7);
+  color: var(--hr-text-3);
   font-size: 12px;
 }
 
@@ -450,21 +463,21 @@ function clampNumber(value: unknown): number {
   grid-template-columns: 40px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-border);
   border-radius: 14px;
   padding: 10px;
-  background: rgba(0, 0, 0, 0.16);
+  background: var(--hr-surface-1);
 }
 
 .voice-dynamic-widget__node[data-status*="running"],
 .voice-dynamic-widget__node[data-status*="active"] {
-  border-color: rgba(91, 255, 231, 0.45);
-  box-shadow: 0 0 22px rgba(29, 233, 210, 0.14);
+  border-color: var(--hr-success-border);
+  box-shadow: 0 0 22px var(--hr-success-soft);
 }
 
 .voice-dynamic-widget__node[data-status*="failed"],
 .voice-dynamic-widget__node[data-status*="error"] {
-  border-color: rgba(255, 112, 112, 0.48);
+  border-color: var(--hr-danger-border);
 }
 
 .voice-dynamic-widget__node-ring {
@@ -473,8 +486,8 @@ function clampNumber(value: unknown): number {
   width: 38px;
   height: 38px;
   border-radius: 999px;
-  color: #dffffd;
-  background: conic-gradient(from 180deg, rgba(76, 255, 234, 0.9), rgba(89, 137, 255, 0.8), rgba(255, 255, 255, 0.08));
+  color: var(--hr-on-accent);
+  background: conic-gradient(from 180deg, var(--hr-accent), var(--hr-speaking), var(--hr-surface-2));
   font-size: 10px;
   font-weight: 900;
 }
@@ -482,7 +495,7 @@ function clampNumber(value: unknown): number {
 .voice-dynamic-widget__node-body strong,
 .voice-dynamic-widget__time-item strong {
   display: block;
-  color: rgba(245, 255, 255, 0.94);
+  color: var(--hr-text-1);
   font-size: 14px;
 }
 
@@ -490,7 +503,7 @@ function clampNumber(value: unknown): number {
 .voice-dynamic-widget__time-item span {
   display: block;
   margin-top: 3px;
-  color: rgba(206, 230, 230, 0.66);
+  color: var(--hr-text-3);
   font-size: 12px;
 }
 
@@ -511,12 +524,12 @@ function clampNumber(value: unknown): number {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #65f7e8;
-  box-shadow: 0 0 16px rgba(101, 247, 232, 0.65);
+  background: var(--hr-accent);
+  box-shadow: 0 0 16px var(--hr-focus-ring);
 }
 
 .voice-dynamic-widget__time-item time {
-  color: rgba(198, 230, 232, 0.65);
+  color: var(--hr-text-3);
   font-size: 12px;
   font-weight: 800;
 }
@@ -526,14 +539,14 @@ function clampNumber(value: unknown): number {
   grid-template-columns: 74px minmax(0, 1fr) 42px;
   gap: 10px;
   align-items: center;
-  color: rgba(230, 246, 248, 0.8);
+  color: var(--hr-text-2);
   font-size: 12px;
 }
 
 .voice-dynamic-widget__bar-row div {
   height: 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hr-surface-2);
   overflow: hidden;
 }
 
@@ -541,11 +554,11 @@ function clampNumber(value: unknown): number {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #45f0df, #7a9bff);
+  background: linear-gradient(90deg, var(--hr-accent), var(--hr-speaking));
 }
 
 .voice-dynamic-widget__bar-row strong {
-  color: rgba(245, 255, 255, 0.9);
+  color: var(--hr-text-1);
   text-align: right;
 }
 
@@ -562,14 +575,14 @@ function clampNumber(value: unknown): number {
 .voice-dynamic-widget__steps li {
   border-radius: 10px;
   padding: 8px 10px;
-  color: rgba(229, 244, 244, 0.76);
-  background: rgba(255, 255, 255, 0.055);
+  color: var(--hr-text-2);
+  background: var(--hr-surface-1);
   font-size: 13px;
   line-height: 1.45;
 }
 
 .voice-dynamic-widget__steps-item--active {
-  color: #ecffff !important;
-  background: rgba(77, 255, 232, 0.16) !important;
+  color: var(--hr-accent) !important;
+  background: var(--hr-accent-soft) !important;
 }
 </style>

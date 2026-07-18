@@ -43,8 +43,8 @@ const timestamp = computed(() => {
 })
 
 const dotColor = computed(() => {
-  if (props.isError === true) return '#ef4444'
-  return '#22c55e'
+  if (props.isError === true) return 'var(--hr-danger)'
+  return 'var(--hr-success)'
 })
 
 const displayName = computed(() => props.rendered?.displayName || props.toolName)
@@ -240,14 +240,14 @@ function toggleExpand() {
 }
 
 .tool-result {
-  background: rgba(34, 197, 94, 0.1);
-  border: 1px solid rgba(34, 197, 94, 0.3);
-  color: #86efac;
+  background: var(--hr-success-soft);
+  border: 1px solid var(--hr-success-border);
+  color: var(--hr-success);
 }
 
 .tool-result.is-error {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: #fca5a5;
+  background: var(--hr-danger-soft);
+  border: 1px solid var(--hr-danger-border);
+  color: var(--hr-danger);
 }
 </style>

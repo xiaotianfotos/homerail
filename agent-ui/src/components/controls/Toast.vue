@@ -45,23 +45,32 @@ defineExpose({
 }
 
 .toast {
-  @apply flex min-h-11 min-w-[240px] max-w-[680px] items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm shadow-2xl backdrop-blur-xl;
+  @apply flex min-h-11 min-w-[240px] max-w-[680px] items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm backdrop-blur-xl;
+  box-shadow: var(--hr-shadow-floating);
 }
 
 .toast-success {
-  @apply border-emerald-300/25 bg-[#0d1b16]/95 text-emerald-100;
+  border-color: var(--hr-success-border);
+  background: color-mix(in srgb, var(--hr-success) 12%, var(--hr-panel));
+  color: var(--hr-success);
 }
 
 .toast-error {
-  @apply border-red-300/25 bg-[#230f12]/95 text-red-100;
+  border-color: var(--hr-danger-border);
+  background: color-mix(in srgb, var(--hr-danger) 12%, var(--hr-panel));
+  color: var(--hr-danger);
 }
 
 .toast-info {
-  @apply border-cyan-200/20 bg-[#0b181b]/95 text-cyan-50;
+  border-color: var(--hr-info-border);
+  background: color-mix(in srgb, var(--hr-info) 12%, var(--hr-panel));
+  color: var(--hr-info);
 }
 
 .toast-warning {
-  @apply border-yellow-200/25 bg-[#221b0a]/95 text-yellow-100;
+  border-color: var(--hr-warning-border);
+  background: color-mix(in srgb, var(--hr-warning) 12%, var(--hr-panel));
+  color: var(--hr-warning);
 }
 
 .toast-icon {

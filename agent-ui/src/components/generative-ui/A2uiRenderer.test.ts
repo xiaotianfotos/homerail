@@ -149,8 +149,8 @@ describe('A2uiRenderer', () => {
     expect([...mounted.querySelectorAll<HTMLElement>('.hr-a2ui__bar-chart > div')].map(item => item.dataset.tone)).toEqual([
       'info', 'positive', 'warning', 'critical',
     ])
-    expect(rendererSource).toContain(".homerail-a2ui [data-tone='info'] { --tone: #59b8ff; }")
-    expect(rendererSource).toContain(".homerail-a2ui [data-tone='positive'] { --tone: #45d58a; }")
+    expect(rendererSource).toContain(".homerail-a2ui [data-tone='info'] { --tone: var(--hr-info); }")
+    expect(rendererSource).toContain(".homerail-a2ui [data-tone='positive'] { --tone: var(--hr-success); }")
   })
 
   it('renders camelCase Metric, Table, DAG, and passive Artifact components', async () => {

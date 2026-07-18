@@ -723,20 +723,20 @@ function skillRuntimeStatusLabel(skill: Skill): string {
 }
 
 function skillRuntimeStatusClass(skill: Skill): string {
-  if (skill.upload_status === 'error') return 'bg-red-500/10 text-red-300'
-  if (skill.upload_status === 'installing') return 'bg-yellow-500/10 text-yellow-200'
-  if (skill.runtime_status === 'runtime_available') return 'bg-emerald-500/10 text-emerald-200'
-  if (skill.runtime_status === 'unavailable_with_reason') return 'bg-red-500/10 text-red-300'
-  return 'bg-yellow-500/10 text-yellow-200'
+  if (skill.upload_status === 'error') return 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
+  if (skill.upload_status === 'installing') return 'bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
+  if (skill.runtime_status === 'runtime_available') return 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]'
+  if (skill.runtime_status === 'unavailable_with_reason') return 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
+  return 'bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
 }
 
 function mcpRuntimeStatusClass(server: MCPServer): string {
   const status = server.runtime_status ?? 'unknown'
-  if (status === 'runtime_available') return 'bg-emerald-500/10 text-emerald-200'
-  if (status === 'configured') return 'bg-gray-500/10 text-gray-300'
-  if (status === 'enabled') return 'bg-blue-500/10 text-blue-200'
-  if (status === 'unavailable_with_reason') return 'bg-red-500/10 text-red-300'
-  return 'bg-yellow-500/10 text-yellow-200'
+  if (status === 'runtime_available') return 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]'
+  if (status === 'configured') return 'bg-[var(--hr-surface-1)] text-[var(--hr-text-2)]'
+  if (status === 'enabled') return 'bg-[var(--hr-info-soft)] text-[var(--hr-info)]'
+  if (status === 'unavailable_with_reason') return 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
+  return 'bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
 }
 
 function selectProject(projectId: string): void {
@@ -985,10 +985,10 @@ function importWireGuardRawConfig(): void {
 }
 
 function wireGuardStatusClass(): string {
-  if (wireGuardStatus.value.connected) return 'bg-emerald-500/10 text-emerald-200'
-  if (wireGuardStatus.value.lastError) return 'bg-red-500/10 text-red-200'
-  if (wireGuardConfigured.value || wireGuardStatus.value.configured) return 'bg-yellow-500/10 text-yellow-200'
-  return 'bg-white/10 text-white/55'
+  if (wireGuardStatus.value.connected) return 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]'
+  if (wireGuardStatus.value.lastError) return 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
+  if (wireGuardConfigured.value || wireGuardStatus.value.configured) return 'bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
+  return 'bg-[var(--hr-surface-2)] text-[var(--hr-text-2)]'
 }
 
 function formatWireGuardBytes(value: number): string {
@@ -1474,12 +1474,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="agent-settings-shell relative flex h-screen flex-col overflow-hidden bg-[var(--hr-bg)] p-2 text-gray-100 md:flex-row md:p-4">
-    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_24%_12%,color-mix(in_srgb,var(--hr-accent)_18%,transparent),transparent_32%),radial-gradient(circle_at_82%_4%,color-mix(in_srgb,var(--hr-accent)_12%,transparent),transparent_28%)]" />
-    <aside class="relative z-10 flex w-full flex-shrink-0 flex-col rounded-t-[24px] border border-b-0 border-[var(--hr-border)] bg-[var(--hr-surface-1)] shadow-2xl backdrop-blur-xl md:w-[224px] md:rounded-l-[30px] md:rounded-tr-none md:border-b md:border-r-0 xl:w-[338px]">
+  <div class="agent-settings-shell relative flex h-screen flex-col overflow-hidden bg-[var(--hr-bg)] p-2 text-[var(--hr-text-1)] md:flex-row md:p-4">
+    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_24%_12%,var(--hr-ambient-accent),transparent_32%),radial-gradient(circle_at_82%_4%,var(--hr-ambient-info),transparent_28%)]" />
+    <aside class="relative z-10 flex w-full flex-shrink-0 flex-col rounded-t-[24px] border border-b-0 border-[var(--hr-settings-divider)] bg-[var(--hr-settings-sidebar)] shadow-[var(--hr-shadow-panel)] backdrop-blur-xl md:w-[224px] md:rounded-l-[30px] md:rounded-tr-none md:border-b md:border-r-0 xl:w-[338px]">
       <div class="hidden h-10 flex-shrink-0 md:block" />
       <div class="px-3 pt-3 md:px-4 md:pt-0">
-        <button class="flex h-11 w-full items-center gap-2 rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-left text-base text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-2)] hover:text-white" @click="back">
+        <button class="flex h-11 w-full items-center gap-2 rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-left text-base text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]" @click="back">
           <ArrowLeft class="h-4 w-4" />
           {{ t('settings.backToApp') }}
         </button>
@@ -1491,7 +1491,7 @@ onUnmounted(() => {
           :key="tab.id"
           :data-testid="`agent-settings-tab-${tab.id}`"
           class="mb-1 flex h-10 w-auto flex-shrink-0 items-center gap-2 rounded-2xl px-3 text-left md:h-11 md:w-full md:gap-3"
-          :class="activeTab === tab.id ? 'border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-white' : 'border border-transparent text-white/66 hover:border-white/10 hover:bg-white/[0.055] hover:text-white'"
+          :class="activeTab === tab.id ? 'border border-[var(--hr-settings-active-border)] bg-[var(--hr-settings-active)] text-[var(--hr-text-1)]' : 'border border-transparent text-[var(--hr-text-2)] hover:border-[var(--hr-settings-divider)] hover:bg-[var(--hr-settings-card-hover)] hover:text-[var(--hr-text-1)]'"
           @click="activeTab = tab.id"
         >
           <component :is="tab.icon" class="h-4 w-4" />
@@ -1503,12 +1503,12 @@ onUnmounted(() => {
       </div>
     </aside>
 
-    <main class="relative z-10 min-h-0 min-w-0 flex-1 overflow-y-auto rounded-b-[24px] border border-[var(--hr-border)] bg-[var(--hr-panel)] shadow-2xl backdrop-blur-xl md:rounded-bl-none md:rounded-r-[30px]">
+    <main class="relative z-10 min-h-0 min-w-0 flex-1 overflow-y-auto rounded-b-[24px] border border-[var(--hr-settings-divider)] bg-[var(--hr-panel)] shadow-[var(--hr-shadow-panel)] backdrop-blur-xl md:rounded-bl-none md:rounded-r-[30px]">
       <div class="mx-auto w-full max-w-[1040px] px-4 py-5 sm:px-5 sm:py-7 xl:px-10 xl:py-12">
         <div class="flex items-start justify-between gap-4">
           <div>
-            <h1 class="text-2xl font-semibold tracking-normal text-white sm:text-3xl">{{ activeTabLabel }}</h1>
-            <p v-if="activeTabDescription" class="mt-3 text-sm text-white/42">{{ activeTabDescription }}</p>
+            <h1 class="text-2xl font-semibold tracking-normal text-[var(--hr-text-1)] sm:text-3xl">{{ activeTabLabel }}</h1>
+            <p v-if="activeTabDescription" class="mt-3 text-sm text-[var(--hr-text-3)]">{{ activeTabDescription }}</p>
           </div>
           <button class="flex h-10 flex-shrink-0 items-center gap-2 rounded-full border border-[var(--hr-border)] px-3 text-sm text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-2)] sm:h-11 sm:px-4" @click="refreshAll">
             <Loader2 v-if="loading" class="h-4 w-4 animate-spin" />
@@ -1524,23 +1524,23 @@ onUnmounted(() => {
 
         <section v-if="activeTab === 'workspace'" data-testid="agent-settings-section-workspace" class="mt-10 space-y-6">
           <div class="grid gap-3 sm:grid-cols-3">
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4">
-              <div class="text-sm text-gray-500">Workspace Path</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-sm text-[var(--hr-text-3)]">Workspace Path</div>
               <div class="mt-2 break-all font-mono text-sm" data-testid="agent-settings-workspace-path">{{ workspaceSettings?.workspace_path ?? '-' }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4">
-              <div class="text-sm text-gray-500">Connected Nodes</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-sm text-[var(--hr-text-3)]">Connected Nodes</div>
               <div class="mt-2 text-2xl font-semibold">{{ runtimeStatus?.connected_nodes ?? 0 }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4">
-              <div class="text-sm text-gray-500">Active Runs</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-sm text-[var(--hr-text-3)]">Active Runs</div>
               <div class="mt-2 text-2xl font-semibold">{{ runtimeStatus?.active_runs ?? 0 }}</div>
             </div>
           </div>
-          <div class="rounded-lg border border-white/10 bg-[#252525]">
-            <div class="border-b border-white/10 px-4 py-3">
+          <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
+            <div class="border-b border-[var(--hr-border)] px-4 py-3">
               <div class="font-semibold">当前项目 / 工作区</div>
-              <div class="mt-1 text-sm text-gray-400">当前后端没有本地目录导入 API，这里显示现有 Project、Storage 和 Git 绑定状态。</div>
+              <div class="mt-1 text-sm text-[var(--hr-text-2)]">当前后端没有本地目录导入 API，这里显示现有 Project、Storage 和 Git 绑定状态。</div>
             </div>
             <div class="grid gap-4 p-4 md:grid-cols-[300px_1fr]">
               <div class="space-y-2">
@@ -1548,40 +1548,40 @@ onUnmounted(() => {
                   v-for="project in projects"
                   :key="project.id"
                   class="w-full rounded-md border px-3 py-2 text-left"
-                  :class="selectedProjectId === project.id ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)]' : 'border-white/10 bg-[var(--hr-surface-1)] hover:bg-white/5'"
+                  :class="selectedProjectId === project.id ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)]' : 'border-[var(--hr-border)] bg-[var(--hr-surface-1)] hover:bg-[var(--hr-surface-1)]'"
                   @click="selectProject(project.id)"
                 >
                   <div class="truncate text-sm font-medium">{{ project.name }}</div>
-                  <div class="mt-1 text-xs text-gray-500">{{ project.active_changes }} active changes</div>
+                  <div class="mt-1 text-xs text-[var(--hr-text-3)]">{{ project.active_changes }} active changes</div>
                 </button>
-                <div v-if="!projects.length" data-testid="agent-settings-workspace-projects-empty" class="rounded-md border border-white/10 bg-[var(--hr-surface-1)] p-3 text-sm text-gray-500">暂无 Project。</div>
-                <div class="rounded-md border border-yellow-500/20 bg-yellow-500/5 p-3 text-sm text-yellow-100/80" data-testid="workspace-directory-import-tracked-unsupported">
+                <div v-if="!projects.length" data-testid="agent-settings-workspace-projects-empty" class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3 text-sm text-[var(--hr-text-3)]">暂无 Project。</div>
+                <div class="rounded-md border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] p-3 text-sm text-[var(--hr-warning)]" data-testid="workspace-directory-import-tracked-unsupported">
                   本地目录导入 (directory import) 为后端 tracked unsupported 状态 — 未伪装为已实现。后端跟进: {{ workspaceSettings?.directory_import_next_action || 'Implement directory import/select API in TS Manager backend' }}
                 </div>
               </div>
               <div v-if="selectedProject" class="space-y-4">
                 <div class="grid gap-3 sm:grid-cols-2">
                   <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
-                    <div class="text-xs text-gray-500">Project ID</div>
+                    <div class="text-xs text-[var(--hr-text-3)]">Project ID</div>
                     <div class="mt-1 break-all font-mono text-sm">{{ selectedProject.id }}</div>
                   </div>
                   <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
-                    <div class="text-xs text-gray-500">Git</div>
+                    <div class="text-xs text-[var(--hr-text-3)]">Git</div>
                     <div class="mt-1 text-sm">{{ splitRepo(selectedProject.git_repo_name) }}</div>
                   </div>
                   <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
-                    <div class="text-xs text-gray-500">Storage</div>
+                    <div class="text-xs text-[var(--hr-text-3)]">Storage</div>
                     <div class="mt-1 text-sm">{{ projectStorages.length }} 个挂载配置</div>
                   </div>
                   <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
-                    <div class="text-xs text-gray-500">Updated</div>
+                    <div class="text-xs text-[var(--hr-text-3)]">Updated</div>
                     <div class="mt-1 text-sm">{{ formatDate(selectedProject.updated_at) }}</div>
                   </div>
                 </div>
                 <div class="space-y-2">
-                  <div v-for="storage in projectStorages" :key="storage.id" class="rounded-md border border-white/10 bg-[var(--hr-surface-1)] p-3 text-sm">
+                  <div v-for="storage in projectStorages" :key="storage.id" class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3 text-sm">
                     <div class="font-medium">{{ storage.name }}</div>
-                    <div class="mt-1 text-gray-500">{{ storage.storage_type }} · {{ storage.mount_point || storage.storage_path }}</div>
+                    <div class="mt-1 text-[var(--hr-text-3)]">{{ storage.storage_type }} · {{ storage.mount_point || storage.storage_path }}</div>
                   </div>
                 </div>
               </div>
@@ -1591,71 +1591,71 @@ onUnmounted(() => {
 
         <section v-if="activeTab === 'nodes'" data-testid="agent-settings-section-nodes" class="mt-10 space-y-4">
           <div class="grid gap-3 sm:grid-cols-4">
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4">
-              <div class="text-sm text-gray-500">Registered Nodes</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-sm text-[var(--hr-text-3)]">Registered Nodes</div>
               <div class="mt-2 text-2xl font-semibold">{{ nodes.length }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4">
-              <div class="text-sm text-gray-500">Connected (Runtime)</div>
-              <div class="mt-2 text-2xl font-semibold text-emerald-300">{{ runtimeStatus?.connected_nodes ?? 0 }}</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-sm text-[var(--hr-text-3)]">Connected (Runtime)</div>
+              <div class="mt-2 text-2xl font-semibold text-[var(--hr-success)]">{{ runtimeStatus?.connected_nodes ?? 0 }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4">
-              <div class="text-sm text-gray-500">Workers</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-sm text-[var(--hr-text-3)]">Workers</div>
               <div class="mt-2 text-2xl font-semibold">{{ runtimeStatus?.connected_workers ?? 0 }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4">
-              <div class="text-sm text-gray-500">Runtime Status</div>
-              <div class="mt-2 text-sm" :class="nodesRuntimeStatus === 'healthy' ? 'text-emerald-300' : nodesRuntimeStatus === 'degraded' ? 'text-yellow-300' : 'text-gray-500'">{{ nodesRuntimeStatus }}</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-sm text-[var(--hr-text-3)]">Runtime Status</div>
+              <div class="mt-2 text-sm" :class="nodesRuntimeStatus === 'healthy' ? 'text-[var(--hr-success)]' : nodesRuntimeStatus === 'degraded' ? 'text-[var(--hr-warning)]' : 'text-[var(--hr-text-3)]'">{{ nodesRuntimeStatus }}</div>
             </div>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4">
-              <div class="text-sm text-gray-500">Active Runs</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-sm text-[var(--hr-text-3)]">Active Runs</div>
               <div class="mt-2 text-2xl font-semibold">{{ runtimeStatus?.active_runs ?? 0 }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4">
-              <div class="text-sm text-gray-500">DAG 可用性</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-sm text-[var(--hr-text-3)]">DAG 可用性</div>
               <div class="mt-2 text-sm">{{ (runtimeStatus?.connected_nodes ?? 0) > 0 ? '可调度' : '无在线 Node' }}</div>
             </div>
           </div>
-          <div class="rounded-lg border border-white/10 bg-[#252525]">
-            <div v-for="node in nodes" :key="node.node_id" class="grid gap-3 border-b border-white/10 px-4 py-3 last:border-0 md:grid-cols-[1fr_120px_1fr]">
+          <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
+            <div v-for="node in nodes" :key="node.node_id" class="grid gap-3 border-b border-[var(--hr-border)] px-4 py-3 last:border-0 md:grid-cols-[1fr_120px_1fr]">
               <div>
                 <div class="font-medium">{{ node.name }}</div>
-                <div class="mt-1 font-mono text-xs text-gray-500">{{ node.node_id }}</div>
+                <div class="mt-1 font-mono text-xs text-[var(--hr-text-3)]">{{ node.node_id }}</div>
               </div>
-              <div class="text-sm" :class="node.status === 'connected' ? 'text-emerald-300' : 'text-gray-500'">{{ node.status }}</div>
-              <div class="text-sm text-gray-400">{{ node.resources?.cpu_cores ?? '-' }} CPU · {{ node.resources?.memory_gb ?? '-' }} GB · {{ node.docker_host || '-' }}</div>
+              <div class="text-sm" :class="node.status === 'connected' ? 'text-[var(--hr-success)]' : 'text-[var(--hr-text-3)]'">{{ node.status }}</div>
+              <div class="text-sm text-[var(--hr-text-2)]">{{ node.resources?.cpu_cores ?? '-' }} CPU · {{ node.resources?.memory_gb ?? '-' }} GB · {{ node.docker_host || '-' }}</div>
             </div>
-            <div v-if="!nodes.length" data-testid="agent-settings-nodes-empty-state" class="p-4 text-sm text-gray-500">暂无 Node。</div>
+            <div v-if="!nodes.length" data-testid="agent-settings-nodes-empty-state" class="p-4 text-sm text-[var(--hr-text-3)]">暂无 Node。</div>
           </div>
         </section>
 
         <section v-if="activeTab === 'git'" data-testid="agent-settings-section-git" class="mt-8 space-y-5">
           <div class="grid gap-3 md:grid-cols-3">
-            <div class="rounded-md border border-white/10 bg-white/[0.045] p-4">
-              <div class="text-xs text-white/42">Git Servers</div>
-              <div class="mt-2 text-2xl font-semibold text-white">{{ gitServers.length }}</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-xs text-[var(--hr-text-3)]">Git Servers</div>
+              <div class="mt-2 text-2xl font-semibold text-[var(--hr-text-1)]">{{ gitServers.length }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-white/[0.045] p-4">
-              <div class="text-xs text-white/42">{{ t('settings.git.tokenStatus') }}</div>
-              <div class="mt-2 text-2xl font-semibold text-emerald-200">{{ validGitServerCount }}/{{ gitServers.length }}</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-xs text-[var(--hr-text-3)]">{{ t('settings.git.tokenStatus') }}</div>
+              <div class="mt-2 text-2xl font-semibold text-[var(--hr-success)]">{{ validGitServerCount }}/{{ gitServers.length }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-white/[0.045] p-4">
-              <div class="text-xs text-white/42">{{ t('settings.git.projectLink') }}</div>
-              <div class="mt-2 text-sm font-medium text-white">{{ t('settings.git.selectWhenAdding') }}</div>
-              <div class="mt-1 text-xs text-white/42">{{ t('settings.git.linkHint') }}</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
+              <div class="text-xs text-[var(--hr-text-3)]">{{ t('settings.git.projectLink') }}</div>
+              <div class="mt-2 text-sm font-medium text-[var(--hr-text-1)]">{{ t('settings.git.selectWhenAdding') }}</div>
+              <div class="mt-1 text-xs text-[var(--hr-text-3)]">{{ t('settings.git.linkHint') }}</div>
             </div>
           </div>
 
-          <section class="overflow-hidden rounded-lg border border-white/10 bg-white/[0.045]">
-            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3.5">
+          <section class="overflow-hidden rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hr-border)] px-4 py-3.5">
               <div>
-                <h2 class="text-base font-semibold text-white/88">{{ t('settings.git.savedTitle') }}</h2>
-                <p class="mt-1 text-sm text-white/42">{{ t('settings.git.savedSummary', { count: gitServers.length }) }}</p>
+                <h2 class="text-base font-semibold text-[var(--hr-text-1)]">{{ t('settings.git.savedTitle') }}</h2>
+                <p class="mt-1 text-sm text-[var(--hr-text-3)]">{{ t('settings.git.savedSummary', { count: gitServers.length }) }}</p>
               </div>
               <button
-                class="inline-flex h-10 items-center gap-2 rounded-md bg-blue-500 px-4 text-sm text-white hover:bg-blue-400 disabled:opacity-40"
+                class="inline-flex h-10 items-center gap-2 rounded-md bg-[var(--hr-accent)] px-4 text-sm text-[var(--hr-on-accent)] hover:bg-[var(--hr-accent-hover)] disabled:opacity-40"
                 :disabled="loading"
                 @click="openGitDrawer"
                 data-testid="agent-settings-git-open-create"
@@ -1664,33 +1664,33 @@ onUnmounted(() => {
                 {{ t('settings.git.addServer') }}
               </button>
             </div>
-            <div v-if="gitServers.length" class="divide-y divide-white/10">
+            <div v-if="gitServers.length" class="divide-y divide-[var(--hr-border)]">
               <div v-for="server in gitServers" :key="server.server_id" :data-testid="`agent-settings-git-server-item-${server.server_id}`" class="grid gap-3 px-4 py-3.5 md:grid-cols-[minmax(0,1fr)_150px_150px] md:items-center">
                 <div class="min-w-0">
                   <div class="flex flex-wrap items-center gap-2">
-                    <div class="truncate font-medium text-white">{{ server.name }}</div>
-                    <span class="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] uppercase tracking-wide text-white/55">{{ server.platform_type }}</span>
+                    <div class="truncate font-medium text-[var(--hr-text-1)]">{{ server.name }}</div>
+                    <span class="rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-2 py-0.5 text-[11px] uppercase tracking-wide text-[var(--hr-text-2)]">{{ server.platform_type }}</span>
                   </div>
-                  <div class="mt-1 truncate font-mono text-xs text-white/42">{{ server.api_endpoint }}</div>
-                  <div class="mt-1 text-xs text-white/35">
+                  <div class="mt-1 truncate font-mono text-xs text-[var(--hr-text-3)]">{{ server.api_endpoint }}</div>
+                  <div class="mt-1 text-xs text-[var(--hr-text-4)]">
                     {{ server.git_user_name || t('settings.git.userUnset') }} · {{ server.git_user_email || t('settings.git.emailUnset') }}
                   </div>
                 </div>
-                <div class="flex items-center gap-1.5 text-sm" :class="server.token_valid ? 'text-emerald-300' : 'text-red-300'" :data-testid="`agent-settings-git-validity-${server.server_id}`">
+                <div class="flex items-center gap-1.5 text-sm" :class="server.token_valid ? 'text-[var(--hr-success)]' : 'text-[var(--hr-danger)]'" :data-testid="`agent-settings-git-validity-${server.server_id}`">
                   <CheckCircle2 v-if="server.token_valid" class="h-4 w-4" />
                   <XCircle v-else class="h-4 w-4" />
                   {{ server.token_valid ? t('settings.git.verified') : t('settings.git.unverified') }}
                 </div>
                 <div class="flex justify-start gap-2 md:justify-end">
-                  <button class="inline-flex h-9 items-center rounded-md border border-white/10 px-3 text-sm text-white/70 hover:bg-white/5 disabled:opacity-40" :disabled="saving === `verify-git-${server.server_id}`" @click="verifyGit(server)" :data-testid="`agent-settings-git-verify-${server.server_id}`">
+                  <button class="inline-flex h-9 items-center rounded-md border border-[var(--hr-border)] px-3 text-sm text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)] disabled:opacity-40" :disabled="saving === `verify-git-${server.server_id}`" @click="verifyGit(server)" :data-testid="`agent-settings-git-verify-${server.server_id}`">
                     <Loader2 v-if="saving === `verify-git-${server.server_id}`" class="mr-2 h-4 w-4 animate-spin" />
                     {{ t('settings.actions.verify') }}
                   </button>
-                  <button class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-500/30 text-red-300 hover:bg-red-500/10 disabled:opacity-40" :disabled="saving === `delete-git-${server.server_id}`" @click="removeGit(server)" :data-testid="`agent-settings-git-delete-${server.server_id}`"><Trash2 class="h-4 w-4" /></button>
+                  <button class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[var(--hr-danger-border)] text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)] disabled:opacity-40" :disabled="saving === `delete-git-${server.server_id}`" @click="removeGit(server)" :data-testid="`agent-settings-git-delete-${server.server_id}`"><Trash2 class="h-4 w-4" /></button>
                 </div>
               </div>
             </div>
-            <div v-else class="px-4 py-8 text-sm text-white/45">
+            <div v-else class="px-4 py-8 text-sm text-[var(--hr-text-3)]">
               {{ t('settings.git.empty') }}
             </div>
           </section>
@@ -1715,7 +1715,7 @@ onUnmounted(() => {
           <section class="space-y-4">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h2 class="text-base font-semibold text-white/88">{{ t('settings.wireguard.connection') }}</h2>
+                <h2 class="text-base font-semibold text-[var(--hr-text-1)]">{{ t('settings.wireguard.connection') }}</h2>
               </div>
               <span
                 data-testid="agent-settings-wireguard-status"
@@ -1726,22 +1726,22 @@ onUnmounted(() => {
               </span>
             </div>
 
-            <div class="overflow-hidden rounded-lg border border-white/10 bg-[#252525]">
-              <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3.5">
-                <div class="grid min-w-[240px] gap-1.5 text-sm text-white/55">
-                  <label class="text-gray-400" for="agent-settings-wireguard-profile-select">Profile</label>
+            <div class="overflow-hidden rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
+              <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hr-border)] px-4 py-3.5">
+                <div class="grid min-w-[240px] gap-1.5 text-sm text-[var(--hr-text-2)]">
+                  <label class="text-[var(--hr-text-2)]" for="agent-settings-wireguard-profile-select">Profile</label>
                   <select
                     id="agent-settings-wireguard-profile-select"
                     v-model="wireGuardProfileName"
                     data-testid="agent-settings-wireguard-profile-select"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                   >
                     <option v-for="name in wireGuardProfileOptions" :key="name" :value="name">{{ name }}</option>
                   </select>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                   <button
-                    class="inline-flex h-10 items-center rounded-md bg-blue-500 px-3 py-2 text-sm text-white hover:bg-blue-400 disabled:opacity-40"
+                    class="inline-flex h-10 items-center rounded-md bg-[var(--hr-accent)] px-3 py-2 text-sm text-[var(--hr-on-accent)] hover:bg-[var(--hr-accent-hover)] disabled:opacity-40"
                     :disabled="saving === 'wireguard-connect' || wireGuardLoading"
                     data-testid="agent-settings-wireguard-connect"
                     @click="connectWireGuardSettings"
@@ -1751,7 +1751,7 @@ onUnmounted(() => {
                     {{ t('settings.wireguard.connect') }}
                   </button>
                   <button
-                    class="inline-flex h-10 items-center rounded-md border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/5 disabled:opacity-40"
+                    class="inline-flex h-10 items-center rounded-md border border-[var(--hr-border)] px-3 py-2 text-sm text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)] disabled:opacity-40"
                     :disabled="saving === 'wireguard-disconnect' || wireGuardLoading || !wireGuardStatus.connected"
                     data-testid="agent-settings-wireguard-disconnect"
                     @click="disconnectWireGuardSettings"
@@ -1761,7 +1761,7 @@ onUnmounted(() => {
                     {{ t('settings.wireguard.disconnect') }}
                   </button>
                   <button
-                    class="inline-flex h-10 items-center rounded-md border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/5 disabled:opacity-40"
+                    class="inline-flex h-10 items-center rounded-md border border-[var(--hr-border)] px-3 py-2 text-sm text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)] disabled:opacity-40"
                     :disabled="wireGuardLoading"
                     data-testid="agent-settings-wireguard-refresh"
                     @click="refreshWireGuardSettings"
@@ -1770,7 +1770,7 @@ onUnmounted(() => {
                     {{ t('settings.actions.refresh') }}
                   </button>
                   <button
-                    class="inline-flex h-10 items-center rounded-md bg-blue-500 px-3 py-2 text-sm text-white hover:bg-blue-400 disabled:opacity-40"
+                    class="inline-flex h-10 items-center rounded-md bg-[var(--hr-accent)] px-3 py-2 text-sm text-[var(--hr-on-accent)] hover:bg-[var(--hr-accent-hover)] disabled:opacity-40"
                     :disabled="saving === 'wireguard-save'"
                     data-testid="agent-settings-wireguard-save"
                     @click="saveWireGuardSettings"
@@ -1780,136 +1780,136 @@ onUnmounted(() => {
                   </button>
                 </div>
               </div>
-              <div class="grid gap-2 border-b border-white/10 px-4 py-3 text-xs text-white/45 sm:grid-cols-2 xl:grid-cols-4">
+              <div class="grid gap-2 border-b border-[var(--hr-border)] px-4 py-3 text-xs text-[var(--hr-text-3)] sm:grid-cols-2 xl:grid-cols-4">
                 <div>
                   endpoint:
-                  <span class="font-mono text-white/66">{{ wireGuardStatus.endpoint || wireGuardForm.endpoint || '-' }}</span>
+                  <span class="font-mono text-[var(--hr-text-2)]">{{ wireGuardStatus.endpoint || wireGuardForm.endpoint || '-' }}</span>
                 </div>
                 <div>
                   tunnel:
-                  <span class="font-mono text-white/66">{{ wireGuardStatus.tunnelName || wireGuardProfileName || '-' }}</span>
+                  <span class="font-mono text-[var(--hr-text-2)]">{{ wireGuardStatus.tunnelName || wireGuardProfileName || '-' }}</span>
                 </div>
                 <div>
                   rx/tx:
-                  <span class="font-mono text-white/66">
+                  <span class="font-mono text-[var(--hr-text-2)]">
                     {{ formatWireGuardBytes(wireGuardStatus.rxBytes) }} / {{ formatWireGuardBytes(wireGuardStatus.txBytes) }}
                   </span>
                 </div>
                 <div>
                   last handshake:
-                  <span class="font-mono text-white/66">{{ formatWireGuardHandshake(wireGuardStatus.latestHandshakeEpochMillis) }}</span>
+                  <span class="font-mono text-[var(--hr-text-2)]">{{ formatWireGuardHandshake(wireGuardStatus.latestHandshakeEpochMillis) }}</span>
                 </div>
                 <div v-if="wireGuardStatus.lastError" class="sm:col-span-2 xl:col-span-4">
                   error:
-                  <span class="font-mono text-red-200">{{ wireGuardStatus.lastError }}</span>
+                  <span class="font-mono text-[var(--hr-danger)]">{{ wireGuardStatus.lastError }}</span>
                 </div>
               </div>
               <div class="grid gap-3 px-4 py-4 xl:grid-cols-2">
-                <label class="grid gap-2 text-sm text-gray-400">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)]">
                   {{ t('settings.wireguard.profileName') }}
                   <input
                     v-model="wireGuardForm.name"
                     data-testid="agent-settings-wireguard-name"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="wg0"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-gray-400">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)]">
                   Endpoint
                   <input
                     v-model="wireGuardForm.endpoint"
                     data-testid="agent-settings-wireguard-endpoint"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="host:51820"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-gray-400 xl:col-span-2">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)] xl:col-span-2">
                   Allowed IPs
                   <input
                     v-model="wireGuardForm.allowedIps"
                     data-testid="agent-settings-wireguard-allowed-ips"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="0.0.0.0/0, ::/0"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-gray-400">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)]">
                   Persistent Keepalive
                   <input
                     v-model="wireGuardForm.persistentKeepalive"
                     data-testid="agent-settings-wireguard-keepalive"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="25"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-gray-400">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)]">
                   Interface Address
                   <input
                     v-model="wireGuardForm.interfaceAddress"
                     data-testid="agent-settings-wireguard-interface-address"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="10.0.0.2/32"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-gray-400 xl:col-span-2">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)] xl:col-span-2">
                   DNS
                   <input
                     v-model="wireGuardForm.dns"
                     data-testid="agent-settings-wireguard-dns"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="223.5.5.5"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-gray-400 xl:col-span-2">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)] xl:col-span-2">
                   Interface Private Key
                   <input
                     v-model="wireGuardForm.interfacePrivateKey"
                     data-testid="agent-settings-wireguard-private-key"
                     type="password"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="private key"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-gray-400 xl:col-span-2">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)] xl:col-span-2">
                   Peer Public Key
                   <input
                     v-model="wireGuardForm.peerPublicKey"
                     data-testid="agent-settings-wireguard-peer-public-key"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="peer public key"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-gray-400 xl:col-span-2">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)] xl:col-span-2">
                   Peer Pre-shared Key
                   <input
                     v-model="wireGuardForm.peerPreSharedKey"
                     data-testid="agent-settings-wireguard-peer-psk"
                     type="password"
-                    class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="optional pre-shared key"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-gray-400 xl:col-span-2">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)] xl:col-span-2">
                   wg0.conf
                   <textarea
                     v-model="wireGuardForm.rawConfig"
                     data-testid="agent-settings-wireguard-raw"
-                    class="min-h-[320px] resize-y rounded-md border border-white/10 bg-[#181818] px-3 py-2 font-mono text-sm leading-6 text-white outline-none"
+                    class="min-h-[320px] resize-y rounded-md border border-[var(--hr-border)] bg-[var(--hr-code-bg)] px-3 py-2 font-mono text-sm leading-6 text-[var(--hr-text-1)] outline-none"
                     style="min-height: 320px"
                     placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = ..."
                   />
                 </label>
               </div>
 
-              <div class="flex flex-wrap items-center gap-2 border-t border-white/10 px-4 py-3.5">
+              <div class="flex flex-wrap items-center gap-2 border-t border-[var(--hr-border)] px-4 py-3.5">
                 <button
-                  class="inline-flex h-10 items-center rounded-md border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/5"
+                  class="inline-flex h-10 items-center rounded-md border border-[var(--hr-border)] px-3 py-2 text-sm text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)]"
                   data-testid="agent-settings-wireguard-import-raw"
                   @click="importWireGuardRawConfig"
                 >
                   {{ t('settings.wireguard.importConfig') }}
                 </button>
                 <button
-                  class="inline-flex h-10 items-center rounded-md border border-red-500/30 px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                  class="inline-flex h-10 items-center rounded-md border border-[var(--hr-danger-border)] px-3 py-2 text-sm text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)] disabled:opacity-40"
                   :disabled="saving === 'wireguard-clear'"
                   data-testid="agent-settings-wireguard-clear"
                   @click="clearWireGuardSettings"
@@ -1920,7 +1920,7 @@ onUnmounted(() => {
               <div
                 v-if="wireGuardError"
                 data-testid="agent-settings-wireguard-error"
-                class="border-t border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-200"
+                class="border-t border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-4 py-3 text-sm text-[var(--hr-danger)]"
               >
                 {{ wireGuardError }}
               </div>
@@ -1931,14 +1931,14 @@ onUnmounted(() => {
         <section v-if="activeTab === 'voice'" data-testid="agent-settings-section-voice" class="mt-10 space-y-8">
           <section class="space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-white/88">{{ t('settings.voice.narration') }}</h2>
-              <p class="mt-1 text-sm text-white/42">{{ t('settings.voice.narrationDescription') }}</p>
+              <h2 class="text-base font-semibold text-[var(--hr-text-1)]">{{ t('settings.voice.narration') }}</h2>
+              <p class="mt-1 text-sm text-[var(--hr-text-3)]">{{ t('settings.voice.narrationDescription') }}</p>
             </div>
-            <div class="overflow-hidden rounded-xl border border-white/10 bg-white/[0.045]">
+            <div class="overflow-hidden rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 px-4 py-3.5">
                 <div class="min-w-0">
-                  <div class="font-medium text-white/88">{{ t('settings.voice.commentary') }}</div>
-                  <div class="mt-1 text-sm leading-6 text-white/44">
+                  <div class="font-medium text-[var(--hr-text-1)]">{{ t('settings.voice.commentary') }}</div>
+                  <div class="mt-1 text-sm leading-6 text-[var(--hr-text-3)]">
                     {{ t('settings.voice.commentaryDescription') }}
                   </div>
                 </div>
@@ -1947,7 +1947,7 @@ onUnmounted(() => {
                   role="switch"
                   data-testid="agent-settings-voice-commentary-toggle"
                   class="relative h-7 w-12 rounded-full border transition disabled:opacity-45"
-                  :class="commentaryNarrationEnabled ? 'border-blue-400 bg-blue-500' : 'border-white/15 bg-white/10'"
+                  :class="commentaryNarrationEnabled ? 'border-[var(--hr-info-border)] bg-[var(--hr-info)]' : 'border-[var(--hr-border-strong)] bg-[var(--hr-surface-2)]'"
                   :aria-checked="commentaryNarrationEnabled"
                   :disabled="saving === 'voice-save'"
                   @click="setCommentaryNarration(!commentaryNarrationEnabled)"
@@ -1963,31 +1963,31 @@ onUnmounted(() => {
 
           <section class="space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-white/88">{{ t('settings.voice.controls') }}</h2>
-              <p class="mt-1 text-sm text-white/40">{{ t('settings.voice.controlsDescription') }}</p>
+              <h2 class="text-base font-semibold text-[var(--hr-text-1)]">{{ t('settings.voice.controls') }}</h2>
+              <p class="mt-1 text-sm text-[var(--hr-text-3)]">{{ t('settings.voice.controlsDescription') }}</p>
             </div>
-            <div class="overflow-hidden rounded-xl border border-white/10 bg-white/[0.045]">
+            <div class="overflow-hidden rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 px-4 py-3.5">
                 <div>
-                  <div class="font-medium text-white/88">{{ t('settings.voice.inputButton') }}</div>
-                  <div class="mt-1 text-sm leading-6 text-white/44">
+                  <div class="font-medium text-[var(--hr-text-1)]">{{ t('settings.voice.inputButton') }}</div>
+                  <div class="mt-1 text-sm leading-6 text-[var(--hr-text-3)]">
                     {{ t('settings.voice.inputButtonDescription') }}
                   </div>
                 </div>
                 <span
                   class="rounded-full px-3 py-1.5 text-sm"
-                  :class="voiceButtonBindingMode === 'hid' ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]' : 'bg-emerald-500/10 text-emerald-100'"
+                  :class="voiceButtonBindingMode === 'hid' ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]' : 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]'"
                 >
                   {{ voiceButtonBindingMode === 'hid' ? 'WebHID' : t('settings.voice.keyboardButton') }}
                 </span>
               </div>
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-[var(--hr-border)] px-4 py-3.5">
                 <div class="min-w-0">
-                  <div class="flex items-center gap-2 font-medium text-white/88">
+                  <div class="flex items-center gap-2 font-medium text-[var(--hr-text-1)]">
                     <Mic class="h-4 w-4 text-[var(--hr-accent)]" />
                     {{ t('settings.voice.microphone') }}
                   </div>
-                  <div class="mt-1 text-sm leading-6 text-white/44">
+                  <div class="mt-1 text-sm leading-6 text-[var(--hr-text-3)]">
                     {{ t('settings.voice.microphoneDescription') }}
                   </div>
                   <div v-if="voiceAudioInputStatus" class="mt-1 text-xs text-[var(--hr-text-2)]">{{ voiceAudioInputStatus }}</div>
@@ -1997,7 +1997,7 @@ onUnmounted(() => {
                     v-if="voiceAudioInputSelectorVisible"
                     :value="selectedVoiceAudioInputDeviceId"
                     data-testid="agent-settings-voice-audio-input-select"
-                    class="h-10 min-w-[260px] rounded-lg border border-white/10 bg-[var(--hr-surface-1)] px-3 text-sm text-white/82 outline-none"
+                    class="h-10 min-w-[260px] rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     @change="selectVoiceAudioInput"
                   >
                     <option value="">{{ t('settings.voice.automatic') }}</option>
@@ -2011,14 +2011,14 @@ onUnmounted(() => {
                   </select>
                   <div
                     v-else-if="singleVoiceAudioInputDevice"
-                    class="max-w-[260px] truncate rounded-lg border border-white/10 bg-[var(--hr-surface-1)] px-3 py-2 text-sm text-white/66"
+                    class="max-w-[260px] truncate rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 py-2 text-sm text-[var(--hr-text-2)]"
                     :title="singleVoiceAudioInputDevice.label"
                     data-testid="agent-settings-voice-audio-input-single"
                   >
                     {{ singleVoiceAudioInputDevice.label }}
                   </div>
                   <button
-                    class="rounded-lg border border-white/10 px-3 py-2 text-sm text-white/66 transition hover:bg-white/[0.08] disabled:opacity-40"
+                    class="rounded-lg border border-[var(--hr-border)] px-3 py-2 text-sm text-[var(--hr-text-2)] transition hover:bg-[var(--hr-surface-2)] disabled:opacity-40"
                     :disabled="voiceAudioInputLoading"
                     data-testid="agent-settings-voice-audio-input-refresh"
                     @click="refreshVoiceAudioInputs"
@@ -2028,28 +2028,28 @@ onUnmounted(() => {
                   </button>
                 </div>
               </div>
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-[var(--hr-border)] px-4 py-3.5">
                 <div>
-                  <div class="font-medium text-white/88">{{ t('settings.voice.hidBinding') }}</div>
-                  <div class="mt-1 text-sm text-white/42">{{ t('settings.voice.hidBindingDescription') }}</div>
+                  <div class="font-medium text-[var(--hr-text-1)]">{{ t('settings.voice.hidBinding') }}</div>
+                  <div class="mt-1 text-sm text-[var(--hr-text-3)]">{{ t('settings.voice.hidBindingDescription') }}</div>
                 </div>
-                <div class="min-w-0 max-w-[360px] truncate font-mono text-sm text-white/70" :title="formatVoiceHidBinding(voiceHidBinding)">
+                <div class="min-w-0 max-w-[360px] truncate font-mono text-sm text-[var(--hr-text-2)]" :title="formatVoiceHidBinding(voiceHidBinding)">
                   {{ formatVoiceHidBinding(voiceHidBinding) }}
                 </div>
               </div>
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-[var(--hr-border)] px-4 py-3.5">
                 <div>
-                  <div class="font-medium text-white/88">{{ t('settings.voice.keyboardBinding') }}</div>
-                  <div class="mt-1 text-sm text-white/42">{{ t('settings.voice.keyboardBindingDescription') }}</div>
+                  <div class="font-medium text-[var(--hr-text-1)]">{{ t('settings.voice.keyboardBinding') }}</div>
+                  <div class="mt-1 text-sm text-[var(--hr-text-3)]">{{ t('settings.voice.keyboardBindingDescription') }}</div>
                 </div>
-                <div class="min-w-0 max-w-[260px] truncate font-mono text-sm text-white/70" :title="formatVoiceKeyboardBinding(voiceKeyboardBinding)">
+                <div class="min-w-0 max-w-[260px] truncate font-mono text-sm text-[var(--hr-text-2)]" :title="formatVoiceKeyboardBinding(voiceKeyboardBinding)">
                   {{ formatVoiceKeyboardBinding(voiceKeyboardBinding) }}
                 </div>
               </div>
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-[var(--hr-border)] px-4 py-3.5">
                 <div>
-                  <div class="font-medium text-white/88">{{ t('settings.voice.status') }}</div>
-                  <div class="mt-1 text-sm" :class="voiceHidSecureContext ? 'text-emerald-300/90' : 'text-yellow-200/90'">
+                  <div class="font-medium text-[var(--hr-text-1)]">{{ t('settings.voice.status') }}</div>
+                  <div class="mt-1 text-sm" :class="voiceHidSecureContext ? 'text-[var(--hr-success)]' : 'text-[var(--hr-warning)]'">
                     {{ voiceButtonBindingMode === 'hid'
                       ? (voiceHidSecureContext ? t('settings.voice.secureAvailable') : t('settings.voice.secureRequired'))
                       : t('settings.voice.keyboardAvailable') }}
@@ -2058,7 +2058,7 @@ onUnmounted(() => {
                 </div>
                 <div class="flex items-center gap-2">
                   <button
-                    class="rounded-lg bg-white/14 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-white/20 disabled:opacity-40"
+                    class="rounded-lg bg-[var(--hr-surface-3)] px-3.5 py-2 text-sm font-medium text-[var(--hr-text-1)] transition hover:bg-[var(--hr-surface-3)] disabled:opacity-40"
                     :disabled="voiceHidBindingActive"
                     @click="bindVoiceControlButton"
                   >
@@ -2066,7 +2066,7 @@ onUnmounted(() => {
                     {{ voiceHidBindingActive ? t('settings.voice.waitingButton') : t('settings.voice.bindButton') }}
                   </button>
                   <button
-                    class="rounded-lg border border-white/10 px-3.5 py-2 text-sm text-white/66 transition hover:bg-white/[0.08] disabled:opacity-40"
+                    class="rounded-lg border border-[var(--hr-border)] px-3.5 py-2 text-sm text-[var(--hr-text-2)] transition hover:bg-[var(--hr-surface-2)] disabled:opacity-40"
                     :disabled="!voiceHidBinding && !voiceKeyboardBinding"
                     @click="clearVoiceHidBinding"
                   >
@@ -2074,10 +2074,10 @@ onUnmounted(() => {
                   </button>
                 </div>
               </div>
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-white/10 px-4 py-3.5">
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-[var(--hr-border)] px-4 py-3.5">
                 <div>
-                  <label class="font-medium text-white/88" for="voice-vad-silence-seconds">{{ t('settings.voice.sendDelay') }}</label>
-                  <div class="mt-1 text-sm text-white/42">{{ t('settings.voice.sendDelayDescription') }}</div>
+                  <label class="font-medium text-[var(--hr-text-1)]" for="voice-vad-silence-seconds">{{ t('settings.voice.sendDelay') }}</label>
+                  <div class="mt-1 text-sm text-[var(--hr-text-3)]">{{ t('settings.voice.sendDelayDescription') }}</div>
                 </div>
                 <div class="flex items-center gap-2">
                   <input
@@ -2087,11 +2087,11 @@ onUnmounted(() => {
                     min="0.5"
                     max="6"
                     step="0.1"
-                    class="h-9 w-24 rounded-lg border border-white/10 bg-[var(--hr-surface-1)] px-3 text-sm text-white/82 outline-none"
+                    class="h-9 w-24 rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     @change="saveVoiceVadSilenceSetting"
                     @blur="saveVoiceVadSilenceSetting"
                   />
-                  <span class="text-sm text-white/42">{{ t('settings.voice.seconds') }}</span>
+                  <span class="text-sm text-[var(--hr-text-3)]">{{ t('settings.voice.seconds') }}</span>
                 </div>
               </div>
             </div>
@@ -2099,71 +2099,71 @@ onUnmounted(() => {
         </section>
 
         <section v-if="activeTab === 'skills'" data-testid="agent-settings-section-skills" class="mt-10 space-y-6">
-          <div class="rounded-lg border border-white/10 bg-[#252525] p-4">
+          <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
             <h2 class="font-semibold">导入 Skill</h2>
             <div class="mt-3 flex flex-wrap items-center gap-3">
-              <input data-testid="agent-settings-skill-upload-input" type="file" accept=".zip,.tar.gz,.tgz" class="text-sm text-gray-300 disabled:opacity-40" disabled @change="onSkillFileChange" />
-              <button data-testid="agent-settings-skill-upload-submit" class="rounded-md bg-blue-500 px-3 py-2 text-sm text-white disabled:opacity-40" disabled @click="uploadSelectedSkill">上传</button>
+              <input data-testid="agent-settings-skill-upload-input" type="file" accept=".zip,.tar.gz,.tgz" class="text-sm text-[var(--hr-text-2)] disabled:opacity-40" disabled @change="onSkillFileChange" />
+              <button data-testid="agent-settings-skill-upload-submit" class="rounded-md bg-[var(--hr-accent)] px-3 py-2 text-sm text-[var(--hr-on-accent)] disabled:opacity-40" disabled @click="uploadSelectedSkill">上传</button>
             </div>
-            <div data-testid="agent-settings-skills-upload-tracked-gap" class="mt-3 rounded-md border border-yellow-500/20 bg-yellow-500/5 p-3 text-sm text-yellow-100/80">
+            <div data-testid="agent-settings-skills-upload-tracked-gap" class="mt-3 rounded-md border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] p-3 text-sm text-[var(--hr-warning)]">
               Skill 上传在 TS Manager 中仍是 tracked unsupported；不要把未实现的 POST /api/skills 暴露成可点击操作。
             </div>
           </div>
           <div class="grid gap-3 md:grid-cols-2">
-            <div v-for="skill in skills" :key="skill.id" class="rounded-lg border border-white/10 bg-[#252525] p-4">
+            <div v-for="skill in skills" :key="skill.id" class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
               <div class="flex items-start justify-between gap-3">
                 <div>
                   <div class="font-medium">{{ skill.name }}</div>
-                  <div class="mt-1 text-sm text-gray-500">{{ skill.description || '无描述' }}</div>
+                  <div class="mt-1 text-sm text-[var(--hr-text-3)]">{{ skill.description || '无描述' }}</div>
                 </div>
-                <button class="rounded-md border border-red-500/30 px-2 py-1.5 text-red-300 hover:bg-red-500/10" @click="removeSkill(skill)"><Trash2 class="h-4 w-4" /></button>
+                <button class="rounded-md border border-[var(--hr-danger-border)] px-2 py-1.5 text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)]" @click="removeSkill(skill)"><Trash2 class="h-4 w-4" /></button>
               </div>
               <div class="mt-3 flex flex-wrap gap-2 text-xs">
-                <span class="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-300">{{ skill.upload_status }}</span>
+                <span class="rounded-full bg-[var(--hr-success-soft)] px-2 py-1 text-[var(--hr-success)]">{{ skill.upload_status }}</span>
                 <span :data-testid="`agent-settings-skill-runtime-status-${skill.id}`" class="rounded-full px-2 py-1" :class="skillRuntimeStatusClass(skill)">{{ skillRuntimeStatusLabel(skill) }}</span>
               </div>
-              <div v-if="skill.upload_status === 'installed' && skill.runtime_status === 'unavailable_with_reason'" :data-testid="`agent-settings-skill-availability-diagnostic-${skill.id}`" class="mt-2 rounded border border-red-500/20 bg-red-500/5 px-2 py-1 text-xs text-red-300">
+              <div v-if="skill.upload_status === 'installed' && skill.runtime_status === 'unavailable_with_reason'" :data-testid="`agent-settings-skill-availability-diagnostic-${skill.id}`" class="mt-2 rounded border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-2 py-1 text-xs text-[var(--hr-danger)]">
                 {{ skillRuntimeStatus(skill) }}
               </div>
             </div>
           </div>
-          <div v-if="!skills.length" data-testid="agent-settings-skills-empty-state" class="rounded-md border border-white/10 bg-[#252525] p-4 text-sm text-gray-500">暂无 Skill。</div>
+          <div v-if="!skills.length" data-testid="agent-settings-skills-empty-state" class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4 text-sm text-[var(--hr-text-3)]">暂无 Skill。</div>
         </section>
 
         <section v-if="activeTab === 'mcp'" data-testid="agent-settings-section-mcp" class="mt-10 space-y-6">
-          <div class="rounded-lg border border-white/10 bg-[#252525] p-4" data-testid="agent-settings-asset-diagnostics">
+          <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4" data-testid="agent-settings-asset-diagnostics">
             <h2 class="font-semibold">新增 MCP Server</h2>
             <div class="mt-4 grid gap-3 md:grid-cols-2">
-              <input v-model="newMcp.name" data-testid="agent-settings-mcp-create-name" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none" placeholder="名称" />
-              <select v-model="newMcp.type" data-testid="agent-settings-mcp-create-type" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none">
+              <input v-model="newMcp.name" data-testid="agent-settings-mcp-create-name" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none" placeholder="名称" />
+              <select v-model="newMcp.type" data-testid="agent-settings-mcp-create-type" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none">
                 <option value="STDIO">STDIO</option>
                 <option value="SSE">SSE</option>
               </select>
-              <input v-model="newMcp.command" data-testid="agent-settings-mcp-create-command" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none" placeholder="STDIO command" />
-              <input v-model="newMcp.url" data-testid="agent-settings-mcp-create-url" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none" placeholder="SSE URL" />
-              <input v-model="newMcp.arguments" data-testid="agent-settings-mcp-create-arguments" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none" placeholder="arguments" />
-              <input v-model="newMcp.environment_variables" data-testid="agent-settings-mcp-create-env" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none" placeholder="env JSON / string" />
+              <input v-model="newMcp.command" data-testid="agent-settings-mcp-create-command" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none" placeholder="STDIO command" />
+              <input v-model="newMcp.url" data-testid="agent-settings-mcp-create-url" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none" placeholder="SSE URL" />
+              <input v-model="newMcp.arguments" data-testid="agent-settings-mcp-create-arguments" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none" placeholder="arguments" />
+              <input v-model="newMcp.environment_variables" data-testid="agent-settings-mcp-create-env" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none" placeholder="env JSON / string" />
             </div>
-            <button data-testid="agent-settings-mcp-create-submit" class="mt-3 rounded-md bg-blue-500 px-3 py-2 text-sm text-white" @click="createMcpServer">添加 MCP</button>
+            <button data-testid="agent-settings-mcp-create-submit" class="mt-3 rounded-md bg-[var(--hr-accent)] px-3 py-2 text-sm text-[var(--hr-on-accent)]" @click="createMcpServer">添加 MCP</button>
           </div>
-          <div class="rounded-lg border border-white/10 bg-[#252525]">
-            <div v-for="server in mcpServers" :key="server.id" :data-testid="`agent-settings-mcp-server-item-${server.id}`" class="grid gap-3 border-b border-white/10 px-4 py-3 last:border-0 md:grid-cols-[1fr_100px_120px]">
+          <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
+            <div v-for="server in mcpServers" :key="server.id" :data-testid="`agent-settings-mcp-server-item-${server.id}`" class="grid gap-3 border-b border-[var(--hr-border)] px-4 py-3 last:border-0 md:grid-cols-[1fr_100px_120px]">
               <div>
                 <div class="font-medium">{{ server.name }}</div>
-                <div class="mt-1 text-xs text-gray-500">{{ server.type }} · {{ server.url || server.command || '-' }} · {{ formatValue(server.arguments) }}</div>
-                <div class="mt-1 text-xs text-gray-600">
+                <div class="mt-1 text-xs text-[var(--hr-text-3)]">{{ server.type }} · {{ server.url || server.command || '-' }} · {{ formatValue(server.arguments) }}</div>
+                <div class="mt-1 text-xs text-[var(--hr-text-3)]">
                   <span :data-testid="`agent-settings-mcp-runtime-status-${server.id}`" class="rounded-full px-2 py-0.5" :class="mcpRuntimeStatusClass(server)">{{ server.runtime_status ?? 'unknown' }}</span>
                   <span v-if="server.runtime_message" :data-testid="`agent-settings-mcp-runtime-message-${server.id}`" class="ml-1">— {{ server.runtime_message }}</span>
                 </div>
-                <div v-if="server.runtime_status === 'unavailable_with_reason'" :data-testid="`agent-settings-mcp-availability-diagnostic-${server.id}`" class="mt-1 rounded border border-red-500/20 bg-red-500/5 px-2 py-1 text-xs text-red-300">
+                <div v-if="server.runtime_status === 'unavailable_with_reason'" :data-testid="`agent-settings-mcp-availability-diagnostic-${server.id}`" class="mt-1 rounded border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-2 py-1 text-xs text-[var(--hr-danger)]">
                   {{ server.runtime_message }}
                 </div>
               </div>
-              <button :data-testid="`agent-settings-mcp-toggle-${server.id}`" class="rounded-md border border-white/10 px-3 py-1.5 text-sm" @click="toggleMcp(server)">{{ server.enabled ? '停用' : '启用' }}</button>
+              <button :data-testid="`agent-settings-mcp-toggle-${server.id}`" class="rounded-md border border-[var(--hr-border)] px-3 py-1.5 text-sm" @click="toggleMcp(server)">{{ server.enabled ? '停用' : '启用' }}</button>
               <div class="flex items-center justify-end gap-2">
                 <button
                   :data-testid="`agent-settings-mcp-refresh-runtime-${server.id}`"
-                  class="rounded-md border border-white/10 px-2 py-1.5 text-gray-200 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                  class="rounded-md border border-[var(--hr-border)] px-2 py-1.5 text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-1)] disabled:cursor-not-allowed disabled:opacity-50"
                   title="刷新 runtime 可用性"
                   :disabled="saving === `refresh-mcp-${server.id}`"
                   @click="refreshMcpRuntime(server)"
@@ -2171,37 +2171,37 @@ onUnmounted(() => {
                   <Loader2 v-if="saving === `refresh-mcp-${server.id}`" class="h-4 w-4 animate-spin" />
                   <RefreshCw v-else class="h-4 w-4" />
                 </button>
-                <button :data-testid="`agent-settings-mcp-delete-${server.id}`" class="rounded-md border border-red-500/30 px-2 py-1.5 text-red-300 hover:bg-red-500/10" @click="removeMcp(server)"><Trash2 class="h-4 w-4" /></button>
+                <button :data-testid="`agent-settings-mcp-delete-${server.id}`" class="rounded-md border border-[var(--hr-danger-border)] px-2 py-1.5 text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)]" @click="removeMcp(server)"><Trash2 class="h-4 w-4" /></button>
               </div>
             </div>
-            <div v-if="!mcpServers.length" data-testid="agent-settings-mcp-empty-state" class="p-4 text-sm text-gray-500">暂无 MCP Server。</div>
+            <div v-if="!mcpServers.length" data-testid="agent-settings-mcp-empty-state" class="p-4 text-sm text-[var(--hr-text-3)]">暂无 MCP Server。</div>
           </div>
-          <div class="rounded-md border border-yellow-500/20 bg-yellow-500/5 p-3 text-sm text-yellow-100/80">
+          <div class="rounded-md border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] p-3 text-sm text-[var(--hr-warning)]">
             MCP Server 已配置于 TS Manager；worker 运行时加载尚未验证/追踪。
           </div>
         </section>
 
         <section v-if="activeTab === 'memory'" data-testid="agent-settings-section-memory" class="mt-10 space-y-6">
           <div class="grid gap-3 sm:grid-cols-3">
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4" data-testid="agent-settings-memory-stats-total">
-              <div class="text-sm text-gray-500">总记忆</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4" data-testid="agent-settings-memory-stats-total">
+              <div class="text-sm text-[var(--hr-text-3)]">总记忆</div>
               <div class="mt-2 text-2xl font-semibold">{{ memoryStats?.total_memories ?? memories.length }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4" data-testid="agent-settings-memory-stats-weight">
-              <div class="text-sm text-gray-500">平均权重</div>
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4" data-testid="agent-settings-memory-stats-weight">
+              <div class="text-sm text-[var(--hr-text-3)]">平均权重</div>
               <div class="mt-2 text-2xl font-semibold">{{ memoryStats?.avg_weight ?? 0 }}</div>
             </div>
-            <div class="rounded-md border border-white/10 bg-[#252525] p-4" data-testid="agent-settings-experience-graph-summary">
-              <div class="text-sm text-gray-500">Run experience KG</div>
-              <div class="mt-2 flex items-center gap-2 text-sm" :class="experienceGraph?.available ? 'text-emerald-200' : 'text-yellow-200'">
+            <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4" data-testid="agent-settings-experience-graph-summary">
+              <div class="text-sm text-[var(--hr-text-3)]">Run experience KG</div>
+              <div class="mt-2 flex items-center gap-2 text-sm" :class="experienceGraph?.available ? 'text-[var(--hr-success)]' : 'text-[var(--hr-warning)]'">
                 <CheckCircle2 v-if="experienceGraph?.available" class="h-4 w-4" />
                 <XCircle v-else class="h-4 w-4" />
                 {{ experienceGraphError ? '读取失败' : experienceGraph?.available ? `${experienceGraph.run_count} runs · ${percent(experienceGraph.success_rate)} 成功率` : '暂无可读图谱' }}
               </div>
               <div v-if="!experienceGraph?.available" class="mt-1" data-testid="agent-settings-experience-graph-tracked-gap">
-                <span class="rounded-full bg-yellow-500/10 px-2 py-0.5 text-xs text-yellow-200">tracked_gap: 经验图谱数据依赖后台 ingest</span>
+                <span class="rounded-full bg-[var(--hr-warning-soft)] px-2 py-0.5 text-xs text-[var(--hr-warning)]">tracked_gap: 经验图谱数据依赖后台 ingest</span>
               </div>
-              <div class="mt-2 text-xs" :class="experienceGraphError ? 'text-red-300' : 'text-gray-500'">{{ experienceGraphError || (experienceGraph?.updated_at ? `更新于 ${formatDate(experienceGraph.updated_at)}` : experienceGraph?.reason || '等待自动 ingest') }}</div>
+              <div class="mt-2 text-xs" :class="experienceGraphError ? 'text-[var(--hr-danger)]' : 'text-[var(--hr-text-3)]'">{{ experienceGraphError || (experienceGraph?.updated_at ? `更新于 ${formatDate(experienceGraph.updated_at)}` : experienceGraph?.reason || '等待自动 ingest') }}</div>
               <button class="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-md border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-sm text-[var(--hr-accent)] hover:bg-[color:color-mix(in_srgb,var(--hr-accent)_18%,transparent)]" @click="router.push('/agent/experience')">
                 <Network class="h-4 w-4" />
                 打开完整图谱
@@ -2209,13 +2209,13 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="grid gap-4 lg:grid-cols-[1fr_1fr]">
-            <div class="rounded-lg border border-white/10 bg-[#252525] p-4" data-testid="agent-settings-section-decorative-marker">
+            <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4" data-testid="agent-settings-section-decorative-marker">
               <div class="flex items-center justify-between gap-3">
                 <div>
                   <h2 class="font-semibold">经验图谱结构</h2>
-                  <div class="mt-1 text-xs text-gray-500">{{ experienceGraph?.structure_coverage?.message || '尚未读取图谱状态。' }}</div>
+                  <div class="mt-1 text-xs text-[var(--hr-text-3)]">{{ experienceGraph?.structure_coverage?.message || '尚未读取图谱状态。' }}</div>
                 </div>
-                <button class="rounded-md border border-white/10 px-3 py-1.5 text-sm hover:bg-white/5" title="刷新经验图谱" aria-label="刷新经验图谱" @click="refreshMemory">
+                <button class="rounded-md border border-[var(--hr-border)] px-3 py-1.5 text-sm hover:bg-[var(--hr-surface-1)]" title="刷新经验图谱" aria-label="刷新经验图谱" @click="refreshMemory">
                   <RefreshCw class="h-4 w-4" />
                 </button>
               </div>
@@ -2223,192 +2223,192 @@ onUnmounted(() => {
                 这里展示的是运行经验图谱：Run 与模板、评分、失败根因和经验的关系。单次 DAG 原始拓扑仍在 DAG 运行页面查看。
               </div>
               <div class="mt-4 grid gap-2 sm:grid-cols-2">
-                <div v-for="(ok, name) in experienceGraph?.structure_coverage?.checks || {}" :key="name" class="flex items-center justify-between rounded-md border border-white/10 bg-[#1e1e1e] px-3 py-2 text-sm">
-                  <span class="text-gray-300">{{ coverageLabel(String(name)) }}</span>
-                  <span :class="ok ? 'text-emerald-300' : 'text-yellow-300'">{{ boolLabel(ok) }}</span>
+                <div v-for="(ok, name) in experienceGraph?.structure_coverage?.checks || {}" :key="name" class="flex items-center justify-between rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 py-2 text-sm">
+                  <span class="text-[var(--hr-text-2)]">{{ coverageLabel(String(name)) }}</span>
+                  <span :class="ok ? 'text-[var(--hr-success)]' : 'text-[var(--hr-warning)]'">{{ boolLabel(ok) }}</span>
                 </div>
               </div>
               <div class="mt-4 grid grid-cols-3 gap-2 text-sm">
-                <div class="rounded-md bg-[#1e1e1e] p-3">
-                  <div class="text-xs text-gray-500">节点</div>
+                <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
+                  <div class="text-xs text-[var(--hr-text-3)]">节点</div>
                   <div class="mt-1 font-semibold">{{ experienceGraph?.node_count ?? 0 }}</div>
                 </div>
-                <div class="rounded-md bg-[#1e1e1e] p-3">
-                  <div class="text-xs text-gray-500">关系</div>
+                <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
+                  <div class="text-xs text-[var(--hr-text-3)]">关系</div>
                   <div class="mt-1 font-semibold">{{ experienceGraph?.relationship_count ?? 0 }}</div>
                 </div>
-                <div class="rounded-md bg-[#1e1e1e] p-3">
-                  <div class="text-xs text-gray-500">失败运行</div>
+                <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
+                  <div class="text-xs text-[var(--hr-text-3)]">失败运行</div>
                   <div class="mt-1 font-semibold">{{ experienceGraph?.failed_runs ?? 0 }}</div>
                 </div>
               </div>
             </div>
-            <div class="rounded-lg border border-white/10 bg-[#252525] p-4">
+            <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
               <h2 class="font-semibold">DAG 模板成功率</h2>
               <div class="mt-3 space-y-3">
-                <div v-for="item in experienceGraph?.template_stats || []" :key="item.template" class="rounded-md border border-white/10 bg-[#1e1e1e] p-3">
+                <div v-for="item in experienceGraph?.template_stats || []" :key="item.template" class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3">
                   <div class="flex items-center justify-between gap-3">
                     <div class="min-w-0 truncate text-sm font-medium">{{ item.template }}</div>
-                    <div class="text-sm" :class="item.success_rate >= 0.8 ? 'text-emerald-300' : item.success_rate >= 0.5 ? 'text-yellow-300' : 'text-red-300'">{{ percent(item.success_rate) }}</div>
+                    <div class="text-sm" :class="item.success_rate >= 0.8 ? 'text-[var(--hr-success)]' : item.success_rate >= 0.5 ? 'text-[var(--hr-warning)]' : 'text-[var(--hr-danger)]'">{{ percent(item.success_rate) }}</div>
                   </div>
-                  <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-                    <div class="h-full rounded-full bg-emerald-400" :style="{ width: percent(item.success_rate) }"></div>
+                  <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--hr-surface-2)]">
+                    <div class="h-full rounded-full bg-[var(--hr-success)]" :style="{ width: percent(item.success_rate) }"></div>
                   </div>
-                  <div class="mt-2 text-xs text-gray-500">{{ item.runs }} runs · {{ item.failures }} failures · scorecard pass {{ item.scorecard_passes }}</div>
+                  <div class="mt-2 text-xs text-[var(--hr-text-3)]">{{ item.runs }} runs · {{ item.failures }} failures · scorecard pass {{ item.scorecard_passes }}</div>
                   <div v-if="item.problem_categories.length" class="mt-2 flex flex-wrap gap-1">
-                    <span v-for="category in item.problem_categories" :key="category" class="rounded bg-red-500/10 px-2 py-0.5 text-xs text-red-200">{{ category }}</span>
+                    <span v-for="category in item.problem_categories" :key="category" class="rounded bg-[var(--hr-danger-soft)] px-2 py-0.5 text-xs text-[var(--hr-danger)]">{{ category }}</span>
                   </div>
                 </div>
-                <div v-if="!(experienceGraph?.template_stats?.length)" class="text-sm text-gray-500">暂无模板运行统计。</div>
+                <div v-if="!(experienceGraph?.template_stats?.length)" class="text-sm text-[var(--hr-text-3)]">暂无模板运行统计。</div>
               </div>
             </div>
           </div>
-          <div class="rounded-lg border border-white/10 bg-[#252525] p-4">
+          <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
             <div class="flex items-start justify-between gap-4">
               <div>
                 <h2 class="font-semibold">Shared Asset Root 诊断</h2>
-                <p class="mt-1 text-xs text-gray-500">展示当前 asset 解析路径、symlink 状态和子目录可用性。</p>
+                <p class="mt-1 text-xs text-[var(--hr-text-3)]">展示当前 asset 解析路径、symlink 状态和子目录可用性。</p>
               </div>
               <span
                 class="rounded-full px-2 py-1 text-xs"
-                :class="assetDiagnostics?.exists ? 'bg-emerald-500/10 text-emerald-200' : 'bg-red-500/10 text-red-200'"
+                :class="assetDiagnostics?.exists ? 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]' : 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'"
               >
                 {{ assetDiagnostics?.env_source || '...' }}
               </span>
             </div>
-            <div v-if="assetDiagnosticsError" class="mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{{ assetDiagnosticsError }}</div>
+            <div v-if="assetDiagnosticsError" class="mt-3 rounded-md border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-3 py-2 text-sm text-[var(--hr-danger)]">{{ assetDiagnosticsError }}</div>
             <div v-if="assetDiagnostics" class="mt-4 space-y-3">
               <div class="grid gap-3 sm:grid-cols-2">
-                <div class="rounded-md bg-[#1e1e1e] p-3">
-                  <div class="text-xs text-gray-500">Asset Root</div>
+                <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
+                  <div class="text-xs text-[var(--hr-text-3)]">Asset Root</div>
                   <div class="mt-1 break-all font-mono text-sm" data-testid="agent-settings-asset-root">{{ assetDiagnostics.asset_root }}</div>
                 </div>
-                <div class="rounded-md bg-[#1e1e1e] p-3">
-                  <div class="text-xs text-gray-500">Repo Seed</div>
+                <div class="rounded-md bg-[var(--hr-surface-1)] p-3">
+                  <div class="text-xs text-[var(--hr-text-3)]">Repo Seed</div>
                   <div class="mt-1 break-all font-mono text-sm">{{ assetDiagnostics.repo_seed_path }}</div>
                 </div>
               </div>
               <div class="flex flex-wrap gap-2 text-xs">
-                <span class="rounded-full px-2 py-1" :class="assetDiagnostics.exists ? 'bg-emerald-500/10 text-emerald-200' : 'bg-red-500/10 text-red-200'">
+                <span class="rounded-full px-2 py-1" :class="assetDiagnostics.exists ? 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]' : 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'">
                   {{ assetDiagnostics.exists ? '目录存在' : '目录缺失' }}
                 </span>
                 <span v-if="assetDiagnostics.is_symlink" class="rounded-full bg-[var(--hr-accent-soft)] px-2 py-1 text-[var(--hr-accent)]">
                   symlink → {{ assetDiagnostics.symlink_target }}
                 </span>
-                <span v-if="assetDiagnostics.catalog_path" class="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">catalog.yaml</span>
-                <span v-if="assetDiagnostics.experience_graph_path" class="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">db/graph.json</span>
+                <span v-if="assetDiagnostics.catalog_path" class="rounded-full bg-[var(--hr-success-soft)] px-2 py-1 text-[var(--hr-success)]">catalog.yaml</span>
+                <span v-if="assetDiagnostics.experience_graph_path" class="rounded-full bg-[var(--hr-success-soft)] px-2 py-1 text-[var(--hr-success)]">db/graph.json</span>
               </div>
               <div class="grid gap-2 sm:grid-cols-3">
                 <div
                   v-for="(status, name) in assetDiagnostics.subdirs"
                   :key="name"
                   class="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
-                  :class="status.exists ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5'"
+                  :class="status.exists ? 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)]' : 'border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)]'"
                 >
-                  <span class="text-gray-300">{{ name }}</span>
-                  <CheckCircle2 v-if="status.exists" class="h-3.5 w-3.5 text-emerald-300" />
-                  <XCircle v-else class="h-3.5 w-3.5 text-red-300" />
+                  <span class="text-[var(--hr-text-2)]">{{ name }}</span>
+                  <CheckCircle2 v-if="status.exists" class="h-3.5 w-3.5 text-[var(--hr-success)]" />
+                  <XCircle v-else class="h-3.5 w-3.5 text-[var(--hr-danger)]" />
                 </div>
               </div>
-              <div class="rounded-md border border-white/10 bg-[#1e1e1e] p-3" data-testid="agent-settings-orchestration-templates">
+              <div class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3" data-testid="agent-settings-orchestration-templates">
                 <div class="flex items-center justify-between gap-3">
                   <div>
-                    <div class="text-sm font-medium text-gray-200">DAG 模板目录</div>
-                    <div class="mt-1 text-xs text-gray-500">默认只展示 catalog primary 模板；legacy/compat 不进入主要入口。</div>
+                    <div class="text-sm font-medium text-[var(--hr-text-1)]">DAG 模板目录</div>
+                    <div class="mt-1 text-xs text-[var(--hr-text-3)]">默认只展示 catalog primary 模板；legacy/compat 不进入主要入口。</div>
                   </div>
                   <span class="rounded-full bg-[var(--hr-accent-soft)] px-2 py-1 text-xs text-[var(--hr-accent)]">{{ orchestrationTemplates.length }} primary</span>
                 </div>
-                <div v-if="orchestrationTemplatesError" class="mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{{ orchestrationTemplatesError }}</div>
+                <div v-if="orchestrationTemplatesError" class="mt-3 rounded-md border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-3 py-2 text-sm text-[var(--hr-danger)]">{{ orchestrationTemplatesError }}</div>
                 <div class="mt-3 grid gap-2">
                   <div
                     v-for="template in orchestrationTemplates"
                     :key="template.id"
                     :data-testid="`agent-settings-orchestration-template-${template.id}`"
-                    class="rounded-md border border-white/10 bg-[var(--hr-surface-1)] px-3 py-2"
+                    class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 py-2"
                   >
                     <div class="flex items-start justify-between gap-3">
                       <div class="min-w-0">
-                        <div class="truncate text-sm font-medium text-white">{{ template.name || template.id }}</div>
-                        <div class="mt-1 truncate font-mono text-xs text-gray-500">{{ template.id }}</div>
+                        <div class="truncate text-sm font-medium text-[var(--hr-text-1)]">{{ template.name || template.id }}</div>
+                        <div class="mt-1 truncate font-mono text-xs text-[var(--hr-text-3)]">{{ template.id }}</div>
                       </div>
                       <div class="flex flex-shrink-0 items-center gap-1 text-xs">
-                        <span class="rounded bg-emerald-500/10 px-2 py-0.5 text-emerald-200">{{ template.category }}</span>
-                        <span class="rounded bg-white/10 px-2 py-0.5 text-gray-200">{{ template.node_count }} nodes</span>
+                        <span class="rounded bg-[var(--hr-success-soft)] px-2 py-0.5 text-[var(--hr-success)]">{{ template.category }}</span>
+                        <span class="rounded bg-[var(--hr-surface-2)] px-2 py-0.5 text-[var(--hr-text-1)]">{{ template.node_count }} nodes</span>
                       </div>
                     </div>
                     <div class="mt-2 flex flex-wrap gap-1 text-xs">
                       <span
                         v-for="profile in template.supported_profiles || []"
                         :key="profile"
-                        class="rounded bg-blue-500/10 px-2 py-0.5 text-blue-200"
+                        class="rounded bg-[var(--hr-info-soft)] px-2 py-0.5 text-[var(--hr-info)]"
                       >
                         {{ profile }}
                       </span>
-                      <span v-if="!(template.supported_profiles?.length)" class="rounded bg-yellow-500/10 px-2 py-0.5 text-yellow-200">profile 未声明</span>
+                      <span v-if="!(template.supported_profiles?.length)" class="rounded bg-[var(--hr-warning-soft)] px-2 py-0.5 text-[var(--hr-warning)]">profile 未声明</span>
                     </div>
-                    <div class="mt-2 break-all font-mono text-[11px] text-gray-500">{{ template.path }}</div>
+                    <div class="mt-2 break-all font-mono text-[11px] text-[var(--hr-text-3)]">{{ template.path }}</div>
                   </div>
-                  <div v-if="!orchestrationTemplates.length && !orchestrationTemplatesError" class="text-sm text-gray-500">暂无 primary DAG 模板。</div>
+                  <div v-if="!orchestrationTemplates.length && !orchestrationTemplatesError" class="text-sm text-[var(--hr-text-3)]">暂无 primary DAG 模板。</div>
                 </div>
               </div>
             </div>
           </div>
           <div class="grid gap-4 lg:grid-cols-[1fr_1fr]">
-            <div class="rounded-lg border border-white/10 bg-[#252525] p-4">
+            <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
               <h2 class="font-semibold">主要问题</h2>
               <div class="mt-3 space-y-3">
-                <div v-for="problem in experienceGraph?.problems || []" :key="problem.category" class="rounded-md border border-white/10 bg-[#1e1e1e] p-3">
+                <div v-for="problem in experienceGraph?.problems || []" :key="problem.category" class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3">
                   <div class="flex items-center justify-between gap-3">
                     <div class="text-sm font-medium">{{ problem.category }}</div>
-                    <div class="text-xs text-gray-500">{{ problem.count }} 次 · {{ problem.severity || 'unknown' }}</div>
+                    <div class="text-xs text-[var(--hr-text-3)]">{{ problem.count }} 次 · {{ problem.severity || 'unknown' }}</div>
                   </div>
-                  <div class="mt-1 text-sm text-gray-400">{{ problem.description || '无描述' }}</div>
-                  <div v-if="problem.lesson_actions.length" class="mt-2 text-xs text-emerald-200">{{ problem.lesson_actions[0] }}</div>
+                  <div class="mt-1 text-sm text-[var(--hr-text-2)]">{{ problem.description || '无描述' }}</div>
+                  <div v-if="problem.lesson_actions.length" class="mt-2 text-xs text-[var(--hr-success)]">{{ problem.lesson_actions[0] }}</div>
                 </div>
-                <div v-if="!(experienceGraph?.problems?.length)" class="text-sm text-gray-500">暂无失败根因记录。</div>
+                <div v-if="!(experienceGraph?.problems?.length)" class="text-sm text-[var(--hr-text-3)]">暂无失败根因记录。</div>
               </div>
             </div>
-            <div class="rounded-lg border border-white/10 bg-[#252525] p-4">
+            <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
               <h2 class="font-semibold">最近经验</h2>
               <div class="mt-3 space-y-3">
-                <div v-for="lesson in experienceGraph?.lessons || []" :key="lesson.id" class="rounded-md border border-white/10 bg-[#1e1e1e] p-3">
+                <div v-for="lesson in experienceGraph?.lessons || []" :key="lesson.id" class="rounded-md border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3">
                   <div class="text-sm font-medium">{{ lesson.summary || lesson.id }}</div>
-                  <div class="mt-1 text-sm text-gray-400">{{ lesson.action || '无行动项' }}</div>
+                  <div class="mt-1 text-sm text-[var(--hr-text-2)]">{{ lesson.action || '无行动项' }}</div>
                 </div>
-                <div v-if="!(experienceGraph?.lessons?.length)" class="text-sm text-gray-500">暂无可复用经验。</div>
+                <div v-if="!(experienceGraph?.lessons?.length)" class="text-sm text-[var(--hr-text-3)]">暂无可复用经验。</div>
               </div>
             </div>
           </div>
-          <div class="rounded-lg border border-white/10 bg-[#252525] p-4">
+          <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
             <div class="grid gap-3 md:grid-cols-[1fr_160px_100px]">
-              <input v-model="memoryQuery" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none" placeholder="搜索记忆" data-testid="agent-settings-memory-search" />
-              <select v-model="memoryKind" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none">
+              <input v-model="memoryQuery" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none" placeholder="搜索记忆" data-testid="agent-settings-memory-search" />
+              <select v-model="memoryKind" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none">
                 <option value="">全部类型</option>
                 <option value="preference">preference</option>
                 <option value="fact">fact</option>
                 <option value="decision">decision</option>
                 <option value="note">note</option>
               </select>
-              <button class="rounded-md border border-white/10 px-3 py-2 text-sm hover:bg-white/5" @click="refreshMemory">搜索</button>
+              <button class="rounded-md border border-[var(--hr-border)] px-3 py-2 text-sm hover:bg-[var(--hr-surface-1)]" @click="refreshMemory">搜索</button>
             </div>
             <div class="mt-4 grid gap-3 md:grid-cols-[1fr_150px_150px_80px]">
-              <input v-model="newMemory.content" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none" placeholder="新增记忆" />
-              <input v-model="newMemory.kind" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none" placeholder="kind" />
-              <input v-model="newMemory.topic" class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none" placeholder="topic" />
-              <button class="rounded-md bg-blue-500 px-3 py-2 text-sm text-white" @click="addMemory" data-testid="agent-settings-memory-create-button">添加</button>
+              <input v-model="newMemory.content" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none" placeholder="新增记忆" />
+              <input v-model="newMemory.kind" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none" placeholder="kind" />
+              <input v-model="newMemory.topic" class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none" placeholder="topic" />
+              <button class="rounded-md bg-[var(--hr-accent)] px-3 py-2 text-sm text-[var(--hr-on-accent)]" @click="addMemory" data-testid="agent-settings-memory-create-button">添加</button>
             </div>
           </div>
-          <div class="rounded-lg border border-white/10 bg-[#252525]">
-            <div v-for="memory in memories" :key="memory.id" class="grid gap-3 border-b border-white/10 px-4 py-3 last:border-0 md:grid-cols-[80px_1fr_110px_80px]" :data-testid="`agent-settings-memory-item-${memory.id}`">
-              <div class="font-mono text-xs text-gray-500">#{{ memory.id }}</div>
+          <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
+            <div v-for="memory in memories" :key="memory.id" class="grid gap-3 border-b border-[var(--hr-border)] px-4 py-3 last:border-0 md:grid-cols-[80px_1fr_110px_80px]" :data-testid="`agent-settings-memory-item-${memory.id}`">
+              <div class="font-mono text-xs text-[var(--hr-text-3)]">#{{ memory.id }}</div>
               <div>
                 <div class="text-sm">{{ memory.content }}</div>
-                <div class="mt-1 text-xs text-gray-500">{{ formatDate(memory.created_at) }}</div>
+                <div class="mt-1 text-xs text-[var(--hr-text-3)]">{{ formatDate(memory.created_at) }}</div>
               </div>
-              <div class="text-sm text-gray-400">{{ memory.kind }} · {{ memory.weight.toFixed(2) }}</div>
-              <button class="justify-self-end rounded-md border border-red-500/30 px-2 py-1.5 text-red-300 hover:bg-red-500/10" @click="removeMemory(memory)" :data-testid="`agent-settings-memory-delete-${memory.id}`"><Trash2 class="h-4 w-4" /></button>
+              <div class="text-sm text-[var(--hr-text-2)]">{{ memory.kind }} · {{ memory.weight.toFixed(2) }}</div>
+              <button class="justify-self-end rounded-md border border-[var(--hr-danger-border)] px-2 py-1.5 text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)]" @click="removeMemory(memory)" :data-testid="`agent-settings-memory-delete-${memory.id}`"><Trash2 class="h-4 w-4" /></button>
             </div>
-            <div v-if="!memories.length" data-testid="agent-settings-memory-empty-state" class="p-4 text-sm text-gray-500">暂无记忆。</div>
+            <div v-if="!memories.length" data-testid="agent-settings-memory-empty-state" class="p-4 text-sm text-[var(--hr-text-3)]">暂无记忆。</div>
           </div>
         </section>
       </div>
@@ -2428,7 +2428,7 @@ onUnmounted(() => {
               </div>
               <button
                 type="button"
-                class="inline-flex h-9 w-9 items-center justify-center border border-[var(--hr-border)] text-gray-400 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
+                class="inline-flex h-9 w-9 items-center justify-center border border-[var(--hr-border)] text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
                 @click="closeGitDrawer"
                 :title="t('settings.actions.close')"
               >
@@ -2438,60 +2438,60 @@ onUnmounted(() => {
 
             <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5">
               <div class="grid gap-4">
-                <label class="grid gap-2 text-sm text-white/60">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)]">
                   {{ t('settings.git.name') }}
                   <input
                     v-model.trim="newGitServer.name"
-                    class="h-10 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="HomeRail Gitea"
                     data-testid="agent-settings-git-create-name"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-white/60">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)]">
                   {{ t('settings.git.platform') }}
                   <select
                     v-model="newGitServer.platform_type"
-                    class="h-10 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     data-testid="agent-settings-git-create-platform"
                   >
                     <option v-for="platform in gitPlatformOptions" :key="platform.value" :value="platform.value">{{ platform.label }}</option>
                   </select>
                 </label>
-                <label class="grid gap-2 text-sm text-white/60">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)]">
                   API endpoint
                   <input
                     v-model.trim="newGitServer.api_endpoint"
-                    class="h-10 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="http://host:3000/api/v1"
                     data-testid="agent-settings-git-create-endpoint"
                   />
                 </label>
                 <div class="grid gap-4 sm:grid-cols-2">
-                  <label class="grid min-w-0 gap-2 text-sm text-white/60">
+                  <label class="grid min-w-0 gap-2 text-sm text-[var(--hr-text-2)]">
                     Git user
-                    <input v-model.trim="newGitServer.git_user_name" class="h-10 min-w-0 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none" :placeholder="t('settings.git.optional')" />
+                    <input v-model.trim="newGitServer.git_user_name" class="h-10 min-w-0 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none" :placeholder="t('settings.git.optional')" />
                   </label>
-                  <label class="grid min-w-0 gap-2 text-sm text-white/60">
+                  <label class="grid min-w-0 gap-2 text-sm text-[var(--hr-text-2)]">
                     Git email
-                    <input v-model.trim="newGitServer.git_user_email" class="h-10 min-w-0 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none" :placeholder="t('settings.git.optional')" />
+                    <input v-model.trim="newGitServer.git_user_email" class="h-10 min-w-0 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none" :placeholder="t('settings.git.optional')" />
                   </label>
                 </div>
-                <label class="grid gap-2 text-sm text-white/60">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)]">
                   Token
                   <input
                     v-model.trim="newGitServer.token"
                     type="password"
-                    class="h-10 rounded-md border border-white/10 bg-[#202728] px-3 text-sm text-white outline-none"
+                    class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     placeholder="Access token"
                     data-testid="agent-settings-git-create-token"
                     autocomplete="off"
                   />
                 </label>
-                <label class="grid gap-2 text-sm text-white/60">
+                <label class="grid gap-2 text-sm text-[var(--hr-text-2)]">
                   {{ t('settings.git.notes') }}
                   <textarea
                     v-model.trim="newGitServer.description"
-                    class="min-h-[86px] resize-none rounded-md border border-white/10 bg-[#202728] px-3 py-2 text-sm text-white outline-none"
+                    class="min-h-[86px] resize-none rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 py-2 text-sm text-[var(--hr-text-1)] outline-none"
                     :placeholder="t('settings.git.optional')"
                   />
                 </label>
@@ -2501,14 +2501,14 @@ onUnmounted(() => {
             <footer class="flex shrink-0 justify-end gap-2 border-t border-[var(--hr-border)] px-5 py-4">
               <button
                 type="button"
-                class="h-10 border border-white/10 px-4 text-sm text-white/60 hover:bg-white/5 hover:text-white"
+                class="h-10 border border-[var(--hr-border)] px-4 text-sm text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)] hover:text-[var(--hr-text-1)]"
                 @click="closeGitDrawer"
               >
                 {{ t('settings.actions.cancel') }}
               </button>
               <button
                 type="submit"
-                class="inline-flex h-10 items-center justify-center gap-2 bg-blue-500 px-4 text-sm text-white hover:bg-blue-400 disabled:opacity-40"
+                class="inline-flex h-10 items-center justify-center gap-2 bg-[var(--hr-accent)] px-4 text-sm text-[var(--hr-on-accent)] hover:bg-[var(--hr-accent-hover)] disabled:opacity-40"
                 :disabled="saving === 'create-git' || !newGitServer.name.trim() || !newGitServer.api_endpoint.trim() || !newGitServer.token.trim()"
                 data-testid="agent-settings-git-create-submit"
               >
@@ -2529,8 +2529,8 @@ onUnmounted(() => {
 .agent-settings-shell {
   --settings-card-radius: 24px;
   --settings-control-radius: 18px;
-  --settings-field-bg: var(--hr-surface-1);
-  --settings-border: var(--hr-border);
+  --settings-field-bg: var(--hr-control);
+  --settings-border: var(--hr-settings-divider);
 }
 
 .agent-settings-shell :deep(section) {
@@ -2581,14 +2581,22 @@ onUnmounted(() => {
 .agent-settings-shell :deep(section > .bg-\[\#252525\]),
 .agent-settings-shell :deep(.grid > .bg-\[\#252525\]),
 .agent-settings-shell :deep(.bg-\[\#343434\]) {
-  background: var(--hr-surface-1);
+  background: var(--hr-settings-card);
+}
+
+.agent-settings-shell :deep(.bg-\[var\(--hr-surface-1\)\]) {
+  background-color: var(--hr-settings-card);
+}
+
+.agent-settings-shell :deep(.border-\[var\(--hr-border\)\]) {
+  border-color: var(--hr-settings-divider);
 }
 
 .settings-git-overlay {
   position: fixed;
   inset: 0;
   z-index: 79;
-  background: rgba(0, 0, 0, 0.24);
+  background: var(--hr-overlay);
   backdrop-filter: blur(2px);
 }
 
@@ -2602,7 +2610,7 @@ onUnmounted(() => {
   border-left: 1px solid var(--hr-border);
   background: var(--hr-panel);
   color: var(--hr-text-1);
-  box-shadow: -24px 0 80px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--hr-shadow-floating);
   backdrop-filter: blur(24px);
 }
 

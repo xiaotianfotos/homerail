@@ -146,21 +146,21 @@ defineExpose({ acceptStreamEvent, refresh })
 }
 
 .generative-ui-shadow-preview > header span {
-  background: rgba(116, 228, 227, 0.12);
-  color: #8df4ef;
+  background: var(--hr-accent-soft);
+  color: var(--hr-accent);
 }
 
 .generative-ui-shadow-preview > header em {
-  background: rgba(251, 191, 36, 0.1);
-  color: rgba(253, 230, 138, 0.8);
+  background: var(--hr-warning-soft);
+  color: var(--hr-warning);
 }
 
 .generative-ui-shadow-preview__state {
   margin: auto;
-  color: rgba(220, 243, 242, 0.6);
+  color: var(--hr-text-3);
 }
 
 .generative-ui-shadow-preview__state--error {
-  color: rgba(253, 186, 186, 0.8);
+  color: var(--hr-danger);
 }
 </style>

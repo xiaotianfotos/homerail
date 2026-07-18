@@ -202,7 +202,7 @@ onUnmounted(() => {
     <div class="flex-shrink-0 border-b border-[var(--hr-border)] px-3 py-2">
       <div class="flex items-center justify-between gap-3">
         <div class="flex items-center gap-1.5 text-[11px] font-medium text-[var(--hr-text-1)]">
-          <GitPullRequest class="h-3.5 w-3.5 text-emerald-300" />
+          <GitPullRequest class="h-3.5 w-3.5 text-[var(--hr-success)]" />
           {{ t('agent.artifacts.title') }}
         </div>
         <div v-if="loading" class="flex items-center gap-1 text-[10px] text-[var(--hr-text-3)]">
@@ -210,7 +210,7 @@ onUnmounted(() => {
           {{ t('agent.artifacts.loading') }}
         </div>
       </div>
-      <div v-if="error" class="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-200">
+      <div v-if="error" class="mt-2 rounded border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-2 py-1 text-[10px] text-[var(--hr-danger)]">
         {{ error }}
       </div>
     </div>
@@ -243,8 +243,8 @@ onUnmounted(() => {
             <span
               :class="cn(
                 'rounded-full px-2 py-0.5 text-[10px]',
-                summary.reviewStatus === 'approved' ? 'bg-emerald-500/15 text-emerald-300' :
-                summary.reviewStatus === 'changes_requested' ? 'bg-red-500/15 text-red-300' :
+                summary.reviewStatus === 'approved' ? 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]' :
+                summary.reviewStatus === 'changes_requested' ? 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]' :
                 'bg-[var(--hr-surface-2)] text-[var(--hr-text-3)]'
               )"
             >
@@ -256,7 +256,7 @@ onUnmounted(() => {
             :href="primaryPrUrl"
             target="_blank"
             rel="noreferrer"
-            class="flex items-center gap-1.5 truncate text-[11px] text-blue-300 hover:text-blue-200"
+            class="flex items-center gap-1.5 truncate text-[11px] text-[var(--hr-info)] hover:text-[var(--hr-info)]"
           >
             <ExternalLink class="h-3 w-3 flex-shrink-0" />
             <span class="truncate">{{ primaryPrUrl }}</span>
@@ -274,7 +274,7 @@ onUnmounted(() => {
             :href="primaryIssueUrl"
             target="_blank"
             rel="noreferrer"
-            class="flex items-center gap-1.5 truncate text-[11px] text-blue-300 hover:text-blue-200"
+            class="flex items-center gap-1.5 truncate text-[11px] text-[var(--hr-info)] hover:text-[var(--hr-info)]"
           >
             <ExternalLink class="h-3 w-3 flex-shrink-0" />
             <span class="truncate">{{ primaryIssueUrl }}</span>
@@ -317,7 +317,7 @@ onUnmounted(() => {
               :href="url"
               target="_blank"
               rel="noreferrer"
-              class="flex items-center gap-1.5 truncate text-[10px] text-blue-300 hover:text-blue-200"
+              class="flex items-center gap-1.5 truncate text-[10px] text-[var(--hr-info)] hover:text-[var(--hr-info)]"
             >
               <ExternalLink class="h-3 w-3 flex-shrink-0" />
               <span class="truncate">{{ url }}</span>

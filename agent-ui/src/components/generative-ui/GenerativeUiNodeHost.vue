@@ -763,12 +763,12 @@ function acceptInlineRendererActions(names: string[]): void {
   min-width: 0;
   min-height: 0;
   align-content: stretch;
-  border: 1px solid rgba(116, 228, 227, 0.16);
+  border: 1px solid var(--hr-border);
   border-radius: 8px;
-  background: rgba(10, 20, 23, 0.88);
+  background: var(--hr-panel);
   overflow: hidden;
   outline: none;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 1px 0 var(--hr-surface-1);
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
   container-name: generative-ui-block;
   container-type: size;
@@ -776,17 +776,17 @@ function acceptInlineRendererActions(names: string[]): void {
 
 .generative-ui-node-host:hover,
 .generative-ui-node-host:focus-within {
-  border-color: rgba(116, 228, 227, 0.36);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border-color: var(--hr-accent-border);
+  box-shadow: var(--hr-shadow-panel), inset 0 1px 0 var(--hr-surface-1);
 }
 
 .generative-ui-node-host:focus-visible {
-  box-shadow: 0 0 0 2px rgba(116, 228, 227, 0.8);
+  box-shadow: 0 0 0 2px var(--hr-focus-ring);
 }
 
 .generative-ui-node-host--selected {
-  border-color: rgba(116, 228, 227, 0.82);
-  box-shadow: 0 0 0 2px rgba(68, 209, 199, 0.22), 0 18px 48px rgba(0, 0, 0, 0.28);
+  border-color: var(--hr-accent);
+  box-shadow: 0 0 0 2px var(--hr-focus-ring), var(--hr-shadow-panel);
 }
 
 .generative-ui-node-host--selected::before {
@@ -796,8 +796,8 @@ function acceptInlineRendererActions(names: string[]): void {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: #74e4df;
-  box-shadow: 0 0 12px rgba(116, 228, 223, 0.72);
+  background: var(--hr-accent);
+  box-shadow: 0 0 12px var(--hr-focus-ring);
   content: '';
 }
 
@@ -809,19 +809,19 @@ function acceptInlineRendererActions(names: string[]): void {
   position: absolute;
   inset: 0;
   z-index: 2;
-  border: 1px solid rgba(116, 228, 223, 0.75);
+  border: 1px solid var(--hr-accent);
   border-radius: inherit;
-  box-shadow: inset 0 0 0 1px rgba(116, 228, 223, 0.12);
+  box-shadow: inset 0 0 0 1px var(--hr-accent-soft);
   content: '';
   pointer-events: none;
   animation: generative-ui-standard-attention-frame var(--generative-ui-attention-duration) ease-out both;
 }
 
 @keyframes generative-ui-standard-attention {
-  0% { border-color: rgba(116, 228, 227, 0.16); }
-  14% { border-color: rgba(116, 228, 227, 0.92); box-shadow: 0 0 0 3px rgba(68, 209, 199, 0.2), 0 18px 56px rgba(18, 184, 170, 0.2); }
-  48% { border-color: rgba(116, 228, 227, 0.58); box-shadow: 0 0 0 1px rgba(68, 209, 199, 0.12), 0 14px 44px rgba(18, 184, 170, 0.1); }
-  100% { border-color: rgba(116, 228, 227, 0.16); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035); }
+  0% { border-color: var(--hr-border); }
+  14% { border-color: var(--hr-accent); box-shadow: 0 0 0 3px var(--hr-focus-ring), var(--hr-shadow-panel); }
+  48% { border-color: var(--hr-accent-border); box-shadow: 0 0 0 1px var(--hr-accent-soft), var(--hr-shadow-panel); }
+  100% { border-color: var(--hr-border); box-shadow: inset 0 1px 0 var(--hr-surface-1); }
 }
 
 @keyframes generative-ui-standard-attention-frame {
@@ -838,8 +838,8 @@ function acceptInlineRendererActions(names: string[]): void {
   }
 
   [data-motion-profile].generative-ui-node-host--attention {
-    border-color: rgba(116, 228, 227, 0.76);
-    box-shadow: 0 0 0 2px rgba(68, 209, 199, 0.18);
+    border-color: var(--hr-accent);
+    box-shadow: 0 0 0 2px var(--hr-focus-ring);
   }
 }
 
@@ -867,11 +867,11 @@ function acceptInlineRendererActions(names: string[]): void {
   max-width: min(220px, 34cqw);
   flex: 0 1 auto;
   overflow: hidden;
-  border: 1px solid rgba(116, 228, 227, 0.18);
+  border: 1px solid var(--hr-border);
   border-radius: 999px;
   padding: 4px 8px;
-  color: rgba(218, 245, 243, 0.68);
-  background: rgba(10, 31, 33, 0.72);
+  color: var(--hr-text-2);
+  background: var(--hr-control);
   font-size: 11px;
   font-weight: 720;
   line-height: 1;
@@ -880,15 +880,15 @@ function acceptInlineRendererActions(names: string[]): void {
 }
 
 .generative-ui-node-host__generation-badges span[data-generation-badge='current'] {
-  border-color: rgba(74, 222, 128, 0.26);
-  color: rgba(187, 247, 208, 0.9);
-  background: rgba(22, 101, 52, 0.16);
+  border-color: var(--hr-success-border);
+  color: var(--hr-success);
+  background: var(--hr-success-soft);
 }
 
 .generative-ui-node-host__generation-badges span[data-generation-badge='superseded'] {
-  border-color: rgba(250, 204, 21, 0.24);
-  color: rgba(254, 240, 138, 0.82);
-  background: rgba(113, 63, 18, 0.14);
+  border-color: var(--hr-warning-border);
+  color: var(--hr-warning);
+  background: var(--hr-warning-soft);
 }
 
 .generative-ui-node-host__history-switcher {
@@ -901,8 +901,8 @@ function acceptInlineRendererActions(names: string[]): void {
   justify-content: space-between;
   gap: 10px;
   margin: -4px 0 14px;
-  border-bottom: 1px solid rgba(116, 228, 227, 0.13);
-  background: rgba(9, 19, 22, 0.96);
+  border-bottom: 1px solid var(--hr-border);
+  background: var(--hr-panel);
   padding: 8px 0 10px;
 }
 
@@ -916,11 +916,11 @@ function acceptInlineRendererActions(names: string[]): void {
 .generative-ui-node-host__history-tabs button,
 .generative-ui-node-host__history-retry {
   min-height: 32px;
-  border: 1px solid rgba(116, 228, 227, 0.18);
+  border: 1px solid var(--hr-border);
   border-radius: 6px;
   padding: 6px 10px;
-  color: rgba(218, 245, 243, 0.7);
-  background: rgba(8, 28, 31, 0.7);
+  color: var(--hr-text-2);
+  background: var(--hr-control);
   font: inherit;
   font-size: 12px;
   font-weight: 720;
@@ -928,14 +928,14 @@ function acceptInlineRendererActions(names: string[]): void {
 }
 
 .generative-ui-node-host__history-tabs button[data-history-selected='true'] {
-  border-color: rgba(116, 228, 227, 0.52);
-  color: #efffff;
-  background: rgba(38, 151, 145, 0.2);
+  border-color: var(--hr-accent-border);
+  color: var(--hr-accent);
+  background: var(--hr-accent-soft);
 }
 
 .generative-ui-node-host__history-status {
   flex: 0 0 auto;
-  color: rgba(218, 245, 243, 0.58);
+  color: var(--hr-text-3);
   font-size: 12px;
 }
 
@@ -945,15 +945,15 @@ function acceptInlineRendererActions(names: string[]): void {
   align-items: baseline;
   gap: 8px;
   margin-bottom: 12px;
-  border-left: 3px solid rgba(250, 204, 21, 0.64);
-  background: rgba(113, 63, 18, 0.12);
+  border-left: 3px solid var(--hr-warning);
+  background: var(--hr-warning-soft);
   padding: 8px 10px;
-  color: rgba(254, 240, 138, 0.74);
+  color: var(--hr-warning);
   font-size: 12px;
 }
 
 .generative-ui-node-host__historical-banner strong {
-  color: rgba(254, 249, 195, 0.94);
+  color: var(--hr-text-1);
 }
 
 .generative-ui-node-host__tool {
@@ -962,17 +962,17 @@ function acceptInlineRendererActions(names: string[]): void {
   height: 38px;
   flex: 0 0 38px;
   place-items: center;
-  border: 1px solid rgba(116, 228, 227, 0.22);
+  border: 1px solid var(--hr-border);
   border-radius: 7px;
-  color: rgba(225, 255, 252, 0.76);
-  background: rgba(7, 18, 21, 0.88);
+  color: var(--hr-text-2);
+  background: var(--hr-control);
   cursor: pointer;
 }
 
 .generative-ui-node-host__tool:hover,
 .generative-ui-node-host__tool:focus-visible {
-  border-color: rgba(116, 228, 227, 0.58);
-  color: #f5fffe;
+  border-color: var(--hr-accent-border);
+  color: var(--hr-accent);
   outline: none;
 }
 
@@ -994,7 +994,7 @@ function acceptInlineRendererActions(names: string[]): void {
   gap: 8px;
   overflow: hidden;
   padding: 12px 20px 20px;
-  color: rgba(224, 248, 246, 0.76);
+  color: var(--hr-text-2);
 }
 
 .generative-ui-node-host__minimal strong,
@@ -1005,7 +1005,7 @@ function acceptInlineRendererActions(names: string[]): void {
 }
 
 .generative-ui-node-host__minimal strong {
-  color: #f1fffe;
+  color: var(--hr-text-1);
   font-size: 14px;
 }
 
@@ -1016,19 +1016,19 @@ function acceptInlineRendererActions(names: string[]): void {
 .generative-ui-node-host__minimal progress {
   width: min(100%, 320px);
   height: 5px;
-  accent-color: #74e4df;
+  accent-color: var(--hr-accent);
 }
 
 .generative-ui-node-host[data-status-phase='succeeded'] {
-  border-color: rgba(74, 222, 128, 0.38);
+  border-color: var(--hr-success-border);
 }
 
 .generative-ui-node-host[data-status-phase='failed'] {
-  border-color: rgba(248, 113, 113, 0.5);
+  border-color: var(--hr-danger-border);
 }
 
 .generative-ui-node-host[data-status-phase='blocked'] {
-  border-color: rgba(250, 204, 21, 0.42);
+  border-color: var(--hr-warning-border);
 }
 
 [data-motion-profile='standard'][data-lifecycle-motion='update'] .generative-ui-node-host__body,
@@ -1047,19 +1047,19 @@ function acceptInlineRendererActions(names: string[]): void {
 }
 
 @keyframes generative-ui-standard-update {
-  0% { background-color: rgba(116, 228, 223, 0.2); }
+  0% { background-color: var(--hr-accent-soft); }
   100% { background-color: transparent; }
 }
 
 @keyframes generative-ui-standard-complete {
-  0% { background-color: rgba(74, 222, 128, 0.24); }
-  45% { background-color: rgba(74, 222, 128, 0.1); }
+  0% { background-color: var(--hr-success-border); }
+  45% { background-color: var(--hr-success-soft); }
   100% { background-color: transparent; }
 }
 
 @keyframes generative-ui-standard-fail {
-  0% { background-color: rgba(248, 113, 113, 0.28); }
-  45% { background-color: rgba(248, 113, 113, 0.1); }
+  0% { background-color: var(--hr-danger-border); }
+  45% { background-color: var(--hr-danger-soft); }
   100% { background-color: transparent; }
 }
 
@@ -1075,9 +1075,9 @@ function acceptInlineRendererActions(names: string[]): void {
   grid-row: auto !important;
   overflow-x: hidden;
   overflow-y: hidden;
-  border-color: rgba(116, 228, 227, 0.46);
-  background: #091316;
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.72);
+  border-color: var(--hr-accent-border);
+  background: var(--hr-bg-raised);
+  box-shadow: var(--hr-shadow-floating);
 }
 
 :global(body.generative-ui-node-expanded) {
@@ -1092,11 +1092,11 @@ function acceptInlineRendererActions(names: string[]): void {
 }
 
 .generative-ui-node-host__actions button {
-  border: 1px solid rgba(116, 228, 227, 0.25);
+  border: 1px solid var(--hr-accent-border);
   border-radius: 999px;
-  background: rgba(116, 228, 227, 0.09);
+  background: var(--hr-accent-soft);
   padding: 7px 12px;
-  color: rgba(233, 255, 253, 0.9);
+  color: var(--hr-text-1);
   font: inherit;
   font-size: 12px;
   font-weight: 750;
@@ -1104,12 +1104,13 @@ function acceptInlineRendererActions(names: string[]): void {
 }
 
 .generative-ui-node-host__actions button[data-style='primary'] {
-  background: rgba(116, 228, 227, 0.2);
+  background: var(--hr-accent-border);
 }
 
 .generative-ui-node-host__actions button[data-style='danger'] {
-  border-color: rgba(248, 113, 113, 0.4);
-  background: rgba(248, 113, 113, 0.12);
+  border-color: var(--hr-danger-border);
+  color: var(--hr-danger);
+  background: var(--hr-danger-soft);
 }
 
 .generative-ui-node-host__actions button:disabled,
@@ -1123,11 +1124,11 @@ function acceptInlineRendererActions(names: string[]): void {
   justify-items: start;
   gap: 6px;
   margin-top: 8px;
-  border: 1px solid rgba(116, 228, 227, 0.18);
+  border: 1px solid var(--hr-border);
   border-radius: 12px;
-  background: rgba(8, 26, 29, 0.72);
+  background: var(--hr-surface-1);
   padding: 9px 11px;
-  color: rgba(220, 243, 242, 0.76);
+  color: var(--hr-text-2);
   font-size: 12px;
 }
 
@@ -1137,15 +1138,15 @@ function acceptInlineRendererActions(names: string[]): void {
 }
 
 .generative-ui-node-host__action-state--committed {
-  border-color: rgba(74, 222, 128, 0.32);
-  color: rgba(187, 247, 208, 0.9);
+  border-color: var(--hr-success-border);
+  color: var(--hr-success);
 }
 
 .generative-ui-node-host__action-state--failed,
 .generative-ui-node-host__action-state--denied,
 .generative-ui-node-host__action-state--cancelled {
-  border-color: rgba(248, 113, 113, 0.32);
-  color: rgba(254, 202, 202, 0.9);
+  border-color: var(--hr-danger-border);
+  color: var(--hr-danger);
 }
 
 .generative-ui-node-host__confirmation {
@@ -1163,7 +1164,7 @@ function acceptInlineRendererActions(names: string[]): void {
 }
 
 .generative-ui-node-host__authority dt {
-  color: rgba(233, 255, 253, 0.62);
+  color: var(--hr-text-3);
   font-weight: 700;
 }
 
@@ -1178,9 +1179,9 @@ function acceptInlineRendererActions(names: string[]): void {
 }
 
 .generative-ui-node-host__action-state button {
-  border: 1px solid rgba(116, 228, 227, 0.25);
+  border: 1px solid var(--hr-accent-border);
   border-radius: 999px;
-  background: rgba(116, 228, 227, 0.09);
+  background: var(--hr-accent-soft);
   padding: 6px 10px;
   color: inherit;
   font: inherit;

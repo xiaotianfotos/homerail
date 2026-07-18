@@ -280,17 +280,17 @@ const addOptions = [
 </script>
 
 <template>
-  <section class="rounded-lg border border-white/10 bg-[#252525]">
+  <section class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
     <header
-      class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3"
+      class="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hr-border)] px-4 py-3"
     >
       <div>
         <h2 class="font-semibold">{{ t('settings.models.providers.title') }}</h2>
-        <p class="mt-1 text-xs text-gray-500">{{ t('settings.models.providers.subtitle') }}</p>
+        <p class="mt-1 text-xs text-[var(--hr-text-3)]">{{ t('settings.models.providers.subtitle') }}</p>
       </div>
       <button
         type="button"
-        class="inline-flex items-center gap-2 rounded-md border border-white/12 px-3 py-2 text-sm text-gray-200 hover:bg-white/5"
+        class="inline-flex items-center gap-2 rounded-md border border-[var(--hr-border-strong)] px-3 py-2 text-sm text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-1)]"
         @click="startCreate"
       >
         <Plus class="h-4 w-4" />
@@ -300,7 +300,7 @@ const addOptions = [
 
     <div class="grid min-h-80 md:grid-cols-[220px_minmax(0,1fr)]">
       <nav
-        class="border-b border-white/10 p-2 md:border-b-0 md:border-r"
+        class="border-b border-[var(--hr-border)] p-2 md:border-b-0 md:border-r"
         :aria-label="t('settings.models.providers.title')"
       >
         <button
@@ -311,16 +311,16 @@ const addOptions = [
           :class="
             selectedId === provider.id && !creating
               ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
-              : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+              : 'text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)] hover:text-[var(--hr-text-1)]'
           "
           @click="loadProvider(provider)"
         >
           <span class="truncate">{{ provider.name }}</span>
-          <span class="text-[10px] text-gray-600">{{
+          <span class="text-[10px] text-[var(--hr-text-3)]">{{
             settings.filter(setting => setting.provider_id === provider.id).length
           }}</span>
         </button>
-        <div v-if="!customProviders.length" class="px-3 py-6 text-center text-xs text-gray-600">
+        <div v-if="!customProviders.length" class="px-3 py-6 text-center text-xs text-[var(--hr-text-3)]">
           {{ t('settings.models.providers.empty') }}
         </div>
       </nav>
@@ -328,135 +328,135 @@ const addOptions = [
       <form class="space-y-4 p-4" @submit.prevent="save">
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="space-y-1">
-            <span class="text-xs text-gray-500">Provider ID</span>
+            <span class="text-xs text-[var(--hr-text-3)]">Provider ID</span>
             <input
               v-model="providerId"
               :disabled="!creating"
-              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none disabled:text-gray-500"
+              class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none disabled:text-[var(--hr-text-3)]"
               placeholder="custom-openai"
             />
           </label>
           <label class="space-y-1">
-            <span class="text-xs text-gray-500">{{ t('settings.models.form.displayName') }}</span>
+            <span class="text-xs text-[var(--hr-text-3)]">{{ t('settings.models.form.displayName') }}</span>
             <input
               v-model="providerName"
-              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+              class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
             />
           </label>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="space-y-1">
-            <span class="text-xs text-gray-500">Base URL</span>
+            <span class="text-xs text-[var(--hr-text-3)]">Base URL</span>
             <input
               v-model="baseUrl"
-              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+              class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
               placeholder="https://api.example.com/v1"
               @blur="normalizeVoiceBaseUrl"
             />
           </label>
           <label class="space-y-1">
-            <span class="text-xs text-gray-500">{{
+            <span class="text-xs text-[var(--hr-text-3)]">{{
               t('settings.models.providers.defaultModel')
             }}</span>
             <input
               v-model="defaultModel"
-              class="h-10 w-full rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+              class="h-10 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
             />
           </label>
         </div>
-        <details v-if="supportsLlm" class="border-t border-white/8 pt-3">
-          <summary class="cursor-pointer text-xs text-gray-500">
+        <details v-if="supportsLlm" class="border-t border-[var(--hr-border)] pt-3">
+          <summary class="cursor-pointer text-xs text-[var(--hr-text-3)]">
             {{ t('settings.models.providers.protocolUrls') }}
           </summary>
           <div class="mt-3 grid gap-3">
             <input
               v-model="chatCompletionsBaseUrl"
-              class="h-9 rounded-md border border-white/10 bg-[#343434] px-3 text-xs"
+              class="h-9 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-xs"
               placeholder="Chat Completions URL"
             />
             <input
               v-model="responsesBaseUrl"
-              class="h-9 rounded-md border border-white/10 bg-[#343434] px-3 text-xs"
+              class="h-9 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-xs"
               placeholder="Responses URL"
             />
             <input
               v-model="anthropicBaseUrl"
-              class="h-9 rounded-md border border-white/10 bg-[#343434] px-3 text-xs"
+              class="h-9 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-xs"
               placeholder="Anthropic URL"
             />
           </div>
         </details>
-        <div v-if="supportsTts || supportsAsr" class="space-y-3 border-t border-white/8 pt-4">
-          <div class="text-xs text-gray-500">
+        <div v-if="supportsTts || supportsAsr" class="space-y-3 border-t border-[var(--hr-border)] pt-4">
+          <div class="text-xs text-[var(--hr-text-3)]">
             {{ t('settings.models.providers.voiceEndpoints') }}
           </div>
           <div v-if="supportsTts" class="grid gap-3 sm:grid-cols-2">
             <label class="space-y-1">
-              <span class="text-xs text-gray-500">{{
+              <span class="text-xs text-[var(--hr-text-3)]">{{
                 t('settings.models.providers.ttsHttp')
               }}</span>
               <input
                 v-model="ttsHttpUrl"
                 data-testid="provider-tts-http-url"
-                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
+                class="h-9 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
                 :placeholder="defaultTtsHttpUrl"
               />
             </label>
             <label class="space-y-1">
-              <span class="text-xs text-gray-500">{{
+              <span class="text-xs text-[var(--hr-text-3)]">{{
                 t('settings.models.providers.ttsStreamingHttp')
               }}</span>
               <input
                 v-model="ttsStreamingUrl"
                 data-testid="provider-tts-streaming-url"
-                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
+                class="h-9 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
                 :placeholder="defaultTtsStreamingUrl"
               />
             </label>
           </div>
           <div v-if="supportsAsr" class="grid gap-3 sm:grid-cols-2">
             <label class="space-y-1">
-              <span class="text-xs text-gray-500">{{
+              <span class="text-xs text-[var(--hr-text-3)]">{{
                 t('settings.models.providers.asrHttp')
               }}</span>
               <input
                 v-model="asrHttpUrl"
                 data-testid="provider-asr-http-url"
-                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
+                class="h-9 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
                 :placeholder="defaultAsrHttpUrl"
               />
             </label>
             <label class="space-y-1">
-              <span class="text-xs text-gray-500">{{
+              <span class="text-xs text-[var(--hr-text-3)]">{{
                 t('settings.models.providers.asrRealtimeWs')
               }}</span>
               <input
                 v-model="asrRealtimeUrl"
                 data-testid="provider-asr-realtime-url"
-                class="h-9 w-full rounded-md border border-white/10 bg-[#343434] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
+                class="h-9 w-full rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 font-mono text-xs outline-none focus:border-[var(--hr-accent-border)]"
                 :placeholder="defaultAsrRealtimeUrl"
               />
             </label>
           </div>
         </div>
         <div class="space-y-2">
-          <div class="text-xs text-gray-500">{{ t('settings.models.form.capabilities') }}</div>
+          <div class="text-xs text-[var(--hr-text-3)]">{{ t('settings.models.form.capabilities') }}</div>
           <div class="flex flex-wrap gap-2">
             <CapabilityToggle capability="llm" v-model="supportsLlm" />
             <CapabilityToggle capability="asr" v-model="supportsAsr" />
             <CapabilityToggle capability="tts" v-model="supportsTts" />
           </div>
         </div>
-        <div v-if="!creating && selectedProvider" class="space-y-3 border-t border-white/8 pt-4">
+        <div v-if="!creating && selectedProvider" class="space-y-3 border-t border-[var(--hr-border)] pt-4">
           <div>
-            <div class="text-xs text-gray-500">
+            <div class="text-xs text-[var(--hr-text-3)]">
               {{ t('settings.models.providers.references', { count: referenceCount }) }}
             </div>
             <div v-if="referenceCount" class="mt-2 flex flex-wrap gap-1.5">
               <span
                 v-for="setting in referencedSettings"
                 :key="setting.id"
-                class="rounded border border-amber-400/20 bg-amber-400/5 px-2 py-1 text-xs text-amber-200"
+                class="rounded border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] px-2 py-1 text-xs text-[var(--hr-warning)]"
               >
                 {{ setting.display_name || setting.model_name }}
               </span>
@@ -467,7 +467,7 @@ const addOptions = [
               v-for="option in addOptions"
               :key="option.purpose"
               type="button"
-              class="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs text-gray-300 hover:bg-white/5"
+              class="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--hr-border)] px-2.5 text-xs text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)]"
               @click="emit('addModel', option.purpose, selectedProvider.id)"
             >
               <component :is="option.icon" class="h-3.5 w-3.5" />
@@ -480,8 +480,8 @@ const addOptions = [
             <button
               type="button"
               data-testid="delete-custom-provider"
-              class="inline-flex items-center gap-2 rounded-md border border-red-500/25 px-3 py-2 text-xs text-red-300 disabled:cursor-not-allowed disabled:opacity-35"
-              :class="deleteConfirmOpen ? 'bg-red-500/10' : ''"
+              class="inline-flex items-center gap-2 rounded-md border border-[var(--hr-danger-border)] px-3 py-2 text-xs text-[var(--hr-danger)] disabled:cursor-not-allowed disabled:opacity-35"
+              :class="deleteConfirmOpen ? 'bg-[var(--hr-danger-soft)]' : ''"
               :disabled="saving"
               @click="toggleDeleteConfirm"
             >

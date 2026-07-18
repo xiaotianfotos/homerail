@@ -20,17 +20,17 @@ const label = computed(() => {
 
 const classes = computed(() => {
   if (!props.active) {
-    return 'border-white/10 text-gray-600 bg-transparent'
+    return 'border-[var(--hr-border)] text-[var(--hr-text-3)] bg-transparent'
   }
   const map: Record<string, string> = {
-    llm: 'border-emerald-400/40 bg-emerald-400/10 text-emerald-100',
-    asr: 'border-blue-400/40 bg-blue-400/10 text-blue-100',
+    llm: 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)]',
+    asr: 'border-[var(--hr-info-border)] bg-[var(--hr-info-soft)] text-[var(--hr-info)]',
     tts: 'border-orange-300/40 bg-orange-300/10 text-orange-100',
     audio: 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]',
-    vision: 'border-violet-400/40 bg-violet-400/10 text-violet-100',
+    vision: 'border-[var(--hr-speaking-border)] bg-[var(--hr-speaking-soft)] text-[var(--hr-speaking)]',
     video: 'border-fuchsia-400/40 bg-fuchsia-400/10 text-fuchsia-100',
   }
-  return map[props.capability] ?? 'border-white/10 bg-white/5 text-gray-300'
+  return map[props.capability] ?? 'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-2)]'
 })
 </script>
 

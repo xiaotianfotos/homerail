@@ -658,12 +658,12 @@ async function playBlob(blob: Blob): Promise<void> {
     <div class="agent-chat-header flex h-16 flex-shrink-0 items-center justify-between border-b border-[var(--hr-border)] px-6">
       <div>
         <div class="text-[11px] uppercase tracking-[0.22em] text-[var(--hr-text-3)]">Manager</div>
-        <div class="mt-1 text-lg font-semibold text-white">Runtime</div>
+        <div class="mt-1 text-lg font-semibold text-[var(--hr-text-1)]">Runtime</div>
       </div>
       <div class="flex items-center gap-2 text-xs">
         <select
           :value="store.managerProviderName"
-          class="h-9 rounded-full border border-[var(--hr-border)] bg-white/[0.035] px-3 text-xs text-white/72 outline-none focus:border-[var(--hr-border-strong)]"
+          class="h-9 rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-xs text-[var(--hr-text-2)] outline-none focus:border-[var(--hr-border-strong)]"
           :disabled="isSending || store.managerRuntimeLoading"
           @change="handleProviderChange"
         >
@@ -677,7 +677,7 @@ async function playBlob(blob: Blob): Promise<void> {
         </select>
         <select
           v-model="store.managerModelName"
-          class="h-9 rounded-full border border-[var(--hr-border)] bg-white/[0.035] px-3 text-xs text-white/72 outline-none focus:border-[var(--hr-border-strong)]"
+          class="h-9 rounded-full border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-xs text-[var(--hr-text-2)] outline-none focus:border-[var(--hr-border-strong)]"
           :disabled="isSending || store.managerRuntimeLoading"
           @change="handleModelChange"
         >
@@ -698,7 +698,7 @@ async function playBlob(blob: Blob): Promise<void> {
       @scroll="checkAtBottom"
     >
       <!-- Empty state -->
-      <div v-if="store.chatMessages.length === 0" class="flex items-center justify-center h-full text-gray-500 text-sm">
+      <div v-if="store.chatMessages.length === 0" class="flex items-center justify-center h-full text-[var(--hr-text-3)] text-sm">
         <div class="text-center space-y-2">
           <div class="text-4xl opacity-20">💬</div>
           <div>{{ t('shell.chat.empty') }}</div>
@@ -714,7 +714,7 @@ async function playBlob(blob: Blob): Promise<void> {
           </div>
           <div class="flex-1 min-w-0 space-y-1">
             <!-- Text -->
-            <div v-if="msg.type === 'text'" class="agent-markdown rounded-[22px] border border-white/[0.08] bg-white/[0.035] px-4 py-3 text-[15px] leading-7 text-white/[0.82] break-words shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]" v-html="renderMarkdown(msg.content)" />
+            <div v-if="msg.type === 'text'" class="agent-markdown rounded-[22px] border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-4 py-3 text-[15px] leading-7 text-[var(--hr-text-1)] break-words shadow-[inset_0_1px_0_var(--hr-border)]" v-html="renderMarkdown(msg.content)" />
 
             <!-- Thinking summary -->
             <div
@@ -733,7 +733,7 @@ async function playBlob(blob: Blob): Promise<void> {
                 'overflow-hidden rounded-[20px] border',
                 isInvokeRun(msg) && extractRunId(msg)
                   ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] cursor-pointer hover:border-[var(--hr-accent)]'
-                  : 'border-white/10 bg-white/[0.035]'
+                  : 'border-[var(--hr-border)] bg-[var(--hr-surface-1)]'
               )"
               @click="isInvokeRun(msg) && extractRunId(msg) ? clickRunCard(extractRunId(msg)!) : undefined"
             >
@@ -743,29 +743,29 @@ async function playBlob(blob: Blob): Promise<void> {
                   <GitBranch class="h-4 w-4 text-[var(--hr-accent)] flex-shrink-0" />
                   <div class="flex-1 min-w-0">
                     <div class="text-xs font-medium text-[var(--hr-accent)]">DAG Run</div>
-                    <div class="text-[10px] text-white/35 font-mono">{{ extractRunId(msg)!.slice(-12) }}</div>
+                    <div class="text-[10px] text-[var(--hr-text-4)] font-mono">{{ extractRunId(msg)!.slice(-12) }}</div>
                   </div>
-                  <ExternalLink class="h-3 w-3 text-white/35" />
+                  <ExternalLink class="h-3 w-3 text-[var(--hr-text-4)]" />
                 </div>
               </template>
               <!-- Regular tool call -->
               <template v-else>
                 <button
-                  class="flex items-center gap-2 w-full px-3 py-2.5 text-xs text-white/66 hover:bg-white/5 transition-colors"
+                  class="flex items-center gap-2 w-full px-3 py-2.5 text-xs text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)] transition-colors"
                   @click="toggleExpanded(msg.id)"
                 >
                   <ChevronDown v-if="expandedToolCalls.has(msg.id)" class="h-3.5 w-3.5" />
                   <ChevronUp v-else class="h-3.5 w-3.5" />
                   <Wrench class="h-3.5 w-3.5 text-[var(--hr-accent)]" />
-                  <span class="text-white/35">{{ t('shell.chat.toolCalls') }}</span>
-                  <span class="font-medium text-white/[0.86]">{{ msg.toolName }}</span>
-                  <span v-if="msg.toolSummary" class="text-white/35">{{ msg.toolSummary }}</span>
+                  <span class="text-[var(--hr-text-4)]">{{ t('shell.chat.toolCalls') }}</span>
+                  <span class="font-medium text-[var(--hr-text-1)]">{{ msg.toolName }}</span>
+                  <span v-if="msg.toolSummary" class="text-[var(--hr-text-4)]">{{ msg.toolSummary }}</span>
                   <span
                     :class="cn(
                       'ml-auto text-[10px]',
-                      msg.status === 'completed' && 'text-green-400',
-                      msg.status === 'failed' && 'text-red-400',
-                      msg.status === 'pending' && 'text-amber-400'
+                      msg.status === 'completed' && 'text-[var(--hr-success)]',
+                      msg.status === 'failed' && 'text-[var(--hr-danger)]',
+                      msg.status === 'pending' && 'text-[var(--hr-warning)]'
                     )"
                   >
                     {{ msg.status === 'completed' ? t('shell.chat.status.completed') : msg.status === 'failed' ? t('shell.chat.status.failed') : t('shell.chat.status.running') }}
@@ -773,25 +773,25 @@ async function playBlob(blob: Blob): Promise<void> {
                 </button>
                 <div
                   v-if="!expandedToolCalls.has(msg.id) && msg.toolResult"
-                  class="border-t border-white/5 px-3 py-2 text-xs text-white/40"
+                  class="border-t border-[var(--hr-border)] px-3 py-2 text-xs text-[var(--hr-text-3)]"
                 >
                   {{ toolResultPreview(msg.toolResult) }}
                 </div>
-                <div v-if="expandedToolCalls.has(msg.id)" class="px-3 pb-3 text-xs text-white/40 border-t border-white/5 mt-1 pt-2 whitespace-pre-wrap">
+                <div v-if="expandedToolCalls.has(msg.id)" class="px-3 pb-3 text-xs text-[var(--hr-text-3)] border-t border-[var(--hr-border)] mt-1 pt-2 whitespace-pre-wrap">
                   <template v-if="msg.content">
-                    <div class="text-white/55">Input</div>
+                    <div class="text-[var(--hr-text-2)]">Input</div>
                     <div>{{ msg.content }}</div>
                   </template>
                   <template v-if="msg.toolResult">
-                    <div class="mt-2 text-white/55">Result</div>
-                    <div class="max-h-64 overflow-y-auto rounded-2xl border border-white/5 bg-[var(--hr-surface-1)] p-2">{{ formatToolResult(msg.toolResult) }}</div>
+                    <div class="mt-2 text-[var(--hr-text-2)]">Result</div>
+                    <div class="max-h-64 overflow-y-auto rounded-2xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-2">{{ formatToolResult(msg.toolResult) }}</div>
                   </template>
                 </div>
               </template>
             </div>
 
             <!-- Status -->
-            <div v-if="msg.type === 'status'" class="text-xs text-white/35 italic">
+            <div v-if="msg.type === 'status'" class="text-xs text-[var(--hr-text-4)] italic">
               {{ msg.content }}
             </div>
           </div>
@@ -799,8 +799,8 @@ async function playBlob(blob: Blob): Promise<void> {
 
         <!-- User -->
         <div v-else-if="msg.role === 'user'" class="flex gap-3 flex-row-reverse">
-          <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.055]">
-            <User class="h-4 w-4 text-white/55" />
+          <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-2xl border border-[var(--hr-border)] bg-[var(--hr-surface-2)]">
+            <User class="h-4 w-4 text-[var(--hr-text-2)]" />
           </div>
           <div class="flex-1 min-w-0">
             <div class="ml-auto max-w-[86%] rounded-[22px] rounded-tr-md border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] px-4 py-3 text-sm leading-relaxed text-[var(--hr-text-1)] break-words">
@@ -828,7 +828,7 @@ async function playBlob(blob: Blob): Promise<void> {
         <button
           :class="cn(
             'flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors',
-            voiceMode ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)] hover:bg-[var(--hr-accent-border)]' : 'bg-transparent text-white/45 hover:bg-white/10 hover:text-white'
+            voiceMode ? 'bg-[var(--hr-accent-soft)] text-[var(--hr-accent)] hover:bg-[var(--hr-accent-border)]' : 'bg-transparent text-[var(--hr-text-3)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]'
           )"
           :title="voiceMode ? t('shell.chat.voice.stop') : t('shell.chat.voice.start')"
           @click="toggleVoiceMode"
@@ -841,23 +841,23 @@ async function playBlob(blob: Blob): Promise<void> {
             <span
               v-for="(bar, index) in waveformBars"
               :key="index"
-              class="w-1 rounded-full bg-gradient-to-t from-teal-500 via-[var(--hr-accent)] to-emerald-200 transition-[height,opacity] duration-75"
+              class="w-1 rounded-full bg-gradient-to-t from-teal-500 via-[var(--hr-accent)] to-[var(--hr-success)] transition-[height,opacity] duration-75"
               :style="{ height: `${Math.max(10, bar * 34)}px`, opacity: 0.38 + bar * 0.62 }"
             />
           </div>
           <div class="mt-1 flex items-center justify-between gap-3 text-[11px]">
-            <span class="flex items-center gap-1.5 text-gray-400">
+            <span class="flex items-center gap-1.5 text-[var(--hr-text-2)]">
               <AudioLines class="h-3.5 w-3.5 text-[var(--hr-accent)]" />
               {{ voiceStatus }}
             </span>
-            <span class="font-mono text-gray-500">{{ voiceLevelPct }}</span>
+            <span class="font-mono text-[var(--hr-text-3)]">{{ voiceLevelPct }}</span>
           </div>
-          <div v-if="voiceError" class="mt-1 text-[11px] text-red-300">{{ voiceError }}</div>
+          <div v-if="voiceError" class="mt-1 text-[11px] text-[var(--hr-danger)]">{{ voiceError }}</div>
         </div>
         <textarea
           v-model="inputValue"
           :class="cn(
-            'flex-1 resize-none bg-transparent text-sm text-white/[0.82] placeholder:text-white/30 outline-none',
+            'flex-1 resize-none bg-transparent text-sm text-[var(--hr-text-1)] placeholder:text-[var(--hr-text-4)] outline-none',
             'max-h-32 min-h-[44px] py-1 px-1'
           )"
           :rows="2"
@@ -869,7 +869,7 @@ async function playBlob(blob: Blob): Promise<void> {
           :class="cn(
             'flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors',
             isSending
-              ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+              ? 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)]'
               : 'bg-[var(--hr-accent)] text-[var(--hr-on-accent)] hover:bg-[color-mix(in_srgb,var(--hr-accent)_85%,white)]'
           )"
           :title="t('shell.chat.send')"
@@ -885,9 +885,9 @@ async function playBlob(blob: Blob): Promise<void> {
 
 <style scoped>
 @keyframes pulse-ring {
-  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-  70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  0% { box-shadow: 0 0 0 0 var(--hr-success-border); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 .agent-chat-surface {
@@ -946,15 +946,15 @@ async function playBlob(blob: Blob): Promise<void> {
 .agent-markdown :deep(p:first-child) { margin-top: 0; }
 .agent-markdown :deep(p:last-child) { margin-bottom: 0; }
 .agent-markdown :deep(code) {
-  background: rgba(255,255,255,0.08);
+  background: var(--hr-surface-2);
   padding: 0.15em 0.4em;
   border-radius: 4px;
   font-size: 0.875em;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 }
 .agent-markdown :deep(pre) {
-  background: rgba(0,0,0,0.3);
-  border: 1px solid rgba(255,255,255,0.06);
+  background: var(--hr-code-bg);
+  border: 1px solid var(--hr-border);
   border-radius: 8px;
   padding: 0.75em 1em;
   overflow-x: auto;
@@ -966,7 +966,7 @@ async function playBlob(blob: Blob): Promise<void> {
   font-size: 0.8em;
 }
 .agent-markdown :deep(a) {
-  color: #60a5fa;
+  color: var(--hr-info);
   text-decoration: underline;
 }
 .agent-markdown :deep(ul), .agent-markdown :deep(ol) {
@@ -975,13 +975,13 @@ async function playBlob(blob: Blob): Promise<void> {
 }
 .agent-markdown :deep(li) { margin: 0.15em 0; }
 .agent-markdown :deep(blockquote) {
-  border-left: 3px solid rgba(255,255,255,0.15);
+  border-left: 3px solid var(--hr-border-strong);
   padding-left: 0.75em;
   margin: 0.5em 0;
-  color: #9ca3af;
+  color: var(--hr-text-3);
 }
 .agent-markdown :deep(h1), .agent-markdown :deep(h2), .agent-markdown :deep(h3) {
-  color: #e5e7eb;
+  color: var(--hr-text-1);
   margin: 0.6em 0 0.3em;
   font-weight: 600;
 }
@@ -990,11 +990,11 @@ async function playBlob(blob: Blob): Promise<void> {
 .agent-markdown :deep(h3) { font-size: 1.05em; }
 .agent-markdown :deep(table) { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
 .agent-markdown :deep(th), .agent-markdown :deep(td) {
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--hr-border);
   padding: 0.3em 0.6em;
   text-align: left;
 }
-.agent-markdown :deep(th) { background: rgba(255,255,255,0.05); font-weight: 600; }
-.agent-markdown :deep(hr) { border-color: rgba(255,255,255,0.1); margin: 0.75em 0; }
-.agent-markdown :deep(strong) { color: #e5e7eb; }
+.agent-markdown :deep(th) { background: var(--hr-surface-1); font-weight: 600; }
+.agent-markdown :deep(hr) { border-color: var(--hr-border); margin: 0.75em 0; }
+.agent-markdown :deep(strong) { color: var(--hr-text-1); }
 </style>

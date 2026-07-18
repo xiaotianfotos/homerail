@@ -232,7 +232,7 @@ function text(value: unknown, limit = 96): string {
 
 .xhs-note-widget::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(207, 226, 229, 0.2);
+  background: var(--hr-scrollbar);
 }
 
 .xhs-note-widget__author {
@@ -268,13 +268,13 @@ function text(value: unknown, limit = 96): string {
 
 .xhs-note-widget__nickname {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--hr-text-1);
   font-weight: 600;
 }
 
 .xhs-note-widget__author-text small {
   font-size: 11px;
-  color: rgba(207, 226, 229, 0.58);
+  color: var(--hr-text-3);
   line-height: 1;
 }
 
@@ -284,20 +284,20 @@ function text(value: unknown, limit = 96): string {
   gap: 5px;
   margin-left: auto;
   padding: 5px 8px;
-  border: 1px solid rgba(122, 255, 238, 0.22);
+  border: 1px solid var(--hr-accent-border);
   border-radius: 999px;
-  color: rgba(222, 252, 249, 0.86);
+  color: var(--hr-accent);
   font-size: 11px;
   font-weight: 650;
   line-height: 1;
   text-decoration: none;
-  background: rgba(9, 29, 32, 0.45);
+  background: var(--hr-accent-soft);
   cursor: pointer;
 }
 
 .xhs-note-widget__preview-link:hover {
-  border-color: rgba(122, 255, 238, 0.38);
-  background: rgba(29, 73, 78, 0.45);
+  border-color: var(--hr-accent);
+  background: var(--hr-control-hover);
 }
 
 .xhs-note-widget__gallery {
@@ -393,7 +393,7 @@ function text(value: unknown, limit = 96): string {
   margin: 0 0 8px;
   font-size: 18px;
   font-weight: 700;
-  color: #f5fbff;
+  color: var(--hr-text-1);
   line-height: 1.3;
   flex-shrink: 0;
   display: -webkit-box;
@@ -411,7 +411,7 @@ function text(value: unknown, limit = 96): string {
   margin: 0;
   font-size: 13px;
   line-height: 1.55;
-  color: rgba(235, 244, 246, 0.82);
+  color: var(--hr-text-2);
 }
 
 .xhs-note-widget__body p + p {
@@ -435,8 +435,8 @@ function text(value: unknown, limit = 96): string {
   flex: 0 0 auto;
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(255, 36, 66, 0.15);
-  color: #ff6b7a;
+  background: var(--hr-danger-soft);
+  color: var(--hr-danger);
   font-size: 11px;
   font-weight: 600;
 }
@@ -445,7 +445,7 @@ function text(value: unknown, limit = 96): string {
   display: flex;
   gap: 16px;
   padding-top: 9px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--hr-border);
   margin-top: auto;
   flex-shrink: 0;
 }
@@ -455,6 +455,6 @@ function text(value: unknown, limit = 96): string {
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--hr-text-3);
 }
 </style>

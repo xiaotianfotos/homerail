@@ -4709,9 +4709,9 @@ function summarizeTask(value: string): string {
                   data-testid="voice-model-agent-harness-select"
                   @change="changeVoiceAgentHarness"
                 >
-                  <option value="codex_appserver" class="bg-[#111315] text-white">Codex</option>
-                  <option value="kimi_code" class="bg-[#111315] text-white">Kimi Code</option>
-                  <option value="claude_agent_sdk" class="bg-[#111315] text-white">
+                  <option value="codex_appserver" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">Codex</option>
+                  <option value="kimi_code" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">Kimi Code</option>
+                  <option value="claude_agent_sdk" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">
                     Claude Code
                   </option>
                 </select>
@@ -4727,7 +4727,7 @@ function summarizeTask(value: string): string {
                     v-if="configuredCodexModelUnavailable"
                     :value="configuredCodexModel"
                     disabled
-                    class="bg-[#111315] text-white"
+                    class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
                   >
                     {{ configuredCodexModel }} ({{ t('voice.model.accountUnavailable') }})
                   </option>
@@ -4742,7 +4742,7 @@ function summarizeTask(value: string): string {
                     v-for="model in codexModelOptions"
                     :key="model.id"
                     :value="model.model"
-                    class="bg-[#111315] text-white"
+                    class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
                   >
                     {{ model.display_name }}
                   </option>
@@ -4761,14 +4761,14 @@ function summarizeTask(value: string): string {
                   data-testid="voice-model-agent-model-select"
                   @change="changeLlmModel"
                 >
-                  <option v-if="!managerAgentModelOptions.length" value="" class="bg-[#111315] text-white">
+                  <option v-if="!managerAgentModelOptions.length" value="" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">
                     {{ voiceSettings?.llm_model || t('voice.model.managerUnconfigured') }}
                   </option>
                   <option
                     v-for="setting in managerAgentModelOptions"
                     :key="setting.id"
                     :value="setting.id"
-                    class="bg-[#111315] text-white"
+                    class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
                   >
                     {{ modelSettingLabel(setting, managerAgentModelOptions) }}
                   </option>
@@ -4795,7 +4795,7 @@ function summarizeTask(value: string): string {
                   v-for="option in codexReasoningEffortOptions"
                   :key="option.value"
                   :value="option.value"
-                  class="bg-[#111315] text-white"
+                  class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
                 >
                   {{ option.label }}
                 </option>
@@ -4821,7 +4821,7 @@ function summarizeTask(value: string): string {
                   v-for="option in codexServiceTierOptions"
                   :key="option.value || 'standard'"
                   :value="option.value"
-                  class="bg-[#111315] text-white"
+                  class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
                 >
                   {{ option.label }}
                 </option>
@@ -4839,14 +4839,14 @@ function summarizeTask(value: string): string {
                 :title="t('voice.model.asr')"
                 @change="changeAsrModel"
               >
-                <option v-if="!asrModelOptions.length" value="" class="bg-[#111315] text-white">
+                <option v-if="!asrModelOptions.length" value="" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">
                   {{ voiceSettings?.asr_model || t('voice.model.asrUnconfigured') }}
                 </option>
                 <option
                   v-for="setting in asrModelOptions"
                   :key="setting.id"
                   :value="setting.id"
-                  class="bg-[#111315] text-white"
+                  class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
                 >
                   {{ modelSettingLabel(setting, asrModelOptions) }}
                 </option>
@@ -4867,13 +4867,13 @@ function summarizeTask(value: string): string {
                 <option
                   v-if="selectedTtsModelId === '' && voiceSettings?.tts_model"
                   value=""
-                  class="bg-[#111315] text-white"
+                  class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
                 >
                   {{ voiceSettings?.tts_model || t('voice.model.ttsUnconfigured') }}
                 </option>
                 <option
                   :value="BUILTIN_EDGE_TTS_OPTION_ID"
-                  class="bg-[#111315] text-white"
+                  class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
                 >
                   {{ t('voice.model.edgeTts') }}
                 </option>
@@ -4881,7 +4881,7 @@ function summarizeTask(value: string): string {
                   v-for="setting in ttsModelOptions"
                   :key="setting.id"
                   :value="setting.id"
-                  class="bg-[#111315] text-white"
+                  class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
                 >
                   {{ modelSettingLabel(setting, ttsModelOptions) }}
                 </option>
@@ -4910,7 +4910,7 @@ function summarizeTask(value: string): string {
         </button>
         <button
           v-if="devOnboardingEntryVisible"
-          class="voice-runtime-pill voice-runtime-pill--dev-onboarding flex h-9 items-center gap-2 rounded-full border border-amber-300/24 bg-amber-300/10 px-3 text-xs text-amber-100 transition-colors hover:bg-amber-300/16 hover:text-white"
+          class="voice-runtime-pill voice-runtime-pill--dev-onboarding flex h-9 items-center gap-2 rounded-full border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] px-3 text-xs text-[var(--hr-warning)] transition-colors hover:bg-[var(--hr-warning-soft)] hover:text-[var(--hr-text-1)]"
           :title="t('voice.onboarding.devTitle')"
           type="button"
           data-testid="voice-dev-onboarding-button"
@@ -4922,7 +4922,7 @@ function summarizeTask(value: string): string {
         <button
           class="voice-runtime-pill voice-runtime-pill--gamepad flex h-9 items-center rounded-full border px-3 text-xs"
           :class="{
-            'border-emerald-300/30 bg-emerald-300/10 text-emerald-100': voiceGamepadConnected,
+            'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)]': voiceGamepadConnected,
             'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-4)]': !voiceGamepadConnected,
             'voice-runtime-pill--gamepad-live': voiceGamepadLiveVisible
           }"
@@ -5383,20 +5383,20 @@ function summarizeTask(value: string): string {
                 <svg class="voice-wave-svg" viewBox="0 0 360 76" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="voiceStripMainGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stop-color="rgba(79,216,232,0.1)" />
-                      <stop offset="30%" stop-color="rgba(79,216,232,0.85)" />
-                      <stop offset="62%" stop-color="rgba(56,189,248,0.75)" />
-                      <stop offset="100%" stop-color="rgba(129,140,248,0.12)" />
+                      <stop offset="0%" stop-color="var(--hr-accent)" stop-opacity="0.1" />
+                      <stop offset="30%" stop-color="var(--hr-accent)" stop-opacity="0.85" />
+                      <stop offset="62%" stop-color="var(--hr-info)" stop-opacity="0.75" />
+                      <stop offset="100%" stop-color="var(--hr-speaking)" stop-opacity="0.12" />
                     </linearGradient>
                     <linearGradient id="voiceStripUpperGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stop-color="rgba(125,211,252,0.06)" />
-                      <stop offset="50%" stop-color="rgba(125,211,252,0.4)" />
-                      <stop offset="100%" stop-color="rgba(79,216,232,0.06)" />
+                      <stop offset="0%" stop-color="var(--hr-info)" stop-opacity="0.06" />
+                      <stop offset="50%" stop-color="var(--hr-info)" stop-opacity="0.4" />
+                      <stop offset="100%" stop-color="var(--hr-accent)" stop-opacity="0.06" />
                     </linearGradient>
                     <linearGradient id="voiceStripLowerGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stop-color="rgba(129,140,248,0.08)" />
-                      <stop offset="44%" stop-color="rgba(129,140,248,0.42)" />
-                      <stop offset="100%" stop-color="rgba(79,216,232,0.06)" />
+                      <stop offset="0%" stop-color="var(--hr-speaking)" stop-opacity="0.08" />
+                      <stop offset="44%" stop-color="var(--hr-speaking)" stop-opacity="0.42" />
+                      <stop offset="100%" stop-color="var(--hr-accent)" stop-opacity="0.06" />
                     </linearGradient>
                   </defs>
                   <path
@@ -5446,20 +5446,20 @@ function summarizeTask(value: string): string {
                   <svg class="voice-wave-svg" viewBox="0 0 360 76" preserveAspectRatio="none">
                     <defs>
                       <linearGradient id="voiceWaveMainGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stop-color="rgba(79,216,232,0.12)" />
-                        <stop offset="30%" stop-color="rgba(79,216,232,0.82)" />
-                        <stop offset="62%" stop-color="rgba(56,189,248,0.74)" />
-                        <stop offset="100%" stop-color="rgba(125,211,252,0.14)" />
+                        <stop offset="0%" stop-color="var(--hr-accent)" stop-opacity="0.12" />
+                        <stop offset="30%" stop-color="var(--hr-accent)" stop-opacity="0.82" />
+                        <stop offset="62%" stop-color="var(--hr-info)" stop-opacity="0.74" />
+                        <stop offset="100%" stop-color="var(--hr-info)" stop-opacity="0.14" />
                       </linearGradient>
                       <linearGradient id="voiceWaveUpperGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stop-color="rgba(125,211,252,0.08)" />
-                        <stop offset="50%" stop-color="rgba(125,211,252,0.44)" />
-                        <stop offset="100%" stop-color="rgba(79,216,232,0.08)" />
+                        <stop offset="0%" stop-color="var(--hr-info)" stop-opacity="0.08" />
+                        <stop offset="50%" stop-color="var(--hr-info)" stop-opacity="0.44" />
+                        <stop offset="100%" stop-color="var(--hr-accent)" stop-opacity="0.08" />
                       </linearGradient>
                       <linearGradient id="voiceWaveLowerGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stop-color="rgba(129,140,248,0.1)" />
-                        <stop offset="44%" stop-color="rgba(129,140,248,0.46)" />
-                        <stop offset="100%" stop-color="rgba(79,216,232,0.08)" />
+                        <stop offset="0%" stop-color="var(--hr-speaking)" stop-opacity="0.1" />
+                        <stop offset="44%" stop-color="var(--hr-speaking)" stop-opacity="0.46" />
+                        <stop offset="100%" stop-color="var(--hr-accent)" stop-opacity="0.08" />
                       </linearGradient>
                     </defs>
                     <path
@@ -5862,11 +5862,12 @@ function summarizeTask(value: string): string {
    three surface levels, consistent hairline borders and radius scale.
    ========================================================================== */
 .voice-cockpit {
-  /* Local aliases over the global --hr-* skin tokens (styles/hr-theme.css).
-     Switching `data-hr-theme` on <html> re-skins the whole cockpit. */
+  /* Local aliases over the global appearance token contract. Components do
+     not know which appearance plugin supplied the values. */
   --vc-bg: var(--hr-bg);
   --vc-surface-1: var(--hr-surface-1);
   --vc-surface-2: var(--hr-surface-2);
+  --vc-surface-3: var(--hr-surface-3);
   --vc-panel: var(--hr-panel);
   --vc-border: var(--hr-border);
   --vc-border-strong: var(--hr-border-strong);
@@ -5879,10 +5880,19 @@ function summarizeTask(value: string): string {
   --vc-accent-border: var(--hr-accent-border);
   --vc-speaking: var(--hr-speaking);
   --vc-speaking-soft: var(--hr-speaking-soft);
+  --vc-speaking-border: var(--hr-speaking-border);
   --vc-success: var(--hr-success);
+  --vc-success-soft: var(--hr-success-soft);
+  --vc-success-border: var(--hr-success-border);
   --vc-warning: var(--hr-warning);
+  --vc-warning-soft: var(--hr-warning-soft);
+  --vc-warning-border: var(--hr-warning-border);
   --vc-danger: var(--hr-danger);
+  --vc-danger-soft: var(--hr-danger-soft);
+  --vc-danger-border: var(--hr-danger-border);
   --vc-info: var(--hr-info);
+  --vc-info-soft: var(--hr-info-soft);
+  --vc-info-border: var(--hr-info-border);
   --vc-radius-lg: var(--hr-radius-lg);
   --vc-radius-md: var(--hr-radius-md);
   --vc-radius-sm: var(--hr-radius-sm);
@@ -5991,8 +6001,8 @@ function summarizeTask(value: string): string {
   gap: 10px;
   border: 0;
   background:
-    radial-gradient(circle at 50% 38%, rgba(79, 216, 232, 0.16), transparent 32%),
-    rgba(6, 8, 13, 0.94);
+    radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--vc-accent) 16%, transparent), transparent 32%),
+    color-mix(in srgb, var(--hr-overlay) 88%, var(--vc-bg));
   color: var(--vc-text-1);
   text-align: center;
   backdrop-filter: blur(16px);
@@ -6055,15 +6065,15 @@ function summarizeTask(value: string): string {
 }
 
 .voice-model-menu__button--alert {
-  border-color: rgba(251, 191, 36, 0.4);
-  background: rgba(251, 191, 36, 0.1);
-  color: rgba(254, 243, 199, 0.96);
+  border-color: var(--vc-warning-border);
+  background: var(--vc-warning-soft);
+  color: var(--vc-warning);
 }
 
 .voice-model-menu__button--alert:hover {
-  border-color: rgba(251, 191, 36, 0.56);
-  background: rgba(251, 191, 36, 0.16);
-  color: rgba(255, 251, 235, 1);
+  border-color: var(--vc-warning);
+  background: color-mix(in srgb, var(--vc-warning) 16%, transparent);
+  color: var(--vc-warning);
 }
 
 .voice-model-menu__popover {
@@ -6077,9 +6087,7 @@ function summarizeTask(value: string): string {
   border-radius: var(--vc-radius-lg);
   background: var(--vc-panel);
   padding: 12px;
-  box-shadow:
-    0 24px 72px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  box-shadow: var(--hr-shadow-floating), 0 0 0 1px var(--hr-border) inset;
   backdrop-filter: blur(20px);
 }
 
@@ -6168,7 +6176,7 @@ function summarizeTask(value: string): string {
 .voice-model-menu__footer {
   border-top: 1px solid var(--vc-border);
   padding: 10px 4px 2px;
-  color: rgba(252, 165, 165, 0.9);
+  color: var(--vc-danger);
   font-size: 12px;
 }
 
@@ -6178,9 +6186,7 @@ function summarizeTask(value: string): string {
 }
 
 .voice-runtime-pill--gamepad-live {
-  box-shadow:
-    0 0 0 1px rgba(79, 216, 232, 0.24),
-    0 0 26px rgba(79, 216, 232, 0.18);
+  box-shadow: 0 0 0 1px var(--vc-accent-border), 0 0 26px var(--vc-accent-soft);
 }
 
 /* --------------------------------------------------------------------------
@@ -6193,7 +6199,7 @@ function summarizeTask(value: string): string {
 .voice-stage {
   border: 1px solid var(--vc-border);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 22%),
+    linear-gradient(180deg, var(--vc-surface-1), transparent 22%),
     var(--vc-surface-1);
   box-shadow: var(--hr-shadow-panel);
   transition:
@@ -6216,7 +6222,7 @@ function summarizeTask(value: string): string {
 
 .voice-stage__status {
   border: 1px solid var(--vc-border) !important;
-  background: rgba(8, 12, 19, 0.72) !important;
+  background: color-mix(in srgb, var(--vc-panel) 82%, transparent) !important;
   color: var(--vc-text-2) !important;
   backdrop-filter: blur(12px);
 }
@@ -6332,9 +6338,9 @@ function summarizeTask(value: string): string {
   border: 1px solid var(--vc-border);
   border-radius: var(--vc-radius-lg);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 28%),
+    linear-gradient(180deg, var(--vc-surface-1), transparent 28%),
     var(--vc-surface-1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 1px 0 var(--vc-border);
   scroll-snap-align: start;
 }
 
@@ -6346,7 +6352,7 @@ function summarizeTask(value: string): string {
   --card-accent: var(--vc-accent);
   border-color: var(--vc-accent-border);
   background:
-    radial-gradient(circle at 84% 0%, rgba(79, 216, 232, 0.09), transparent 36%),
+    radial-gradient(circle at 84% 0%, var(--vc-accent-soft), transparent 36%),
     var(--vc-surface-1);
   padding: 22px;
   overflow: hidden;
@@ -6370,11 +6376,11 @@ function summarizeTask(value: string): string {
 }
 
 .voice-status-card--deck {
-  --card-accent: #2dd4bf;
+  --card-accent: var(--vc-success);
 }
 
 .voice-status-card--xhs {
-  --card-accent: #fb7185;
+  --card-accent: var(--vc-danger);
   padding: 14px;
 }
 
@@ -6512,7 +6518,7 @@ function summarizeTask(value: string): string {
   overflow: hidden;
   border: 1px solid var(--vc-border);
   border-radius: var(--vc-radius-md);
-  background: #05080e;
+  background: var(--hr-bg-raised);
 }
 
 .voice-artifact-image {
@@ -6531,7 +6537,7 @@ function summarizeTask(value: string): string {
   width: 100%;
   height: 100%;
   border: 0;
-  background: #05080e;
+  background: var(--hr-bg-raised);
 }
 
 .voice-artifact-empty {
@@ -6595,9 +6601,9 @@ function summarizeTask(value: string): string {
 }
 
 .voice-card-tool--primary {
-  border-color: rgba(52, 211, 153, 0.34);
-  background: rgba(52, 211, 153, 0.12);
-  color: rgba(209, 250, 229, 0.94);
+  border-color: var(--vc-success-border);
+  background: var(--vc-success-soft);
+  color: var(--vc-success);
 }
 
 /* --------------------------------------------------------------------------
@@ -6609,8 +6615,8 @@ function summarizeTask(value: string): string {
   justify-content: space-between;
   gap: 10px;
   border-radius: var(--vc-radius-md);
-  border: 1px solid rgba(124, 179, 255, 0.18);
-  background: rgba(124, 179, 255, 0.06);
+  border: 1px solid var(--vc-info-border);
+  background: var(--vc-info-soft);
   padding: 10px 12px;
 }
 
@@ -6621,7 +6627,7 @@ function summarizeTask(value: string): string {
 }
 
 .voice-source-issue a {
-  color: rgba(224, 242, 254, 0.92);
+  color: var(--vc-info);
   font-size: 13px;
   font-weight: 700;
 }
@@ -6639,7 +6645,7 @@ function summarizeTask(value: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  border-left: 2px solid rgba(52, 211, 153, 0.32);
+  border-left: 2px solid var(--vc-success-border);
   padding-left: 9px;
   color: var(--vc-text-2);
   font-size: 12px;
@@ -6647,8 +6653,8 @@ function summarizeTask(value: string): string {
 }
 
 .voice-manager-stream__line--error {
-  border-left-color: rgba(248, 113, 113, 0.55);
-  color: rgba(254, 202, 202, 0.82);
+  border-left-color: var(--vc-danger-border);
+  color: var(--vc-danger);
 }
 
 .voice-dag-panel {
@@ -6664,8 +6670,8 @@ function summarizeTask(value: string): string {
 
 .voice-dag-summary span {
   border-radius: 9999px;
-  border: 1px solid rgba(124, 179, 255, 0.18);
-  background: rgba(124, 179, 255, 0.07);
+  border: 1px solid var(--vc-info-border);
+  background: var(--vc-info-soft);
   padding: 4px 9px;
   color: var(--vc-text-2);
   font-size: 11px;
@@ -6694,13 +6700,13 @@ function summarizeTask(value: string): string {
 }
 
 .voice-dag-node--failed {
-  border-color: rgba(248, 113, 113, 0.3);
-  background: rgba(248, 113, 113, 0.06);
+  border-color: var(--vc-danger-border);
+  background: var(--vc-danger-soft);
 }
 
 .voice-dag-node--done {
-  border-color: rgba(52, 211, 153, 0.26);
-  background: rgba(52, 211, 153, 0.05);
+  border-color: var(--vc-success-border);
+  background: var(--vc-success-soft);
 }
 
 .voice-dag-node__main,
@@ -6745,8 +6751,8 @@ function summarizeTask(value: string): string {
 
 .voice-dag-signal {
   border-radius: var(--vc-radius-md);
-  border: 1px solid rgba(45, 212, 191, 0.14);
-  background: rgba(8, 14, 21, 0.6);
+  border: 1px solid var(--vc-accent-border);
+  background: var(--vc-surface-1);
   padding: 10px 11px;
 }
 
@@ -6771,9 +6777,9 @@ function summarizeTask(value: string): string {
 .voice-dag-signal__head em {
   flex: 0 0 auto;
   border-radius: 999px;
-  background: rgba(45, 212, 191, 0.1);
+  background: var(--vc-accent-soft);
   padding: 3px 7px;
-  color: rgba(153, 246, 228, 0.74);
+  color: var(--vc-accent);
   font-size: 10px;
   font-style: normal;
   font-weight: 740;
@@ -6945,11 +6951,11 @@ function summarizeTask(value: string): string {
   flex: 0 0 auto;
   gap: 9px;
   height: 36px;
-  border: 1px solid rgba(248, 113, 113, 0.26);
+  border: 1px solid var(--vc-danger-border);
   border-radius: 9999px;
-  background: rgba(248, 113, 113, 0.07);
+  background: var(--vc-danger-soft);
   padding: 0 14px 0 11px;
-  color: rgba(254, 226, 226, 0.92);
+  color: var(--vc-danger);
   font-size: 13px;
   font-weight: 700;
   transition:
@@ -6958,8 +6964,8 @@ function summarizeTask(value: string): string {
 }
 
 .voice-agent-run-button:hover {
-  border-color: rgba(248, 113, 113, 0.44);
-  background: rgba(248, 113, 113, 0.12);
+  border-color: var(--vc-danger);
+  background: color-mix(in srgb, var(--vc-danger) 16%, transparent);
 }
 
 .voice-agent-run-button__text {
@@ -6984,7 +6990,7 @@ function summarizeTask(value: string): string {
   width: 18px;
   align-items: center;
   justify-content: center;
-  border: 2px solid rgba(254, 226, 226, 0.24);
+  border: 2px solid var(--vc-danger-border);
   border-top-color: currentColor;
   border-radius: 9999px;
   animation: voice-agent-run-spin 0.9s linear infinite;
@@ -7015,7 +7021,7 @@ function summarizeTask(value: string): string {
 }
 
 .voice-caption-strip--speaking {
-  border-color: rgba(129, 140, 248, 0.32);
+  border-color: var(--vc-speaking-border);
 }
 
 .voice-caption-strip__status {
@@ -7072,7 +7078,7 @@ function summarizeTask(value: string): string {
 }
 
 .voice-caption-text--assistant {
-  color: rgba(190, 242, 255, 0.88);
+  color: var(--vc-info);
 }
 
 /* Composer */
@@ -7101,7 +7107,7 @@ function summarizeTask(value: string): string {
 
 .voice-composer__row:focus-within {
   border-color: var(--vc-accent-border);
-  box-shadow: 0 0 0 3px rgba(79, 216, 232, 0.06);
+  box-shadow: 0 0 0 3px var(--hr-focus-ring);
 }
 
 .voice-composer__mic {
@@ -7129,11 +7135,11 @@ function summarizeTask(value: string): string {
   border-color: var(--vc-accent-border);
   background: var(--vc-accent-soft);
   color: var(--vc-accent);
-  box-shadow: 0 0 0 4px rgba(79, 216, 232, 0.08);
+  box-shadow: 0 0 0 4px var(--hr-focus-ring);
 }
 
 .voice-composer__mic--speaking {
-  border-color: rgba(129, 140, 248, 0.4);
+  border-color: var(--vc-speaking-border);
   background: var(--vc-speaking-soft);
   color: var(--vc-speaking);
 }
@@ -7155,7 +7161,7 @@ function summarizeTask(value: string): string {
   width: 3px;
   height: 100%;
   border-radius: 2px;
-  background: linear-gradient(180deg, rgba(79, 216, 232, 0.95), rgba(56, 189, 248, 0.5));
+  background: linear-gradient(180deg, var(--vc-accent), color-mix(in srgb, var(--vc-info) 58%, transparent));
   transform-origin: bottom center;
 }
 
@@ -7195,7 +7201,7 @@ function summarizeTask(value: string): string {
 
 .voice-composer__send:hover:not(:disabled),
 .voice-composer__send:focus-visible {
-  background: rgba(79, 216, 232, 0.22);
+  background: color-mix(in srgb, var(--vc-accent) 22%, transparent);
   color: var(--vc-text-1);
 }
 
@@ -7208,10 +7214,10 @@ function summarizeTask(value: string): string {
   margin-top: 8px;
   align-self: flex-start;
   border-radius: var(--vc-radius-md);
-  border: 1px solid rgba(248, 113, 113, 0.3);
-  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid var(--vc-danger-border);
+  background: var(--vc-danger-soft);
   padding: 8px 12px;
-  color: rgba(254, 202, 202, 0.94);
+  color: var(--vc-danger);
   font-size: 13px;
 }
 
@@ -7253,11 +7259,11 @@ function summarizeTask(value: string): string {
 .voice-input-zone--active {
   border-color: var(--vc-accent-border);
   background: var(--vc-surface-2);
-  box-shadow: 0 0 0 3px rgba(79, 216, 232, 0.05);
+  box-shadow: 0 0 0 3px var(--hr-focus-ring);
 }
 
 .voice-input-zone--speaking {
-  border-color: rgba(129, 140, 248, 0.34);
+  border-color: var(--vc-speaking-border);
   background: var(--vc-speaking-soft);
 }
 
@@ -7267,7 +7273,7 @@ function summarizeTask(value: string): string {
 }
 
 .voice-input-zone--agent-running {
-  border-color: rgba(79, 216, 232, 0.18);
+  border-color: var(--vc-accent-border);
 }
 
 .voice-input-zone__mic {
@@ -7286,7 +7292,7 @@ function summarizeTask(value: string): string {
   border-color: var(--vc-accent-border);
   background: var(--vc-accent-soft);
   color: var(--vc-accent);
-  box-shadow: 0 0 0 8px rgba(79, 216, 232, 0.06);
+  box-shadow: 0 0 0 8px var(--hr-focus-ring);
 }
 
 .voice-input-zone__wave {
@@ -7318,7 +7324,7 @@ function summarizeTask(value: string): string {
   stroke: url(#voiceWaveMainGradient);
   stroke-width: 1.25;
   opacity: 0.85;
-  filter: drop-shadow(0 0 5px rgba(79, 216, 232, 0.16));
+  filter: drop-shadow(0 0 5px var(--vc-accent-soft));
 }
 
 .voice-wave-line--upper {
@@ -7492,10 +7498,10 @@ function summarizeTask(value: string): string {
 
 .voice-thread-item--error {
   max-width: 100%;
-  border: 1px solid rgba(248, 113, 113, 0.34);
+  border: 1px solid var(--vc-danger-border);
   border-radius: 14px;
-  background: rgba(127, 29, 29, 0.22);
-  color: rgba(254, 226, 226, 0.94);
+  background: var(--vc-danger-soft);
+  color: var(--vc-danger);
 }
 
 .voice-thread-item__error-label {
@@ -7503,13 +7509,13 @@ function summarizeTask(value: string): string {
   align-items: center;
   gap: 6px;
   margin-bottom: 6px;
-  color: rgba(252, 165, 165, 0.95);
+  color: var(--vc-danger);
   font-size: 11px;
   font-weight: 700;
 }
 
 .voice-thread-item--commentary {
-  border-left-color: rgba(129, 140, 248, 0.4);
+  border-left-color: var(--vc-speaking-border);
   background: var(--vc-speaking-soft);
 }
 
@@ -7531,7 +7537,7 @@ function summarizeTask(value: string): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(3, 5, 9, 0.76);
+  background: var(--hr-overlay);
   padding: 34px;
   backdrop-filter: blur(18px);
 }
@@ -7545,8 +7551,8 @@ function summarizeTask(value: string): string {
   overflow: hidden;
   border-radius: 20px;
   border: 1px solid var(--vc-border-strong);
-  background: #0a0f18;
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.56);
+  background: var(--vc-panel);
+  box-shadow: var(--hr-shadow-floating);
 }
 
 .voice-artifact-modal__head {
@@ -7579,7 +7585,7 @@ function summarizeTask(value: string): string {
   flex: 1;
   width: 100%;
   overflow: hidden;
-  background: #05080e;
+  background: var(--hr-bg-raised);
 }
 
 .voice-artifact-modal__frame {
@@ -7587,7 +7593,7 @@ function summarizeTask(value: string): string {
   width: 100%;
   height: 100%;
   border: 0;
-  background: #05080e;
+  background: var(--hr-bg-raised);
 }
 
 .voice-artifact-modal--portrait {
@@ -7640,7 +7646,8 @@ function summarizeTask(value: string): string {
   justify-content: center;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 40%, rgba(79, 216, 232, 0.06), transparent 46%), #05080e;
+    radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--vc-accent) 8%, transparent), transparent 46%),
+    var(--hr-bg-raised);
 }
 
 .voice-artifact-modal__image {
@@ -7668,7 +7675,7 @@ function summarizeTask(value: string): string {
   z-index: 2;
   padding: 5px 10px;
   border-radius: 999px;
-  background: rgba(5, 8, 14, 0.66);
+  background: color-mix(in srgb, var(--vc-panel) 82%, transparent);
   color: var(--vc-text-1);
   font-size: 12px;
   font-weight: 700;
@@ -7685,7 +7692,7 @@ function summarizeTask(value: string): string {
   transform: translateY(-50%);
   border-radius: 999px;
   border: 1px solid var(--vc-border-strong);
-  background: rgba(5, 8, 14, 0.6);
+  background: color-mix(in srgb, var(--vc-panel) 82%, transparent);
   color: var(--vc-text-1);
   transition:
     border-color 0.18s ease,
@@ -7695,7 +7702,7 @@ function summarizeTask(value: string): string {
 
 .voice-artifact-modal__nav:hover:not(:disabled) {
   border-color: var(--vc-accent-border);
-  background: rgba(10, 18, 26, 0.78);
+  background: var(--vc-surface-3, var(--vc-surface-2));
 }
 
 .voice-artifact-modal__nav:disabled {
@@ -7728,7 +7735,7 @@ function summarizeTask(value: string): string {
   padding: 0;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--vc-text-4);
   transition:
     width 0.18s ease,
     background 0.18s ease;
@@ -7743,15 +7750,13 @@ function summarizeTask(value: string): string {
    Gamepad monitor overlay
    -------------------------------------------------------------------------- */
 .voice-widget--gamepad-selected {
-  border-color: rgba(79, 216, 232, 0.7) !important;
-  box-shadow:
-    0 0 0 1px rgba(79, 216, 232, 0.42),
-    0 0 38px rgba(79, 216, 232, 0.2) !important;
+  border-color: var(--vc-accent) !important;
+  box-shadow: 0 0 0 1px var(--vc-accent-border), 0 0 38px var(--vc-accent-soft) !important;
 }
 
 .voice-widget--gamepad-selected
   :is(button, a, input, select, textarea, [role='button'], [tabindex]):focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.94);
+  outline: 2px solid var(--vc-text-1);
   outline-offset: 3px;
 }
 
@@ -7770,7 +7775,7 @@ function summarizeTask(value: string): string {
   border-radius: 20px;
   background: var(--vc-panel);
   padding: 18px 20px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46);
+  box-shadow: var(--hr-shadow-floating);
   backdrop-filter: blur(22px);
   animation: voice-gamepad-pop 3.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -7789,8 +7794,8 @@ function summarizeTask(value: string): string {
   position: absolute;
   inset: -40%;
   background:
-    radial-gradient(circle at 24% 46%, rgba(79, 216, 232, 0.18), transparent 26%),
-    radial-gradient(circle at 70% 24%, rgba(124, 179, 255, 0.14), transparent 30%);
+    radial-gradient(circle at 24% 46%, var(--vc-accent-soft), transparent 26%),
+    radial-gradient(circle at 70% 24%, var(--vc-info-soft), transparent 30%);
   animation: voice-gamepad-glow 3.6s ease both;
 }
 
@@ -7799,16 +7804,18 @@ function summarizeTask(value: string): string {
   z-index: 1;
   flex: 0 0 210px;
   height: 130px;
-  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 12px 24px var(--hr-border-strong));
   animation: voice-gamepad-float 3.6s ease both;
 }
 
 .voice-gamepad-connect__body {
-  fill: rgba(226, 236, 248, 0.94);
+  fill: var(--vc-text-2);
+  stroke: var(--vc-border-strong);
+  stroke-width: 2;
 }
 
 .voice-gamepad-connect__touch {
-  fill: rgba(9, 14, 22, 0.72);
+  fill: var(--vc-bg);
 }
 
 .voice-gamepad-connect__shoulders rect,
@@ -7817,8 +7824,8 @@ function summarizeTask(value: string): string {
 .voice-gamepad-connect__dpad rect,
 .voice-gamepad-connect__face circle,
 .voice-gamepad-connect__touch {
-  fill: rgba(12, 19, 29, 0.9);
-  stroke: rgba(79, 216, 232, 0.32);
+  fill: var(--vc-bg);
+  stroke: var(--vc-accent-border);
   stroke-width: 2;
   transition:
     fill 120ms ease,
@@ -7830,7 +7837,7 @@ function summarizeTask(value: string): string {
 .voice-gamepad-connect__center text,
 .voice-gamepad-connect__sticks text,
 .voice-gamepad-connect__face text {
-  fill: rgba(226, 236, 248, 0.78);
+  fill: var(--vc-text-2);
   font-size: 13px;
   font-weight: 740;
   text-anchor: middle;
@@ -7838,22 +7845,22 @@ function summarizeTask(value: string): string {
 }
 
 .voice-gamepad-connect__part--active {
-  fill: rgba(79, 216, 232, 0.95) !important;
-  stroke: rgba(237, 244, 252, 0.96) !important;
-  filter: drop-shadow(0 0 8px rgba(79, 216, 232, 0.7));
+  fill: var(--vc-accent) !important;
+  stroke: var(--vc-text-1) !important;
+  filter: drop-shadow(0 0 8px var(--vc-accent-border));
 }
 
 .voice-gamepad-connect__button--triangle {
-  stroke: #67e8f9;
+  stroke: var(--vc-accent);
 }
 .voice-gamepad-connect__button--circle {
-  stroke: #fda4af;
+  stroke: var(--vc-danger);
 }
 .voice-gamepad-connect__button--cross {
-  stroke: #93c5fd;
+  stroke: var(--vc-info);
 }
 .voice-gamepad-connect__button--square {
-  stroke: #c4b5fd;
+  stroke: var(--vc-speaking);
 }
 
 .voice-gamepad-connect__copy {
@@ -7895,12 +7902,12 @@ function summarizeTask(value: string): string {
   0%,
   100% {
     box-shadow:
-      0 0 0 0 rgba(79, 216, 232, 0.07),
+      0 0 0 0 var(--vc-accent-soft),
       var(--hr-shadow-panel);
   }
   50% {
     box-shadow:
-      0 0 0 4px rgba(79, 216, 232, 0.09),
+      0 0 0 4px var(--vc-accent-soft),
       var(--hr-shadow-panel);
   }
 }
@@ -7909,12 +7916,12 @@ function summarizeTask(value: string): string {
   0%,
   100% {
     box-shadow:
-      0 0 0 0 rgba(251, 191, 36, 0.05),
+      0 0 0 0 var(--vc-warning-soft),
       var(--hr-shadow-panel);
   }
   50% {
     box-shadow:
-      0 0 0 4px rgba(251, 191, 36, 0.07),
+      0 0 0 4px var(--vc-warning-soft),
       var(--hr-shadow-panel);
   }
 }
@@ -7923,12 +7930,12 @@ function summarizeTask(value: string): string {
   0%,
   100% {
     box-shadow:
-      0 0 0 0 rgba(129, 140, 248, 0.06),
+      0 0 0 0 var(--vc-speaking-soft),
       var(--hr-shadow-panel);
   }
   50% {
     box-shadow:
-      0 0 0 4px rgba(129, 140, 248, 0.09),
+      0 0 0 4px var(--vc-speaking-soft),
       var(--hr-shadow-panel);
   }
 }
@@ -7953,18 +7960,16 @@ function summarizeTask(value: string): string {
 
 @keyframes voice-widget-new-pulse {
   0% {
-    border-color: rgba(79, 216, 232, 0.68);
-    box-shadow:
-      0 0 0 1px rgba(79, 216, 232, 0.48),
-      0 0 52px rgba(79, 216, 232, 0.26);
+    border-color: var(--vc-accent);
+    box-shadow: 0 0 0 1px var(--vc-accent-border), 0 0 52px var(--vc-accent-soft);
   }
 
   48% {
-    border-color: rgba(79, 216, 232, 0.4);
+    border-color: var(--vc-accent-border);
   }
 
   100% {
-    border-color: rgba(148, 178, 214, 0.1);
+    border-color: var(--vc-border);
     box-shadow: none;
   }
 }
@@ -8117,8 +8122,8 @@ function summarizeTask(value: string): string {
   max-width: calc(100vw - 24px);
   border: 1px solid var(--vc-border-strong);
   border-radius: 18px;
-  background: rgba(8, 12, 19, 0.96);
-  box-shadow: 18px 0 44px rgba(0, 0, 0, 0.45);
+  background: var(--vc-panel);
+  box-shadow: var(--hr-shadow-floating);
   backdrop-filter: blur(18px);
 }
 

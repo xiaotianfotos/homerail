@@ -476,11 +476,11 @@ function statusIcon(status: string) {
 function statusColor(status: string): string {
   switch (status) {
     case 'running':
-      return 'text-cyan-200'
+      return 'text-[var(--hr-accent)]'
     case 'completed':
-      return 'text-emerald-300'
+      return 'text-[var(--hr-success)]'
     case 'failed':
-      return 'text-red-300'
+      return 'text-[var(--hr-danger)]'
     default:
       return 'text-[var(--hr-text-3)]'
   }
@@ -609,8 +609,8 @@ defineExpose({
                 <Settings class="h-3.5 w-3.5" />
               </button>
               <button
-                class="rounded-full p-1.5 text-[var(--hr-text-4)] hover:bg-red-400/10 hover:text-red-200 disabled:opacity-45"
-                :class="confirmDeleteProjectId === project.id ? 'bg-red-400/10 text-red-200 opacity-100' : ''"
+                class="rounded-full p-1.5 text-[var(--hr-text-4)] hover:bg-[var(--hr-danger-soft)] hover:text-[var(--hr-danger)] disabled:opacity-45"
+                :class="confirmDeleteProjectId === project.id ? 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)] opacity-100' : ''"
                 :title="t('voice.sidebar.deleteDirectory')"
                 :disabled="deletingProjectId === project.id"
                 @click="openProjectDeleteConfirm(project, $event)"
@@ -624,11 +624,11 @@ defineExpose({
           <div
             v-if="confirmDeleteProjectId === project.id"
             data-project-delete-confirm
-            class="mt-2 rounded-2xl border border-red-300/20 bg-[var(--hr-panel)] p-4 text-[var(--hr-text-1)] shadow-xl shadow-black/25"
+            class="mt-2 rounded-2xl border border-[var(--hr-danger-border)] bg-[var(--hr-panel)] p-4 text-[var(--hr-text-1)] shadow-xl shadow-black/25"
             @click.stop
           >
             <div class="flex items-start gap-3">
-              <div class="mt-0.5 rounded-full bg-red-400/15 p-2 text-red-200">
+              <div class="mt-0.5 rounded-full bg-[var(--hr-danger-soft)] p-2 text-[var(--hr-danger)]">
                 <Trash2 class="h-4 w-4" />
               </div>
               <div class="min-w-0 flex-1">
@@ -645,7 +645,7 @@ defineExpose({
             </div>
             <div class="mt-4 flex gap-2">
               <button
-                class="flex-1 rounded-full bg-red-500/20 px-4 py-2 text-sm font-medium text-red-100 transition hover:bg-red-500/30 disabled:opacity-45"
+                class="flex-1 rounded-full bg-[var(--hr-danger-soft)] px-4 py-2 text-sm font-medium text-[var(--hr-danger)] transition hover:bg-[var(--hr-danger-soft)] disabled:opacity-45"
                 :disabled="deletingProjectId === project.id"
                 @click.stop="confirmProjectDelete(project)"
               >
@@ -718,7 +718,7 @@ defineExpose({
                 }}</span>
               </button>
               <button
-                class="shrink-0 rounded-full p-1.5 text-[var(--hr-text-4)] transition hover:bg-red-400/10 hover:text-red-200 group-hover/session:opacity-100 disabled:opacity-45"
+                class="shrink-0 rounded-full p-1.5 text-[var(--hr-text-4)] transition hover:bg-[var(--hr-danger-soft)] hover:text-[var(--hr-danger)] group-hover/session:opacity-100 disabled:opacity-45"
                 :class="confirmDeleteSessionId === session.session_id ? 'opacity-100' : 'opacity-0'"
                 :title="t('voice.sidebar.deleteSession')"
                 :disabled="deletingSessionId === session.session_id"
@@ -740,7 +740,7 @@ defineExpose({
                 </p>
                 <div class="flex gap-2">
                   <button
-                    class="flex-1 rounded-full bg-red-500/20 px-3 py-1.5 text-xs font-medium text-red-200 transition hover:bg-red-500/30 disabled:opacity-45"
+                    class="flex-1 rounded-full bg-[var(--hr-danger-soft)] px-3 py-1.5 text-xs font-medium text-[var(--hr-danger)] transition hover:bg-[var(--hr-danger-soft)] disabled:opacity-45"
                     :disabled="deletingSessionId === session.session_id"
                     @click.stop="confirmSessionDelete(session)"
                   >
@@ -823,7 +823,7 @@ defineExpose({
 
   <div
     v-if="editingProject"
-    class="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 px-6 backdrop-blur-sm"
+    class="fixed inset-0 z-[75] flex items-center justify-center bg-[var(--hr-overlay)] px-6 backdrop-blur-sm"
   >
     <section
       class="w-[min(520px,92vw)] rounded-[24px] border border-[var(--hr-border)] bg-[var(--hr-panel)] p-5 text-[var(--hr-text-1)] shadow-2xl"
@@ -927,10 +927,10 @@ defineExpose({
 
 <style scoped>
 .voice-session-sidebar__gamepad-focus {
-  outline: 2px solid rgba(79, 216, 232, 0.88);
+  outline: 2px solid var(--hr-accent);
   outline-offset: 2px;
   box-shadow:
-    0 0 0 1px rgba(79, 216, 232, 0.18),
-    0 0 22px rgba(79, 216, 232, 0.16);
+    0 0 0 1px var(--hr-accent-border),
+    0 0 22px var(--hr-accent-soft);
 }
 </style>

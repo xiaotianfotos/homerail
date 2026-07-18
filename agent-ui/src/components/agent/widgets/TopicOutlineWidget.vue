@@ -168,7 +168,7 @@ function clampPercent(value: unknown): number {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  color: rgba(239, 252, 252, 0.9);
+  color: var(--hr-text-1);
 }
 
 .topic-outline-widget__brief-pane,
@@ -178,12 +178,12 @@ function clampPercent(value: unknown): number {
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
-  border: 1px solid rgba(122, 255, 238, 0.1);
+  border: 1px solid var(--hr-border);
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.12);
+  background: var(--hr-surface-1);
   padding: 12px;
   scrollbar-gutter: stable;
-  scrollbar-color: rgba(116, 228, 227, 0.42) transparent;
+  scrollbar-color: var(--hr-scrollbar) transparent;
   scrollbar-width: thin;
 }
 
@@ -200,12 +200,12 @@ function clampPercent(value: unknown): number {
 .topic-outline-widget__brief-pane::-webkit-scrollbar-thumb,
 .topic-outline-widget__outline-pane::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(116, 228, 227, 0.34);
+  background: var(--hr-scrollbar);
 }
 
 .topic-outline-widget__brief-pane::-webkit-scrollbar-thumb:hover,
 .topic-outline-widget__outline-pane::-webkit-scrollbar-thumb:hover {
-  background: rgba(116, 228, 227, 0.52);
+  background: var(--hr-scrollbar-hover);
 }
 
 .topic-outline-widget__pane-head {
@@ -218,7 +218,7 @@ function clampPercent(value: unknown): number {
 }
 
 .topic-outline-widget__pane-head span {
-  color: #74e4e3;
+  color: var(--hr-accent);
   font-size: 11px;
   font-weight: 850;
   letter-spacing: 0;
@@ -227,9 +227,9 @@ function clampPercent(value: unknown): number {
 .topic-outline-widget__pane-head em {
   flex: 0 0 auto;
   border-radius: 999px;
-  background: rgba(116, 228, 227, 0.1);
+  background: var(--hr-accent-soft);
   padding: 3px 7px;
-  color: rgba(209, 255, 250, 0.62);
+  color: var(--hr-text-3);
   font-size: 10px;
   font-style: normal;
   font-weight: 800;
@@ -237,7 +237,7 @@ function clampPercent(value: unknown): number {
 
 .topic-outline-widget__summary p {
   margin: 0;
-  color: rgba(229, 244, 244, 0.78);
+  color: var(--hr-text-2);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -253,9 +253,9 @@ function clampPercent(value: unknown): number {
 .topic-outline-widget__thesis,
 .topic-outline-widget__questions,
 .topic-outline-widget__next {
-  border: 1px solid rgba(122, 255, 238, 0.13);
+  border: 1px solid var(--hr-border);
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--hr-surface-1);
 }
 
 .topic-outline-widget__meta span {
@@ -263,7 +263,7 @@ function clampPercent(value: unknown): number {
   align-items: center;
   gap: 6px;
   padding: 7px 9px;
-  color: rgba(216, 244, 244, 0.78);
+  color: var(--hr-text-2);
   font-size: 12px;
   font-weight: 750;
 }
@@ -277,14 +277,14 @@ function clampPercent(value: unknown): number {
 
 .topic-outline-widget__thesis span,
 .topic-outline-widget__questions span {
-  color: #74e4e3;
+  color: var(--hr-accent);
   font-size: 11px;
   font-weight: 850;
   letter-spacing: 0;
 }
 
 .topic-outline-widget__thesis strong {
-  color: #f6ffff;
+  color: var(--hr-text-1);
   font-size: 15px;
   line-height: 1.45;
 }
@@ -296,10 +296,10 @@ function clampPercent(value: unknown): number {
 }
 
 .topic-outline-widget__section {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-border);
   border-radius: 8px;
   padding: 10px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--hr-surface-1);
 }
 
 .topic-outline-widget__section header {
@@ -315,21 +315,21 @@ function clampPercent(value: unknown): number {
   width: 24px;
   height: 24px;
   border-radius: 999px;
-  color: #03191b;
-  background: #65f7e8;
+  color: var(--hr-on-accent);
+  background: var(--hr-accent);
   font-size: 12px;
 }
 
 .topic-outline-widget__section strong {
   overflow: hidden;
-  color: #f5fbff;
+  color: var(--hr-text-1);
   font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .topic-outline-widget__section em {
-  color: rgba(207, 232, 232, 0.62);
+  color: var(--hr-text-3);
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
@@ -343,7 +343,7 @@ function clampPercent(value: unknown): number {
 }
 
 .topic-outline-widget__section li {
-  color: rgba(220, 240, 240, 0.72);
+  color: var(--hr-text-2);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -357,7 +357,7 @@ function clampPercent(value: unknown): number {
 
 .topic-outline-widget__questions p {
   margin: 0;
-  color: rgba(231, 245, 245, 0.78);
+  color: var(--hr-text-2);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -374,11 +374,11 @@ function clampPercent(value: unknown): number {
   max-width: 100%;
   align-items: center;
   gap: 5px;
-  border: 1px solid rgba(122, 255, 238, 0.14);
+  border: 1px solid var(--hr-border);
   border-radius: 999px;
   padding: 6px 9px;
-  color: rgba(220, 246, 246, 0.74);
-  background: rgba(255, 255, 255, 0.045);
+  color: var(--hr-text-2);
+  background: var(--hr-surface-1);
   font-size: 11px;
   font-weight: 750;
   text-decoration: none;
@@ -393,7 +393,7 @@ function clampPercent(value: unknown): number {
 .topic-outline-widget__next {
   margin-top: 10px;
   padding: 10px 11px;
-  color: #dffffc;
+  color: var(--hr-text-1);
   font-size: 12px;
   font-weight: 780;
 }
@@ -402,9 +402,9 @@ function clampPercent(value: unknown): number {
   display: grid;
   min-height: 180px;
   place-items: center;
-  border: 1px dashed rgba(122, 255, 238, 0.14);
+  border: 1px dashed var(--hr-border-strong);
   border-radius: 12px;
-  color: rgba(220, 246, 246, 0.44);
+  color: var(--hr-text-3);
   font-size: 12px;
   font-weight: 760;
 }

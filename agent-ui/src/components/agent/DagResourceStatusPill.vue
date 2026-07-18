@@ -110,9 +110,9 @@ onBeforeUnmount(() => {
 }
 
 .dag-resource-status__button--error {
-  border-color: rgba(251, 191, 36, 0.34);
-  background: rgba(251, 191, 36, 0.08);
-  color: rgba(254, 243, 199, 0.95);
+  border-color: var(--hr-warning-border);
+  background: var(--hr-warning-soft);
+  color: var(--hr-warning);
 }
 
 .dag-resource-status__tooltip {
@@ -127,7 +127,7 @@ onBeforeUnmount(() => {
   border-radius: 0.65rem;
   border: 1px solid var(--hr-border-strong);
   background: var(--hr-panel);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--hr-shadow-panel);
   color: var(--hr-text-2);
 }
 

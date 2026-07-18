@@ -30,8 +30,14 @@ import {
   resolveInitialLocale,
   type AppLocale,
 } from '@/i18n/locales'
+import {
+  APPEARANCE_STORAGE_KEY,
+  applyAppearanceToDocument,
+  getAppearancePlugin,
+  normalizeAppearanceId,
+  resolveStoredAppearance,
+} from '@/appearance/appearance-registry'
 
-export type Theme = 'light' | 'dark' | 'system'
 export type NotificationType = 'success' | 'error' | 'warning' | 'info'
 
 export interface Notification {
@@ -52,8 +58,15 @@ export const useUiStore = defineStore('ui', () => {
   // State
   // --------------------------------------------------------------------------
 
-  const theme = ref<Theme>('system')
-  const skin = useStorage<'cockpit' | 'paper'>('homerail.skin', 'cockpit')
+  const appearanceId = useStorage<string>(
+    APPEARANCE_STORAGE_KEY,
+    resolveStoredAppearance(
+      typeof window !== 'undefined' ? window.localStorage : undefined,
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia.bind(window)
+        : undefined,
+    ),
+  )
   const sidebarCollapsed = ref(false)
   const isLoading = ref(false)
   const loadingMessage = ref<string>('')
@@ -65,15 +78,8 @@ export const useUiStore = defineStore('ui', () => {
   // Getters
   // --------------------------------------------------------------------------
 
-  const isDarkMode = computed(() => {
-    if (theme.value === 'dark') return true
-    if (theme.value === 'light') return false
-    // System theme
-    if (typeof window !== 'undefined') {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches
-    }
-    return false
-  })
+  const appearance = computed(() => getAppearancePlugin(appearanceId.value))
+  const isDarkMode = computed(() => appearance.value.colorScheme === 'dark')
 
   const unreadNotificationsCount = computed(() => {
     return notifications.value.length
@@ -100,22 +106,10 @@ export const useUiStore = defineStore('ui', () => {
   // Actions
   // --------------------------------------------------------------------------
 
-  function setTheme(newTheme: Theme) {
-    theme.value = newTheme
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('omni_theme', newTheme)
-      updateHtmlClass()
-    }
-  }
-
-  function setSkin(newSkin: 'cockpit' | 'paper') {
-    skin.value = newSkin
-    applySkinToDocument()
-  }
-
-  function applySkinToDocument() {
+  function setAppearance(newAppearanceId: string) {
+    appearanceId.value = normalizeAppearanceId(newAppearanceId)
     if (typeof document !== 'undefined') {
-      document.documentElement.dataset.hrTheme = skin.value
+      applyAppearanceToDocument(appearanceId.value)
     }
   }
 
@@ -199,49 +193,26 @@ export const useUiStore = defineStore('ui', () => {
 
   function initialize() {
     if (typeof window !== 'undefined') {
-      // Load theme from localStorage
-      const savedTheme = localStorage.getItem('omni_theme') as Theme | null
-      if (savedTheme && ['light', 'dark', 'system'].includes(savedTheme)) {
-        theme.value = savedTheme
-      }
-
       // Load sidebar state from localStorage
       const savedSidebarState = localStorage.getItem('omni_sidebar_collapsed')
       if (savedSidebarState !== null) {
         sidebarCollapsed.value = savedSidebarState === 'true'
       }
 
-      // Apply theme to HTML
-      updateHtmlClass()
-      applySkinToDocument()
+      // One appearance controls CSS tokens, native controls, Tailwind dark
+      // variants, and Naive UI through isDarkMode.
+      setAppearance(appearanceId.value)
 
       const normalizedLocale = normalizeAppLocale(locale.value) ?? resolveInitialLocale()
       locale.value = normalizedLocale
       applyLocaleToDocument(normalizedLocale)
-
-      // Listen for system theme changes
-      if (theme.value === 'system') {
-        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-        mediaQuery.addEventListener('change', updateHtmlClass)
-      }
-    }
-  }
-
-  function updateHtmlClass() {
-    if (typeof document !== 'undefined') {
-      const html = document.documentElement
-      if (isDarkMode.value) {
-        html.classList.add('dark')
-      } else {
-        html.classList.remove('dark')
-      }
     }
   }
 
   return {
     // State
-    theme,
-    skin,
+    appearanceId,
+    appearance,
     sidebarCollapsed,
     isLoading,
     loadingMessage,
@@ -256,8 +227,7 @@ export const useUiStore = defineStore('ui', () => {
     naiveDateLocale,
 
     // Actions
-    setTheme,
-    setSkin,
+    setAppearance,
     toggleSidebar,
     setSidebarCollapsed,
     setLoading,

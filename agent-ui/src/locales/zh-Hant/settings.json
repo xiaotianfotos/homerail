@@ -25,6 +25,20 @@
   "general": {
     "title": "常規",
     "description": "這些設置隻影響當前設備，並會自動保存。",
+    "appearance": {
+      "title": "外觀",
+      "description": "選擇視覺外觀。外觀外掛只替換語義顏色，不改變元件行為。",
+      "options": {
+        "cockpit": {
+          "label": "駕駛艙藍",
+          "description": "帶青藍強調色的專注深色儀表介面。"
+        },
+        "paper": {
+          "label": "紙張淺色",
+          "description": "以中性色和清晰白色層級構成的舒適工作區。"
+        }
+      }
+    },
     "language": {
       "title": "語言",
       "description": "選擇 HomeRail 界面使用的語言。",

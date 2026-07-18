@@ -25,6 +25,20 @@
   "general": {
     "title": "General",
     "description": "These preferences apply to this device and are saved automatically.",
+    "appearance": {
+      "title": "Appearance",
+      "description": "Choose a visual appearance. Appearance plugins change semantic colors without changing component behavior.",
+      "options": {
+        "cockpit": {
+          "label": "Cockpit blue",
+          "description": "A focused dark instrument panel with cyan accents."
+        },
+        "paper": {
+          "label": "Paper light",
+          "description": "A calm neutral workspace with crisp white surfaces."
+        }
+      }
+    },
     "language": {
       "title": "Language",
       "description": "Choose the language used by the HomeRail interface.",

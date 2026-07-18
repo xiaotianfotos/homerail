@@ -358,9 +358,9 @@ defineExpose({ refresh })
   gap: 12px;
   margin: 12px;
   padding: 14px;
-  border: 1px solid rgba(116, 228, 227, 0.5);
+  border: 1px solid var(--hr-accent-border);
   border-radius: 14px;
-  background: rgba(8, 23, 35, 0.92);
+  background: var(--hr-panel);
 }
 
 .generative-ui-canonical-surface__tool-confirmations > header,
@@ -373,7 +373,7 @@ defineExpose({ refresh })
 }
 
 .generative-ui-canonical-surface__tool-confirmations > header span {
-  color: rgba(190, 244, 243, 0.72);
+  color: var(--hr-text-2);
   font-size: 12px;
 }
 
@@ -382,7 +382,7 @@ defineExpose({ refresh })
   gap: 10px;
   padding: 12px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hr-surface-1);
 }
 
 .generative-ui-canonical-surface__tool-confirmation h3,
@@ -398,7 +398,7 @@ defineExpose({ refresh })
 }
 
 .generative-ui-canonical-surface__tool-confirmation dt {
-  color: rgba(190, 244, 243, 0.72);
+  color: var(--hr-text-3);
 }
 
 .generative-ui-canonical-surface__tool-confirmation dd {
@@ -413,10 +413,10 @@ defineExpose({ refresh })
 
 .generative-ui-canonical-surface__tool-controls button {
   padding: 6px 12px;
-  border: 1px solid rgba(116, 228, 227, 0.55);
+  border: 1px solid var(--hr-accent-border);
   border-radius: 999px;
-  color: inherit;
-  background: rgba(116, 228, 227, 0.12);
+  color: var(--hr-accent);
+  background: var(--hr-accent-soft);
   cursor: pointer;
 }
 
@@ -426,10 +426,10 @@ defineExpose({ refresh })
 }
 
 .generative-ui-canonical-surface__tool-error {
-  color: #ffb4ab;
+  color: var(--hr-danger);
 }
 
 .generative-ui-canonical-surface__tool-busy {
-  color: rgba(190, 244, 243, 0.82);
+  color: var(--hr-info);
 }
 </style>

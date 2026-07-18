@@ -432,16 +432,16 @@ defineExpose({ refresh })
   min-height: 0;
   align-content: start;
   gap: 14px;
-  border: 1px solid rgba(116, 228, 227, 0.12);
+  border: 1px solid var(--hr-border);
   border-radius: 8px;
-  background: rgba(10, 20, 23, 0.88);
+  background: var(--hr-panel);
   padding: 64px 20px 20px;
 }
 
 .dag-task-canvas__skeleton-block span {
   height: 10px;
   border-radius: 3px;
-  background: rgba(208, 235, 232, 0.08);
+  background: var(--hr-surface-2);
 }
 
 .dag-task-canvas__skeleton-block span:nth-child(1) { width: 58%; }

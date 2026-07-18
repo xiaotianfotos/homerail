@@ -5,6 +5,11 @@ import { useRouter } from 'vue-router'
 import { ArrowLeft, Database, Filter, Network, RefreshCw, Search, XCircle } from 'lucide-vue-next'
 import { getExperienceGraph } from '@/api/services/experience-api'
 import type { ExperienceGraphDetail, ExperienceGraphEdge, ExperienceGraphNode } from '@/api/types/experience.types'
+import {
+  observeCanvasAppearance,
+  readCanvasAppearancePalette,
+  type CanvasAppearancePalette,
+} from '@/appearance/canvas-appearance'
 
 interface CanvasNode extends ExperienceGraphNode {
   x: number
@@ -44,6 +49,8 @@ let panDrag: CanvasPoint | null = null
 let layoutEnergy = 0
 let layoutCenterX = 0
 let layoutCenterY = 0
+let stopObservingAppearance: (() => void) | null = null
+let canvasPalette: CanvasAppearancePalette = readCanvasAppearancePalette()
 
 const selectedNode = computed(() => graph.value?.nodes.find(node => node.id === selectedNodeId.value) ?? null)
 const hoverNode = computed(() => graph.value?.nodes.find(node => node.id === hoverNodeId.value) ?? null)
@@ -65,36 +72,47 @@ const updatedLabel = computed(() => {
   return loading.value ? 'waiting for data' : 'local graph'
 })
 
-function nodeAccent(type: string): string {
-  const colors: Record<string, string> = {
-    Run: '147, 197, 253',
-    OrchestrationTemplate: '110, 231, 183',
-    ScorecardResult: '196, 181, 253',
-    FailureRootCause: '248, 113, 113',
-    Lesson: '251, 191, 36',
-    RunSignal: '34, 211, 238',
-    Provider: '251, 146, 60',
-    Model: '216, 180, 254',
-    RuntimeProfile: '45, 212, 191',
-    Issue: '244, 114, 182',
-    PullRequest: '134, 239, 172',
-    WorkerAgent: '125, 211, 252',
+type ExperienceTone = 'accent' | 'speaking' | 'success' | 'warning' | 'danger' | 'info' | 'text2'
+
+function nodeTone(type: string): ExperienceTone {
+  const tones: Record<string, ExperienceTone> = {
+    Run: 'info',
+    OrchestrationTemplate: 'success',
+    ScorecardResult: 'speaking',
+    FailureRootCause: 'danger',
+    Lesson: 'warning',
+    RunSignal: 'accent',
+    Provider: 'warning',
+    Model: 'speaking',
+    RuntimeProfile: 'accent',
+    Issue: 'danger',
+    PullRequest: 'success',
+    WorkerAgent: 'info',
   }
-  return colors[type] ?? '148, 163, 184'
+  return tones[type] ?? 'text2'
+}
+
+function nodeAccent(type: string): string {
+  const tone = nodeTone(type)
+  return tone === 'text2' ? 'var(--hr-text-2)' : `var(--hr-${tone})`
+}
+
+function nodeCanvasAccent(type: string): string {
+  return canvasPalette[nodeTone(type)]
 }
 
 function edgeColor(type: string): string {
-  const colors: Record<string, string> = {
-    UsedTemplate: 'rgba(110, 231, 183, 0.76)',
-    ScoredBy: 'rgba(196, 181, 253, 0.76)',
-    FailedWith: 'rgba(248, 113, 113, 0.82)',
-    LedTo: 'rgba(251, 191, 36, 0.8)',
-    ObservedSignal: 'rgba(34, 211, 238, 0.78)',
-    UsedProvider: 'rgba(251, 146, 60, 0.76)',
-    UsedModel: 'rgba(216, 180, 254, 0.76)',
-    CreatedPR: 'rgba(134, 239, 172, 0.76)',
+  const tones: Record<string, ExperienceTone> = {
+    UsedTemplate: 'success',
+    ScoredBy: 'speaking',
+    FailedWith: 'danger',
+    LedTo: 'warning',
+    ObservedSignal: 'accent',
+    UsedProvider: 'warning',
+    UsedModel: 'speaking',
+    CreatedPR: 'success',
   }
-  return colors[type] ?? 'rgba(148, 163, 184, 0.5)'
+  return canvasPalette[tones[type] ?? 'text2']
 }
 
 function radiusFor(node: ExperienceGraphNode): number {
@@ -268,14 +286,14 @@ function drawEdges(ctx: CanvasRenderingContext2D): void {
     const target = nodeById.get(edge.target_id)
     if (!source || !target) continue
     const active = selectedNodeId.value === edge.source_id || selectedNodeId.value === edge.target_id
-    ctx.strokeStyle = active ? edgeColor(edge.type) : 'rgba(148, 163, 184, 0.22)'
+    ctx.strokeStyle = active ? edgeColor(edge.type) : canvasPalette.borderStrong
     ctx.lineWidth = active ? 1.8 : 1.1
     ctx.beginPath()
     ctx.moveTo(source.x, source.y)
     ctx.lineTo(target.x, target.y)
     ctx.stroke()
     if (zoom > 0.68) {
-      ctx.fillStyle = active ? 'rgba(236, 254, 255, 0.62)' : 'rgba(255, 255, 255, 0.36)'
+      ctx.fillStyle = active ? canvasPalette.text1 : canvasPalette.text2
       ctx.font = '650 10px Inter, ui-sans-serif, system-ui, sans-serif'
       ctx.fillText(edge.label || edge.type, (source.x + target.x) / 2 + 5, (source.y + target.y) / 2 - 5)
     }
@@ -284,21 +302,21 @@ function drawEdges(ctx: CanvasRenderingContext2D): void {
 
 function drawNodes(ctx: CanvasRenderingContext2D): void {
   for (const node of canvasNodes.value) {
-    const accent = nodeAccent(node.type)
+    const accent = nodeCanvasAccent(node.type)
     const active = selectedNodeId.value === node.id
     const hovering = hoverNodeId.value === node.id
-    ctx.shadowColor = `rgba(${accent}, ${active ? 0.5 : 0.24})`
+    ctx.shadowColor = accent
     ctx.shadowBlur = active ? 22 : 9
-    ctx.fillStyle = `rgb(${accent})`
+    ctx.fillStyle = accent
     ctx.beginPath()
     ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2)
     ctx.fill()
     ctx.shadowBlur = 0
     ctx.lineWidth = active || hovering ? 3 : 1.2
-    ctx.strokeStyle = active ? 'rgba(236, 254, 255, 0.96)' : 'rgba(255, 255, 255, 0.72)'
+    ctx.strokeStyle = active ? canvasPalette.text1 : canvasPalette.onStrong
     ctx.stroke()
     if (zoom > 0.5) {
-      ctx.fillStyle = active ? 'rgba(255, 255, 255, 0.94)' : 'rgba(229, 231, 235, 0.72)'
+      ctx.fillStyle = active ? canvasPalette.text1 : canvasPalette.text2
       ctx.font = `${active ? 720 : 650} 11px Inter, ui-sans-serif, system-ui, sans-serif`
       ctx.fillText(compactLabel(node.label || node.id), node.x + node.r + 6, node.y + 4)
     }
@@ -461,6 +479,10 @@ function propertyPreview(value: unknown): string {
 }
 
 onMounted(() => {
+  canvasPalette = readCanvasAppearancePalette()
+  stopObservingAppearance = observeCanvasAppearance((palette) => {
+    canvasPalette = palette
+  })
   resizeCanvas()
   window.addEventListener('resize', resizeCanvas)
   rafId = requestAnimationFrame(drawGraph)
@@ -468,6 +490,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  stopObservingAppearance?.()
+  stopObservingAppearance = null
   window.removeEventListener('resize', resizeCanvas)
   if (rafId) cancelAnimationFrame(rafId)
 })
@@ -544,7 +568,7 @@ onUnmounted(() => {
               @click="toggleType(type)"
             >
               <span class="experience-type-chip__main">
-                <i :style="{ background: `rgb(${nodeAccent(type)})` }" />
+                <i :style="{ background: nodeAccent(type) }" />
                 <span>{{ type }}</span>
               </span>
               <em>{{ count }}</em>
@@ -638,8 +662,8 @@ onUnmounted(() => {
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
-  background: #090b0d;
-  color: white;
+  background: var(--hr-bg);
+  color: var(--hr-text-1);
 }
 
 .experience-graph__ambient {
@@ -647,9 +671,9 @@ onUnmounted(() => {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 18% 12%, rgba(34, 211, 238, 0.12), transparent 32%),
-    radial-gradient(circle at 80% 2%, rgba(110, 231, 183, 0.08), transparent 30%),
-    linear-gradient(180deg, rgba(3, 19, 19, 0.04), rgba(3, 7, 10, 0.7));
+    radial-gradient(circle at 18% 12%, var(--hr-accent-soft), transparent 32%),
+    radial-gradient(circle at 80% 2%, var(--hr-success-soft), transparent 30%),
+    linear-gradient(180deg, transparent, var(--hr-surface-1));
 }
 
 .experience-shell {
@@ -670,11 +694,11 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 14px;
   overflow: hidden;
-  border: 1px solid rgba(103, 232, 249, 0.14);
+  border: 1px solid var(--hr-border);
   border-radius: 9999px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--hr-panel);
   padding: 8px 12px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--hr-shadow-panel);
   backdrop-filter: blur(18px);
 }
 
@@ -697,11 +721,11 @@ onUnmounted(() => {
 
 .experience-brand {
   flex: 0 0 auto;
-  border: 1px solid rgba(103, 232, 249, 0.12);
+  border: 1px solid var(--hr-border);
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--hr-surface-1);
   padding: 7px 10px;
-  color: rgba(207, 250, 254, 0.55);
+  color: var(--hr-text-3);
   font-size: 11px;
   font-weight: 780;
   line-height: 1;
@@ -711,7 +735,7 @@ onUnmounted(() => {
   width: 1px;
   height: 30px;
   flex: 0 0 auto;
-  background: rgba(103, 232, 249, 0.13);
+  background: var(--hr-border);
 }
 
 .experience-title-group {
@@ -722,7 +746,7 @@ onUnmounted(() => {
 
 .experience-panel__head span,
 .experience-detail-head span {
-  color: rgba(207, 250, 254, 0.5);
+  color: var(--hr-text-3);
   font-size: 12px;
   font-weight: 650;
 }
@@ -735,7 +759,7 @@ onUnmounted(() => {
 .experience-title-line h1 {
   margin: 0;
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.94);
+  color: var(--hr-text-1);
   font-size: 15px;
   font-weight: 740;
   line-height: 1.2;
@@ -745,11 +769,11 @@ onUnmounted(() => {
 
 .experience-title-line span {
   flex: 0 0 auto;
-  border: 1px solid rgba(103, 232, 249, 0.16);
+  border: 1px solid var(--hr-accent-border);
   border-radius: 9999px;
-  background: rgba(103, 232, 249, 0.07);
+  background: var(--hr-accent-soft);
   padding: 3px 7px;
-  color: rgba(207, 250, 254, 0.58);
+  color: var(--hr-accent);
   font-size: 11px;
   font-weight: 720;
   line-height: 1;
@@ -760,7 +784,7 @@ onUnmounted(() => {
   max-width: min(46vw, 560px);
   gap: 6px;
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--hr-text-3);
   font-size: 11px;
   line-height: 1.2;
 }
@@ -778,11 +802,11 @@ onUnmounted(() => {
 }
 
 .experience-topbar__metrics span {
-  border: 1px solid rgba(147, 197, 253, 0.16);
+  border: 1px solid var(--hr-info-border);
   border-radius: 9999px;
-  background: rgba(147, 197, 253, 0.07);
+  background: var(--hr-info-soft);
   padding: 6px 10px;
-  color: rgba(219, 234, 254, 0.7);
+  color: var(--hr-info);
   font-size: 12px;
   font-weight: 650;
 }
@@ -799,9 +823,9 @@ onUnmounted(() => {
 .experience-stage {
   min-height: 0;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--hr-border);
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--hr-panel);
 }
 
 .experience-panel {
@@ -813,17 +837,17 @@ onUnmounted(() => {
 }
 
 .experience-panel--filters {
-  border-color: rgba(103, 232, 249, 0.13);
+  border-color: var(--hr-decorative-accent-border);
   background:
-    radial-gradient(circle at 86% 0%, rgba(103, 232, 249, 0.1), transparent 34%),
-    rgba(255, 255, 255, 0.04);
+    radial-gradient(circle at 86% 0%, var(--hr-decorative-accent-soft), transparent 34%),
+    var(--hr-panel);
 }
 
 .experience-panel--details {
-  border-color: rgba(196, 181, 253, 0.14);
+  border-color: var(--hr-decorative-speaking-border);
   background:
-    radial-gradient(circle at 86% 0%, rgba(196, 181, 253, 0.1), transparent 34%),
-    rgba(255, 255, 255, 0.04);
+    radial-gradient(circle at 86% 0%, var(--hr-decorative-speaking-soft), transparent 34%),
+    var(--hr-panel);
 }
 
 .experience-panel__head {
@@ -836,7 +860,7 @@ onUnmounted(() => {
 .experience-panel__head h2,
 .experience-detail-head h2 {
   margin: 5px 0 0;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--hr-text-1);
   font-size: 20px;
   font-weight: 730;
   line-height: 1.2;
@@ -848,16 +872,16 @@ onUnmounted(() => {
 }
 
 .experience-control-group label {
-  color: rgba(255, 255, 255, 0.48);
+  color: var(--hr-text-3);
   font-size: 12px;
   font-weight: 650;
 }
 
 .experience-search,
 .experience-number-input {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--hr-border);
   border-radius: 14px;
-  background: rgba(0, 0, 0, 0.24);
+  background: var(--hr-control);
 }
 
 .experience-search {
@@ -866,7 +890,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 9px;
   padding: 0 12px;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--hr-text-3);
 }
 
 .experience-search input,
@@ -875,13 +899,13 @@ onUnmounted(() => {
   width: 100%;
   border: 0;
   background: transparent;
-  color: rgba(255, 255, 255, 0.86);
+  color: var(--hr-text-1);
   font-size: 13px;
   outline: none;
 }
 
 .experience-search input::placeholder {
-  color: rgba(255, 255, 255, 0.32);
+  color: var(--hr-text-4);
 }
 
 .experience-action-row {
@@ -903,17 +927,17 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid rgba(34, 211, 238, 0.22);
+  border: 1px solid var(--hr-accent-border);
   border-radius: 9999px;
-  background: rgba(34, 211, 238, 0.12);
-  color: rgba(207, 250, 254, 0.92);
+  background: var(--hr-accent-soft);
+  color: var(--hr-accent);
   font-size: 13px;
   font-weight: 720;
 }
 
 .experience-primary-button:hover:not(:disabled) {
-  border-color: rgba(103, 232, 249, 0.4);
-  background: rgba(34, 211, 238, 0.18);
+  border-color: var(--hr-accent);
+  background: var(--hr-control-hover);
 }
 
 .experience-primary-button:disabled {
@@ -928,15 +952,15 @@ onUnmounted(() => {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(103, 232, 249, 0.14);
+  border: 1px solid var(--hr-border);
   border-radius: 9999px;
-  color: rgba(255, 255, 255, 0.58);
+  color: var(--hr-text-2);
 }
 
 .experience-icon-button:hover {
-  border-color: rgba(103, 232, 249, 0.28);
-  background: rgba(103, 232, 249, 0.1);
-  color: rgba(255, 255, 255, 0.9);
+  border-color: var(--hr-accent-border);
+  background: var(--hr-accent-soft);
+  color: var(--hr-accent);
 }
 
 .experience-icon-button--soft {
@@ -951,20 +975,20 @@ onUnmounted(() => {
 
 .experience-filter-title div {
   gap: 8px;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--hr-text-2);
   font-size: 13px;
   font-weight: 700;
 }
 
 .experience-filter-title button {
   border: 0;
-  color: rgba(103, 232, 249, 0.72);
+  color: var(--hr-accent);
   font-size: 12px;
   font-weight: 700;
 }
 
 .experience-filter-title button:hover {
-  color: rgba(236, 254, 255, 0.96);
+  color: var(--hr-accent-hover);
 }
 
 .experience-type-chip {
@@ -974,21 +998,21 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-border);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--hr-surface-1);
   padding: 8px 10px;
   text-align: left;
 }
 
 .experience-type-chip:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.065);
+  border-color: var(--hr-border-strong);
+  background: var(--hr-surface-2);
 }
 
 .experience-type-chip--active {
-  border-color: rgba(34, 211, 238, 0.34);
-  background: rgba(34, 211, 238, 0.1);
+  border-color: var(--hr-accent-border);
+  background: var(--hr-accent-soft);
 }
 
 .experience-type-chip__main {
@@ -1010,7 +1034,7 @@ onUnmounted(() => {
 .experience-type-chip__main span {
   min-width: 0;
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.74);
+  color: var(--hr-text-2);
   font-size: 13px;
   font-weight: 640;
   text-overflow: ellipsis;
@@ -1019,7 +1043,7 @@ onUnmounted(() => {
 
 .experience-type-chip em {
   flex: 0 0 auto;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--hr-text-3);
   font-size: 11px;
   font-style: normal;
   font-weight: 720;
@@ -1032,14 +1056,14 @@ onUnmounted(() => {
 
 .experience-checkbox {
   gap: 9px;
-  color: rgba(255, 255, 255, 0.66);
+  color: var(--hr-text-2);
   font-size: 13px;
 }
 
 .experience-checkbox input {
   height: 15px;
   width: 15px;
-  accent-color: rgb(34, 211, 238);
+  accent-color: var(--hr-accent);
 }
 
 .experience-stats {
@@ -1049,15 +1073,15 @@ onUnmounted(() => {
 }
 
 .experience-stat {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-border);
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--hr-surface-1);
   padding: 10px;
 }
 
 .experience-stat b {
   display: block;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--hr-text-1);
   font-size: 18px;
   font-weight: 760;
   line-height: 1.1;
@@ -1066,7 +1090,7 @@ onUnmounted(() => {
 .experience-stat span {
   display: block;
   margin-top: 3px;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--hr-text-3);
   font-size: 11px;
   font-weight: 650;
 }
@@ -1074,10 +1098,10 @@ onUnmounted(() => {
 .experience-stage {
   position: relative;
   background:
-    linear-gradient(rgba(103, 232, 249, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(103, 232, 249, 0.045) 1px, transparent 1px),
-    radial-gradient(circle at 50% 30%, rgba(20, 184, 166, 0.08), transparent 34%),
-    rgba(0, 0, 0, 0.18);
+    linear-gradient(var(--hr-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hr-border) 1px, transparent 1px),
+    radial-gradient(circle at 50% 30%, var(--hr-decorative-accent-soft), transparent 34%),
+    var(--hr-surface-1);
   background-size: 28px 28px, 28px 28px, auto, auto;
 }
 
@@ -1108,11 +1132,11 @@ onUnmounted(() => {
 .experience-stage-pill {
   max-width: min(48%, 520px);
   overflow: hidden;
-  border: 1px solid rgba(103, 232, 249, 0.14);
+  border: 1px solid var(--hr-border);
   border-radius: 9999px;
-  background: rgba(0, 0, 0, 0.36);
+  background: var(--hr-panel);
   padding: 8px 11px;
-  color: rgba(207, 250, 254, 0.58);
+  color: var(--hr-text-3);
   font-size: 12px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -1134,15 +1158,15 @@ onUnmounted(() => {
 }
 
 .experience-toast--error {
-  border: 1px solid rgba(248, 113, 113, 0.3);
-  background: rgba(127, 29, 29, 0.24);
-  color: rgba(254, 202, 202, 0.9);
+  border: 1px solid var(--hr-danger-border);
+  background: var(--hr-danger-soft);
+  color: var(--hr-danger);
 }
 
 .experience-toast--warning {
-  border: 1px solid rgba(251, 191, 36, 0.26);
-  background: rgba(113, 63, 18, 0.24);
-  color: rgba(254, 240, 138, 0.9);
+  border: 1px solid var(--hr-warning-border);
+  background: var(--hr-warning-soft);
+  color: var(--hr-warning);
 }
 
 .experience-empty-state {
@@ -1155,14 +1179,14 @@ onUnmounted(() => {
 }
 
 .experience-empty-state span {
-  color: rgba(103, 232, 249, 0.58);
+  color: var(--hr-accent);
   font-size: 12px;
   font-weight: 680;
 }
 
 .experience-empty-state h2 {
   margin: 12px 0 0;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--hr-text-1);
   font-size: 32px;
   font-weight: 730;
   line-height: 1.16;
@@ -1171,7 +1195,7 @@ onUnmounted(() => {
 .experience-empty-state p {
   margin: 14px 0 0;
   max-width: 520px;
-  color: rgba(255, 255, 255, 0.52);
+  color: var(--hr-text-3);
   font-size: 15px;
   line-height: 1.7;
 }
@@ -1187,14 +1211,14 @@ onUnmounted(() => {
 
 .experience-detail-head p {
   margin: 12px 0 0;
-  color: rgba(255, 255, 255, 0.62);
+  color: var(--hr-text-2);
   font-size: 14px;
   line-height: 1.55;
 }
 
 .experience-property-section h3 {
   margin: 0;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--hr-text-1);
   font-size: 14px;
   font-weight: 710;
 }
@@ -1207,16 +1231,16 @@ onUnmounted(() => {
 
 .experience-property {
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-border);
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--hr-code-bg);
   padding: 11px;
 }
 
 .experience-property span {
   display: block;
   overflow: hidden;
-  color: rgba(207, 250, 254, 0.45);
+  color: var(--hr-text-3);
   font-size: 11px;
   font-weight: 720;
   text-overflow: ellipsis;
@@ -1229,14 +1253,14 @@ onUnmounted(() => {
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--hr-text-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
 }
 
 .experience-detail-empty {
-  color: rgba(255, 255, 255, 0.38);
+  color: var(--hr-text-4);
   font-size: 14px;
   line-height: 1.6;
 }

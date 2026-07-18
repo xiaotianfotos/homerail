@@ -1,11 +1,11 @@
 /* ============================================================================
-   CUSTOM SCROLLBAR STYLES - 暗色主题优化
+   CUSTOM SCROLLBAR STYLES - APPEARANCE TOKEN DRIVEN
    ============================================================================ */
 
 /* 默认滚动条样式 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  scrollbar-color: var(--hr-scrollbar) transparent;
 }
 
 /* Webkit 滚动条样式 (Chrome, Safari, Edge) */
@@ -19,7 +19,7 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: var(--hr-scrollbar);
   border-radius: 4px;
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -27,11 +27,11 @@
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.35);
+  background-color: var(--hr-scrollbar-hover);
 }
 
 *::-webkit-scrollbar-thumb:active {
-  background-color: rgba(255, 255, 255, 0.5);
+  background-color: var(--hr-scrollbar-hover);
 }
 
 /* 禁用滚动条时的样式 */

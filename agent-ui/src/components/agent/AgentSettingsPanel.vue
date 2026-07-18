@@ -85,8 +85,8 @@ function masked(value?: string | null): string {
 }
 
 function healthClass(value: 'unknown' | 'healthy' | 'failed'): string {
-  if (value === 'healthy') return 'bg-emerald-500/15 text-emerald-300'
-  if (value === 'failed') return 'bg-red-500/15 text-red-300'
+  if (value === 'healthy') return 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]'
+  if (value === 'failed') return 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
   return 'bg-[var(--hr-surface-2)] text-[var(--hr-text-3)]'
 }
 
@@ -122,7 +122,7 @@ function handleManagerModelChange(event: Event): void {
           <RefreshCw v-else class="h-3.5 w-3.5" />
         </button>
       </div>
-      <div v-if="error" class="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-200">
+      <div v-if="error" class="mt-2 rounded border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-2 py-1 text-[10px] text-[var(--hr-danger)]">
         {{ error }}
       </div>
     </div>
@@ -214,7 +214,7 @@ function handleManagerModelChange(event: Event): void {
               </div>
               <div class="flex items-center justify-between gap-2 text-[10px]">
                 <span class="text-[var(--hr-text-3)]">{{ masked(server.git_user_name) }} / {{ masked(server.git_user_email) }}</span>
-                <span :class="server.token_valid ? 'text-emerald-300' : 'text-red-300'">
+                <span :class="server.token_valid ? 'text-[var(--hr-success)]' : 'text-[var(--hr-danger)]'">
                   <CheckCircle2 v-if="server.token_valid" class="mr-1 inline h-3 w-3" />
                   <AlertCircle v-else class="mr-1 inline h-3 w-3" />
                   {{ server.token_valid ? t('agent.settings.valid') : t('agent.settings.invalid') }}
@@ -241,7 +241,7 @@ function handleManagerModelChange(event: Event): void {
             >
               <div class="flex items-center justify-between gap-2">
                 <span class="truncate text-[11px] text-[var(--hr-text-1)]">{{ provider.name }}</span>
-                <span :class="provider.is_active ? 'text-emerald-300' : 'text-[var(--hr-text-4)]'" class="text-[10px]">
+                <span :class="provider.is_active ? 'text-[var(--hr-success)]' : 'text-[var(--hr-text-4)]'" class="text-[10px]">
                   {{ provider.is_active ? t('agent.settings.active') : t('agent.settings.inactive') }}
                 </span>
               </div>
@@ -275,9 +275,9 @@ function handleManagerModelChange(event: Event): void {
           <div v-else class="text-[11px] text-[var(--hr-text-4)]">{{ t('agent.settings.noModels') }}</div>
         </section>
 
-        <section class="rounded-md border border-yellow-500/20 bg-yellow-500/5 p-3">
-          <div class="mb-1 text-[11px] font-medium text-yellow-200">{{ t('agent.settings.defaults') }}</div>
-          <div class="text-[11px] leading-relaxed text-yellow-100/70">
+        <section class="rounded-md border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] p-3">
+          <div class="mb-1 text-[11px] font-medium text-[var(--hr-warning)]">{{ t('agent.settings.defaults') }}</div>
+          <div class="text-[11px] leading-relaxed text-[var(--hr-warning)]">
             {{ t('agent.settings.defaultsGap') }}
           </div>
         </section>

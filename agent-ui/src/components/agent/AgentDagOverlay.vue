@@ -20,18 +20,18 @@ const emit = defineEmits<{
 // ============================================================================
 
 const statusStyle: Record<string, { dot: string; border: string; shadow?: string; bg?: string; text?: string }> = {
-  pending:   { dot: 'bg-gray-400',            border: 'border-gray-400/60',       bg: 'bg-gray-500/5',  text: 'text-gray-400' },
-  ready:     { dot: 'bg-blue-300',            border: 'border-blue-300/60',       bg: 'bg-blue-400/5',  text: 'text-blue-300' },
-  running:   { dot: 'bg-emerald-400 animate-pulse', border: 'border-emerald-400', shadow: 'shadow-emerald-500/30 shadow-lg', bg: 'bg-emerald-400/10', text: 'text-emerald-400' },
-  completed: { dot: 'bg-blue-500',            border: 'border-blue-500',          bg: 'bg-blue-500/10', text: 'text-blue-400' },
-  failed:    { dot: 'bg-red-500',             border: 'border-red-500',           bg: 'bg-red-500/10',  text: 'text-red-400' },
-  skipped:   { dot: 'bg-yellow-500',          border: 'border-yellow-500',        bg: 'bg-yellow-500/10', text: 'text-yellow-400' },
+  pending:   { dot: 'bg-[var(--hr-text-3)]', border: 'border-[var(--hr-border-strong)]', bg: 'bg-[var(--hr-surface-1)]', text: 'text-[var(--hr-text-2)]' },
+  ready:     { dot: 'bg-[var(--hr-info)]',            border: 'border-[var(--hr-info-border)]',       bg: 'bg-[var(--hr-info-soft)]',  text: 'text-[var(--hr-info)]' },
+  running:   { dot: 'bg-[var(--hr-success)] animate-pulse', border: 'border-[var(--hr-success-border)]', shadow: 'shadow-[0_0_18px_var(--hr-success-soft)]', bg: 'bg-[var(--hr-success-soft)]', text: 'text-[var(--hr-success)]' },
+  completed: { dot: 'bg-[var(--hr-info)]',            border: 'border-[var(--hr-info-border)]',          bg: 'bg-[var(--hr-info-soft)]', text: 'text-[var(--hr-info)]' },
+  failed:    { dot: 'bg-[var(--hr-danger)]',             border: 'border-[var(--hr-danger-border)]',           bg: 'bg-[var(--hr-danger-soft)]',  text: 'text-[var(--hr-danger)]' },
+  skipped:   { dot: 'bg-[var(--hr-warning)]',          border: 'border-[var(--hr-warning-border)]',        bg: 'bg-[var(--hr-warning-soft)]', text: 'text-[var(--hr-warning)]' },
 }
 
 const edgeStyles: Record<string, { stroke: string; dashed: boolean; label: string }> = {
-  always:     { stroke: '#6b7280', dashed: false, label: '' },
-  on_success: { stroke: '#22c55e', dashed: false, label: '✓' },
-  on_failure: { stroke: '#ef4444', dashed: true,  label: '✗' },
+  always:     { stroke: 'var(--hr-text-3)', dashed: false, label: '' },
+  on_success: { stroke: 'var(--hr-success)', dashed: false, label: '✓' },
+  on_failure: { stroke: 'var(--hr-danger)', dashed: true,  label: '✗' },
 }
 
 // ============================================================================
@@ -155,7 +155,7 @@ function onNodeClick({ node }: { node: Node }) {
         <div
           class="px-3 py-2 rounded-lg border-2 bg-[var(--hr-bg-raised)] shadow-md min-w-[160px] transition-all cursor-pointer hover:shadow-lg"
           :class="[
-            (statusStyle[nodeProps.data?.status]?.border || 'border-gray-400'),
+            (statusStyle[nodeProps.data?.status]?.border || 'border-[var(--hr-border-strong)]'),
             statusStyle[nodeProps.data?.status]?.shadow || '',
           ]"
           @click="emit('node-click', nodeProps.id)"

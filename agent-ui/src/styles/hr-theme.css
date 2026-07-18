@@ -1,13 +1,13 @@
 /* ==========================================================================
-   HomeRail theme tokens ("skins")
+   HomeRail appearance token contract
 
-   A skin is only a set of CSS custom properties. Components must consume
-   the --hr-* tokens (via `var(--hr-...)`) instead of hardcoded colors for
-   the skin swap to reach them. Switch skins by setting
-   `document.documentElement.dataset.hrTheme`, e.g. "cockpit" | "paper".
+   Built-in and external appearances are registered in
+   appearance/appearance-registry.ts. An appearance owns only this semantic
+   token surface; components must never branch on an appearance id.
    ========================================================================== */
 
 :root,
+:root[data-hr-appearance='cockpit'],
 :root[data-hr-theme='cockpit'] {
   color-scheme: dark;
 
@@ -15,63 +15,149 @@
   --hr-bg-raised: #0a0f18;
   --hr-surface-1: rgba(148, 178, 214, 0.055);
   --hr-surface-2: rgba(148, 178, 214, 0.095);
+  --hr-surface-3: rgba(148, 178, 214, 0.15);
   --hr-panel: rgba(10, 15, 23, 0.92);
+  --hr-control: rgba(148, 178, 214, 0.075);
+  --hr-control-hover: rgba(148, 178, 214, 0.12);
+  --hr-control-active: rgba(148, 178, 214, 0.18);
+  --hr-overlay: rgba(2, 5, 10, 0.76);
+  --hr-code-bg: rgba(3, 6, 11, 0.72);
+
   --hr-border: rgba(148, 178, 214, 0.1);
   --hr-border-strong: rgba(148, 178, 214, 0.2);
 
   --hr-text-1: rgba(237, 244, 252, 0.96);
-  --hr-text-2: rgba(222, 233, 246, 0.68);
-  --hr-text-3: rgba(206, 221, 238, 0.48);
-  --hr-text-4: rgba(206, 221, 238, 0.32);
+  --hr-text-2: rgba(222, 233, 246, 0.72);
+  --hr-text-3: rgba(213, 226, 241, 0.56);
+  --hr-text-4: rgba(206, 221, 238, 0.38);
+  --hr-on-strong: #ffffff;
 
   --hr-accent: #4fd8e8;
+  --hr-accent-hover: #7de5ef;
   --hr-accent-soft: rgba(79, 216, 232, 0.12);
-  --hr-accent-border: rgba(79, 216, 232, 0.28);
+  --hr-accent-border: rgba(79, 216, 232, 0.3);
   --hr-on-accent: #04222a;
 
-  --hr-speaking: #818cf8;
+  --hr-speaking: #a5b4fc;
   --hr-speaking-soft: rgba(129, 140, 248, 0.12);
-  --hr-success: #34d399;
-  --hr-warning: #fbbf24;
-  --hr-danger: #f87171;
-  --hr-info: #7cb3ff;
+  --hr-speaking-border: rgba(129, 140, 248, 0.32);
+  --hr-success: #5ee2ad;
+  --hr-success-soft: rgba(52, 211, 153, 0.12);
+  --hr-success-border: rgba(52, 211, 153, 0.32);
+  --hr-warning: #fbc94b;
+  --hr-warning-soft: rgba(251, 191, 36, 0.12);
+  --hr-warning-border: rgba(251, 191, 36, 0.34);
+  --hr-danger: #fca5a5;
+  --hr-danger-soft: rgba(248, 113, 113, 0.12);
+  --hr-danger-border: rgba(248, 113, 113, 0.34);
+  --hr-info: #93c5fd;
+  --hr-info-soft: rgba(124, 179, 255, 0.12);
+  --hr-info-border: rgba(124, 179, 255, 0.3);
+
+  --hr-focus-ring: rgba(79, 216, 232, 0.32);
+  --hr-selection: rgba(79, 216, 232, 0.24);
+  --hr-scrollbar: rgba(148, 178, 214, 0.24);
+  --hr-scrollbar-hover: rgba(148, 178, 214, 0.38);
+  --hr-ambient-accent: color-mix(in srgb, var(--hr-accent) 18%, transparent);
+  --hr-ambient-info: color-mix(in srgb, var(--hr-accent) 12%, transparent);
+  --hr-canvas-ambient-primary: color-mix(in srgb, var(--hr-accent) 12%, transparent);
+  --hr-canvas-ambient-secondary: color-mix(in srgb, var(--hr-success) 8%, transparent);
+  --hr-decorative-accent-soft: var(--hr-accent-soft);
+  --hr-decorative-accent-border: var(--hr-accent-border);
+  --hr-decorative-speaking-soft: var(--hr-speaking-soft);
+  --hr-decorative-speaking-border: var(--hr-speaking-border);
+  --hr-settings-sidebar: var(--hr-surface-1);
+  --hr-settings-card: var(--hr-surface-1);
+  --hr-settings-card-hover: var(--hr-surface-2);
+  --hr-settings-divider: var(--hr-border);
+  --hr-settings-active: var(--hr-accent-soft);
+  --hr-settings-active-border: var(--hr-accent-border);
 
   --hr-radius-lg: 16px;
   --hr-radius-md: 12px;
   --hr-radius-sm: 9px;
 
   --hr-shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.32);
+  --hr-shadow-floating: 0 28px 90px rgba(0, 0, 0, 0.56);
+  --hr-shadow-accent: 0 0 28px color-mix(in srgb, var(--hr-accent) 16%, transparent);
 }
 
-/* Proof-of-concept light skin. Token-driven components follow automatically;
-   components with remaining hardcoded dark colors will be migrated over time. */
+:root[data-hr-appearance='paper'],
 :root[data-hr-theme='paper'] {
   color-scheme: light;
 
-  --hr-bg: #eef2f6;
+  --hr-bg: #f5f6f8;
   --hr-bg-raised: #ffffff;
-  --hr-surface-1: rgba(15, 40, 70, 0.045);
-  --hr-surface-2: rgba(15, 40, 70, 0.08);
-  --hr-panel: rgba(255, 255, 255, 0.94);
-  --hr-border: rgba(15, 40, 70, 0.12);
-  --hr-border-strong: rgba(15, 40, 70, 0.22);
+  --hr-surface-1: #ffffff;
+  --hr-surface-2: #f1f3f5;
+  --hr-surface-3: #e7ebef;
+  --hr-panel: #ffffff;
+  --hr-control: #f6f7f8;
+  --hr-control-hover: #eef1f3;
+  --hr-control-active: #e4e9ed;
+  --hr-overlay: rgba(17, 24, 39, 0.28);
+  --hr-code-bg: #f6f8fa;
 
-  --hr-text-1: rgba(13, 24, 38, 0.94);
-  --hr-text-2: rgba(13, 24, 38, 0.68);
-  --hr-text-3: rgba(13, 24, 38, 0.5);
-  --hr-text-4: rgba(13, 24, 38, 0.36);
+  --hr-border: #dfe3e8;
+  --hr-border-strong: #c9d0d8;
 
-  --hr-accent: #0899ab;
-  --hr-accent-soft: rgba(8, 153, 171, 0.1);
-  --hr-accent-border: rgba(8, 153, 171, 0.32);
-  --hr-on-accent: #f2feff;
+  --hr-text-1: #172033;
+  --hr-text-2: #405168;
+  --hr-text-3: #536477;
+  --hr-text-4: #5d6c7f;
+  --hr-on-strong: #ffffff;
 
-  --hr-speaking: #6366f1;
-  --hr-speaking-soft: rgba(99, 102, 241, 0.1);
-  --hr-success: #0d9f6e;
-  --hr-warning: #b47b0a;
-  --hr-danger: #dc4444;
-  --hr-info: #3b82f6;
+  --hr-accent: #076d7a;
+  --hr-accent-hover: #055d68;
+  --hr-accent-soft: #edf7f8;
+  --hr-accent-border: #b8dce1;
+  --hr-on-accent: #ffffff;
 
-  --hr-shadow-panel: 0 18px 50px rgba(15, 40, 70, 0.12);
+  --hr-speaking: #5b5bd6;
+  --hr-speaking-soft: #f1f0ff;
+  --hr-speaking-border: #d8d5ff;
+  --hr-success: #147a5b;
+  --hr-success-soft: #ecf8f3;
+  --hr-success-border: #bfe6d5;
+  --hr-warning: #8a5a00;
+  --hr-warning-soft: #fff7e6;
+  --hr-warning-border: #ead39b;
+  --hr-danger: #b4232a;
+  --hr-danger-soft: #fff0f1;
+  --hr-danger-border: #efc1c5;
+  --hr-info: #1f63b5;
+  --hr-info-soft: #eef5ff;
+  --hr-info-border: #c7daf5;
+
+  --hr-focus-ring: rgba(7, 109, 122, 0.22);
+  --hr-selection: rgba(7, 109, 122, 0.16);
+  --hr-scrollbar: rgba(64, 81, 104, 0.2);
+  --hr-scrollbar-hover: rgba(64, 81, 104, 0.34);
+  --hr-ambient-accent: rgba(7, 109, 122, 0.035);
+  --hr-ambient-info: rgba(31, 99, 181, 0.025);
+  --hr-canvas-ambient-primary: rgba(7, 109, 122, 0.025);
+  --hr-canvas-ambient-secondary: rgba(20, 122, 91, 0.018);
+  --hr-decorative-accent-soft: #fbfdfd;
+  --hr-decorative-accent-border: var(--hr-border);
+  --hr-decorative-speaking-soft: #fbfbfe;
+  --hr-decorative-speaking-border: var(--hr-border);
+  --hr-settings-sidebar: #edf0f3;
+  --hr-settings-card: #f7f8fa;
+  --hr-settings-card-hover: #eef2f5;
+  --hr-settings-divider: #cfd6de;
+  --hr-settings-active: #dff1f3;
+  --hr-settings-active-border: #78bdc6;
+
+  --hr-radius-lg: 14px;
+  --hr-radius-md: 10px;
+  --hr-radius-sm: 8px;
+
+  --hr-shadow-panel: 0 1px 2px rgba(17, 24, 39, 0.04), 0 10px 30px rgba(17, 24, 39, 0.055);
+  --hr-shadow-floating: 0 18px 48px rgba(17, 24, 39, 0.16), 0 2px 8px rgba(17, 24, 39, 0.06);
+  --hr-shadow-accent: 0 8px 22px rgba(17, 24, 39, 0.08);
+}
+
+::selection {
+  background: var(--hr-selection);
+  color: var(--hr-text-1);
 }

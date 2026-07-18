@@ -685,27 +685,27 @@ async function submit(): Promise<void> {
     <div class="contents">
       <div>
         <div class="mb-2 flex items-center justify-between">
-          <span class="text-xs font-medium text-gray-400">{{
+          <span class="text-xs font-medium text-[var(--hr-text-2)]">{{
             t('settings.models.form.credentialType')
           }}</span>
           <div class="relative">
             <Search
-              class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-600"
+              class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--hr-text-3)]"
             />
             <input
               v-model="searchQuery"
-              class="h-8 w-44 rounded-lg border border-white/10 bg-[#343434] pl-7 pr-2 text-xs text-gray-200 outline-none focus:border-[var(--hr-accent-border)]"
+              class="h-8 w-44 rounded-lg border border-[var(--hr-border)] bg-[var(--hr-control)] pl-7 pr-2 text-xs text-[var(--hr-text-1)] outline-none focus:border-[var(--hr-accent-border)]"
               :placeholder="t('settings.models.form.search')"
             />
           </div>
         </div>
 
         <div
-          class="max-h-64 space-y-3 overflow-y-auto rounded-xl border border-white/8 bg-[var(--hr-surface-1)] p-3"
+          class="max-h-64 space-y-3 overflow-y-auto rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3"
         >
           <div v-for="group in groupedCredentials" :key="group.provider.id">
             <div
-              class="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500"
+              class="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--hr-text-3)]"
             >
               {{ group.provider.name }}
             </div>
@@ -718,7 +718,7 @@ async function submit(): Promise<void> {
                   'flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all',
                   isSelectedCredentialOption(item)
                     ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] shadow-[0_0_16px_color-mix(in_srgb,var(--hr-accent)_12%,transparent)]'
-                    : 'border-white/8 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]'
+                    : 'border-[var(--hr-border)] bg-[var(--hr-surface-1)] hover:border-[var(--hr-border-strong)] hover:bg-[var(--hr-surface-1)]'
                 ]"
                 @click="selectCredential(item)"
               >
@@ -727,7 +727,7 @@ async function submit(): Promise<void> {
                     'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border',
                     isSelectedCredentialOption(item)
                       ? 'border-[var(--hr-accent)] bg-[var(--hr-accent)]'
-                      : 'border-white/25'
+                      : 'border-[var(--hr-border-strong)]'
                   ]"
                 >
                   <span
@@ -736,10 +736,10 @@ async function submit(): Promise<void> {
                   />
                 </span>
                 <div class="min-w-0 flex-1">
-                  <div class="text-sm font-medium text-gray-200">
+                  <div class="text-sm font-medium text-[var(--hr-text-1)]">
                     {{ localizedPlanLabel(item.planType) }}
                   </div>
-                  <div class="mt-0.5 flex items-center gap-2 text-[11px] text-gray-500">
+                  <div class="mt-0.5 flex items-center gap-2 text-[11px] text-[var(--hr-text-3)]">
                     <span>{{
                       t('settings.models.modelsCount', { count: item.models.length })
                     }}</span>
@@ -753,7 +753,7 @@ async function submit(): Promise<void> {
             </div>
           </div>
 
-          <div v-if="!groupedCredentials.length" class="py-6 text-center text-xs text-gray-600">
+          <div v-if="!groupedCredentials.length" class="py-6 text-center text-xs text-[var(--hr-text-3)]">
             {{ t('settings.models.form.noCredentials') }}
           </div>
         </div>
@@ -761,35 +761,35 @@ async function submit(): Promise<void> {
         <!-- 底部信息：协议 + 接入地址 -->
         <div
           v-if="selectedCredential"
-          class="mt-3 space-y-1.5 rounded-lg border border-white/8 bg-white/[0.02] px-3 py-2.5"
+          class="mt-3 space-y-1.5 rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 py-2.5"
         >
-          <div class="flex items-center gap-2 text-[11px] text-gray-500">
+          <div class="flex items-center gap-2 text-[11px] text-[var(--hr-text-3)]">
             <span>{{ t('settings.models.form.supportedProtocols') }}</span>
             <span
               v-for="p in selectedCredential.protocols"
               :key="p"
-              class="rounded bg-white/5 px-1.5 py-0.5 text-gray-300"
+              class="rounded bg-[var(--hr-surface-1)] px-1.5 py-0.5 text-[var(--hr-text-2)]"
               >{{ localizedProtocolLabel(p) }}</span
             >
           </div>
           <div
             v-for="row in endpointUrlRows"
             :key="row.label"
-            class="flex items-center gap-2 text-[11px] text-gray-500"
+            class="flex items-center gap-2 text-[11px] text-[var(--hr-text-3)]"
           >
             <span>{{ row.label }}：</span>
-            <span class="truncate font-mono text-gray-400">{{ row.value }}</span>
+            <span class="truncate font-mono text-[var(--hr-text-2)]">{{ row.value }}</span>
           </div>
           <template v-if="isArkVoiceCredential">
-            <div class="flex items-center gap-2 text-[11px] text-gray-500">
+            <div class="flex items-center gap-2 text-[11px] text-[var(--hr-text-3)]">
               <span>TTS HTTP：</span>
-              <span class="truncate font-mono text-gray-400">{{
+              <span class="truncate font-mono text-[var(--hr-text-2)]">{{
                 representativeEndpoint?.tts_http_url
               }}</span>
             </div>
-            <div class="flex items-center gap-2 text-[11px] text-gray-500">
+            <div class="flex items-center gap-2 text-[11px] text-[var(--hr-text-3)]">
               <span>ASR Batch WS：</span>
-              <span class="truncate font-mono text-gray-400">{{
+              <span class="truncate font-mono text-[var(--hr-text-2)]">{{
                 representativeEndpoint?.asr_realtime_url
               }}</span>
             </div>
@@ -800,33 +800,33 @@ async function submit(): Promise<void> {
       <!-- ═══ 模型多选（catalog 预设 + 动态探测）════════════════ -->
       <div v-if="selectedCredential" class="space-y-2">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-medium text-gray-400">{{
+          <span class="text-xs font-medium text-[var(--hr-text-2)]">{{
             t('settings.models.form.availableModels')
           }}</span>
           <div class="flex items-center gap-2">
             <span v-if="probing" class="flex items-center gap-1 text-[11px] text-[var(--hr-accent)]">
               <Loader2 class="h-3 w-3 animate-spin" /> {{ t('settings.models.form.probing') }}
             </span>
-            <span v-else-if="probedModels.length" class="text-[11px] text-emerald-300/60">
+            <span v-else-if="probedModels.length" class="text-[11px] text-[var(--hr-success)]">
               {{ t('settings.models.form.probedCount', { count: probedModels.length }) }}
             </span>
             <button
               v-if="canProbeModels && !probing"
               type="button"
-              class="flex items-center gap-1 text-[11px] text-gray-500 transition-colors hover:text-[var(--hr-accent)]"
+              class="flex items-center gap-1 text-[11px] text-[var(--hr-text-3)] transition-colors hover:text-[var(--hr-accent)]"
               :title="t('settings.models.form.reprobe')"
               @click="runProbe"
             >
               <RefreshCw class="h-3 w-3" />
             </button>
-            <span class="text-[11px] text-gray-500">{{
+            <span class="text-[11px] text-[var(--hr-text-3)]">{{
               t('settings.models.form.pendingCount', { count: selectedModels.size })
             }}</span>
           </div>
         </div>
         <div
           v-if="probeError"
-          class="rounded-md border border-amber-400/20 bg-amber-400/5 px-3 py-1.5 text-[11px] text-amber-300/70"
+          class="rounded-md border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] px-3 py-1.5 text-[11px] text-[var(--hr-warning)]"
         >
           {{ t('settings.models.form.probeFailed', { error: probeError }) }}
         </div>
@@ -838,14 +838,14 @@ async function submit(): Promise<void> {
             :class="[
               'flex min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-all',
               m.probed
-                ? 'border-emerald-400/25 bg-emerald-400/[0.04] text-emerald-200/75 hover:border-emerald-400/45'
-                : 'border-white/10 bg-white/[0.02] text-gray-300 hover:border-[var(--hr-accent-border)] hover:bg-[var(--hr-accent-soft)]'
+                ? 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)] hover:border-[var(--hr-success-border)]'
+                : 'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-2)] hover:border-[var(--hr-accent-border)] hover:bg-[var(--hr-accent-soft)]'
             ]"
             @click="addModel(m.id)"
           >
             <span class="min-w-0">
               <span class="block truncate">{{ m.display_name }}</span>
-              <span v-if="m.probed" class="mt-0.5 block text-[9px] text-emerald-300/55">{{
+              <span v-if="m.probed" class="mt-0.5 block text-[9px] text-[var(--hr-success)]">{{
                 t('settings.models.form.probed')
               }}</span>
             </span>
@@ -858,7 +858,7 @@ async function submit(): Promise<void> {
         </div>
         <div
           v-else
-          class="rounded-lg border border-white/8 bg-[var(--hr-surface-1)] px-3 py-4 text-center text-xs text-gray-500"
+          class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 py-4 text-center text-xs text-[var(--hr-text-3)]"
         >
           {{ t('settings.models.form.allAdded') }}
         </div>
@@ -866,33 +866,33 @@ async function submit(): Promise<void> {
         <!-- 已配置模型列表（每个模型提交为一个独立配置，共用同一个 key）-->
         <div
           v-if="selectedModels.size > 0"
-          class="space-y-2 rounded-lg border border-white/8 bg-[var(--hr-surface-1)] p-3"
+          class="space-y-2 rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-3"
         >
           <div class="flex items-center justify-between gap-3">
-            <div class="text-[11px] text-gray-500">
+            <div class="text-[11px] text-[var(--hr-text-3)]">
               {{ t('settings.models.form.pendingConfigs') }}
             </div>
-            <div class="text-[11px] text-gray-600">
+            <div class="text-[11px] text-[var(--hr-text-3)]">
               {{ t('settings.models.modelsCount', { count: selectedModels.size }) }}
             </div>
           </div>
           <div
             v-for="model in selectedModelRows"
             :key="model.id"
-            class="grid gap-2 rounded-lg border border-white/8 bg-white/[0.025] p-2 sm:grid-cols-[minmax(0,180px)_minmax(0,1fr)_32px]"
+            class="grid gap-2 rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-2 sm:grid-cols-[minmax(0,180px)_minmax(0,1fr)_32px]"
           >
-            <span class="min-w-0 truncate py-1.5 text-sm text-gray-300" :title="model.id">
+            <span class="min-w-0 truncate py-1.5 text-sm text-[var(--hr-text-2)]" :title="model.id">
               {{ model.displayName }}
             </span>
             <input
               :value="model.alias"
-              class="h-8 flex-1 rounded-md border border-white/10 bg-[#343434] px-2 text-xs text-gray-200 outline-none focus:border-[var(--hr-accent-border)]"
+              class="h-8 flex-1 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-2 text-xs text-[var(--hr-text-1)] outline-none focus:border-[var(--hr-accent-border)]"
               :placeholder="t('settings.models.form.aliasPlaceholder')"
               @input="setModelAlias(model.id, ($event.target as HTMLInputElement).value)"
             />
             <button
               type="button"
-              class="flex h-8 w-8 items-center justify-center rounded-full border border-red-400/25 text-red-200/80 transition hover:bg-red-400/10 hover:text-red-100"
+              class="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--hr-danger-border)] text-[var(--hr-danger)] transition hover:bg-[var(--hr-danger-soft)] hover:text-[var(--hr-danger)]"
               :title="t('settings.models.form.removeModel')"
               @click="removeModel(model.id)"
             >
@@ -907,27 +907,27 @@ async function submit(): Promise<void> {
     <div
       v-if="reusingCredential"
       data-testid="reused-provider-credential"
-      class="flex items-center gap-3 rounded-lg border border-emerald-400/20 bg-emerald-400/[0.05] px-3 py-2.5"
+      class="flex items-center gap-3 rounded-lg border border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] px-3 py-2.5"
     >
-      <KeyRound class="h-4 w-4 flex-shrink-0 text-emerald-300/80" />
+      <KeyRound class="h-4 w-4 flex-shrink-0 text-[var(--hr-success)]" />
       <div class="min-w-0 flex-1">
-        <div class="text-xs font-medium text-emerald-100/90">
+        <div class="text-xs font-medium text-[var(--hr-success)]">
           {{ t('settings.models.form.reuseCredential') }}
         </div>
-        <div class="mt-0.5 truncate font-mono text-[11px] text-gray-500">
+        <div class="mt-0.5 truncate font-mono text-[11px] text-[var(--hr-text-3)]">
           {{ reusableCredentialDisplay }}
         </div>
       </div>
       <button
         type="button"
-        class="flex-shrink-0 text-xs text-gray-400 transition-colors hover:text-gray-200"
+        class="flex-shrink-0 text-xs text-[var(--hr-text-2)] transition-colors hover:text-[var(--hr-text-1)]"
         @click="useNewApiKey = true"
       >
         {{ t('settings.models.form.useDifferentKey') }}
       </button>
     </div>
     <label v-else class="block space-y-1">
-      <span class="flex items-center justify-between gap-3 text-xs font-medium text-gray-400">
+      <span class="flex items-center justify-between gap-3 text-xs font-medium text-[var(--hr-text-2)]">
         <span>API Key</span>
         <button
           v-if="canReuseCredential"
@@ -941,7 +941,7 @@ async function submit(): Promise<void> {
       <input
         v-model="apiKey"
         type="password"
-        class="h-10 w-full rounded-lg border border-white/10 bg-[#343434] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
+        class="h-10 w-full rounded-lg border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none focus:border-[var(--hr-accent-border)]"
         :placeholder="representativeEndpoint?.key_hint || 'sk-...'"
       />
     </label>
@@ -949,7 +949,7 @@ async function submit(): Promise<void> {
     <!-- ═══ 能力（自动填 + 手动微调）════════════════════════════ -->
     <div class="space-y-2">
       <div class="flex items-center justify-between">
-        <span class="text-xs font-medium text-gray-400">{{
+        <span class="text-xs font-medium text-[var(--hr-text-2)]">{{
           t('settings.models.form.capabilities')
         }}</span>
       </div>
@@ -984,17 +984,17 @@ async function submit(): Promise<void> {
         <input
           type="checkbox"
           v-model="isDefault"
-          class="h-4 w-4 rounded border-white/20 bg-[#343434]"
+          class="h-4 w-4 rounded border-[var(--hr-border-strong)] bg-[var(--hr-control)]"
         />
-        <span class="text-sm text-gray-300">{{ t('settings.models.setDefault') }}</span>
+        <span class="text-sm text-[var(--hr-text-2)]">{{ t('settings.models.setDefault') }}</span>
       </label>
       <label class="flex cursor-pointer items-center gap-2">
         <input
           type="checkbox"
           v-model="isActive"
-          class="h-4 w-4 rounded border-white/20 bg-[#343434]"
+          class="h-4 w-4 rounded border-[var(--hr-border-strong)] bg-[var(--hr-control)]"
         />
-        <span class="text-sm text-gray-300">{{ t('settings.actions.enable') }}</span>
+        <span class="text-sm text-[var(--hr-text-2)]">{{ t('settings.actions.enable') }}</span>
       </label>
     </div>
 
@@ -1002,7 +1002,7 @@ async function submit(): Promise<void> {
     <div class="flex justify-end gap-2 pt-2">
       <button
         type="button"
-        class="rounded-lg border border-white/10 px-4 py-2 text-sm text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200"
+        class="rounded-lg border border-[var(--hr-border)] px-4 py-2 text-sm text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-1)] hover:text-[var(--hr-text-1)]"
         @click="emit('cancel')"
       >
         {{ t('settings.actions.cancel') }}
@@ -1014,7 +1014,7 @@ async function submit(): Promise<void> {
           'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all',
           canSubmit && !isSubmitting
             ? 'bg-[var(--hr-accent)] text-[var(--hr-on-accent)] hover:bg-[color:color-mix(in_srgb,var(--hr-accent)_85%,white)]'
-            : 'cursor-not-allowed bg-gray-700 text-gray-500'
+            : 'cursor-not-allowed bg-[var(--hr-control)] text-[var(--hr-text-3)]'
         ]"
         @click="submit"
       >

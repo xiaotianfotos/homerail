@@ -77,9 +77,9 @@ function statusIcon(status: string) {
 
 function statusColor(status: string): string {
   switch (status) {
-    case 'running': return 'text-emerald-400'
-    case 'completed': return 'text-blue-400'
-    case 'failed': return 'text-red-400'
+    case 'running': return 'text-[var(--hr-success)]'
+    case 'completed': return 'text-[var(--hr-info)]'
+    case 'failed': return 'text-[var(--hr-danger)]'
     default: return 'text-[var(--hr-text-3)]'
   }
 }
@@ -95,10 +95,10 @@ const experienceIngestLabel = computed(() => {
 
 const experienceIngestClass = computed(() => {
   const status = experienceIngest.value?.status
-  if (status === 'applied') return 'border-emerald-300/20 bg-emerald-300/10 text-emerald-200'
-  if (status === 'failed') return 'border-red-300/25 bg-red-500/15 text-red-300'
-  if (status === 'pending' || status === 'running') return 'border-amber-300/20 bg-amber-300/10 text-amber-200'
-  return 'border-white/10 bg-white/[0.04] text-white/45'
+  if (status === 'applied') return 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)]'
+  if (status === 'failed') return 'border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
+  if (status === 'pending' || status === 'running') return 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
+  return 'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-3)]'
 })
 
 function isExperienceIngestActive(status?: string): boolean {
@@ -181,22 +181,22 @@ onBeforeUnmount(stopExperienceIngestPoll)
         <span
           :class="cn(
             'rounded-full border px-2 py-1 font-medium',
-            store.isRunning ? 'border-emerald-300/20 bg-emerald-300/10 text-emerald-200' :
+            store.isRunning ? 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)]' :
             store.isCompleted ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]' :
-            store.isFailed ? 'bg-red-500/15 text-red-400' :
-            'border-white/10 bg-white/[0.04] text-white/45'
+            store.isFailed ? 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]' :
+            'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-3)]'
           )"
         >
           {{ store.dagExecution.status }}
         </span>
-        <span class="font-mono text-white/35">{{ store.currentRunId?.slice(-8) }}</span>
-        <span class="text-white/20">·</span>
-        <span class="text-white/35">{{ t('shell.workspace.nodes', { count: store.nodes.length }) }}</span>
-        <span class="text-white/20">·</span>
-        <span class="text-white/35">
+        <span class="font-mono text-[var(--hr-text-4)]">{{ store.currentRunId?.slice(-8) }}</span>
+        <span class="text-[var(--hr-text-4)]">·</span>
+        <span class="text-[var(--hr-text-4)]">{{ t('shell.workspace.nodes', { count: store.nodes.length }) }}</span>
+        <span class="text-[var(--hr-text-4)]">·</span>
+        <span class="text-[var(--hr-text-4)]">
           {{ t('shell.workspace.progress', { running: store.statusSummary.running, completed: store.statusSummary.completed }) }}
         </span>
-        <span class="text-white/20">·</span>
+        <span class="text-[var(--hr-text-4)]">·</span>
         <span
           :class="cn(
             'inline-flex items-center gap-1 rounded-full border px-2 py-1 font-medium',
@@ -209,7 +209,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
         </span>
         <button
           v-if="experienceIngest?.status === 'failed'"
-          class="inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-1 font-medium text-white/45 transition-colors hover:bg-white/[0.08] hover:text-white/75"
+          class="inline-flex items-center gap-1 rounded-full border border-[var(--hr-border)] px-2 py-1 font-medium text-[var(--hr-text-3)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-2)]"
           :disabled="experienceIngestLoading"
           :title="t('shell.workspace.experience.retryTitle')"
           @click="retryExperienceIngest"
@@ -218,7 +218,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
           retry
         </button>
       </div>
-      <div v-else class="text-[11px] text-white/35">{{ t('agent.inspector.noDag') }}</div>
+      <div v-else class="text-[11px] text-[var(--hr-text-4)]">{{ t('agent.inspector.noDag') }}</div>
     </div>
 
     <!-- Tab bar -->
@@ -230,7 +230,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
           'flex items-center gap-1.5 px-3 py-1.5 text-[11px] transition-colors border-b-2',
           store.inspectorTab === tab.key
             ? 'rounded-full border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
-            : 'rounded-full border-transparent text-white/[0.42] hover:bg-white/[0.08] hover:text-white/70'
+            : 'rounded-full border-transparent text-[var(--hr-text-3)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-2)]'
         )"
         @click="store.inspectorTab = tab.key"
       >
@@ -247,12 +247,12 @@ onBeforeUnmount(stopExperienceIngestPoll)
       >
         <div class="max-w-[220px] text-center">
           <Activity class="mx-auto mb-3 h-7 w-7 text-[var(--hr-text-4)]" />
-          <div class="text-xs font-medium text-white/45">{{ t('shell.workspace.emptyTitle') }}</div>
-          <div class="mt-1 text-[11px] leading-5 text-white/32">
+          <div class="text-xs font-medium text-[var(--hr-text-3)]">{{ t('shell.workspace.emptyTitle') }}</div>
+          <div class="mt-1 text-[11px] leading-5 text-[var(--hr-text-4)]">
             {{ t('shell.workspace.emptyDescription') }}
           </div>
           <button
-            class="mt-4 rounded-full border border-[var(--hr-border)] px-3 py-1.5 text-[11px] text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
+            class="mt-4 rounded-full border border-[var(--hr-border)] px-3 py-1.5 text-[11px] text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
             @click="store.settingsPageOpen = true"
           >
             {{ t('shell.workspace.openSettings') }}
@@ -292,7 +292,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
             'mx-2 my-1 flex w-[calc(100%-1rem)] items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left transition-colors',
             store.selectedNodeId === node.id
                 ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)]'
-                : 'border-transparent hover:border-white/10 hover:bg-white/[0.04]'
+                : 'border-transparent hover:border-[var(--hr-border)] hover:bg-[var(--hr-surface-1)]'
             )"
             @click="selectNode(node.id)"
           >
@@ -310,10 +310,10 @@ onBeforeUnmount(stopExperienceIngestPoll)
 
             <!-- Name + status -->
             <div class="flex-1 min-w-0">
-              <div class="text-xs font-medium text-white/[0.82] truncate">
+              <div class="text-xs font-medium text-[var(--hr-text-1)] truncate">
                 {{ getAgentPersona(node.agent_name).name }}
               </div>
-              <div class="text-[10px] text-white/35 truncate">{{ node.name }}</div>
+              <div class="text-[10px] text-[var(--hr-text-4)] truncate">{{ node.name }}</div>
             </div>
 
             <!-- Status + context -->
@@ -321,12 +321,12 @@ onBeforeUnmount(stopExperienceIngestPoll)
               <!-- Context bar -->
               <div v-if="node.context_usage_pct != null" class="w-10">
                 <div class="flex justify-between text-[9px] mb-0.5">
-                  <span class="text-white/30">ctx</span>
+                  <span class="text-[var(--hr-text-4)]">ctx</span>
                   <span :class="contextUsageText(node.context_usage_pct)">
                     {{ node.context_usage_pct }}%
                   </span>
                 </div>
-                <div class="h-1 rounded-full bg-white/10">
+                <div class="h-1 rounded-full bg-[var(--hr-surface-2)]">
                   <div
                     class="h-full rounded-full transition-all"
                     :class="contextBarColor(node.context_usage_pct)"
@@ -360,14 +360,14 @@ onBeforeUnmount(stopExperienceIngestPoll)
         <div v-if="!store.selectedNode" class="flex-1 flex items-center justify-center">
           <div class="text-center space-y-2">
             <FileText class="h-8 w-8 mx-auto opacity-20 text-[var(--hr-text-1)]" />
-            <div class="text-xs text-white/35">{{ t('agent.inspector.selectNodeLogs') }}</div>
+            <div class="text-xs text-[var(--hr-text-4)]">{{ t('agent.inspector.selectNodeLogs') }}</div>
           </div>
         </div>
 
         <!-- Node selected: show log header + messages -->
         <template v-else>
           <!-- Log header with node info -->
-          <div class="flex items-center gap-2 border-b border-[var(--hr-border)] bg-white/[0.025] px-3 py-2.5 flex-shrink-0">
+          <div class="flex items-center gap-2 border-b border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 py-2.5 flex-shrink-0">
             <div
               class="w-6 h-6 rounded-xl flex items-center justify-center"
               :style="{ backgroundColor: getAgentPersona(store.selectedNode.agent_name).color + '22' }"
@@ -379,10 +379,10 @@ onBeforeUnmount(stopExperienceIngestPoll)
               />
             </div>
             <div class="flex-1 min-w-0">
-              <span class="text-[11px] font-medium text-white/[0.82]">
+              <span class="text-[11px] font-medium text-[var(--hr-text-1)]">
                 {{ getAgentPersona(store.selectedNode.agent_name).name }}
               </span>
-              <span class="text-[10px] text-white/35 ml-1">{{ store.selectedNode.name }}</span>
+              <span class="text-[10px] text-[var(--hr-text-4)] ml-1">{{ store.selectedNode.name }}</span>
             </div>
             <div
               v-if="store.selectedNode.context_usage_pct != null"

@@ -166,9 +166,9 @@ function stateIcon(state: ProgressState) {
 }
 
 function stateColor(state: ProgressState): string {
-  if (state === 'done') return 'text-emerald-400'
-  if (state === 'running') return 'text-blue-400'
-  if (state === 'failed') return 'text-red-400'
+  if (state === 'done') return 'text-[var(--hr-success)]'
+  if (state === 'running') return 'text-[var(--hr-info)]'
+  if (state === 'failed') return 'text-[var(--hr-danger)]'
   return 'text-[var(--hr-text-4)]'
 }
 
@@ -376,9 +376,9 @@ onUnmounted(() => {
         <div
           :class="cn(
             'rounded-full px-2 py-0.5 text-[10px] font-medium',
-            store.isFailed ? 'bg-red-500/15 text-red-300' :
-            store.isCompleted ? 'bg-emerald-500/15 text-emerald-300' :
-            store.isRunning ? 'bg-blue-500/15 text-blue-300' :
+            store.isFailed ? 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]' :
+            store.isCompleted ? 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]' :
+            store.isRunning ? 'bg-[var(--hr-info-soft)] text-[var(--hr-info)]' :
             'bg-[var(--hr-surface-2)] text-[var(--hr-text-3)]'
           )"
         >
@@ -388,7 +388,7 @@ onUnmounted(() => {
 
       <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--hr-surface-2)]">
         <div
-          :class="cn('h-full rounded-full transition-all', store.isFailed ? 'bg-red-500' : 'bg-emerald-500')"
+          :class="cn('h-full rounded-full transition-all', store.isFailed ? 'bg-[var(--hr-danger)]' : 'bg-[var(--hr-success)]')"
           :style="{ width: `${progressPercent}%` }"
         />
       </div>
@@ -417,20 +417,20 @@ onUnmounted(() => {
 
     <section
       v-if="failedNodes.length"
-      class="rounded-md border border-red-500/30 bg-red-500/10 p-3"
+      class="rounded-md border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] p-3"
     >
-      <div class="mb-2 flex items-center gap-2 text-xs font-medium text-red-200">
+      <div class="mb-2 flex items-center gap-2 text-xs font-medium text-[var(--hr-danger)]">
         <AlertCircle class="h-3.5 w-3.5" />
         {{ t('agent.progress.failedNodes') }}
       </div>
       <button
         v-for="node in failedNodes"
         :key="node.id"
-        class="flex w-full items-center justify-between rounded px-2 py-1 text-left text-[11px] text-red-100 hover:bg-red-500/10"
+        class="flex w-full items-center justify-between rounded px-2 py-1 text-left text-[11px] text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)]"
         @click="store.selectNode(node.id); store.inspectorTab = 'evidence'"
       >
         <span class="truncate">{{ node.name }}</span>
-        <span class="ml-2 text-[10px] text-red-300">{{ t('agent.progress.viewEvidence') }}</span>
+        <span class="ml-2 text-[10px] text-[var(--hr-danger)]">{{ t('agent.progress.viewEvidence') }}</span>
       </button>
     </section>
 
@@ -468,8 +468,8 @@ onUnmounted(() => {
           :class="cn(
             'rounded-full px-2 py-0.5 text-[10px] font-medium',
             !scorecard ? 'bg-[var(--hr-surface-2)] text-[var(--hr-text-3)]' :
-            scorecard.passed ? 'bg-emerald-500/15 text-emerald-300' :
-            'bg-red-500/15 text-red-300'
+            scorecard.passed ? 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]' :
+            'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
           )"
         >
           {{ scorecard ? (scorecard.passed ? 'PASS' : 'FAIL') : 'N/A' }}
@@ -480,11 +480,11 @@ onUnmounted(() => {
         <button
           v-for="failure in scorecard.failures"
           :key="`${failure.rule}-${failure.node ?? 'run'}`"
-          class="w-full rounded bg-red-500/10 px-2 py-1.5 text-left hover:bg-red-500/15"
+          class="w-full rounded bg-[var(--hr-danger-soft)] px-2 py-1.5 text-left hover:bg-[var(--hr-danger-soft)]"
           @click="openFailureEvidence(failure)"
         >
-          <div class="truncate text-[11px] text-red-100">{{ failure.message }}</div>
-          <div class="mt-0.5 truncate text-[10px] text-red-300">{{ failure.rule }}</div>
+          <div class="truncate text-[11px] text-[var(--hr-danger)]">{{ failure.message }}</div>
+          <div class="mt-0.5 truncate text-[10px] text-[var(--hr-danger)]">{{ failure.rule }}</div>
         </button>
       </div>
       <div v-else class="mb-3 text-[11px] text-[var(--hr-text-3)]">

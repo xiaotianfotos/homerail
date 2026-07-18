@@ -15,6 +15,11 @@ import { useAgentStore } from '@/stores/agent-store'
 import { getAgentPersona, fmtTokens } from '@/lib/agentPersonas'
 import type { DAGNodeMetrics, DAGRunMetrics } from '@/api/types/dag.types'
 import type { DAGTaskNode, DAGEdge } from '@/api/types/dag.types'
+import {
+  observeCanvasAppearance,
+  readCanvasAppearancePalette,
+  type CanvasAppearancePalette,
+} from '@/appearance/canvas-appearance'
 
 interface RuntimeNode {
   id: string
@@ -64,6 +69,12 @@ let layoutCenterY = 0
 // 数据流动粒子：每条 active 边一个沿边运动的进度 0..1
 const edgeFlow = new Map<string, number>()
 let flowTick = 0
+let stopObservingAppearance: (() => void) | null = null
+let canvasPalette: CanvasAppearancePalette = readCanvasAppearancePalette()
+
+function refreshCanvasPalette(): void {
+  canvasPalette = readCanvasAppearancePalette()
+}
 
 // ============================================================================
 // 状态 → 视觉
@@ -71,13 +82,13 @@ let flowTick = 0
 
 function statusGlow(status: string): { color: string; pulse: boolean } {
   switch (status) {
-    case 'running': return { color: '52, 211, 153', pulse: true }
-    case 'waiting_for_command': return { color: '251, 191, 36', pulse: false }
-    case 'completed': return { color: '96, 165, 250', pulse: false }
-    case 'failed': return { color: '248, 113, 113', pulse: false }
-    case 'ready': return { color: '147, 197, 253', pulse: false }
-    case 'skipped': return { color: '251, 191, 36', pulse: false }
-    default: return { color: '148, 163, 184', pulse: false }
+    case 'running': return { color: canvasPalette.success, pulse: true }
+    case 'waiting_for_command': return { color: canvasPalette.warning, pulse: false }
+    case 'completed': return { color: canvasPalette.info, pulse: false }
+    case 'failed': return { color: canvasPalette.danger, pulse: false }
+    case 'ready': return { color: canvasPalette.info, pulse: false }
+    case 'skipped': return { color: canvasPalette.warning, pulse: false }
+    default: return { color: canvasPalette.text2, pulse: false }
   }
 }
 
@@ -316,10 +327,10 @@ function drawEdges(ctx: CanvasRenderingContext2D): void {
     const targetRunning = target.status === 'running'
     const edgeKey = `${edge.source}->${edge.target}`
 
-    // 主边线（active 高亮色与 --hr-accent 对齐；canvas 无法直接消费 CSS var，用等值 rgba）
+    // Canvas 不能直接解析 CSS var，因此在 appearance 变化时读取语义令牌。
     ctx.strokeStyle = targetRunning
-      ? 'rgba(52, 211, 153, 0.55)'
-      : active ? 'rgba(79, 216, 232, 0.5)' : 'rgba(148, 163, 184, 0.22)'
+      ? canvasPalette.successBorder
+      : active ? canvasPalette.accentBorder : canvasPalette.borderStrong
     ctx.lineWidth = targetRunning ? 2 : active ? 1.8 : 1.1
     ctx.beginPath()
     ctx.moveTo(source.x, source.y)
@@ -334,9 +345,9 @@ function drawEdges(ctx: CanvasRenderingContext2D): void {
       const phase = ((flowTick * 0.012) + (i * 0.31)) % 1
       const px = source.x + (target.x - source.x) * phase
       const py = source.y + (target.y - source.y) * phase
-      ctx.shadowColor = 'rgba(52, 211, 153, 0.9)'
+      ctx.shadowColor = canvasPalette.success
       ctx.shadowBlur = 12
-      ctx.fillStyle = 'rgba(167, 243, 208, 0.95)'
+      ctx.fillStyle = canvasPalette.success
       ctx.beginPath()
       ctx.arc(px, py, 3, 0, Math.PI * 2)
       ctx.fill()
@@ -353,7 +364,7 @@ function drawArrowHead(ctx: CanvasRenderingContext2D, fromX: number, fromY: numb
   const tipX = toX - ux * (targetR + 4)
   const tipY = toY - uy * (targetR + 4)
   const size = 7
-  ctx.fillStyle = 'rgba(148, 163, 184, 0.5)'
+  ctx.fillStyle = canvasPalette.text2
   ctx.beginPath()
   ctx.moveTo(tipX, tipY)
   ctx.lineTo(tipX - ux * size - uy * size * 0.5, tipY - uy * size + ux * size * 0.5)
@@ -375,19 +386,21 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
 
     // 焦点外圈脉冲环（accent 色，手柄/键盘导航的醒目标记）
     if (focused) {
-      ctx.strokeStyle = `rgba(79, 216, 232, ${0.35 + pulse * 0.35})`
+      ctx.strokeStyle = canvasPalette.focusRing
+      ctx.globalAlpha = 0.7 + pulse * 0.3
       ctx.lineWidth = 2.5
       ctx.beginPath()
       ctx.arc(node.x, node.y, renderR + 7 + pulse * 3, 0, Math.PI * 2)
       ctx.stroke()
+      ctx.globalAlpha = 1
     }
 
     // 外层光晕（running 时脉冲呼吸）
     if (glow.pulse) {
-      ctx.shadowColor = `rgba(${glow.color}, ${0.4 + pulse * 0.4})`
+      ctx.shadowColor = glow.color
       ctx.shadowBlur = 18 + pulse * 14
     } else {
-      ctx.shadowColor = `rgba(${glow.color}, ${active || focused ? 0.5 : 0.22})`
+      ctx.shadowColor = glow.color
       ctx.shadowBlur = active || focused ? 22 : 10
     }
 
@@ -401,16 +414,16 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
     // 状态描边
     ctx.lineWidth = active || focused || hovering ? 3 : 1.6
     ctx.strokeStyle = active
-      ? 'rgba(237, 244, 252, 0.96)'
+      ? canvasPalette.text1
       : focused
-        ? 'rgba(79, 216, 232, 0.95)'
-        : `rgba(${glow.color}, 0.85)`
+        ? canvasPalette.accent
+        : glow.color
     ctx.stroke()
 
     if (zoom < 0.45) continue
 
     // 节点中心：agent 名首字
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
+    ctx.fillStyle = canvasPalette.onStrong
     ctx.font = '600 11px Inter, ui-sans-serif, system-ui, sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -418,7 +431,7 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
 
     // 节点下方：标签
     if (zoom > 0.5) {
-      ctx.fillStyle = active ? 'rgba(237, 244, 252, 0.92)' : 'rgba(226, 232, 240, 0.72)'
+      ctx.fillStyle = active ? canvasPalette.text1 : canvasPalette.text2
       ctx.font = '600 11px Inter, ui-sans-serif, system-ui, sans-serif'
       ctx.fillText(persona.name, node.x, node.y + node.r + 14)
     }
@@ -434,15 +447,15 @@ function drawBadges(ctx: CanvasRenderingContext2D, node: RuntimeNode): void {
   const m = node.metrics!
   const badges: Array<{ text: string; color: string }> = []
   if (m.tool_calls > 0) {
-    badges.push({ text: `🔧${m.tool_calls}`, color: 'rgba(147, 197, 253, 0.92)' })
+    badges.push({ text: `🔧${m.tool_calls}`, color: canvasPalette.info })
   }
   if (m.tool_failures > 0) {
-    badges.push({ text: `✗${m.tool_failures}`, color: 'rgba(248, 113, 113, 0.95)' })
+    badges.push({ text: `✗${m.tool_failures}`, color: canvasPalette.danger })
   }
   if (m.tokens) {
     const total = m.tokens.input + m.tokens.output + m.tokens.cache_read
     if (total > 0) {
-      badges.push({ text: fmtTokens(total), color: 'rgba(167, 243, 208, 0.92)' })
+      badges.push({ text: fmtTokens(total), color: canvasPalette.success })
     }
   }
   if (!badges.length) return
@@ -454,8 +467,7 @@ function drawBadges(ctx: CanvasRenderingContext2D, node: RuntimeNode): void {
   let by = node.y - node.r - 10
   for (const badge of badges) {
     const w = ctx.measureText(badge.text).width + 12
-    // 胶囊背景（近黑面板色，与 --hr-panel 对齐）
-    ctx.fillStyle = 'rgba(10, 15, 23, 0.85)'
+    ctx.fillStyle = canvasPalette.panel
     roundRect(ctx, bx, by - 8, w, 16, 8)
     ctx.fill()
     ctx.strokeStyle = badge.color
@@ -614,6 +626,10 @@ watch(
 )
 
 onMounted(() => {
+  refreshCanvasPalette()
+  stopObservingAppearance = observeCanvasAppearance((palette) => {
+    canvasPalette = palette
+  })
   rebuildGraph(true)
   resizeCanvas()
   rafId = requestAnimationFrame(drawGraph)
@@ -622,6 +638,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (rafId) cancelAnimationFrame(rafId)
+  stopObservingAppearance?.()
+  stopObservingAppearance = null
   window.removeEventListener('resize', resizeCanvas)
 })
 

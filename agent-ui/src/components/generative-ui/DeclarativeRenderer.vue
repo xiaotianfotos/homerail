@@ -38,23 +38,23 @@ const model = computed(() => buildDeclarativeRendererModel(props.document, props
 </template>
 
 <style scoped>
-.declarative-renderer { display:grid; gap:14px; min-width:0; border:1px solid rgba(116,228,227,.16); border-radius:18px; background:linear-gradient(145deg,rgba(18,38,41,.96),rgba(7,14,16,.98)); padding:16px; color:rgba(239,255,253,.94); }
+.declarative-renderer { display:grid; gap:14px; min-width:0; border:1px solid var(--hr-accent-border); border-radius:18px; background:linear-gradient(145deg,var(--hr-panel),var(--hr-bg-raised)); padding:16px; color:var(--hr-text-1); }
 header h2, section h3, p, ol, ul, dl { margin:0; }
 header h2 { font-size:16px; font-weight:800; }
-header p { margin-top:5px; color:rgba(220,242,240,.62); font-size:13px; white-space:pre-wrap; }
+header p { margin-top:5px; color:var(--hr-text-2); font-size:13px; white-space:pre-wrap; }
 .declarative-renderer__sections { display:grid; gap:13px; }
 .declarative-renderer__sections > section { display:grid; gap:7px; }
-.declarative-renderer__sections h3 { color:rgba(151,236,231,.75); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
-.declarative-renderer__text { display:-webkit-box; overflow:hidden; color:rgba(236,249,248,.78); white-space:pre-wrap; -webkit-box-orient:vertical; -webkit-line-clamp:var(--max-lines); }
+.declarative-renderer__sections h3 { color:var(--hr-accent); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+.declarative-renderer__text { display:-webkit-box; overflow:hidden; color:var(--hr-text-2); white-space:pre-wrap; -webkit-box-orient:vertical; -webkit-line-clamp:var(--max-lines); }
 .declarative-renderer__list,.declarative-renderer__links { display:grid; gap:7px; padding:0; list-style:none; }
-.declarative-renderer__list li { display:flex; justify-content:space-between; gap:12px; border-radius:11px; background:rgba(255,255,255,.04); padding:9px 10px; }
+.declarative-renderer__list li { display:flex; justify-content:space-between; gap:12px; border-radius:11px; background:var(--hr-surface-1); padding:9px 10px; }
 .declarative-renderer__list strong { font-size:13px; }
-.declarative-renderer__list p { margin-top:3px; color:rgba(230,245,243,.58); font-size:12px; }
-.declarative-renderer__list span { align-self:start; border-radius:999px; background:rgba(116,228,227,.12); padding:3px 7px; color:rgba(180,248,244,.8); font-size:10px; }
+.declarative-renderer__list p { margin-top:3px; color:var(--hr-text-3); font-size:12px; }
+.declarative-renderer__list span { align-self:start; border-radius:999px; background:var(--hr-accent-soft); padding:3px 7px; color:var(--hr-accent); font-size:10px; }
 .declarative-renderer__metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:8px; }
-.declarative-renderer__metrics div { border-radius:11px; background:rgba(255,255,255,.04); padding:9px; }
-.declarative-renderer__metrics dt { color:rgba(220,242,240,.55); font-size:10px; }
+.declarative-renderer__metrics div { border-radius:11px; background:var(--hr-surface-1); padding:9px; }
+.declarative-renderer__metrics dt { color:var(--hr-text-3); font-size:10px; }
 .declarative-renderer__metrics dd { margin:3px 0 0; font-size:16px; font-weight:800; }
-.declarative-renderer__links a { color:rgb(137,230,224); font-size:12px; text-decoration:underline; text-underline-offset:3px; }
-.declarative-renderer__empty { color:rgba(220,242,240,.45); font-size:12px; }
+.declarative-renderer__links a { color:var(--hr-accent); font-size:12px; text-decoration:underline; text-underline-offset:3px; }
+.declarative-renderer__empty { color:var(--hr-text-4); font-size:12px; }
 </style>

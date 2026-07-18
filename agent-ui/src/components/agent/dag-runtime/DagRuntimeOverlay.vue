@@ -339,7 +339,7 @@ onUnmounted(() => {
   <transition name="overlay-zoom">
     <div class="dag-runtime-overlay fixed inset-0 z-[200] flex flex-col overflow-hidden bg-[var(--hr-bg)]">
       <!-- 氛围层 -->
-      <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_22%_18%,color-mix(in_srgb,var(--hr-accent)_12%,transparent),transparent_38%),radial-gradient(circle_at_78%_72%,color-mix(in_srgb,var(--hr-success)_8%,transparent),transparent_42%)]" />
+      <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_22%_18%,var(--hr-canvas-ambient-primary),transparent_38%),radial-gradient(circle_at_78%_72%,var(--hr-canvas-ambient-secondary),transparent_42%)]" />
 
       <!-- 顶部工具栏（仅 graph 态显示完整工具栏；list 态显示精简版） -->
       <DagRuntimeToolbar
@@ -378,7 +378,7 @@ onUnmounted(() => {
 
           <div
             v-if="metricsLoading"
-            class="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-[var(--hr-border)] bg-[var(--hr-panel)] px-3 py-1.5 text-[10px] text-white/50 backdrop-blur"
+            class="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-[var(--hr-border)] bg-[var(--hr-panel)] px-3 py-1.5 text-[10px] text-[var(--hr-text-3)] backdrop-blur"
           >
             {{ t('dag.overlay.loadingMetrics') }}
           </div>
@@ -399,7 +399,7 @@ onUnmounted(() => {
       <!-- 底部操作提示条（手柄连接时显示） -->
       <div
         v-if="gamepadConnected"
-        class="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-[var(--hr-border)] bg-[var(--hr-panel)] px-6 py-2.5 text-sm text-white/60 backdrop-blur"
+        class="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-[var(--hr-border)] bg-[var(--hr-panel)] px-6 py-2.5 text-sm text-[var(--hr-text-2)] backdrop-blur"
       >
         <template v-if="view === 'run_list'">
           {{ t('dag.overlay.runListHelp') }}
@@ -417,7 +417,7 @@ onUnmounted(() => {
 
 <style scoped>
 .dag-runtime-overlay {
-  box-shadow: 0 0 120px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--hr-shadow-floating);
 }
 
 .overlay-zoom-enter-active {

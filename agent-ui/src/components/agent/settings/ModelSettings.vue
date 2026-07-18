@@ -298,22 +298,22 @@ function capabilityList(
 
 <template>
   <section data-testid="agent-settings-section-providers" class="mt-10 space-y-6">
-    <div class="rounded-lg border border-white/10 bg-[#252525] p-4">
+    <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="font-semibold">{{ t('settings.models.runtimeTitle') }}</h2>
-          <div class="mt-1 text-xs text-gray-500">{{ t('settings.models.runtimeSubtitle') }}</div>
+          <div class="mt-1 text-xs text-[var(--hr-text-3)]">{{ t('settings.models.runtimeSubtitle') }}</div>
         </div>
         <span
           data-testid="agent-settings-manager-runtime-count"
-          class="rounded-full border border-white/10 px-3 py-1 text-xs text-gray-400"
+          class="rounded-full border border-[var(--hr-border)] px-3 py-1 text-xs text-[var(--hr-text-2)]"
           >{{ t('settings.models.available', { count: availableManagerModelCount }) }}</span
         >
       </div>
       <div v-if="currentManagerUsesCodex" class="mt-4 grid gap-3 md:grid-cols-2">
         <div
           data-testid="agent-settings-manager-runtime-provider-readonly"
-          class="flex h-10 items-center justify-between rounded-md border border-white/10 bg-[#343434] px-3 text-sm"
+          class="flex h-10 items-center justify-between rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm"
         >
           <span>Codex</span>
           <span class="inline-flex items-center gap-1 text-xs text-[var(--hr-text-2)]">
@@ -323,10 +323,10 @@ function capabilityList(
         </div>
         <div
           data-testid="agent-settings-manager-runtime-model-readonly"
-          class="flex h-10 items-center justify-between rounded-md border border-white/10 bg-[#343434] px-3 text-sm"
+          class="flex h-10 items-center justify-between rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm"
         >
           <span>{{ currentCodexModelLabel }}</span>
-          <span class="text-xs text-gray-500">
+          <span class="text-xs text-[var(--hr-text-3)]">
             <template v-if="managerConfig?.reasoning_effort"
               >{{ managerConfig.reasoning_effort }} · </template
             >{{ currentCodexServiceTierLabel }}
@@ -336,7 +336,7 @@ function capabilityList(
       <div v-else class="mt-4 grid gap-3 md:grid-cols-2">
         <select
           :value="store.managerProviderName"
-          class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none"
+          class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none"
           :disabled="store.managerRuntimeLoading"
           @change="handleManagerProviderChange"
         >
@@ -350,7 +350,7 @@ function capabilityList(
         </select>
         <select
           v-model="store.managerModelName"
-          class="h-10 rounded-md border border-white/10 bg-[#343434] px-3 text-sm outline-none"
+          class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none"
           :disabled="store.managerRuntimeLoading"
           @change="handleManagerModelChange"
         >
@@ -359,10 +359,10 @@ function capabilityList(
           </option>
         </select>
       </div>
-      <div v-if="currentManagerUsesCodex" class="mt-3 text-xs leading-relaxed text-gray-500">
+      <div v-if="currentManagerUsesCodex" class="mt-3 text-xs leading-relaxed text-[var(--hr-text-3)]">
         {{ t('settings.models.codexRuntimeHint') }}
       </div>
-      <div v-else class="mt-3 text-xs leading-relaxed text-gray-500">
+      <div v-else class="mt-3 text-xs leading-relaxed text-[var(--hr-text-3)]">
         {{ t('settings.models.runtimeHint') }}
       </div>
     </div>
@@ -375,13 +375,13 @@ function capabilityList(
       @add-model="openCreate"
     />
 
-    <div class="rounded-lg border border-white/10 bg-[#252525]">
+    <div class="rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
       <div
-        class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3"
+        class="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hr-border)] px-4 py-3"
       >
         <div>
           <h2 class="font-semibold">{{ t('settings.models.configuredTitle') }}</h2>
-          <div class="mt-1 text-xs text-gray-500">
+          <div class="mt-1 text-xs text-[var(--hr-text-3)]">
             {{
               t('settings.models.summary', {
                 providers: providers.length,
@@ -393,7 +393,7 @@ function capabilityList(
         <div class="relative">
           <button
             data-testid="add-model-menu-button"
-            class="inline-flex items-center gap-2 rounded-md bg-blue-500 px-3 py-2 text-sm text-white hover:bg-blue-400 disabled:opacity-50"
+            class="inline-flex items-center gap-2 rounded-md bg-[var(--hr-accent)] px-3 py-2 text-sm text-[var(--hr-on-accent)] hover:bg-[var(--hr-accent-hover)] disabled:opacity-50"
             :disabled="loading"
             aria-haspopup="menu"
             :aria-expanded="createMenuOpen"
@@ -405,7 +405,7 @@ function capabilityList(
           </button>
           <div
             v-if="createMenuOpen"
-            class="absolute right-0 top-full z-20 mt-2 w-56 rounded-md border border-white/12 bg-[#202426] p-1.5 shadow-2xl"
+            class="absolute right-0 top-full z-20 mt-2 w-56 rounded-md border border-[var(--hr-border-strong)] bg-[var(--hr-surface-1)] p-1.5 shadow-2xl"
             role="menu"
           >
             <button
@@ -413,7 +413,7 @@ function capabilityList(
               :key="option.id"
               :data-testid="`add-model-purpose-${option.id}`"
               type="button"
-              class="flex w-full items-center gap-3 rounded px-3 py-2.5 text-left text-sm text-gray-200 hover:bg-white/7"
+              class="flex w-full items-center gap-3 rounded px-3 py-2.5 text-left text-sm text-[var(--hr-text-1)] hover:bg-[var(--hr-surface-1)]"
               role="menuitem"
               @click="openCreate(option.id)"
             >
@@ -426,13 +426,13 @@ function capabilityList(
 
       <div
         v-if="loading && !configuredModelCount"
-        class="px-4 py-8 text-center text-sm text-gray-500"
+        class="px-4 py-8 text-center text-sm text-[var(--hr-text-3)]"
       >
         <Loader2 class="mx-auto h-5 w-5 animate-spin" />
         <div class="mt-2">{{ t('settings.models.loading') }}</div>
       </div>
 
-      <div v-else-if="!configuredModelCount" class="px-4 py-8 text-center text-sm text-gray-500">
+      <div v-else-if="!configuredModelCount" class="px-4 py-8 text-center text-sm text-[var(--hr-text-3)]">
         {{ t('settings.models.empty') }}
       </div>
 
@@ -440,7 +440,7 @@ function capabilityList(
         <div
           v-if="showCodexRuntime"
           data-testid="agent-settings-model-item-codex"
-          class="border-b border-white/10 px-4 py-4"
+          class="border-b border-[var(--hr-border)] px-4 py-4"
         >
           <div class="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
             <div class="min-w-0 flex-1">
@@ -448,7 +448,7 @@ function capabilityList(
                 <span class="font-medium">Codex</span>
                 <span
                   v-if="currentManagerUsesCodex"
-                  class="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200"
+                  class="rounded-full bg-[var(--hr-success-soft)] px-2 py-0.5 text-[10px] text-[var(--hr-success)]"
                   >{{ t('settings.models.currentManager') }}</span
                 >
                 <span
@@ -456,11 +456,11 @@ function capabilityList(
                   class="rounded-full bg-[var(--hr-accent-soft)] px-2 py-0.5 text-[10px] text-[var(--hr-accent)]"
                   >{{ t('settings.models.autoDetected') }}</span
                 >
-                <span class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">{{
+                <span class="rounded-full bg-[var(--hr-surface-1)] px-2 py-0.5 text-[10px] text-[var(--hr-text-2)]">{{
                   t('settings.models.readOnly')
                 }}</span>
               </div>
-              <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+              <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--hr-text-3)]">
                 <span>OpenAI Codex</span>
                 <span>·</span>
                 <span>{{ t('settings.models.localCli') }}</span>
@@ -484,7 +484,7 @@ function capabilityList(
                 <CapabilityBadge capability="llm" :active="true" />
                 <span
                   v-if="currentManagerUsesCodex"
-                  class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300"
+                  class="rounded-full bg-[var(--hr-surface-1)] px-2 py-0.5 text-[10px] text-[var(--hr-text-2)]"
                 >
                   {{ currentCodexModelLabel
                   }}<template v-if="managerConfig?.reasoning_effort">
@@ -495,7 +495,7 @@ function capabilityList(
               </div>
             </div>
 
-            <div class="inline-flex items-center gap-1.5 text-xs text-gray-500 xl:pt-1">
+            <div class="inline-flex items-center gap-1.5 text-xs text-[var(--hr-text-3)] xl:pt-1">
               <LockKeyhole class="h-3.5 w-3.5" />
               {{ t('settings.models.systemManaged') }}
             </div>
@@ -505,7 +505,7 @@ function capabilityList(
         <div
           v-for="setting in activeSettings"
           :key="setting.id"
-          class="group border-b border-white/10 px-4 py-4 last:border-0"
+          class="group border-b border-[var(--hr-border)] px-4 py-4 last:border-0"
           :data-testid="`agent-settings-model-item-${setting.id}`"
         >
           <div class="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -514,20 +514,20 @@ function capabilityList(
                 <span class="font-medium">{{ setting.display_name || setting.model_name }}</span>
                 <span
                   v-if="setting.is_default"
-                  class="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200"
+                  class="rounded-full bg-[var(--hr-success-soft)] px-2 py-0.5 text-[10px] text-[var(--hr-success)]"
                   >{{ t('settings.models.default') }}</span
                 >
                 <span
-                  class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-200"
+                  class="rounded-full bg-[var(--hr-success-soft)] px-2 py-0.5 text-[10px] text-[var(--hr-success)]"
                   >{{ t('settings.models.active') }}</span
                 >
               </div>
-              <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+              <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--hr-text-3)]">
                 <span>{{ setting.provider_name }}</span>
                 <span>·</span>
                 <span>{{ localizedPlanLabel(setting.plan_type) }}</span>
                 <span>·</span>
-                <span v-if="setting.models && setting.models.length > 1" class="text-gray-400">
+                <span v-if="setting.models && setting.models.length > 1" class="text-[var(--hr-text-2)]">
                   {{
                     t('settings.models.modelList', {
                       count: setting.models.length,
@@ -548,10 +548,10 @@ function capabilityList(
                 />
                 <span
                   v-if="setting.plan_type === 'custom' || setting.endpoint_id?.endsWith('_custom')"
-                  class="rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-200"
+                  class="rounded-full bg-[var(--hr-warning-soft)] px-2 py-0.5 text-[10px] text-[var(--hr-warning)]"
                   >{{ t('settings.models.custom') }}</span
                 >
-                <span class="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-300">{{
+                <span class="rounded-full bg-[var(--hr-surface-1)] px-2 py-0.5 text-[10px] text-[var(--hr-text-2)]">{{
                   localizedPlanLabel(setting.plan_type)
                 }}</span>
               </div>
@@ -559,7 +559,7 @@ function capabilityList(
 
             <div class="flex flex-wrap items-center gap-2 xl:justify-end">
               <button
-                class="rounded-md border border-white/10 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
+                class="rounded-md border border-[var(--hr-border)] px-3 py-1.5 text-xs text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)]"
                 :disabled="savingId === `default-${setting.id}`"
                 @click="setDefault(setting)"
               >
@@ -572,13 +572,13 @@ function capabilityList(
               <button
                 :data-testid="`edit-model-${setting.id}`"
                 :title="t('settings.models.editTitle')"
-                class="rounded-md border border-white/10 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
+                class="rounded-md border border-[var(--hr-border)] px-3 py-1.5 text-xs text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)]"
                 @click="openEdit(setting)"
               >
                 <Pencil class="h-3.5 w-3.5" />
               </button>
               <button
-                class="rounded-md border border-white/10 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
+                class="rounded-md border border-[var(--hr-border)] px-3 py-1.5 text-xs text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)]"
                 :disabled="savingId === `active-${setting.id}`"
                 @click="toggleActive(setting)"
               >
@@ -591,8 +591,8 @@ function capabilityList(
               <div>
                 <button
                   :data-testid="`delete-model-${setting.id}`"
-                  class="rounded-md border border-red-500/30 px-2 py-1.5 text-red-300 hover:bg-red-500/10"
-                  :class="deleteConfirmId === setting.id ? 'bg-red-500/10' : ''"
+                  class="rounded-md border border-[var(--hr-danger-border)] px-2 py-1.5 text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)]"
+                  :class="deleteConfirmId === setting.id ? 'bg-[var(--hr-danger-soft)]' : ''"
                   :disabled="savingId === `delete-${setting.id}`"
                   @click="toggleDeleteConfirm(setting.id)"
                 >
@@ -622,28 +622,28 @@ function capabilityList(
 
         <div
           v-if="inactiveSettings.length"
-          class="border-t border-dashed border-white/10 px-4 py-2"
+          class="border-t border-dashed border-[var(--hr-border)] px-4 py-2"
         >
-          <div class="text-xs text-gray-500">
+          <div class="text-xs text-[var(--hr-text-3)]">
             {{ t('settings.models.inactive', { count: inactiveSettings.length }) }}
           </div>
         </div>
         <div
           v-for="setting in inactiveSettings"
           :key="setting.id"
-          class="group border-b border-white/10 px-4 py-3 opacity-60 last:border-0 hover:opacity-80"
+          class="group border-b border-[var(--hr-border)] px-4 py-3 opacity-60 last:border-0 hover:opacity-80"
           :data-testid="`agent-settings-model-item-${setting.id}`"
         >
           <div class="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
             <div class="min-w-0 flex-1">
-              <div class="text-sm font-medium text-gray-400">
+              <div class="text-sm font-medium text-[var(--hr-text-2)]">
                 {{ setting.display_name || setting.model_name }}
               </div>
-              <div class="mt-0.5 text-xs text-gray-600">
+              <div class="mt-0.5 text-xs text-[var(--hr-text-3)]">
                 {{ setting.provider_name }}
                 <span
                   v-if="setting.plan_type === 'custom' || setting.endpoint_id?.endsWith('_custom')"
-                  class="ml-1 rounded bg-amber-400/10 px-1 text-amber-200/70"
+                  class="ml-1 rounded bg-[var(--hr-warning-soft)] px-1 text-[var(--hr-warning)]"
                   >{{ t('settings.models.custom') }}</span
                 >
                 · {{ localizedPlanLabel(setting.plan_type) }} ·
@@ -656,7 +656,7 @@ function capabilityList(
             </div>
             <div class="flex items-center gap-2">
               <button
-                class="rounded-md border border-white/10 px-3 py-1.5 text-xs text-gray-400 hover:bg-white/5"
+                class="rounded-md border border-[var(--hr-border)] px-3 py-1.5 text-xs text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-1)]"
                 :disabled="savingId === `active-${setting.id}`"
                 @click="toggleActive(setting)"
               >
@@ -669,8 +669,8 @@ function capabilityList(
               <div>
                 <button
                   :data-testid="`delete-model-${setting.id}`"
-                  class="rounded-md border border-red-500/30 px-2 py-1.5 text-red-300/70 hover:bg-red-500/10"
-                  :class="deleteConfirmId === setting.id ? 'bg-red-500/10' : ''"
+                  class="rounded-md border border-[var(--hr-danger-border)] px-2 py-1.5 text-[var(--hr-danger)] hover:bg-[var(--hr-danger-soft)]"
+                  :class="deleteConfirmId === setting.id ? 'bg-[var(--hr-danger-soft)]' : ''"
                   :disabled="savingId === `delete-${setting.id}`"
                   @click="toggleDeleteConfirm(setting.id)"
                 >
@@ -722,7 +722,7 @@ function capabilityList(
                 }}
               </h2>
               <button
-                class="rounded-md border border-[var(--hr-border)] px-3 py-1.5 text-sm text-gray-400 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
+                class="rounded-md border border-[var(--hr-border)] px-3 py-1.5 text-sm text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
                 @click="closeDialog"
               >
                 {{ t('settings.actions.close') }}
@@ -760,7 +760,7 @@ function capabilityList(
   position: fixed;
   inset: 0;
   z-index: 59;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--hr-overlay);
   backdrop-filter: blur(2px);
 }
 
@@ -775,7 +775,7 @@ function capabilityList(
   background: var(--hr-panel);
   backdrop-filter: blur(24px);
   border-left: 1px solid var(--hr-border);
-  box-shadow: -24px 0 80px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--hr-shadow-floating);
 }
 
 .settings-overlay-enter-active,

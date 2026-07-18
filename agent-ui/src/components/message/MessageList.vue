@@ -844,7 +844,7 @@ watch(() => renderList.value.length, (newLength, oldLength) => {
 .round-nav-btn {
   @apply w-6 h-6 text-xs font-medium rounded transition-all;
   @apply bg-[var(--hr-surface-1)] text-[var(--hr-text-2)];
-  @apply hover:bg-[var(--hr-accent)] hover:text-[var(--hr-on-accent)];
+  @apply hover:bg-[var(--hr-accent-hover)] hover:text-[var(--hr-on-accent)];
 }
 
 .round-nav-btn.active {

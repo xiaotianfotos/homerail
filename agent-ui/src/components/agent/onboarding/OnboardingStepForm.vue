@@ -525,7 +525,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
             @change="selectCredential(($event.target as HTMLSelectElement).value)"
           >
             <option value="">{{ t('onboarding.form.selectCredential') }}</option>
-            <option v-for="c in credentials" :key="c.key" :value="c.key" class="bg-[#111315] text-white">
+            <option v-for="c in credentials" :key="c.key" :value="c.key" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">
               {{ credentialLabel(c) }}
             </option>
           </select>
@@ -539,7 +539,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
             class="onboarding-step-form__select"
           >
             <option value="">{{ t('onboarding.form.selectModel') }}</option>
-            <option v-for="m in displayModels" :key="m.id" :value="m.id" class="bg-[#111315] text-white">
+            <option v-for="m in displayModels" :key="m.id" :value="m.id" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">
               {{ m.display_name }}{{ m.recommended ? ` · ${t('onboarding.form.recommended')}` : '' }}
             </option>
           </select>
@@ -677,8 +677,8 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
   padding: 0.2rem;
   margin-bottom: 0.75rem;
   border-radius: 0.6rem;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--hr-surface-1);
+  border: 1px solid var(--hr-border);
 }
 
 .onboarding-step-form__mode-tab {
@@ -690,7 +690,7 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
   padding: 0.4rem 0.5rem;
   border-radius: 0.45rem;
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--hr-text-3);
   transition: background 160ms ease, color 160ms ease;
 }
 
@@ -703,9 +703,9 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
 .onboarding-step-form__empty {
   padding: 1rem 0.75rem;
   border-radius: 0.75rem;
-  border: 1px dashed rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(255, 255, 255, 0.5);
+  border: 1px dashed var(--hr-border-strong);
+  background: var(--hr-surface-1);
+  color: var(--hr-text-3);
   font-size: 0.8rem;
   line-height: 1.5;
 }
@@ -744,19 +744,19 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
   gap: 0.35rem;
   font-size: 0.7rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--hr-text-3);
   letter-spacing: 0.02em;
 }
 
 .onboarding-step-form__field-label em {
   font-size: 0.62rem;
   font-style: normal;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--hr-text-4);
 }
 
 .onboarding-step-form__field-hint {
   font-size: 0.65rem;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--hr-text-4);
 }
 
 .onboarding-step-form__select,
@@ -765,9 +765,9 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
   height: 2.25rem;
   padding: 0 0.65rem;
   border-radius: 0.6rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--hr-border-strong);
+  background: var(--hr-control);
+  color: var(--hr-text-1);
   font-size: 0.8rem;
   outline: none;
   transition: border-color 160ms ease, background 160ms ease;
@@ -803,13 +803,13 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
   height: 1.5rem;
   width: 1.5rem;
   border-radius: 0.35rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--hr-text-3);
   transition: color 160ms ease, background 160ms ease;
 }
 
 .onboarding-step-form__key-toggle:hover {
-  color: rgba(255, 255, 255, 0.8);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--hr-text-1);
+  background: var(--hr-control-hover);
 }
 
 /* 复用已有 Key 提示 */
@@ -819,9 +819,9 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
   height: 2.25rem;
   padding: 0 0.65rem;
   border-radius: 0.6rem;
-  border: 1px solid rgba(52, 211, 153, 0.3);
-  background: rgba(52, 211, 153, 0.08);
-  color: rgba(167, 243, 208, 0.9);
+  border: 1px solid var(--hr-success-border);
+  background: var(--hr-success-soft);
+  color: var(--hr-success);
   font-size: 0.72rem;
 }
 
@@ -854,8 +854,8 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
 .onboarding-step-form__submit--disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.5);
+  border-color: var(--hr-border-strong);
+  background: var(--hr-control);
+  color: var(--hr-text-3);
 }
 </style>

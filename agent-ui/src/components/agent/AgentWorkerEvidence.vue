@@ -190,7 +190,7 @@ onUnmounted(() => {
     <div class="flex-shrink-0 border-b border-[var(--hr-border)] px-3 py-2">
       <div class="mb-2 flex items-center justify-between gap-3">
         <div class="flex items-center gap-1.5 text-[11px] font-medium text-[var(--hr-text-1)]">
-          <FileText class="h-3.5 w-3.5 text-blue-300" />
+          <FileText class="h-3.5 w-3.5 text-[var(--hr-info)]" />
           {{ t('agent.evidence.title') }}
         </div>
         <div v-if="loading" class="flex items-center gap-1 text-[10px] text-[var(--hr-text-3)]">
@@ -210,14 +210,14 @@ onUnmounted(() => {
         </div>
         <div class="rounded bg-[var(--hr-surface-2)] px-2 py-1.5">
           <div class="text-[var(--hr-text-3)]">{{ t('agent.evidence.handoffs') }}</div>
-          <div class="mt-0.5 text-blue-200">{{ totals.handoffs }}</div>
+          <div class="mt-0.5 text-[var(--hr-info)]">{{ totals.handoffs }}</div>
         </div>
         <div class="rounded bg-[var(--hr-surface-2)] px-2 py-1.5">
           <div class="text-[var(--hr-text-3)]">{{ t('agent.evidence.errors') }}</div>
-          <div :class="cn('mt-0.5', totals.errors ? 'text-red-300' : 'text-[var(--hr-text-1)]')">{{ totals.errors }}</div>
+          <div :class="cn('mt-0.5', totals.errors ? 'text-[var(--hr-danger)]' : 'text-[var(--hr-text-1)]')">{{ totals.errors }}</div>
         </div>
       </div>
-      <div v-if="error" class="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-200">
+      <div v-if="error" class="mt-2 rounded border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] px-2 py-1 text-[10px] text-[var(--hr-danger)]">
         {{ error }}
       </div>
     </div>
@@ -236,7 +236,7 @@ onUnmounted(() => {
           :key="item.node.id"
           :class="cn(
             'w-full px-2 py-2 text-left transition-colors',
-            store.selectedNodeId === item.node.id ? 'bg-blue-500/10' : 'hover:bg-[var(--hr-surface-2)]'
+            store.selectedNodeId === item.node.id ? 'bg-[var(--hr-info-soft)]' : 'hover:bg-[var(--hr-surface-2)]'
           )"
           @click="selectNode(item.node.id)"
         >
@@ -259,17 +259,17 @@ onUnmounted(() => {
               :is="statusIcon(item.node.status)"
               :class="cn(
                 'h-3.5 w-3.5 flex-shrink-0',
-                item.node.status === 'failed' ? 'text-red-400' :
-                item.node.status === 'completed' ? 'text-blue-400' :
-                item.node.status === 'running' ? 'text-emerald-400 animate-spin' :
+                item.node.status === 'failed' ? 'text-[var(--hr-danger)]' :
+                item.node.status === 'completed' ? 'text-[var(--hr-info)]' :
+                item.node.status === 'running' ? 'text-[var(--hr-success)] animate-spin' :
                 'text-[var(--hr-text-3)]'
               )"
             />
           </div>
           <div class="mt-1 flex items-center gap-1 text-[9px] text-[var(--hr-text-3)]">
             <span>{{ item.toolCalls.length }} tools</span>
-            <span v-if="item.handoffs.length" class="text-blue-300">{{ item.handoffs.length }} handoff</span>
-            <span v-if="item.errors.length" class="text-red-300">{{ item.errors.length }} error</span>
+            <span v-if="item.handoffs.length" class="text-[var(--hr-info)]">{{ item.handoffs.length }} handoff</span>
+            <span v-if="item.errors.length" class="text-[var(--hr-danger)]">{{ item.errors.length }} error</span>
           </div>
         </button>
       </div>
@@ -289,9 +289,9 @@ onUnmounted(() => {
               <span
                 :class="cn(
                   'rounded-full px-2 py-0.5 text-[10px]',
-                  selectedEvidence.node.status === 'failed' ? 'bg-red-500/15 text-red-300' :
-                  selectedEvidence.node.status === 'completed' ? 'bg-blue-500/15 text-blue-300' :
-                  selectedEvidence.node.status === 'running' ? 'bg-emerald-500/15 text-emerald-300' :
+                  selectedEvidence.node.status === 'failed' ? 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]' :
+                  selectedEvidence.node.status === 'completed' ? 'bg-[var(--hr-info-soft)] text-[var(--hr-info)]' :
+                  selectedEvidence.node.status === 'running' ? 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]' :
                   'bg-[var(--hr-surface-2)] text-[var(--hr-text-2)]'
                 )"
               >
@@ -303,8 +303,8 @@ onUnmounted(() => {
             </div>
           </section>
 
-          <section v-if="selectedEvidence.handoffs.length" class="rounded-md border border-blue-500/25 bg-blue-500/10 p-3">
-            <div class="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-blue-200">
+          <section v-if="selectedEvidence.handoffs.length" class="rounded-md border border-[var(--hr-info-border)] bg-[var(--hr-info-soft)] p-3">
+            <div class="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-[var(--hr-info)]">
               <ArrowRightLeft class="h-3.5 w-3.5" />
               {{ t('agent.evidence.handoffs') }}
             </div>
@@ -312,13 +312,13 @@ onUnmounted(() => {
               <pre
                 v-for="(message, index) in selectedEvidence.handoffs"
                 :key="`${message.message_id ?? index}-handoff`"
-                class="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--hr-bg)] p-2 text-[10px] leading-relaxed text-blue-100"
+                class="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--hr-bg)] p-2 text-[10px] leading-relaxed text-[var(--hr-info)]"
               >{{ compact(toolDetail(message), 900) }}</pre>
             </div>
           </section>
 
-          <section v-if="selectedEvidence.errors.length" class="rounded-md border border-red-500/30 bg-red-500/10 p-3">
-            <div class="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-red-200">
+          <section v-if="selectedEvidence.errors.length" class="rounded-md border border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] p-3">
+            <div class="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-[var(--hr-danger)]">
               <AlertTriangle class="h-3.5 w-3.5" />
               {{ t('agent.evidence.errors') }}
             </div>
@@ -326,7 +326,7 @@ onUnmounted(() => {
               <pre
                 v-for="(message, index) in selectedEvidence.errors"
                 :key="`${message.message_id ?? index}-error`"
-                class="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--hr-bg)] p-2 text-[10px] leading-relaxed text-red-100"
+                class="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--hr-bg)] p-2 text-[10px] leading-relaxed text-[var(--hr-danger)]"
               >{{ compact(toolDetail(message), 1100) }}</pre>
             </div>
           </section>
@@ -363,8 +363,8 @@ onUnmounted(() => {
                 :key="message.message_id ?? index"
                 :class="cn(
                   'rounded border px-2 py-1.5',
-                  isError(message) ? 'border-red-500/20 bg-red-500/5' :
-                  isHandoff(message) ? 'border-blue-500/20 bg-blue-500/5' :
+                  isError(message) ? 'border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)]' :
+                  isHandoff(message) ? 'border-[var(--hr-info-border)] bg-[var(--hr-info-soft)]' :
                   'border-[var(--hr-border)] bg-[var(--hr-surface-1)]'
                 )"
               >

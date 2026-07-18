@@ -71,8 +71,8 @@ watch(
     @close="store.runtimeOverlayOpen = false"
   />
 
-  <div v-else-if="textModeEnabled" class="agent-shell relative flex h-screen overflow-hidden bg-[var(--hr-bg)] p-4 text-gray-100">
-    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_22%_12%,color-mix(in_srgb,var(--hr-accent)_14%,transparent),transparent_34%),radial-gradient(circle_at_78%_20%,color-mix(in_srgb,var(--hr-accent)_10%,transparent),transparent_31%),linear-gradient(180deg,rgba(255,255,255,0.035),transparent_24%)]" />
+  <div v-else-if="textModeEnabled" class="agent-shell relative flex h-screen overflow-hidden bg-[var(--hr-bg)] p-4 text-[var(--hr-text-1)]">
+    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_22%_12%,color-mix(in_srgb,var(--hr-accent)_14%,transparent),transparent_34%),radial-gradient(circle_at_78%_20%,color-mix(in_srgb,var(--hr-accent)_10%,transparent),transparent_31%),linear-gradient(180deg,var(--hr-surface-1),transparent_24%)]" />
     <div class="relative z-10 flex min-h-0 flex-1 flex-col gap-3">
       <AgentModeTopBar
         active-mode="text"
@@ -86,7 +86,7 @@ watch(
           <DagResourceStatusPill />
         </template>
       </AgentModeTopBar>
-      <div class="relative flex min-h-0 flex-1 overflow-hidden rounded-[30px] border border-[var(--hr-border)] bg-[var(--hr-panel)] shadow-[0_0_0_1px_rgba(255,255,255,0.03),0_28px_90px_rgba(0,0,0,0.48)] backdrop-blur-xl">
+      <div class="relative flex min-h-0 flex-1 overflow-hidden rounded-[30px] border border-[var(--hr-border)] bg-[var(--hr-panel)] shadow-[var(--hr-shadow-floating)] backdrop-blur-xl">
       <!-- Left: session sidebar (collapsible w-56/w-10) -->
       <AgentSessionSidebar />
 
@@ -101,9 +101,9 @@ watch(
         :class="store.rightPanelCollapsed ? 'w-10 flex-shrink-0' : 'w-[min(34vw,620px)] min-w-[460px] flex-shrink-0'"
       >
         <!-- Collapse toggle -->
-        <div class="flex h-14 items-center justify-start px-3 flex-shrink-0 border-b border-[var(--hr-border)] bg-white/[0.025]">
+        <div class="flex h-14 items-center justify-start px-3 flex-shrink-0 border-b border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
           <button
-            class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-3)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
+            class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-3)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
             @click="store.rightPanelCollapsed = !store.rightPanelCollapsed"
           >
             <PanelRightClose v-if="!store.rightPanelCollapsed" class="h-3.5 w-3.5" />

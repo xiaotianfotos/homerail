@@ -210,9 +210,9 @@ onBeforeUnmount(() => {
         v-if="showRuntime"
         class="flex h-9 items-center gap-2 rounded-full border px-3 text-sm transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
         :class="hasActiveRuns
-          ? 'border-emerald-300/45 bg-emerald-300/10 text-emerald-100 shadow-[0_0_18px_rgba(52,211,153,0.16)]'
+          ? 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)] shadow-[0_0_18px_var(--hr-success-soft)]'
           : hasWaitingRuns
-            ? 'border-amber-300/40 bg-amber-300/10 text-amber-100'
+            ? 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
             : 'border-[var(--hr-border)] text-[var(--hr-text-2)]'"
         :data-state="hasActiveRuns ? 'active' : hasWaitingRuns ? 'waiting' : 'idle'"
         data-testid="dag-runtime-button"
@@ -228,8 +228,8 @@ onBeforeUnmount(() => {
           v-if="runtimeRunCount > 0"
           class="min-w-5 rounded-full border px-1.5 text-center text-[11px] font-semibold leading-5"
           :class="hasActiveRuns
-            ? 'border-emerald-200/35 bg-emerald-300/15 text-emerald-50'
-            : 'border-amber-200/35 bg-amber-300/15 text-amber-50'"
+            ? 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)]'
+            : 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'"
         >
           {{ runtimeRunCount }}
         </span>

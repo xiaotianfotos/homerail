@@ -76,11 +76,11 @@
 
 @layer base {
   * {
-    border-color: hsl(var(--border));
+    border-color: var(--hr-border);
   }
 
   body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
+    background-color: var(--hr-bg);
+    color: var(--hr-text-1);
   }
 }

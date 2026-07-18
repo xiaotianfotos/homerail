@@ -65,13 +65,13 @@ const totals = computed(() => {
 })
 
 const statusItems = computed(() => [
-  { key: 'running', label: t('dag.toolbar.legend.running'), color: 'bg-emerald-400' },
-  { key: 'waiting_for_command', label: t('dag.status.waitingForCommand'), color: 'bg-amber-400' },
-  { key: 'completed', label: t('dag.toolbar.legend.completed'), color: 'bg-blue-500' },
-  { key: 'failed', label: t('dag.toolbar.legend.failed'), color: 'bg-red-500' },
-  { key: 'ready', label: t('dag.toolbar.legend.ready'), color: 'bg-blue-300' },
-  { key: 'pending', label: t('dag.toolbar.legend.pending'), color: 'bg-gray-400' },
-  { key: 'skipped', label: t('dag.toolbar.legend.skipped'), color: 'bg-yellow-500' },
+  { key: 'running', label: t('dag.toolbar.legend.running'), color: 'bg-[var(--hr-success)]' },
+  { key: 'waiting_for_command', label: t('dag.status.waitingForCommand'), color: 'bg-[var(--hr-warning)]' },
+  { key: 'completed', label: t('dag.toolbar.legend.completed'), color: 'bg-[var(--hr-info)]' },
+  { key: 'failed', label: t('dag.toolbar.legend.failed'), color: 'bg-[var(--hr-danger)]' },
+  { key: 'ready', label: t('dag.toolbar.legend.ready'), color: 'bg-[var(--hr-info)]' },
+  { key: 'pending', label: t('dag.toolbar.legend.pending'), color: 'bg-[var(--hr-text-3)]' },
+  { key: 'skipped', label: t('dag.toolbar.legend.skipped'), color: 'bg-[var(--hr-warning)]' },
 ])
 </script>
 
@@ -81,7 +81,7 @@ const statusItems = computed(() => [
     <template v-if="view === 'run_list'">
       <div class="flex items-center gap-3">
         <Network class="h-7 w-7 text-[var(--hr-accent)]" />
-        <span class="text-2xl font-bold tracking-wide text-white/90">{{ t('dag.runList.title') }}</span>
+        <span class="text-2xl font-bold tracking-wide text-[var(--hr-text-1)]">{{ t('dag.runList.title') }}</span>
         <span class="rounded-full border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] px-3 py-1 text-base font-medium text-[var(--hr-accent)]">
           {{ runsCount ?? 0 }}
         </span>
@@ -98,28 +98,28 @@ const statusItems = computed(() => [
           <span
             :class="cn(
               'rounded-full border px-3 py-1 text-sm font-medium',
-              store.isRunning ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-200' :
-              store.isWaiting ? 'border-amber-300/25 bg-amber-300/10 text-amber-200' :
+              store.isRunning ? 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)]' :
+              store.isWaiting ? 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]' :
               store.isCompleted ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]' :
-              store.isFailed ? 'border-red-400/30 bg-red-500/15 text-red-300' :
-              'border-white/10 bg-white/[0.04] text-white/45'
+              store.isFailed ? 'border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]' :
+              'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-3)]'
             )"
           >
             {{ executionStatusLabel }}
           </span>
         </div>
-        <div class="mt-1 flex items-center gap-2 text-sm text-white/50">
+        <div class="mt-1 flex items-center gap-2 text-sm text-[var(--hr-text-3)]">
           <span class="font-mono">{{ store.currentRunId ? store.currentRunId.slice(-12) : '—' }}</span>
-          <span class="text-white/20">·</span>
+          <span class="text-[var(--hr-text-4)]">·</span>
           <span>{{ t('dag.toolbar.nodesProgress', { completed: completedCount, total: store.nodes.length }) }}</span>
         </div>
       </div>
       <!-- 进度条 -->
       <div v-if="store.nodes.length" class="hidden w-40 md:block">
-        <div class="h-2 overflow-hidden rounded-full bg-white/10">
+        <div class="h-2 overflow-hidden rounded-full bg-[var(--hr-surface-2)]">
           <div
             class="h-full rounded-full transition-all duration-500"
-            :class="store.isFailed ? 'bg-red-500' : 'bg-gradient-to-r from-[var(--hr-accent)] to-emerald-400'"
+            :class="store.isFailed ? 'bg-[var(--hr-danger)]' : 'bg-gradient-to-r from-[var(--hr-accent)] to-[var(--hr-success)]'"
             :style="{ width: `${progressPct}%` }"
           />
         </div>
@@ -129,23 +129,23 @@ const statusItems = computed(() => [
     <!-- 中：全局指标 -->
     <div class="ml-auto hidden items-center gap-6 lg:flex">
       <div class="flex items-center gap-2">
-        <Coins class="h-4 w-4 text-emerald-300/70" />
-        <span class="text-xs text-white/45">tokens</span>
-        <span class="font-mono text-sm font-semibold text-white/90">
+        <Coins class="h-4 w-4 text-[var(--hr-success)]" />
+        <span class="text-xs text-[var(--hr-text-3)]">tokens</span>
+        <span class="font-mono text-sm font-semibold text-[var(--hr-text-1)]">
           {{ totals.available ? fmtTokens(totals.tokens) : '—' }}
         </span>
       </div>
       <div class="flex items-center gap-2">
-        <Wrench class="h-4 w-4 text-blue-300/70" />
-        <span class="text-xs text-white/45">{{ t('dag.toolbar.tools') }}</span>
-        <span class="font-mono text-sm font-semibold text-white/90">{{ totals.toolCalls }}</span>
+        <Wrench class="h-4 w-4 text-[var(--hr-info)]" />
+        <span class="text-xs text-[var(--hr-text-3)]">{{ t('dag.toolbar.tools') }}</span>
+        <span class="font-mono text-sm font-semibold text-[var(--hr-text-1)]">{{ totals.toolCalls }}</span>
       </div>
       <div class="flex items-center gap-2">
-        <AlertTriangle class="h-4 w-4" :class="totals.failures > 0 ? 'text-red-400' : 'text-white/30'" />
-        <span class="text-xs text-white/45">{{ t('dag.toolbar.failures') }}</span>
+        <AlertTriangle class="h-4 w-4" :class="totals.failures > 0 ? 'text-[var(--hr-danger)]' : 'text-[var(--hr-text-4)]'" />
+        <span class="text-xs text-[var(--hr-text-3)]">{{ t('dag.toolbar.failures') }}</span>
         <span
           class="font-mono text-sm font-semibold"
-          :class="totals.failures > 0 ? 'text-red-300' : 'text-white/90'"
+          :class="totals.failures > 0 ? 'text-[var(--hr-danger)]' : 'text-[var(--hr-text-1)]'"
         >{{ totals.failures }}</span>
       </div>
     </div>
@@ -154,7 +154,7 @@ const statusItems = computed(() => [
     <div class="hidden items-center gap-2.5 xl:flex">
       <div v-for="item in statusItems" :key="item.key" class="flex items-center gap-1">
         <span :class="cn('h-2 w-2 rounded-full', item.color)" />
-        <span class="text-[9px] text-white/35">{{ item.label }}</span>
+        <span class="text-[9px] text-[var(--hr-text-4)]">{{ item.label }}</span>
       </div>
     </div>
 
@@ -162,7 +162,7 @@ const statusItems = computed(() => [
     <div class="flex items-center gap-1.5">
       <button
         v-if="showBack"
-        class="flex h-9 items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-3 text-xs text-white/70 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
+        class="flex h-9 items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-3 text-xs text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
         :title="t('dag.toolbar.back')"
         @click="emit('back')"
       >
@@ -170,7 +170,7 @@ const statusItems = computed(() => [
         <span class="hidden sm:inline">{{ t('dag.toolbar.runList') }}</span>
       </button>
       <button
-        class="rounded-full border border-[var(--hr-border)] p-2 text-white/55 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
+        class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
         :title="physicsPaused ? t('dag.toolbar.resumePhysics') : t('dag.toolbar.pausePhysics')"
         @click="physicsPaused = !physicsPaused"
       >
@@ -178,14 +178,14 @@ const statusItems = computed(() => [
         <Pause v-else class="h-3.5 w-3.5" />
       </button>
       <button
-        class="rounded-full border border-[var(--hr-border)] p-2 text-white/55 transition-colors hover:bg-[var(--hr-surface-2)] hover:text-white"
+        class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
         :title="t('dag.toolbar.resetView')"
         @click="emit('fit-view')"
       >
         <Maximize2 class="h-3.5 w-3.5" />
       </button>
       <button
-        class="flex items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-3 py-2 text-xs text-white/70 transition-colors hover:bg-red-500/15 hover:text-red-200"
+        class="flex items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-3 py-2 text-xs text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-danger-soft)] hover:text-[var(--hr-danger)]"
         :title="t('dag.toolbar.closeEsc')"
         @click="emit('close')"
       >
@@ -197,7 +197,7 @@ const statusItems = computed(() => [
     <!-- 列表态的关闭按钮（图态的在上方 template 内） -->
     <button
       v-if="view === 'run_list'"
-      class="ml-auto flex items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-4 py-2 text-sm text-white/70 transition-colors hover:bg-red-500/15 hover:text-red-200"
+      class="ml-auto flex items-center gap-1.5 rounded-full border border-[var(--hr-border)] px-4 py-2 text-sm text-[var(--hr-text-2)] transition-colors hover:bg-[var(--hr-danger-soft)] hover:text-[var(--hr-danger)]"
       :title="t('dag.toolbar.closeEsc')"
       @click="emit('close')"
     >
