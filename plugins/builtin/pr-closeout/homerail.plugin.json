@@ -39,8 +39,7 @@
   "skills": [
     {
       "id": "pr-closeout",
-      "path": "skills/pr-closeout/SKILL.md",
-      "description": "Build an evidence-grounded pull request closeout snapshot after review or validation work."
+      "path": "skills/pr-closeout/SKILL.md"
     }
   ],
   "schemas": [

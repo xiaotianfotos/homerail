@@ -25,6 +25,8 @@
         "remember evolving task requirements",
         "show confirmed task or execution state",
         "compose a dynamic structured interface",
+        "show multiple live panels for parallel actors",
+        "continuously update supervised actor results",
         "动态生成界面"
       ],
       "tags": ["voice", "ui", "core"],
@@ -40,7 +42,7 @@
     {
       "id": "voice-generative-ui",
       "path": "skills/voice-generative-ui/SKILL.md",
-      "description": "Choose and maintain generated UI for a voice session without inventing execution state."
+      "visual_profile": "skills/voice-generative-ui/assets/homerail/worker-visual-profile.json"
     }
   ],
   "schemas": [

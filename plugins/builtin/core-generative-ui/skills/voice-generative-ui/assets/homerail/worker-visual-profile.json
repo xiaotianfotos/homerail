@@ -1,0 +1,133 @@
+{
+  "profile_version": 1,
+  "views": [
+    {
+      "id": "research-live",
+      "a2ui": {
+        "version": "v1.0",
+        "catalogId": "https://homerail.dev/a2ui/catalogs/core/v1",
+        "components": [
+          { "id": "root", "component": "Column", "children": ["header", "summary", "progress", "findings", "sources"] },
+          { "id": "header", "component": "Row", "children": ["title", "phase"], "align": "center", "justify": "spaceBetween" },
+          { "id": "title", "component": "Text", "text": { "path": "/actor_view/data/title" } },
+          { "id": "phase", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/phase_text" }, "tone": "info" },
+          { "id": "summary", "component": "Text", "text": { "path": "/actor_view/data/summary" }, "variant": "caption" },
+          { "id": "progress", "component": "HrProgress", "label": { "path": "/actor_view/data/phase_text" }, "value": { "path": "/actor_view/data/progress" }, "tone": "info" },
+          { "id": "findings", "component": "HrSection", "title": "关键发现", "children": ["finding-one", "finding-two"], "tone": "positive" },
+          { "id": "finding-one", "component": "Text", "text": { "path": "/actor_view/data/finding_one" } },
+          { "id": "finding-two", "component": "Text", "text": { "path": "/actor_view/data/finding_two" }, "variant": "caption" },
+          { "id": "sources", "component": "HrSection", "title": "来源线索", "children": ["source-one", "source-two"], "tone": "neutral" },
+          { "id": "source-one", "component": "Text", "text": { "path": "/actor_view/data/source_one" }, "variant": "caption" },
+          { "id": "source-two", "component": "Text", "text": { "path": "/actor_view/data/source_two" }, "variant": "caption" }
+        ]
+      },
+      "data_contract": {
+        "source": { "input_port": "mission", "encoding": "value", "pointer": "" },
+        "required_phases": ["started", "partial", "final"],
+        "fields": [
+          { "field": "title", "mode": "presentation", "value_schema": { "type": "string", "max_length": 80 } },
+          { "field": "phase_text", "mode": "presentation", "value_schema": { "type": "string", "max_length": 60 } },
+          { "field": "summary", "mode": "presentation", "value_schema": { "type": "string", "max_length": 240 } },
+          { "field": "progress", "mode": "presentation", "value_schema": { "type": "integer", "enum": [5, 55, 100] } },
+          { "field": "finding_one", "mode": "presentation", "value_schema": { "type": "string", "max_length": 240 } },
+          { "field": "finding_two", "mode": "presentation", "value_schema": { "type": "string", "max_length": 240 } },
+          { "field": "source_one", "mode": "presentation", "value_schema": { "type": "string", "max_length": 240 } },
+          { "field": "source_two", "mode": "presentation", "value_schema": { "type": "string", "max_length": 240 } }
+        ]
+      }
+    },
+    {
+      "id": "analysis-live",
+      "a2ui": {
+        "version": "v1.0",
+        "catalogId": "https://homerail.dev/a2ui/catalogs/core/v1",
+        "components": [
+          { "id": "root", "component": "Column", "children": ["header", "summary", "progress", "decision-grid", "evidence", "caveat"] },
+          { "id": "header", "component": "Row", "children": ["title", "phase"], "align": "center", "justify": "spaceBetween" },
+          { "id": "title", "component": "Text", "text": { "path": "/actor_view/data/title" } },
+          { "id": "phase", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/phase_text" }, "tone": "info" },
+          { "id": "summary", "component": "Text", "text": { "path": "/actor_view/data/summary" }, "variant": "caption" },
+          { "id": "progress", "component": "HrProgress", "label": { "path": "/actor_view/data/phase_text" }, "value": { "path": "/actor_view/data/progress" }, "tone": "positive" },
+          { "id": "decision-grid", "component": "HrGrid", "children": ["conclusion", "confidence"], "columns": { "default": 2, "compact": 1 }, "gap": "sm", "align": "stretch" },
+          { "id": "conclusion", "component": "HrSection", "title": "判断", "children": ["conclusion-text"], "tone": "positive" },
+          { "id": "conclusion-text", "component": "Text", "text": { "path": "/actor_view/data/conclusion" } },
+          { "id": "confidence", "component": "HrMetric", "label": "证据置信度", "value": { "path": "/actor_view/data/confidence" }, "unit": "%", "tone": "info" },
+          { "id": "evidence", "component": "HrSection", "title": "证据链", "children": ["evidence-text"], "tone": "info" },
+          { "id": "evidence-text", "component": "Text", "text": { "path": "/actor_view/data/evidence" }, "variant": "caption" },
+          { "id": "caveat", "component": "HrSection", "title": "边界", "children": ["caveat-text"], "tone": "warning" },
+          { "id": "caveat-text", "component": "Text", "text": { "path": "/actor_view/data/caveat" }, "variant": "caption" }
+        ]
+      },
+      "data_contract": {
+        "source": { "input_port": "mission", "encoding": "value", "pointer": "" },
+        "required_phases": ["started", "partial", "final"],
+        "fields": [
+          { "field": "title", "mode": "presentation", "value_schema": { "type": "string", "max_length": 80 } },
+          { "field": "phase_text", "mode": "presentation", "value_schema": { "type": "string", "max_length": 60 } },
+          { "field": "summary", "mode": "presentation", "value_schema": { "type": "string", "max_length": 240 } },
+          { "field": "progress", "mode": "presentation", "value_schema": { "type": "integer", "enum": [5, 55, 100] } },
+          { "field": "conclusion", "mode": "presentation", "value_schema": { "type": "string", "max_length": 240 } },
+          { "field": "confidence", "mode": "presentation", "value_schema": { "type": "integer" } },
+          { "field": "evidence", "mode": "presentation", "value_schema": { "type": "string", "max_length": 400 } },
+          { "field": "caveat", "mode": "presentation", "value_schema": { "type": "string", "max_length": 240 } }
+        ]
+      }
+    },
+    {
+      "id": "publication-live",
+      "a2ui": {
+        "version": "v1.0",
+        "catalogId": "https://homerail.dev/a2ui/catalogs/core/v1",
+        "components": [
+          { "id": "root", "component": "Column", "children": ["header", "summary", "progress", "post"] },
+          { "id": "header", "component": "Row", "children": ["title", "phase"], "align": "center", "justify": "spaceBetween" },
+          { "id": "title", "component": "Text", "text": { "path": "/actor_view/data/title" } },
+          { "id": "phase", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/phase_text" }, "tone": "info" },
+          { "id": "summary", "component": "Text", "text": { "path": "/actor_view/data/summary" }, "variant": "caption" },
+          { "id": "progress", "component": "HrProgress", "label": { "path": "/actor_view/data/phase_text" }, "value": { "path": "/actor_view/data/progress" }, "tone": "positive" },
+          { "id": "post", "component": "HrSection", "title": "发布预览", "children": ["headline", "divider", "hook", "body", "tags"], "tone": "info" },
+          { "id": "headline", "component": "Text", "text": { "call": "formatString", "args": { "value": "## ${/actor_view/data/headline}" } } },
+          { "id": "divider", "component": "Divider" },
+          { "id": "hook", "component": "Text", "text": { "path": "/actor_view/data/hook" } },
+          { "id": "body", "component": "Text", "text": { "path": "/actor_view/data/post_text" }, "variant": "caption" },
+          { "id": "tags", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/tags" }, "tone": "positive" }
+        ]
+      },
+      "data_contract": {
+        "source": { "input_port": "mission", "encoding": "value", "pointer": "" },
+        "required_phases": ["started", "partial", "final"],
+        "fields": [
+          { "field": "title", "mode": "presentation", "value_schema": { "type": "string", "max_length": 80 } },
+          { "field": "phase_text", "mode": "presentation", "value_schema": { "type": "string", "max_length": 60 } },
+          { "field": "summary", "mode": "presentation", "value_schema": { "type": "string", "max_length": 240 } },
+          { "field": "progress", "mode": "presentation", "value_schema": { "type": "integer", "enum": [5, 55, 100] } },
+          { "field": "headline", "mode": "presentation", "value_schema": { "type": "string", "max_length": 100 } },
+          { "field": "hook", "mode": "presentation", "value_schema": { "type": "string", "max_length": 180 } },
+          { "field": "post_text", "mode": "presentation", "value_schema": { "type": "string", "max_length": 500 } },
+          { "field": "tags", "mode": "presentation", "value_schema": { "type": "string", "max_length": 120 } }
+        ]
+      }
+    }
+  ],
+  "data_fields": [
+    "title",
+    "phase_text",
+    "summary",
+    "progress",
+    "finding_one",
+    "finding_two",
+    "source_one",
+    "source_two",
+    "conclusion",
+    "confidence",
+    "evidence",
+    "caveat",
+    "headline",
+    "hook",
+    "post_text",
+    "tags"
+  ],
+  "media_roles": ["evidence", "analysis", "publication"],
+  "recommended_size": { "width": 480, "height": 640 },
+  "mobile_fallback": "stack"
+}

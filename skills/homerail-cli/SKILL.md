@@ -1,15 +1,33 @@
 ---
 name: homerail-cli
 description: |
-  HomeRail local-source TypeScript CLI command reference for DAG orchestration.
+  Exact HomeRail local-source TypeScript CLI command and configuration reference.
   Use when: (1) configuring or invoking the homerail CLI from a local checkout,
   (2) listing orchestration templates, starting runs, checking status,
   (3) supervising DAG runs, inspecting chats/handoffs/scorecards,
-  (4) injecting instructions or replaying runs.
+  (4) injecting instructions or replaying runs, or (5) translating a known HomeRail operation into an exact hr command.
+  For workflow topology selection use homerail-dag-patterns; for multi-Actor Surface lifecycle and operational procedure use homerail-dag-ops.
   For deployment, service startup, or skill installation, use homerail-install-ops first.
 ---
 
 # HomeRail CLI (TypeScript)
+
+## Manager Agent native shell
+
+The HomeRail Manager Agent can use the selected harness's native shell directly:
+Codex provides its built-in shell and Claude Agent SDK provides `Bash`.
+
+Prefer `hr --json <command...>` for structured results. If `hr` is not installed
+on `PATH`, HomeRail exposes the active local-source entrypoint through
+`HOMERAIL_CLI_ENTRYPOINT`; invoke it as:
+
+```bash
+node "$HOMERAIL_CLI_ENTRYPOINT" --json <command...>
+```
+
+A zero exit status plus the returned JSON is valid execution evidence. Dedicated
+Manager Tools remain useful shortcuts, but the CLI is the complete control
+surface for commands that have no dedicated Tool.
 
 ## Installation
 

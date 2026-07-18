@@ -5,7 +5,8 @@ description: |
   Use when an agent needs to design a reusable workflow for periodic triage, read-only issue diagnosis, planner/worker fan-out,
   on-demand executor/advisor consultation, budget admission, graduated trust, standing-goal verification, quorum decisions, adversarial
   builder/breaker review, monotonic improvement, or evidence-driven process evolution. Also use
-  when deciding whether a workflow needs condition, loop, join, or while gateway semantics.
+  when deciding whether a workflow needs condition, loop, join, or while gateway semantics. Patterns describe control-flow invariants;
+  for stable live Actor panels, Surface updates, or follow-up commands, use homerail-dag-ops and a concrete presentation-aware Workflow.
 ---
 
 # HomeRail DAG Patterns
@@ -16,8 +17,9 @@ truth for parameters and generated topology.
 
 ## Manager Agent Native Path
 
-When running as the HomeRail Manager Agent, use Manager tools rather than shell,
-`curl`, or the `hr` binary:
+When running as the HomeRail Manager Agent, dedicated Manager Tools are the
+shortest path for the operations below. The harness-native shell and `hr --json`
+remain valid when they expose a needed command that has no dedicated Tool:
 
 1. Call `list_dag_patterns` and compare `typical_uses`, `avoid_when`, required
    primitives, and parameters.
@@ -48,6 +50,19 @@ generated instance unchanged:
 
 For a simple one-step or linear task, do not force a pattern. Use an existing
 concrete orchestration or ask for the missing execution boundary.
+
+## Patterns do not imply presentation
+
+A pattern instance defines topology and evidence flow. It does not gain a
+Canvas Surface merely because its roles are called Actors or Workers.
+`orchestrator-workers` in particular creates data-driven fan-out children with
+no declared Skill, `allowed_surface_views`, `report_surface_state`, or
+`await_command`. Use it for bounded parallel work whose results are aggregated.
+
+When the request includes multiple live cards, parallel panels, continuous UI,
+per-panel correction, or later follow-up, load `homerail-dag-ops` and select a
+concrete Workflow that declares those presentation and lifecycle contracts.
+Never promise that a generic pattern will update visible panels.
 
 ## Select a Pattern
 

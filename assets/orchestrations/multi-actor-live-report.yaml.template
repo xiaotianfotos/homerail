@@ -1,0 +1,231 @@
+api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: multi-actor-live-report
+  name: Multi-Actor Live Report
+  labels:
+    category: supervised-presentation
+    presentation: actor-surfaces
+
+spec:
+  description: >
+    Run three stable Actors in parallel for evidence gathering, analysis, and
+    publication while each Actor maintains one digest-pinned live Surface and
+    remains available for later typed follow-up commands.
+
+  workspace:
+    mode: isolated
+
+  contracts:
+    Mission:
+      type: string
+      minLength: 1
+      maxLength: 24000
+
+    ActorReport:
+      type: object
+      additionalProperties: false
+      required: [actor, status, summary, items]
+      properties:
+        actor:
+          type: string
+          enum: [research, synthesis, visual_story]
+        status:
+          type: string
+          const: ready
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 500
+        items:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: string
+            minLength: 1
+            maxLength: 500
+
+    Failure:
+      type: object
+      additionalProperties: true
+      required: [error]
+      properties:
+        error: { type: string }
+
+    RoundGate:
+      type: object
+      additionalProperties: false
+      required: [mode, total, successes, failures, threshold, passed, values]
+      properties:
+        mode: { type: string, const: all }
+        total: { type: integer, const: 3 }
+        successes: { type: integer, minimum: 0, maximum: 3 }
+        failures: { type: integer, minimum: 0, maximum: 3 }
+        threshold: { type: integer, const: 3 }
+        passed: { type: boolean }
+        values:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { type: object }
+
+  agents:
+    research:
+      description: Finds current, attributable evidence and reports uncertainty.
+      skills: [com.homerail.core:voice-generative-ui]
+      allowed_surface_views: [research-live]
+      system: |
+        Own only evidence gathering for the mission or latest command. Inspect
+        real sources with the available read-only shell/file tools when the task
+        needs them; never copy another Actor's conclusion. Use only pinned view
+        research-live. Every turn call report_surface_state exactly three times,
+        in order: started, partial, final. Each call must send all fields title,
+        phase_text, summary, progress, finding_one, finding_two, source_one, and
+        source_two as one complete snapshot. Use progress 5, then 55, then 100.
+        Source fields must identify attributable source titles or hosts; state
+        unavailable evidence plainly instead of inventing it. After accepted
+        final, call report_activity once with a concise finding, then handoff once
+        on report with actor research, status ready, a grounded summary, and one
+        or more evidence items. If no claim can be checked, handoff failed with
+        an error instead. Never call a Manager generated-view Tool.
+
+    synthesis:
+      description: Independently evaluates the mission, evidence quality, implications, and caveats.
+      skills: [com.homerail.core:voice-generative-ui]
+      allowed_surface_views: [analysis-live]
+      system: |
+        Own only independent analysis for the mission or latest command. Inspect
+        enough real evidence with available read-only shell/file tools to avoid
+        treating the prompt as proof. Use only pinned view analysis-live. Every
+        turn call report_surface_state exactly three times, in order: started,
+        partial, final. Each call must send all fields title, phase_text, summary,
+        progress, conclusion, confidence, evidence, and caveat as one complete
+        snapshot. Use progress 5, then 55, then 100; confidence is an integer from
+        0 to 100 and must reflect evidence quality. After accepted final, call
+        report_activity once, then handoff once on report with actor synthesis,
+        status ready, a bounded conclusion, and evidence/caveat items. If analysis
+        cannot be grounded, handoff failed with an error. Never call a Manager
+        generated-view Tool.
+
+    visual_story:
+      description: Produces a concise screenshot-ready social publication draft grounded in checked facts.
+      skills: [com.homerail.core:voice-generative-ui]
+      allowed_surface_views: [publication-live]
+      system: |
+        Own only the publication draft for the mission or latest command. Check
+        key facts independently with available read-only shell/file tools before
+        presenting them. Use only pinned view publication-live. Every turn call
+        report_surface_state exactly three times, in order: started, partial,
+        final. Each call must send all fields title, phase_text, summary, progress,
+        headline, hook, post_text, and tags as one complete snapshot. Use progress 5,
+        then 55, then 100. Keep the final card concise, visually scannable, and
+        safe to screenshot; distinguish verified facts from framing. After
+        accepted final, call report_activity once, then handoff once on report
+        with actor visual_story, status ready, the headline as summary, and the
+        final hook/post text/tags as items. If a grounded draft is impossible, handoff
+        failed with an error. Never call a Manager generated-view Tool.
+
+  nodes:
+    research:
+      kind: agent
+      description: 证据调查
+      agent: research
+      allowed_builtin_tools: [Bash, Read, Grep, Glob, LS]
+      allowed_dag_tools: [report_surface_state, report_activity, handoff]
+      inputs:
+        mission: { contract: Mission }
+        command: {}
+      outputs:
+        report: { contract: ActorReport }
+        failed: { contract: Failure }
+
+    synthesis:
+      kind: agent
+      description: 独立分析
+      agent: synthesis
+      allowed_builtin_tools: [Bash, Read, Grep, Glob, LS]
+      allowed_dag_tools: [report_surface_state, report_activity, handoff]
+      inputs:
+        mission: { contract: Mission }
+        command: {}
+      outputs:
+        report: { contract: ActorReport }
+        failed: { contract: Failure }
+
+    visual_story:
+      kind: agent
+      description: 发布排版
+      agent: visual_story
+      allowed_builtin_tools: [Bash, Read, Grep, Glob, LS]
+      allowed_dag_tools: [report_surface_state, report_activity, handoff]
+      inputs:
+        mission: { contract: Mission }
+        command: {}
+      outputs:
+        report: { contract: ActorReport }
+        failed: { contract: Failure }
+
+    collect_round:
+      kind: join
+      inputs:
+        research: { contract: ActorReport }
+        synthesis: { contract: ActorReport }
+        visual_story: { contract: ActorReport }
+      outputs:
+        ready: { contract: RoundGate }
+        blocked: { contract: RoundGate }
+      config:
+        mode: all
+        field: status
+        success_values: [ready]
+        passed_port: ready
+        failed_port: blocked
+
+    wait_for_command:
+      kind: await_command
+      inputs:
+        ready: { contract: RoundGate }
+        blocked: { contract: RoundGate }
+      config:
+        primitive_version: 1
+        target_actors: [research, synthesis, visual_story]
+        command_port: command
+
+    research_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: { contract: Failure } }
+
+    synthesis_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: { contract: Failure } }
+
+    visual_story_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: { contract: Failure } }
+
+  edges:
+    - { from: $run.input, to: research.mission }
+    - { from: $run.input, to: synthesis.mission }
+    - { from: $run.input, to: visual_story.mission }
+    - { from: research.report, to: collect_round.research }
+    - { from: synthesis.report, to: collect_round.synthesis }
+    - { from: visual_story.report, to: collect_round.visual_story }
+    - { from: collect_round.ready, to: wait_for_command.ready }
+    - { from: collect_round.blocked, to: wait_for_command.blocked }
+    - { from: research.failed, to: research_failed.result, condition: on_failure }
+    - { from: synthesis.failed, to: synthesis_failed.result, condition: on_failure }
+    - { from: visual_story.failed, to: visual_story_failed.result, condition: on_failure }
+
+  policies:
+    max_nodes: 8
+    max_edges: 11
+    max_parallelism: 3
+    max_dispatches: 120
+    max_handoffs: 120
+    max_tool_calls_per_node: 60
+    max_corrections_per_node: 3

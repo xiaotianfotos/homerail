@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HomerailPluginManifestV1 } from "homerail-protocol";
 import { repoRoot } from "../src/assets/root.js";
@@ -9,10 +10,11 @@ import { closeDb, getDb } from "../src/persistence/db.js";
 import {
   getPluginRegistryState,
   listPluginPackages,
+  repairLegacyBuiltinPluginPackages,
   setPluginEnabled,
   syncPluginPackage,
 } from "../src/persistence/plugins.js";
-import { pluginDescriptorPackageDigest } from "../src/plugins/descriptor.js";
+import { pluginDescriptorPackageDigest, pluginJsonDigest } from "../src/plugins/descriptor.js";
 import { loadPluginPackage } from "../src/plugins/manifest-loader.js";
 import {
   CORE_PLUGIN_ID,
@@ -172,8 +174,19 @@ describe("HomeRail plugin archive and activation registry", () => {
     expect(first).toMatchObject({
       descriptor_version: 1,
       manifest: { id: CORE_PLUGIN_ID, version: "0.1.8" },
-      skills: [{ id: "voice-generative-ui" }],
+      skills: [{
+        id: "voice-generative-ui",
+        description: expect.stringContaining("supervised multi-Actor live panels"),
+      }],
     });
+    expect(first.manifest.skills[0]).toMatchObject({
+      id: "voice-generative-ui",
+      visual_profile: "skills/voice-generative-ui/assets/homerail/worker-visual-profile.json",
+    });
+    expect(first.manifest.skills[0]).not.toHaveProperty("description");
+    expect(first.referenced_files.map((entry) => entry.path)).toContain(
+      "skills/voice-generative-ui/assets/homerail/worker-visual-profile.json",
+    );
     expect(first.schemas.map((schema) => schema.id)).toEqual([
       "legacy-widget-content-v1",
       "generated-view-input-v1",
@@ -343,6 +356,85 @@ describe("HomeRail plugin archive and activation registry", () => {
       source: "development",
       refresh_builtin: true,
     })).toThrow(/Only builtin plugins/);
+  });
+
+  it("repairs an older invalid same-version builtin from the trusted application package", () => {
+    const current = loadPluginPackage(topicPackage(), {
+      source: "builtin",
+      builtin_renderer_ids: M3_BUILTIN_RENDERER_IDS,
+      legacy_bridge_plugin_ids: M3_LEGACY_BRIDGE_PLUGIN_IDS,
+    });
+    syncPluginPackage({ descriptor: current, source: "builtin", default_enabled: true });
+
+    const legacy = structuredClone(current);
+    delete (legacy.manifest.tools[0] as Partial<typeof legacy.manifest.tools[number]>).exposure;
+    legacy.manifest_digest = pluginJsonDigest(legacy.manifest, 512 * 1024);
+    const { package_digest: _packageDigest, ...legacyUnsigned } = legacy;
+    legacy.package_digest = pluginDescriptorPackageDigest(legacyUnsigned);
+    getDb().prepare(`
+      UPDATE plugin_packages
+      SET package_digest = ?, manifest_json = ?, resolved_descriptor_json = ?
+      WHERE plugin_id = ? AND plugin_version = ?
+    `).run(
+      legacy.package_digest,
+      JSON.stringify(legacy.manifest),
+      JSON.stringify(legacy),
+      legacy.manifest.id,
+      legacy.manifest.version,
+    );
+
+    expect(() => getPluginRegistryState()).toThrow(/Invalid persisted plugin package/);
+    const repaired = syncPluginPackage({
+      descriptor: current,
+      source: "builtin",
+      refresh_builtin: true,
+    });
+    expect(repaired).toMatchObject({
+      package_digest: current.package_digest,
+      source: "builtin",
+      activation: { active_version: "1.0.0", enabled: true, revision: 2 },
+    });
+    expect(getPluginRegistryState().plugins).toHaveLength(1);
+  });
+
+  it("bounds archived builtin open-object schemas added before the current safety policy", () => {
+    const current = loadPluginPackage(writeMinimalPlugin(tmpHome, "com.example.builtin", "0.1.0"), {
+      source: "builtin",
+    });
+    syncPluginPackage({ descriptor: current, source: "builtin", default_enabled: true });
+
+    const legacy = structuredClone(current);
+    const schema = legacy.schemas[0];
+    const archived = legacy.referenced_files.find((entry) => entry.path === schema.file)!;
+    const legacySchema = structuredClone(schema.schema);
+    (legacySchema.properties as Record<string, unknown>).note = { type: "object" };
+    const encoded = Buffer.from(JSON.stringify(legacySchema), "utf8");
+    const digest = createHash("sha256").update(encoded).digest("hex");
+    schema.schema = legacySchema;
+    schema.digest = digest;
+    archived.digest = digest;
+    archived.content = encoded.toString("base64");
+    const { package_digest: _packageDigest, ...legacyUnsigned } = legacy;
+    legacy.package_digest = pluginDescriptorPackageDigest(legacyUnsigned);
+    getDb().prepare(`
+      UPDATE plugin_packages
+      SET package_digest = ?, resolved_descriptor_json = ?
+      WHERE plugin_id = ? AND plugin_version = ?
+    `).run(
+      legacy.package_digest,
+      JSON.stringify(legacy),
+      legacy.manifest.id,
+      legacy.manifest.version,
+    );
+
+    expect(() => listPluginPackages()).toThrow(/Invalid persisted plugin package/);
+    expect(repairLegacyBuiltinPluginPackages()).toBe(1);
+    const repaired = listPluginPackages()[0].descriptor.schemas[0].schema;
+    expect((repaired.properties as Record<string, Record<string, unknown>>).note).toMatchObject({
+      type: "object",
+      additionalProperties: true,
+      maxProperties: 128,
+    });
   });
 
   it("qualifies Action capability identities in the UI registry projection", () => {

@@ -1,6 +1,6 @@
 ---
 name: voice-generative-ui
-description: Choose and maintain truthful structured UI for a HomeRail voice session, using only currently available Core and plugin tools.
+description: Design and maintain truthful HomeRail generative UI for voice or text. Use for dashboards, cards, charts, visual reports, screenshot-ready output, or supervised multi-Actor live panels that update in parallel and across follow-ups.
 ---
 
 # Voice Generative UI
@@ -24,6 +24,20 @@ Keep generated UI compact and spatially meaningful:
 - Put long checklists, evidence, or artifacts in UI and keep spoken text brief.
 - Ask for confirmation before execution when the task is ready.
 - Never invent a run, file change, artifact, or external action.
+
+## Choose the presentation path
+
+Use one of these paths deliberately. They are different runtime contracts:
+
+1. **Manager-owned Block** — For one result, memo, dashboard, chart, or report that the Manager Agent can produce in the current turn, call `upsert_generated_view`. Reuse the same Block id on follow-ups.
+2. **Supervised multi-Actor Surfaces** — When the user asks for multiple roles or panels to work in parallel, remain live, or accept later per-panel corrections, load `homerail-dag-ops` and start the concrete `assets/orchestrations/multi-actor-live-report.yaml.template` Workflow with `start_supervised_dag`. It creates stable `research`, `synthesis`, and `visual_story` Actors whose Surfaces are updated by their Workers.
+3. **Skill-owned presenter** — When another loaded Skill provides `skill_view_present`, use that trusted presenter instead of recreating its domain layout.
+
+The abstract `orchestrator-workers` pattern is a planner/fan-out/verifier topology. It does not declare Surface views, `report_surface_state`, or `await_command`; never promise live panels merely because that pattern started. Use it for bounded parallel evidence, not persistent multi-panel presentation.
+
+For a supervised Surface run, the Manager Agent starts and supervises the Workflow but never fabricates Worker output. After launch, use the returned stable Actor ids. On a later user request, read supervision, send one atomic command array for all affected Actors, and keep unaffected siblings unchanged. A command acceptance is not proof that a Surface update completed.
+
+When this Skill is projected into a DAG Worker and `report_surface_state` is available, use only the pinned view advertised for that Actor. Submit the required `started`, `partial`, and `final` phases in order, send every visible presentation field as a complete snapshot on each phase, and hand off only after the final Surface update is accepted. Do not call Manager-owned generated-view Tools from a Worker.
 
 ## Native A2UI v1.0
 

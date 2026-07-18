@@ -25,6 +25,12 @@ node homerail_cli/dist/cli.js dag sync \
 
 WorkflowSpec v1 uses named contracts, top-level edges, and explicit terminal
 outcomes. Bind its logical agents through a separate database runtime profile.
+`multi-actor-live-report.yaml.template` is the concrete supervised presentation
+path: it provisions stable research, synthesis, and visual_story Actors, grants
+their pinned Worker Skill views, requires live Surface updates, and waits for
+later per-Actor commands. Use it when visible parallel panels are part of the
+contract; the abstract `orchestrator-workers` pattern does not provide those
+presentation semantics.
 `pr-review.yaml.template` performs evidence-backed advisory review, while
 `pr-closeout.yaml.template` deterministically routes immutable GitHub and
 validation evidence to `ready_for_review`, a blocked result, or a durable

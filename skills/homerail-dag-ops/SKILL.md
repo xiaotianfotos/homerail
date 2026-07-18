@@ -1,10 +1,11 @@
 ---
 name: homerail-dag-ops
 description: |
-  Run, monitor, inspect, debug, and author HomeRail DAG workflows through the local-source TypeScript CLI and Manager.
+  Run, monitor, inspect, debug, and author HomeRail DAG workflows through the CLI or Manager Tools, including supervised multi-Actor runs with stable live Surfaces and later per-Actor follow-ups.
   Use when: (1) listing templates, (2) starting a DAG run, (3) supervising or watching a run,
   (4) inspecting chats, handoffs, scorecard, eval-run, or replay output,
-  (5) injecting instructions into running nodes, or (6) creating custom DAG templates.
+  (5) creating multiple parallel UI panels that update while Actors work, (6) sending commands to waiting Actors,
+  (7) injecting instructions into running nodes, or (8) creating custom DAG templates.
   For installing or starting Manager/Node/Worker services, use homerail-install-ops first.
 ---
 
@@ -13,11 +14,33 @@ description: |
 Before acting, apply `homerail-shared` rules. This skill assumes the local runtime
 is already ready. If not, run `hr start` or use `homerail-install-ops`.
 
-When this skill is loaded inside the HomeRail Manager Agent, do not invoke the
-CLI through shell. Use `list_orchestrations`, `create_and_run`, `invoke_run`, and
-`get_run_status`. For abstract pattern selection, load `homerail-dag-patterns`
-and use `list_dag_patterns`, `get_dag_pattern`, and
-`instantiate_dag_pattern` before `create_and_run`.
+When this Skill is loaded inside the HomeRail Manager Agent, use the harness's
+native shell and the HomeRail CLI whenever they provide the clearest or most
+complete path. Prefer `--json` so command results remain structured. Dedicated
+Manager Tools such as `list_orchestrations`, `create_and_run`, `invoke_run`, and
+`get_run_status` are equivalent shorter paths for operations they already
+cover; they are not the only valid execution route. For abstract pattern selection, load
+`homerail-dag-patterns` and use either its Manager Tools or the corresponding
+`hr patterns` commands before running the instantiated workflow.
+
+## Supervised multi-Actor live panels
+
+Use the concrete `assets/orchestrations/multi-actor-live-report.yaml.template`
+Workflow when the user wants three stable panels for evidence research,
+independent analysis, and a screenshot-ready publication draft. It explicitly
+declares digest-pinned Surface views, `report_surface_state`, a three-Actor
+join, and `await_command`, so all three Actors remain addressable after their
+first round.
+
+Inside the Manager Agent, start it with `start_supervised_dag` and the exact
+`yamlPath`; pass the user's full objective as `prompt` and an available runtime
+profile only when one is required. Do not substitute the abstract
+`orchestrator-workers` pattern: that pattern performs dynamic fan-out and
+verification but intentionally has no live Surface or follow-up contract.
+
+Read [references/multi-actor-surfaces.md](references/multi-actor-surfaces.md)
+before authoring another presentation-aware Workflow or handling a follow-up
+that changes one or more Actor panels.
 
 ## Quick Path (runtime already ready)
 

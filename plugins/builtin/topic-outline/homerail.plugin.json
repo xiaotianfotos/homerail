@@ -38,8 +38,7 @@
   "skills": [
     {
       "id": "topic-outline",
-      "path": "skills/topic-outline/SKILL.md",
-      "description": "Create and revise a structured topic outline from a partial or complete brief."
+      "path": "skills/topic-outline/SKILL.md"
     }
   ],
   "schemas": [
