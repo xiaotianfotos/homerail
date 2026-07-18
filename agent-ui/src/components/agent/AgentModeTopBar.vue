@@ -25,7 +25,7 @@ const emit = defineEmits<{
 
 function modeClass(mode: 'text' | 'voice'): string {
   return props.activeMode === mode
-    ? 'bg-cyan-300 text-black shadow-[0_0_20px_rgba(103,232,249,0.18)]'
+    ? 'bg-[#4fd8e8] text-[#04222a] shadow-[0_0_20px_rgba(79,216,232,0.18)]'
     : 'text-white/58 hover:bg-white/10 hover:text-white'
 }
 
@@ -168,12 +168,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <header class="agent-mode-topbar flex h-14 flex-shrink-0 items-center justify-between rounded-full border border-cyan-200/14 bg-black/30 px-3 shadow-2xl backdrop-blur-xl">
+  <header class="agent-mode-topbar flex h-14 flex-shrink-0 items-center justify-between rounded-full border border-white/10 bg-[#0a0f18]/60 px-3 shadow-2xl backdrop-blur-xl">
     <div class="agent-mode-topbar__left flex min-w-0 items-center gap-3 overflow-x-auto">
-      <div class="agent-mode-topbar__brand hidden px-2 text-[11px] font-medium tracking-[0.22em] text-cyan-200/48 sm:block">
+      <div class="agent-mode-topbar__brand hidden px-2 text-[11px] font-medium tracking-[0.22em] text-white/40 sm:block">
         HomeRail
       </div>
-      <div v-if="!voiceOnly" class="agent-mode-topbar__mode flex h-10 items-center rounded-full border border-cyan-200/14 bg-white/[0.035] p-1">
+      <div v-if="!voiceOnly" class="agent-mode-topbar__mode flex h-10 items-center rounded-full border border-white/10 bg-white/[0.03] p-1">
         <button
           class="h-8 rounded-full px-3 text-xs font-medium transition-colors"
           :class="modeClass('text')"
@@ -198,7 +198,7 @@ onBeforeUnmount(() => {
       <slot name="right" />
       <button
         v-if="downloadedUpdate"
-        class="flex h-9 items-center gap-2 rounded-full border border-cyan-200/35 bg-cyan-300/14 px-3 text-sm font-medium text-cyan-50 shadow-[0_0_18px_rgba(103,232,249,0.18)] transition-colors hover:bg-cyan-300/20"
+        class="flex h-9 items-center gap-2 rounded-full border border-[#4fd8e8]/35 bg-[#4fd8e8]/12 px-3 text-sm font-medium text-[#d9f7fb] shadow-[0_0_18px_rgba(79,216,232,0.16)] transition-colors hover:bg-[#4fd8e8]/20"
         :title="updateButtonTitle"
         type="button"
         @click="installDesktopUpdate"
@@ -208,12 +208,12 @@ onBeforeUnmount(() => {
       </button>
       <button
         v-if="showRuntime"
-        class="flex h-9 items-center gap-2 rounded-full border px-3 text-sm transition-colors hover:bg-cyan-200/10 hover:text-white"
+        class="flex h-9 items-center gap-2 rounded-full border px-3 text-sm transition-colors hover:bg-white/10 hover:text-white"
         :class="hasActiveRuns
           ? 'border-emerald-300/45 bg-emerald-300/10 text-emerald-100 shadow-[0_0_18px_rgba(52,211,153,0.16)]'
           : hasWaitingRuns
             ? 'border-amber-300/40 bg-amber-300/10 text-amber-100'
-            : 'border-cyan-200/14 text-white/60'"
+            : 'border-white/10 text-white/60'"
         :data-state="hasActiveRuns ? 'active' : hasWaitingRuns ? 'waiting' : 'idle'"
         data-testid="dag-runtime-button"
         :title="runtimeTitle"
@@ -236,7 +236,7 @@ onBeforeUnmount(() => {
       </button>
       <button
         v-if="showDetails"
-        class="flex h-9 items-center gap-2 rounded-full border border-cyan-200/14 px-3 text-sm text-white/60 transition-colors hover:bg-cyan-200/10 hover:text-white"
+        class="flex h-9 items-center gap-2 rounded-full border border-white/10 px-3 text-sm text-white/60 transition-colors hover:bg-white/10 hover:text-white"
         :title="detailsOpen ? t('shell.details.hide') : t('shell.details.show')"
         type="button"
         @click="emit('toggleDetails')"
@@ -247,7 +247,7 @@ onBeforeUnmount(() => {
       </button>
       <button
         v-if="showSettings"
-        class="flex h-9 items-center gap-2 rounded-full border border-cyan-200/14 px-3 text-sm text-white/60 transition-colors hover:bg-cyan-200/10 hover:text-white"
+        class="flex h-9 items-center gap-2 rounded-full border border-white/10 px-3 text-sm text-white/60 transition-colors hover:bg-white/10 hover:text-white"
         data-testid="agent-mode-settings-button"
         type="button"
         @click="emit('openSettings')"

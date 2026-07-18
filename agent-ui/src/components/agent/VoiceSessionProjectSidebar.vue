@@ -532,7 +532,7 @@ defineExpose({
 
 <template>
   <aside
-    class="voice-left-rail flex h-full min-h-0 w-[292px] shrink-0 flex-col border-r border-cyan-200/10 bg-black/20 px-4 py-5"
+    class="voice-left-rail flex h-full min-h-0 w-[292px] shrink-0 flex-col border-r border-white/8 bg-white/[0.02] px-4 py-5"
   >
     <div class="mb-4 flex items-center justify-between">
       <div class="min-w-0">
@@ -540,14 +540,14 @@ defineExpose({
       </div>
       <div class="flex items-center gap-2">
         <button
-          class="rounded-full border border-cyan-200/15 p-2 text-cyan-100/70 hover:bg-cyan-200/10 hover:text-white"
+          class="rounded-full border border-white/10 p-2 text-white/55 hover:bg-white/10 hover:text-white"
           :title="t('voice.sidebar.collapse')"
           @click="emit('collapse')"
         >
           <PanelLeftClose class="h-4 w-4" />
         </button>
         <button
-          class="rounded-full border border-cyan-200/15 p-2 text-cyan-100/70 hover:bg-cyan-200/10 hover:text-white"
+          class="rounded-full border border-white/10 p-2 text-white/55 hover:bg-white/10 hover:text-white"
           :title="t('voice.sidebar.addDirectory')"
           @click="createOpen = true"
         >
@@ -562,7 +562,7 @@ defineExpose({
       />
       <input
         v-model="projectQuery"
-        class="h-10 w-full rounded-full border border-white/10 bg-white/[0.035] pl-9 pr-3 text-sm text-white/80 outline-none placeholder:text-white/30 focus:border-cyan-200/35"
+        class="h-10 w-full rounded-full border border-white/10 bg-white/[0.035] pl-9 pr-3 text-sm text-white/80 outline-none placeholder:text-white/30 focus:border-[#4fd8e8]/40"
         :placeholder="t('voice.sidebar.search')"
       />
     </div>
@@ -581,8 +581,8 @@ defineExpose({
                 isGamepadFocused(projectGamepadId(project)) &&
                   'voice-session-sidebar__gamepad-focus',
                 project.id === store.managerProjectId
-                  ? 'border-cyan-200/35 bg-cyan-200/12 text-white'
-                  : 'border-transparent text-white/62 hover:border-cyan-200/15 hover:bg-white/[0.045] hover:text-white'
+                  ? 'border-[#4fd8e8]/35 bg-[#4fd8e8]/10 text-white'
+                  : 'border-transparent text-white/62 hover:border-white/15 hover:bg-white/[0.045] hover:text-white'
               )
             "
             :data-gamepad-sidebar-id="projectGamepadId(project)"
@@ -591,7 +591,7 @@ defineExpose({
             @click="selectProject(project)"
             @keydown.enter.prevent="selectProject(project)"
           >
-            <Folder class="h-4 w-4 shrink-0 text-cyan-200/65" />
+            <Folder class="h-4 w-4 shrink-0 text-white/40" />
             <div class="min-w-0 flex-1">
               <div class="truncate text-sm font-medium">{{ project.name }}</div>
               <div class="mt-0.5 truncate text-[11px] text-white/35">
@@ -602,14 +602,14 @@ defineExpose({
               class="absolute right-2 top-2 flex opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
             >
               <button
-                class="rounded-full p-1.5 text-cyan-50/45 hover:bg-cyan-200/10 hover:text-cyan-100"
+                class="rounded-full p-1.5 text-white/40 hover:bg-white/10 hover:text-white"
                 :title="t('voice.sidebar.configureDirectory')"
                 @click="openProjectSettings(project, $event)"
               >
                 <Settings class="h-3.5 w-3.5" />
               </button>
               <button
-                class="rounded-full p-1.5 text-cyan-50/35 hover:bg-red-400/10 hover:text-red-200 disabled:opacity-45"
+                class="rounded-full p-1.5 text-white/35 hover:bg-red-400/10 hover:text-red-200 disabled:opacity-45"
                 :class="confirmDeleteProjectId === project.id ? 'bg-red-400/10 text-red-200 opacity-100' : ''"
                 :title="t('voice.sidebar.deleteDirectory')"
                 :disabled="deletingProjectId === project.id"
@@ -669,7 +669,7 @@ defineExpose({
               v-if="project.id === store.managerProjectId"
               :class="
                 cn(
-                  'flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-cyan-100/58 transition hover:bg-cyan-200/10 hover:text-cyan-50',
+                  'flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-white/55 transition hover:bg-white/8 hover:text-white',
                   isGamepadFocused(newSessionGamepadId(project)) &&
                     'voice-session-sidebar__gamepad-focus'
                 )
@@ -689,7 +689,7 @@ defineExpose({
                   isGamepadFocused(sessionGamepadId(session)) &&
                     'voice-session-sidebar__gamepad-focus',
                   session.session_id === props.activeSessionId
-                    ? 'border-cyan-200/25 bg-cyan-200/10'
+                    ? 'border-[#4fd8e8]/30 bg-[#4fd8e8]/10'
                     : 'border-transparent hover:border-white/10 hover:bg-white/[0.04]'
                 )
               "
@@ -733,7 +733,7 @@ defineExpose({
               <div
                 v-if="confirmDeleteSessionId === session.session_id"
                 data-session-delete-confirm
-                class="absolute right-0 top-full z-30 mt-1 w-48 rounded-2xl border border-cyan-200/15 bg-black/40 p-3 backdrop-blur-md"
+                class="absolute right-0 top-full z-30 mt-1 w-48 rounded-2xl border border-white/10 bg-[#0b111b]/95 p-3 backdrop-blur-md"
               >
                 <p class="pb-2.5 text-xs leading-relaxed text-white/55">
                   {{ t('voice.sidebar.deleteSessionConfirm') }}
@@ -769,7 +769,7 @@ defineExpose({
                     cn(
                       'flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-xs transition',
                       runId === store.currentRunId
-                        ? 'bg-cyan-200/12 text-cyan-100'
+                        ? 'bg-[#4fd8e8]/12 text-[#d9f7fb]'
                         : 'text-white/40 hover:bg-white/10 hover:text-white/70'
                     )
                   "
@@ -826,11 +826,11 @@ defineExpose({
     class="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 px-6 backdrop-blur-sm"
   >
     <section
-      class="w-[min(520px,92vw)] rounded-[24px] border border-cyan-200/15 bg-[#0b1518] p-5 text-white shadow-2xl"
+      class="w-[min(520px,92vw)] rounded-[24px] border border-white/10 bg-[#0b111b] p-5 text-white shadow-2xl"
     >
       <div class="mb-5 flex items-start justify-between gap-4">
         <div>
-          <div class="text-xs tracking-[0.18em] text-cyan-200/45">{{ t('voice.sidebar.directories') }}</div>
+          <div class="text-xs tracking-[0.18em] text-[#4fd8e8]/60">{{ t('voice.sidebar.directories') }}</div>
           <h2 class="mt-1 text-xl font-semibold">{{ t('voice.project.configuration') }}</h2>
         </div>
         <button
@@ -844,21 +844,21 @@ defineExpose({
       <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.name') }}</label>
       <input
         v-model="editName"
-        class="mb-3 h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 text-sm outline-none focus:border-cyan-200/45"
+        class="mb-3 h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 text-sm outline-none focus:border-[#4fd8e8]/45"
         :placeholder="t('voice.project.namePlaceholder')"
       />
 
       <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.description') }}</label>
       <textarea
         v-model="editDescription"
-        class="mb-3 h-20 w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-cyan-200/45"
+        class="mb-3 h-20 w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-[#4fd8e8]/45"
         :placeholder="t('voice.project.optional')"
       />
 
       <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.path') }}</label>
       <input
         v-model="editWorkspacePath"
-        class="mb-2 h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 font-mono text-sm outline-none focus:border-cyan-200/45"
+        class="mb-2 h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 font-mono text-sm outline-none focus:border-[#4fd8e8]/45"
         placeholder="/path/to/directory"
       />
       <div class="mb-5 text-xs text-white/35">
@@ -867,13 +867,13 @@ defineExpose({
 
       <div class="mb-5 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
         <div class="mb-3 flex items-center gap-2 text-sm font-medium text-white/80">
-          <GitBranch class="h-4 w-4 text-cyan-200/70" />
+          <GitBranch class="h-4 w-4 text-[#4fd8e8]/70" />
           {{ t('voice.project.gitRepository') }}
         </div>
         <label class="mb-1 block text-xs text-white/45">Git Token</label>
         <select
           :value="selectedGitServerId || ''"
-          class="mb-3 h-10 w-full rounded-xl border border-white/10 bg-[#0f1a1d] px-3 text-sm text-white/80 outline-none focus:border-cyan-200/45"
+          class="mb-3 h-10 w-full rounded-xl border border-white/10 bg-[#101823] px-3 text-sm text-white/80 outline-none focus:border-[#4fd8e8]/45"
           @change="handleGitServerChange"
         >
           <option value="">{{ t('voice.project.noGitToken') }}</option>
@@ -891,7 +891,7 @@ defineExpose({
         <label class="mb-1 block text-xs text-white/45">{{ t('voice.project.repository') }}</label>
         <select
           v-model="selectedRepoFullName"
-          class="h-10 w-full rounded-xl border border-white/10 bg-[#0f1a1d] px-3 text-sm text-white/80 outline-none focus:border-cyan-200/45 disabled:opacity-45"
+          class="h-10 w-full rounded-xl border border-white/10 bg-[#101823] px-3 text-sm text-white/80 outline-none focus:border-[#4fd8e8]/45 disabled:opacity-45"
           :disabled="!selectedGitServerId || loadingRepos"
         >
           <option :value="null">{{ loadingRepos ? t('voice.project.loadingRepositories') : t('voice.project.noRepository') }}</option>
@@ -912,7 +912,7 @@ defineExpose({
           {{ t('settings.actions.cancel') }}
         </button>
         <button
-          class="flex items-center gap-2 rounded-full bg-cyan-300 px-4 py-2 text-sm font-medium text-black hover:bg-cyan-200 disabled:opacity-45"
+          class="flex items-center gap-2 rounded-full bg-[#4fd8e8] px-4 py-2 text-sm font-medium text-[#04222a] hover:bg-[#7ce6f2] disabled:opacity-45"
           :disabled="savingProject || !editName.trim()"
           @click="saveProjectSettings"
         >
@@ -927,10 +927,10 @@ defineExpose({
 
 <style scoped>
 .voice-session-sidebar__gamepad-focus {
-  outline: 2px solid rgba(103, 232, 249, 0.88);
+  outline: 2px solid rgba(79, 216, 232, 0.88);
   outline-offset: 2px;
   box-shadow:
-    0 0 0 1px rgba(34, 211, 238, 0.18),
-    0 0 22px rgba(34, 211, 238, 0.16);
+    0 0 0 1px rgba(79, 216, 232, 0.18),
+    0 0 22px rgba(79, 216, 232, 0.16);
 }
 </style>
