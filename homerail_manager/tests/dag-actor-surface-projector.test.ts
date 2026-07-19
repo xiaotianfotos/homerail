@@ -162,8 +162,10 @@ describe("DAG Actor surface Projector", () => {
     expect(nodeBefore.status).toMatchObject({ phase: "running", label: "Started" });
     expect((nodeBefore.content as Record<string, any>).actor_view.data).toEqual({ summary: "Result 1" });
     expect(nodeBefore.a2ui?.components.find((component) => component.id === "root"))
-      .toMatchObject({ children: ["header", "summary", "progress", "findings", "actor.root"] });
+      .toMatchObject({ children: ["actor.root"] });
     expect(nodeBefore.a2ui?.components.filter((component) => component.id.startsWith("actor."))).toHaveLength(2);
+    expect(nodeBefore.a2ui?.components.map((component) => component.id))
+      .not.toEqual(expect.arrayContaining(["header", "summary", "progress", "findings"]));
 
     projectDagActivityJournalEntry(appendDagActivityEvent({
       schema_version: DAG_ACTIVITY_EVENT_SCHEMA_VERSION,

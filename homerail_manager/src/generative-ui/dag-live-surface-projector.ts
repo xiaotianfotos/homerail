@@ -366,18 +366,19 @@ function namespaceActorComponents(body: DagActorSurfaceBodyV1): A2uiComponentV1[
 }
 
 function composedLiveSurfaceA2ui(body?: DagActorSurfaceBodyV1): HomerailA2uiSurfaceV1 {
-  const host = structuredClone(LIVE_SURFACE_A2UI);
-  if (!body) return host;
-  const root = host.components.find((component) => component.id === "root");
-  if (!root || root.component !== "Column" || !Array.isArray(root.children)) {
-    throw new DagLiveSurfaceProjectionError("projection_state_conflict", "Projector A2UI root is invalid");
-  }
-  root.children.push(`${ACTOR_COMPONENT_PREFIX}root`);
-  host.components.push(...namespaceActorComponents(body));
-  if (host.components.length > HOMERAIL_A2UI_MAX_COMPONENTS) {
+  if (!body) return structuredClone(LIVE_SURFACE_A2UI);
+  const composed: HomerailA2uiSurfaceV1 = {
+    version: HOMERAIL_A2UI_VERSION,
+    catalogId: HOMERAIL_A2UI_CATALOG_ID,
+    components: [
+      { id: "root", component: "Column", children: [`${ACTOR_COMPONENT_PREFIX}root`] },
+      ...namespaceActorComponents(body),
+    ],
+  };
+  if (composed.components.length > HOMERAIL_A2UI_MAX_COMPONENTS) {
     throw new DagLiveSurfaceProjectionError("a2ui_rejected", "Composed DAG live surface exceeds the A2UI component budget");
   }
-  return host;
+  return composed;
 }
 
 function actorViewContent(body: DagActorSurfaceBodyV1): Record<string, unknown> {
