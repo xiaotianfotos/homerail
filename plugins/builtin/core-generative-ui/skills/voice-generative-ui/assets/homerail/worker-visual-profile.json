@@ -58,7 +58,7 @@
           { "id": "identity", "component": "Row", "children": ["icon", "title"], "align": "center" },
           { "id": "icon", "component": "Icon", "name": "visibility" },
           { "id": "title", "component": "Text", "text": { "path": "/actor_view/data/title" } },
-          { "id": "phase", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/phase_text" }, "tone": "info" },
+          { "id": "phase", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/phase_text" }, "tone": "positive" },
           { "id": "summary", "component": "Text", "text": { "path": "/actor_view/data/summary" }, "variant": "caption" },
           { "id": "progress", "component": "HrProgress", "label": { "path": "/actor_view/data/phase_text" }, "value": { "path": "/actor_view/data/progress" }, "tone": "positive" },
           { "id": "metrics", "component": "HrGrid", "children": ["confidence", "evidence-count", "risk-count"], "columns": { "default": 3, "compact": 3 }, "gap": "sm", "align": "stretch" },
@@ -70,7 +70,7 @@
           { "id": "evidence-grid", "component": "HrGrid", "children": ["evidence-one", "evidence-two"], "columns": { "default": 2, "compact": 2 }, "gap": "sm", "align": "stretch" },
           { "id": "evidence-one", "component": "HrSection", "title": "依据 A", "children": ["evidence-one-text"], "tone": "info" },
           { "id": "evidence-one-text", "component": "Text", "text": { "path": "/actor_view/data/evidence_one" }, "variant": "caption" },
-          { "id": "evidence-two", "component": "HrSection", "title": "依据 B", "children": ["evidence-two-text"], "tone": "neutral" },
+          { "id": "evidence-two", "component": "HrSection", "title": "依据 B", "children": ["evidence-two-text"], "tone": "warning" },
           { "id": "evidence-two-text", "component": "Text", "text": { "path": "/actor_view/data/evidence_two" }, "variant": "caption" },
           { "id": "caveat", "component": "HrDisclosure", "title": "风险与适用边界", "children": ["caveat-text"] },
           { "id": "caveat-text", "component": "Text", "text": { "path": "/actor_view/data/caveat" }, "variant": "caption" }
@@ -105,10 +105,10 @@
           { "id": "identity", "component": "Row", "children": ["icon", "title"], "align": "center" },
           { "id": "icon", "component": "Icon", "name": "share" },
           { "id": "title", "component": "Text", "text": { "path": "/actor_view/data/title" } },
-          { "id": "phase", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/phase_text" }, "tone": "info" },
+          { "id": "phase", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/phase_text" }, "tone": "warning" },
           { "id": "summary", "component": "Text", "text": { "path": "/actor_view/data/summary" }, "variant": "caption" },
-          { "id": "progress", "component": "HrProgress", "label": { "path": "/actor_view/data/phase_text" }, "value": { "path": "/actor_view/data/progress" }, "tone": "positive" },
-          { "id": "hero", "component": "HrSection", "title": "发布预览", "children": ["headline", "hook"], "tone": "info" },
+          { "id": "progress", "component": "HrProgress", "label": { "path": "/actor_view/data/phase_text" }, "value": { "path": "/actor_view/data/progress" }, "tone": "warning" },
+          { "id": "hero", "component": "HrSection", "title": "发布预览", "children": ["headline", "hook"], "tone": "warning" },
           { "id": "headline", "component": "Text", "text": { "call": "formatString", "args": { "value": "## ${/actor_view/data/headline}" } } },
           { "id": "hook", "component": "Text", "text": { "path": "/actor_view/data/hook" }, "variant": "caption" },
           { "id": "stats", "component": "HrGrid", "children": ["stat-one", "stat-two"], "columns": { "default": 2, "compact": 2 }, "gap": "sm", "align": "stretch" },
@@ -119,11 +119,11 @@
           { "id": "beat-one-text", "component": "Text", "text": { "path": "/actor_view/data/point_one" }, "variant": "caption" },
           { "id": "beat-two", "component": "HrSection", "title": "02", "children": ["beat-two-text"], "tone": "info" },
           { "id": "beat-two-text", "component": "Text", "text": { "path": "/actor_view/data/point_two" }, "variant": "caption" },
-          { "id": "beat-three", "component": "HrSection", "title": "03", "children": ["beat-three-text"], "tone": "neutral" },
+          { "id": "beat-three", "component": "HrSection", "title": "03", "children": ["beat-three-text"], "tone": "warning" },
           { "id": "beat-three-text", "component": "Text", "text": { "path": "/actor_view/data/point_three" }, "variant": "caption" },
           { "id": "full-copy", "component": "HrDisclosure", "title": "完整文案与标签", "children": ["post-text", "tags"] },
           { "id": "post-text", "component": "Text", "text": { "path": "/actor_view/data/post_text" }, "variant": "caption" },
-          { "id": "tags", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/tags" }, "tone": "positive" }
+          { "id": "tags", "component": "HrStatusBadge", "text": { "path": "/actor_view/data/tags" }, "tone": "warning" }
         ]
       },
       "data_contract": {

@@ -161,6 +161,13 @@ describe("multi-Actor live report asset", () => {
         "HrProgress",
         "HrStatusBadge",
       ]));
+      const tones = new Set(view.a2ui.components.flatMap((component) => (
+        typeof component.tone === "string" ? [component.tone] : []
+      )));
+      expect(tones).toEqual(new Set(["info", "positive", "warning"]));
+      for (const section of view.a2ui.components.filter((component) => component.component === "HrSection")) {
+        expect(section.tone).toMatch(/^(?:info|positive|warning)$/);
+      }
       for (const field of view.data_contract?.fields ?? []) {
         if (field.value_schema?.type === "string") {
           expect(field.value_schema.max_length).toBeLessThanOrEqual(320);

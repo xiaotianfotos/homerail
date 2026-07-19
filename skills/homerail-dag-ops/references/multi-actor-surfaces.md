@@ -99,6 +99,11 @@ Treat each Surface as a decision panel, not as a transcript:
 - Give the roles different visual emphasis: research shows evidence and gaps;
   synthesis shows a conclusion, confidence, and risk; publication shows a
   headline, key figures, and short publishing beats.
+- Give them different dominant color semantics: research uses `info`, synthesis
+  uses `positive`, and publication uses `warning`, with contrasting metric and
+  finding tones inside each panel. Reserve `critical` for actual failures.
+- Use colored borders, badges, progress, and metric cards to form visual groups;
+  keep a text label or icon beside every color-coded state for accessibility.
 - Put source lists, caveats, and the full publishing copy in `HrDisclosure`.
 - Prefer `HrMetric`, `HrProgress`, `HrGrid`, `HrStatusBadge`, `Icon`, and short
   sections over paragraphs. Use an `HrTable`, `HrTimeline`, `HrBarChart`, image,
@@ -107,6 +112,8 @@ Treat each Surface as a decision panel, not as a transcript:
   not stream growing prose into one field.
 - Let the host retain activity and handoff data for audit without rendering that
   generic text above a custom Actor view.
+- Do not wash the whole Canvas in one accent, use neutral styling everywhere,
+  or add arbitrary colors that contradict status semantics.
 
 ## Handling a later request
 

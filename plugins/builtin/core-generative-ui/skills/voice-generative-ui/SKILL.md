@@ -103,6 +103,8 @@ For a bounded source list, repeat an `HrLink` through a template. Bind `label`, 
 
 Use `HrGrid` for visual density without shrinking text. Its `columns.default` and `columns.compact` are 1 to 3. Use three compact columns only for short numeric metrics or small visual thumbnails; use one or two for prose. Each `HrGridItem` wraps one `child` and uses `span` 1 to 3. Never use four columns. Prefer imagery, metrics, progress, compact diagrams, and short labels over paragraphs. Put detailed evidence inside `HrDisclosure` so the normal Block remains scannable and the expanded Block can reveal the full content.
 
+Use the semantic palette generously but consistently: `info` for evidence and active research, `positive` for verified judgments, `warning` for uncertainty or publication emphasis, and `critical` only for a real failure. In a three-Actor Canvas, give research, synthesis, and publication visibly different dominant tones while mixing two or three semantic tones inside each panel. Do not make every component neutral or one color, and never rely on color alone to communicate status.
+
 Actions are A2UI events, but the event `name` must exactly match an Action already registered by the Block Kind. Do not send event context, `responsePath`, `wantResponse: true`, or `functionCall`; HomeRail owns every Action argument. The generic Core generated-view Tool exposes no Actions, so do not add a `Button` to it.
 
 ## Artifact publishing and preview
