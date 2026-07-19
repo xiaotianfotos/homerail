@@ -26,11 +26,19 @@ cover; they are not the only valid execution route. For abstract pattern selecti
 ## Supervised multi-Actor live panels
 
 Use the concrete `assets/orchestrations/multi-actor-live-report.yaml.template`
-Workflow when the user wants three stable panels for evidence research,
-independent analysis, and a screenshot-ready publication draft. It explicitly
-declares digest-pinned Surface views, `report_surface_state`, a three-Actor
-join, and `await_command`, so all three Actors remain addressable after their
-first round.
+Workflow only when the user wants three stable, independently grounded panels
+for evidence research, skeptical analysis, and a screenshot-ready publication
+draft. It explicitly declares digest-pinned Surface views,
+`report_surface_state`, a three-Actor join, and `await_command`, so all three
+Actors remain addressable after their first round.
+
+Choose exactly three Actors when each panel remains useful by itself, each has
+a non-overlapping responsibility, and the user benefits from later per-panel
+follow-ups. Share one source identity and evidence boundary. Parallelize only
+independent work. When analysis or publication must consume research output,
+author explicit data edges or structured handoffs instead of using the bundled
+parallel template unchanged. Use one Manager-owned Block for a simple answer or
+single report, and never add Actors merely to make the task look sophisticated.
 
 Inside the Manager Agent, start it with `start_supervised_dag` and the exact
 `yamlPath`; pass the user's full objective as `prompt` and an available runtime

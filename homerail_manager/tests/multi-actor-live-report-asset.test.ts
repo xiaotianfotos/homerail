@@ -19,6 +19,20 @@ import { _clearActiveRuns } from "../src/runtime/active-runs.js";
 
 const ACTORS = ["research", "synthesis", "visual_story"] as const;
 const VIEWS = ["research-live", "analysis-live", "publication-live"] as const;
+const VIEW_FIELDS: Record<(typeof VIEWS)[number], string[]> = {
+  "research-live": [
+    "title", "phase_text", "summary", "progress", "verified_count", "source_count", "gap_count",
+    "finding_one", "finding_two", "source_one", "source_two",
+  ],
+  "analysis-live": [
+    "title", "phase_text", "summary", "progress", "confidence", "evidence_count", "risk_count",
+    "conclusion", "evidence_one", "evidence_two", "caveat",
+  ],
+  "publication-live": [
+    "title", "phase_text", "summary", "progress", "headline", "hook", "stat_one_label", "stat_one_value",
+    "stat_two_label", "stat_two_value", "point_one", "point_two", "point_three", "post_text", "tags",
+  ],
+};
 const WORKFLOW_FILE = path.resolve(
   import.meta.dirname,
   "../../assets/orchestrations/multi-actor-live-report.yaml.template",
@@ -78,6 +92,9 @@ describe("multi-Actor live report asset", () => {
         "report_surface_state exactly three times",
       );
       expect(canonical.agents[actor]?.system).toMatch(/started,\s+partial,\s+final/);
+      for (const field of VIEW_FIELDS[VIEWS[index]]) {
+        expect(canonical.agents[actor]?.system).toContain(field);
+      }
     }
 
     expect(canonical.nodes.find((node) => node.id === "collect_round")).toMatchObject({
@@ -131,9 +148,24 @@ describe("multi-Actor live report asset", () => {
     for (const view of archived?.visual_profile?.views ?? []) {
       expect(view.data_contract?.required_phases).toEqual(["started", "partial", "final"]);
       expect(view.data_contract?.fields.every((field) => field.mode === "presentation")).toBe(true);
+      expect(view.data_contract?.fields.map((field) => field.field)).toEqual(
+        VIEW_FIELDS[view.id as (typeof VIEWS)[number]],
+      );
       expect(view.data_contract?.fields.find((field) => field.field === "progress")?.value_schema)
         .toMatchObject({ type: "integer", enum: [5, 55, 100] });
-      expect(view.a2ui.components.length).toBeGreaterThan(5);
+      expect(view.a2ui.components.map((component) => component.component)).toEqual(expect.arrayContaining([
+        "Icon",
+        "HrDisclosure",
+        "HrGrid",
+        "HrMetric",
+        "HrProgress",
+        "HrStatusBadge",
+      ]));
+      for (const field of view.data_contract?.fields ?? []) {
+        if (field.value_schema?.type === "string") {
+          expect(field.value_schema.max_length).toBeLessThanOrEqual(320);
+        }
+      }
     }
   });
 });

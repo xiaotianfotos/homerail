@@ -33,6 +33,16 @@ Use one of these paths deliberately. They are different runtime contracts:
 2. **Supervised multi-Actor Surfaces** — When the user asks for multiple roles or panels to work in parallel, remain live, or accept later per-panel corrections, load `homerail-dag-ops` and start the concrete `assets/orchestrations/multi-actor-live-report.yaml.template` Workflow with `start_supervised_dag`. It creates stable `research`, `synthesis`, and `visual_story` Actors whose Surfaces are updated by their Workers.
 3. **Skill-owned presenter** — When another loaded Skill provides `skill_view_present`, use that trusted presenter instead of recreating its domain layout.
 
+### Choose three Actors deliberately
+
+Do use three Actors only for three non-overlapping, separately useful panels that
+benefit from stable per-panel follow-ups. Share one source identity; run
+independent lanes in parallel and wire dependent lanes with explicit edges or
+structured handoffs. Give each panel a distinct visual grammar and keep prose in
+a disclosure. Do not create duplicate generalists, split one answer into
+decorative panels, or claim research -> synthesis -> publication without a data
+edge. Load `homerail-dag-ops` and read its multi-Actor reference before launch.
+
 The abstract `orchestrator-workers` pattern is a planner/fan-out/verifier topology. It does not declare Surface views, `report_surface_state`, or `await_command`; never promise live panels merely because that pattern started. Use it for bounded parallel evidence, not persistent multi-panel presentation.
 
 For a supervised Surface run, the Manager Agent starts and supervises the Workflow but never fabricates Worker output. After launch, use the returned stable Actor ids. On a later user request, read supervision, send one atomic command array for all affected Actors, and keep unaffected siblings unchanged. A command acceptance is not proof that a Surface update completed.
@@ -91,7 +101,7 @@ For a bounded source list, repeat an `HrLink` through a template. Bind `label`, 
 { "id": "source-link", "component": "HrLink", "label": { "path": "label" }, "url": { "path": "url" }, "description": { "path": "description" } }
 ```
 
-Use `HrGrid` for visual density without shrinking text. Its `columns.default` is 1 to 3 and `columns.compact` is 1 to 2. Each `HrGridItem` wraps one `child` and uses `span` 1 to 3. Never use four columns. Prefer imagery, metrics, progress, compact diagrams, and short labels over paragraphs. Put detailed evidence inside `HrDisclosure` so the normal Block remains scannable and the expanded Block can reveal the full content.
+Use `HrGrid` for visual density without shrinking text. Its `columns.default` and `columns.compact` are 1 to 3. Use three compact columns only for short numeric metrics or small visual thumbnails; use one or two for prose. Each `HrGridItem` wraps one `child` and uses `span` 1 to 3. Never use four columns. Prefer imagery, metrics, progress, compact diagrams, and short labels over paragraphs. Put detailed evidence inside `HrDisclosure` so the normal Block remains scannable and the expanded Block can reveal the full content.
 
 Actions are A2UI events, but the event `name` must exactly match an Action already registered by the Block Kind. Do not send event context, `responsePath`, `wantResponse: true`, or `functionCall`; HomeRail owns every Action argument. The generic Core generated-view Tool exposes no Actions, so do not add a `Button` to it.
 

@@ -3,6 +3,45 @@
 Read this reference when a request needs independently updating Actor panels,
 or when a later user turn changes an existing supervised result.
 
+## Choose the decomposition before the template
+
+Use exactly three Actors only when every answer below is yes:
+
+1. Will the three outputs remain separately useful on the Canvas?
+2. Can each responsibility be stated in one non-overlapping sentence?
+3. Will the user benefit from focusing or updating one result without replacing
+   its siblings?
+4. Is there enough work and evidence to justify three independent lifecycles?
+5. Does the graph mechanically share source identity and any required upstream
+   result?
+
+Good three-Actor decompositions include:
+
+- code architecture / PR history / Issue health for the same repository and
+  revision, because the evidence lanes are independent;
+- current state / risk review / remediation plan, when each panel owns a
+  distinct decision surface;
+- evidence research / skeptical synthesis / publication layout, only when the
+  research handoff is wired into every downstream Actor that claims to use it.
+
+Do:
+
+- give every Actor one stable id, one responsibility, and one visual grammar;
+- use parallel edges for independent lanes and staged edges for dependent work;
+- pass conclusions, evidence, gaps, and source identity as structured fields;
+- keep unaffected siblings stable during a targeted follow-up;
+- state honestly when a staged Actor is waiting for upstream evidence.
+
+Do not:
+
+- create three generalists that independently repeat the same mission;
+- split one answer or one dashboard into decorative Actor panels;
+- ask a synthesis or publication Actor to infer an upstream result from the
+  original prompt;
+- claim that parallel nodes formed a pipeline when no data edge connects them;
+- start three Actors for simple Q&A, a single status, or one compact report;
+- use a fixed domain layout when the requested responsibilities do not match it.
+
 ## Required Workflow contract
 
 A live multi-Actor Workflow must declare all of these mechanically. Prompts
@@ -39,7 +78,8 @@ Use the returned run id. Then call `list_dag_actors` and
 lease identifiers. Starting this run is the execution action—do not also create
 three Manager-owned generated-view Blocks.
 
-The generic Workflow owns these stable responsibilities:
+The generic Workflow owns these stable responsibilities and asks every lane to
+ground its own claims from the shared objective:
 
 - `research`: current attributable evidence and uncertainty;
 - `synthesis`: independent judgment, evidence quality, and caveats;
@@ -47,6 +87,26 @@ The generic Workflow owns these stable responsibilities:
 
 Use a domain Skill's own presenter when it supplies a more specific supervised
 Workflow, as Palquery does. Do not force domain data into this generic layout.
+Do not use this parallel generic Workflow unchanged when `synthesis` or
+`visual_story` must consume `research`; author the dependency explicitly.
+
+## Visual contract
+
+Treat each Surface as a decision panel, not as a transcript:
+
+- Keep the always-visible state to a short title and summary, two or three
+  metrics, one compact visual group, and no more than two short findings.
+- Give the roles different visual emphasis: research shows evidence and gaps;
+  synthesis shows a conclusion, confidence, and risk; publication shows a
+  headline, key figures, and short publishing beats.
+- Put source lists, caveats, and the full publishing copy in `HrDisclosure`.
+- Prefer `HrMetric`, `HrProgress`, `HrGrid`, `HrStatusBadge`, `Icon`, and short
+  sections over paragraphs. Use an `HrTable`, `HrTimeline`, `HrBarChart`, image,
+  or Artifact only when its data is mechanically available and grounded.
+- Bound visible strings in the visual profile and send complete snapshots; do
+  not stream growing prose into one field.
+- Let the host retain activity and handoff data for audit without rendering that
+  generic text above a custom Actor view.
 
 ## Handling a later request
 
