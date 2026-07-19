@@ -374,10 +374,13 @@ const rootScope = computed(() => ({ value: dataModel.value, key: 'root' }))
 .hr-a2ui__section {
   display: grid;
   gap: 11px;
-  border-top: 1px solid var(--hr-border);
-  padding-top: 12px;
+  border: 1px solid color-mix(in srgb, var(--tone) 24%, var(--hr-border));
+  border-left: 3px solid var(--tone);
+  border-radius: 7px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--tone) 7%, var(--hr-surface-1));
 }
-.hr-a2ui__section > header { color: var(--hr-accent); font-size: 12px; font-weight: 850; text-transform: uppercase; }
+.hr-a2ui__section > header { color: var(--tone); font-size: 12px; font-weight: 850; text-transform: uppercase; }
 
 .homerail-a2ui [data-tone='positive'] { --tone: var(--hr-success); }
 .homerail-a2ui [data-tone='info'] { --tone: var(--hr-info); }

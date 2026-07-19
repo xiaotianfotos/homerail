@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { i18n } from '@/plugins/i18n'
 import DagTaskCanvas from '@/components/generative-ui/DagTaskCanvas.vue'
+import './styles/hr-theme.css'
 import './styles/tailwind.css'
 import './style.css'
 import './styles/main.css'
