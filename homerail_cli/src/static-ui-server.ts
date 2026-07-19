@@ -223,9 +223,11 @@ function proxyHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
 }
 
 function handleWebSocket(req: http.IncomingMessage, socket: net.Socket, head: Buffer): void {
-  // Proxy a WebSocket upgrade to the Manager (/ws).
+  // Proxy WebSocket upgrades to the Manager. This includes the general event
+  // stream and Voice ASR's same-origin realtime endpoint.
   const target = new URL(MANAGER_WS);
-  const proxyReq = http.request(
+  const request = target.protocol === "wss:" ? https.request : http.request;
+  const proxyReq = request(
     {
       method: "GET",
       protocol: target.protocol === "ws:" ? "http:" : "https:",
@@ -274,7 +276,8 @@ function onRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
 }
 
 server.on("upgrade", (req, socket, head) => {
-  if ((req.url || "").startsWith("/ws")) {
+  const pathname = new URL(req.url || "/", "http://localhost").pathname;
+  if (pathname === "/ws" || pathname === "/api/voice/asr/realtime") {
     handleWebSocket(req, socket as unknown as net.Socket, head);
     return;
   }

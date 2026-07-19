@@ -17,8 +17,11 @@ export function dockerWorkspaceGuidance(
     return 'install'
   }
   if (
+    result.code === 'docker_daemon_unavailable' ||
     message.includes('cannot connect to the docker daemon') ||
-    message.includes('is the docker daemon running')
+    message.includes('failed to connect to the docker api') ||
+    message.includes('is the docker daemon running') ||
+    message.includes('dockerdesktoplinuxengine')
   ) {
     return 'start'
   }

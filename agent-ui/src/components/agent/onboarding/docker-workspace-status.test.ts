@@ -26,6 +26,17 @@ describe('Docker workspace guidance', () => {
     expect(dockerWorkspaceGuidance({
       available: false,
       host_path: '/workspace',
+      error: 'failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the daemon is running: The system cannot find the file specified.',
+    })).toBe('start')
+    expect(dockerWorkspaceGuidance({
+      available: false,
+      host_path: '/workspace',
+      code: 'docker_daemon_unavailable',
+      error: 'Docker Desktop engine is unavailable',
+    })).toBe('start')
+    expect(dockerWorkspaceGuidance({
+      available: false,
+      host_path: '/workspace',
       error: 'permission denied while trying to connect to the Docker daemon; add the user to the docker group',
     })).toBe('permission')
   })
