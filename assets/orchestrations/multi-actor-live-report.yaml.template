@@ -85,7 +85,11 @@ spec:
         in order: started, partial, final. Each call must send all fields title,
         phase_text, summary, progress, verified_count, source_count, gap_count,
         finding_one, finding_two, source_one, and source_two as one complete
-        snapshot. Use progress 5, then 55, then 100. Counts are non-negative
+        snapshot, including primary_tone, secondary_tone, and accent_tone.
+        Choose those three tones freely from the advertised values to fit this
+        subject and visual hierarchy; use a varied palette, not a fixed
+        research-role color, and keep it stable across the three snapshots. Use
+        progress 5, then 55, then 100. Counts are non-negative
         integers and the final counts must describe inspected evidence. Keep the
         summary to one sentence, each finding to one fact, and each source field
         to a short attributable title or host; never paste a report into a visual
@@ -107,7 +111,11 @@ spec:
         turn call report_surface_state exactly three times, in order: started,
         partial, final. Each call must send all fields title, phase_text, summary,
         progress, confidence, evidence_count, risk_count, conclusion,
-        evidence_one, evidence_two, and caveat as one complete snapshot. Use
+        evidence_one, evidence_two, caveat, primary_tone, secondary_tone, and
+        accent_tone as one complete snapshot. Choose those tones freely from the
+        advertised values to fit this subject and visual hierarchy; use a varied
+        palette, not a fixed synthesis-role color, and keep it stable across the
+        three snapshots. Use
         progress 5, then 55, then 100; confidence is an integer from 0 to 100,
         other counts are non-negative integers, and all must reflect inspected
         evidence. Keep the conclusion to one decision, each evidence field to
@@ -129,7 +137,11 @@ spec:
         final. Each call must send all fields title, phase_text, summary, progress,
         headline, hook, stat_one_label, stat_one_value, stat_two_label,
         stat_two_value, point_one, point_two, point_three, post_text, and tags as
-        one complete snapshot. Use progress 5, then 55, then 100. Use only two
+        one complete snapshot, including primary_tone, secondary_tone, and
+        accent_tone. Choose those tones freely from the advertised values to fit
+        this subject and visual hierarchy; use a varied palette, not a fixed
+        publication-role color, and keep it stable across the three snapshots.
+        Use progress 5, then 55, then 100. Use only two
         grounded figures for the metric cards, three short publishing beats, and
         keep the longer copy inside the disclosure. Keep the final card concise,
         visually scannable, and safe to screenshot; distinguish verified facts

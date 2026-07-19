@@ -21,15 +21,18 @@ const ACTORS = ["research", "synthesis", "visual_story"] as const;
 const VIEWS = ["research-live", "analysis-live", "publication-live"] as const;
 const VIEW_FIELDS: Record<(typeof VIEWS)[number], string[]> = {
   "research-live": [
-    "title", "phase_text", "summary", "progress", "verified_count", "source_count", "gap_count",
+    "title", "phase_text", "summary", "progress", "primary_tone", "secondary_tone", "accent_tone",
+    "verified_count", "source_count", "gap_count",
     "finding_one", "finding_two", "source_one", "source_two",
   ],
   "analysis-live": [
-    "title", "phase_text", "summary", "progress", "confidence", "evidence_count", "risk_count",
+    "title", "phase_text", "summary", "progress", "primary_tone", "secondary_tone", "accent_tone",
+    "confidence", "evidence_count", "risk_count",
     "conclusion", "evidence_one", "evidence_two", "caveat",
   ],
   "publication-live": [
-    "title", "phase_text", "summary", "progress", "headline", "hook", "stat_one_label", "stat_one_value",
+    "title", "phase_text", "summary", "progress", "primary_tone", "secondary_tone", "accent_tone",
+    "headline", "hook", "stat_one_label", "stat_one_value",
     "stat_two_label", "stat_two_value", "point_one", "point_two", "point_three", "post_text", "tags",
   ],
 };
@@ -161,15 +164,25 @@ describe("multi-Actor live report asset", () => {
         "HrProgress",
         "HrStatusBadge",
       ]));
-      const tones = new Set(view.a2ui.components.flatMap((component) => (
-        typeof component.tone === "string" ? [component.tone] : []
-      )));
-      expect(tones).toEqual(new Set(["info", "positive", "warning"]));
-      for (const section of view.a2ui.components.filter((component) => component.component === "HrSection")) {
-        expect(section.tone).toMatch(/^(?:info|positive|warning)$/);
+      const tonePaths = new Set(view.a2ui.components.flatMap((component) => {
+        const tone = component.tone as { path?: string } | string | undefined;
+        return typeof tone === "object" && typeof tone.path === "string" ? [tone.path] : [];
+      }));
+      expect(tonePaths).toEqual(new Set([
+        "/actor_view/data/primary_tone",
+        "/actor_view/data/secondary_tone",
+        "/actor_view/data/accent_tone",
+      ]));
+      expect(view.a2ui.components.some((component) => typeof component.tone === "string")).toBe(false);
+      for (const paletteField of ["primary_tone", "secondary_tone", "accent_tone"]) {
+        expect(view.data_contract?.fields.find((field) => field.field === paletteField)?.value_schema)
+          .toEqual({
+            type: "string",
+            enum: ["neutral", "info", "positive", "warning", "critical"],
+          });
       }
       for (const field of view.data_contract?.fields ?? []) {
-        if (field.value_schema?.type === "string") {
+        if (field.value_schema?.type === "string" && field.value_schema.enum === undefined) {
           expect(field.value_schema.max_length).toBeLessThanOrEqual(320);
         }
       }

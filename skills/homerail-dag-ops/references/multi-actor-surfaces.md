@@ -99,11 +99,14 @@ Treat each Surface as a decision panel, not as a transcript:
 - Give the roles different visual emphasis: research shows evidence and gaps;
   synthesis shows a conclusion, confidence, and risk; publication shows a
   headline, key figures, and short publishing beats.
-- Give them different dominant color semantics: research uses `info`, synthesis
-  uses `positive`, and publication uses `warning`, with contrasting metric and
-  finding tones inside each panel. Reserve `critical` for actual failures.
-- Use colored borders, badges, progress, and metric cards to form visual groups;
-  keep a text label or icon beside every color-coded state for accessibility.
+- Let each Actor choose `primary_tone`, `secondary_tone`, and `accent_tone` for
+  the current subject. These are runtime design choices, not permanent mappings
+  from research, synthesis, publication, or any content category to a color.
+- Use a varied, coherent palette across borders, badges, progress, metrics, and
+  sections to form visual groups. Keep the choice stable through one update, but
+  allow a later request or different subject to inspire a different palette.
+- Keep a text label or icon beside every color-coded state for accessibility;
+  host-owned run status is independent of the Actor's expressive palette.
 - Put source lists, caveats, and the full publishing copy in `HrDisclosure`.
 - Prefer `HrMetric`, `HrProgress`, `HrGrid`, `HrStatusBadge`, `Icon`, and short
   sections over paragraphs. Use an `HrTable`, `HrTimeline`, `HrBarChart`, image,
@@ -113,7 +116,8 @@ Treat each Surface as a decision panel, not as a transcript:
 - Let the host retain activity and handoff data for audit without rendering that
   generic text above a custom Actor view.
 - Do not wash the whole Canvas in one accent, use neutral styling everywhere,
-  or add arbitrary colors that contradict status semantics.
+  impose a universal role-to-color mapping, or make color the only carrier of
+  meaning.
 
 ## Handling a later request
 
