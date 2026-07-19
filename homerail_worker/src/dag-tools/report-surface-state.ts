@@ -129,6 +129,7 @@ export const REPORT_SURFACE_STATE_PROMPT = [
   "Run, node, session, round, actor, generation, lease, surface, schema, and timestamp identity are injected and locked by the Worker; never include them in tool arguments.",
   "For custom A2UI, only status=submitted advances patch_sequence. Pinned Skill views never require the model to manage patch ids or sequence numbers.",
   "Within one active turn, phases only move forward in this order: started, partial, verified, refined, final. A pinned data contract may declare a narrower exact sequence; that sequence is authoritative. Final closes Surface reporting for that turn.",
+  "If a pinned presentation value is rejected for its type, enum, or length, correct that value and retry the same required phase. A rejected proposal does not advance the Surface sequence.",
   "A submitted result means Manager validation is pending. It never means a Surface revision was applied, and it must not be polled or retried in the same turn.",
   "When final returns trusted_final_prefix_values, use those exact Worker-selected values for subsequent activity and handoff evidence instead of prior-round memory.",
 ].join("\n");
@@ -641,6 +642,7 @@ function resolveContractSource(
 interface ContractMaterialization {
   data?: Record<string, unknown>;
   error?: string;
+  issues?: string[];
   sourceFields?: string[];
   ignoredSourceFields?: string[];
   legacyPrefixArrays?: string[];
@@ -683,10 +685,42 @@ function materializeContractData(
   const prefixCounts: Record<string, number> = {};
   const finalPrefixCounts: Record<string, number> = {};
   const adjustedPrefixCounts: Record<string, { requested: number; applied: number }> = {};
+  const presentationIssues: string[] = [];
   for (const field of contract.fields) {
     if (field.mode === "presentation") {
       if (Object.prototype.hasOwnProperty.call(proposed, field.field)) {
-        data[field.field] = structuredClone(proposed[field.field]);
+        const schema = field.value_schema;
+        const type = schema?.type ?? "string";
+        const value = proposed[field.field];
+        const matchesType = type === "string"
+          ? typeof value === "string"
+          : type === "boolean"
+            ? typeof value === "boolean"
+            : type === "integer"
+              ? Number.isSafeInteger(value)
+              : typeof value === "number" && Number.isFinite(value);
+        if (!matchesType) {
+          presentationIssues.push(`data.${field.field} must be a ${type}`);
+          continue;
+        }
+        let valid = true;
+        if (typeof value === "string") {
+          const length = [...value].length;
+          const maximum = schema?.max_length ?? 500;
+          if (length < 1 || length > maximum) {
+            presentationIssues.push(
+              `data.${field.field} must contain between 1 and ${maximum} characters; received ${length}`,
+            );
+            valid = false;
+          }
+        }
+        if (schema?.enum && !schema.enum.some((candidate) => candidate === value)) {
+          presentationIssues.push(
+            `data.${field.field} must be one of ${schema.enum.map((candidate) => JSON.stringify(candidate)).join(", ")}`,
+          );
+          valid = false;
+        }
+        if (valid) data[field.field] = structuredClone(value);
       }
       continue;
     }
@@ -746,6 +780,12 @@ function materializeContractData(
     prefixCounts[field.field] = count;
     data[field.field] = structuredClone(selected.value.slice(0, count));
   }
+  if (presentationIssues.length > 0) {
+    return {
+      error: presentationIssues[0],
+      issues: presentationIssues,
+    };
+  }
   return {
     data,
     sourceFields,
@@ -774,7 +814,13 @@ function pinnedDataContractDescription(
     });
   const presentation = contract.fields
     .filter((field) => field.mode === "presentation")
-    .map((field) => field.field);
+    .map((field) => {
+      const schema = field.value_schema;
+      const type = schema?.type ?? "string";
+      const bound = type === "string" ? `<=${schema?.max_length ?? 500} chars` : type;
+      const allowed = schema?.enum?.length ? ` enum=${schema.enum.map((value) => JSON.stringify(value)).join("|")}` : "";
+      return `${field.field}:${bound}${allowed}`;
+    });
   return [
     `${viewId} trusted data`,
     `omit Worker-owned source fields [${source.join(", ") || "none"}]`,
@@ -880,6 +926,7 @@ function resolvePinnedSurfaceBody(
   body?: DagActorSurfaceBodyV1;
   code?: string;
   message?: string;
+  issues?: string[];
   materialization?: ContractMaterialization;
 } {
   const viewId = value.view_id;
@@ -916,6 +963,7 @@ function resolvePinnedSurfaceBody(
           ? "source_contract_unavailable"
           : "invalid_data_projection",
         message: materialization.error ?? "Worker could not materialize the pinned data contract",
+        ...(materialization.issues?.length ? { issues: materialization.issues } : {}),
       };
     }
     body.data = materialization.data;
@@ -1012,6 +1060,7 @@ export function createReportSurfaceStateTool(
       "The Worker injects immutable run/node/session/round/actor/generation/lease/surface identity and timestamp.",
       "This is a proposal to the Manager projector, never a direct Canvas mutation; submitted does not mean applied. Do not poll or retry a submitted proposal in the same turn.",
       "Phases are monotonic within this turn. A pinned contract's required calls are an exact sequence and take precedence; final closes Surface reporting. Follow next_allowed_phases or next_action in each result.",
+      "If a pinned presentation field is rejected for type, enum, or length, shorten or correct it and retry the same required phase; rejection does not advance the sequence.",
       ...(pinnedViewIds.length === 0
         ? [`For custom A2UI, the next accepted patch_sequence is ${state.surfacePatchSequence + 1}.`]
         : []),
@@ -1257,6 +1306,7 @@ export function createReportSurfaceStateTool(
         );
         if (!resolved.body) {
           const sourceContractUnavailable = resolved.code === "source_contract_unavailable";
+          const invalidDataProjection = resolved.code === "invalid_data_projection";
           if (sourceContractUnavailable) {
             state.surfaceReportingFatalError = {
               code: resolved.code!,
@@ -1273,6 +1323,13 @@ export function createReportSurfaceStateTool(
                     retryable: false,
                     next_action: "Do not retry report_surface_state or call handoff in this turn. End the turn so the runtime records the immutable Surface input-contract failure.",
                   }
+                : invalidDataProjection
+                  ? {
+                      retryable: true,
+                      expected_phase: phase,
+                      ...(resolved.issues?.length ? { issues: resolved.issues.slice(0, 16) } : {}),
+                      next_action: `Correct every rejected presentation value and retry report_surface_state with phase ${phase}.`,
+                    }
                 : {}),
             },
           );

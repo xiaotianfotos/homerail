@@ -147,6 +147,7 @@ describe("report_surface_state", () => {
       .toBeLessThan(REPORT_SURFACE_STATE_PROMPT.indexOf("Only when no pinned Skill view fits"));
     expect(REPORT_SURFACE_STATE_PROMPT).toContain("omit patch_id, patch_sequence");
     expect(REPORT_SURFACE_STATE_PROMPT).toContain("phases only move forward");
+    expect(REPORT_SURFACE_STATE_PROMPT).toContain("correct that value and retry the same required phase");
   });
 
   it("resolves a digest-pinned Skill view without letting the model copy or modify A2UI", async () => {
@@ -254,7 +255,9 @@ describe("report_surface_state", () => {
 
     expect(tool.description).toContain("omit Worker-owned source fields [title]");
     expect(tool.description).toContain("send integer prefix counts [steps<=2]");
-    expect(tool.description).toContain("model-owned presentation fields [phase_text]");
+    expect(tool.description).toContain(
+      'model-owned presentation fields [phase_text:<=32 chars enum="Starting"|"Working"|"Done"]',
+    );
     expect(tool.description).toContain("required calls in exact order [started -> partial -> final]");
     expect(tool.description).toContain("derives fallback from trusted title/summary");
     const contractedInputSchema = tool.input_schema as Record<string, unknown>;
@@ -285,6 +288,41 @@ describe("report_surface_state", () => {
     expect(payload(prematureFinal)).toMatchObject({
       status: "rejected",
       code: "phase_sequence",
+      expected_phase: "started",
+    });
+    expect(emitted).toHaveLength(0);
+
+    const overlongPresentation = await tool.handler({
+      phase: "started",
+      view_id: "route",
+      steps: 0,
+      phase_text: "x".repeat(33),
+    });
+    expect(payload(overlongPresentation)).toMatchObject({
+      status: "rejected",
+      code: "invalid_data_projection",
+      message: "data.phase_text must contain between 1 and 32 characters; received 33",
+      retryable: true,
+      expected_phase: "started",
+      issues: [
+        "data.phase_text must contain between 1 and 32 characters; received 33",
+        'data.phase_text must be one of "Starting", "Working", "Done"',
+      ],
+      next_action: "Correct every rejected presentation value and retry report_surface_state with phase started.",
+    });
+    expect(emitted).toHaveLength(0);
+
+    const unknownPresentationEnum = await tool.handler({
+      phase: "started",
+      view_id: "route",
+      steps: 0,
+      phase_text: "Unknown",
+    });
+    expect(payload(unknownPresentationEnum)).toMatchObject({
+      status: "rejected",
+      code: "invalid_data_projection",
+      message: 'data.phase_text must be one of "Starting", "Working", "Done"',
+      retryable: true,
       expected_phase: "started",
     });
     expect(emitted).toHaveLength(0);
