@@ -19,6 +19,10 @@ import {
   type DetectedMainModelHarness,
   type MainModelRuntimeDetection,
 } from '@/api/services/providers-api'
+import {
+  testVoiceEndpoints,
+  type VoiceEndpointProbeResult,
+} from '@/api/services/voice-api'
 import { useToast } from '@/components/controls/useToast'
 import { createProtocolLabels } from '@/lib/protocol-labels'
 import { cn } from '@/lib/utils'
@@ -166,6 +170,7 @@ const apiKey = ref('')
 const showKey = ref(false)
 const saving = ref(false)
 const checkingMainModel = ref(false)
+const checkingVoiceEndpoints = ref(false)
 const probedModels = ref<string[]>([])
 let probeTimer: number | undefined
 
@@ -369,11 +374,50 @@ function mainModelHarnessLabel(harness: DetectedMainModelHarness): string {
   return harness === 'claude_agent_sdk' ? 'Claude Agent SDK' : 'Kimi Code'
 }
 
+interface CustomVoiceUrls {
+  tts_http_url?: string
+  tts_realtime_url?: string
+  asr_async_url?: string
+  asr_realtime_url?: string
+}
+
+function endpointProbeMessage(result: VoiceEndpointProbeResult | undefined): string {
+  return result?.message || t('onboarding.form.endpointUnavailable')
+}
+
+async function detectCustomAsrEndpoints(): Promise<CustomVoiceUrls> {
+  const baseUrl = voiceApiBase(customFields.value.baseUrl)
+  const asyncUrl = voiceEndpoint(baseUrl, 'audio/transcriptions')
+  const realtimeUrl = voiceEndpoint(baseUrl, 'realtime')
+    .replace(/^http:/, 'ws:')
+    .replace(/^https:/, 'wss:')
+  const response = await testVoiceEndpoints([
+    { id: 'asr_http', kind: 'http', url: asyncUrl },
+    { id: 'asr_realtime', kind: 'websocket', url: realtimeUrl },
+  ])
+  const results = response.data?.results ?? []
+  const asyncResult = results.find(result => result.id === 'asr_http')
+  const realtimeResult = results.find(result => result.id === 'asr_realtime')
+  if (!asyncResult?.ok && !realtimeResult?.ok) {
+    throw new Error(t('onboarding.form.asrEndpointsUnavailable', {
+      async: endpointProbeMessage(asyncResult),
+      realtime: endpointProbeMessage(realtimeResult),
+    }))
+  }
+  return {
+    // Empty strings deliberately clear stale guessed endpoints on an existing
+    // local provider. The Manager normalizes them back to undefined.
+    asr_async_url: asyncResult?.ok ? asyncUrl : '',
+    asr_realtime_url: realtimeResult?.ok ? realtimeUrl : '',
+  }
+}
+
 async function submit(): Promise<void> {
   if (!canSubmit.value || saving.value) return
   saving.value = true
   try {
     let mainModelDetection: MainModelRuntimeDetection | undefined
+    let customVoiceUrls: CustomVoiceUrls | undefined
     if (mode.value === 'custom' && props.capability === 'supports_llm') {
       checkingMainModel.value = true
       try {
@@ -382,10 +426,18 @@ async function submit(): Promise<void> {
         checkingMainModel.value = false
       }
     }
+    if (mode.value === 'custom' && props.capability === 'supports_asr') {
+      checkingVoiceEndpoints.value = true
+      try {
+        customVoiceUrls = await detectCustomAsrEndpoints()
+      } finally {
+        checkingVoiceEndpoints.value = false
+      }
+    }
     const setting =
       mode.value === 'preset'
         ? await submitPreset()
-        : await submitCustom(mainModelDetection)
+        : await submitCustom(mainModelDetection, customVoiceUrls)
     if (!setting) throw new Error(t('onboarding.form.saveFailed'))
     await props.activateSetting?.(setting, mainModelDetection?.preferred_harness ?? undefined)
     const successMessage = mode.value === 'custom' && props.capability === 'supports_llm'
@@ -451,7 +503,10 @@ async function submitPreset(): Promise<LLMSetting | undefined> {
   return res.data
 }
 
-async function submitCustom(mainModelDetection?: MainModelRuntimeDetection): Promise<LLMSetting | undefined> {
+async function submitCustom(
+  mainModelDetection?: MainModelRuntimeDetection,
+  detectedVoiceUrls?: CustomVoiceUrls,
+): Promise<LLMSetting | undefined> {
   const f = customFields.value
   const pid = customProviderId.value
   const pname = customProviderName.value
@@ -481,21 +536,14 @@ async function submitCustom(mainModelDetection?: MainModelRuntimeDetection): Pro
   }
 
   const voiceAdapter = props.capability === 'supports_llm' ? 'custom' as const : 'openai_audio' as const
-  const voiceUrls = {
+  const voiceUrls: CustomVoiceUrls = {
     ...(props.capability === 'supports_tts'
       ? {
           tts_http_url: voiceEndpoint(baseUrl, 'audio/speech'),
           tts_realtime_url: voiceEndpoint(baseUrl, 'audio/speech/stream'),
         }
       : {}),
-    ...(props.capability === 'supports_asr'
-      ? {
-          asr_async_url: voiceEndpoint(baseUrl, 'audio/transcriptions'),
-          asr_realtime_url: voiceEndpoint(baseUrl, 'realtime')
-            .replace(/^http:/, 'ws:')
-            .replace(/^https:/, 'wss:'),
-        }
-      : {}),
+    ...(props.capability === 'supports_asr' ? detectedVoiceUrls : {}),
   }
 
   const providerPayload = {
@@ -718,9 +766,11 @@ async function submitCustom(mainModelDetection?: MainModelRuntimeDetection): Pro
         <span>{{
           checkingMainModel
             ? t('onboarding.form.checkingMainModel')
-            : saving
-              ? t('onboarding.form.saving')
-              : t('onboarding.form.saveContinue')
+            : checkingVoiceEndpoints
+              ? t('onboarding.form.checkingAsrEndpoints')
+              : saving
+                ? t('onboarding.form.saving')
+                : t('onboarding.form.saveContinue')
         }}</span>
       </button>
     </div>

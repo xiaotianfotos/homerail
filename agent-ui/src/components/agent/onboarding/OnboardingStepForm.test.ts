@@ -14,6 +14,9 @@ const apiMocks = vi.hoisted(() => ({
 const toastMocks = vi.hoisted(() => ({
   showToast: vi.fn()
 }))
+const voiceApiMocks = vi.hoisted(() => ({
+  testVoiceEndpoints: vi.fn()
+}))
 
 vi.mock('@/api/agent', () => ({
   agentSettingsApi: apiMocks
@@ -22,6 +25,10 @@ vi.mock('@/api/agent', () => ({
 vi.mock('@/api/services/providers-api', () => ({
   detectMainModelRuntime: vi.fn(),
   probeModels: vi.fn(async () => ({ models: [] }))
+}))
+
+vi.mock('@/api/services/voice-api', () => ({
+  testVoiceEndpoints: voiceApiMocks.testVoiceEndpoints
 }))
 
 vi.mock('@/components/controls/useToast', () => ({
@@ -94,6 +101,31 @@ function inputValue(input: HTMLInputElement, value: string): void {
 beforeEach(() => {
   i18n.global.locale.value = 'zh-Hans'
   vi.clearAllMocks()
+  voiceApiMocks.testVoiceEndpoints.mockResolvedValue({
+    success: true,
+    data: {
+      ok: true,
+      results: [
+        {
+          id: 'asr_http',
+          kind: 'http',
+          url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+          ok: true,
+          reachable: true,
+          status_code: 405,
+          message: 'Endpoint is reachable'
+        },
+        {
+          id: 'asr_realtime',
+          kind: 'websocket',
+          url: 'ws://192.168.100.10:5002/v1/realtime',
+          ok: true,
+          reachable: true,
+          message: 'WebSocket handshake succeeded'
+        }
+      ]
+    }
+  })
 })
 
 afterEach(() => {
@@ -199,6 +231,144 @@ describe('OnboardingStepForm TTS persistence', () => {
     expect(apiMocks.createProvider.mock.invocationCallOrder[0]).toBeLessThan(
       apiMocks.createLLMSetting.mock.invocationCallOrder[0]!
     )
+  })
+})
+
+describe('OnboardingStepForm ASR endpoint detection', () => {
+  async function fillCustomAsr(root: HTMLElement): Promise<void> {
+    root.querySelectorAll<HTMLButtonElement>('.onboarding-step-form__mode-tab')[1]!.click()
+    await nextTick()
+    const inputs = root.querySelectorAll<HTMLInputElement>('.onboarding-step-form__custom input')
+    inputValue(inputs[0]!, 'http://192.168.100.10:5002/v1')
+    inputValue(inputs[1]!, 'qwen3-asr-realtime')
+    await nextTick()
+  }
+
+  it('tests the /v1 endpoints before saving and persists both when both are reachable', async () => {
+    const root = await mountForm({
+      capability: 'supports_asr',
+      providers: [],
+      existingSettings: []
+    })
+    await fillCustomAsr(root)
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(apiMocks.createLLMSetting).toHaveBeenCalledTimes(1))
+    expect(voiceApiMocks.testVoiceEndpoints).toHaveBeenCalledWith([
+      {
+        id: 'asr_http',
+        kind: 'http',
+        url: 'http://192.168.100.10:5002/v1/audio/transcriptions'
+      },
+      {
+        id: 'asr_realtime',
+        kind: 'websocket',
+        url: 'ws://192.168.100.10:5002/v1/realtime'
+      }
+    ])
+    expect(apiMocks.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      base_url: 'http://192.168.100.10:5002/v1',
+      asr_async_url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+      asr_realtime_url: 'ws://192.168.100.10:5002/v1/realtime'
+    }))
+    expect(apiMocks.createLLMSetting).toHaveBeenCalledWith(expect.objectContaining({
+      asr_async_url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+      asr_realtime_url: 'ws://192.168.100.10:5002/v1/realtime'
+    }))
+    expect(voiceApiMocks.testVoiceEndpoints.mock.invocationCallOrder[0]).toBeLessThan(
+      apiMocks.createProvider.mock.invocationCallOrder[0]!
+    )
+  })
+
+  it('stores only the standard endpoint when realtime is unavailable', async () => {
+    voiceApiMocks.testVoiceEndpoints.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ok: false,
+        results: [
+          {
+            id: 'asr_http',
+            kind: 'http',
+            url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+            ok: true,
+            reachable: true,
+            status_code: 405,
+            message: 'Endpoint is reachable'
+          },
+          {
+            id: 'asr_realtime',
+            kind: 'websocket',
+            url: 'ws://192.168.100.10:5002/v1/realtime',
+            ok: false,
+            reachable: true,
+            status_code: 404,
+            message: 'WebSocket handshake returned HTTP 404'
+          }
+        ]
+      }
+    })
+    const root = await mountForm({
+      capability: 'supports_asr',
+      providers: [],
+      existingSettings: []
+    })
+    await fillCustomAsr(root)
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(apiMocks.createLLMSetting).toHaveBeenCalledTimes(1))
+    expect(apiMocks.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      asr_async_url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+      asr_realtime_url: ''
+    }))
+    expect(apiMocks.createLLMSetting).toHaveBeenCalledWith(expect.objectContaining({
+      asr_async_url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+      asr_realtime_url: ''
+    }))
+  })
+
+  it('does not persist an ASR setting when neither endpoint is reachable', async () => {
+    voiceApiMocks.testVoiceEndpoints.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ok: false,
+        results: [
+          {
+            id: 'asr_http',
+            kind: 'http',
+            url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+            ok: false,
+            reachable: false,
+            message: 'fetch failed'
+          },
+          {
+            id: 'asr_realtime',
+            kind: 'websocket',
+            url: 'ws://192.168.100.10:5002/v1/realtime',
+            ok: false,
+            reachable: false,
+            message: 'connect ECONNREFUSED'
+          }
+        ]
+      }
+    })
+    const root = await mountForm({
+      capability: 'supports_asr',
+      providers: [],
+      existingSettings: []
+    })
+    await fillCustomAsr(root)
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(toastMocks.showToast).toHaveBeenCalledWith(
+      expect.stringContaining('ASR 接入地址不可用'),
+      'error',
+      6000
+    ))
+    expect(apiMocks.createProvider).not.toHaveBeenCalled()
+    expect(apiMocks.createLLMSetting).not.toHaveBeenCalled()
   })
 })
 

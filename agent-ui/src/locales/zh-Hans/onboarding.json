@@ -79,10 +79,12 @@
     "localKeyPlaceholder": "本地服务一般无需 Key",
     "saving": "保存中",
     "checkingMainModel": "正在检测主模型的两个兼容端点...",
+    "checkingAsrEndpoints": "正在检测 ASR 实时与普通端点...",
     "saveContinue": "保存并继续",
     "added": "{capability} 配置已添加",
     "mainModelReady": "主模型检测通过，已使用 {harness} 配置",
     "endpointUnavailable": "端点不可用",
+    "asrEndpointsUnavailable": "ASR 接入地址不可用。普通转写：{async}；实时转写：{realtime}",
     "modelRuntimeUnavailable": "主模型不可用。Anthropic Messages：{anthropic}；OpenAI Chat Completions：{openai}",
     "modelRuntimeDetectionRequired": "保存主模型前必须完成运行时检测",
     "saveFailed": "保存失败",
@@ -90,7 +92,7 @@
     "mainModelPlaceholder": "填写服务实际暴露的模型 ID",
     "llmBaseHint": "填写含 /v1 的地址；后台会实测 /messages 和 /chat/completions，均可用时优先 Claude Agent SDK",
     "llmModelHint": "不会预填模型名；后台将用此模型 ID 发起最小请求验证可用性",
-    "asrBaseHint": "ASR 的 /v1 兼容地址（实时走 /v1/realtime，批量走 /v1/audio/transcriptions）",
+    "asrBaseHint": "填写含 /v1 的地址；保存前会自动检测实时与普通转写端点",
     "modelHint": "模型 ID，后端会带上",
     "ttsBaseHint": "TTS 的 /v1 兼容地址（后端调 /v1/audio/speech）"
   }
