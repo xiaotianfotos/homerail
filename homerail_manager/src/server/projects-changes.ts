@@ -2,7 +2,6 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ensureDefaultWorkspacePath, getHomerailHome } from "../config/env.js";
 import {
   listProjects,
   getProject,
@@ -196,35 +195,6 @@ function _changeRunInput(body: Record<string, unknown>, changeIdOverride?: strin
   };
 }
 
-function _directoryRoots(): Array<{ id: string; name: string; path: string; writable: boolean }> {
-  const roots = new Map<string, { id: string; name: string; path: string; writable: boolean }>();
-  const add = (id: string, name: string, rawPath?: string) => {
-    if (!rawPath) return;
-    const resolved = path.resolve(rawPath.replace(/^~/, os.homedir()));
-    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) return;
-    roots.set(resolved, { id, name, path: resolved, writable: true });
-  };
-  add("home", "Home", os.homedir());
-  add("filesystem", "Macintosh HD", path.parse(os.homedir()).root || "/");
-  if (process.platform === "darwin") {
-    add("volumes", "Volumes", "/Volumes");
-  }
-  add("cwd", "Current workspace", process.cwd());
-  add("homerail_home", "HomeRail Home", getHomerailHome());
-  add("default_workspace", "Default workspace", ensureDefaultWorkspacePath());
-  for (const project of listProjects()) {
-    add(`project:${project.id}`, `Project: ${project.name}`, project.workspace_path ?? project.project_root);
-  }
-  return [...roots.values()];
-}
-
-function _resolveBrowsePath(rawPath?: string): string {
-  const roots = _directoryRoots().map((root) => root.path);
-  return rawPath?.trim()
-    ? path.resolve(rawPath.trim().replace(/^~/, os.homedir()))
-    : roots[0] ?? os.homedir();
-}
-
 function _pathIsWritable(targetPath: string): boolean {
   try {
     fs.accessSync(targetPath, fs.constants.W_OK);
@@ -232,6 +202,42 @@ function _pathIsWritable(targetPath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function _defaultDirectoryPath(): string {
+  for (const candidate of [os.homedir(), process.cwd()]) {
+    try {
+      const resolved = path.resolve(candidate);
+      if (fs.statSync(resolved).isDirectory()) return resolved;
+    } catch {
+      // Try the next runtime-derived directory.
+    }
+  }
+  return path.resolve(process.cwd());
+}
+
+function _directoryRoots(): Array<{ id: string; name: string; path: string; writable: boolean }> {
+  const roots = new Map<string, { id: string; name: string; path: string; writable: boolean }>();
+  const add = (id: string, name: string, rawPath?: string) => {
+    if (!rawPath) return;
+    try {
+      const resolved = path.resolve(rawPath.replace(/^~/, os.homedir()));
+      if (!fs.statSync(resolved).isDirectory()) return;
+      roots.set(resolved, { id, name, path: resolved, writable: _pathIsWritable(resolved) });
+    } catch {
+      // A deleted or inaccessible project directory is not a usable shortcut.
+    }
+  };
+  for (const project of listProjects()) {
+    add(`project:${project.id}`, project.name, project.workspace_path ?? project.project_root);
+  }
+  return [...roots.values()];
+}
+
+function _resolveBrowsePath(rawPath?: string): string {
+  return rawPath?.trim()
+    ? path.resolve(rawPath.trim().replace(/^~/, os.homedir()))
+    : _defaultDirectoryPath();
 }
 
 function _pathIsGitRepo(targetPath: string): boolean {
@@ -329,7 +335,11 @@ export function projectsChangesRoutesHandler(
 
   // GET /api/projects/directories/roots
   if (pathname === "/api/projects/directories/roots" && req.method === "GET") {
-    ok(res, "Directory roots retrieved", { roots: _directoryRoots() });
+    ok(res, "Directory roots retrieved", {
+      servers: [{ id: "manager", name: "Manager", kind: "manager", can_browse: true }],
+      roots: _directoryRoots(),
+      default_path: _defaultDirectoryPath(),
+    });
     return true;
   }
 

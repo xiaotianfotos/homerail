@@ -237,7 +237,7 @@
     "server": "服務器",
     "browsable": "可瀏覽",
     "notBrowsable": "不可瀏覽",
-    "quickLocations": "快捷位置",
+    "existingProjects": "已有項目目錄",
     "parentTitle": "去上級目錄",
     "parent": "上級",
     "pathPlaceholder": "輸入目錄路徑...",

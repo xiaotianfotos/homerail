@@ -237,7 +237,7 @@
     "server": "服务器",
     "browsable": "可浏览",
     "notBrowsable": "不可浏览",
-    "quickLocations": "快捷位置",
+    "existingProjects": "已有项目目录",
     "parentTitle": "去上级目录",
     "parent": "上级",
     "pathPlaceholder": "输入目录路径...",

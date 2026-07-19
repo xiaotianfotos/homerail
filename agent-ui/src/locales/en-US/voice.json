@@ -237,7 +237,7 @@
     "server": "Server",
     "browsable": "Browsable",
     "notBrowsable": "Not browsable",
-    "quickLocations": "Quick locations",
+    "existingProjects": "Existing project directories",
     "parentTitle": "Go to parent directory",
     "parent": "Parent",
     "pathPlaceholder": "Enter a directory path...",

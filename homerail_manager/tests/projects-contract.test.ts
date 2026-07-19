@@ -88,12 +88,36 @@ describe("project settings API contract", () => {
     expect(storages.status).toBe(200);
     expect(storagesBody.data.storages[0].path).toBe(workspaceDir);
 
+    const defaultWorkspace = path.join(tmpHome, "workspace", "default");
+    expect(fs.existsSync(defaultWorkspace)).toBe(false);
     const roots = await fetch(`http://127.0.0.1:${port}/api/projects/directories/roots`);
-    const rootsBody = await roots.json() as { success: boolean; data: { roots: Array<{ path: string }> } };
+    const rootsBody = await roots.json() as {
+      success: boolean;
+      data: {
+        servers: Array<{ id: string; can_browse: boolean }>;
+        roots: Array<{ id: string; name: string; path: string; writable: boolean }>;
+        default_path: string;
+      };
+    };
     expect(roots.status).toBe(200);
-    expect(rootsBody.data.roots.map((root) => root.path)).toContain(workspaceDir);
-    expect(rootsBody.data.roots.map((root) => root.path)).toContain(path.join(tmpHome, "workspace", "default"));
-    expect(fs.existsSync(path.join(tmpHome, "workspace", "default"))).toBe(true);
+    expect(rootsBody.data.servers).toEqual([
+      expect.objectContaining({ id: "manager", can_browse: true }),
+    ]);
+    expect(rootsBody.data.default_path).toBe(path.resolve(os.homedir()));
+    expect(rootsBody.data.roots).toEqual([
+      expect.objectContaining({
+        id: `project:${projectId}`,
+        name: "OSS",
+        path: workspaceDir,
+        writable: true,
+      }),
+    ]);
+    expect(fs.existsSync(defaultWorkspace)).toBe(false);
+
+    const defaultBrowse = await fetch(`http://127.0.0.1:${port}/api/projects/directories/browse`);
+    const defaultBrowseBody = await defaultBrowse.json() as { data: { path: string } };
+    expect(defaultBrowse.status).toBe(200);
+    expect(defaultBrowseBody.data.path).toBe(path.resolve(os.homedir()));
 
     fs.writeFileSync(path.join(workspaceDir, "README.md"), "ok");
     const browse = await fetch(`http://127.0.0.1:${port}/api/projects/directories/browse?path=${encodeURIComponent(workspaceDir)}`);

@@ -267,17 +267,20 @@ function handleProjectNameInput(event: Event): void {
           {{ selectedServer?.kind || 'manager' }} · {{ selectedServer?.can_browse ? t('voice.directoryPicker.browsable') : t('voice.directoryPicker.notBrowsable') }}
         </div>
 
-        <div class="mb-2 text-xs text-[var(--hr-text-3)]">{{ t('voice.directoryPicker.quickLocations') }}</div>
-        <div class="space-y-1 overflow-y-auto">
-          <button
-            v-for="root in roots"
-            :key="root.id"
-            class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
-            @click="browse(root.path)"
-          >
-            <Folder class="h-4 w-4 shrink-0 text-[var(--hr-accent)]" />
-            <span class="min-w-0 flex-1 truncate">{{ root.name }}</span>
-          </button>
+        <div v-if="roots.length" class="min-h-0 flex-1" data-testid="voice-directory-existing-projects">
+          <div class="mb-2 text-xs text-[var(--hr-text-3)]">{{ t('voice.directoryPicker.existingProjects') }}</div>
+          <div class="space-y-1 overflow-y-auto">
+            <button
+              v-for="root in roots"
+              :key="root.id"
+              data-testid="voice-directory-project-root"
+              class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
+              @click="browse(root.path)"
+            >
+              <Folder class="h-4 w-4 shrink-0 text-[var(--hr-accent)]" />
+              <span class="min-w-0 flex-1 truncate">{{ root.name }}</span>
+            </button>
+          </div>
         </div>
       </aside>
 
