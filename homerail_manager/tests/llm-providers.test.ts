@@ -484,6 +484,133 @@ describe("custom LLM providers", () => {
     expect(response.status).toBe(404);
   });
 
+  it("tests both /v1 endpoints with the exact model and prefers Claude when both work", async () => {
+    const upstreamRequests: Array<{
+      url?: string;
+      model?: string;
+      authorization?: string;
+      apiKey?: string;
+      anthropicVersion?: string;
+    }> = [];
+    const upstream = http.createServer((req, res) => {
+      let raw = "";
+      req.on("data", (chunk) => { raw += chunk; });
+      req.on("end", () => {
+        const body = raw ? JSON.parse(raw) as { model?: string } : {};
+        upstreamRequests.push({
+          url: req.url,
+          model: body.model,
+          authorization: req.headers.authorization,
+          apiKey: typeof req.headers["x-api-key"] === "string" ? req.headers["x-api-key"] : undefined,
+          anthropicVersion: typeof req.headers["anthropic-version"] === "string"
+            ? req.headers["anthropic-version"]
+            : undefined,
+        });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ id: "probe-result" }));
+      });
+    });
+    const upstreamPort = await listen(upstream);
+
+    try {
+      const port = await listen(server);
+      const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/detect-runtime`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_url: `http://127.0.0.1:${upstreamPort}/v1`,
+          api_key: "local-secret",
+          model: "local-exact-model",
+        }),
+      });
+      const body = await response.json() as {
+        data: {
+          available: boolean;
+          preferred_harness: string | null;
+          endpoints: {
+            anthropic: { available: boolean; url: string };
+            openai: { available: boolean; url: string };
+          };
+        };
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.data).toMatchObject({
+        available: true,
+        preferred_harness: "claude_agent_sdk",
+        endpoints: {
+          anthropic: { available: true, url: `http://127.0.0.1:${upstreamPort}/v1/messages` },
+          openai: { available: true, url: `http://127.0.0.1:${upstreamPort}/v1/chat/completions` },
+        },
+      });
+      expect(upstreamRequests.sort((a, b) => String(a.url).localeCompare(String(b.url)))).toEqual([
+        {
+          url: "/v1/chat/completions",
+          model: "local-exact-model",
+          authorization: "Bearer local-secret",
+          apiKey: "local-secret",
+          anthropicVersion: undefined,
+        },
+        {
+          url: "/v1/messages",
+          model: "local-exact-model",
+          authorization: "Bearer local-secret",
+          apiKey: "local-secret",
+          anthropicVersion: "2023-06-01",
+        },
+      ]);
+    } finally {
+      await close(upstream);
+    }
+  });
+
+  it("selects Kimi Code only when the OpenAI-compatible endpoint works", async () => {
+    const upstream = http.createServer((req, res) => {
+      req.resume();
+      if (req.url === "/v1/chat/completions") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ id: "openai-probe-result" }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+    });
+    const upstreamPort = await listen(upstream);
+
+    try {
+      const port = await listen(server);
+      const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/detect-runtime`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_url: `http://127.0.0.1:${upstreamPort}/v1`,
+          model: "openai-only-model",
+        }),
+      });
+      const body = await response.json() as {
+        data: {
+          available: boolean;
+          preferred_harness: string | null;
+          endpoints: {
+            anthropic: { available: boolean; status?: number };
+            openai: { available: boolean; status?: number };
+          };
+        };
+      };
+
+      expect(body.data).toMatchObject({
+        available: true,
+        preferred_harness: "kimi_code",
+        endpoints: {
+          anthropic: { available: false, status: 404 },
+          openai: { available: true, status: 200 },
+        },
+      });
+    } finally {
+      await close(upstream);
+    }
+  });
+
   it("migrates legacy plaintext DB settings to Manager-encrypted storage", () => {
     getDb().prepare(`
       INSERT INTO llm_settings(id, provider_id, model_name, updated_at, data)

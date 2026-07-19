@@ -106,6 +106,42 @@ export async function probeModels(
   }
 }
 
+export type DetectedMainModelHarness = 'claude_agent_sdk' | 'kimi_code'
+
+export interface MainModelEndpointProbe {
+  available: boolean
+  url: string
+  status?: number
+  error?: string
+}
+
+export interface MainModelRuntimeDetection {
+  available: boolean
+  preferred_harness: DetectedMainModelHarness | null
+  endpoints: {
+    anthropic: MainModelEndpointProbe
+    openai: MainModelEndpointProbe
+  }
+}
+
+/**
+ * 用用户填写的准确模型名实测 Anthropic Messages 与 OpenAI Chat Completions。
+ * 两个协议都可用时，后端固定优先 Claude Agent SDK。
+ */
+export async function detectMainModelRuntime(input: {
+  baseUrl: string
+  apiKey: string
+  model: string
+}): Promise<MainModelRuntimeDetection> {
+  const res = await http.post<any>('/api/llm/models/detect-runtime', {
+    base_url: input.baseUrl,
+    api_key: input.apiKey,
+    model: input.model
+  })
+  const data = res.data ?? res
+  return data as MainModelRuntimeDetection
+}
+
 /**
  * 获取常见供应商的常用模型列表（静态 fallback）
  */

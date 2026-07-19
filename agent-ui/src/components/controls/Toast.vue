@@ -1,23 +1,25 @@
 <template>
-  <Transition
-    enter-active-class="transition ease-out duration-200"
-    enter-from-class="opacity-0 -translate-y-2"
-    enter-to-class="opacity-100 translate-y-0"
-    leave-active-class="transition ease-in duration-150"
-    leave-from-class="opacity-100 translate-y-0"
-    leave-to-class="opacity-0 -translate-y-2"
-  >
-    <div v-if="show" class="toast-container" data-testid="global-toast">
-      <div :class="['toast', `toast-${type}`]">
-        <div class="toast-icon">
-          <component :is="toastIcon" class="h-4 w-4" />
-        </div>
-        <div class="toast-content">
-          {{ message }}
+  <Teleport to="body">
+    <Transition
+      enter-active-class="transition ease-out duration-200"
+      enter-from-class="opacity-0 -translate-y-2"
+      enter-to-class="opacity-100 translate-y-0"
+      leave-active-class="transition ease-in duration-150"
+      leave-from-class="opacity-100 translate-y-0"
+      leave-to-class="opacity-0 -translate-y-2"
+    >
+      <div v-if="show" class="toast-container" data-testid="global-toast">
+        <div :class="['toast', `toast-${type}`]">
+          <div class="toast-icon">
+            <component :is="toastIcon" class="h-4 w-4" />
+          </div>
+          <div class="toast-content">
+            {{ message }}
+          </div>
         </div>
       </div>
-    </div>
-  </Transition>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -41,7 +43,7 @@ defineExpose({
 
 <style scoped>
 .toast-container {
-  @apply pointer-events-none fixed left-1/2 top-6 z-[100] flex max-w-[calc(100vw-32px)] -translate-x-1/2 justify-center px-4;
+  @apply pointer-events-none fixed left-1/2 top-6 z-[10000] flex max-w-[calc(100vw-32px)] -translate-x-1/2 justify-center px-4;
 }
 
 .toast {

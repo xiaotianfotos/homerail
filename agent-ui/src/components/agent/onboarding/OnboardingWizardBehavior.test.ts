@@ -14,3 +14,16 @@ describe('OnboardingWizard environment checks', () => {
     expect(wizardSource).toContain('v-if="hostShellRequired" class="onboarding-wizard__docker-check"')
   })
 })
+
+describe('OnboardingWizard Manager Agent activation', () => {
+  it('uses the detected harness and keeps Anthropic-compatible settings on Claude', () => {
+    expect(wizardSource).toContain('if (detectedHarness) return detectedHarness')
+    expect(wizardSource).toContain("setting.protocol === 'anthropic_compatible'")
+    expect(wizardSource).toContain("return 'claude_agent_sdk'")
+  })
+
+  it('lets the form await runtime activation before it reports success', () => {
+    expect(wizardSource).toContain(':activate-setting="activateCreatedManagerAgentSetting"')
+    expect(wizardSource).toContain('await configureManagerAgentSetting(setting, detectedHarness)')
+  })
+})

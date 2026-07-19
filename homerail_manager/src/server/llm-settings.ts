@@ -73,6 +73,111 @@ function _modelProbeBaseUrlForSetting(setting: LLMSetting): string {
   return _normalizedBaseUrl(baseUrl);
 }
 
+type MainModelHarness = "claude_agent_sdk" | "kimi_code";
+
+interface MainModelEndpointProbe {
+  available: boolean;
+  url: string;
+  status?: number;
+  error?: string;
+}
+
+function _versionedEndpointUrl(baseUrl: string, endpoint: "messages" | "chat/completions"): string {
+  const normalized = _normalizedBaseUrl(baseUrl);
+  return normalized.endsWith("/v1")
+    ? `${normalized}/${endpoint}`
+    : `${normalized}/v1/${endpoint}`;
+}
+
+function _modelProbeHeaders(apiKey: string, anthropic: boolean): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...(apiKey
+      ? {
+          Authorization: `Bearer ${apiKey}`,
+          "x-api-key": apiKey,
+        }
+      : {}),
+    ...(anthropic ? { "anthropic-version": "2023-06-01" } : {}),
+  };
+}
+
+async function _probeMainModelEndpoint(input: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  endpoint: "anthropic" | "openai";
+}): Promise<MainModelEndpointProbe> {
+  const anthropic = input.endpoint === "anthropic";
+  const url = _versionedEndpointUrl(input.baseUrl, anthropic ? "messages" : "chat/completions");
+  const body = anthropic
+    ? {
+        model: input.model,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "Reply with OK." }],
+      }
+    : {
+        model: input.model,
+        max_tokens: 1,
+        stream: false,
+        messages: [{ role: "user", content: "Reply with OK." }],
+      };
+  try {
+    const upstream = await fetch(url, {
+      method: "POST",
+      headers: _modelProbeHeaders(input.apiKey, anthropic),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const responseText = await upstream.text().catch(() => "");
+    if (!upstream.ok) {
+      return {
+        available: false,
+        url,
+        status: upstream.status,
+        error: `HTTP ${upstream.status}${responseText ? `: ${responseText.slice(0, 240)}` : ""}`,
+      };
+    }
+    return { available: true, url, status: upstream.status };
+  } catch (err) {
+    return {
+      available: false,
+      url,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function _detectMainModelRuntime(input: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}): Promise<{
+  available: boolean;
+  preferred_harness: MainModelHarness | null;
+  endpoints: {
+    anthropic: MainModelEndpointProbe;
+    openai: MainModelEndpointProbe;
+  };
+}> {
+  const [anthropic, openai] = await Promise.all([
+    _probeMainModelEndpoint({ ...input, endpoint: "anthropic" }),
+    _probeMainModelEndpoint({ ...input, endpoint: "openai" }),
+  ]);
+  // Claude Agent SDK is the product default whenever the model actually
+  // supports both protocols. Kimi Code is only the OpenAI-compatible fallback.
+  const preferredHarness: MainModelHarness | null = anthropic.available
+    ? "claude_agent_sdk"
+    : openai.available
+      ? "kimi_code"
+      : null;
+  return {
+    available: preferredHarness !== null,
+    preferred_harness: preferredHarness,
+    endpoints: { anthropic, openai },
+  };
+}
+
 function _created(res: http.ServerResponse, message: string, data: unknown) {
   json(res, 201, { success: true, message, data });
 }
@@ -374,6 +479,33 @@ export function llmSettingsRoutesHandler(
           const message = err instanceof Error ? err.message : String(err);
           _ok(res, "Probe failed", { models: [], error: message });
         }
+      })
+      .catch((err) => {
+        _badRequest(res, err instanceof Error ? err.message : "Invalid JSON body");
+      });
+    return true;
+  }
+
+  // POST /api/llm/models/detect-runtime — use the exact configured model to
+  // test both supported Manager Agent protocols. A /v1 base URL is accepted
+  // as-is, without producing /v1/v1 paths.
+  if (pathname === "/api/llm/models/detect-runtime" && req.method === "POST") {
+    _readJsonBody(req)
+      .then(async (body) => {
+        const b = body as Record<string, unknown>;
+        const baseUrl = typeof b.base_url === "string" ? _normalizedBaseUrl(b.base_url) : "";
+        const apiKey = typeof b.api_key === "string" ? b.api_key.trim() : "";
+        const model = typeof b.model === "string" ? b.model.trim() : "";
+        if (!baseUrl) {
+          _badRequest(res, "Missing required field: base_url");
+          return;
+        }
+        if (!model) {
+          _badRequest(res, "Missing required field: model");
+          return;
+        }
+        const result = await _detectMainModelRuntime({ baseUrl, apiKey, model });
+        _ok(res, result.available ? "Main model runtime detected" : "Main model runtime unavailable", result);
       })
       .catch((err) => {
         _badRequest(res, err instanceof Error ? err.message : "Invalid JSON body");

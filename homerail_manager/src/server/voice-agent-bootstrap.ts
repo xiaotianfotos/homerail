@@ -79,6 +79,7 @@ import {
 import { buildGenerativeUiCanvasContext } from "../generative-ui/canvas-context.js";
 import { acceptPluginToolExecution } from "../plugins/execution-broker.js";
 import {
+  injectVoiceArtifactAppearanceBridge,
   publishVoiceArtifact,
   resolveVoiceArtifact,
   resolveVoiceArtifactRevision,
@@ -2013,10 +2014,16 @@ export function voiceAgentBootstrapHandler(
       res.writeHead(200, {
         "Content-Type": type,
         "X-Content-Type-Options": "nosniff",
-        "Cache-Control": artifactById ? "no-store" : "private, max-age=31536000, immutable",
+        "Cache-Control": ext === ".html" || artifactById
+          ? "no-store"
+          : "private, max-age=31536000, immutable",
         ...(ext === ".html" ? { "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-pointer-lock allow-popups" } : {}),
       });
-      fs.createReadStream(resolved).pipe(res);
+      if (ext === ".html") {
+        res.end(injectVoiceArtifactAppearanceBridge(fs.readFileSync(resolved, "utf8")));
+      } else {
+        fs.createReadStream(resolved).pipe(res);
+      }
     } catch (err) {
       notFound(res, err instanceof Error ? err.message : String(err));
     }

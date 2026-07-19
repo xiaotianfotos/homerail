@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getDefaultWorkspacePath } from "../src/config/env.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import {
+  injectVoiceArtifactAppearanceBridge,
   publishVoiceArtifact,
   resolveVoiceArtifact,
   resolveVoiceArtifactRevision,
@@ -32,6 +33,20 @@ describe("voice artifact publishing", () => {
     if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
     else process.env.HOMERAIL_HOME = oldHome;
     fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("injects one appearance bridge into the served HTML copy", () => {
+    const original = "<!doctype html><html><head><title>Story</title></head><body><h1>Story</h1></body></html>";
+    const injected = injectVoiceArtifactAppearanceBridge(original);
+
+    expect(injected).toContain("data-homerail-artifact-appearance-bridge");
+    expect(injected).toContain("homerail:artifact-appearance");
+    expect(injected).toContain("visibleCanvasColor() || colors[0]");
+    expect(injected).toContain("background-color: var(--homerail-artifact-scrollbar-track) !important");
+    expect(injected).toContain("<h1>Story</h1>");
+    expect(injected.indexOf("data-homerail-artifact-appearance-bridge"))
+      .toBeLessThan(injected.indexOf("</head>"));
+    expect(injectVoiceArtifactAppearanceBridge(injected)).toBe(injected);
   });
 
   it("publishes a content-addressed image with a persistent browser URL", () => {

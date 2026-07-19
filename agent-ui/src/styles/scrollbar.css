@@ -2,36 +2,43 @@
    CUSTOM SCROLLBAR STYLES - APPEARANCE TOKEN DRIVEN
    ============================================================================ */
 
-/* 默认滚动条样式 */
+/* Keep every host scrollbar on the appearance token contract. Components may
+   choose a narrower width, but should not invent a separate color palette. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--hr-scrollbar) transparent;
+  scrollbar-color: var(--hr-scrollbar) var(--hr-scrollbar-track);
 }
 
 /* Webkit 滚动条样式 (Chrome, Safari, Edge) */
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
+  background-color: var(--hr-scrollbar-track) !important;
 }
 
 *::-webkit-scrollbar-track {
-  background: transparent;
+  background-color: var(--hr-scrollbar-track) !important;
+  border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: var(--hr-scrollbar);
-  border-radius: 4px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  background-color: var(--hr-scrollbar) !important;
+  border-radius: 999px;
+  border: 2px solid var(--hr-scrollbar-track) !important;
+  background-clip: border-box;
   transition: background-color 0.2s ease;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: var(--hr-scrollbar-hover);
+  background-color: var(--hr-scrollbar-hover) !important;
 }
 
 *::-webkit-scrollbar-thumb:active {
-  background-color: var(--hr-scrollbar-hover);
+  background-color: var(--hr-scrollbar-hover) !important;
+}
+
+*::-webkit-scrollbar-corner {
+  background-color: var(--hr-scrollbar-track) !important;
 }
 
 /* 禁用滚动条时的样式 */

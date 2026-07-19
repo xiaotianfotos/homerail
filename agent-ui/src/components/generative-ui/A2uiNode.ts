@@ -36,7 +36,6 @@ import {
   Mail,
   MapPin,
   Menu,
-  Monitor,
   MoreHorizontal,
   MoreVertical,
   Paperclip,
@@ -88,6 +87,7 @@ import {
   type A2uiRuntime,
   type A2uiComponentV1,
 } from '@/generative-ui/a2ui'
+import { postAppearanceToArtifactFrame } from '@/appearance/appearance-registry'
 import A2uiDag, { type A2uiDagItem } from './A2uiDag.vue'
 
 const icons: Record<string, Component> = {
@@ -740,9 +740,12 @@ function renderNode(
           allow: '',
           tabindex: '-1',
           title: title || 'HTML artifact preview',
+          'data-homerail-artifact-frame': '',
+          onLoad: (event: Event) => {
+            const frame = event.currentTarget
+            if (frame instanceof HTMLIFrameElement) postAppearanceToArtifactFrame(frame)
+          },
         }),
-        h('button', { type: 'button', onClick: preview }, [h(Monitor, { size: 16, 'aria-hidden': true }), title || 'Open preview']),
-        description ? h('p', description) : null,
       ])
     }
     return h('button', { ...nodeAttrs(), type: 'button', onClick: preview }, [

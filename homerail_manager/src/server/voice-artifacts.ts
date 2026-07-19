@@ -65,6 +65,88 @@ export class VoiceArtifactRevisionConflictError extends Error {
   }
 }
 
+const ARTIFACT_APPEARANCE_BRIDGE = `<style data-homerail-artifact-appearance-bridge>
+:root {
+  color-scheme: dark;
+  --homerail-artifact-scrollbar-track: #0a0f18;
+  --homerail-artifact-scrollbar: #2a3541;
+  --homerail-artifact-scrollbar-hover: #435565;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--homerail-artifact-scrollbar) var(--homerail-artifact-scrollbar-track) !important;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background-color: var(--homerail-artifact-scrollbar-track) !important;
+}
+*::-webkit-scrollbar-track {
+  background-color: var(--homerail-artifact-scrollbar-track) !important;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--homerail-artifact-scrollbar) !important;
+  border: 2px solid var(--homerail-artifact-scrollbar-track) !important;
+  background-clip: border-box;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:active { background-color: var(--homerail-artifact-scrollbar-hover) !important; }
+*::-webkit-scrollbar-corner { background-color: var(--homerail-artifact-scrollbar-track) !important; }
+</style><script data-homerail-artifact-appearance-bridge>
+(() => {
+  const messageType = "homerail:artifact-appearance";
+  const root = document.documentElement;
+  const safeColor = (value) => typeof value === "string"
+    && value.length <= 160
+    && !/[;{}<>]/.test(value)
+    && (typeof CSS === "undefined" || typeof CSS.supports !== "function" || CSS.supports("color", value));
+  const visibleCanvasColor = () => {
+    const candidates = [document.body, root]
+      .filter(Boolean)
+      .map((element) => getComputedStyle(element).backgroundColor);
+    return candidates.find((value) => {
+      if (!safeColor(value) || value === "transparent") return false;
+      if (!value.startsWith("rgba(")) return true;
+      return Number(value.slice(value.lastIndexOf(",") + 1, -1).trim()) !== 0;
+    });
+  };
+  window.addEventListener("message", (event) => {
+    const payload = event.data;
+    if (event.source !== window.parent || !payload || payload.type !== messageType || payload.version !== 1) return;
+    if (payload.colorScheme !== "dark" && payload.colorScheme !== "light") return;
+    const colors = [payload.scrollbarTrack, payload.scrollbar, payload.scrollbarHover];
+    if (!colors.every(safeColor)) return;
+    root.style.colorScheme = payload.colorScheme;
+    root.style.setProperty("--homerail-artifact-scrollbar-track", visibleCanvasColor() || colors[0]);
+    root.style.setProperty("--homerail-artifact-scrollbar", colors[1]);
+    root.style.setProperty("--homerail-artifact-scrollbar-hover", colors[2]);
+  });
+})();
+</script>`;
+
+/** Adds the host appearance bridge to a served copy without mutating the stored Artifact. */
+export function injectVoiceArtifactAppearanceBridge(html: string): string {
+  if (html.includes("data-homerail-artifact-appearance-bridge")) return html;
+
+  const closingHead = /<\/head\s*>/i;
+  if (closingHead.test(html)) return html.replace(closingHead, `${ARTIFACT_APPEARANCE_BRIDGE}</head>`);
+
+  const openingHead = /<head(?:\s[^>]*)?>/i;
+  if (openingHead.test(html)) {
+    return html.replace(openingHead, (match) => `${match}${ARTIFACT_APPEARANCE_BRIDGE}`);
+  }
+
+  const doctype = /<!doctype[^>]*>/i;
+  const match = doctype.exec(html);
+  if (match) {
+    const index = match.index + match[0].length;
+    return `${html.slice(0, index)}${ARTIFACT_APPEARANCE_BRIDGE}${html.slice(index)}`;
+  }
+  return `${ARTIFACT_APPEARANCE_BRIDGE}${html}`;
+}
+
 function safeSessionId(value: string): string {
   if (!/^[A-Za-z0-9_.-]+$/.test(value)) throw new Error("invalid voice session id");
   return value;

@@ -16,10 +16,14 @@ import { useI18n } from 'vue-i18n'
 import { Check, Sparkles, ArrowRight, Terminal, Mic, Volume2, X, FolderCheck, RefreshCw } from 'lucide-vue-next'
 import { useAgentStore } from '@/stores/agent-store'
 import { useOnboardingStatus } from '@/composables/useOnboardingStatus'
+import { useToast } from '@/components/controls/useToast'
 import { listProviders, agentSettingsApi } from '@/api/agent'
 import { probeDockerWorkspaceMount, type DockerWorkspaceProbeResult } from '@/api/services/voice-agent-api'
 import { cn } from '@/lib/utils'
-import { isKimiProviderId } from '@/lib/model-runtime'
+import {
+  isKimiCodeCompatibleModelSetting,
+  type ManagerAgentHarness,
+} from 'homerail-protocol'
 import type { Provider } from '@/api/types/orchestration-v2.types'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
 import OnboardingStepForm from './OnboardingStepForm.vue'
@@ -37,6 +41,7 @@ const emit = defineEmits<{
 
 const store = useAgentStore()
 const { t } = useI18n()
+const { showToast } = useToast()
 const { status, refresh } = useOnboardingStatus()
 
 const providers = ref<Provider[]>([])
@@ -147,7 +152,6 @@ function maybeFinish(): void {
 
 // ── 交互 ──────────────────────────────────────────────────────
 async function onCreated(setting?: LLMSetting): Promise<void> {
-  await applyCreatedManagerAgentSetting(setting)
   await Promise.all([
     refresh(),
     loadExistingSettings(),
@@ -221,31 +225,59 @@ function isDedicatedManagerAgentSetting(setting: LLMSetting | undefined): settin
 
 const existingManagerAgentSettings = computed(() => existingSettings.value.filter(isDedicatedManagerAgentSetting))
 
-function harnessForManagerAgentSetting(setting: LLMSetting): 'kimi_code' | 'claude_agent_sdk' {
-  return isKimiProviderId(setting.provider_id) ? 'kimi_code' : 'claude_agent_sdk'
+function harnessForManagerAgentSetting(
+  setting: LLMSetting,
+  detectedHarness?: Extract<ManagerAgentHarness, 'claude_agent_sdk' | 'kimi_code'>,
+): 'kimi_code' | 'claude_agent_sdk' {
+  if (detectedHarness) return detectedHarness
+  // Persisted dual-protocol settings prefer Claude, matching runtime detection.
+  if (setting.anthropic_base_url || setting.protocol === 'anthropic_compatible') {
+    return 'claude_agent_sdk'
+  }
+  return isKimiCodeCompatibleModelSetting({
+    providerId: setting.provider_id,
+    providerSource: setting.provider_source,
+    planType: setting.plan_type,
+    protocol: setting.protocol,
+    endpointId: setting.endpoint_id,
+    endpointName: setting.endpoint_name,
+  }) ? 'kimi_code' : 'claude_agent_sdk'
 }
 
-async function applyCreatedManagerAgentSetting(setting: LLMSetting | undefined): Promise<void> {
+async function configureManagerAgentSetting(
+  setting: LLMSetting,
+  detectedHarness?: Extract<ManagerAgentHarness, 'claude_agent_sdk' | 'kimi_code'>,
+): Promise<void> {
+  const harness = harnessForManagerAgentSetting(setting, detectedHarness)
+  await agentSettingsApi.updateVoiceAgentConfig({
+    harness,
+    llm_setting_id: setting.id,
+    provider_name: setting.provider_id,
+    model_name: setting.model_name,
+  })
+}
+
+async function activateCreatedManagerAgentSetting(
+  setting: LLMSetting,
+  detectedHarness?: Extract<ManagerAgentHarness, 'claude_agent_sdk' | 'kimi_code'>,
+): Promise<void> {
   if (currentStep.value.id !== 'agent' || !isDedicatedManagerAgentSetting(setting)) return
-  await applyExistingManagerAgentSetting(setting)
+  await configureManagerAgentSetting(setting, detectedHarness)
 }
 
 async function applyExistingManagerAgentSetting(setting: LLMSetting): Promise<void> {
   applyingExistingAgentId.value = setting.id
   try {
-    const harness = harnessForManagerAgentSetting(setting)
-    await agentSettingsApi.updateVoiceAgentConfig({
-      harness,
-      llm_setting_id: setting.id,
-      provider_name: setting.provider_id,
-      model_name: setting.model_name,
-    })
+    await configureManagerAgentSetting(setting)
     await Promise.all([
       refresh(),
       loadExistingSettings(),
     ])
     await store.loadManagerRuntimeOptions()
     advanceIfDone()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    showToast(message, 'error', 6000)
   } finally {
     applyingExistingAgentId.value = null
   }
@@ -392,6 +424,7 @@ watch(activePane, (pane) => {
               :capability="currentStep.capability"
               :providers="providers"
               :existing-settings="existingSettings"
+              :activate-setting="activateCreatedManagerAgentSetting"
               @created="onCreated"
             />
           </template>
@@ -411,6 +444,7 @@ watch(activePane, (pane) => {
               :capability="currentStep.capability"
               :providers="providers"
               :existing-settings="existingSettings"
+              :activate-setting="activateCreatedManagerAgentSetting"
               @created="onCreated"
             />
           </template>

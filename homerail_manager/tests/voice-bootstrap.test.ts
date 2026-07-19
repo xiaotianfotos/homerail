@@ -1342,9 +1342,12 @@ describe("voice bootstrap routes", () => {
 
       const preview = await fetch(`${baseUrl}${publishedBody.data.artifact.url}`);
       expect(preview.status).toBe(200);
+      expect(preview.headers.get("cache-control")).toBe("no-store");
       expect(preview.headers.get("content-security-policy"))
         .toBe("sandbox allow-scripts allow-forms allow-pointer-lock allow-popups");
-      expect(await preview.text()).toContain("<h1>AI story</h1>");
+      const previewHtml = await preview.text();
+      expect(previewHtml).toContain("<h1>AI story</h1>");
+      expect(previewHtml).toContain("data-homerail-artifact-appearance-bridge");
 
       fs.writeFileSync(
         path.join(projectRoot, "story.html"),

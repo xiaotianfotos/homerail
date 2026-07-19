@@ -6,14 +6,19 @@
  *   1. 内置凭证（供应商+计费）：选凭证 → 选模型 → 填 API Key。
  *      base_url / 协议 / asr·tts URL 从 preset 自动带出。
  *   2. 自定义 / 本地部署：直接填接入地址 + 模型名 +（可选）Key。
- *      适用于本地部署的 ASR/TTS，或任何未内置预设的服务。
+ *      主模型会实测 Anthropic Messages 与 OpenAI Chat Completions；双可用时优先 Claude。
  */
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Eye, EyeOff, Server, Package } from 'lucide-vue-next'
 import { agentSettingsApi } from '@/api/agent'
-import { probeModels } from '@/api/services/providers-api'
+import {
+  detectMainModelRuntime,
+  probeModels,
+  type DetectedMainModelHarness,
+  type MainModelRuntimeDetection,
+} from '@/api/services/providers-api'
 import { useToast } from '@/components/controls/useToast'
 import { createProtocolLabels } from '@/lib/protocol-labels'
 import { cn } from '@/lib/utils'
@@ -32,6 +37,8 @@ const props = defineProps<{
   providers: Provider[]
   /** 已配置的 settings，用于"复用已有 key"派生新能力模型 */
   existingSettings?: LLMSetting[]
+  /** 主模型保存后、显示成功提示前绑定后台检测出的 Manager Agent 运行时。 */
+  activateSetting?: (setting: LLMSetting, harness?: DetectedMainModelHarness) => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -158,6 +165,7 @@ const selectedModelId = ref('')
 const apiKey = ref('')
 const showKey = ref(false)
 const saving = ref(false)
+const checkingMainModel = ref(false)
 const probedModels = ref<string[]>([])
 let probeTimer: number | undefined
 
@@ -228,7 +236,7 @@ function selectCredential(key: string): void {
 // ── 自定义 / 本地部署表单状态 ─────────────────────────────────
 // 本地 OpenAI Audio 服务从 /v1 Base URL 派生标准 HTTP/WS 端点并持久化。
 interface CustomFields {
-  baseUrl: string  // vLLM OpenAI 兼容接入地址（不含 /v1）
+  baseUrl: string
   model: string
   voice: string    // TTS 可选音色
 }
@@ -253,15 +261,15 @@ function voiceEndpoint(baseUrl: string, path: string): string {
 const customProviderId = computed(() => `local-${props.capability.replace('supports_', '')}`)
 const customProviderName = computed(() => t('onboarding.form.localProvider', { capability: capabilityLabel(props.capability) }))
 
-// 各能力的字段配置 + 示例（基于本地 vLLM 部署实测）
+// 各能力的模型名必须由用户或服务目录提供，不预填具体模型。
 const customFieldConfig = computed(() => {
   if (props.capability === 'supports_llm') {
     return {
       baseUrlPlaceholder: 'http://localhost/v1',
-      modelPlaceholder: 'qwen3.6',
+      modelPlaceholder: t('onboarding.form.mainModelPlaceholder'),
       baseUrlHint: t('onboarding.form.llmBaseHint'),
       modelHint: t('onboarding.form.llmModelHint'),
-      defaultModel: 'qwen3.6',
+      defaultModel: '',
     }
   }
   if (props.capability === 'supports_asr') {
@@ -270,7 +278,7 @@ const customFieldConfig = computed(() => {
       modelPlaceholder: 'qwen3-asr-realtime',
       baseUrlHint: t('onboarding.form.asrBaseHint'),
       modelHint: t('onboarding.form.modelHint'),
-      defaultModel: 'qwen3-asr-realtime',
+      defaultModel: '',
     }
   }
   // tts
@@ -279,11 +287,11 @@ const customFieldConfig = computed(() => {
     modelPlaceholder: 'qwen3-tts',
     baseUrlHint: t('onboarding.form.ttsBaseHint'),
     modelHint: t('onboarding.form.modelHint'),
-    defaultModel: 'qwen3-tts',
+    defaultModel: '',
   }
 })
 
-// 切换能力时重置自定义字段 + 预填默认模型
+// 切换能力时重置自定义字段；模型保持空值，避免绑定某个硬编码模型。
 watch(() => props.capability, () => {
   customFields.value = { baseUrl: '', model: customFieldConfig.value.defaultModel, voice: '' }
 }, { immediate: true })
@@ -332,7 +340,7 @@ const presetCanSubmit = computed(() => {
   return apiKey.value.trim().length > 0
 })
 
-// 自定义模式：base_url 必填；model 在 LLM/ASR/TTS 下都必填（有默认值预填）
+// 自定义模式：base_url 与 model 都必填；具体模型名不做任何默认假设。
 const customCanSubmit = computed(() => {
   return customFields.value.baseUrl.trim().length > 0 && customFields.value.model.trim().length > 0
 })
@@ -340,15 +348,52 @@ const customCanSubmit = computed(() => {
 const canSubmit = computed(() => mode.value === 'preset' ? presetCanSubmit.value : customCanSubmit.value)
 
 // ── 提交 ──────────────────────────────────────────────────────
+function mainModelProbeError(result: MainModelRuntimeDetection): string {
+  const anthropic = result.endpoints.anthropic.error || t('onboarding.form.endpointUnavailable')
+  const openai = result.endpoints.openai.error || t('onboarding.form.endpointUnavailable')
+  return t('onboarding.form.modelRuntimeUnavailable', { anthropic, openai })
+}
+
+async function detectCustomMainModel(): Promise<MainModelRuntimeDetection> {
+  const result = await detectMainModelRuntime({
+    baseUrl: customFields.value.baseUrl.trim(),
+    // 与后续持久化/运行时使用同一个无 Key 占位值，避免检测和实际调用鉴权不一致。
+    apiKey: apiKey.value.trim() || 'local-no-key',
+    model: customFields.value.model.trim(),
+  })
+  if (!result.available || !result.preferred_harness) throw new Error(mainModelProbeError(result))
+  return result
+}
+
+function mainModelHarnessLabel(harness: DetectedMainModelHarness): string {
+  return harness === 'claude_agent_sdk' ? 'Claude Agent SDK' : 'Kimi Code'
+}
+
 async function submit(): Promise<void> {
   if (!canSubmit.value || saving.value) return
   saving.value = true
   try {
+    let mainModelDetection: MainModelRuntimeDetection | undefined
+    if (mode.value === 'custom' && props.capability === 'supports_llm') {
+      checkingMainModel.value = true
+      try {
+        mainModelDetection = await detectCustomMainModel()
+      } finally {
+        checkingMainModel.value = false
+      }
+    }
     const setting =
       mode.value === 'preset'
         ? await submitPreset()
-        : await submitCustom()
-    showToast(t('onboarding.form.added', { capability: capabilityLabel(props.capability) }), 'success')
+        : await submitCustom(mainModelDetection)
+    if (!setting) throw new Error(t('onboarding.form.saveFailed'))
+    await props.activateSetting?.(setting, mainModelDetection?.preferred_harness ?? undefined)
+    const successMessage = mode.value === 'custom' && props.capability === 'supports_llm'
+      ? t('onboarding.form.mainModelReady', {
+          harness: mainModelHarnessLabel(mainModelDetection!.preferred_harness!),
+        })
+      : t('onboarding.form.added', { capability: capabilityLabel(props.capability) })
+    showToast(successMessage, 'success')
     emit('created', setting)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : t('onboarding.form.saveFailed')
@@ -406,7 +451,7 @@ async function submitPreset(): Promise<LLMSetting | undefined> {
   return res.data
 }
 
-async function submitCustom(): Promise<LLMSetting | undefined> {
+async function submitCustom(mainModelDetection?: MainModelRuntimeDetection): Promise<LLMSetting | undefined> {
   const f = customFields.value
   const pid = customProviderId.value
   const pname = customProviderName.value
@@ -415,8 +460,16 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
   const rawBaseUrl = f.baseUrl.trim()
   const baseUrl = props.capability === 'supports_llm' ? rawBaseUrl : voiceApiBase(rawBaseUrl)
 
-  // 本地语音服务使用 OpenAI Audio 兼容协议，并保存可覆盖的标准 HTTP/WS 端点。
-  const protocol: ProviderProtocol = 'openai_compatible'
+  const isMainModel = props.capability === 'supports_llm'
+  if (isMainModel && !mainModelDetection?.preferred_harness) {
+    throw new Error(t('onboarding.form.modelRuntimeDetectionRequired'))
+  }
+  const anthropicAvailable = mainModelDetection?.endpoints.anthropic.available === true
+  const openaiAvailable = mainModelDetection?.endpoints.openai.available === true
+  // 语音服务使用 OpenAI Audio；主模型协议完全由后台实测结果决定。
+  const protocol: ProviderProtocol = isMainModel && mainModelDetection?.preferred_harness === 'claude_agent_sdk'
+    ? 'anthropic_compatible'
+    : 'openai_compatible'
 
   const caps = {
     supports_llm: props.capability === 'supports_llm',
@@ -449,7 +502,9 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
     name: pname,
     default_model: model,
     base_url: baseUrl,
-    chat_completions_base_url: props.capability === 'supports_llm' ? baseUrl : undefined,
+    // 主模型 provider 是固定 id；显式用空串清掉上一次检测留下的失效端点。
+    chat_completions_base_url: isMainModel ? (openaiAvailable ? baseUrl : '') : undefined,
+    anthropic_base_url: isMainModel ? (anthropicAvailable ? baseUrl : '') : undefined,
     voice_adapter: voiceAdapter,
     status: 'active' as const,
     ...voiceUrls,
@@ -470,10 +525,11 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
     endpoint_name: 'custom',
     plan_type: 'custom',
     protocol,
-    auth_type: 'bearer',
+    auth_type: protocol === 'anthropic_compatible' ? 'api-key' : 'bearer',
     base_url: baseUrl,
-    // LLM 同时填 chat_completions_base_url；ASR/TTS 后端只用 base_url
-    chat_completions_base_url: props.capability === 'supports_llm' ? baseUrl : undefined,
+    // 保存所有实际可用的端点；双协议可用时运行时仍固定优先 Claude。
+    chat_completions_base_url: isMainModel && openaiAvailable ? baseUrl : undefined,
+    anthropic_base_url: isMainModel && anthropicAvailable ? baseUrl : undefined,
     voice_adapter: voiceAdapter,
     ...voiceUrls,
     // TTS 音色（后端 TTS payload 会带上）
@@ -659,7 +715,13 @@ async function submitCustom(): Promise<LLMSetting | undefined> {
         @click="submit"
       >
         <Loader2 v-if="saving" class="h-3.5 w-3.5 animate-spin" />
-        <span>{{ saving ? t('onboarding.form.saving') : t('onboarding.form.saveContinue') }}</span>
+        <span>{{
+          checkingMainModel
+            ? t('onboarding.form.checkingMainModel')
+            : saving
+              ? t('onboarding.form.saving')
+              : t('onboarding.form.saveContinue')
+        }}</span>
       </button>
     </div>
   </div>

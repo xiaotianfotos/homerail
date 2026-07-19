@@ -7,6 +7,7 @@ import {
 import { isSafeGenerativeUiArtifactUri, type HomerailViewModelNodeV1 } from 'homerail-protocol'
 import ViewSpecDag from './ViewSpecDag.vue'
 import type { GenerativeUiPreviewRequestV1 } from '@/generative-ui/types'
+import { postAppearanceToArtifactFrame } from '@/appearance/appearance-registry'
 
 const icons = {
   activity: Activity, alert: AlertTriangle, check: Check, clock: Clock3, database: Database,
@@ -162,9 +163,12 @@ function renderNode(
           sandbox: 'allow-scripts allow-forms allow-pointer-lock allow-popups',
           tabindex: '-1',
           title: node.title || 'HTML artifact preview',
+          'data-homerail-artifact-frame': '',
+          onLoad: (event: Event) => {
+            const frame = event.currentTarget
+            if (frame instanceof HTMLIFrameElement) postAppearanceToArtifactFrame(frame)
+          },
         }),
-        h('button', { type: 'button', onClick: preview }, [h(Monitor, { size: 16 }), node.title || 'Open preview']),
-        node.description ? h('p', node.description) : null,
       ])
     }
     return h('a', { ...attrs, href: node.uri, target: '_blank', rel: 'noopener noreferrer' }, [

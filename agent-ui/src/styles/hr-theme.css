@@ -56,8 +56,9 @@
 
   --hr-focus-ring: rgba(79, 216, 232, 0.32);
   --hr-selection: rgba(79, 216, 232, 0.24);
-  --hr-scrollbar: rgba(148, 178, 214, 0.24);
-  --hr-scrollbar-hover: rgba(148, 178, 214, 0.38);
+  --hr-scrollbar-track: #0a0f18;
+  --hr-scrollbar: #2a3541;
+  --hr-scrollbar-hover: #435565;
   --hr-ambient-accent: color-mix(in srgb, var(--hr-accent) 18%, transparent);
   --hr-ambient-info: color-mix(in srgb, var(--hr-accent) 12%, transparent);
   --hr-canvas-ambient-primary: color-mix(in srgb, var(--hr-accent) 12%, transparent);
@@ -131,8 +132,9 @@
 
   --hr-focus-ring: rgba(46, 114, 122, 0.25);
   --hr-selection: rgba(46, 114, 122, 0.18);
-  --hr-scrollbar: rgba(70, 84, 94, 0.2);
-  --hr-scrollbar-hover: rgba(70, 84, 94, 0.34);
+  --hr-scrollbar-track: #eef1f2;
+  --hr-scrollbar: #c0c8cb;
+  --hr-scrollbar-hover: #8e9ca1;
   --hr-ambient-accent: rgba(46, 114, 122, 0.028);
   --hr-ambient-info: rgba(69, 111, 152, 0.02);
   --hr-canvas-ambient-primary: rgba(46, 114, 122, 0.02);

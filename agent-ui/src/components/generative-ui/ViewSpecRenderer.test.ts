@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createApp, nextTick, type App } from 'vue'
 import type { GenerativeUiCompositionItemV1, GenerativeUiStoredNodeV1, GenerativeUiSurfaceContextV1, HomerailViewSpecV1 } from 'homerail-protocol'
 import { i18n } from '@/plugins/i18n'
+import rendererSource from './ViewSpecRenderer.vue?raw'
 import ViewSpecRenderer from './ViewSpecRenderer.vue'
 
 let app: App<Element> | null = null
@@ -177,7 +178,7 @@ describe('ViewSpecRenderer', () => {
     expect(mounted.querySelector<HTMLDetailsElement>('.hr-view__disclosure')?.open).toBe(true)
   })
 
-  it('previews image and HTML artifacts through the generic ViewSpec node', async () => {
+  it('previews image artifacts and renders HTML artifacts without a fixed footer', async () => {
     const mounted = mount({
       view_version: 1,
       root: { id: 'root', type: 'grid', columns: { default: 2 }, children: [
@@ -195,16 +196,32 @@ describe('ViewSpecRenderer', () => {
     })
     const image = mounted.querySelector<HTMLButtonElement>('button.hr-view__artifact')!
     const frame = mounted.querySelector<HTMLIFrameElement>('iframe')!
-    const htmlButton = mounted.querySelector<HTMLButtonElement>('div.hr-view__artifact > button')!
 
     expect(image.querySelector('img')?.getAttribute('alt')).toBe('AI cover preview')
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-pointer-lock allow-popups')
+    expect(frame.hasAttribute('data-homerail-artifact-frame')).toBe(true)
+    expect(frame.parentElement?.children).toHaveLength(1)
     image.click()
-    htmlButton.click()
     await nextTick()
     expect(requestedPreviews).toEqual([
       expect.objectContaining({ title: 'AI cover', kind: 'image', layout: 'portrait' }),
-      expect.objectContaining({ title: 'Story page', kind: 'html', layout: 'fluid' }),
     ])
+  })
+
+  it('lets a root HTML artifact inherit the full canvas height', () => {
+    const mounted = mount({
+      view_version: 1,
+      root: {
+        id: 'root', type: 'artifact', kind: 'html',
+        uri: { literal: '/api/voice-agent/sessions/session-one/artifacts/showcase.html' },
+        title: { literal: 'Showcase' }, description: { literal: 'Three by two overview' },
+      },
+    })
+
+    const artifact = mounted.querySelector('.homerail-view-spec > div.hr-view__artifact')
+    expect(artifact?.querySelector('iframe')).toBeTruthy()
+    expect(artifact?.children).toHaveLength(1)
+    expect(rendererSource).toContain('.homerail-view-spec > div.hr-view__artifact { height:100%; }')
+    expect(rendererSource).toContain('.homerail-view-spec > div.hr-view__artifact > iframe { pointer-events:auto; }')
   })
 })

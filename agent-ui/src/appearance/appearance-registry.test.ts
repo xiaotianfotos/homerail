@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   APPEARANCE_COLOR_SCHEME_STORAGE_KEY,
   APPEARANCE_STORAGE_KEY,
+  ARTIFACT_APPEARANCE_MESSAGE_TYPE,
   applyAppearanceToDocument,
+  artifactAppearanceMessage,
   getAppearancePlugin,
   listAppearancePlugins,
   normalizeAppearanceId,
@@ -51,6 +53,28 @@ describe('appearance registry', () => {
     expect(localStorage.getItem(APPEARANCE_COLOR_SCHEME_STORAGE_KEY)).toBe('light')
 
     themeColor.remove()
+  })
+
+  it('broadcasts the resolved appearance to marked Artifact frames', () => {
+    const frame = document.createElement('iframe')
+    frame.dataset.homerailArtifactFrame = ''
+    document.body.appendChild(frame)
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage')
+
+    applyAppearanceToDocument('paper')
+
+    const message = artifactAppearanceMessage()
+    expect(message).toMatchObject({
+      type: ARTIFACT_APPEARANCE_MESSAGE_TYPE,
+      version: 1,
+      colorScheme: 'light',
+    })
+    expect(message.scrollbarTrack).toBeTruthy()
+    expect(message.scrollbar).toBeTruthy()
+    expect(message.scrollbarHover).toBeTruthy()
+    expect(postMessage).toHaveBeenCalledWith(message, '*')
+
+    frame.remove()
   })
 
   it('supports self-contained plugin tokens and clears them when switching', () => {

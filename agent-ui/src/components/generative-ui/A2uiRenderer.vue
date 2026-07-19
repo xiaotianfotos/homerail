@@ -81,6 +81,7 @@ const rootScope = computed(() => ({ value: dataModel.value, key: 'root' }))
   --hr-a2ui-gap-lg: 24px;
   --tone: var(--hr-text-3);
   min-width: 0;
+  height: 100%;
   min-height: 100%;
   overflow: visible;
   color: var(--hr-text-1);
@@ -516,10 +517,10 @@ button.hr-a2ui__artifact { display: grid; width: 100%; padding: 0; text-align: l
 .hr-a2ui__artifact strong { font-size: 15px; }
 .hr-a2ui__artifact small,
 .hr-a2ui__artifact p { color: var(--hr-text-3); font-size: 12px; }
-div.hr-a2ui__artifact { display: grid; min-height: 220px; grid-template-rows: minmax(0, 1fr) auto; }
+div.hr-a2ui__artifact { display: grid; min-height: 220px; }
+.homerail-a2ui > div.hr-a2ui__artifact { height: 100%; }
 .hr-a2ui__artifact iframe { width: 100%; height: 100%; min-height: 180px; border: 0; background: #fff; pointer-events: none; }
-.hr-a2ui__artifact > button { display: flex; min-height: 42px; align-items: center; justify-content: center; gap: 8px; border: 0; border-top: 1px solid var(--hr-accent-border); color: var(--hr-text-1); background: var(--hr-panel); font: inherit; font-weight: 800; cursor: pointer; }
-.hr-a2ui__artifact > p { margin: 0; padding: 0 12px 12px; background: var(--hr-panel); }
+.homerail-a2ui > div.hr-a2ui__artifact > iframe { pointer-events: auto; }
 .hr-a2ui__artifact[data-unavailable='true'] { display: flex; min-height: 92px; align-items: center; gap: 12px; padding: 16px; }
 
 .hr-a2ui__link {

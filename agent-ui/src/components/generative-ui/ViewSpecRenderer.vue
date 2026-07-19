@@ -35,7 +35,7 @@ const model = computed(() => {
 </template>
 
 <style>
-.homerail-view-spec { --hr-gap-xs:6px; --hr-gap-sm:10px; --hr-gap-md:16px; --hr-gap-lg:24px; min-width:0; min-height:100%; color:var(--hr-text-1); font-size:14px; }
+.homerail-view-spec { --hr-gap-xs:6px; --hr-gap-sm:10px; --hr-gap-md:16px; --hr-gap-lg:24px; min-width:0; height:100%; min-height:100%; color:var(--hr-text-1); font-size:14px; }
 .hr-view__node { min-width:0; }
 .hr-view__stack,.hr-view__repeat { display:grid; align-content:start; }
 .hr-view__grid,.hr-view__repeat { display:grid; grid-template-columns:repeat(var(--columns),minmax(0,1fr)); align-content:start; }
@@ -68,10 +68,10 @@ button.hr-view__artifact { display:grid; width:100%; padding:0; text-align:left;
 .hr-view__artifact:hover img { transform:scale(1.015); }
 .hr-view__artifact > span { position:absolute; right:0; bottom:0; left:0; display:grid; gap:3px; padding:28px 14px 13px; background:linear-gradient(transparent,var(--hr-overlay)); }
 .hr-view__artifact strong { font-size:15px; }.hr-view__artifact small,.hr-view__artifact p { color:var(--hr-text-3); font-size:12px; }
-div.hr-view__artifact { display:grid; min-height:220px; grid-template-rows:minmax(0,1fr) auto; }
+div.hr-view__artifact { display:grid; min-height:220px; }
+.homerail-view-spec > div.hr-view__artifact { height:100%; }
 .hr-view__artifact iframe { width:100%; height:100%; min-height:180px; border:0; background:#fff; pointer-events:none; }
-.hr-view__artifact > button { display:flex; min-height:42px; align-items:center; justify-content:center; gap:8px; border:0; border-top:1px solid var(--hr-accent-border); color:var(--hr-text-1); background:var(--hr-panel); font:inherit; font-weight:800; cursor:pointer; }
-.hr-view__artifact > p { margin:0; padding:0 12px 12px; background:var(--hr-panel); }
+.homerail-view-spec > div.hr-view__artifact > iframe { pointer-events:auto; }
 a.hr-view__artifact { display:flex; min-height:92px; align-items:center; gap:12px; padding:16px; text-decoration:none; }
 a.hr-view__artifact span { position:static; padding:0; background:none; }
 .homerail-view-spec[data-variant="summary"][data-expanded="false"] button.hr-view__artifact { min-height:88px; place-items:center; }

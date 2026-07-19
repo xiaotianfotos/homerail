@@ -108,6 +108,7 @@ import {
   builtinEdgeTtsUpdate,
   isBuiltinEdgeTtsSettings
 } from '@/components/agent/builtin-tts'
+import { postAppearanceToArtifactFrame } from '@/appearance/appearance-registry'
 import { createVoiceMediaStream } from '@/utils/voice-audio-input'
 import {
   NATIVE_GAMEPAD_ANALOG_EVENT,
@@ -2304,6 +2305,11 @@ function openArtifactPreview(widget: VoiceWidget): void {
     layout: artifactPreviewLayout(widget, url),
     images: images.length ? images : undefined
   }
+}
+
+function handleArtifactFrameLoad(event: Event): void {
+  const frame = event.currentTarget
+  if (frame instanceof HTMLIFrameElement) postAppearanceToArtifactFrame(frame)
 }
 
 function openWidgetPreview(payload: WidgetPreviewRequest): void {
@@ -5205,6 +5211,8 @@ function summarizeTask(value: string): string {
                     sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups"
                     loading="lazy"
                     title="Artifact preview"
+                    data-homerail-artifact-frame
+                    @load="handleArtifactFrameLoad"
                   />
                 </div>
                 <div v-else class="voice-artifact-empty">{{ t('voice.canvas.artifactUnavailable') }}</div>
@@ -5696,6 +5704,8 @@ function summarizeTask(value: string): string {
               :src="artifactPreviewModal.url"
               sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups"
               title="Artifact preview"
+              data-homerail-artifact-frame
+              @load="handleArtifactFrameLoad"
             />
           </div>
         </section>

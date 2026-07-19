@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { http } from '@/api/clients/http-client'
-import { probeModels } from './providers-api'
+import { detectMainModelRuntime, probeModels } from './providers-api'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -28,6 +28,29 @@ describe('providers api model probing', () => {
     expect(post).toHaveBeenCalledWith('/api/llm/models/probe', {
       base_url: 'https://provider.example/v1',
       api_key: 'new-key'
+    })
+  })
+
+  it('sends the exact base URL and model for dual runtime detection', async () => {
+    const detection = {
+      available: true,
+      preferred_harness: 'claude_agent_sdk' as const,
+      endpoints: {
+        anthropic: { available: true, url: 'http://localhost/v1/messages', status: 200 },
+        openai: { available: true, url: 'http://localhost/v1/chat/completions', status: 200 }
+      }
+    }
+    const post = vi.spyOn(http, 'post').mockResolvedValue({ success: true, data: detection })
+
+    await expect(detectMainModelRuntime({
+      baseUrl: 'http://localhost/v1',
+      apiKey: '',
+      model: 'local-model'
+    })).resolves.toEqual(detection)
+    expect(post).toHaveBeenCalledWith('/api/llm/models/detect-runtime', {
+      base_url: 'http://localhost/v1',
+      api_key: '',
+      model: 'local-model'
     })
   })
 })

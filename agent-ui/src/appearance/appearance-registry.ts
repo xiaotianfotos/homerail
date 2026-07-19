@@ -41,6 +41,7 @@ export const APPEARANCE_TOKEN_NAMES = [
   '--hr-info-border',
   '--hr-focus-ring',
   '--hr-selection',
+  '--hr-scrollbar-track',
   '--hr-scrollbar',
   '--hr-scrollbar-hover',
   '--hr-ambient-accent',
@@ -93,6 +94,16 @@ export const APPEARANCE_COLOR_SCHEME_STORAGE_KEY = 'homerail.appearance-color-sc
 export const LEGACY_SKIN_STORAGE_KEY = 'homerail.skin'
 export const LEGACY_THEME_STORAGE_KEY = 'omni_theme'
 export const DEFAULT_APPEARANCE_ID = 'cockpit'
+export const ARTIFACT_APPEARANCE_MESSAGE_TYPE = 'homerail:artifact-appearance'
+
+export interface ArtifactAppearanceMessage {
+  type: typeof ARTIFACT_APPEARANCE_MESSAGE_TYPE
+  version: 1
+  colorScheme: AppearanceColorScheme
+  scrollbarTrack: string
+  scrollbar: string
+  scrollbarHover: string
+}
 
 const registry = new Map<string, AppearancePlugin>()
 const registryListeners = new Set<() => void>()
@@ -198,6 +209,60 @@ export function resolveStoredAppearance(
   return DEFAULT_APPEARANCE_ID
 }
 
+function resolvedAppearanceToken(
+  doc: Document,
+  name: AppearanceTokenName,
+  fallback: string,
+): string {
+  try {
+    return doc.defaultView?.getComputedStyle(doc.documentElement).getPropertyValue(name).trim() || fallback
+  } catch {
+    return fallback
+  }
+}
+
+export function artifactAppearanceMessage(doc: Document = document): ArtifactAppearanceMessage {
+  const appearance = getAppearancePlugin(doc.documentElement.dataset.hrAppearance)
+  const dark = appearance.colorScheme === 'dark'
+  return {
+    type: ARTIFACT_APPEARANCE_MESSAGE_TYPE,
+    version: 1,
+    colorScheme: appearance.colorScheme,
+    scrollbarTrack: resolvedAppearanceToken(
+      doc,
+      '--hr-scrollbar-track',
+      dark ? '#0a0f18' : '#eef1f2',
+    ),
+    scrollbar: resolvedAppearanceToken(
+      doc,
+      '--hr-scrollbar',
+      dark ? '#2a3541' : '#c0c8cb',
+    ),
+    scrollbarHover: resolvedAppearanceToken(
+      doc,
+      '--hr-scrollbar-hover',
+      dark ? '#435565' : '#8e9ca1',
+    ),
+  }
+}
+
+export function postAppearanceToArtifactFrame(
+  frame: HTMLIFrameElement,
+  doc: Document = frame.ownerDocument,
+): void {
+  try {
+    frame.contentWindow?.postMessage(artifactAppearanceMessage(doc), '*')
+  } catch {
+    // A sandboxed or detaching frame may become unavailable between load and dispatch.
+  }
+}
+
+function broadcastArtifactAppearance(doc: Document): void {
+  for (const frame of doc.querySelectorAll<HTMLIFrameElement>('iframe[data-homerail-artifact-frame]')) {
+    postAppearanceToArtifactFrame(frame, doc)
+  }
+}
+
 export function applyAppearanceToDocument(
   id: string,
   doc: Document = document,
@@ -226,6 +291,8 @@ export function applyAppearanceToDocument(
   } catch {
     // Storage can be unavailable in privacy modes; the document still receives the appearance.
   }
+
+  broadcastArtifactAppearance(doc)
 
   return plugin
 }
