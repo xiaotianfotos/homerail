@@ -756,6 +756,36 @@ describe("ClaudeSdkAdapter", () => {
     expect(JSON.stringify(queryStart)).not.toContain("anthropic-secret-value");
   });
 
+  it("uses Authorization bearer credentials for auth-token gateways", async () => {
+    const captured: Record<string, unknown>[] = [];
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: Record<string, unknown> }) {
+        captured.push(params.options ?? {});
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(_opts: { name: string; tools?: Array<Record<string, unknown>> }) {
+        return { type: "sdk", name: _opts.name };
+      },
+      tool(name: string) {
+        return { name };
+      },
+    }));
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    for await (const _event of adapter.run("test", [], {
+      ...ctx,
+      apiKey: "sk-sp-provider-secret",
+      anthropicAuthMode: "auth_token",
+    })) {
+      // Consume the complete SDK stream.
+    }
+
+    const env = captured[0].env as Record<string, string>;
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("sk-sp-provider-secret");
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
   it("pins Claude Code background model and disables telemetry for gateway providers", async () => {
     // Regression for #1148: a non-Anthropic gateway model (e.g. qwen3.6) must
     // override Claude Code's internal haiku/background model, otherwise the

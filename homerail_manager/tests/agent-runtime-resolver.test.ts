@@ -154,9 +154,37 @@ describe("agent runtime resolver", () => {
       api_key: "pk-test-kimi",
       base_url: "https://api.kimi.com/coding",
       protocol: "anthropic_compatible",
+      anthropic_auth_mode: "api_key",
       agent_type: "claude-sdk",
       runtime_placement: "host_shell",
       llm_setting_id: setting.id,
+    });
+  });
+
+  it("uses Bearer auth for the Aliyun Token Plan Anthropic gateway", () => {
+    const setting = createSetting({
+      provider_id: "aliyun",
+      endpoint_id: "aliyun_dashscope_cn_token_plan",
+      model_name: "qwen3.8-max-preview",
+      api_key: "sk-sp-test-qwen",
+      is_active: true,
+      is_default: true,
+    });
+
+    const resolved = resolveAgentRuntimeConfig({
+      surface: "dag",
+      settingId: setting.id,
+      agentType: "claude-sdk",
+    });
+
+    expect(resolved).toMatchObject({
+      provider_name: "aliyun",
+      model: "qwen3.8-max-preview",
+      base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      protocol: "anthropic_compatible",
+      anthropic_auth_mode: "auth_token",
+      agent_type: "claude-sdk",
+      runtime_placement: "container",
     });
   });
 

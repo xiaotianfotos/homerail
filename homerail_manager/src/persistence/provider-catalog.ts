@@ -1,6 +1,7 @@
 export type LLMPlanType = "api_billing" | "token_plan" | "coding_plan" | "agent_plan" | "subscription" | "custom";
 export type LLMProtocol = "openai_compatible" | "anthropic_compatible" | "dashscope_native" | "volcengine_doubao_voice" | "volcengine_ark_voice" | "volcengine_openspeech" | "custom";
 export type LLMAuthType = "bearer" | "api-key" | "x-api-key" | "subscription-key" | "custom";
+export type AnthropicAuthMode = "api_key" | "auth_token";
 
 export interface ModelCapabilities {
   supports_llm?: boolean;
@@ -30,6 +31,8 @@ export interface ProviderEndpointPreset extends ModelCapabilities {
   chat_completions_base_url?: string;
   responses_base_url?: string;
   anthropic_base_url?: string;
+  /** Header contract used by Claude-compatible gateways. Defaults to x-api-key. */
+  anthropic_auth_mode?: AnthropicAuthMode;
   resource_id?: string;
   voice_adapter?: "openai_audio" | "mimo_audio" | "volcengine_doubao_voice" | "volcengine_ark_voice" | "volcengine_openspeech" | "custom";
   tts_http_url?: string;
@@ -492,6 +495,7 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
         base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         chat_completions_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         anthropic_base_url: "https://dashscope.aliyuncs.com/api/v2/apps/claude-code-proxy",
+        anthropic_auth_mode: "auth_token",
         region: "cn-beijing",
         region_label: "中国大陆",
         auth_type: "bearer",
@@ -515,6 +519,7 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
         base_url: "https://coding.dashscope.aliyuncs.com/v1",
         chat_completions_base_url: "https://coding.dashscope.aliyuncs.com/v1",
         anthropic_base_url: "https://coding.dashscope.aliyuncs.com/api/v2/apps/claude-code-proxy",
+        anthropic_auth_mode: "auth_token",
         region: "cn-beijing",
         region_label: "中国大陆",
         auth_type: "bearer",
@@ -532,6 +537,7 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
         base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         chat_completions_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         anthropic_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        anthropic_auth_mode: "auth_token",
         responses_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         region: "cn-beijing",
         region_label: "中国大陆",

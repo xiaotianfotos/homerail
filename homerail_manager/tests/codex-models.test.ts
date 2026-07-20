@@ -156,6 +156,23 @@ describe("Codex model catalog", () => {
     })).rejects.toThrow("Codex app-server exited without returning a model catalog");
   });
 
+  it("contains an app-server stdin EPIPE instead of crashing the Manager", async () => {
+    const child = new FakeChildProcess();
+    child.stdin.on("data", () => {
+      child.stdin.destroy(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+    });
+
+    await expect(listCodexModels({
+      resolution: {
+        command: "/home/test/.nvm/versions/node/v24/bin/codex",
+        requested: "codex",
+        needsShell: false,
+      },
+      spawnImpl: (() => child as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+      timeoutMs: 1_000,
+    })).rejects.toThrow("write EPIPE");
+  });
+
   it("serves the model catalog from the Manager Agent API", async () => {
     const catalog: CodexModelCatalog = {
       binary: "C:\\Codex\\codex.exe",

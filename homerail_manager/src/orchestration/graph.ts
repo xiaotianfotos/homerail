@@ -11,7 +11,14 @@ export const FAILURE_PORT_NAMES: ReadonlySet<string> = new Set([
 export interface DAGAgentConfig {
   agent_type?: string;
   llm_setting_id?: string;
-  llm?: { provider?: string; model?: string; api_key?: string; base_url?: string; protocol?: string };
+  llm?: {
+    provider?: string;
+    model?: string;
+    api_key?: string;
+    base_url?: string;
+    protocol?: string;
+    anthropic_auth_mode?: "api_key" | "auth_token";
+  };
   model?: string;
   system?: string;
   description?: string;

@@ -170,7 +170,16 @@ function queryCodexModels(
     }
 
     function send(id: number, method: string, params: Record<string, unknown>): void {
-      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      if (settled || child.stdin.destroyed || !child.stdin.writable) {
+        finish(new Error("Codex app-server stdin closed before the request could be sent"));
+        return;
+      }
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
+        (error) => {
+          if (error) finish(error);
+        },
+      );
     }
 
     function requestModelPage(cursor?: string): void {
@@ -233,6 +242,7 @@ function queryCodexModels(
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderr = `${stderr}${chunk.toString()}`.slice(-4_000);
     });
+    child.stdin.on("error", (error) => finish(error));
     child.on("error", (error) => finish(error));
     child.on("exit", (code) => {
       if (!settled) {

@@ -6,6 +6,7 @@ import {
   getSetting,
   isVoiceServiceSetting,
   resolveClaudeSdkBaseUrlForSetting,
+  resolveClaudeSdkAuthModeForSetting,
   type LLMSetting,
 } from "../persistence/llm-settings.js";
 import {
@@ -43,6 +44,7 @@ export interface AgentRuntimeResolution {
   api_key: string;
   base_url: string;
   protocol: string;
+  anthropic_auth_mode?: "api_key" | "auth_token";
   agent_type: string;
   runtime_placement: ManagerAgentRuntimePlacementValue;
   llm_setting_id?: string;
@@ -189,6 +191,9 @@ export function resolveAgentRuntimeConfig(input: AgentRuntimeResolutionInput): A
     api_key: setting.api_key,
     base_url: baseUrl,
     protocol: agentType === "claude-sdk" ? "anthropic_compatible" : setting.protocol,
+    anthropic_auth_mode: agentType === "claude-sdk"
+      ? resolveClaudeSdkAuthModeForSetting(setting)
+      : undefined,
     agent_type: agentType,
     runtime_placement: runtimePlacementForAgentType(agentType, input.surface),
     llm_setting_id: setting.id,

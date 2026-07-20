@@ -172,6 +172,9 @@ client.on("task", async (msg) => {
   const apiKey = typeof llmConfig.api_key === "string" ? llmConfig.api_key : undefined;
   const baseUrl = typeof llmConfig.base_url === "string" ? llmConfig.base_url : undefined;
   const protocol = typeof llmConfig.protocol === "string" ? llmConfig.protocol : undefined;
+  const anthropicAuthMode = llmConfig.anthropic_auth_mode === "auth_token"
+    ? "auth_token"
+    : llmConfig.anthropic_auth_mode === "api_key" ? "api_key" : undefined;
   const backend = resolveWorkerAgentBackend({
     agentType,
     envBackend: process.env.AGENT_BACKEND,
@@ -295,6 +298,7 @@ client.on("task", async (msg) => {
     llmProtocol: protocol,
     llmApiKey: apiKey,
     llmBaseUrl: baseUrl,
+    llmAnthropicAuthMode: anthropicAuthMode,
     checkpointResume,
     actorCheckpoint,
     skillContextSummary: preparedSkillContext.summary,

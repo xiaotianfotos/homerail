@@ -88,6 +88,8 @@ export interface AgentRunContext {
   model: string;
   apiKey: string;
   baseUrl: string;
+  /** Claude-compatible gateway credential header contract. */
+  anthropicAuthMode?: "api_key" | "auth_token";
   maxIterations?: number;
   workspace?: string;
   /** Stable backend-native session id for multi-turn Manager Agent use. */

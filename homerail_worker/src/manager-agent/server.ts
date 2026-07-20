@@ -69,6 +69,7 @@ interface ManagerAgentConfig {
   model_name?: string;
   api_key?: string;
   base_url?: string;
+  anthropic_auth_mode?: "api_key" | "auth_token";
   agent_type?: string;
   project_workspace?: string;
   reasoning_effort?: string;
@@ -1859,6 +1860,7 @@ async function handleChat(
     model,
     apiKey: String(config.api_key || ""),
     baseUrl: String(config.base_url || ""),
+    anthropicAuthMode: config.anthropic_auth_mode,
     workspace: projectWorkspace(),
     claudePermissionMode: "dontAsk",
     ...(claudeNativeSession

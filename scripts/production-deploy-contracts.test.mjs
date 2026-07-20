@@ -40,6 +40,11 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HTTP_PORT=\$UI_HTTP_PORT/);
   assert.match(deploy, /must be a LAN-accessible host or address/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_PORT:-19192/);
+  assert.match(deploy, /HOMERAIL_HOME="\$\(realpath "\$HOMERAIL_HOME"\)"/);
+  assert.match(deploy, /HOMERAIL_CODEX_BIN/);
+  assert.match(deploy, /\.nvm\/versions\/node/);
+  assert.match(deploy, /SERVICE_PATH="\$\(dirname "\$CODEX_BIN"\):\$SERVICE_PATH"/);
+  assert.doesNotMatch(deploy, /Environment=PATH=\/usr\/local\/bin:\/usr\/bin:\/bin\nExecStart=/);
   assert.match(service, /HOMERAIL_PRODUCTION_UI_PORT:-19192/);
   assert.match(service, /Production UI must bind all interfaces/);
   assert.match(service, /HOMERAIL_UI_SERVE_STATIC=1/);

@@ -763,6 +763,7 @@ describe("prompt runner", () => {
         llmProvider: "anthropic",
         llmApiKey: "anthropic-test-secret",
         llmBaseUrl: "https://api.anthropic.test",
+        llmAnthropicAuthMode: "auth_token",
       },
       {
         wsSend: () => {},
@@ -775,6 +776,7 @@ describe("prompt runner", () => {
       provider: "anthropic",
       apiKey: "anthropic-test-secret",
       baseUrl: "https://api.anthropic.test",
+      anthropicAuthMode: "auth_token",
     });
   });
 

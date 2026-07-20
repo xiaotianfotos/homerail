@@ -809,7 +809,15 @@ export class ClaudeSdkAdapter implements AgentClient {
     const baseUrl = fromContextBaseUrl || fromAnthropicBaseUrl || fromLlmBaseUrl;
     const env = sanitizedAgentChildEnv();
     Object.assign(env, context.environmentVariables ?? {});
-    if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
+    if (apiKey) {
+      if (context.anthropicAuthMode === "auth_token") {
+        delete env.ANTHROPIC_API_KEY;
+        env.ANTHROPIC_AUTH_TOKEN = apiKey;
+      } else {
+        delete env.ANTHROPIC_AUTH_TOKEN;
+        env.ANTHROPIC_API_KEY = apiKey;
+      }
+    }
     if (baseUrl) {
       env.ANTHROPIC_BASE_URL = baseUrl;
       env.LLM_BASE_URL = baseUrl;

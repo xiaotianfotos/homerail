@@ -4248,6 +4248,7 @@ function _withDispatchCredentials(agentConfig: DAGAgentConfig): DispatchCredenti
           api_key: resolved.api_key,
           base_url: resolved.base_url,
           protocol: resolved.protocol,
+          anthropic_auth_mode: resolved.anthropic_auth_mode,
         },
       },
     };

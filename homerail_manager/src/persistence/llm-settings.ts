@@ -22,6 +22,7 @@ import {
   type LLMProtocol,
   type ModelCapabilities,
   type ProviderEndpointPreset,
+  type AnthropicAuthMode,
   type ProviderModelPreset,
 } from "./provider-catalog.js";
 
@@ -1233,6 +1234,10 @@ export function resolveClaudeSdkBaseUrlForSetting(setting: LLMSetting): string |
       _normalizeClaudeSdkBaseUrl(provider?.base_url);
   }
   return undefined;
+}
+
+export function resolveClaudeSdkAuthModeForSetting(setting: LLMSetting): AnthropicAuthMode {
+  return _endpointForSetting(setting)?.anthropic_auth_mode ?? "api_key";
 }
 
 function _generateId(): string {

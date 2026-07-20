@@ -17,6 +17,7 @@ export interface ManagerAgentRuntimeConfig {
   api_key: string;
   base_url: string;
   protocol?: string;
+  anthropic_auth_mode?: "api_key" | "auth_token";
   agent_type: string;
   runtime_placement: ManagerAgentHostRuntimePlacement;
   project_id?: string;

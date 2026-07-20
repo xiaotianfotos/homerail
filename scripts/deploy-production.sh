@@ -74,7 +74,33 @@ if [ -d "$SOURCE_ROOT/.git" ]; then
 fi
 
 mkdir -p "$PRODUCTION_ROOT/releases" "$PRODUCTION_ROOT/locks" "$HOMERAIL_HOME" "$(dirname "$UNIT_PATH")"
+HOMERAIL_HOME="$(realpath "$HOMERAIL_HOME")"
 chmod 700 "$HOMERAIL_HOME"
+
+# systemd user services do not inherit interactive-shell NVM initialization.
+# Preserve an installed Codex npm wrapper together with the Node binary in the
+# same bin directory, while keeping Codex optional for non-Codex deployments.
+CODEX_BIN="${HOMERAIL_CODEX_BIN:-}"
+if [ -n "$CODEX_BIN" ] && [[ "$CODEX_BIN" != */* ]]; then
+  CODEX_BIN="$(command -v "$CODEX_BIN" 2>/dev/null || true)"
+fi
+if [ -z "$CODEX_BIN" ]; then
+  CODEX_BIN="$(command -v codex 2>/dev/null || true)"
+fi
+if [ -z "$CODEX_BIN" ] && [ -d "$HOME/.nvm/versions/node" ]; then
+  CODEX_BIN="$(find "$HOME/.nvm/versions/node" -mindepth 3 -maxdepth 3 -path '*/bin/codex' -print 2>/dev/null | sort -V | tail -n 1)"
+fi
+SERVICE_PATH="/usr/local/bin:/usr/bin:/bin"
+CODEX_UNIT_ENV=""
+if [ -n "$CODEX_BIN" ]; then
+  if [ ! -f "$CODEX_BIN" ] || [ ! -x "$CODEX_BIN" ]; then
+    echo "HOMERAIL_CODEX_BIN is not an executable file: $CODEX_BIN" >&2
+    exit 1
+  fi
+  case "$CODEX_BIN" in *[$'\t\r\n ']* ) echo "HOMERAIL_CODEX_BIN must not contain whitespace." >&2; exit 1 ;; esac
+  SERVICE_PATH="$(dirname "$CODEX_BIN"):$SERVICE_PATH"
+  CODEX_UNIT_ENV="Environment=HOMERAIL_CODEX_BIN=$CODEX_BIN"
+fi
 exec 9>"$PRODUCTION_ROOT/locks/deploy.lock"
 if ! flock -w 60 9; then
   echo "Another production deployment is active." >&2
@@ -140,7 +166,8 @@ Environment=HOMERAIL_PRODUCTION_UI_HOST=$UI_HOST
 Environment=HOMERAIL_PRODUCTION_UI_PORT=$UI_PORT
 Environment=HOMERAIL_PRODUCTION_UI_HTTP_PORT=$UI_HTTP_PORT
 Environment=HOMERAIL_PRODUCTION_PUBLIC_HOST=$PUBLIC_HOST
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$SERVICE_PATH
+$CODEX_UNIT_ENV
 ExecStart=$PRODUCTION_ROOT/current/scripts/run-production-service.sh
 Restart=always
 RestartSec=5
