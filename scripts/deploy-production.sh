@@ -8,9 +8,9 @@ RESOURCE_ROOT="${HOMERAIL_PRODUCTION_RESOURCES:-$HOME/.local/share/homerail-reso
 REVISION="${HOMERAIL_DEPLOY_REVISION:-}"
 SERVICE_NAME="homerail-production.service"
 UNIT_PATH="$HOME/.config/systemd/user/$SERVICE_NAME"
-MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-127.0.0.1}"
+MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-0.0.0.0}"
 MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
-MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://$MANAGER_HOST:$MANAGER_PORT}"
+MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://127.0.0.1:$MANAGER_PORT}"
 UI_HOST="${HOMERAIL_PRODUCTION_UI_HOST:-0.0.0.0}"
 UI_PORT="${HOMERAIL_PRODUCTION_UI_PORT:-19192}"
 UI_HTTP_PORT="${HOMERAIL_PRODUCTION_UI_HTTP_PORT:-19193}"
@@ -20,6 +20,12 @@ UI_URL="${HOMERAIL_PRODUCTION_UI_URL:-}"
 case "$PRODUCTION_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_ROOT must be absolute." >&2; exit 1 ;; esac
 case "$HOMERAIL_HOME" in /*) ;; *) echo "HOMERAIL_PRODUCTION_HOME must be absolute." >&2; exit 1 ;; esac
 case "$RESOURCE_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_RESOURCES must be absolute." >&2; exit 1 ;; esac
+case "$MANAGER_HOST" in
+  localhost|127.*|::1|\[::1\])
+    echo "HOMERAIL_PRODUCTION_MANAGER_HOST must be reachable from Docker Workers; loopback-only binds are not supported." >&2
+    exit 1
+    ;;
+esac
 if [ "$UI_HOST" != "0.0.0.0" ] && [ "$UI_HOST" != "::" ]; then
   echo "HOMERAIL_PRODUCTION_UI_HOST must bind all interfaces (0.0.0.0 or ::)." >&2
   exit 1
@@ -227,6 +233,26 @@ for _ in $(seq 1 60); do
   fi
   sleep 2
 done
+
+if [ "$healthy" = "1" ]; then
+  smoke_output=""
+  if ! smoke_output="$(
+    "$PRODUCTION_ROOT/current/runtime/node" \
+      "$PRODUCTION_ROOT/current/homerail_cli/dist/cli.js" \
+      --base-url "$MANAGER_URL" \
+      --request-timeout 180000 \
+      --json \
+      smoke dag \
+      --template assets/orchestrations/public-two-node.yaml.template \
+      --profile offline-deterministic \
+      --timeout 120 \
+      --interval 1 2>&1
+  )"; then
+    echo "Production Docker Worker DAG smoke failed for $REVISION." >&2
+    printf '%s\n' "$smoke_output" >&2
+    healthy=0
+  fi
+fi
 
 if [ "$healthy" != "1" ]; then
   echo "Production health check failed for $REVISION; rolling back." >&2

@@ -34,6 +34,13 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /connected_nodes/);
   assert.match(deploy, /grep -Fxl -- "\$old_revision"/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_HOST=\$MANAGER_HOST/);
+  assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_HOST:-0\.0\.0\.0/);
+  assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_URL:-http:\/\/127\.0\.0\.1:\$MANAGER_PORT/);
+  assert.match(deploy, /must be reachable from Docker Workers/);
+  assert.match(deploy, /smoke dag/);
+  assert.match(deploy, /public-two-node\.yaml\.template/);
+  assert.match(deploy, /offline-deterministic/);
+  assert.match(deploy, /Production Docker Worker DAG smoke failed/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_PORT=\$MANAGER_PORT/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HOST=\$UI_HOST/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_PORT=\$UI_PORT/);
@@ -51,6 +58,7 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.doesNotMatch(deploy, /SERVICE_PATH="\$\(dirname "\$CODEX_BIN"\):\$SERVICE_PATH"/);
   assert.match(deploy, /Environment=PATH=\$SERVICE_PATH/);
   assert.match(service, /HOMERAIL_PRODUCTION_UI_PORT:-19192/);
+  assert.match(service, /HOMERAIL_PRODUCTION_MANAGER_HOST:-0\.0\.0\.0/);
   assert.match(service, /Production UI must bind all interfaces/);
   assert.match(service, /HOMERAIL_UI_SERVE_STATIC=1/);
   assert.match(service, /RELEASE_ROOT="\$\(readlink -f "\$CURRENT"\)"/);
