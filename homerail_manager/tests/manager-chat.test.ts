@@ -552,15 +552,13 @@ describe("/api/manager/chat", () => {
       is_active: true,
       is_default: true,
     });
-    const resolved = resolveManagerAgentConfig(undefined, "qwen36", "qwen3.6", setting.id, "codex_appserver");
-    expect(resolved).toMatchObject({
-      provider_name: "",
-      model: "gpt-5.5",
-      agent_type: "codex_appserver",
-      runtime_placement: "host",
-      api_key: "",
-      base_url: "",
-    });
+    expect(() => resolveManagerAgentConfig(
+      undefined,
+      "qwen36",
+      "qwen3.6",
+      setting.id,
+      "codex_appserver",
+    )).toThrow("Codex app-server cannot use a HomeRail LLM provider or setting");
 
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;

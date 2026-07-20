@@ -27,6 +27,18 @@ describe('appearance contract', () => {
     expect(paper).not.toMatch(/--hr-(?:bg-raised|surface-1|panel):\s*#fff(?:fff)?\b/i)
   })
 
+  it('themes native select popup menus with semantic colors on Windows and other host UIs', () => {
+    const css = source('styles/hr-theme.css')
+
+    expect(css).toMatch(/select,\s*option,\s*optgroup\s*\{[^}]*color-scheme:\s*inherit/s)
+    expect(css).toMatch(
+      /select option,\s*select optgroup\s*\{[^}]*background-color:\s*var\(--hr-bg-raised\);[^}]*color:\s*var\(--hr-text-1\)/s,
+    )
+    expect(css).toMatch(
+      /@media\s*\(forced-colors:\s*active\)[^{]*\{[\s\S]*background-color:\s*Canvas;[\s\S]*color:\s*CanvasText/,
+    )
+  })
+
   it('prepaints the stored appearance before the application entry module', () => {
     const html = readFileSync(resolve(sourceRoot, '../index.html'), 'utf8')
     expect(html.indexOf('homerail.appearance')).toBeGreaterThan(-1)

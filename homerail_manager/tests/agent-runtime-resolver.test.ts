@@ -31,24 +31,39 @@ describe("agent runtime resolver", () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  it("keeps Codex as the host runtime without HomeRail LLM credentials", () => {
+  it("keeps Codex as the host runtime and uses the explicitly catalog-selected model", () => {
     const resolved = resolveAgentRuntimeConfig({
       surface: "manager_agent",
-      providerName: "qwen36",
-      modelName: "qwen3.6",
-      settingId: "ignored-setting",
+      modelName: "codex-account-model",
       harness: "codex_appserver",
     });
 
     expect(resolved).toMatchObject({
       provider_name: "",
-      model: "gpt-5.5",
+      model: "codex-account-model",
       api_key: "",
       base_url: "",
       protocol: "codex_appserver",
       agent_type: "codex_appserver",
       runtime_placement: "host",
     });
+  });
+
+  it("rejects HomeRail provider metadata instead of treating its model as a Codex account model", () => {
+    expect(() => resolveAgentRuntimeConfig({
+      surface: "manager_agent",
+      providerName: "qwen36",
+      modelName: "qwen3.6",
+      settingId: "local-setting",
+      harness: "codex_appserver",
+    })).toThrow("Codex app-server cannot use a HomeRail LLM provider or setting");
+  });
+
+  it("does not invent a Codex model when the catalog selection is missing", () => {
+    expect(() => resolveAgentRuntimeConfig({
+      surface: "manager_agent",
+      harness: "codex_appserver",
+    })).toThrow("Codex app-server model is not configured");
   });
 
   it("runs Kimi Manager on the host while keeping DAG execution containerized", () => {

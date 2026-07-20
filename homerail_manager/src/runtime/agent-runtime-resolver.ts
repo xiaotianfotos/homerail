@@ -153,9 +153,16 @@ export function resolveAgentRuntimeConfig(input: AgentRuntimeResolutionInput): A
   }
   if (requested === "codex_appserver" && input.surface === "manager_agent") {
     const definition = managerAgentHarnessDefinition("codex_appserver");
+    if (input.settingId || input.providerName) {
+      throw new Error("Codex app-server cannot use a HomeRail LLM provider or setting; select a model from the account catalog");
+    }
+    const model = input.modelName?.trim();
+    if (!model) {
+      throw new Error("Codex app-server model is not configured; load the account model catalog before starting the Manager Agent");
+    }
     return {
       provider_name: "",
-      model: input.settingId || input.providerName ? "gpt-5.5" : input.modelName || "gpt-5.5",
+      model,
       api_key: "",
       base_url: "",
       protocol: "codex_appserver",

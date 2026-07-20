@@ -546,6 +546,52 @@ describe("custom LLM providers", () => {
     }
   });
 
+  it("discovers local models without an API key and tries root and versioned endpoints", async () => {
+    const upstreamRequests: Array<{
+      url?: string;
+      authorization?: string;
+      apiKey?: string;
+    }> = [];
+    const upstream = http.createServer((req, res) => {
+      upstreamRequests.push({
+        url: req.url,
+        authorization: req.headers.authorization,
+        apiKey: typeof req.headers["x-api-key"] === "string"
+          ? req.headers["x-api-key"]
+          : undefined,
+      });
+      if (req.url === "/models") {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "use the versioned endpoint" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ models: ["local-qwen", { id: "local-vision" }, "local-qwen"] }));
+    });
+    const upstreamPort = await listen(upstream);
+
+    try {
+      const port = await listen(server);
+      const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/probe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_url: `http://127.0.0.1:${upstreamPort}` }),
+      });
+      const body = await response.json() as {
+        data?: { models?: string[]; error?: string };
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({ models: ["local-qwen", "local-vision"] });
+      expect(upstreamRequests).toEqual([
+        { url: "/models", authorization: undefined, apiKey: undefined },
+        { url: "/v1/models", authorization: undefined, apiKey: undefined },
+      ]);
+    } finally {
+      await close(upstream);
+    }
+  });
+
   it("rejects model probes for unknown saved settings", async () => {
     const port = await listen(server);
     const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/probe`, {
@@ -557,7 +603,7 @@ describe("custom LLM providers", () => {
     expect(response.status).toBe(404);
   });
 
-  it("tests both /v1 endpoints with the exact model and prefers Claude when both work", async () => {
+  it("tests all three /v1 endpoints with the exact model and prefers Claude when both harness protocols work", async () => {
     const upstreamRequests: Array<{
       url?: string;
       model?: string;
@@ -601,8 +647,9 @@ describe("custom LLM providers", () => {
           available: boolean;
           preferred_harness: string | null;
           endpoints: {
-            anthropic: { available: boolean; url: string };
-            openai: { available: boolean; url: string };
+            anthropic: { available: boolean; url: string; base_url?: string };
+            openai: { available: boolean; url: string; base_url?: string };
+            responses: { available: boolean; url: string; base_url?: string };
           };
         };
       };
@@ -612,8 +659,21 @@ describe("custom LLM providers", () => {
         available: true,
         preferred_harness: "claude_agent_sdk",
         endpoints: {
-          anthropic: { available: true, url: `http://127.0.0.1:${upstreamPort}/v1/messages` },
-          openai: { available: true, url: `http://127.0.0.1:${upstreamPort}/v1/chat/completions` },
+          anthropic: {
+            available: true,
+            url: `http://127.0.0.1:${upstreamPort}/v1/messages`,
+            base_url: `http://127.0.0.1:${upstreamPort}/v1`,
+          },
+          openai: {
+            available: true,
+            url: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`,
+            base_url: `http://127.0.0.1:${upstreamPort}/v1`,
+          },
+          responses: {
+            available: true,
+            url: `http://127.0.0.1:${upstreamPort}/v1/responses`,
+            base_url: `http://127.0.0.1:${upstreamPort}/v1`,
+          },
         },
       });
       expect(upstreamRequests.sort((a, b) => String(a.url).localeCompare(String(b.url)))).toEqual([
@@ -631,7 +691,85 @@ describe("custom LLM providers", () => {
           apiKey: "local-secret",
           anthropicVersion: "2023-06-01",
         },
+        {
+          url: "/v1/responses",
+          model: "local-exact-model",
+          authorization: "Bearer local-secret",
+          apiKey: "local-secret",
+          anthropicVersion: undefined,
+        },
       ]);
+    } finally {
+      await close(upstream);
+    }
+  });
+
+  it("discovers protocol roots from an unversioned base URL and falls back to root endpoints", async () => {
+    const upstreamRequests: string[] = [];
+    const upstream = http.createServer((req, res) => {
+      req.resume();
+      upstreamRequests.push(req.url ?? "");
+      if (req.url === "/v1/messages" || req.url === "/v1/responses" || req.url === "/chat/completions") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ id: "probe-result" }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+    });
+    const upstreamPort = await listen(upstream);
+
+    try {
+      const port = await listen(server);
+      const root = `http://127.0.0.1:${upstreamPort}`;
+      const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/detect-runtime`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_url: root, model: "local-model" }),
+      });
+      const body = await response.json() as {
+        data: {
+          available: boolean;
+          preferred_harness: string | null;
+          endpoints: Record<string, {
+            available: boolean;
+            url: string;
+            base_url?: string;
+            attempted_urls?: string[];
+          }>;
+        };
+      };
+
+      expect(body.data).toMatchObject({
+        available: true,
+        preferred_harness: "claude_agent_sdk",
+        endpoints: {
+          anthropic: {
+            available: true,
+            url: `${root}/v1/messages`,
+            base_url: `${root}/v1`,
+            attempted_urls: [`${root}/v1/messages`],
+          },
+          responses: {
+            available: true,
+            url: `${root}/v1/responses`,
+            base_url: `${root}/v1`,
+            attempted_urls: [`${root}/v1/responses`],
+          },
+          openai: {
+            available: true,
+            url: `${root}/chat/completions`,
+            base_url: root,
+            attempted_urls: [`${root}/v1/chat/completions`, `${root}/chat/completions`],
+          },
+        },
+      });
+      expect(upstreamRequests).toEqual(expect.arrayContaining([
+        "/v1/messages",
+        "/v1/responses",
+        "/v1/chat/completions",
+        "/chat/completions",
+      ]));
     } finally {
       await close(upstream);
     }
@@ -667,6 +805,7 @@ describe("custom LLM providers", () => {
           endpoints: {
             anthropic: { available: boolean; status?: number };
             openai: { available: boolean; status?: number };
+            responses: { available: boolean; status?: number };
           };
         };
       };
@@ -677,6 +816,58 @@ describe("custom LLM providers", () => {
         endpoints: {
           anthropic: { available: false, status: 404 },
           openai: { available: true, status: 200 },
+          responses: { available: false, status: 404 },
+        },
+      });
+    } finally {
+      await close(upstream);
+    }
+  });
+
+  it("reports a Responses-only endpoint without selecting an unsupported harness", async () => {
+    const upstream = http.createServer((req, res) => {
+      req.resume();
+      if (req.url === "/v1/responses") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ id: "responses-probe-result" }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+    });
+    const upstreamPort = await listen(upstream);
+
+    try {
+      const port = await listen(server);
+      const root = `http://127.0.0.1:${upstreamPort}/v1`;
+      const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/detect-runtime`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_url: root,
+          model: "responses-only-model",
+        }),
+      });
+      const body = await response.json() as {
+        data: {
+          available: boolean;
+          preferred_harness: string | null;
+          endpoints: {
+            anthropic: { available: boolean; status?: number };
+            openai: { available: boolean; status?: number };
+            responses: { available: boolean; status?: number; base_url?: string };
+          };
+        };
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.data).toMatchObject({
+        available: false,
+        preferred_harness: null,
+        endpoints: {
+          anthropic: { available: false, status: 404 },
+          openai: { available: false, status: 404 },
+          responses: { available: true, status: 200, base_url: root },
         },
       });
     } finally {

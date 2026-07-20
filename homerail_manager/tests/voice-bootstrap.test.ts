@@ -17,6 +17,7 @@ import { _clearStoredConfig, _managerAgentHistoryForTest } from "../src/server/v
 import { _clearStoredVoiceSettings } from "../src/server/voice.js";
 import { BUILTIN_EDGE_TTS_MODEL, synthesizeEdgeTts } from "../src/server/edge-tts.js";
 import { _clearAllSettings, createSetting, listSettings, upsertProvider } from "../src/persistence/llm-settings.js";
+import { saveManagerAgentConfig } from "../src/persistence/manager-agent-config.js";
 import { createProject } from "../src/persistence/projects-changes.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import { createServer } from "../src/server/http.js";
@@ -252,6 +253,106 @@ describe("voice bootstrap routes", () => {
       harness: "codex_appserver",
       model_name: "gpt-5.5",
       reasoning_effort: "medium",
+    });
+  });
+
+  it("selects the live Codex account default when switching harnesses without a model", async () => {
+    await close(server);
+    const accountCatalog: CodexModelCatalog = {
+      binary: "codex",
+      models: [{
+        id: "account-default-model",
+        model: "account-default-model",
+        display_name: "Account Default Model",
+        description: "",
+        is_default: true,
+        default_reasoning_effort: "high",
+        supported_reasoning_efforts: ["medium", "high"],
+        service_tiers: [],
+      }],
+    };
+    server = createServer(0, undefined, undefined, false, {
+      loadCodexModels: async () => accountCatalog,
+      autoDetectCodex: true,
+    });
+    const port = await listen(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver" }),
+    });
+    const body = await response.json() as {
+      data: {
+        harness: string;
+        llm_setting_id: string | null;
+        provider_name: string | null;
+        model_name: string;
+        reasoning_effort: string;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({
+      harness: "codex_appserver",
+      llm_setting_id: null,
+      provider_name: null,
+      model_name: "account-default-model",
+      reasoning_effort: "high",
+    });
+  });
+
+  it("repairs a retired stored Codex model from the live account catalog", async () => {
+    saveManagerAgentConfig({
+      harness: "codex_appserver",
+      model_name: "retired-account-model",
+      reasoning_effort: "low",
+    });
+    await close(server);
+    const accountCatalog: CodexModelCatalog = {
+      binary: "codex",
+      models: [{
+        id: "replacement-account-model",
+        model: "replacement-account-model",
+        display_name: "Replacement Account Model",
+        description: "",
+        is_default: true,
+        default_reasoning_effort: "medium",
+        supported_reasoning_efforts: ["low", "medium", "high"],
+        service_tiers: [],
+      }],
+    };
+    server = createServer(0, undefined, undefined, false, {
+      loadCodexModels: async () => accountCatalog,
+      autoDetectCodex: true,
+    });
+    const port = await listen(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/manager-agent/config`);
+    const body = await response.json() as {
+      data: { model_name: string; reasoning_effort: string };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({
+      model_name: "replacement-account-model",
+      reasoning_effort: "medium",
+    });
+  });
+
+  it("does not reinterpret legacy HomeRail provider metadata as a Codex model", async () => {
+    const normalized = saveManagerAgentConfig({
+      harness: "codex_appserver",
+      llm_setting_id: "legacy-setting",
+      provider_name: "legacy-provider",
+      model_name: "legacy-provider-model",
+    });
+
+    expect(normalized).toMatchObject({
+      harness: "codex_appserver",
+      llm_setting_id: null,
+      provider_name: null,
+      model_name: null,
     });
   });
 

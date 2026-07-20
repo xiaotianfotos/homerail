@@ -31,13 +31,28 @@ describe('providers api model probing', () => {
     })
   })
 
-  it('sends the exact base URL and model for dual runtime detection', async () => {
+  it('allows local model discovery without an API key', async () => {
+    const post = vi.spyOn(http, 'post').mockResolvedValue({
+      success: true,
+      data: { models: ['local-model'] }
+    })
+
+    await expect(probeModels({ baseUrl: 'http://127.0.0.1:5000' })).resolves.toEqual({
+      models: ['local-model']
+    })
+    expect(post).toHaveBeenCalledWith('/api/llm/models/probe', {
+      base_url: 'http://127.0.0.1:5000'
+    })
+  })
+
+  it('sends the exact base URL and model for three-protocol runtime detection', async () => {
     const detection = {
       available: true,
       preferred_harness: 'claude_agent_sdk' as const,
       endpoints: {
-        anthropic: { available: true, url: 'http://localhost/v1/messages', status: 200 },
-        openai: { available: true, url: 'http://localhost/v1/chat/completions', status: 200 }
+        anthropic: { available: true, url: 'http://localhost/v1/messages', base_url: 'http://localhost/v1', status: 200 },
+        openai: { available: true, url: 'http://localhost/v1/chat/completions', base_url: 'http://localhost/v1', status: 200 },
+        responses: { available: true, url: 'http://localhost/v1/responses', base_url: 'http://localhost/v1', status: 200 }
       }
     }
     const post = vi.spyOn(http, 'post').mockResolvedValue({ success: true, data: detection })

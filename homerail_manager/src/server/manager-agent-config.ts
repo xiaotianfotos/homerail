@@ -118,16 +118,20 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
     : normalizedServiceTier(serviceTier);
   if (harness === "codex_appserver") {
     const staleRuntimeSelection = Boolean(settingId || providerName);
+    const currentCodexModel = current.harness === "codex_appserver" ? current.model_name : null;
     return {
       ...current,
       harness,
       llm_setting_id: null,
       provider_name: null,
+      // Ignore stale HomeRail provider/model patches while Codex is active.
+      // When switching to Codex without an explicit model, leave this null so
+      // validateAndSaveManagerAgentConfig can use the live app-server catalog.
       model_name: staleRuntimeSelection
-        ? current.harness === "codex_appserver"
-          ? current.model_name ?? "gpt-5.5"
-          : "gpt-5.5"
-        : modelName ?? (mergedSettingId || mergedProviderName ? "gpt-5.5" : mergedModelName ?? "gpt-5.5"),
+        ? currentCodexModel
+        : modelName === undefined
+          ? currentCodexModel
+          : modelName,
       reasoning_effort: mergedReasoningEffort,
       service_tier: mergedServiceTier,
       generative_ui_mode: generativeUiMode,
@@ -149,9 +153,14 @@ function codexModelMatches(model: CodexModel, modelName: string): boolean {
   return model.model === modelName || model.id === modelName;
 }
 
+function requiredCodexModelName(config: ManagerAgentConfig): string {
+  if (config.model_name) return config.model_name;
+  throw new Error("Codex app-server did not provide an available model for the current account.");
+}
+
 function validateCodexReasoningEffort(config: ManagerAgentConfig, catalog: CodexModelCatalog): void {
   if (config.harness !== "codex_appserver") return;
-  const modelName = config.model_name || "gpt-5.5";
+  const modelName = requiredCodexModelName(config);
   const model = catalog.models.find((item) => codexModelMatches(item, modelName));
   if (!model) {
     throw new Error(`Codex model '${modelName}' is not available for the current account.`);
@@ -166,7 +175,7 @@ function validateCodexReasoningEffort(config: ManagerAgentConfig, catalog: Codex
 
 function validateCodexServiceTier(config: ManagerAgentConfig, catalog: CodexModelCatalog): void {
   if (config.harness !== "codex_appserver" || !config.service_tier) return;
-  const modelName = config.model_name || "gpt-5.5";
+  const modelName = requiredCodexModelName(config);
   const model = catalog.models.find((item) => codexModelMatches(item, modelName));
   if (!model) return;
   const supported = model.service_tiers.map((tier) => tier.id);
@@ -177,7 +186,10 @@ function validateCodexServiceTier(config: ManagerAgentConfig, catalog: CodexMode
   }
 }
 
-function preferredCodexConfig(catalog: CodexModelCatalog): Pick<ManagerAgentConfig, "model_name" | "reasoning_effort" | "service_tier"> | null {
+function preferredCodexConfig(
+  catalog: CodexModelCatalog,
+  currentModelName?: string,
+): Pick<ManagerAgentConfig, "model_name" | "reasoning_effort" | "service_tier"> | null {
   const candidates = catalog.models.flatMap((model) => {
     const supported = model.supported_reasoning_efforts;
     const defaultEffort = model.default_reasoning_effort &&
@@ -188,7 +200,9 @@ function preferredCodexConfig(catalog: CodexModelCatalog): Pick<ManagerAgentConf
         : supported[0] ?? "medium";
     return [{ model, reasoning_effort: defaultEffort }];
   });
-  const selected = candidates.find(({ model }) => model.is_default) ?? candidates[0];
+  const selected = currentModelName
+    ? candidates.find(({ model }) => codexModelMatches(model, currentModelName))
+    : candidates.find(({ model }) => model.is_default) ?? candidates[0];
   return selected
     ? { model_name: selected.model.model, reasoning_effort: selected.reasoning_effort, service_tier: null }
     : null;
@@ -218,15 +232,31 @@ export async function validateAndSaveManagerAgentConfig(
   let next: ManagerAgentConfig;
   try {
     next = patchedConfig(patch);
-    validateManagerConfig(next);
   } catch (error) {
     throw validationError(error);
   }
   if (next.harness === "codex_appserver") {
     const catalog = await (options.loadCodexModels ?? listCodexModels)();
     try {
+      if (!next.model_name) {
+        const selected = preferredCodexConfig(catalog);
+        if (!selected) throw new Error("Codex app-server returned an empty model catalog.");
+        next = {
+          ...next,
+          ...selected,
+          reasoning_effort: _string(patch.reasoning_effort) ? next.reasoning_effort : selected.reasoning_effort,
+          service_tier: patch.service_tier === undefined ? selected.service_tier : next.service_tier,
+        };
+      }
+      validateManagerConfig(next);
       validateCodexReasoningEffort(next, catalog);
       validateCodexServiceTier(next, catalog);
+    } catch (error) {
+      throw validationError(error);
+    }
+  } else {
+    try {
+      validateManagerConfig(next);
     } catch (error) {
       throw validationError(error);
     }
@@ -243,11 +273,36 @@ export async function ensurePreferredManagerAgentConfig(
 ): Promise<ManagerAgentConfig> {
   const current = readManagerAgentConfig();
   if (hasManagerAgentConfig()) {
-    try {
-      validateManagerConfig(current);
-      return current;
-    } catch {
-      // Fall through to an available runtime when a stored config is stale.
+    if (current.harness === "codex_appserver" && autoDetectCodex(options)) {
+      try {
+        const catalog = await (options.loadCodexModels ?? listCodexModels)();
+        try {
+          validateManagerConfig(current);
+          validateCodexReasoningEffort(current, catalog);
+          validateCodexServiceTier(current, catalog);
+          return current;
+        } catch {
+          const selected = preferredCodexConfig(catalog, current.model_name ?? undefined) ??
+            preferredCodexConfig(catalog);
+          if (selected) {
+            return saveManagerAgentConfig({
+              harness: "codex_appserver",
+              llm_setting_id: null,
+              provider_name: null,
+              ...selected,
+            });
+          }
+        }
+      } catch {
+        // Fall through to another available runtime when app-server is unavailable.
+      }
+    } else {
+      try {
+        validateManagerConfig(current);
+        return current;
+      } catch {
+        // Fall through to an available runtime when a stored config is stale.
+      }
     }
   }
 
