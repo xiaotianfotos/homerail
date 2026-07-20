@@ -17,7 +17,7 @@
   "runtime": {
     "ready": "主 Agent 運行時已就緒",
     "currentHarness": "當前 Harness：{harness}",
-    "notReady": "主 Agent 運行時未就緒。模型憑證在這裏配置，本機依賴和 Docker 存取請到環境檢查頁處理。",
+    "notReady": "主 Agent 運行時未就緒。模型憑證在這裏配置，本機主 Agent 依賴請到環境檢查頁處理。",
     "existing": "已有主 Agent 配置",
     "switching": "切換中...",
     "use": "使用",
@@ -25,7 +25,7 @@
     "nextAvailable": "可以進入下一步"
   },
   "environmentCheck": {
-    "description": "確認本機運行依賴和 Docker 工作區存取",
+    "description": "確認主 Agent 依賴；Docker 僅在執行容器 DAG 時需要",
     "hostNotRequired": "當前 Manager Agent 不需要 Git Bash host-shell 環境",
     "gitBashReadyPath": "Git Bash 已就緒：{path}",
     "gitBashReady": "Git Bash host-shell 環境已就緒",
@@ -38,6 +38,7 @@
     "dockerStartRequired": "Docker 已安裝但未執行。請啟動 Docker 後重新檢查。",
     "dockerPermissionRequired": "目前使用者無法存取 Docker。請授予 Docker 存取權限後重新檢查。",
     "dockerCheckFailed": "Docker 工作區檢查失敗：{error}",
+    "dockerCheckUnavailable": "暫時無法檢查 Docker，請稍後重試",
     "passed": "已通過",
     "needsAttention": "需處理",
     "dockerTitle": "Docker 工作區存取",

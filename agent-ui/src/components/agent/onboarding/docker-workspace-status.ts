@@ -6,7 +6,7 @@ export function dockerWorkspaceGuidance(
   result: DockerWorkspaceProbeResult | null,
 ): DockerWorkspaceGuidance {
   if (!result || result.available) return null
-  const message = (result.error || '').toLowerCase()
+  const message = typeof result.error === 'string' ? result.error.toLowerCase() : ''
 
   if (
     result.code === 'docker_node_unavailable' ||
@@ -29,4 +29,20 @@ export function dockerWorkspaceGuidance(
     return 'permission'
   }
   return null
+}
+
+export function readableDockerWorkspaceError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (typeof error === 'string' && error.trim()) return error
+  if (error && typeof error === 'object') {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim()) return message
+    const nested = (error as { error?: unknown }).error
+    if (nested && typeof nested === 'object') {
+      const nestedMessage = (nested as { message?: unknown }).message
+      if (typeof nestedMessage === 'string' && nestedMessage.trim()) return nestedMessage
+    }
+    if (typeof nested === 'string' && nested.trim()) return nested
+  }
+  return fallback
 }

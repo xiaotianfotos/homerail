@@ -17,7 +17,7 @@
   "runtime": {
     "ready": "主 Agent 运行时已就绪",
     "currentHarness": "当前 Harness：{harness}",
-    "notReady": "主 Agent 运行时未就绪。模型凭证在这里配置，本机依赖和 Docker 访问请到环境检查页处理。",
+    "notReady": "主 Agent 运行时未就绪。模型凭证在这里配置，本机主 Agent 依赖请到环境检查页处理。",
     "existing": "已有主 Agent 配置",
     "switching": "切换中...",
     "use": "使用",
@@ -25,7 +25,7 @@
     "nextAvailable": "可以进入下一步"
   },
   "environmentCheck": {
-    "description": "确认本机运行依赖和 Docker 工作区访问",
+    "description": "确认主 Agent 依赖；Docker 仅在运行容器 DAG 时需要",
     "hostNotRequired": "当前 Manager Agent 不需要 Git Bash host-shell 环境",
     "gitBashReadyPath": "Git Bash 已就绪：{path}",
     "gitBashReady": "Git Bash host-shell 环境已就绪",
@@ -38,6 +38,7 @@
     "dockerStartRequired": "Docker 已安装但未运行。请启动 Docker 后重新检查。",
     "dockerPermissionRequired": "当前用户无法访问 Docker。请授予 Docker 访问权限后重新检查。",
     "dockerCheckFailed": "Docker 工作区检查失败：{error}",
+    "dockerCheckUnavailable": "暂时无法检查 Docker，请稍后重试",
     "passed": "已通过",
     "needsAttention": "需处理",
     "dockerTitle": "Docker 工作区访问",

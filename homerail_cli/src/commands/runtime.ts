@@ -28,12 +28,6 @@ import {
   loadLocalSecrets,
   managerWsUrl,
 } from "../local-config.js";
-import {
-  HOMERAIL_UI_ADMIN_PROXY_ENABLED,
-  HOMERAIL_UI_ORIGIN,
-  HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
-  createUiAdminProxyPolicy,
-} from "../ui-admin-proxy.js";
 import { applyStoredModelConfig } from "./config.js";
 import { dockerNotFoundDetail, resolveDockerBinary } from "../docker-bin.js";
 import {
@@ -65,7 +59,6 @@ interface StartOpts {
   uiPort?: string;
   uiPublicUrl?: string;
   enableTextMode?: boolean;
-  unsafeNoAdminToken?: boolean;
 }
 
 interface UiStartOpts {
@@ -75,7 +68,6 @@ interface UiStartOpts {
   publicUrl?: string;
   managerUrl?: string;
   enableTextMode?: boolean;
-  unsafeNoAdminToken?: boolean;
 }
 
 interface RuntimeStatus {
@@ -215,37 +207,6 @@ export function mergeManagerAdminOrigins(
     origins.add(parsed.origin);
   }
   return [...origins].sort().join(",");
-}
-
-export interface UiAdminProxyProcessEnvOptions {
-  uiBindHost: string;
-  uiPublicUrl: string;
-  managerUrl: string;
-  adminToken?: string;
-  unsafeNoAdminToken?: boolean;
-}
-
-/** Compute, rather than inherit, the only mode in which a UI may proxy writes. */
-export function resolveUiAdminProxyProcessEnv(
-  options: UiAdminProxyProcessEnvOptions,
-): Record<string, string> {
-  const uiOrigin = new URL(options.uiPublicUrl).origin;
-  const policy = createUiAdminProxyPolicy({
-    enabled: true,
-    uiOrigin,
-    uiBindHost: options.uiBindHost,
-    managerUrl: options.managerUrl,
-    adminToken: undefined,
-    unsafeAllowPublicNoAuth: true,
-  });
-  return {
-    [HOMERAIL_UI_ORIGIN]: uiOrigin,
-    [HOMERAIL_UI_ADMIN_PROXY_ENABLED]: policy.enabled ? "1" : "0",
-    // Admin-token authentication is disabled for this release. Explicitly
-    // erase inherited/local secrets for both the static and Vite UI proxies.
-    HOMERAIL_MANAGER_ADMIN_TOKEN: "",
-    [HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH]: "1",
-  };
 }
 
 export interface ModelConfigApplyStatus {
@@ -552,7 +513,6 @@ async function startRuntime(
       HOMERAIL_MANAGER_HOST: managerHost,
       HOMERAIL_MANAGER_ADMIN_ORIGINS: managerAdminOrigins,
       HOMERAIL_MANAGER_ADMIN_TOKEN: "",
-      [HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH]: "1",
       ...(hasExplicitManagerPublicUrl ? { HOMERAIL_MANAGER_PUBLIC_URL: managerPublicUrl } : {}),
       HOMERAIL_PROJECT_ID: cfg.node?.projectId || "p1",
       ...assetEnv,
@@ -608,7 +568,6 @@ async function startRuntime(
       publicUrl: opts.uiPublicUrl,
       managerUrl: opts.public && !hasExplicitManagerPublicUrl ? undefined : managerPublicUrl,
       enableTextMode: opts.enableTextMode,
-      unsafeNoAdminToken: opts.unsafeNoAdminToken,
     });
     printMessage(`Agent UI: ${uiStatus.uiPidRunning ? "PASS" : "FAIL"} ${uiStatus.uiUrl}`);
   }
@@ -825,7 +784,6 @@ async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Pr
         managerPort,
         publicUrl: httpsPublicUrl,
         textModeEnabled,
-        unsafeNoAdminToken: opts.unsafeNoAdminToken,
         certificate,
       });
       await waitForHttp(uiProbeUrl(host, httpsPort, "https"));
@@ -847,7 +805,6 @@ async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Pr
         managerPort,
         publicUrl: httpPublicUrl,
         textModeEnabled,
-        unsafeNoAdminToken: opts.unsafeNoAdminToken,
       });
       await waitForHttp(uiProbeUrl(host, httpPort, "http"));
     } catch (err) {
@@ -876,7 +833,6 @@ interface StartUiProcessOpts {
   managerPort: string;
   publicUrl: string;
   textModeEnabled: boolean;
-  unsafeNoAdminToken?: boolean;
   certificate?: UiCertificate;
 }
 
@@ -903,14 +859,6 @@ function startUiProcess(opts: StartUiProcessOpts): number {
   // also the most reliable source-deploy path when dist exists.
   const serveStatic = shouldServeStaticAgentUi(agentUiDir);
   const managerHttp = opts.managerUrl || `http://localhost:${opts.managerPort}`;
-  const adminProxyEnv = resolveUiAdminProxyProcessEnv({
-    uiBindHost: opts.host,
-    uiPublicUrl: opts.publicUrl,
-    managerUrl: managerHttp,
-    adminToken: undefined,
-    unsafeNoAdminToken: true,
-  });
-
   let child: import("child_process").ChildProcess;
   if (serveStatic) {
     const serverScript = path.join(resolveRepoRoot(), "homerail_cli", "dist", "static-ui-server.js");
@@ -926,7 +874,6 @@ function startUiProcess(opts: StartUiProcessOpts): number {
         HOMERAIL_UI_PORT: String(opts.port),
         HOMERAIL_MANAGER_HTTP: managerHttp,
         HOMERAIL_MANAGER_WS: managerWs,
-        ...adminProxyEnv,
         ...(opts.protocol === "https"
           ? {
             HOMERAIL_UI_HTTPS: "1",
@@ -963,7 +910,6 @@ function startUiProcess(opts: StartUiProcessOpts): number {
         VITE_HOMERAIL_ENABLE_TEXT_MODE: opts.textModeEnabled ? "1" : "0",
         HOMERAIL_MANAGER_HTTP: managerHttp,
         VITE_API_BASE_URL: uiApiOrigin,
-        ...adminProxyEnv,
         ...(opts.protocol === "https"
           ? {
             HOMERAIL_UI_HTTPS: "1",

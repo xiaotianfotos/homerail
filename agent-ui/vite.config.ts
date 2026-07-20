@@ -8,7 +8,6 @@ import viteCompression from 'vite-plugin-compression2'
 import {
   authorizeAdminProxyRequest,
   isProtectedApiMutation,
-  resolveAdminProxyTrust,
 } from './src/admin-proxy-trust'
 
 // Dev server gzip compression plugin
@@ -40,14 +39,6 @@ const managerWsTarget = (
   process.env.VITE_WS_URL
   || managerHttpTarget.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
 )
-const managerAdminToken = process.env.HOMERAIL_MANAGER_ADMIN_TOKEN || ''
-const adminProxyTrust = resolveAdminProxyTrust({
-  enabled: process.env.HOMERAIL_UI_ADMIN_PROXY_ENABLED === '1',
-  uiOrigin: process.env.HOMERAIL_UI_ORIGIN || '',
-  uiBindHost: process.env.HOMERAIL_UI_HOST || '',
-  managerUrl: managerHttpTarget,
-  unsafeAllowPublicNoAuth: process.env.HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH === '1',
-})
 
 function adminProxyGuardPlugin(): Plugin {
   return {
@@ -56,11 +47,12 @@ function adminProxyGuardPlugin(): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         if (!isProtectedApiMutation(req.method, req.url)) return next()
-        const authorization = authorizeAdminProxyRequest(
-          adminProxyTrust,
-          req.headers.origin,
-          req.headers['sec-fetch-site'],
-        )
+        const authorization = authorizeAdminProxyRequest({
+          protocol: 'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http',
+          host: req.headers.host,
+          origin: req.headers.origin,
+          secFetchSite: req.headers['sec-fetch-site'],
+        })
         if (authorization.allowed) return next()
         req.resume()
         res.writeHead(403, {
@@ -71,21 +63,6 @@ function adminProxyGuardPlugin(): Plugin {
       })
     },
   }
-}
-
-function configureManagerProxy(proxy: { on: (event: string, listener: (...args: any[]) => void) => void }): void {
-  proxy.on('proxyReq', (proxyReq: { removeHeader: (name: string) => void; setHeader: (name: string, value: string) => void }, req: { method?: string; url?: string; headers: Record<string, string | string[] | undefined> }) => {
-    if (!isProtectedApiMutation(req.method, req.url)) return
-    proxyReq.removeHeader('authorization')
-    const authorization = authorizeAdminProxyRequest(
-      adminProxyTrust,
-      req.headers.origin,
-      req.headers['sec-fetch-site'],
-    )
-    if (authorization.allowed && managerAdminToken) {
-      proxyReq.setHeader('authorization', `Bearer ${managerAdminToken}`)
-    }
-  })
 }
 
 // NOTE: For production nginx, uncomment `gzip on;` in /usr/trim/nginx/conf/nginx.conf
@@ -136,7 +113,6 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path,
-        configure: configureManagerProxy,
       },
       '/artifacts': {
         target: managerHttpTarget,

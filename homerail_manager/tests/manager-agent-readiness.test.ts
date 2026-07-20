@@ -211,7 +211,7 @@ describe("/api/manager-agent/readiness", () => {
       worker_entry: workerEntry,
     });
     expect(body.data.checks.docker_workspace).toEqual({
-      required: true,
+      required: false,
       host_path: path.join(tmpHome, "workspace"),
       probe_endpoint: "/api/dag/docker-workspace-probe",
     });
