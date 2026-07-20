@@ -65,12 +65,16 @@ export function prReviewRuntimeProfileYaml({ profileId, primary, arbiter }) {
 }
 
 async function request(managerUrl, pathname, init) {
+  const isMutation = init?.method && init.method !== "GET";
   const response = await fetch(`${managerUrl}${pathname}`, {
     ...init,
     headers: {
       ...(init?.headers ?? {}),
-      ...(process.env.HOMERAIL_MANAGER_ADMIN_TOKEN && init?.method && init.method !== "GET"
+      ...(process.env.HOMERAIL_MANAGER_ADMIN_TOKEN && isMutation
         ? { Authorization: `Bearer ${process.env.HOMERAIL_MANAGER_ADMIN_TOKEN}` }
+        : {}),
+      ...(process.env.HOMERAIL_DAG_MUTATION_TOKEN && isMutation
+        ? { "x-homerail-dag-token": process.env.HOMERAIL_DAG_MUTATION_TOKEN }
         : {}),
     },
   });

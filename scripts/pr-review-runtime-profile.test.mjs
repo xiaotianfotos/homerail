@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
   PR_REVIEW_ARBITER_AGENTS,
+  configurePrReviewRuntimeProfile,
   prReviewRuntimeProfileYaml,
   selectRuntimeSetting,
 } from "./configure-pr-review-runtime-profile.mjs";
@@ -54,6 +56,45 @@ test("binds primary review to one model and arbitration to a distinct model", ()
     () => prReviewRuntimeProfileYaml({ profileId: "same", primary, arbiter: primary }),
     /must use different LLM settings/,
   );
+});
+
+test("authenticates profile sync with the isolated DAG mutation token", async () => {
+  const previousToken = process.env.HOMERAIL_DAG_MUTATION_TOKEN;
+  process.env.HOMERAIL_DAG_MUTATION_TOKEN = "test-mutation-token";
+  let syncHeaders;
+  const server = http.createServer((request, response) => {
+    response.setHeader("content-type", "application/json");
+    if (request.method === "GET" && request.url === "/api/llm/settings") {
+      response.end(JSON.stringify({ success: true, data: { settings: [primary, arbiter] } }));
+      return;
+    }
+    if (request.method === "POST" && request.url === "/api/dag/profiles/sync") {
+      syncHeaders = request.headers;
+      request.resume();
+      response.end(JSON.stringify({
+        success: true,
+        data: { profile: { workflow_id: "pr-review", profile_id: "pr-review-mixed" } },
+      }));
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ success: false, error: "not found" }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    await configurePrReviewRuntimeProfile({
+      managerUrl: `http://127.0.0.1:${address.port}`,
+      primarySelector: primary.model_name,
+      arbiterSelector: arbiter.model_name,
+    });
+    assert.equal(syncHeaders?.["x-homerail-dag-token"], "test-mutation-token");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    if (previousToken === undefined) delete process.env.HOMERAIL_DAG_MUTATION_TOKEN;
+    else process.env.HOMERAIL_DAG_MUTATION_TOKEN = previousToken;
+  }
 });
 
 test("live PR Review clones the Seed Home and switches from setting to profile", () => {
