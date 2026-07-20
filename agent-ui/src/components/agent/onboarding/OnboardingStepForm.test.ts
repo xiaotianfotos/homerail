@@ -101,31 +101,23 @@ function inputValue(input: HTMLInputElement, value: string): void {
 beforeEach(() => {
   i18n.global.locale.value = 'zh-Hans'
   vi.clearAllMocks()
-  voiceApiMocks.testVoiceEndpoints.mockResolvedValue({
-    success: true,
-    data: {
-      ok: true,
-      results: [
-        {
-          id: 'asr_http',
-          kind: 'http',
-          url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+  // 默认所有候选端点都可达（按请求原样返回 ok 结果）；
+  // 需要失败场景时各用例用 mockResolvedValueOnce 覆盖。
+  voiceApiMocks.testVoiceEndpoints.mockImplementation((endpoints: Array<{ id: string; kind: string; url: string }>) =>
+    Promise.resolve({
+      success: true,
+      data: {
+        ok: true,
+        results: endpoints.map((endpoint) => ({
+          ...endpoint,
           ok: true,
           reachable: true,
           status_code: 405,
-          message: 'Endpoint is reachable'
-        },
-        {
-          id: 'asr_realtime',
-          kind: 'websocket',
-          url: 'ws://192.168.100.10:5002/v1/realtime',
-          ok: true,
-          reachable: true,
-          message: 'WebSocket handshake succeeded'
-        }
-      ]
-    }
-  })
+          message: endpoint.kind === 'websocket' ? 'WebSocket handshake succeeded' : 'Endpoint is reachable'
+        }))
+      }
+    })
+  )
 })
 
 afterEach(() => {
@@ -364,6 +356,96 @@ describe('OnboardingStepForm ASR endpoint detection', () => {
 
     await vi.waitFor(() => expect(toastMocks.showToast).toHaveBeenCalledWith(
       expect.stringContaining('ASR 接入地址不可用'),
+      'error',
+      6000
+    ))
+    expect(apiMocks.createProvider).not.toHaveBeenCalled()
+    expect(apiMocks.createLLMSetting).not.toHaveBeenCalled()
+  })
+})
+
+describe('OnboardingStepForm TTS endpoint detection', () => {
+  async function fillCustomTts(root: HTMLElement): Promise<void> {
+    root.querySelectorAll<HTMLButtonElement>('.onboarding-step-form__mode-tab')[1]!.click()
+    await nextTick()
+    const inputs = root.querySelectorAll<HTMLInputElement>('.onboarding-step-form__custom input')
+    inputValue(inputs[0]!, 'http://192.168.100.10:5001/v1')
+    inputValue(inputs[1]!, 'qwen3-tts')
+    await nextTick()
+  }
+
+  it('tests the speech endpoints before saving and persists reachable ones', async () => {
+    const root = await mountForm({
+      capability: 'supports_tts',
+      providers: [],
+      existingSettings: []
+    })
+    await fillCustomTts(root)
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(apiMocks.createLLMSetting).toHaveBeenCalledTimes(1))
+    expect(voiceApiMocks.testVoiceEndpoints).toHaveBeenCalledWith([
+      {
+        id: 'tts_http',
+        kind: 'http',
+        url: 'http://192.168.100.10:5001/v1/audio/speech'
+      },
+      {
+        id: 'tts_stream',
+        kind: 'http',
+        url: 'http://192.168.100.10:5001/v1/audio/speech/stream'
+      }
+    ])
+    expect(apiMocks.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      tts_http_url: 'http://192.168.100.10:5001/v1/audio/speech',
+      tts_realtime_url: 'http://192.168.100.10:5001/v1/audio/speech/stream'
+    }))
+    expect(apiMocks.createLLMSetting).toHaveBeenCalledWith(expect.objectContaining({
+      tts_http_url: 'http://192.168.100.10:5001/v1/audio/speech',
+      tts_realtime_url: 'http://192.168.100.10:5001/v1/audio/speech/stream'
+    }))
+    expect(voiceApiMocks.testVoiceEndpoints.mock.invocationCallOrder[0]).toBeLessThan(
+      apiMocks.createProvider.mock.invocationCallOrder[0]!
+    )
+  })
+
+  it('does not persist a TTS setting when no speech endpoint is reachable', async () => {
+    voiceApiMocks.testVoiceEndpoints.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ok: false,
+        results: [
+          {
+            id: 'tts_http',
+            kind: 'http',
+            url: 'http://192.168.100.10:5001/v1/audio/speech',
+            ok: false,
+            reachable: false,
+            message: 'fetch failed'
+          },
+          {
+            id: 'tts_stream',
+            kind: 'http',
+            url: 'http://192.168.100.10:5001/v1/audio/speech/stream',
+            ok: false,
+            reachable: false,
+            message: 'Endpoint returned HTTP 404'
+          }
+        ]
+      }
+    })
+    const root = await mountForm({
+      capability: 'supports_tts',
+      providers: [],
+      existingSettings: []
+    })
+    await fillCustomTts(root)
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(toastMocks.showToast).toHaveBeenCalledWith(
+      expect.stringContaining('TTS 接入地址不可用'),
       'error',
       6000
     ))
