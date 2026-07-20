@@ -14,6 +14,7 @@
 //   HOMERAIL_UI_HTTPS_CERT      PEM cert path (HTTPS only)
 //   HOMERAIL_MANAGER_HTTP       manager HTTP origin, e.g. http://localhost:19191
 //   HOMERAIL_MANAGER_WS         manager WS origin, e.g. ws://localhost:19191
+//   HOMERAIL_DAG_MUTATION_TOKEN internal token added to trusted same-origin mutations
 import http from "node:http";
 import https from "node:https";
 import fs from "node:fs";
@@ -30,6 +31,7 @@ const PORT = Number(process.env.HOMERAIL_UI_PORT || 19192);
 const HOST = process.env.HOMERAIL_UI_HOST || "127.0.0.1";
 const MANAGER_HTTP = process.env.HOMERAIL_MANAGER_HTTP || "http://localhost:19191";
 const MANAGER_WS = process.env.HOMERAIL_MANAGER_WS || "ws://localhost:19191";
+const DAG_MUTATION_TOKEN = process.env.HOMERAIL_DAG_MUTATION_TOKEN?.trim();
 const USE_HTTPS = process.env.HOMERAIL_UI_HTTPS === "1";
 const BUILD_MANIFEST = "homerail-build.json";
 
@@ -163,7 +165,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
 
 function proxyHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
   const target = new URL(MANAGER_HTTP);
-  const headers = { ...req.headers, host: target.host };
+  const headers: http.OutgoingHttpHeaders = { ...req.headers, host: target.host };
   if (isProtectedApiMutation(req.method, req.url)) {
     const authorization = authorizeUiAdminProxyMutation({
       protocol: USE_HTTPS ? "https" : "http",
@@ -182,6 +184,9 @@ function proxyHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
     }
     // Browser credentials never override Manager's own trust decision.
     delete headers.authorization;
+    if (DAG_MUTATION_TOKEN) {
+      headers["x-homerail-dag-token"] = DAG_MUTATION_TOKEN;
+    }
   }
   const request = target.protocol === "https:" ? https.request : http.request;
   const proxyReq = request(

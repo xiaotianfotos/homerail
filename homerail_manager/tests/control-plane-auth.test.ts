@@ -9,6 +9,7 @@ import {
 import {
   createServer,
   mergeProvisionerOptions,
+  resolveManagerLocalHttpBaseUrl,
   resolveProvisionedWorkerRuntimeEnv,
   resolveWorkerControlPlaneAuth,
 } from "../src/server/http.js";
@@ -175,6 +176,18 @@ describe("control-plane websocket authentication", () => {
       CLAUDE_MAX_TURNS: "8",
       HOMERAIL_WORKER_TOKEN: "generated-token",
     });
+  });
+
+  it("polls a Manager bound to a specific Docker bridge interface", () => {
+    expect(resolveManagerLocalHttpBaseUrl(39191, {
+      HOMERAIL_MANAGER_HOST: "172.17.0.1",
+    })).toBe("http://172.17.0.1:39191");
+    expect(resolveManagerLocalHttpBaseUrl(39191, {
+      HOMERAIL_MANAGER_HOST: "0.0.0.0",
+    })).toBe("http://127.0.0.1:39191");
+    expect(resolveManagerLocalHttpBaseUrl(39191, {
+      HOMERAIL_MANAGER_HOST: "2001:db8::1",
+    })).toBe("http://[2001:db8::1]:39191");
   });
 
   it("persists the generated provision token across Manager restarts", () => {

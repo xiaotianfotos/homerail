@@ -8,9 +8,12 @@ RESOURCE_ROOT="${HOMERAIL_PRODUCTION_RESOURCES:-$HOME/.local/share/homerail-reso
 REVISION="${HOMERAIL_DEPLOY_REVISION:-}"
 SERVICE_NAME="homerail-production.service"
 UNIT_PATH="$HOME/.config/systemd/user/$SERVICE_NAME"
-MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-0.0.0.0}"
 MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
-MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://127.0.0.1:$MANAGER_PORT}"
+MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-}"
+if [ -z "$MANAGER_HOST" ]; then
+  MANAGER_HOST="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+fi
+MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://$MANAGER_HOST:$MANAGER_PORT}"
 UI_HOST="${HOMERAIL_PRODUCTION_UI_HOST:-0.0.0.0}"
 UI_PORT="${HOMERAIL_PRODUCTION_UI_PORT:-19192}"
 UI_HTTP_PORT="${HOMERAIL_PRODUCTION_UI_HTTP_PORT:-19193}"
@@ -20,6 +23,10 @@ UI_URL="${HOMERAIL_PRODUCTION_UI_URL:-}"
 case "$PRODUCTION_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_ROOT must be absolute." >&2; exit 1 ;; esac
 case "$HOMERAIL_HOME" in /*) ;; *) echo "HOMERAIL_PRODUCTION_HOME must be absolute." >&2; exit 1 ;; esac
 case "$RESOURCE_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_RESOURCES must be absolute." >&2; exit 1 ;; esac
+if [ -z "$MANAGER_HOST" ]; then
+  echo "Could not resolve the Docker bridge gateway for the production Manager bind." >&2
+  exit 1
+fi
 case "$MANAGER_HOST" in
   localhost|127.*|::1|\[::1\])
     echo "HOMERAIL_PRODUCTION_MANAGER_HOST must be reachable from Docker Workers; loopback-only binds are not supported." >&2
@@ -188,6 +195,7 @@ Environment=HOMERAIL_PRODUCTION_MANAGER_URL=$MANAGER_URL
 Environment=HOMERAIL_PRODUCTION_MANAGER_HOST=$MANAGER_HOST
 Environment=HOMERAIL_PRODUCTION_MANAGER_PORT=$MANAGER_PORT
 Environment=HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL=${HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-$MANAGER_URL}
+Environment=HOMERAIL_ALLOW_INSECURE_REMOTE_WS=1
 Environment=HOMERAIL_PRODUCTION_UI_URL=$UI_URL
 Environment=HOMERAIL_PRODUCTION_UI_HOST=$UI_HOST
 Environment=HOMERAIL_PRODUCTION_UI_PORT=$UI_PORT
@@ -236,6 +244,17 @@ done
 
 if [ "$healthy" = "1" ]; then
   smoke_output=""
+  CONTROL_PLANE_TOKEN_FILE="$HOMERAIL_HOME/manager/secrets/control-plane.token"
+  if [ ! -f "$CONTROL_PLANE_TOKEN_FILE" ]; then
+    echo "Production control-plane token is missing after service startup." >&2
+    healthy=0
+  else
+    HOMERAIL_DAG_MUTATION_TOKEN="$(tr -d '[:space:]' < "$CONTROL_PLANE_TOKEN_FILE")"
+    export HOMERAIL_DAG_MUTATION_TOKEN
+  fi
+fi
+
+if [ "$healthy" = "1" ]; then
   if ! smoke_output="$(
     "$PRODUCTION_ROOT/current/runtime/node" \
       "$PRODUCTION_ROOT/current/homerail_cli/dist/cli.js" \
@@ -243,7 +262,7 @@ if [ "$healthy" = "1" ]; then
       --request-timeout 180000 \
       --json \
       smoke dag \
-      --template assets/orchestrations/public-two-node.yaml.template \
+      --template "$PRODUCTION_ROOT/current/assets/orchestrations/public-two-node.yaml.template" \
       --profile offline-deterministic \
       --timeout 120 \
       --interval 1 2>&1

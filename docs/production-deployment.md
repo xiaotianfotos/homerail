@@ -21,10 +21,17 @@ runner environment file defines:
   `HOMERAIL_PRODUCTION_UI_HTTP_PORT` overrides (defaults: `19192` and
   `19193`);
 - optional Manager URL/host/port overrides when the default endpoint would
-  conflict with another local runtime. The production Manager binds
-  `0.0.0.0` by default because Linux bridge-network Workers connect through
+  conflict with another local runtime. By default the deployment discovers
+  Docker's `bridge` gateway and binds the Manager only on that interface.
+  Linux bridge-network Workers reach the same interface through
   `host.docker.internal`; a loopback-only Manager cannot accept those Worker
-  WebSocket registrations.
+  WebSocket registrations, while an all-interface bind would unnecessarily
+  expose the Manager port to the LAN. The service enables insecure remote
+  WebSockets only for this host-local bridge channel and authenticates Node and
+  Worker registrations with the shared 0600 control-plane token under the
+  persistent Home. The CLI and trusted same-origin UI proxy reuse that token
+  internally for DAG mutations; browser clients never receive it. The Manager
+  socket is not bound to a LAN interface.
 
 The installation also provides:
 
@@ -32,8 +39,7 @@ The installation also provides:
 - runner service: `homerail-deploy-runner.service` using only the
   `homerail-deploy` custom label;
 - a LAN-facing HTTPS UI;
-- a dedicated Manager port, with health checks still performed through
-  `127.0.0.1` from the deployment host.
+- a dedicated Manager port bound to the Docker bridge interface;
 
 Each deployment installs dependencies, builds all packages, builds a
 revision-tagged Worker image, copies the runnable tree plus its Node.js binary
@@ -43,7 +49,7 @@ restarts after a process or health failure. Deployment waits for both Manager
 and HTTPS UI health through its LAN address, requires a connected Docker Node,
 and runs the deterministic public two-node DAG through a provisioned Docker
 Worker before accepting the release. Deployment rejects loopback-only Manager
-and UI binds as well as loopback public addresses.
+binds, loopback-only UI binds, and loopback public addresses.
 A failed health check switches `current` back to the prior release and restarts it. The
 dedicated Manager port prevents desktop/E2E runtimes from being mistaken for
 the production Manager. The newest three releases and their Worker images are

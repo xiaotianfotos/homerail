@@ -6,7 +6,16 @@ CURRENT="$PRODUCTION_ROOT/current"
 RELEASE_ROOT="$(readlink -f "$CURRENT")"
 HOMERAIL_HOME="${HOMERAIL_HOME:-$HOME/.local/share/homerail-production-data}"
 RESOURCE_ROOT="${HOMERAIL_PRODUCTION_RESOURCES:-$HOME/.local/share/homerail-resources}"
-MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://127.0.0.1:39191}"
+MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
+MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-}"
+if [ -z "$MANAGER_HOST" ]; then
+  MANAGER_HOST="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+fi
+if [ -z "$MANAGER_HOST" ]; then
+  echo "Could not resolve the Docker bridge gateway for the production Manager bind." >&2
+  exit 1
+fi
+MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://$MANAGER_HOST:$MANAGER_PORT}"
 UI_HOST="${HOMERAIL_PRODUCTION_UI_HOST:-0.0.0.0}"
 UI_PORT="${HOMERAIL_PRODUCTION_UI_PORT:-19192}"
 UI_HTTP_PORT="${HOMERAIL_PRODUCTION_UI_HTTP_PORT:-19193}"
@@ -41,12 +50,36 @@ if [ -z "$UI_URL" ]; then
   fi
 fi
 
+CONTROL_PLANE_SECRET_DIR="$HOMERAIL_HOME/manager/secrets"
+CONTROL_PLANE_TOKEN_FILE="$CONTROL_PLANE_SECRET_DIR/control-plane.token"
+mkdir -p "$CONTROL_PLANE_SECRET_DIR"
+chmod 0700 "$CONTROL_PLANE_SECRET_DIR"
+if [ -e "$CONTROL_PLANE_TOKEN_FILE" ] && [ ! -f "$CONTROL_PLANE_TOKEN_FILE" ]; then
+  echo "Production control-plane token path must be a regular file." >&2
+  exit 1
+fi
+if [ ! -e "$CONTROL_PLANE_TOKEN_FILE" ]; then
+  control_plane_token="$($NODE -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
+  token_tmp="$CONTROL_PLANE_TOKEN_FILE.$$.tmp"
+  (umask 077; printf '%s\n' "$control_plane_token" > "$token_tmp")
+  mv "$token_tmp" "$CONTROL_PLANE_TOKEN_FILE"
+fi
+chmod 0600 "$CONTROL_PLANE_TOKEN_FILE"
+HOMERAIL_CONTROL_PLANE_TOKEN="$(tr -d '[:space:]' < "$CONTROL_PLANE_TOKEN_FILE")"
+if [ -z "$HOMERAIL_CONTROL_PLANE_TOKEN" ]; then
+  echo "Production control-plane token must not be empty." >&2
+  exit 1
+fi
+
 export HOMERAIL_HOME
+export HOMERAIL_CONTROL_PLANE_TOKEN
+export HOMERAIL_DAG_MUTATION_TOKEN="$HOMERAIL_CONTROL_PLANE_TOKEN"
 export HOMERAIL_REPO_ROOT="$RELEASE_ROOT"
 export HOMERAIL_MANAGER_URL="$MANAGER_URL"
-export HOMERAIL_MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
-export HOMERAIL_MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-0.0.0.0}"
-export HOMERAIL_MANAGER_PUBLIC_URL="${HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-http://127.0.0.1:39191}"
+export HOMERAIL_MANAGER_PORT="$MANAGER_PORT"
+export HOMERAIL_MANAGER_HOST="$MANAGER_HOST"
+export HOMERAIL_MANAGER_PUBLIC_URL="${HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-$MANAGER_URL}"
+export HOMERAIL_ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_ALLOW_INSECURE_REMOTE_WS:-1}"
 export HOMERAIL_UI_HOST="$UI_HOST"
 export HOMERAIL_UI_PORT="$UI_PORT"
 export HOMERAIL_UI_HTTP_PORT="$UI_HTTP_PORT"

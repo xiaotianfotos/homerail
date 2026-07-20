@@ -118,6 +118,7 @@ export function registerSmokeCommand(program: Command): void {
           const evalRunData = evalRun.data as Record<string, unknown> | undefined;
           const evalVerdict = String(evalRunData?.verdict ?? "unknown").toLowerCase();
           const evalPassed = evalRun.success && ["pass", "pass_with_warnings", "scorecard_blind_spot"].includes(evalVerdict);
+          const passed = finalStatus === "completed" && scorecardPassed && evalPassed;
 
           if (globalOpts.json) {
             console.log(JSON.stringify({
@@ -125,8 +126,9 @@ export function registerSmokeCommand(program: Command): void {
               status: finalStatus,
               scorecard: scorecardData ?? null,
               eval_run: evalRunData ?? null,
-              passed: finalStatus === "completed" && scorecardPassed && evalPassed,
+              passed,
             }));
+            if (!passed) process.exitCode = 1;
             return;
           }
 
@@ -138,7 +140,7 @@ export function registerSmokeCommand(program: Command): void {
           );
           console.log(`Eval: ${evalPassed ? "PASS" : "FAIL"} (${evalVerdict})`);
           console.log(`Inspect: hr dag handoffs ${runId}`);
-          if (finalStatus !== "completed" || !scorecardPassed || !evalPassed) {
+          if (!passed) {
             process.exitCode = 1;
           }
         } catch (err: unknown) {

@@ -51,12 +51,15 @@ describe("static Agent UI mutation proxy", () => {
   }, 15_000);
 
   it("rejects no-Origin/cross-origin requests and proxies exact self-Origin without credentials", async () => {
-    const received: Array<{ authorization?: string; origin?: string; method?: string }> = [];
+    const received: Array<{ authorization?: string; origin?: string; method?: string; mutationToken?: string }> = [];
     const manager = http.createServer((req, res) => {
       received.push({
         authorization: req.headers.authorization,
         origin: req.headers.origin,
         method: req.method,
+        mutationToken: typeof req.headers["x-homerail-dag-token"] === "string"
+          ? req.headers["x-homerail-dag-token"]
+          : undefined,
       });
       req.resume();
       res.writeHead(200, { "content-type": "application/json" });
@@ -71,6 +74,7 @@ describe("static Agent UI mutation proxy", () => {
       host: "127.0.0.1",
       origin: uiOrigin,
       managerUrl,
+      mutationToken: "internal-mutation-token",
     });
 
     expect((await fetch(`${uiOrigin}/api/runs`, { method: "POST" })).status).toBe(403);
@@ -88,6 +92,7 @@ describe("static Agent UI mutation proxy", () => {
       authorization: undefined,
       origin: uiOrigin,
       method: "POST",
+      mutationToken: "internal-mutation-token",
     });
 
     expect((await fetch(`${uiOrigin}/api/read`)).status).toBe(200);
@@ -166,6 +171,7 @@ async function startStaticUi(options: {
   origin: string;
   managerUrl: string;
   root?: string;
+  mutationToken?: string;
 }): Promise<void> {
   const root = options.root ?? fs.mkdtempSync(path.join(os.tmpdir(), "homerail-static-ui-trust-"));
   if (!options.root) {
@@ -184,6 +190,7 @@ async function startStaticUi(options: {
       HOMERAIL_UI_HTTPS: "0",
       HOMERAIL_MANAGER_HTTP: options.managerUrl,
       HOMERAIL_MANAGER_WS: options.managerUrl.replace(/^http/, "ws"),
+      ...(options.mutationToken ? { HOMERAIL_DAG_MUTATION_TOKEN: options.mutationToken } : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
