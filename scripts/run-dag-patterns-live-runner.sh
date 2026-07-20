@@ -379,12 +379,16 @@ if [ "$LIVE_TASK" = "pr-review" ]; then
     --output "$REVIEW_ARTIFACT_DIR/pr-review.json"
   node "$REPO_ROOT/homerail_cli/dist/cli.js" dag artifact "$REVIEW_RUN_ID" pr-review.md \
     --output "$REVIEW_ARTIFACT_DIR/pr-review.md"
+  node "$REPO_ROOT/homerail_cli/dist/cli.js" dag artifact "$REVIEW_RUN_ID" pr-privacy-review.json \
+    --output "$REVIEW_ARTIFACT_DIR/pr-privacy-review.json"
   test -s "$REVIEW_ARTIFACT_DIR/pr-review.json"
   test -s "$REVIEW_ARTIFACT_DIR/pr-review.md"
+  test -s "$REVIEW_ARTIFACT_DIR/pr-privacy-review.json"
   node "$REPO_ROOT/scripts/validate-pr-review-artifacts.mjs" \
     "$command_path" \
     "$REVIEW_ARTIFACT_DIR/pr-review.json" \
-    "$REVIEW_ARTIFACT_DIR/pr-review.md"
+    "$REVIEW_ARTIFACT_DIR/pr-review.md" \
+    "$REVIEW_ARTIFACT_DIR/pr-privacy-review.json"
   echo "HomeRail PR Review artifacts: $REVIEW_ARTIFACT_DIR"
   exit 0
 fi

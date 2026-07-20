@@ -1,0 +1,21 @@
+[Unit]
+Description=HomeRail GitHub Actions production deploy runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+EnvironmentFile=%h/.config/homerail/production.env
+ExecStart=/usr/bin/env bash -lc 'exec "$HOMERAIL_DEPLOY_RUNNER_ROOT/run.sh"'
+Restart=always
+RestartSec=5
+Nice=10
+CPUQuota=600%
+MemoryMax=14G
+TasksMax=4096
+KillMode=control-group
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

@@ -38,12 +38,16 @@ metadata.
    local/ext protocols disabled; no model tool call is involved in checkout or
    evidence collection. The serialized review context is capped below the
    Manager command-output limit and records `diff_truncated` explicitly.
-3. Runtime, security, tests, and frontend reviewers inspect the same exact diff
-   independently and in parallel. The Manager-produced patch is embedded in the
-   typed input, so provider-specific shell/file tools are unnecessary. Reviewers
-   receive no built-in tools and only the `handoff` DAG tool. Patch content is
-   untrusted evidence, never an instruction. If evidence had to be truncated,
-   reviewers fail closed and the report becomes inconclusive.
+   Bounded author/committer metadata is captured from the exact commit range for
+   the independent privacy advisory, then deterministically stripped from the
+   context supplied to every main reviewer, synthesizer, and voter.
+3. Runtime, security, tests, frontend, and privacy reviewers inspect the same
+   exact evidence independently and in parallel. The first four feed the main
+   review. The privacy reviewer looks only for accidental local/private data and
+   can never feed synthesis, verification, or quorum. All reviewers receive no
+   built-in tools and only the `handoff` DAG tool. Patch content is untrusted
+   evidence, never an instruction. If evidence had to be truncated, the main
+   reviewers fail closed and the privacy advisory requests human inspection.
 4. A deterministic normalizer preserves every valid reviewer result. If a
    reviewer exhausts contract correction without a handoff, the normalizer
    emits a `status: failed` ReviewerResult with grounded runtime evidence so the
@@ -60,7 +64,10 @@ metadata.
 8. A branch-merge join normalizes either quorum outcome into one path. A
    refiner removes findings specifically rejected by an evidence or
    false-positive verdict and recomputes the report.
-9. The refiner persists the final structured report and quorum as JSON. A small
+9. The refiner persists the final structured report and quorum as JSON. The
+   privacy result is normalized separately; a failed privacy model call becomes
+   a redacted `human_review` result rather than blocking or silently passing.
+   A small
    publisher renders only Markdown plus the exact runtime id, avoiding a second
    model-generated copy of the full report. Manager materializes both declared
    artifacts. Failed quorum produces an `inconclusive` report instead of a
@@ -70,6 +77,7 @@ metadata.
 
 - `pr-review.json`
 - `pr-review.md`
+- `pr-privacy-review.json` (redacted advisory; excluded from the main report)
 - four normalized independent reviewer results
 - three independent verification votes
 - per-finding evidence and false-positive verdicts
@@ -86,7 +94,7 @@ submit a GitHub review, approve a PR, or merge code.
 event fields into the public CLI input, then uses the shared isolated live-runner
 bootstrap to build and start the checked-out Manager and Worker revision. The
 runner registers its Qwen3.6 setting, calls `hr dag run-template ... --wait`,
-downloads the two declared artifacts through the generic run-artifact commands,
+downloads the three declared artifacts through the generic run-artifact commands,
 uploads them as CI evidence, and copies `pr-review.md` into the GitHub Check
 summary. Running the checked-out revision keeps the template, compiler, runtime,
 and Worker protocol at the same commit instead of sending a new template to a
@@ -97,13 +105,20 @@ The isolated Manager command allowlist includes `node` and `git`; checkout and
 diff capture use only the tracked fixed command and never accept an executable
 or argument vector from pull request content.
 The adapter verifies that the run reached the terminal state implied by quorum,
-both artifacts are structured and non-empty, the quorum is 2-of-3, and Markdown
+all artifacts are structured and non-empty, the quorum is 2-of-3, and Markdown
 contains the exact HomeRail run id and report identity. A valid rejected quorum
 is retained as `cancelled` plus `inconclusive`; infrastructure or
 artifact-integrity failures fail the check instead of being hidden behind an
 advisory success. Whether that check blocks merging is a repository
 branch-protection decision; findings and a valid inconclusive result are still
 complete diagnostic outputs.
+
+The privacy artifact contains categories, repository-relative locations, and
+redacted reasons only. A separate `continue-on-error` step emits GitHub error
+annotations when its status is `human_review`. That step is visibly red for a
+maintainer to inspect, while the job conclusion and the main PR review remain
+unchanged. Invalid or unredacted artifact output is an infrastructure failure
+and is not hidden by the advisory step.
 
 Automatic self-hosted execution is restricted to non-draft, same-repository PRs
 created by the trusted maintainer. This avoids running untrusted fork content on

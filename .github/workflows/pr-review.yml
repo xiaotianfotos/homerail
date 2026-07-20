@@ -1,6 +1,8 @@
 name: HomeRail PR Review
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       repo:
@@ -24,13 +26,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: homerail-pr-review-${{ inputs.pr }}
+  group: homerail-pr-review-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 
 jobs:
   review:
     name: HomeRail PR Review
-    if: github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.draft == false &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == 'xiaotianfotos')
     runs-on: [self-hosted, Linux, X64, homerail-pr-review]
     timeout-minutes: 90
     env:
@@ -66,7 +73,10 @@ jobs:
       - name: Resolve immutable review input
         id: input
         env:
-          EVENT_REPO: ${{ github.repository }}
+          EVENT_REPO: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
           INPUT_REPO: ${{ inputs.repo }}
           INPUT_PR: ${{ inputs.pr }}
           INPUT_BASE: ${{ inputs.base }}
@@ -76,10 +86,13 @@ jobs:
           import fs from 'node:fs'
           const input = {
             repo: process.env.INPUT_REPO || process.env.EVENT_REPO,
-            pr: Number(process.env.INPUT_PR),
+            pr: Number(process.env.INPUT_PR || process.env.EVENT_PR),
           }
-          const base = process.env.INPUT_BASE
-          const head = process.env.INPUT_HEAD
+          const base = process.env.INPUT_BASE || process.env.EVENT_BASE
+          const head = process.env.INPUT_HEAD || process.env.EVENT_HEAD
+          if (!input.repo || !Number.isInteger(input.pr) || input.pr < 1) {
+            throw new Error('A repository and pull request number are required')
+          }
           if (base) input.base = base
           if (head) input.head = head
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `json=${JSON.stringify(input)}\n`)
@@ -111,11 +124,16 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Privacy advisory (human inspection only)
+        if: always() && hashFiles('artifacts/pr-review/pr-privacy-review.json') != ''
+        continue-on-error: true
+        run: node scripts/report-pr-privacy-advisory.mjs artifacts/pr-review/pr-privacy-review.json
+
       - name: Upload review evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pr-review-${{ inputs.pr }}-${{ github.run_id }}
+          name: pr-review-${{ github.event.pull_request.number || inputs.pr }}-${{ github.run_id }}
           path: artifacts/pr-review/
           if-no-files-found: warn
           retention-days: 14
