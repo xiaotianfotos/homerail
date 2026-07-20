@@ -86,9 +86,10 @@ export function resolveManagerLocalHttpBaseUrl(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const configuredHost = env.HOMERAIL_MANAGER_HOST?.trim();
-  const host = !configuredHost || configuredHost === "0.0.0.0" || configuredHost === "::"
+  const normalizedHost = configuredHost?.replace(/^\[|\]$/g, "") ?? "";
+  const host = !normalizedHost || normalizedHost === "0.0.0.0" || normalizedHost === "::"
     ? "127.0.0.1"
-    : configuredHost.replace(/^\[|\]$/g, "");
+    : normalizedHost;
   const urlHost = host.includes(":") ? `[${host}]` : host;
   return `http://${urlHost}:${actualPort}`;
 }

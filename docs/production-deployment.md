@@ -32,6 +32,9 @@ runner environment file defines:
   Home. A third 0600 token authorizes Manager Agent, CLI, and trusted
   same-origin UI proxy DAG mutations; ordinary DAG Workers receive neither the
   Node nor mutation credential, and browser clients never receive any token.
+  These service tokens are environment variables of trusted processes running
+  under the dedicated deployment account; do not share that Unix account with
+  untrusted local processes.
   The Manager socket is not bound to a LAN interface. Plaintext bridge
   WebSockets default to disabled and require the operator to set
   `HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS=1` explicitly for an isolated

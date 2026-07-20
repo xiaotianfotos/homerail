@@ -10,8 +10,13 @@ load_or_create_production_token() {
   fi
   if [ ! -e "$token_file" ]; then
     local generated_token token_tmp
-    generated_token="$($node_bin -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
     token_tmp="$token_file.$$.tmp"
+    if ! generated_token="$($node_bin -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')" \
+      || [ -z "$generated_token" ]; then
+      rm -f "$token_tmp"
+      echo "Production $token_label token generation failed." >&2
+      return 1
+    fi
     (umask 077; printf '%s\n' "$generated_token" > "$token_tmp")
     mv "$token_tmp" "$token_file"
   fi
@@ -19,7 +24,8 @@ load_or_create_production_token() {
   local token
   token="$(tr -d '[:space:]' < "$token_file")"
   if [ -z "$token" ]; then
-    echo "Production $token_label token must not be empty." >&2
+    rm -f "$token_file"
+    echo "Production $token_label token must not be empty; removed for regeneration." >&2
     return 1
   fi
   printf '%s' "$token"

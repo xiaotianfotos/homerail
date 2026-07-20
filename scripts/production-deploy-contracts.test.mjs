@@ -131,12 +131,26 @@ test("production tokens are distinct, persistent, private, and fail closed", { s
     const empty = initialize();
     assert.notEqual(empty.status, 0);
     assert.match(empty.stderr, /must not be empty/);
+    assert.equal(fs.existsSync(path.join(secretDir, "node-registration.token")), false);
 
-    fs.rmSync(path.join(secretDir, "node-registration.token"));
     fs.mkdirSync(path.join(secretDir, "node-registration.token"));
     const directory = initialize();
     assert.notEqual(directory.status, 0);
     assert.match(directory.stderr, /must be a regular file/);
+
+    fs.rmSync(path.join(secretDir, "node-registration.token"), { recursive: true });
+    const failedGenerationPath = path.join(secretDir, "failed-generation.token");
+    const failedGeneration = spawnSync("bash", [
+      "-c",
+      'set -euo pipefail; source "$1"; load_or_create_production_token "$2" "$3" "Failure test"',
+      "production-token-generation-test",
+      helper,
+      "/bin/false",
+      failedGenerationPath,
+    ], { encoding: "utf8" });
+    assert.notEqual(failedGeneration.status, 0);
+    assert.match(failedGeneration.stderr, /token generation failed/);
+    assert.equal(fs.existsSync(failedGenerationPath), false);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

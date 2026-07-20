@@ -186,7 +186,13 @@ describe("control-plane websocket authentication", () => {
       HOMERAIL_MANAGER_HOST: "0.0.0.0",
     })).toBe("http://127.0.0.1:39191");
     expect(resolveManagerLocalHttpBaseUrl(39191, {
+      HOMERAIL_MANAGER_HOST: "[::]",
+    })).toBe("http://127.0.0.1:39191");
+    expect(resolveManagerLocalHttpBaseUrl(39191, {
       HOMERAIL_MANAGER_HOST: "2001:db8::1",
+    })).toBe("http://[2001:db8::1]:39191");
+    expect(resolveManagerLocalHttpBaseUrl(39191, {
+      HOMERAIL_MANAGER_HOST: "[2001:db8::1]",
     })).toBe("http://[2001:db8::1]:39191");
   });
 
