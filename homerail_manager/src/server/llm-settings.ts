@@ -17,7 +17,7 @@ import {
   type LLMAuthType,
   type ProviderInput,
 } from "../persistence/llm-settings.js";
-import { normalizeOpenAiBaseUrl, openAiModelsUrl } from "./openai-url.js";
+import { normalizeOpenAiBaseUrl } from "./openai-url.js";
 
 interface BaseResponse {
   success: boolean;
@@ -65,6 +65,35 @@ function _catalogModelsForBaseUrl(baseUrl: string): string[] | undefined {
   return endpoint?.models.map((model) => model.id) ?? [];
 }
 
+function _modelProbeUrls(baseUrl: string): string[] {
+  const normalized = normalizeOpenAiBaseUrl(baseUrl);
+  if (!normalized) return [];
+  if (normalized.endsWith("/models")) return [normalized];
+  if (normalized.endsWith("/v1")) {
+    return [`${normalized}/models`, `${normalized.slice(0, -3)}/models`];
+  }
+  return [`${normalized}/models`, `${normalized}/v1/models`];
+}
+
+function _modelsFromProbePayload(payload: unknown): string[] | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+  const rec = payload as Record<string, unknown>;
+  const rawModels = Array.isArray(rec.data)
+    ? rec.data
+    : Array.isArray(rec.models)
+      ? rec.models
+      : undefined;
+  if (!rawModels) return undefined;
+  return Array.from(new Set(rawModels
+    .map((item) => typeof item === "string"
+      ? item.trim()
+      : item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string"
+        ? String((item as Record<string, unknown>).id).trim()
+        : "")
+    .filter(Boolean)))
+    .sort();
+}
+
 function _modelProbeBaseUrlForSetting(setting: LLMSetting): string {
   const provider = getProvider(setting.provider_id);
   const endpoint = provider?.endpoints?.find((candidate) => candidate.id === setting.endpoint_id);
@@ -79,17 +108,29 @@ type MainModelHarness = "claude_agent_sdk" | "kimi_code";
 interface MainModelEndpointProbe {
   available: boolean;
   url: string;
+  base_url?: string;
+  attempted_urls: string[];
   status?: number;
   error?: string;
 }
 
-function _versionedEndpointUrl(baseUrl: string, endpoint: "messages" | "chat/completions"): string {
-  // 与探测/保存同一条归一化：用户粘贴完整端点地址（…/v1/chat/completions）
-  // 时先剥到 API 根，否则实测会打到 …/v1/chat/completions/v1/chat/completions。
-  const normalized = normalizeOpenAiBaseUrl(baseUrl);
-  return normalized.endsWith("/v1")
-    ? `${normalized}/${endpoint}`
-    : `${normalized}/v1/${endpoint}`;
+type MainModelEndpointKind = "anthropic" | "openai" | "responses";
+
+function _mainModelBaseUrlCandidates(baseUrl: string): string[] {
+  let normalized = normalizeOpenAiBaseUrl(baseUrl);
+  if (normalized.endsWith("/messages")) {
+    normalized = _normalizedBaseUrl(normalized.slice(0, -"/messages".length));
+  }
+  const candidates = normalized.endsWith("/v1")
+    ? [normalized, normalized.slice(0, -3)]
+    : [`${normalized}/v1`, normalized];
+  return Array.from(new Set(candidates.map(_normalizedBaseUrl).filter(Boolean)));
+}
+
+function _mainModelEndpointPath(endpoint: MainModelEndpointKind): string {
+  if (endpoint === "anthropic") return "messages";
+  if (endpoint === "responses") return "responses";
+  return "chat/completions";
 }
 
 function _modelProbeHeaders(apiKey: string, anthropic: boolean): Record<string, string> {
@@ -109,46 +150,70 @@ async function _probeMainModelEndpoint(input: {
   baseUrl: string;
   apiKey: string;
   model: string;
-  endpoint: "anthropic" | "openai";
+  endpoint: MainModelEndpointKind;
 }): Promise<MainModelEndpointProbe> {
   const anthropic = input.endpoint === "anthropic";
-  const url = _versionedEndpointUrl(input.baseUrl, anthropic ? "messages" : "chat/completions");
-  const body = anthropic
+  const endpointPath = _mainModelEndpointPath(input.endpoint);
+  const body = input.endpoint === "anthropic"
     ? {
         model: input.model,
         max_tokens: 1,
         messages: [{ role: "user", content: "Reply with OK." }],
       }
-    : {
-        model: input.model,
-        max_tokens: 1,
-        stream: false,
-        messages: [{ role: "user", content: "Reply with OK." }],
-      };
-  try {
-    const upstream = await fetch(url, {
-      method: "POST",
-      headers: _modelProbeHeaders(input.apiKey, anthropic),
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    });
-    const responseText = await upstream.text().catch(() => "");
-    if (!upstream.ok) {
+    : input.endpoint === "responses"
+      ? {
+          model: input.model,
+          max_output_tokens: 1,
+          stream: false,
+          input: "Reply with OK.",
+        }
+      : {
+          model: input.model,
+          max_tokens: 1,
+          stream: false,
+          messages: [{ role: "user", content: "Reply with OK." }],
+        };
+  const failures: Array<{ url: string; status?: number; error: string }> = [];
+  for (const baseUrl of _mainModelBaseUrlCandidates(input.baseUrl)) {
+    const url = `${baseUrl}/${endpointPath}`;
+    try {
+      const upstream = await fetch(url, {
+        method: "POST",
+        headers: _modelProbeHeaders(input.apiKey, anthropic),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const responseText = await upstream.text().catch(() => "");
+      if (!upstream.ok) {
+        failures.push({
+          url,
+          status: upstream.status,
+          error: `HTTP ${upstream.status}${responseText ? `: ${responseText.slice(0, 240)}` : ""}`,
+        });
+        continue;
+      }
       return {
-        available: false,
+        available: true,
         url,
+        base_url: baseUrl,
+        attempted_urls: [...failures.map((failure) => failure.url), url],
         status: upstream.status,
-        error: `HTTP ${upstream.status}${responseText ? `: ${responseText.slice(0, 240)}` : ""}`,
       };
+    } catch (err) {
+      failures.push({
+        url,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-    return { available: true, url, status: upstream.status };
-  } catch (err) {
-    return {
-      available: false,
-      url,
-      error: err instanceof Error ? err.message : String(err),
-    };
   }
+  const lastFailure = failures[failures.length - 1];
+  return {
+    available: false,
+    url: failures[0]?.url ?? `${_normalizedBaseUrl(input.baseUrl)}/${endpointPath}`,
+    attempted_urls: failures.map((failure) => failure.url),
+    status: lastFailure?.status,
+    error: failures.map((failure) => `${failure.url}: ${failure.error}`).join("; ") || "No endpoint candidates",
+  };
 }
 
 async function _detectMainModelRuntime(input: {
@@ -161,11 +226,13 @@ async function _detectMainModelRuntime(input: {
   endpoints: {
     anthropic: MainModelEndpointProbe;
     openai: MainModelEndpointProbe;
+    responses: MainModelEndpointProbe;
   };
 }> {
-  const [anthropic, openai] = await Promise.all([
+  const [anthropic, openai, responses] = await Promise.all([
     _probeMainModelEndpoint({ ...input, endpoint: "anthropic" }),
     _probeMainModelEndpoint({ ...input, endpoint: "openai" }),
+    _probeMainModelEndpoint({ ...input, endpoint: "responses" }),
   ]);
   // Claude Agent SDK is the product default whenever the model actually
   // supports both protocols. Kimi Code is only the OpenAI-compatible fallback.
@@ -177,7 +244,7 @@ async function _detectMainModelRuntime(input: {
   return {
     available: preferredHarness !== null,
     preferred_harness: preferredHarness,
-    endpoints: { anthropic, openai },
+    endpoints: { anthropic, openai, responses },
   };
 }
 
@@ -442,45 +509,42 @@ export function llmSettingsRoutesHandler(
             : "Missing required field: base_url");
           return;
         }
-        if (!apiKey) {
-          _badRequest(res, setting
-            ? `No API key configured for LLM setting: ${setting.id}`
-            : "Missing required field: api_key");
-          return;
-        }
         const catalogModels = _catalogModelsForBaseUrl(baseUrl);
         if (catalogModels) {
           _ok(res, `Probed ${catalogModels.length} catalog models`, { models: catalogModels });
           return;
         }
-        // 构造 /models 请求 URL。用户可能粘贴裸地址、/v1 地址或完整端点
-        // 地址（…/v1/chat/completions、…/v1/models 等），统一归一化后再拼接。
-        const modelsUrl = openAiModelsUrl(baseUrl);
-        try {
-          const upstream = await fetch(modelsUrl, {
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              "x-api-key": apiKey,
-            },
-            signal: AbortSignal.timeout(8000),
-          });
-          if (!upstream.ok) {
-            const text = await upstream.text().catch(() => "");
-            _ok(res, "Probe completed with error", {
-              models: [],
-              error: `HTTP ${upstream.status}: ${text.slice(0, 200)}`,
-            });
-            return;
-          }
-          const data = await upstream.json() as { data?: Array<{ id: string }> };
-          const models = Array.isArray(data?.data)
-            ? data!.data!.map((m) => m.id).filter(Boolean).sort()
-            : [];
-          _ok(res, `Probed ${models.length} models`, { models });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          _ok(res, "Probe failed", { models: [], error: message });
+        const headers: Record<string, string> = {};
+        if (apiKey) {
+          headers.Authorization = `Bearer ${apiKey}`;
+          headers["x-api-key"] = apiKey;
         }
+        const failures: string[] = [];
+        for (const modelsUrl of _modelProbeUrls(baseUrl)) {
+          try {
+            const upstream = await fetch(modelsUrl, {
+              headers,
+              signal: AbortSignal.timeout(8000),
+            });
+            if (!upstream.ok) {
+              const text = await upstream.text().catch(() => "");
+              failures.push(`${modelsUrl}: HTTP ${upstream.status}${text ? `: ${text.slice(0, 160)}` : ""}`);
+              continue;
+            }
+            const payload = await upstream.json() as unknown;
+            const models = _modelsFromProbePayload(payload);
+            if (!models) {
+              failures.push(`${modelsUrl}: response did not contain a model list`);
+              continue;
+            }
+            _ok(res, `Probed ${models.length} models`, { models });
+            return;
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            failures.push(`${modelsUrl}: ${message}`);
+          }
+        }
+        _ok(res, "Probe failed", { models: [], error: failures.join("; ") });
       })
       .catch((err) => {
         _badRequest(res, err instanceof Error ? err.message : "Invalid JSON body");
@@ -489,8 +553,8 @@ export function llmSettingsRoutesHandler(
   }
 
   // POST /api/llm/models/detect-runtime — use the exact configured model to
-  // test both supported Manager Agent protocols. A /v1 base URL is accepted
-  // as-is, without producing /v1/v1 paths.
+  // test Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses.
+  // Try versioned and unversioned roots without producing /v1/v1 paths.
   if (pathname === "/api/llm/models/detect-runtime" && req.method === "POST") {
     _readJsonBody(req)
       .then(async (body) => {

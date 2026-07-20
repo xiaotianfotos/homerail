@@ -6,10 +6,11 @@
  *   1. 内置凭证（供应商+计费）：选凭证 → 选模型 → 填 API Key。
  *      base_url / 协议 / asr·tts URL 从 preset 自动带出。
  *   2. 自定义 / 本地部署：直接填接入地址 + 模型名 +（可选）Key。
- *      主模型会实测 Anthropic Messages 与 OpenAI Chat Completions；双可用时优先 Claude。
+ *      主模型会实测 Anthropic Messages、OpenAI Chat Completions 与 OpenAI Responses；
+ *      Manager Agent 可用协议双可用时优先 Claude。
  */
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Eye, EyeOff, Server, Package } from 'lucide-vue-next'
 import { agentSettingsApi } from '@/api/agent'
@@ -172,7 +173,15 @@ const saving = ref(false)
 const checkingMainModel = ref(false)
 const checkingVoiceEndpoints = ref(false)
 const probedModels = ref<string[]>([])
-let probeTimer: number | undefined
+const presetProbeError = ref('')
+const presetProbeSettled = ref(false)
+const presetProbing = ref(false)
+const customProbedModels = ref<string[]>([])
+const customProbeError = ref('')
+const customProbeSettled = ref(false)
+const customProbing = ref(false)
+let presetProbeTimer: number | undefined
+let customProbeTimer: number | undefined
 
 const selectedCredential = computed<CredentialOption | null>(() => {
   if (!selectedCredentialKey.value) return null
@@ -196,15 +205,30 @@ const selectedMaskedKey = computed(() => {
   return maskedKeyForCredential(cred, selectedEndpoint.value)
 })
 
+function credentialModelPreset(credential: CredentialOption, modelId: string): ProviderModelPreset | undefined {
+  return credential.endpoints
+    .flatMap(endpoint => endpoint.models)
+    .find(model => model.id === modelId)
+}
+
 const displayModels = computed(() => {
   const cred = selectedCredential.value
   if (!cred) return []
-  const result = cred.models.map(m => ({ id: m.id, display_name: m.display_name || m.id, recommended: Boolean(m.recommended) }))
-  const known = new Set(result.map(m => m.id))
-  for (const id of probedModels.value) {
-    if (!known.has(id)) result.push({ id, display_name: id, recommended: false })
-  }
-  return result
+  const useDetectedModels = presetProbeSettled.value && !presetProbeError.value
+  const models = useDetectedModels
+    ? probedModels.value.filter(id => {
+        const preset = credentialModelPreset(cred, id)
+        return !preset || modelSupports(preset, props.capability)
+      })
+    : cred.models.map(model => model.id)
+  return models.map(id => {
+    const preset = credentialModelPreset(cred, id)
+    return {
+      id,
+      display_name: preset?.display_name || id,
+      detected: useDetectedModels,
+    }
+  })
 })
 
 const selectedEndpoint = computed<ProviderEndpointPreset | null>(() => {
@@ -230,10 +254,8 @@ function credentialLabel(c: CredentialOption): string {
 
 function selectCredential(key: string): void {
   selectedCredentialKey.value = key
-  const cred = credentials.value.find(c => c.key === selectedCredentialKey.value)
-  if (!cred) { selectedModelId.value = ''; return }
-  const rec = cred.models.find(m => m.recommended) ?? cred.models[0]
-  selectedModelId.value = rec?.id ?? ''
+  // 内置目录只是候选集，不代表用户凭证实际可用的默认模型。
+  selectedModelId.value = ''
   // 切换凭证时清空手动 key（若该 credential 已有 key 会自动复用）
   apiKey.value = ''
 }
@@ -302,7 +324,7 @@ const customFieldConfig = computed(() => {
   if (props.capability === 'supports_asr') {
     return {
       baseUrlPlaceholder: 'http://localhost/v1',
-      modelPlaceholder: 'qwen3-asr-realtime',
+      modelPlaceholder: t('onboarding.form.modelPlaceholder'),
       baseUrlHint: t('onboarding.form.asrBaseHint'),
       modelHint: t('onboarding.form.modelHint'),
       defaultModel: '',
@@ -311,7 +333,7 @@ const customFieldConfig = computed(() => {
   // tts
   return {
     baseUrlPlaceholder: 'http://localhost/v1',
-    modelPlaceholder: 'qwen3-tts',
+    modelPlaceholder: t('onboarding.form.modelPlaceholder'),
     baseUrlHint: t('onboarding.form.ttsBaseHint'),
     modelHint: t('onboarding.form.modelHint'),
     defaultModel: '',
@@ -320,24 +342,37 @@ const customFieldConfig = computed(() => {
 
 // 切换能力时重置自定义字段；模型保持空值，避免绑定某个硬编码模型。
 watch(() => props.capability, () => {
+  selectedCredentialKey.value = ''
+  selectedModelId.value = ''
+  apiKey.value = ''
   customFields.value = { baseUrl: '', model: customFieldConfig.value.defaultModel, voice: '' }
 }, { immediate: true })
 
 // ── 动态探测（内置模式，key 填入后）──────────────────────────
-async function runProbe(): Promise<void> {
+async function runPresetProbe(): Promise<void> {
   const ep = selectedEndpoint.value
   if (!ep) return
   const savedSetting = selectedCredentialSetting.value
   const rawApiKey = apiKey.value.trim()
   const baseUrl = ep.chat_completions_base_url || ep.base_url
   if (!savedSetting && (!baseUrl || !rawApiKey)) return
+  presetProbing.value = true
+  presetProbeError.value = ''
   try {
     const result = await probeModels(
       savedSetting ? { settingId: savedSetting.id } : { baseUrl, apiKey: rawApiKey }
     )
-    probedModels.value = result.models
-  } catch {
+    probedModels.value = Array.from(new Set(result.models))
+    presetProbeError.value = result.error || (probedModels.value.length ? '' : 'empty model catalog')
+    if (!presetProbeError.value && selectedModelId.value && !probedModels.value.includes(selectedModelId.value)) {
+      selectedModelId.value = ''
+    }
+  } catch (error) {
     probedModels.value = []
+    presetProbeError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    presetProbeSettled.value = true
+    presetProbing.value = false
   }
 }
 
@@ -349,20 +384,67 @@ watch(
     () => selectedCredentialSetting.value?.id
   ],
   () => {
-    if (probeTimer) window.clearTimeout(probeTimer)
+    if (presetProbeTimer) window.clearTimeout(presetProbeTimer)
     probedModels.value = []
+    presetProbeError.value = ''
+    presetProbeSettled.value = false
     if ((!apiKey.value.trim() && !selectedCredentialSetting.value) || !selectedCredential.value)
       return
-    probeTimer = window.setTimeout(() => {
-      void runProbe()
+    presetProbeTimer = window.setTimeout(() => {
+      void runPresetProbe()
     }, 600)
   }
 )
+
+async function runCustomProbe(): Promise<void> {
+  const baseUrl = customFields.value.baseUrl.trim()
+  if (!baseUrl) return
+  customProbing.value = true
+  customProbeError.value = ''
+  try {
+    const key = apiKey.value.trim()
+    const result = await probeModels(key ? { baseUrl, apiKey: key } : { baseUrl })
+    customProbedModels.value = Array.from(new Set(result.models))
+    customProbeError.value = result.error || (customProbedModels.value.length ? '' : 'empty model catalog')
+  } catch (error) {
+    customProbedModels.value = []
+    customProbeError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    customProbeSettled.value = true
+    customProbing.value = false
+  }
+}
+
+watch(
+  [mode, () => customFields.value.baseUrl, apiKey],
+  ([currentMode, baseUrl]) => {
+    if (customProbeTimer) window.clearTimeout(customProbeTimer)
+    customProbedModels.value = []
+    customProbeError.value = ''
+    customProbeSettled.value = false
+    if (currentMode !== 'custom' || !baseUrl.trim()) return
+    customProbeTimer = window.setTimeout(() => {
+      void runCustomProbe()
+    }, 600)
+  }
+)
+
+const presetProbeRequired = computed(() => Boolean(
+  selectedCredential.value && (selectedCredentialSetting.value || apiKey.value.trim())
+))
+
+const customModelListId = computed(() => `onboarding-${props.capability}-models`)
+
+onBeforeUnmount(() => {
+  if (presetProbeTimer) window.clearTimeout(presetProbeTimer)
+  if (customProbeTimer) window.clearTimeout(customProbeTimer)
+})
 
 // ── 校验 ──────────────────────────────────────────────────────
 // credential 已有 key 时只需选模型；否则需模型 + key
 const presetCanSubmit = computed(() => {
   if (!selectedCredential.value || !selectedModelId.value) return false
+  if (presetProbeRequired.value && (!presetProbeSettled.value || presetProbing.value)) return false
   if (selectedCredentialHasKey.value) return true
   return apiKey.value.trim().length > 0
 })
@@ -378,7 +460,15 @@ const canSubmit = computed(() => mode.value === 'preset' ? presetCanSubmit.value
 function mainModelProbeError(result: MainModelRuntimeDetection): string {
   const anthropic = result.endpoints.anthropic.error || t('onboarding.form.endpointUnavailable')
   const openai = result.endpoints.openai.error || t('onboarding.form.endpointUnavailable')
-  return t('onboarding.form.modelRuntimeUnavailable', { anthropic, openai })
+  const responses = result.endpoints.responses?.error || t('onboarding.form.endpointUnavailable')
+  return t('onboarding.form.modelRuntimeUnavailable', { anthropic, openai, responses })
+}
+
+function detectedProtocolBaseUrl(
+  probe: MainModelRuntimeDetection['endpoints'][keyof MainModelRuntimeDetection['endpoints']] | undefined,
+  fallback: string,
+): string | undefined {
+  return probe?.available ? (probe.base_url || fallback) : undefined
 }
 
 async function detectCustomMainModel(): Promise<MainModelRuntimeDetection> {
@@ -537,6 +627,7 @@ async function submitPreset(): Promise<LLMSetting | undefined> {
     key_hint: ep.key_hint,
     base_url: ep.base_url,
     chat_completions_base_url: ep.chat_completions_base_url,
+    responses_base_url: ep.responses_base_url,
     anthropic_base_url: ep.anthropic_base_url,
     resource_id: mp?.resource_id ?? ep.resource_id,
     voice_adapter: ep.voice_adapter,
@@ -569,14 +660,19 @@ async function submitCustom(
   const model = f.model.trim()
   const displayName = `${pname} · ${model}`
   const rawBaseUrl = f.baseUrl.trim()
-  const baseUrl = props.capability === 'supports_llm' ? rawBaseUrl : voiceApiBase(rawBaseUrl)
 
   const isMainModel = props.capability === 'supports_llm'
   if (isMainModel && !mainModelDetection?.preferred_harness) {
     throw new Error(t('onboarding.form.modelRuntimeDetectionRequired'))
   }
-  const anthropicAvailable = mainModelDetection?.endpoints.anthropic.available === true
-  const openaiAvailable = mainModelDetection?.endpoints.openai.available === true
+  const anthropicBaseUrl = detectedProtocolBaseUrl(mainModelDetection?.endpoints.anthropic, rawBaseUrl)
+  const chatCompletionsBaseUrl = detectedProtocolBaseUrl(mainModelDetection?.endpoints.openai, rawBaseUrl)
+  const responsesBaseUrl = detectedProtocolBaseUrl(mainModelDetection?.endpoints.responses, rawBaseUrl)
+  const baseUrl = isMainModel
+    ? (mainModelDetection?.preferred_harness === 'claude_agent_sdk'
+        ? anthropicBaseUrl
+        : chatCompletionsBaseUrl) || responsesBaseUrl || rawBaseUrl
+    : voiceApiBase(rawBaseUrl)
   // 语音服务使用 OpenAI Audio；主模型协议完全由后台实测结果决定。
   const protocol: ProviderProtocol = isMainModel && mainModelDetection?.preferred_harness === 'claude_agent_sdk'
     ? 'anthropic_compatible'
@@ -602,8 +698,9 @@ async function submitCustom(
     default_model: model,
     base_url: baseUrl,
     // 主模型 provider 是固定 id；显式用空串清掉上一次检测留下的失效端点。
-    chat_completions_base_url: isMainModel ? (openaiAvailable ? baseUrl : '') : undefined,
-    anthropic_base_url: isMainModel ? (anthropicAvailable ? baseUrl : '') : undefined,
+    chat_completions_base_url: isMainModel ? (chatCompletionsBaseUrl ?? '') : undefined,
+    responses_base_url: isMainModel ? (responsesBaseUrl ?? '') : undefined,
+    anthropic_base_url: isMainModel ? (anthropicBaseUrl ?? '') : undefined,
     voice_adapter: voiceAdapter,
     status: 'active' as const,
     ...voiceUrls,
@@ -626,9 +723,11 @@ async function submitCustom(
     protocol,
     auth_type: protocol === 'anthropic_compatible' ? 'api-key' : 'bearer',
     base_url: baseUrl,
-    // 保存所有实际可用的端点；双协议可用时运行时仍固定优先 Claude。
-    chat_completions_base_url: isMainModel && openaiAvailable ? baseUrl : undefined,
-    anthropic_base_url: isMainModel && anthropicAvailable ? baseUrl : undefined,
+    // 保存每种协议实际命中的根地址；Manager Agent 双协议可用时仍固定优先 Claude。
+    // 空串用于覆盖同一 local provider 上一次探测留下、现在已失效的协议根地址。
+    chat_completions_base_url: isMainModel ? (chatCompletionsBaseUrl ?? '') : undefined,
+    responses_base_url: isMainModel ? (responsesBaseUrl ?? '') : undefined,
+    anthropic_base_url: isMainModel ? (anthropicBaseUrl ?? '') : undefined,
     voice_adapter: voiceAdapter,
     ...voiceUrls,
     // TTS 音色（后端 TTS payload 会带上）
@@ -695,9 +794,19 @@ async function submitCustom(
           >
             <option value="">{{ t('onboarding.form.selectModel') }}</option>
             <option v-for="m in displayModels" :key="m.id" :value="m.id" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">
-              {{ m.display_name }}{{ m.recommended ? ` · ${t('onboarding.form.recommended')}` : '' }}
+              {{ m.display_name }} · {{ m.detected ? t('onboarding.form.detected') : t('onboarding.form.catalog') }}
             </option>
           </select>
+          <span v-if="presetProbing" class="onboarding-step-form__probe-status">
+            <Loader2 class="h-3 w-3 animate-spin" />
+            {{ t('onboarding.form.discoveringModels') }}
+          </span>
+          <span v-else-if="presetProbeSettled && !presetProbeError" class="onboarding-step-form__probe-status">
+            {{ t('onboarding.form.modelsDetected', { count: displayModels.length }) }}
+          </span>
+          <span v-else-if="presetProbeError" class="onboarding-step-form__probe-status onboarding-step-form__probe-status--warning">
+            {{ t('onboarding.form.modelDiscoveryFallback') }}
+          </span>
         </label>
 
         <!-- credential 已有 key：自动复用并显示 masked 值；否则填新 key -->
@@ -751,12 +860,26 @@ async function submitCustom(
           <span class="onboarding-step-form__field-label">{{ t('onboarding.form.model') }}</span>
           <input
             v-model="customFields.model"
+            :list="customModelListId"
             :placeholder="customFieldConfig.modelPlaceholder"
             autocomplete="off"
             spellcheck="false"
             class="onboarding-step-form__input"
           />
-          <span class="onboarding-step-form__field-hint">{{ customFieldConfig.modelHint }}</span>
+          <datalist :id="customModelListId">
+            <option v-for="model in customProbedModels" :key="model" :value="model" />
+          </datalist>
+          <span v-if="customProbing" class="onboarding-step-form__probe-status">
+            <Loader2 class="h-3 w-3 animate-spin" />
+            {{ t('onboarding.form.discoveringModels') }}
+          </span>
+          <span v-else-if="customProbeSettled && !customProbeError" class="onboarding-step-form__probe-status">
+            {{ t('onboarding.form.modelsDetected', { count: customProbedModels.length }) }}
+          </span>
+          <span v-else-if="customProbeError" class="onboarding-step-form__probe-status onboarding-step-form__probe-status--warning">
+            {{ t('onboarding.form.modelDiscoveryManual') }}
+          </span>
+          <span v-else class="onboarding-step-form__field-hint">{{ customFieldConfig.modelHint }}</span>
         </label>
 
         <!-- TTS 音色（可选） -->
@@ -973,6 +1096,19 @@ async function submitCustom(
 .onboarding-step-form__key-toggle:hover {
   color: var(--hr-text-1);
   background: var(--hr-control-hover);
+}
+
+.onboarding-step-form__probe-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--hr-text-3);
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.onboarding-step-form__probe-status--warning {
+  color: var(--hr-warning);
 }
 
 /* 复用已有 Key 提示 */

@@ -55,4 +55,48 @@ describe('agent runtime selection', () => {
     expect(store.managerModelName).toBe('gpt-5.6-terra')
     expect(agentApi.updateManagerAgentConfig).not.toHaveBeenCalled()
   })
+
+  it('chooses the persisted default setting without matching a hard-coded provider model', async () => {
+    llmApi.listLLMSettings.mockResolvedValue({
+      data: {
+        settings: [
+          {
+            id: 'first-setting',
+            provider_id: 'provider-a',
+            provider_name: 'Provider A',
+            model_name: 'model-first',
+            supports_llm: true,
+            supports_asr: false,
+            supports_tts: false,
+            is_active: true,
+            is_default: false,
+          },
+          {
+            id: 'account-default',
+            provider_id: 'provider-b',
+            provider_name: 'Provider B',
+            model_name: 'model-from-settings',
+            supports_llm: true,
+            supports_asr: false,
+            supports_tts: false,
+            is_active: true,
+            is_default: true,
+          },
+        ],
+      },
+    })
+    agentApi.getManagerAgentConfig.mockRejectedValue(new Error('not configured'))
+    agentApi.updateManagerAgentConfig.mockResolvedValue({ success: true })
+
+    const store = useAgentStore()
+    await store.loadManagerRuntimeOptions()
+
+    expect(store.managerProviderName).toBe('provider-b')
+    expect(store.managerModelName).toBe('model-from-settings')
+    expect(agentApi.updateManagerAgentConfig).toHaveBeenCalledWith({
+      llm_setting_id: 'account-default',
+      provider_name: 'provider-b',
+      model_name: 'model-from-settings',
+    })
+  })
 })

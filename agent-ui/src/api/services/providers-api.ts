@@ -90,14 +90,17 @@ export async function getProviderModels(
  */
 export type ProbeModelsInput =
   | { settingId: string; baseUrl?: never; apiKey?: never }
-  | { settingId?: never; baseUrl: string; apiKey: string }
+  | { settingId?: never; baseUrl: string; apiKey?: string }
 
 export async function probeModels(
   input: ProbeModelsInput
 ): Promise<{ models: string[]; error?: string }> {
   const body = input.settingId
     ? { setting_id: input.settingId }
-    : { base_url: input.baseUrl, api_key: input.apiKey }
+    : {
+        base_url: input.baseUrl,
+        ...(input.apiKey ? { api_key: input.apiKey } : {})
+      }
   const res = await http.post<any>('/api/llm/models/probe', body)
   const data = res.data ?? res
   return {
@@ -111,6 +114,8 @@ export type DetectedMainModelHarness = 'claude_agent_sdk' | 'kimi_code'
 export interface MainModelEndpointProbe {
   available: boolean
   url: string
+  base_url?: string
+  attempted_urls?: string[]
   status?: number
   error?: string
 }
@@ -121,12 +126,15 @@ export interface MainModelRuntimeDetection {
   endpoints: {
     anthropic: MainModelEndpointProbe
     openai: MainModelEndpointProbe
+    /** Optional only for rolling compatibility with older Managers. */
+    responses?: MainModelEndpointProbe
   }
 }
 
 /**
- * 用用户填写的准确模型名实测 Anthropic Messages 与 OpenAI Chat Completions。
- * 两个协议都可用时，后端固定优先 Claude Agent SDK。
+ * 用用户填写的准确模型名实测 Anthropic Messages、OpenAI Chat Completions
+ * 与 OpenAI Responses。后台会同时尝试带 /v1 和不带 /v1 的协议根地址。
+ * 两种 Manager Agent 协议都可用时，后端固定优先 Claude Agent SDK。
  */
 export async function detectMainModelRuntime(input: {
   baseUrl: string

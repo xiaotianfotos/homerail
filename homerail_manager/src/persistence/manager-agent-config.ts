@@ -70,9 +70,10 @@ function _normalize(raw?: Record<string, unknown> | null): ManagerAgentConfig {
   const harness = _harness(base.harness);
   if (harness === "codex_appserver") {
     const rawModel = _string(base.model_name);
-    const modelName = raw?.llm_setting_id || raw?.provider_name
-      ? "gpt-5.5"
-      : rawModel ?? "gpt-5.5";
+    // Legacy provider references belong to HomeRail-managed runtimes and must
+    // not be converted into a guessed Codex model. A null model lets the
+    // app-server catalog select the account's real default during bootstrap.
+    const modelName = raw?.llm_setting_id || raw?.provider_name ? null : rawModel;
     return {
       agent_type: "manager_agent",
       harness,

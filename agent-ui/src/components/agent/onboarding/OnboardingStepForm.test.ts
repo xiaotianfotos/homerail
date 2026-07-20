@@ -128,6 +128,7 @@ afterEach(() => {
 
 describe('OnboardingStepForm TTS persistence', () => {
   it('uses the explicit credential reuse flag for a preset TTS model', async () => {
+    vi.mocked(probeModels).mockResolvedValueOnce({ models: ['mimo-v2.5-tts'] })
     const root = await mountForm({
       capability: 'supports_tts',
       providers: [ttsProvider],
@@ -140,7 +141,18 @@ describe('OnboardingStepForm TTS persistence', () => {
     await nextTick()
 
     expect(root.textContent).toContain('sk-c****hyxs')
+    const model = root.querySelectorAll<HTMLSelectElement>('select')[1]!
     const submit = root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!
+    expect(model.value).toBe('')
+    expect(submit.disabled).toBe(true)
+
+    model.value = 'mimo-v2.5-tts'
+    model.dispatchEvent(new Event('change'))
+    await nextTick()
+    // A saved credential must finish model discovery before it can be submitted.
+    await new Promise(resolve => window.setTimeout(resolve, 650))
+    await nextTick()
+
     submit.click()
 
     await vi.waitFor(() => expect(apiMocks.createLLMSetting).toHaveBeenCalledTimes(1))
@@ -176,6 +188,62 @@ describe('OnboardingStepForm TTS persistence', () => {
 
       expect(probeModels).toHaveBeenCalledWith({ settingId: existingAsrSetting.id })
       expect(root.textContent).toContain('mimo-v2.5-tts-latest')
+      expect(root.querySelectorAll<HTMLSelectElement>('select')[1]!.value).toBe('')
+      expect(root.textContent).toContain('已探测')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('falls back to the catalog without auto-selecting when discovery returns no models', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(probeModels).mockResolvedValueOnce({ models: [] })
+      const root = await mountForm({
+        capability: 'supports_tts',
+        providers: [ttsProvider],
+        existingSettings: [existingAsrSetting]
+      })
+
+      const credential = root.querySelector<HTMLSelectElement>('select')!
+      credential.value = 'xiaomi::api_billing'
+      credential.dispatchEvent(new Event('change'))
+      await nextTick()
+      await vi.advanceTimersByTimeAsync(600)
+      await nextTick()
+
+      const model = root.querySelectorAll<HTMLSelectElement>('select')[1]!
+      expect(Array.from(model.options).map(option => option.value)).toContain('mimo-v2.5-tts')
+      expect(model.value).toBe('')
+      expect(root.textContent).toContain('当前显示内置目录，不会自动选择')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('discovers custom local models without a key but leaves the choice empty', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(probeModels).mockResolvedValueOnce({ models: ['local-qwen', 'local-vision'] })
+      const root = await mountForm({
+        capability: 'supports_llm',
+        providers: [],
+        existingSettings: []
+      })
+
+      root.querySelectorAll<HTMLButtonElement>('.onboarding-step-form__mode-tab')[1]!.click()
+      await nextTick()
+      const inputs = root.querySelectorAll<HTMLInputElement>('.onboarding-step-form__custom input')
+      inputValue(inputs[0]!, 'http://127.0.0.1:5000')
+      await nextTick()
+      await vi.advanceTimersByTimeAsync(600)
+      await nextTick()
+
+      expect(probeModels).toHaveBeenCalledWith({ baseUrl: 'http://127.0.0.1:5000' })
+      expect(inputs[1]!.value).toBe('')
+      expect(Array.from(root.querySelectorAll<HTMLOptionElement>('datalist option')).map(option => option.value))
+        .toEqual(['local-qwen', 'local-vision'])
+      expect(root.textContent).toContain('已从服务发现 2 个模型')
     } finally {
       vi.useRealTimers()
     }
@@ -466,6 +534,7 @@ describe('OnboardingStepForm local Manager Agent setup', () => {
     protocol: 'anthropic_compatible',
     base_url: 'http://127.0.0.1:8000/v1',
     chat_completions_base_url: 'http://127.0.0.1:8000/v1',
+    responses_base_url: 'http://127.0.0.1:8000/v1',
     anthropic_base_url: 'http://127.0.0.1:8000/v1',
     model_name: 'qwen-local',
     display_name: '本地主 Agent · qwen-local',
@@ -482,23 +551,42 @@ describe('OnboardingStepForm local Manager Agent setup', () => {
     updated_at: '2026-01-01T00:00:00.000Z'
   }
 
-  async function fillLocalMainModel(root: HTMLElement): Promise<void> {
+  async function fillLocalMainModel(
+    root: HTMLElement,
+    baseUrl = 'http://127.0.0.1:8000',
+  ): Promise<void> {
     root.querySelectorAll<HTMLButtonElement>('.onboarding-step-form__mode-tab')[1]!.click()
     await nextTick()
     const inputs = root.querySelectorAll<HTMLInputElement>('.onboarding-step-form__custom input')
     expect(inputs[1]!.value).toBe('')
-    inputValue(inputs[0]!, 'http://127.0.0.1:8000/v1')
+    inputValue(inputs[0]!, baseUrl)
     inputValue(inputs[1]!, 'qwen-local')
     await nextTick()
   }
 
-  it('tests both endpoints, prefers Claude, persists both URLs, and awaits activation', async () => {
+  it('tests all protocol endpoints, prefers Claude, persists discovered roots, and awaits activation', async () => {
     vi.mocked(detectMainModelRuntime).mockResolvedValueOnce({
       available: true,
       preferred_harness: 'claude_agent_sdk',
       endpoints: {
-        anthropic: { available: true, url: 'http://127.0.0.1:8000/v1/messages', status: 200 },
-        openai: { available: true, url: 'http://127.0.0.1:8000/v1/chat/completions', status: 200 }
+        anthropic: {
+          available: true,
+          url: 'http://127.0.0.1:8000/v1/messages',
+          base_url: 'http://127.0.0.1:8000/v1',
+          status: 200
+        },
+        openai: {
+          available: true,
+          url: 'http://127.0.0.1:8000/chat/completions',
+          base_url: 'http://127.0.0.1:8000',
+          status: 200
+        },
+        responses: {
+          available: true,
+          url: 'http://127.0.0.1:8000/v1/responses',
+          base_url: 'http://127.0.0.1:8000/v1',
+          status: 200
+        }
       }
     })
     apiMocks.createLLMSetting.mockResolvedValueOnce({ success: true, data: localMainSetting } as any)
@@ -518,7 +606,7 @@ describe('OnboardingStepForm local Manager Agent setup', () => {
       'claude_agent_sdk'
     ))
     expect(detectMainModelRuntime).toHaveBeenCalledWith({
-      baseUrl: 'http://127.0.0.1:8000/v1',
+      baseUrl: 'http://127.0.0.1:8000',
       apiKey: 'local-no-key',
       model: 'qwen-local'
     })
@@ -529,12 +617,16 @@ describe('OnboardingStepForm local Manager Agent setup', () => {
       activateSetting.mock.invocationCallOrder[0]!
     )
     expect(apiMocks.createProvider).toHaveBeenCalledWith(expect.objectContaining({
-      chat_completions_base_url: 'http://127.0.0.1:8000/v1',
+      base_url: 'http://127.0.0.1:8000/v1',
+      chat_completions_base_url: 'http://127.0.0.1:8000',
+      responses_base_url: 'http://127.0.0.1:8000/v1',
       anthropic_base_url: 'http://127.0.0.1:8000/v1'
     }))
     expect(apiMocks.createLLMSetting).toHaveBeenCalledWith(expect.objectContaining({
       protocol: 'anthropic_compatible',
-      chat_completions_base_url: 'http://127.0.0.1:8000/v1',
+      base_url: 'http://127.0.0.1:8000/v1',
+      chat_completions_base_url: 'http://127.0.0.1:8000',
+      responses_base_url: 'http://127.0.0.1:8000/v1',
       anthropic_base_url: 'http://127.0.0.1:8000/v1'
     }))
     expect(toastMocks.showToast).toHaveBeenCalledWith(
@@ -554,12 +646,24 @@ describe('OnboardingStepForm local Manager Agent setup', () => {
           status: 404,
           error: 'HTTP 404'
         },
-        openai: { available: true, url: 'http://127.0.0.1:8000/v1/chat/completions', status: 200 }
+        openai: {
+          available: true,
+          url: 'http://127.0.0.1:8000/v1/chat/completions',
+          base_url: 'http://127.0.0.1:8000/v1',
+          status: 200
+        },
+        responses: {
+          available: false,
+          url: 'http://127.0.0.1:8000/v1/responses',
+          status: 404,
+          error: 'HTTP 404'
+        }
       }
     })
     const openAiSetting = {
       ...localMainSetting,
       protocol: 'openai_compatible' as const,
+      responses_base_url: undefined,
       anthropic_base_url: undefined
     }
     apiMocks.createLLMSetting.mockResolvedValueOnce({ success: true, data: openAiSetting } as any)
@@ -577,12 +681,14 @@ describe('OnboardingStepForm local Manager Agent setup', () => {
     await vi.waitFor(() => expect(activateSetting).toHaveBeenCalledWith(openAiSetting, 'kimi_code'))
     expect(apiMocks.createProvider).toHaveBeenCalledWith(expect.objectContaining({
       chat_completions_base_url: 'http://127.0.0.1:8000/v1',
+      responses_base_url: '',
       anthropic_base_url: ''
     }))
     expect(apiMocks.createLLMSetting).toHaveBeenCalledWith(expect.objectContaining({
       protocol: 'openai_compatible',
       chat_completions_base_url: 'http://127.0.0.1:8000/v1',
-      anthropic_base_url: undefined
+      responses_base_url: '',
+      anthropic_base_url: ''
     }))
   })
 
@@ -602,6 +708,12 @@ describe('OnboardingStepForm local Manager Agent setup', () => {
           url: 'http://127.0.0.1:8000/v1/chat/completions',
           status: 503,
           error: 'HTTP 503'
+        },
+        responses: {
+          available: false,
+          url: 'http://127.0.0.1:8000/v1/responses',
+          status: 404,
+          error: 'HTTP 404'
         }
       }
     })
@@ -632,8 +744,14 @@ describe('OnboardingStepForm local Manager Agent setup', () => {
       available: true,
       preferred_harness: 'claude_agent_sdk',
       endpoints: {
-        anthropic: { available: true, url: 'http://127.0.0.1:8000/v1/messages', status: 200 },
-        openai: { available: false, url: 'http://127.0.0.1:8000/v1/chat/completions', status: 404 }
+        anthropic: {
+          available: true,
+          url: 'http://127.0.0.1:8000/v1/messages',
+          base_url: 'http://127.0.0.1:8000/v1',
+          status: 200
+        },
+        openai: { available: false, url: 'http://127.0.0.1:8000/v1/chat/completions', status: 404 },
+        responses: { available: false, url: 'http://127.0.0.1:8000/v1/responses', status: 404 }
       }
     })
     apiMocks.createLLMSetting.mockResolvedValueOnce({ success: true, data: localMainSetting } as any)

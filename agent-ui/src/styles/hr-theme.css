@@ -163,3 +163,31 @@
   background: var(--hr-selection);
   color: var(--hr-text-1);
 }
+
+/* Native select popups are painted by the host UI on Windows and some Linux
+   desktops. Carry the active appearance into that separate popup so a dark
+   control never opens onto a white system canvas. */
+select,
+option,
+optgroup {
+  color-scheme: inherit;
+}
+
+select option,
+select optgroup {
+  background-color: var(--hr-bg-raised);
+  color: var(--hr-text-1);
+}
+
+select option:checked {
+  background-color: var(--hr-control-active);
+}
+
+/* Preserve Windows High Contrast instead of overriding its system palette. */
+@media (forced-colors: active) {
+  select option,
+  select optgroup {
+    background-color: Canvas;
+    color: CanvasText;
+  }
+}
