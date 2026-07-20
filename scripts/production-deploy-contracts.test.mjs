@@ -35,6 +35,13 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /grep -Fxl -- "\$old_revision"/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_HOST=\$MANAGER_HOST/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_PORT=\$MANAGER_PORT/);
+  assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HOST=\$UI_HOST/);
+  assert.match(deploy, /HOMERAIL_PRODUCTION_UI_PORT=\$UI_PORT/);
+  assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HTTP_PORT=\$UI_HTTP_PORT/);
+  assert.match(deploy, /must be a LAN-accessible host or address/);
+  assert.match(deploy, /HOMERAIL_PRODUCTION_UI_PORT:-19192/);
+  assert.match(service, /HOMERAIL_PRODUCTION_UI_PORT:-19192/);
+  assert.match(service, /Production UI must bind all interfaces/);
   assert.match(service, /HOMERAIL_UI_SERVE_STATIC=1/);
   assert.match(service, /RELEASE_ROOT="\$\(readlink -f "\$CURRENT"\)"/);
   assert.match(service, /HOMERAIL_REPO_ROOT="\$RELEASE_ROOT"/);
