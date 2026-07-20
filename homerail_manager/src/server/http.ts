@@ -81,6 +81,19 @@ export function resolveManagerWorkerWsBaseUrl(actualPort: number): string {
   return `ws://${host}:${actualPort}`;
 }
 
+export function resolveManagerLocalHttpBaseUrl(
+  actualPort: number,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configuredHost = env.HOMERAIL_MANAGER_HOST?.trim();
+  const normalizedHost = configuredHost?.replace(/^\[|\]$/g, "") ?? "";
+  const host = !normalizedHost || normalizedHost === "0.0.0.0" || normalizedHost === "::"
+    ? "127.0.0.1"
+    : normalizedHost;
+  const urlHost = host.includes(":") ? `[${host}]` : host;
+  return `http://${urlHost}:${actualPort}`;
+}
+
 export function resolveManagerWorkerExtraHosts(): string[] {
   const explicit = process.env.HOMERAIL_MANAGER_WORKER_EXTRA_HOSTS;
   if (explicit !== undefined) {
@@ -247,7 +260,7 @@ export function createServer(
     managerBaseUrl: () => {
       const addr = server?.address();
       const actualPort = typeof addr === "object" && addr ? addr.port : port;
-      return `http://127.0.0.1:${actualPort}`;
+      return resolveManagerLocalHttpBaseUrl(actualPort);
     },
     managerWorkerWsBaseUrl: () => {
       const addr = server?.address();
@@ -264,7 +277,7 @@ export function createServer(
   const localManagerUrl = (): string => {
     const addr = server?.address();
     const actualPort = typeof addr === "object" && addr ? addr.port : port;
-    return `http://127.0.0.1:${actualPort}`;
+    return resolveManagerLocalHttpBaseUrl(actualPort);
   };
   const managerAgentRuntimeOptions = {
     env: resolveManagerAgentRuntimeEnv(),

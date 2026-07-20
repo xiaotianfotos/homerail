@@ -20,8 +20,28 @@ runner environment file defines:
 - optional `HOMERAIL_PRODUCTION_UI_PORT` and
   `HOMERAIL_PRODUCTION_UI_HTTP_PORT` overrides (defaults: `19192` and
   `19193`);
-- optional Manager URL/host/port overrides when the default loopback endpoint
-  would conflict with another local runtime.
+- optional Manager URL/host/port overrides when the default endpoint would
+  conflict with another local runtime. By default the deployment discovers
+  Docker's `bridge` gateway and binds the Manager only on that interface.
+  Linux bridge-network Workers reach the same interface through
+  `host.docker.internal`; a loopback-only Manager cannot accept those Worker
+  WebSocket registrations, while an all-interface bind would unnecessarily
+  expose the Manager port to the LAN. The service enables insecure remote
+  WebSockets only for this host-local bridge channel and authenticates Node and
+  Worker registrations with separate 0600 tokens under the persistent
+  Home. A third 0600 token authorizes Manager Agent, CLI, and trusted
+  same-origin UI proxy DAG mutations; ordinary DAG Workers receive neither the
+  Node nor mutation credential, and browser clients never receive any token.
+  These service tokens are environment variables of trusted processes running
+  under the dedicated deployment account; do not share that Unix account with
+  untrusted local processes.
+  The Manager socket is not bound to a LAN interface. Plaintext bridge
+  WebSockets default to disabled and require the operator to set
+  `HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS=1` explicitly for an isolated
+  trusted Docker bridge. Startup always rejects every Manager host other than
+  the discovered Docker bridge gateway. Production currently requires Docker's
+  default `bridge` network because provisioned Workers use that network; a
+  missing or renamed default bridge fails deployment with an actionable error.
 
 The installation also provides:
 
@@ -29,15 +49,17 @@ The installation also provides:
 - runner service: `homerail-deploy-runner.service` using only the
   `homerail-deploy` custom label;
 - a LAN-facing HTTPS UI;
-- a dedicated loopback Manager health endpoint.
+- a dedicated Manager port bound to the Docker bridge interface;
 
 Each deployment installs dependencies, builds all packages, builds a
 revision-tagged Worker image, copies the runnable tree plus its Node.js binary
 into a new release directory, and atomically switches `current`. The systemd
 user service owns Manager, Node, and the static Agent UI as one cgroup and
 restarts after a process or health failure. Deployment waits for both Manager
-and HTTPS UI health through its LAN address, and requires a connected Docker
-Node. Deployment rejects loopback-only UI binds and loopback public addresses.
+and HTTPS UI health through its LAN address, requires a connected Docker Node,
+and runs the deterministic public two-node DAG through a provisioned Docker
+Worker before accepting the release. Deployment rejects loopback-only Manager
+binds, loopback-only UI binds, and loopback public addresses.
 A failed health check switches `current` back to the prior release and restarts it. The
 dedicated Manager port prevents desktop/E2E runtimes from being mistaken for
 the production Manager. The newest three releases and their Worker images are

@@ -2453,6 +2453,53 @@ describe("smoke command", () => {
       expect.objectContaining({ method: "GET" }),
     );
   });
+
+  it("returns a failing exit status for an unsuccessful JSON DAG smoke", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { run_id: "smoke-run-failed" } }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { status: "failed" } }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { passed: false, score: 4, total: 9 } }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { verdict: "fail" } }),
+      } as unknown as Response);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const program = createProgram();
+    await program.parseAsync([
+      "node",
+      "hr",
+      "--json",
+      "smoke",
+      "dag",
+      "--template",
+      "assets/orchestrations/public-two-node.yaml.template",
+      "--interval",
+      "0",
+      "--timeout",
+      "1",
+    ]);
+
+    expect(JSON.parse(logSpy.mock.calls.at(-1)?.join(" ") ?? "{}")).toMatchObject({
+      run_id: "smoke-run-failed",
+      status: "failed",
+      passed: false,
+    });
+    expect(process.exitCode).toBe(1);
+  });
 });
 
 describe("redactSecret helper", () => {
