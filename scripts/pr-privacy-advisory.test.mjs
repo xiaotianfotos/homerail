@@ -28,7 +28,7 @@ test("human review emits only redacted GitHub error annotations", () => {
       {
         category: "email",
         source: "commit_metadata",
-        location: "commit:0123456789ab metadata",
+        location: "commit:0123456789abcdef0123456789abcdef01234567 metadata",
         description: "Commit identity metadata may contain a personal address; inspect it before publishing.",
         confidence: "medium",
       },

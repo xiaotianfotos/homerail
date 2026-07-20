@@ -77,7 +77,7 @@ const privacyConfidence = new Set(["high", "medium", "low"]);
 
 function isSafePrivacyLocation(location) {
   if (location === "review-context") return true;
-  if (/^commit:[0-9a-f]{12} metadata$/.test(location)) return true;
+  if (/^commit:(?:[0-9a-f]{12}|[0-9a-f]{40}) metadata$/.test(location)) return true;
   if (!/^[^\\:\u0000-\u001f\u007f]+(?::[1-9][0-9]*)?$/.test(location)) return false;
   const file = location.replace(/:[1-9][0-9]*$/, "");
   return !file.startsWith("/") && !file.split("/").includes("..");
