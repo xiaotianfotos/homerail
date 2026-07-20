@@ -35,6 +35,8 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /grep -Fxl -- "\$old_revision"/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_HOST=\$MANAGER_HOST/);
   assert.match(deploy, /docker network inspect bridge/);
+  assert.match(deploy, /\*:\*\) MANAGER_URL_HOST="\[\$MANAGER_HOST\]"/);
+  assert.match(deploy, /http:\/\/\$MANAGER_URL_HOST:\$MANAGER_PORT/);
   assert.match(deploy, /Could not resolve the Docker bridge gateway/);
   assert.match(deploy, /loopback and wildcard binds are not supported/);
   assert.match(deploy, /MANAGER_HOST" != "\$DOCKER_BRIDGE_GATEWAY/);
@@ -67,6 +69,8 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /Environment=PATH=\$SERVICE_PATH/);
   assert.match(service, /HOMERAIL_PRODUCTION_UI_PORT:-19192/);
   assert.match(service, /docker network inspect bridge/);
+  assert.match(service, /\*:\*\) MANAGER_URL_HOST="\[\$MANAGER_HOST\]"/);
+  assert.match(service, /http:\/\/\$MANAGER_URL_HOST:\$MANAGER_PORT/);
   assert.match(service, /HOMERAIL_MANAGER_HOST="\$MANAGER_HOST"/);
   assert.match(service, /HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-\$MANAGER_URL/);
   assert.match(service, /HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS/);
