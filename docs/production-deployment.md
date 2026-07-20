@@ -28,14 +28,15 @@ runner environment file defines:
   WebSocket registrations, while an all-interface bind would unnecessarily
   expose the Manager port to the LAN. The service enables insecure remote
   WebSockets only for this host-local bridge channel and authenticates Node and
-  Worker registrations with a 0600 control-plane token under the persistent
-  Home. A separate 0600 token authorizes Manager Agent, CLI, and trusted
-  same-origin UI proxy DAG mutations; ordinary DAG Workers never receive that
-  mutation credential, and browser clients never receive either token. The
-  Manager socket is not bound to a LAN interface. Plaintext bridge WebSockets
-  default to enabled and may be overridden with
-  `HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS=0`; while enabled, startup
-  rejects every Manager host other than the discovered Docker bridge gateway.
+  Node and Worker registrations with separate 0600 tokens under the persistent
+  Home. A third 0600 token authorizes Manager Agent, CLI, and trusted
+  same-origin UI proxy DAG mutations; ordinary DAG Workers receive neither the
+  Node nor mutation credential, and browser clients never receive any token.
+  The Manager socket is not bound to a LAN interface. Plaintext bridge
+  WebSockets default to disabled and require the operator to set
+  `HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS=1` explicitly for an isolated
+  trusted Docker bridge. Startup always rejects every Manager host other than
+  the discovered Docker bridge gateway.
 
 The installation also provides:
 

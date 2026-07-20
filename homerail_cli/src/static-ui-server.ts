@@ -184,6 +184,7 @@ function proxyHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
     }
     // Browser credentials never override Manager's own trust decision.
     delete headers.authorization;
+    delete headers["x-homerail-dag-token"];
     if (DAG_MUTATION_TOKEN) {
       headers["x-homerail-dag-token"] = DAG_MUTATION_TOKEN;
     }

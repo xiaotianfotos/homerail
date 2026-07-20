@@ -12,7 +12,7 @@ MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
 DOCKER_BRIDGE_GATEWAY="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
 MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-$DOCKER_BRIDGE_GATEWAY}"
 MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://$MANAGER_HOST:$MANAGER_PORT}"
-ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-1}"
+ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-0}"
 UI_HOST="${HOMERAIL_PRODUCTION_UI_HOST:-0.0.0.0}"
 UI_PORT="${HOMERAIL_PRODUCTION_UI_PORT:-19192}"
 UI_HTTP_PORT="${HOMERAIL_PRODUCTION_UI_HTTP_PORT:-19193}"
@@ -33,8 +33,8 @@ case "$MANAGER_HOST" in
     exit 1
     ;;
 esac
-if [ "$ALLOW_INSECURE_REMOTE_WS" = "1" ] && [ "$MANAGER_HOST" != "$DOCKER_BRIDGE_GATEWAY" ]; then
-  echo "Plaintext production WebSockets may bind only to the Docker bridge gateway." >&2
+if [ "$MANAGER_HOST" != "$DOCKER_BRIDGE_GATEWAY" ]; then
+  echo "Production Manager may bind only to the Docker bridge gateway." >&2
   exit 1
 fi
 if [ "$UI_HOST" != "0.0.0.0" ] && [ "$UI_HOST" != "::" ]; then

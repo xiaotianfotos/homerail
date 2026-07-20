@@ -86,7 +86,10 @@ describe("static Agent UI mutation proxy", () => {
 
     expect((await fetch(`${uiOrigin}/api/runs`, {
       method: "POST",
-      headers: { Origin: uiOrigin },
+      headers: {
+        Origin: uiOrigin,
+        "x-homerail-dag-token": "browser-supplied-token",
+      },
     })).status).toBe(200);
     expect(received[0]).toEqual({
       authorization: undefined,
@@ -102,8 +105,12 @@ describe("static Agent UI mutation proxy", () => {
 
   it("derives the self Origin for a publicly bound development server", async () => {
     let managerHits = 0;
+    let receivedMutationToken: string | undefined;
     const manager = http.createServer((req, res) => {
       managerHits++;
+      receivedMutationToken = typeof req.headers["x-homerail-dag-token"] === "string"
+        ? req.headers["x-homerail-dag-token"]
+        : undefined;
       req.resume();
       res.writeHead(200).end();
     });
@@ -115,10 +122,14 @@ describe("static Agent UI mutation proxy", () => {
 
     const response = await fetch(`${uiOrigin}/api/runs`, {
       method: "POST",
-      headers: { Origin: uiOrigin },
+      headers: {
+        Origin: uiOrigin,
+        "x-homerail-dag-token": "browser-supplied-token",
+      },
     });
     expect(response.status).toBe(200);
     expect(managerHits).toBe(1);
+    expect(receivedMutationToken).toBeUndefined();
   }, 15_000);
 
   it("rejects encoded traversal into a same-prefix sibling of the static root", async () => {

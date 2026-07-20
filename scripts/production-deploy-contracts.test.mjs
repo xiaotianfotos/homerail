@@ -38,7 +38,7 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /Could not resolve the Docker bridge gateway/);
   assert.match(deploy, /loopback and wildcard binds are not supported/);
   assert.match(deploy, /MANAGER_HOST" != "\$DOCKER_BRIDGE_GATEWAY/);
-  assert.match(deploy, /Plaintext production WebSockets may bind only to the Docker bridge gateway/);
+  assert.match(deploy, /Production Manager may bind only to the Docker bridge gateway/);
   assert.match(deploy, /smoke dag/);
   assert.match(deploy, /public-two-node\.yaml\.template/);
   assert.match(deploy, /--template "\$PRODUCTION_ROOT\/current\/assets\/orchestrations\/public-two-node\.yaml\.template"/);
@@ -48,7 +48,7 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /export HOMERAIL_DAG_MUTATION_TOKEN/);
   assert.match(deploy, /Production DAG mutation token is missing after service startup/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_PORT=\$MANAGER_PORT/);
-  assert.match(deploy, /HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-1/);
+  assert.match(deploy, /HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-0/);
   assert.match(deploy, /Environment=HOMERAIL_ALLOW_INSECURE_REMOTE_WS=\$ALLOW_INSECURE_REMOTE_WS/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HOST=\$UI_HOST/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_PORT=\$UI_PORT/);
@@ -73,13 +73,15 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(service, /export HOMERAIL_ALLOW_INSECURE_REMOTE_WS="\$ALLOW_INSECURE_REMOTE_WS"/);
   assert.match(service, /Production Manager must bind the Docker bridge gateway/);
   assert.match(service, /manager\/secrets/);
-  assert.match(service, /control-plane\.token/);
+  assert.match(service, /node-registration\.token/);
+  assert.match(service, /worker-registration\.token/);
   assert.match(service, /dag-mutation\.token/);
   assert.match(service, /randomBytes\(32\)\.toString\("base64url"\)/);
   assert.match(service, /chmod 0600 "\$token_file"/);
-  assert.match(service, /export HOMERAIL_CONTROL_PLANE_TOKEN/);
+  assert.match(service, /export HOMERAIL_NODE_TOKEN/);
+  assert.match(service, /export HOMERAIL_WORKER_TOKEN/);
   assert.match(service, /export HOMERAIL_DAG_MUTATION_TOKEN/);
-  assert.doesNotMatch(service, /HOMERAIL_DAG_MUTATION_TOKEN="\$HOMERAIL_CONTROL_PLANE_TOKEN"/);
+  assert.doesNotMatch(service, /export HOMERAIL_CONTROL_PLANE_TOKEN/);
   assert.match(service, /Production UI must bind all interfaces/);
   assert.match(service, /HOMERAIL_UI_SERVE_STATIC=1/);
   assert.match(service, /RELEASE_ROOT="\$\(readlink -f "\$CURRENT"\)"/);

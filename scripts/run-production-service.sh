@@ -9,7 +9,7 @@ RESOURCE_ROOT="${HOMERAIL_PRODUCTION_RESOURCES:-$HOME/.local/share/homerail-reso
 MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
 DOCKER_BRIDGE_GATEWAY="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
 MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-$DOCKER_BRIDGE_GATEWAY}"
-ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-${HOMERAIL_ALLOW_INSECURE_REMOTE_WS:-1}}"
+ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-${HOMERAIL_ALLOW_INSECURE_REMOTE_WS:-0}}"
 if [ -z "$DOCKER_BRIDGE_GATEWAY" ] || [ -z "$MANAGER_HOST" ]; then
   echo "Could not resolve the Docker bridge gateway for the production Manager bind." >&2
   exit 1
@@ -21,8 +21,8 @@ case "$MANAGER_HOST" in
     exit 1
     ;;
 esac
-if [ "$ALLOW_INSECURE_REMOTE_WS" = "1" ] && [ "$MANAGER_HOST" != "$DOCKER_BRIDGE_GATEWAY" ]; then
-  echo "Plaintext production WebSockets may bind only to the Docker bridge gateway." >&2
+if [ "$MANAGER_HOST" != "$DOCKER_BRIDGE_GATEWAY" ]; then
+  echo "Production Manager may bind only to the Docker bridge gateway." >&2
   exit 1
 fi
 MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://$MANAGER_HOST:$MANAGER_PORT}"
@@ -60,11 +60,12 @@ if [ -z "$UI_URL" ]; then
   fi
 fi
 
-CONTROL_PLANE_SECRET_DIR="$HOMERAIL_HOME/manager/secrets"
-CONTROL_PLANE_TOKEN_FILE="$CONTROL_PLANE_SECRET_DIR/control-plane.token"
-DAG_MUTATION_TOKEN_FILE="$CONTROL_PLANE_SECRET_DIR/dag-mutation.token"
-mkdir -p "$CONTROL_PLANE_SECRET_DIR"
-chmod 0700 "$CONTROL_PLANE_SECRET_DIR"
+AUTH_SECRET_DIR="$HOMERAIL_HOME/manager/secrets"
+NODE_TOKEN_FILE="$AUTH_SECRET_DIR/node-registration.token"
+WORKER_TOKEN_FILE="$AUTH_SECRET_DIR/worker-registration.token"
+DAG_MUTATION_TOKEN_FILE="$AUTH_SECRET_DIR/dag-mutation.token"
+mkdir -p "$AUTH_SECRET_DIR"
+chmod 0700 "$AUTH_SECRET_DIR"
 
 load_or_create_token() {
   local token_file="$1"
@@ -90,11 +91,13 @@ load_or_create_token() {
   printf '%s' "$token"
 }
 
-HOMERAIL_CONTROL_PLANE_TOKEN="$(load_or_create_token "$CONTROL_PLANE_TOKEN_FILE" "control-plane")"
+HOMERAIL_NODE_TOKEN="$(load_or_create_token "$NODE_TOKEN_FILE" "Node registration")"
+HOMERAIL_WORKER_TOKEN="$(load_or_create_token "$WORKER_TOKEN_FILE" "Worker registration")"
 HOMERAIL_DAG_MUTATION_TOKEN="$(load_or_create_token "$DAG_MUTATION_TOKEN_FILE" "DAG mutation")"
 
 export HOMERAIL_HOME
-export HOMERAIL_CONTROL_PLANE_TOKEN
+export HOMERAIL_NODE_TOKEN
+export HOMERAIL_WORKER_TOKEN
 export HOMERAIL_DAG_MUTATION_TOKEN
 export HOMERAIL_REPO_ROOT="$RELEASE_ROOT"
 export HOMERAIL_MANAGER_URL="$MANAGER_URL"
