@@ -56,6 +56,7 @@ describe("/api/manager-agent/readiness", () => {
   let oldHostEntry: string | undefined;
   let oldHostShell: string | undefined;
   let oldRepoRoot: string | undefined;
+  let oldAnthropicKey: string | undefined;
 
   beforeEach(() => {
     oldHome = process.env.HOMERAIL_HOME;
@@ -63,11 +64,13 @@ describe("/api/manager-agent/readiness", () => {
     oldHostEntry = process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
     oldHostShell = process.env.HOMERAIL_MANAGER_AGENT_SHELL;
     oldRepoRoot = process.env.HOMERAIL_REPO_ROOT;
+    oldAnthropicKey = process.env.ANTHROPIC_API_KEY;
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-readiness-"));
     process.env.HOMERAIL_HOME = tmpHome;
     process.env.HOMERAIL_LOCAL_NODE_AUTOSTART = "0";
     delete process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY;
     delete process.env.HOMERAIL_MANAGER_AGENT_SHELL;
+    delete process.env.ANTHROPIC_API_KEY;
     clearManagerAgentConfig();
     _clearAllSettings();
     _clearNodes();
@@ -88,6 +91,8 @@ describe("/api/manager-agent/readiness", () => {
     else process.env.HOMERAIL_MANAGER_AGENT_SHELL = oldHostShell;
     if (oldRepoRoot === undefined) delete process.env.HOMERAIL_REPO_ROOT;
     else process.env.HOMERAIL_REPO_ROOT = oldRepoRoot;
+    if (oldAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = oldAnthropicKey;
     await removeTempDir(tmpHome);
   });
 
@@ -155,6 +160,8 @@ describe("/api/manager-agent/readiness", () => {
     fs.writeFileSync(workerEntry, "console.log('worker entry')\n", "utf-8");
     process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = workerEntry;
     process.env.HOMERAIL_MANAGER_AGENT_SHELL = process.platform === "win32" ? process.execPath : "/bin/sh";
+    // 专用 setting 自带端点与 Key，无需宿主机 Claude 凭证即可就绪
+    // （无 ANTHROPIC_API_KEY 也无 ~/.claude 登录态，刻意验证这一点）。
     server = createServer(0, undefined, undefined, false);
     upsertProvider({
       id: "qwen36",
@@ -217,6 +224,25 @@ describe("/api/manager-agent/readiness", () => {
     });
   });
 
+  it("does not report the agent step ready on a fresh home with no LLM settings", async () => {
+    const workerEntry = path.join(tmpHome, "worker-entry.js");
+    fs.writeFileSync(workerEntry, "console.log('worker entry')\n", "utf-8");
+    process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = workerEntry;
+    process.env.HOMERAIL_MANAGER_AGENT_SHELL = process.platform === "win32" ? process.execPath : "/bin/sh";
+    server = createServer(0, undefined, undefined, false);
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    // 无任何 LLM setting：即使 host shell 可用，readiness 也必须阻塞，
+    // 否则新手向导会错误地跳过主模型配置（偶发"自动完成"的根因）。
+    const response = await fetch(`${baseUrl}/api/manager-agent/readiness`);
+    const body = await response.json() as {
+      data: { ready: boolean; blockers: Array<{ code: string }> };
+    };
+    expect(body.data.ready).toBe(false);
+    expect(body.data.blockers.map((item) => item.code)).toEqual(["manager_config_invalid"]);
+  });
+
   it("probes Docker workspace bind mount on demand", async () => {
     const fakeNode = registerFakeDockerNode();
     server = createServer(0);
@@ -259,6 +285,8 @@ describe("/api/manager-agent/readiness", () => {
     fs.writeFileSync(workerEntry, "console.log('worker entry')\n", "utf-8");
     process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = workerEntry;
     process.env.HOMERAIL_MANAGER_AGENT_SHELL = process.platform === "win32" ? process.execPath : "/bin/sh";
+    // host_shell 就绪还需要 Claude 凭证（见 claude_auth_missing 门禁）
+    process.env.ANTHROPIC_API_KEY = "sk-ant-readiness-test";
 
     server = createServer(0, undefined, undefined, false);
     upsertProvider({

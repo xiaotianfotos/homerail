@@ -85,6 +85,7 @@
     "mainModelReady": "主模型检测通过，已使用 {harness} 配置",
     "endpointUnavailable": "端点不可用",
     "asrEndpointsUnavailable": "ASR 接入地址不可用。普通转写：{async}；实时转写：{realtime}",
+    "ttsEndpointsUnavailable": "TTS 接入地址不可用。语音合成：{speech}；流式合成：{stream}",
     "modelRuntimeUnavailable": "主模型不可用。Anthropic Messages：{anthropic}；OpenAI Chat Completions：{openai}",
     "modelRuntimeDetectionRequired": "保存主模型前必须完成运行时检测",
     "saveFailed": "保存失败",

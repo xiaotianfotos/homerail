@@ -9,6 +9,7 @@ import {
   createSetting,
   findActiveClaudeSdkCompatibleSetting,
   findActiveSetting,
+  getSetting,
   listProviders,
   listSettings,
   resolveClaudeSdkBaseUrlForSetting,
@@ -397,6 +398,78 @@ describe("custom LLM providers", () => {
     ]));
     expect(body.data?.models).toHaveLength(3);
     expect(body.data?.error).toBeUndefined();
+  });
+
+  it("probes models for base URL variants (bare, /v1, full endpoint URLs)", async () => {
+    // 模拟 vLLM：只有 /v1/models 可达，裸 /models 与其余路径一律 404。
+    const upstream = http.createServer((req, res) => {
+      if (req.url === "/v1/models") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ object: "list", data: [{ id: "qwen3.6", object: "model" }] }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ detail: "Not Found" }));
+    });
+    const upstreamPort = await listen(upstream);
+    try {
+      const port = await listen(server);
+      const variants = [
+        `http://127.0.0.1:${upstreamPort}`,
+        `http://127.0.0.1:${upstreamPort}/`,
+        `http://127.0.0.1:${upstreamPort}/v1`,
+        `http://127.0.0.1:${upstreamPort}/v1/`,
+        `http://127.0.0.1:${upstreamPort}/v1/models`,
+        `http://127.0.0.1:${upstreamPort}/v1/chat/completions`,
+      ];
+      for (const baseUrl of variants) {
+        const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/probe`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base_url: baseUrl, api_key: "dummy-key" }),
+        });
+        const body = await response.json() as { data?: { models?: string[]; error?: string } };
+        expect(response.status, `variant ${baseUrl}`).toBe(200);
+        expect(body.data?.error, `variant ${baseUrl}`).toBeUndefined();
+        expect(body.data?.models, `variant ${baseUrl}`).toEqual(["qwen3.6"]);
+      }
+    } finally {
+      await close(upstream);
+    }
+  });
+
+  it("normalizes base_url endpoint suffixes on create and update", async () => {
+    const port = await listen(server);
+
+    const providerResponse = await fetch(`http://127.0.0.1:${port}/api/llm/providers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "local-lan", name: "Local LAN", default_model: "qwen3.6" }),
+    });
+    expect(providerResponse.status).toBe(201);
+
+    const createResponse = await fetch(`http://127.0.0.1:${port}/api/llm/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider_id: "local-lan",
+        model_name: "qwen3.6",
+        base_url: "http://192.168.100.10:5000/v1/chat/completions",
+        api_key: "dummy-key",
+        is_active: true,
+      }),
+    });
+    const created = await createResponse.json() as { data?: { id?: string; base_url?: string } };
+    expect(createResponse.status).toBe(201);
+    expect(created.data?.base_url).toBe("http://192.168.100.10:5000/v1");
+
+    const updateResponse = await fetch(`http://127.0.0.1:${port}/api/llm/settings/${created.data!.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: "http://192.168.100.10:5000/v1/models/" }),
+    });
+    expect(updateResponse.status).toBe(200);
+    expect(getSetting(created.data!.id)?.base_url).toBe("http://192.168.100.10:5000/v1");
   });
 
   it("probes upstream models with a saved encrypted setting credential", async () => {

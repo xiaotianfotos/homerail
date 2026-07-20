@@ -252,9 +252,31 @@ const customFields = ref<CustomFields>({
   voice: '',
 })
 
+// 用户可能粘贴裸地址、/v1 地址或完整端点地址（…/v1/realtime、
+// …/v1/audio/speech 等）。先把已知端点后缀剥到 API 根，再补 /v1，
+// 与后端 openai-url.ts 的归一化保持一致。
+const VOICE_ENDPOINT_SUFFIXES = [
+  '/chat/completions',
+  '/audio/transcriptions',
+  '/audio/speech/stream',
+  '/audio/speech',
+  '/images/generations',
+  '/completions',
+  '/embeddings',
+  '/responses',
+  '/realtime',
+  '/models',
+]
+
 function voiceApiBase(value: string): string {
-  const normalized = value.trim().replace(/\/+$/, '')
+  let normalized = value.trim().replace(/\/+$/, '')
   if (!normalized) return ''
+  for (;;) {
+    const lower = normalized.toLowerCase()
+    const suffix = VOICE_ENDPOINT_SUFFIXES.find(candidate => lower.endsWith(candidate))
+    if (!suffix) break
+    normalized = normalized.slice(0, -suffix.length).replace(/\/+$/, '')
+  }
   return normalized.endsWith('/v1') ? normalized : `${normalized}/v1`
 }
 
@@ -412,12 +434,37 @@ async function detectCustomAsrEndpoints(): Promise<CustomVoiceUrls> {
   }
 }
 
+async function detectCustomTtsEndpoints(): Promise<CustomVoiceUrls> {
+  const baseUrl = voiceApiBase(customFields.value.baseUrl)
+  const speechUrl = voiceEndpoint(baseUrl, 'audio/speech')
+  const streamUrl = voiceEndpoint(baseUrl, 'audio/speech/stream')
+  const response = await testVoiceEndpoints([
+    { id: 'tts_http', kind: 'http', url: speechUrl },
+    { id: 'tts_stream', kind: 'http', url: streamUrl },
+  ])
+  const results = response.data?.results ?? []
+  const speechResult = results.find(result => result.id === 'tts_http')
+  const streamResult = results.find(result => result.id === 'tts_stream')
+  if (!speechResult?.ok && !streamResult?.ok) {
+    throw new Error(t('onboarding.form.ttsEndpointsUnavailable', {
+      speech: endpointProbeMessage(speechResult),
+      stream: endpointProbeMessage(streamResult),
+    }))
+  }
+  return {
+    // 与 ASR 相同：失败的端点写空串，清掉上次保存的失效猜测。
+    tts_http_url: speechResult?.ok ? speechUrl : '',
+    tts_realtime_url: streamResult?.ok ? streamUrl : '',
+  }
+}
+
 async function submit(): Promise<void> {
   if (!canSubmit.value || saving.value) return
   saving.value = true
   try {
     let mainModelDetection: MainModelRuntimeDetection | undefined
     let customVoiceUrls: CustomVoiceUrls | undefined
+    let customTtsUrls: CustomVoiceUrls | undefined
     if (mode.value === 'custom' && props.capability === 'supports_llm') {
       checkingMainModel.value = true
       try {
@@ -434,10 +481,18 @@ async function submit(): Promise<void> {
         checkingVoiceEndpoints.value = false
       }
     }
+    if (mode.value === 'custom' && props.capability === 'supports_tts') {
+      checkingVoiceEndpoints.value = true
+      try {
+        customTtsUrls = await detectCustomTtsEndpoints()
+      } finally {
+        checkingVoiceEndpoints.value = false
+      }
+    }
     const setting =
       mode.value === 'preset'
         ? await submitPreset()
-        : await submitCustom(mainModelDetection, customVoiceUrls)
+        : await submitCustom(mainModelDetection, customVoiceUrls, customTtsUrls)
     if (!setting) throw new Error(t('onboarding.form.saveFailed'))
     await props.activateSetting?.(setting, mainModelDetection?.preferred_harness ?? undefined)
     const successMessage = mode.value === 'custom' && props.capability === 'supports_llm'
@@ -506,6 +561,7 @@ async function submitPreset(): Promise<LLMSetting | undefined> {
 async function submitCustom(
   mainModelDetection?: MainModelRuntimeDetection,
   detectedVoiceUrls?: CustomVoiceUrls,
+  detectedTtsUrls?: CustomVoiceUrls,
 ): Promise<LLMSetting | undefined> {
   const f = customFields.value
   const pid = customProviderId.value
@@ -537,12 +593,7 @@ async function submitCustom(
 
   const voiceAdapter = props.capability === 'supports_llm' ? 'custom' as const : 'openai_audio' as const
   const voiceUrls: CustomVoiceUrls = {
-    ...(props.capability === 'supports_tts'
-      ? {
-          tts_http_url: voiceEndpoint(baseUrl, 'audio/speech'),
-          tts_realtime_url: voiceEndpoint(baseUrl, 'audio/speech/stream'),
-        }
-      : {}),
+    ...(props.capability === 'supports_tts' ? detectedTtsUrls : {}),
     ...(props.capability === 'supports_asr' ? detectedVoiceUrls : {}),
   }
 

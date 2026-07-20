@@ -85,6 +85,7 @@
     "mainModelReady": "Manager Agent model verified and configured with {harness}",
     "endpointUnavailable": "Endpoint unavailable",
     "asrEndpointsUnavailable": "The ASR endpoint is unavailable. Standard transcription: {async}; realtime transcription: {realtime}",
+    "ttsEndpointsUnavailable": "The TTS endpoint is unavailable. Speech synthesis: {speech}; streaming synthesis: {stream}",
     "modelRuntimeUnavailable": "Manager Agent model unavailable. Anthropic Messages: {anthropic}; OpenAI Chat Completions: {openai}",
     "modelRuntimeDetectionRequired": "Runtime detection is required before saving the Manager Agent model",
     "saveFailed": "Failed to save",

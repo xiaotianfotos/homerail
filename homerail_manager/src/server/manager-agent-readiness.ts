@@ -99,6 +99,22 @@ function codexStatus(): CodexCheck {
   return { available, logged_in: loggedIn, version, binary: resolved?.command ?? requested };
 }
 
+/** Claude Agent SDK 的主机侧凭证是否存在：ANTHROPIC_API_KEY 环境变量，
+ * 或 Claude Code 登录态（~/.claude/.credentials.json 非空）。 */
+function claudeAgentSdkAuthPresent(): boolean {
+  if (process.env.ANTHROPIC_API_KEY?.trim()) return true;
+  try {
+    const credentialsPath = path.join(os.homedir(), ".claude", ".credentials.json");
+    if (fs.existsSync(credentialsPath)) {
+      const content = fs.readFileSync(credentialsPath, "utf-8").trim();
+      return content.length > 2;
+    }
+  } catch {
+    // 读取失败按无凭证处理
+  }
+  return false;
+}
+
 function dockerCapableNodeIds(): string[] {
   return getAllNodes()
     .filter((node) => node.socket.readyState === 1 && isDockerCapableNode(node))
@@ -256,6 +272,20 @@ export function managerAgentReadiness(
       blockers.push({
         code: "host_shell_unavailable",
         message: hostShell.error ?? "Host-shell Manager Agent runtime is unavailable",
+      });
+    } else if (
+      String(runtimeConfig.agent_type ?? config.harness ?? "").includes("claude")
+      && !config.llm_setting_id
+      && !claudeAgentSdkAuthPresent()
+    ) {
+      // 与 codex 的 available+logged_in 检查对齐：host shell 可用不代表
+      // Claude 已认证。缺凭证时报 ready 会让新手向导错误地跳过主模型配置。
+      // 已有专用 LLM setting 时，凭证随 setting 的端点与 Key 走，
+      // 不需要宿主机自己的 Claude 登录态（例如局域网 Anthropic 兼容模型）。
+      blockers.push({
+        code: "claude_auth_missing",
+        message:
+          "Claude Agent SDK credentials not found (set ANTHROPIC_API_KEY or sign in to Claude Code on this host)",
       });
     }
   } else {

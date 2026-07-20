@@ -17,6 +17,7 @@ import {
   type LLMAuthType,
   type ProviderInput,
 } from "../persistence/llm-settings.js";
+import { normalizeOpenAiBaseUrl, openAiModelsUrl } from "./openai-url.js";
 
 interface BaseResponse {
   success: boolean;
@@ -83,7 +84,9 @@ interface MainModelEndpointProbe {
 }
 
 function _versionedEndpointUrl(baseUrl: string, endpoint: "messages" | "chat/completions"): string {
-  const normalized = _normalizedBaseUrl(baseUrl);
+  // 与探测/保存同一条归一化：用户粘贴完整端点地址（…/v1/chat/completions）
+  // 时先剥到 API 根，否则实测会打到 …/v1/chat/completions/v1/chat/completions。
+  const normalized = normalizeOpenAiBaseUrl(baseUrl);
   return normalized.endsWith("/v1")
     ? `${normalized}/${endpoint}`
     : `${normalized}/v1/${endpoint}`;
@@ -450,10 +453,9 @@ export function llmSettingsRoutesHandler(
           _ok(res, `Probed ${catalogModels.length} catalog models`, { models: catalogModels });
           return;
         }
-        // 构造 /models 请求 URL
-        const modelsUrl = baseUrl.endsWith("/v1")
-          ? `${baseUrl}/models`
-          : `${baseUrl}/v1/models`;
+        // 构造 /models 请求 URL。用户可能粘贴裸地址、/v1 地址或完整端点
+        // 地址（…/v1/chat/completions、…/v1/models 等），统一归一化后再拼接。
+        const modelsUrl = openAiModelsUrl(baseUrl);
         try {
           const upstream = await fetch(modelsUrl, {
             headers: {
@@ -579,6 +581,11 @@ export function llmSettingsRoutesHandler(
       .then((body) => {
         const b = body as Record<string, unknown>;
         const parsed = _settingCreateBody(b);
+        // 归一化 base_url：裸地址 / 带 /v1 / 完整端点地址统一存成 API 根，
+        // 避免运行期拼出 …/chat/completions/v1/chat/completions 这类坏 URL。
+        if (parsed.base_url) {
+          parsed.base_url = normalizeOpenAiBaseUrl(parsed.base_url);
+        }
 
         if (!parsed.provider_id) {
           _badRequest(res, "Missing required field: provider_id");
@@ -660,7 +667,7 @@ export function llmSettingsRoutesHandler(
         if (_protocol(b.protocol)) patch.protocol = _protocol(b.protocol);
         if (_authType(b.auth_type)) patch.auth_type = _authType(b.auth_type);
         if (typeof b.key_hint === "string") patch.key_hint = b.key_hint.trim();
-        if (typeof b.base_url === "string") patch.base_url = b.base_url;
+        if (typeof b.base_url === "string") patch.base_url = normalizeOpenAiBaseUrl(b.base_url);
         if (typeof b.chat_completions_base_url === "string") {
           patch.chat_completions_base_url = b.chat_completions_base_url;
         }

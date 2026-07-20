@@ -14,6 +14,7 @@ import {
   synthesizeArkTtsHttp,
   transcribeArkAsr,
 } from "./ark-voice.js";
+import { normalizeOpenAiBaseUrl } from "./openai-url.js";
 import {
   BUILTIN_EDGE_TTS_MODEL,
   DEFAULT_EDGE_TTS_VOICE,
@@ -145,7 +146,9 @@ function _writeVoiceSettingsDocument(data: Record<string, unknown>): void {
 }
 
 function _joinApiUrl(baseUrl: string, apiPath: string): string {
-  const base = baseUrl.replace(/\/+$/, "");
+  // 先归一化用户可能粘贴的完整端点地址（…/v1/chat/completions、…/v1/models
+  // 等），再拼接目标路径，避免叠出 …/v1/realtime/v1/models 这类坏 URL。
+  const base = normalizeOpenAiBaseUrl(baseUrl);
   let suffix = apiPath.replace(/^\/+/, "");
   if (base.endsWith("/v1") && suffix.startsWith("v1/")) {
     suffix = suffix.slice(3);
