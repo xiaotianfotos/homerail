@@ -65,7 +65,7 @@ verify_production_dag_smoke() {
     --request-timeout 180000 \
     --json \
     smoke dag \
-    --template "$production_root/current/assets/orchestrations/public-two-node.yaml.template" \
+    --template "assets/orchestrations/public-two-node.yaml.template" \
     --profile offline-deterministic \
     --timeout 120 \
     --interval 1

@@ -203,7 +203,8 @@ test("production DAG smoke helper enforces token presence and command success", 
     assert.equal(observed.repoRoot, current);
     assert.match(observed.args, /--base-url http:\/\/127\.0\.0\.1:39191/);
     assert.match(observed.args, /smoke dag/);
-    assert.match(observed.args, /public-two-node\.yaml\.template/);
+    assert.match(observed.args, /--template assets\/orchestrations\/public-two-node\.yaml\.template/);
+    assert.doesNotMatch(observed.args, /--template \/.*public-two-node\.yaml\.template/);
     assert.match(observed.args, /offline-deterministic/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
