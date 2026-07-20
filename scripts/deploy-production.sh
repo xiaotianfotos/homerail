@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SOURCE_ROOT="${GITHUB_WORKSPACE:-$(cd "$(dirname "$0")/.." && pwd)}"
+source "$SOURCE_ROOT/scripts/lib/production-runtime.sh"
 PRODUCTION_ROOT="${HOMERAIL_PRODUCTION_ROOT:-$HOME/.local/share/homerail-production}"
 HOMERAIL_HOME="${HOMERAIL_PRODUCTION_HOME:-$HOME/.local/share/homerail-production-data}"
 RESOURCE_ROOT="${HOMERAIL_PRODUCTION_RESOURCES:-$HOME/.local/share/homerail-resources}"
@@ -24,7 +25,7 @@ case "$PRODUCTION_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_ROOT must be abso
 case "$HOMERAIL_HOME" in /*) ;; *) echo "HOMERAIL_PRODUCTION_HOME must be absolute." >&2; exit 1 ;; esac
 case "$RESOURCE_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_RESOURCES must be absolute." >&2; exit 1 ;; esac
 if [ -z "$DOCKER_BRIDGE_GATEWAY" ] || [ -z "$MANAGER_HOST" ]; then
-  echo "Could not resolve the Docker bridge gateway for the production Manager bind." >&2
+  echo "Production requires Docker's default 'bridge' network because provisioned Workers use it; restore that network before deploying." >&2
   exit 1
 fi
 case "$ALLOW_INSECURE_REMOTE_WS" in 0|1) ;; *) echo "HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS must be 0 or 1." >&2; exit 1 ;; esac
@@ -249,29 +250,7 @@ done
 
 if [ "$healthy" = "1" ]; then
   smoke_output=""
-  DAG_MUTATION_TOKEN_FILE="$HOMERAIL_HOME/manager/secrets/dag-mutation.token"
-  if [ ! -f "$DAG_MUTATION_TOKEN_FILE" ]; then
-    echo "Production DAG mutation token is missing after service startup." >&2
-    healthy=0
-  else
-    HOMERAIL_DAG_MUTATION_TOKEN="$(tr -d '[:space:]' < "$DAG_MUTATION_TOKEN_FILE")"
-    export HOMERAIL_DAG_MUTATION_TOKEN
-  fi
-fi
-
-if [ "$healthy" = "1" ]; then
-  if ! smoke_output="$(
-    "$PRODUCTION_ROOT/current/runtime/node" \
-      "$PRODUCTION_ROOT/current/homerail_cli/dist/cli.js" \
-      --base-url "$MANAGER_URL" \
-      --request-timeout 180000 \
-      --json \
-      smoke dag \
-      --template "$PRODUCTION_ROOT/current/assets/orchestrations/public-two-node.yaml.template" \
-      --profile offline-deterministic \
-      --timeout 120 \
-      --interval 1 2>&1
-  )"; then
+  if ! smoke_output="$(verify_production_dag_smoke "$PRODUCTION_ROOT" "$HOMERAIL_HOME" "$MANAGER_URL" 2>&1)"; then
     echo "Production Docker Worker DAG smoke failed for $REVISION." >&2
     printf '%s\n' "$smoke_output" >&2
     healthy=0

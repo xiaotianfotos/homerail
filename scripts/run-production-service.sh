@@ -11,7 +11,7 @@ DOCKER_BRIDGE_GATEWAY="$(docker network inspect bridge --format '{{(index .IPAM.
 MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-$DOCKER_BRIDGE_GATEWAY}"
 ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-${HOMERAIL_ALLOW_INSECURE_REMOTE_WS:-0}}"
 if [ -z "$DOCKER_BRIDGE_GATEWAY" ] || [ -z "$MANAGER_HOST" ]; then
-  echo "Could not resolve the Docker bridge gateway for the production Manager bind." >&2
+  echo "Production requires Docker's default 'bridge' network because provisioned Workers use it; restore that network before starting HomeRail." >&2
   exit 1
 fi
 case "$ALLOW_INSECURE_REMOTE_WS" in 0|1) ;; *) echo "HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS must be 0 or 1." >&2; exit 1 ;; esac
@@ -39,10 +39,12 @@ REVISION="$(tr -d '[:space:]' < "$RELEASE_ROOT/REVISION")"
 if [[ "$RELEASE_ROOT" != "$PRODUCTION_ROOT"/releases/* ]] \
   || [[ ! "$REVISION" =~ ^[0-9a-f]{40}$ ]] \
   || [ ! -x "$NODE" ] \
-  || [ ! -f "$CLI" ]; then
+  || [ ! -f "$CLI" ] \
+  || [ ! -f "$RELEASE_ROOT/scripts/lib/production-runtime.sh" ]; then
   echo "Production release is incomplete." >&2
   exit 1
 fi
+source "$RELEASE_ROOT/scripts/lib/production-runtime.sh"
 if [ "$UI_HOST" != "0.0.0.0" ] && [ "$UI_HOST" != "::" ]; then
   echo "Production UI must bind all interfaces." >&2
   exit 1
@@ -62,39 +64,7 @@ if [ -z "$UI_URL" ]; then
 fi
 
 AUTH_SECRET_DIR="$HOMERAIL_HOME/manager/secrets"
-NODE_TOKEN_FILE="$AUTH_SECRET_DIR/node-registration.token"
-WORKER_TOKEN_FILE="$AUTH_SECRET_DIR/worker-registration.token"
-DAG_MUTATION_TOKEN_FILE="$AUTH_SECRET_DIR/dag-mutation.token"
-mkdir -p "$AUTH_SECRET_DIR"
-chmod 0700 "$AUTH_SECRET_DIR"
-
-load_or_create_token() {
-  local token_file="$1"
-  local token_label="$2"
-  if [ -e "$token_file" ] && [ ! -f "$token_file" ]; then
-    echo "Production $token_label token path must be a regular file." >&2
-    return 1
-  fi
-  if [ ! -e "$token_file" ]; then
-    local generated_token token_tmp
-    generated_token="$($NODE -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
-    token_tmp="$token_file.$$.tmp"
-    (umask 077; printf '%s\n' "$generated_token" > "$token_tmp")
-    mv "$token_tmp" "$token_file"
-  fi
-  chmod 0600 "$token_file"
-  local token
-  token="$(tr -d '[:space:]' < "$token_file")"
-  if [ -z "$token" ]; then
-    echo "Production $token_label token must not be empty." >&2
-    return 1
-  fi
-  printf '%s' "$token"
-}
-
-HOMERAIL_NODE_TOKEN="$(load_or_create_token "$NODE_TOKEN_FILE" "Node registration")"
-HOMERAIL_WORKER_TOKEN="$(load_or_create_token "$WORKER_TOKEN_FILE" "Worker registration")"
-HOMERAIL_DAG_MUTATION_TOKEN="$(load_or_create_token "$DAG_MUTATION_TOKEN_FILE" "DAG mutation")"
+initialize_production_tokens "$NODE" "$AUTH_SECRET_DIR"
 
 export HOMERAIL_HOME
 export HOMERAIL_NODE_TOKEN

@@ -36,7 +36,9 @@ runner environment file defines:
   WebSockets default to disabled and require the operator to set
   `HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS=1` explicitly for an isolated
   trusted Docker bridge. Startup always rejects every Manager host other than
-  the discovered Docker bridge gateway.
+  the discovered Docker bridge gateway. Production currently requires Docker's
+  default `bridge` network because provisioned Workers use that network; a
+  missing or renamed default bridge fails deployment with an actionable error.
 
 The installation also provides:
 
