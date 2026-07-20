@@ -20,6 +20,8 @@ test("deploys only a successful main CI revision on the isolated deploy runner",
   assert.match(workflow, /ref: \$\{\{ github\.event\.workflow_run\.head_sha/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /cancel-in-progress: false/);
+  assert.doesNotMatch(workflow, /cache:\s*npm/);
+  assert.doesNotMatch(workflow, /cache-dependency-path:/);
 });
 
 test("production deployment is atomic, health checked, and rollback capable", () => {
