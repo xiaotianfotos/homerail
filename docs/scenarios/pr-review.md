@@ -119,6 +119,9 @@ annotations when its status is `human_review`. That step is visibly red for a
 maintainer to inspect, while the job conclusion and the main PR review remain
 unchanged. Invalid or unredacted artifact output is an infrastructure failure
 and is not hidden by the advisory step.
+Commit author and committer identities are checked independently. Any
+non-noreply email address is always a high-confidence `human_review` finding,
+including an address owned by the repository maintainer or published elsewhere.
 
 Automatic self-hosted execution is restricted to non-draft, same-repository PRs
 created by the trusted maintainer. This avoids running untrusted fork content on

@@ -258,6 +258,11 @@ describe("PR Review scenario assets", () => {
     ]) {
       expect(agents[agentId]?.system).toContain("diff_truncated");
     }
+    expect(agents.privacy_reviewer?.system).toContain(
+      "Every non-noreply address in author_email or committer_email requires",
+    );
+    expect(agents.privacy_reviewer?.system).toContain("high-confidence evidence");
+    expect(agents.privacy_reviewer?.system).toContain("never excuse or downgrade");
     for (const agentId of [
       "runtime_reviewer",
       "synthesizer",

@@ -20,7 +20,7 @@ spec:
 
   pattern:
     id: pr-review-scenario
-    version: 1.7.0
+    version: 1.7.1
     source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
     parameters:
       reviewer_count: 4
@@ -439,6 +439,10 @@ spec:
         diff_patch and commit_metadata. Do not treat localhost, RFC 5737 example
         addresses, example.com/example.test, obvious placeholders, public
         repository URLs, or GitHub noreply addresses as disclosures.
+        Every non-noreply address in author_email or committer_email requires
+        human_review, even when it belongs to the repository owner or is
+        visible elsewhere. Direct commit metadata is high-confidence evidence;
+        never excuse or downgrade it based on profile visibility.
 
         The artifact itself must be safe to share. Never reproduce or partially
         quote a suspected value. A finding may name only a repository-relative
