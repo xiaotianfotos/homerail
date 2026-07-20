@@ -731,6 +731,7 @@ describe("ClaudeSdkAdapter", () => {
     }
 
     expect((captured[0].env as Record<string, string>).ANTHROPIC_API_KEY).toBe("anthropic-secret-value");
+    expect((captured[0].env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect((captured[0].env as Record<string, string>).SERVICE_TEST_TOKEN).toBe("turn-scoped-value");
     expect((captured[0].env as Record<string, string>).ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
     expect((captured[0].env as Record<string, string>).LLM_BASE_URL).toBe("https://api.anthropic.com");

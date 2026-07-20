@@ -600,6 +600,62 @@ describe("PR Review scenario assets", () => {
     }
   });
 
+  it("deterministically redacts privacy summaries and descriptions before artifact publication", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "..", "assets", "orchestrations", "pr-review.yaml.template"),
+      "utf8",
+    );
+    const workflow = compileWorkflowSource(source);
+    const normalizer = workflow.canonical?.nodes.find((node) => node.id === "normalize_privacy_review");
+    const command = normalizer?.config?.command as unknown[] | undefined;
+    const code = String(command?.[2] ?? "");
+    const execute = (privacy: Record<string, unknown>) => {
+      const result = spawnSync(process.execPath, ["-e", code], {
+        encoding: "utf8",
+        input: JSON.stringify({ success: [privacy] }),
+      });
+      expect(result.status).toBe(0);
+      return JSON.parse(result.stdout) as Record<string, unknown>;
+    };
+    const privatePath = "/" + "home" + "/machine-user/project";
+    const privateEmail = "person" + "@" + "private.test";
+
+    expect(execute({
+      status: "clear",
+      summary: `Synthetic evidence included ${privatePath} and ${privateEmail}`,
+      findings: [],
+    })).toEqual({
+      status: "clear",
+      summary: "No local or private information requires human inspection.",
+      findings: [],
+    });
+
+    const advisory = execute({
+      status: "human_review",
+      summary: `Inspect ${privatePath}`,
+      findings: [{
+        category: "email",
+        source: "commit_metadata",
+        location: "commit:0123456789ab metadata",
+        description: `The value was ${privateEmail}`,
+        confidence: "high",
+      }],
+    });
+    expect(advisory).toEqual({
+      status: "human_review",
+      summary: "1 redacted privacy finding requires human inspection.",
+      findings: [{
+        category: "email",
+        source: "commit_metadata",
+        location: "commit:0123456789ab metadata",
+        description: "A redacted email indicator requires human inspection.",
+        confidence: "high",
+      }],
+    });
+    expect(JSON.stringify(advisory)).not.toContain(privatePath);
+    expect(JSON.stringify(advisory)).not.toContain(privateEmail);
+  });
+
   it("keeps the trusted automatic GitHub adapter thin and the privacy advisory non-blocking", () => {
     const workflow = fs.readFileSync(path.resolve(process.cwd(), "..", ".github", "workflows", "pr-review.yml"), "utf8");
     const runner = fs.readFileSync(path.resolve(process.cwd(), "..", "scripts", "run-dag-patterns-live-runner.sh"), "utf8");

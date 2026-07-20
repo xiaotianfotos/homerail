@@ -971,6 +971,38 @@ describe("custom LLM providers", () => {
     });
   });
 
+  it("recovers a removed built-in endpoint id from unambiguous model availability", () => {
+    const setting = createSetting({
+      provider_id: "aliyun",
+      endpoint_id: "aliyun_dashscope_cn_token_plan",
+      model_name: "qwen3.8-max-preview",
+      api_key: "legacy-token-plan-key-without-prefix",
+      is_active: true,
+    });
+    getDb().prepare(`
+      UPDATE llm_settings
+      SET endpoint_id = ?, endpoint_name = ?, base_url = ?,
+          chat_completions_base_url = ?, responses_base_url = ?, anthropic_base_url = ?
+      WHERE id = ?
+    `).run(
+      "aliyun_retired_token_plan",
+      "Retired Token Plan",
+      "https://retired.example/v1",
+      "https://retired.example/v1",
+      "https://retired.example/v1",
+      "https://retired.example/anthropic",
+      setting.id,
+    );
+
+    const reconciled = listSettings().find((candidate) => candidate.id === setting.id);
+
+    expect(reconciled).toMatchObject({
+      endpoint_id: "aliyun_dashscope_cn_token_plan",
+      plan_type: "token_plan",
+      anthropic_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    });
+  });
+
   it("locks built-in provider base URLs while keeping custom providers editable", async () => {
     const port = await listen(server);
 

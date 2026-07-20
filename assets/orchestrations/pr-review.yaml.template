@@ -981,8 +981,16 @@ spec:
         command:
           - node
           - -e
-          - >-
-            let s='';const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),success=last(input,'success');if(success&&typeof success==='object'&&(success.status==='clear'||success.status==='human_review')&&Array.isArray(success.findings)){process.stdout.write(JSON.stringify(success));return}process.stdout.write(JSON.stringify({status:'human_review',summary:'Privacy reviewer did not produce a contract-valid result; inspect the pull request manually.',findings:[{category:'reviewer_failure',source:'review_context',location:'review-context',description:'The privacy advisory could not be completed; no suspected value is included in this artifact.',confidence:'high'}]}))});
+          - |-
+            let s='';
+            const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;
+            const categories=new Set(['absolute_path','local_network','local_hostname','local_identity','email','credential','certificate','internal_service','incomplete_evidence','reviewer_failure','other']);
+            const sources=new Set(['diff','commit_metadata','review_context']);
+            const confidences=new Set(['high','medium','low']);
+            const fallback=()=>({status:'human_review',summary:'The privacy advisory requires human inspection.',findings:[{category:'reviewer_failure',source:'review_context',location:'review-context',description:'The privacy advisory could not be completed safely; inspect the pull request manually.',confidence:'high'}]});
+            const safeLocation=value=>{if(value==='review-context')return value;if(/^commit:(?:[0-9a-f]{12}|[0-9a-f]{40}) metadata$/.test(value))return value;if(!/^[A-Za-z0-9._/-]+(?::[1-9][0-9]*)?$/.test(value))return'review-context';const file=value.replace(/:[1-9][0-9]*$/,'');return file.startsWith('/')||file.split('/').includes('..')?'review-context':value};
+            const redact=value=>{if(!value||typeof value!=='object'||(value.status!=='clear'&&value.status!=='human_review')||!Array.isArray(value.findings))return fallback();const findings=value.findings.slice(0,50).filter(item=>item&&typeof item==='object').map(item=>{const category=categories.has(item.category)?item.category:'other';return{category,source:sources.has(item.source)?item.source:'review_context',location:safeLocation(typeof item.location==='string'?item.location:'review-context'),description:`A redacted ${category.replaceAll('_',' ')} indicator requires human inspection.`,confidence:confidences.has(item.confidence)?item.confidence:'low'}});if(value.status==='clear'&&findings.length===0)return{status:'clear',summary:'No local or private information requires human inspection.',findings:[]};if(findings.length===0)return fallback();return{status:'human_review',summary:`${findings.length} redacted privacy finding${findings.length===1?'':'s'} require${findings.length===1?'s':''} human inspection.`,findings}};
+            process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),success=last(input,'success');process.stdout.write(JSON.stringify(redact(success)))});
         stdin_field: "$inputs"
         timeout_ms: 10000
         capture_limit: 12000
