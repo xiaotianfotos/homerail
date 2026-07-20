@@ -42,9 +42,9 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /--template "\$PRODUCTION_ROOT\/current\/assets\/orchestrations\/public-two-node\.yaml\.template"/);
   assert.match(deploy, /offline-deterministic/);
   assert.match(deploy, /Production Docker Worker DAG smoke failed/);
-  assert.match(deploy, /manager\/secrets\/control-plane\.token/);
+  assert.match(deploy, /manager\/secrets\/dag-mutation\.token/);
   assert.match(deploy, /export HOMERAIL_DAG_MUTATION_TOKEN/);
-  assert.match(deploy, /Production control-plane token is missing after service startup/);
+  assert.match(deploy, /Production DAG mutation token is missing after service startup/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_PORT=\$MANAGER_PORT/);
   assert.match(deploy, /Environment=HOMERAIL_ALLOW_INSECURE_REMOTE_WS=1/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HOST=\$UI_HOST/);
@@ -69,10 +69,12 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(service, /HOMERAIL_ALLOW_INSECURE_REMOTE_WS="\$\{HOMERAIL_ALLOW_INSECURE_REMOTE_WS:-1\}"/);
   assert.match(service, /manager\/secrets/);
   assert.match(service, /control-plane\.token/);
+  assert.match(service, /dag-mutation\.token/);
   assert.match(service, /randomBytes\(32\)\.toString\("base64url"\)/);
-  assert.match(service, /chmod 0600 "\$CONTROL_PLANE_TOKEN_FILE"/);
+  assert.match(service, /chmod 0600 "\$token_file"/);
   assert.match(service, /export HOMERAIL_CONTROL_PLANE_TOKEN/);
-  assert.match(service, /export HOMERAIL_DAG_MUTATION_TOKEN="\$HOMERAIL_CONTROL_PLANE_TOKEN"/);
+  assert.match(service, /export HOMERAIL_DAG_MUTATION_TOKEN/);
+  assert.doesNotMatch(service, /HOMERAIL_DAG_MUTATION_TOKEN="\$HOMERAIL_CONTROL_PLANE_TOKEN"/);
   assert.match(service, /Production UI must bind all interfaces/);
   assert.match(service, /HOMERAIL_UI_SERVE_STATIC=1/);
   assert.match(service, /RELEASE_ROOT="\$\(readlink -f "\$CURRENT"\)"/);

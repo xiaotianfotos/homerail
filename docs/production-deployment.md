@@ -28,10 +28,11 @@ runner environment file defines:
   WebSocket registrations, while an all-interface bind would unnecessarily
   expose the Manager port to the LAN. The service enables insecure remote
   WebSockets only for this host-local bridge channel and authenticates Node and
-  Worker registrations with the shared 0600 control-plane token under the
-  persistent Home. The CLI and trusted same-origin UI proxy reuse that token
-  internally for DAG mutations; browser clients never receive it. The Manager
-  socket is not bound to a LAN interface.
+  Worker registrations with a 0600 control-plane token under the persistent
+  Home. A separate 0600 token authorizes Manager Agent, CLI, and trusted
+  same-origin UI proxy DAG mutations; ordinary DAG Workers never receive that
+  mutation credential, and browser clients never receive either token. The
+  Manager socket is not bound to a LAN interface.
 
 The installation also provides:
 

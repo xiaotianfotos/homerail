@@ -244,12 +244,12 @@ done
 
 if [ "$healthy" = "1" ]; then
   smoke_output=""
-  CONTROL_PLANE_TOKEN_FILE="$HOMERAIL_HOME/manager/secrets/control-plane.token"
-  if [ ! -f "$CONTROL_PLANE_TOKEN_FILE" ]; then
-    echo "Production control-plane token is missing after service startup." >&2
+  DAG_MUTATION_TOKEN_FILE="$HOMERAIL_HOME/manager/secrets/dag-mutation.token"
+  if [ ! -f "$DAG_MUTATION_TOKEN_FILE" ]; then
+    echo "Production DAG mutation token is missing after service startup." >&2
     healthy=0
   else
-    HOMERAIL_DAG_MUTATION_TOKEN="$(tr -d '[:space:]' < "$CONTROL_PLANE_TOKEN_FILE")"
+    HOMERAIL_DAG_MUTATION_TOKEN="$(tr -d '[:space:]' < "$DAG_MUTATION_TOKEN_FILE")"
     export HOMERAIL_DAG_MUTATION_TOKEN
   fi
 fi

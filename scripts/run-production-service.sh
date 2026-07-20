@@ -52,28 +52,40 @@ fi
 
 CONTROL_PLANE_SECRET_DIR="$HOMERAIL_HOME/manager/secrets"
 CONTROL_PLANE_TOKEN_FILE="$CONTROL_PLANE_SECRET_DIR/control-plane.token"
+DAG_MUTATION_TOKEN_FILE="$CONTROL_PLANE_SECRET_DIR/dag-mutation.token"
 mkdir -p "$CONTROL_PLANE_SECRET_DIR"
 chmod 0700 "$CONTROL_PLANE_SECRET_DIR"
-if [ -e "$CONTROL_PLANE_TOKEN_FILE" ] && [ ! -f "$CONTROL_PLANE_TOKEN_FILE" ]; then
-  echo "Production control-plane token path must be a regular file." >&2
-  exit 1
-fi
-if [ ! -e "$CONTROL_PLANE_TOKEN_FILE" ]; then
-  control_plane_token="$($NODE -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
-  token_tmp="$CONTROL_PLANE_TOKEN_FILE.$$.tmp"
-  (umask 077; printf '%s\n' "$control_plane_token" > "$token_tmp")
-  mv "$token_tmp" "$CONTROL_PLANE_TOKEN_FILE"
-fi
-chmod 0600 "$CONTROL_PLANE_TOKEN_FILE"
-HOMERAIL_CONTROL_PLANE_TOKEN="$(tr -d '[:space:]' < "$CONTROL_PLANE_TOKEN_FILE")"
-if [ -z "$HOMERAIL_CONTROL_PLANE_TOKEN" ]; then
-  echo "Production control-plane token must not be empty." >&2
-  exit 1
-fi
+
+load_or_create_token() {
+  local token_file="$1"
+  local token_label="$2"
+  if [ -e "$token_file" ] && [ ! -f "$token_file" ]; then
+    echo "Production $token_label token path must be a regular file." >&2
+    return 1
+  fi
+  if [ ! -e "$token_file" ]; then
+    local generated_token token_tmp
+    generated_token="$($NODE -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
+    token_tmp="$token_file.$$.tmp"
+    (umask 077; printf '%s\n' "$generated_token" > "$token_tmp")
+    mv "$token_tmp" "$token_file"
+  fi
+  chmod 0600 "$token_file"
+  local token
+  token="$(tr -d '[:space:]' < "$token_file")"
+  if [ -z "$token" ]; then
+    echo "Production $token_label token must not be empty." >&2
+    return 1
+  fi
+  printf '%s' "$token"
+}
+
+HOMERAIL_CONTROL_PLANE_TOKEN="$(load_or_create_token "$CONTROL_PLANE_TOKEN_FILE" "control-plane")"
+HOMERAIL_DAG_MUTATION_TOKEN="$(load_or_create_token "$DAG_MUTATION_TOKEN_FILE" "DAG mutation")"
 
 export HOMERAIL_HOME
 export HOMERAIL_CONTROL_PLANE_TOKEN
-export HOMERAIL_DAG_MUTATION_TOKEN="$HOMERAIL_CONTROL_PLANE_TOKEN"
+export HOMERAIL_DAG_MUTATION_TOKEN
 export HOMERAIL_REPO_ROOT="$RELEASE_ROOT"
 export HOMERAIL_MANAGER_URL="$MANAGER_URL"
 export HOMERAIL_MANAGER_PORT="$MANAGER_PORT"
