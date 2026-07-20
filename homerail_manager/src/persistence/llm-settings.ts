@@ -203,6 +203,42 @@ function _normalizeEndpointFor(providerId: string, endpointId?: string, baseUrl?
   return (endpointId ? findCatalogEndpoint(providerId, endpointId) : undefined) ?? inferCatalogEndpoint(providerId, baseUrl);
 }
 
+/**
+ * Repair legacy built-in settings whose persisted endpoint snapshot disagrees
+ * with the credential that was actually configured. Older onboarding builds
+ * could save a Token Plan key under the generic API endpoint id. Prefer an
+ * unambiguous longest key-prefix match; otherwise retain a valid explicit
+ * endpoint id. Model availability is only a recovery hint when that id no
+ * longer exists, so newly released models do not get moved unexpectedly.
+ */
+function _normalizeEndpointForStoredCredential(
+  providerId: string,
+  endpointId: string | undefined,
+  baseUrl: string | undefined,
+  modelName: string,
+  apiKey: string,
+): ProviderEndpointPreset | undefined {
+  const provider = findCatalogProvider(providerId);
+  if (provider) {
+    const prefixMatches = provider.endpoints
+      .filter((candidate) => candidate.key_prefix_hint && apiKey.startsWith(candidate.key_prefix_hint))
+      .sort((left, right) => (right.key_prefix_hint?.length ?? 0) - (left.key_prefix_hint?.length ?? 0));
+    if (prefixMatches.length > 0) {
+      const longestLength = prefixMatches[0]?.key_prefix_hint?.length ?? 0;
+      if (prefixMatches.filter((candidate) => candidate.key_prefix_hint?.length === longestLength).length === 1) {
+        return prefixMatches[0];
+      }
+    }
+
+    const storedEndpoint = endpointId ? findCatalogEndpoint(providerId, endpointId) : undefined;
+    if (storedEndpoint) return storedEndpoint;
+
+    const modelMatches = provider.endpoints.filter((candidate) => Boolean(findEndpointModel(candidate, modelName)));
+    if (modelMatches.length === 1) return modelMatches[0];
+  }
+  return _normalizeEndpointFor(providerId, endpointId, baseUrl);
+}
+
 function _canonicalProviderId(
   providerId: string,
   endpointId?: string,
@@ -670,12 +706,14 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
   const storedBaseUrl = _stringField(rec, "base_url");
   const providerId = _canonicalProviderId(rec.provider_id, storedEndpointId, storedBaseUrl, rec.model_name);
   const provider = getProvider(providerId) ?? getProvider(rec.provider_id);
-  const endpoint = _normalizeEndpointFor(
+  const endpoint = _normalizeEndpointForStoredCredential(
     providerId,
     storedEndpointId,
     storedBaseUrl ?? provider?.base_url,
+    rec.model_name,
+    apiKey,
   );
-  const modelName = canonicalModelNameForEndpoint(providerId, storedEndpointId, rec.model_name);
+  const modelName = canonicalModelNameForEndpoint(providerId, endpoint?.id ?? storedEndpointId, rec.model_name);
   const modelPreset = findEndpointModel(endpoint, modelName);
   const lockedEndpoint = _isLockedCatalogEndpoint(providerId, endpoint);
   const endpointId = lockedEndpoint
@@ -692,17 +730,23 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
   const storedResponsesBaseUrl = typeof rec.responses_base_url === "string" ? rec.responses_base_url : undefined;
   const storedAnthropicBaseUrl = typeof rec.anthropic_base_url === "string" ? rec.anthropic_base_url : undefined;
   const inferredChatBaseUrl = lockedEndpoint
-    ? endpoint?.chat_completions_base_url ?? storedChatBaseUrl ?? provider?.chat_completions_base_url
+    ? endpoint?.chat_completions_base_url
     : storedChatBaseUrl ?? endpoint?.chat_completions_base_url ?? provider?.chat_completions_base_url;
   const inferredResponsesBaseUrl = lockedEndpoint
-    ? endpoint?.responses_base_url ?? storedResponsesBaseUrl ?? provider?.responses_base_url
+    ? endpoint?.responses_base_url
     : storedResponsesBaseUrl ?? endpoint?.responses_base_url ?? provider?.responses_base_url;
   const inferredAnthropicBaseUrl = lockedEndpoint
-    ? endpoint?.anthropic_base_url ?? storedAnthropicBaseUrl ?? provider?.anthropic_base_url
+    ? endpoint?.anthropic_base_url
     : storedAnthropicBaseUrl ?? endpoint?.anthropic_base_url ?? provider?.anthropic_base_url;
   needsMigration = needsMigration || rec.provider_id !== providerId || rec.endpoint_id !== endpointId || rec.model_name !== modelName || typeof rec.plan_type !== "string" ||
     typeof rec.protocol !== "string" || typeof rec.display_name !== "string" ||
-    (typeof rec.base_url === "string" && officialBaseUrl !== undefined && rec.base_url !== officialBaseUrl) ||
+    (lockedEndpoint && _stringField(rec, "endpoint_name") !== endpoint?.name) ||
+    (lockedEndpoint && _normalizeAuthType(rec.auth_type) !== endpoint?.auth_type) ||
+    (lockedEndpoint && _stringField(rec, "key_hint") !== endpoint?.key_hint) ||
+    (lockedEndpoint && (storedBaseUrl || undefined) !== officialBaseUrl) ||
+    (lockedEndpoint && (storedChatBaseUrl || undefined) !== inferredChatBaseUrl) ||
+    (lockedEndpoint && (storedResponsesBaseUrl || undefined) !== inferredResponsesBaseUrl) ||
+    (lockedEndpoint && (storedAnthropicBaseUrl || undefined) !== inferredAnthropicBaseUrl) ||
     (lockedEndpoint && endpoint?.plan_type !== undefined && rec.plan_type !== endpoint.plan_type) ||
     (lockedEndpoint && endpoint?.protocol !== undefined && rec.protocol !== endpoint.protocol);
 
@@ -719,13 +763,13 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
     api_key: apiKey,
     display_name: _stringField(rec, "display_name") ?? _stringField(rec, "alias") ?? rec.model_name,
     endpoint_id: endpointId,
-    endpoint_name: _stringField(rec, "endpoint_name") ?? endpoint?.name,
+    endpoint_name: lockedEndpoint ? endpoint?.name : _stringField(rec, "endpoint_name") ?? endpoint?.name,
     plan_type: lockedEndpoint && endpoint?.plan_type
       ? endpoint.plan_type
       : _normalizePlanType(rec.plan_type, endpoint?.plan_type ?? "custom"),
     protocol,
-    auth_type: _normalizeAuthType(rec.auth_type, endpoint?.auth_type),
-    key_hint: _stringField(rec, "key_hint") ?? endpoint?.key_hint,
+    auth_type: lockedEndpoint ? endpoint?.auth_type : _normalizeAuthType(rec.auth_type, endpoint?.auth_type),
+    key_hint: lockedEndpoint ? endpoint?.key_hint : _stringField(rec, "key_hint") ?? endpoint?.key_hint,
     base_url: inferredBaseUrl,
     chat_completions_base_url: inferredChatBaseUrl,
     responses_base_url: inferredResponsesBaseUrl,
@@ -1209,6 +1253,8 @@ export function findActiveLlmRuntimeSetting(): LLMSetting | undefined {
 }
 
 function _endpointForSetting(setting: LLMSetting, provider = getProvider(setting.provider_id)): ProviderEndpointPreset | undefined {
+  const catalogEndpoint = setting.endpoint_id ? findCatalogEndpoint(setting.provider_id, setting.endpoint_id) : undefined;
+  if (catalogEndpoint && _isReadonlyEndpoint(setting.provider_id, catalogEndpoint.id)) return catalogEndpoint;
   return (setting.endpoint_id
     ? provider?.endpoints?.find((endpoint) => endpoint.id === setting.endpoint_id)
     : undefined) ??
@@ -1219,9 +1265,12 @@ function _endpointForSetting(setting: LLMSetting, provider = getProvider(setting
 export function resolveClaudeSdkBaseUrlForSetting(setting: LLMSetting): string | undefined {
   const provider = getProvider(setting.provider_id);
   const endpoint = _endpointForSetting(setting, provider);
-  const anthropicBaseUrl = _normalizeClaudeSdkBaseUrl(setting.anthropic_base_url) ??
-    _normalizeClaudeSdkBaseUrl(endpoint?.anthropic_base_url) ??
-    _normalizeClaudeSdkBaseUrl(provider?.anthropic_base_url);
+  const lockedEndpoint = _isLockedCatalogEndpoint(setting.provider_id, endpoint);
+  const anthropicBaseUrl = lockedEndpoint
+    ? _normalizeClaudeSdkBaseUrl(endpoint?.anthropic_base_url)
+    : _normalizeClaudeSdkBaseUrl(setting.anthropic_base_url) ??
+      _normalizeClaudeSdkBaseUrl(endpoint?.anthropic_base_url) ??
+      _normalizeClaudeSdkBaseUrl(provider?.anthropic_base_url);
   if (anthropicBaseUrl) return anthropicBaseUrl;
   if (setting.protocol === "anthropic_compatible") {
     return _normalizeClaudeSdkBaseUrl(setting.base_url) ??
@@ -1285,18 +1334,15 @@ function _resolveSettingMetadata(
   const officialBaseUrl = _officialBaseUrlFor(input.provider_id, endpoint, protocol);
   const endpointBaseUrl = baseUrlForProtocol(endpoint, protocol);
   const chatBaseUrl = lockedEndpoint
-    ? endpoint?.chat_completions_base_url ?? input.chat_completions_base_url ??
-      existing?.chat_completions_base_url ?? provider.chat_completions_base_url
+    ? endpoint?.chat_completions_base_url
     : input.chat_completions_base_url ?? existing?.chat_completions_base_url ??
       endpoint?.chat_completions_base_url ?? provider.chat_completions_base_url;
   const responsesBaseUrl = lockedEndpoint
-    ? endpoint?.responses_base_url ?? input.responses_base_url ??
-      existing?.responses_base_url ?? provider.responses_base_url
+    ? endpoint?.responses_base_url
     : input.responses_base_url ?? existing?.responses_base_url ??
       endpoint?.responses_base_url ?? provider.responses_base_url;
   const anthropicBaseUrl = lockedEndpoint
-    ? endpoint?.anthropic_base_url ?? input.anthropic_base_url ??
-      existing?.anthropic_base_url ?? provider.anthropic_base_url
+    ? endpoint?.anthropic_base_url
     : input.anthropic_base_url ?? existing?.anthropic_base_url ??
       endpoint?.anthropic_base_url ?? provider.anthropic_base_url;
   return {
