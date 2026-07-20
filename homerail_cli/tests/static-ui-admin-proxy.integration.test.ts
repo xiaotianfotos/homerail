@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as http from "node:http";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,6 +22,35 @@ afterEach(async () => {
 });
 
 describe("static Agent UI mutation proxy", () => {
+  it("proxies the same-origin ASR realtime WebSocket to the Manager", async () => {
+    let upgradedPath = "";
+    const manager = http.createServer();
+    manager.on("upgrade", (req, socket) => {
+      upgradedPath = req.url || "";
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Upgrade: websocket\r\n" +
+        "\r\n",
+      );
+      socket.end();
+    });
+    servers.push(manager);
+    const managerUrl = await listen(manager, "127.0.0.1");
+    const uiPort = await reservePort();
+    const uiOrigin = `http://127.0.0.1:${uiPort}`;
+    await startStaticUi({
+      port: uiPort,
+      host: "127.0.0.1",
+      origin: uiOrigin,
+      managerUrl,
+    });
+
+    const response = await websocketUpgrade(uiPort, "/api/voice/asr/realtime");
+    expect(response).toContain("HTTP/1.1 101 Switching Protocols");
+    expect(upgradedPath).toBe("/api/voice/asr/realtime");
+  }, 15_000);
+
   it("rejects no-Origin/cross-origin requests and injects only for exact local self-Origin", async () => {
     const received: Array<{ authorization?: string; origin?: string; method?: string }> = [];
     const manager = http.createServer((req, res) => {
@@ -189,6 +219,38 @@ async function reservePort(host = "127.0.0.1"): Promise<number> {
   const port = address.port;
   await new Promise<void>((resolve) => server.close(() => resolve()));
   return port;
+}
+
+async function websocketUpgrade(port: number, requestPath: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    let response = "";
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("WebSocket upgrade timed out"));
+    }, 5_000);
+    socket.setEncoding("utf8");
+    socket.on("connect", () => {
+      socket.write(
+        `GET ${requestPath} HTTP/1.1\r\n` +
+        `Host: 127.0.0.1:${port}\r\n` +
+        "Connection: Upgrade\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Sec-WebSocket-Version: 13\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "\r\n",
+      );
+    });
+    socket.on("data", (chunk) => { response += chunk; });
+    socket.on("end", () => {
+      clearTimeout(timer);
+      resolve(response);
+    });
+    socket.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
 }
 
 async function waitUntil(check: () => Promise<boolean>): Promise<void> {
