@@ -42,9 +42,14 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_PORT:-19192/);
   assert.match(deploy, /HOMERAIL_HOME="\$\(realpath "\$HOMERAIL_HOME"\)"/);
   assert.match(deploy, /HOMERAIL_CODEX_BIN/);
-  assert.match(deploy, /\.nvm\/versions\/node/);
-  assert.match(deploy, /SERVICE_PATH="\$\(dirname "\$CODEX_BIN"\):\$SERVICE_PATH"/);
-  assert.doesNotMatch(deploy, /Environment=PATH=\/usr\/local\/bin:\/usr\/bin:\/bin\nExecStart=/);
+  assert.match(deploy, /CODEX_BIN="\$\(realpath "\$CODEX_BIN"\)"/);
+  assert.match(deploy, /stat -Lc '%u'/);
+  assert.match(deploy, /8#022/);
+  assert.match(deploy, /runtime\/codex/);
+  assert.match(deploy, /exec "\\\$\(dirname "\\\$0"\)\/node" "\$CODEX_BIN" "\\\$@"/);
+  assert.doesNotMatch(deploy, /find "\$HOME\/\.nvm/);
+  assert.doesNotMatch(deploy, /SERVICE_PATH="\$\(dirname "\$CODEX_BIN"\):\$SERVICE_PATH"/);
+  assert.match(deploy, /Environment=PATH=\$SERVICE_PATH/);
   assert.match(service, /HOMERAIL_PRODUCTION_UI_PORT:-19192/);
   assert.match(service, /Production UI must bind all interfaces/);
   assert.match(service, /HOMERAIL_UI_SERVE_STATIC=1/);

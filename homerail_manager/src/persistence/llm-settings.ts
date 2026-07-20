@@ -713,7 +713,8 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
     rec.model_name,
     apiKey,
   );
-  const modelName = canonicalModelNameForEndpoint(providerId, endpoint?.id ?? storedEndpointId, rec.model_name);
+  const resolvedEndpointId = endpoint?.id ?? storedEndpointId;
+  const modelName = canonicalModelNameForEndpoint(providerId, resolvedEndpointId, rec.model_name);
   const modelPreset = findEndpointModel(endpoint, modelName);
   const lockedEndpoint = _isLockedCatalogEndpoint(providerId, endpoint);
   const endpointId = lockedEndpoint
@@ -752,7 +753,7 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
 
   // models 向后兼容：旧 setting 无 models 字段时，从 model_name 派生 [model_name]
   const models = Array.isArray(rec.models) && rec.models.every((m) => typeof m === "string")
-    ? (rec.models as string[]).map((item) => canonicalModelNameForEndpoint(providerId, storedEndpointId, item))
+    ? (rec.models as string[]).map((item) => canonicalModelNameForEndpoint(providerId, resolvedEndpointId, item))
     : [modelName];
 
   const setting: LLMSetting = {

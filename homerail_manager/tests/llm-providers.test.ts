@@ -1003,6 +1003,38 @@ describe("custom LLM providers", () => {
     });
   });
 
+  it("canonicalizes every model with the endpoint selected during legacy recovery", () => {
+    const setting = createSetting({
+      provider_id: "kimi_cn",
+      endpoint_id: "kimi_coding_plan",
+      model_name: "kimi-for-coding",
+      models: ["kimi-k2.7-code", "kimi-for-coding-highspeed"],
+      api_key: "legacy-coding-plan-key",
+      is_active: true,
+    });
+    getDb().prepare(`
+      UPDATE llm_settings
+      SET endpoint_id = ?, endpoint_name = ?, base_url = ?,
+          chat_completions_base_url = ?, anthropic_base_url = ?
+      WHERE id = ?
+    `).run(
+      "kimi_retired_coding_plan",
+      "Retired Coding Plan",
+      "https://retired.example/v1",
+      "https://retired.example/v1",
+      "https://retired.example/anthropic",
+      setting.id,
+    );
+
+    const reconciled = listSettings().find((candidate) => candidate.id === setting.id);
+
+    expect(reconciled).toMatchObject({
+      endpoint_id: "kimi_coding_plan",
+      model_name: "kimi-for-coding",
+      models: ["kimi-for-coding", "kimi-for-coding-highspeed"],
+    });
+  });
+
   it("locks built-in provider base URLs while keeping custom providers editable", async () => {
     const port = await listen(server);
 
