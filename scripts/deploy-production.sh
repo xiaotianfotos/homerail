@@ -11,11 +11,49 @@ UNIT_PATH="$HOME/.config/systemd/user/$SERVICE_NAME"
 MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-127.0.0.1}"
 MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
 MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://$MANAGER_HOST:$MANAGER_PORT}"
-UI_URL="${HOMERAIL_PRODUCTION_UI_URL:-https://127.0.0.1:29192}"
+UI_HOST="${HOMERAIL_PRODUCTION_UI_HOST:-0.0.0.0}"
+UI_PORT="${HOMERAIL_PRODUCTION_UI_PORT:-19192}"
+UI_HTTP_PORT="${HOMERAIL_PRODUCTION_UI_HTTP_PORT:-19193}"
+PUBLIC_HOST="${HOMERAIL_PRODUCTION_PUBLIC_HOST:-}"
+UI_URL="${HOMERAIL_PRODUCTION_UI_URL:-}"
 
 case "$PRODUCTION_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_ROOT must be absolute." >&2; exit 1 ;; esac
 case "$HOMERAIL_HOME" in /*) ;; *) echo "HOMERAIL_PRODUCTION_HOME must be absolute." >&2; exit 1 ;; esac
 case "$RESOURCE_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_RESOURCES must be absolute." >&2; exit 1 ;; esac
+if [ "$UI_HOST" != "0.0.0.0" ] && [ "$UI_HOST" != "::" ]; then
+  echo "HOMERAIL_PRODUCTION_UI_HOST must bind all interfaces (0.0.0.0 or ::)." >&2
+  exit 1
+fi
+case "$PUBLIC_HOST" in
+  ""|localhost|127.*|::1|\[::1\])
+    echo "HOMERAIL_PRODUCTION_PUBLIC_HOST must be a LAN-accessible host or address." >&2
+    exit 1
+    ;;
+esac
+for port in "$UI_PORT" "$UI_HTTP_PORT"; do
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    echo "Production UI ports must be integers from 1 through 65535." >&2
+    exit 1
+  fi
+done
+if [ -z "$UI_URL" ]; then
+  if [[ "$PUBLIC_HOST" == *:* ]]; then
+    UI_URL="https://[$PUBLIC_HOST]:$UI_PORT"
+  else
+    UI_URL="https://$PUBLIC_HOST:$UI_PORT"
+  fi
+fi
+case "$UI_URL" in
+  https://localhost:*|https://localhost/*|https://127.*|https://\[::1\]*)
+    echo "HOMERAIL_PRODUCTION_UI_URL must use the LAN-facing HTTPS endpoint." >&2
+    exit 1
+    ;;
+  https://*) ;;
+  *)
+    echo "HOMERAIL_PRODUCTION_UI_URL must use HTTPS." >&2
+    exit 1
+    ;;
+esac
 if [[ ! "$REVISION" =~ ^[0-9a-f]{40}$ ]]; then
   echo "HOMERAIL_DEPLOY_REVISION must be an exact 40-character commit SHA." >&2
   exit 1
@@ -98,7 +136,10 @@ Environment=HOMERAIL_PRODUCTION_MANAGER_HOST=$MANAGER_HOST
 Environment=HOMERAIL_PRODUCTION_MANAGER_PORT=$MANAGER_PORT
 Environment=HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL=${HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-$MANAGER_URL}
 Environment=HOMERAIL_PRODUCTION_UI_URL=$UI_URL
-Environment=HOMERAIL_PRODUCTION_PUBLIC_HOST=${HOMERAIL_PRODUCTION_PUBLIC_HOST:-127.0.0.1}
+Environment=HOMERAIL_PRODUCTION_UI_HOST=$UI_HOST
+Environment=HOMERAIL_PRODUCTION_UI_PORT=$UI_PORT
+Environment=HOMERAIL_PRODUCTION_UI_HTTP_PORT=$UI_HTTP_PORT
+Environment=HOMERAIL_PRODUCTION_PUBLIC_HOST=$PUBLIC_HOST
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=$PRODUCTION_ROOT/current/scripts/run-production-service.sh
 Restart=always
@@ -130,7 +171,7 @@ healthy=0
 for _ in $(seq 1 60); do
   if systemctl --user is-active --quiet "$SERVICE_NAME" \
     && curl -fsS --connect-timeout 3 --max-time 5 "$MANAGER_URL/health" >/dev/null \
-    && curl -fkSs --connect-timeout 3 --max-time 5 "$UI_URL/" >/dev/null \
+    && curl -fkSs --connect-timeout 3 --max-time 5 "${UI_URL%/}/" >/dev/null \
     && curl -fsS --connect-timeout 3 --max-time 5 "$MANAGER_URL/runtime/status" \
       | "$PRODUCTION_ROOT/current/runtime/node" -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const v=JSON.parse(s);process.exit(Number(v.connected_nodes)>0?0:1)})"; then
     healthy=1

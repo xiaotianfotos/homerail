@@ -7,7 +7,11 @@ RELEASE_ROOT="$(readlink -f "$CURRENT")"
 HOMERAIL_HOME="${HOMERAIL_HOME:-$HOME/.local/share/homerail-production-data}"
 RESOURCE_ROOT="${HOMERAIL_PRODUCTION_RESOURCES:-$HOME/.local/share/homerail-resources}"
 MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://127.0.0.1:39191}"
-UI_URL="${HOMERAIL_PRODUCTION_UI_URL:-https://127.0.0.1:29192}"
+UI_HOST="${HOMERAIL_PRODUCTION_UI_HOST:-0.0.0.0}"
+UI_PORT="${HOMERAIL_PRODUCTION_UI_PORT:-19192}"
+UI_HTTP_PORT="${HOMERAIL_PRODUCTION_UI_HTTP_PORT:-19193}"
+PUBLIC_HOST="${HOMERAIL_PRODUCTION_PUBLIC_HOST:-}"
+UI_URL="${HOMERAIL_PRODUCTION_UI_URL:-}"
 NODE="$RELEASE_ROOT/runtime/node"
 CLI="$RELEASE_ROOT/homerail_cli/dist/cli.js"
 REVISION="$(tr -d '[:space:]' < "$RELEASE_ROOT/REVISION")"
@@ -19,6 +23,23 @@ if [[ "$RELEASE_ROOT" != "$PRODUCTION_ROOT"/releases/* ]] \
   echo "Production release is incomplete." >&2
   exit 1
 fi
+if [ "$UI_HOST" != "0.0.0.0" ] && [ "$UI_HOST" != "::" ]; then
+  echo "Production UI must bind all interfaces." >&2
+  exit 1
+fi
+case "$PUBLIC_HOST" in
+  ""|localhost|127.*|::1|\[::1\])
+    echo "Production UI requires a LAN-accessible public host." >&2
+    exit 1
+    ;;
+esac
+if [ -z "$UI_URL" ]; then
+  if [[ "$PUBLIC_HOST" == *:* ]]; then
+    UI_URL="https://[$PUBLIC_HOST]:$UI_PORT"
+  else
+    UI_URL="https://$PUBLIC_HOST:$UI_PORT"
+  fi
+fi
 
 export HOMERAIL_HOME
 export HOMERAIL_REPO_ROOT="$RELEASE_ROOT"
@@ -26,11 +47,11 @@ export HOMERAIL_MANAGER_URL="$MANAGER_URL"
 export HOMERAIL_MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
 export HOMERAIL_MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-127.0.0.1}"
 export HOMERAIL_MANAGER_PUBLIC_URL="${HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-http://127.0.0.1:39191}"
-export HOMERAIL_UI_HOST="${HOMERAIL_PRODUCTION_UI_HOST:-0.0.0.0}"
-export HOMERAIL_UI_PORT="${HOMERAIL_PRODUCTION_UI_PORT:-29192}"
-export HOMERAIL_UI_HTTP_PORT="${HOMERAIL_PRODUCTION_UI_HTTP_PORT:-29193}"
+export HOMERAIL_UI_HOST="$UI_HOST"
+export HOMERAIL_UI_PORT="$UI_PORT"
+export HOMERAIL_UI_HTTP_PORT="$UI_HTTP_PORT"
 export HOMERAIL_UI_PUBLIC_URL="$UI_URL"
-export HOMERAIL_PUBLIC_HOST="${HOMERAIL_PRODUCTION_PUBLIC_HOST:-127.0.0.1}"
+export HOMERAIL_PUBLIC_HOST="$PUBLIC_HOST"
 export HOMERAIL_UI_SERVE_STATIC=1
 export HOMERAIL_WORKER_IMAGE="homerail-worker:production-${REVISION:0:12}"
 
@@ -81,7 +102,7 @@ runtime_has_node() {
 failures=0
 while sleep 10; do
   if curl -fsS --connect-timeout 3 --max-time 10 "$MANAGER_URL/health" >/dev/null \
-    && curl -fkSs --connect-timeout 3 --max-time 10 "$UI_URL/" >/dev/null \
+    && curl -fkSs --connect-timeout 3 --max-time 10 "${UI_URL%/}/" >/dev/null \
     && runtime_has_node; then
     failures=0
     continue
