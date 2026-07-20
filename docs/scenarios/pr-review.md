@@ -138,6 +138,18 @@ on the same worker instead of running concurrently.
 
 Runner repository configuration:
 
+- `HOMERAIL_PR_REVIEW_HOME_TEMPLATE`: optional absolute path to a model-only
+  Seed Home. It must contain `manager/homerail.db` and
+  `manager/secrets/master.key`, contain no symlinks, and never be used as a live
+  Manager Home. The runner copies it into the isolated per-run Home;
+- `HOMERAIL_PR_REVIEW_PRIMARY_MODEL`: exact setting id, display name, or model
+  name selected from the Seed Home. It drives all four specialist reviewers and
+  synthesis;
+- `HOMERAIL_PR_REVIEW_ARBITER_MODEL`: a distinct active setting selected from
+  the Seed Home. It drives the evidence, false-positive, and coverage votes,
+  refinement, and publication. Both settings must expose Anthropic-compatible
+  endpoints because these DAG workers use the Claude Agent SDK harness;
+
 - `HOMERAIL_PATTERN_MODEL_BASE_URL`: the Qwen3.6 Anthropic-compatible endpoint;
 - `HOMERAIL_LIVE_RUNNER_BASE`: optional persistent root for locks and diagnostic
   logs;
@@ -150,3 +162,7 @@ The GitHub Actions adapter supplies `github.api_url` as
 `HOMERAIL_GITHUB_API_BASE_URL`, so credential-free-accessible GitHub Enterprise
 repositories use the correct metadata and checkout host instead of deriving a
 `github.com` URL.
+
+When Seed Home variables are configured, the mixed-model Runtime Profile
+replaces the legacy single `--setting-id` path. The legacy local-model path
+remains available when no Seed Home is configured.

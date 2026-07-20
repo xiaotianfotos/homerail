@@ -13,6 +13,7 @@ MODEL_MAC="${HOMERAIL_PATTERN_MODEL_MAC:-}"
 WAKE_MODEL="${HOMERAIL_WAKE_MODEL:-1}"
 MODEL_PROTOCOL="${HOMERAIL_PATTERN_MODEL_PROTOCOL:-anthropic_compatible}"
 AGENT_TYPE="${HOMERAIL_PATTERN_AGENT_TYPE:-claude-sdk}"
+HOME_TEMPLATE="${HOMERAIL_LIVE_HOME_TEMPLATE:-}"
 SHOWCASE_ASSET="${HOMERAIL_SHOWCASE_ASSET:-}"
 SHOWCASE_PROMPT="${HOMERAIL_SHOWCASE_PROMPT:-}"
 SHOWCASE_REQUIRED_TERMS="${HOMERAIL_SHOWCASE_REQUIRED_TERMS:-}"
@@ -47,9 +48,24 @@ case "$LIVE_TASK" in
     ;;
 esac
 
-if [ -z "$MODEL_BASE_URL" ]; then
+if [ -n "$HOME_TEMPLATE" ] && [ "$LIVE_TASK" != "pr-review" ]; then
+  echo "HOMERAIL_LIVE_HOME_TEMPLATE is currently supported only for pr-review." >&2
+  exit 1
+fi
+if [ -z "$HOME_TEMPLATE" ] && [ -z "$MODEL_BASE_URL" ]; then
   echo "HOMERAIL_PATTERN_MODEL_BASE_URL is required for isolated live DAG execution." >&2
   exit 1
+fi
+if [ -n "$HOME_TEMPLATE" ]; then
+  if [[ "$HOME_TEMPLATE" != /* ]] || [ ! -f "$HOME_TEMPLATE/manager/homerail.db" ] \
+    || [ ! -f "$HOME_TEMPLATE/manager/secrets/master.key" ]; then
+    echo "HOMERAIL_LIVE_HOME_TEMPLATE must be an absolute Seed Home containing Manager DB and master key." >&2
+    exit 1
+  fi
+  if [ -n "$(find "$HOME_TEMPLATE" -type l -print -quit 2>/dev/null)" ]; then
+    echo "HOMERAIL_LIVE_HOME_TEMPLATE must not contain symbolic links." >&2
+    exit 1
+  fi
 fi
 if [ "$LIVE_TASK" = "three-worker-showcase" ]; then
   if [ -z "$SHOWCASE_ASSET" ] || [ ! -f "$SHOWCASE_ASSET" ]; then
@@ -147,6 +163,12 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if [ -n "$HOME_TEMPLATE" ]; then
+  cp -a --reflink=auto "$HOME_TEMPLATE/." "$HOMERAIL_HOME/"
+  chmod 700 "$HOMERAIL_HOME" "$HOMERAIL_HOME/manager" "$HOMERAIL_HOME/manager/secrets"
+  chmod 600 "$HOMERAIL_HOME/manager/homerail.db" "$HOMERAIL_HOME/manager/secrets/master.key"
+fi
+
 model_ready() {
   curl -fsS --connect-timeout 3 --max-time 10 "$MODEL_BASE_URL/v1/models" 2>/dev/null \
     | MODEL_NAME="$MODEL_NAME" python3 -c '
@@ -222,7 +244,7 @@ sock.close()
 PY
 }
 
-if ! wait_for_model 6 5; then
+if [ -z "$HOME_TEMPLATE" ] && ! wait_for_model 6 5; then
   if [ "$WAKE_MODEL" != "1" ]; then
     echo "Model $MODEL_NAME is unavailable at $MODEL_BASE_URL and wake_model is disabled." >&2
     exit 1
@@ -288,7 +310,17 @@ fi
 node "$REPO_ROOT/homerail_cli/dist/cli.js" start --host 0.0.0.0 --no-build-worker-image
 flock -u 8
 exec 8>&-
-SETTING_ID="$(node "$REPO_ROOT/scripts/configure-live-pattern-model.mjs")"
+SETTING_ID=""
+PROFILE_ID=""
+if [ -n "$HOME_TEMPLATE" ]; then
+  # A slim Seed Home deliberately carries no workflows. Runtime profiles are
+  # foreign-keyed to a synced workflow, so establish the tracked PR Review
+  # definition before resolving and syncing the mixed-model profile.
+  node "$REPO_ROOT/homerail_cli/dist/cli.js" dag sync pr-review
+  PROFILE_ID="$(node "$REPO_ROOT/scripts/configure-pr-review-runtime-profile.mjs")"
+else
+  SETTING_ID="$(node "$REPO_ROOT/scripts/configure-live-pattern-model.mjs")"
+fi
 
 if [ "$LIVE_TASK" = "three-worker-showcase" ]; then
   showcase_args=(
@@ -348,10 +380,14 @@ if [ "$LIVE_TASK" = "pr-review" ]; then
   review_args=(
     dag run-template pr-review
     --input "$REVIEW_INPUT"
-    --setting-id "$SETTING_ID"
     --wait
     --timeout "$REVIEW_TIMEOUT_SECONDS"
   )
+  if [ -n "$PROFILE_ID" ]; then
+    review_args+=(--profile "$PROFILE_ID")
+  else
+    review_args+=(--setting-id "$SETTING_ID")
+  fi
   if ! node "$REPO_ROOT/homerail_cli/dist/cli.js" --json "${review_args[@]}" \
     >"$command_tmp" 2> >(tee "$stderr_path" >&2); then
     rm -f "$command_tmp"
