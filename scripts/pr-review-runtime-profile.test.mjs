@@ -60,7 +60,9 @@ test("binds primary review to one model and arbitration to a distinct model", ()
 
 test("authenticates profile sync with the isolated DAG mutation token", async () => {
   const previousToken = process.env.HOMERAIL_DAG_MUTATION_TOKEN;
+  const previousAdminToken = process.env.HOMERAIL_MANAGER_ADMIN_TOKEN;
   process.env.HOMERAIL_DAG_MUTATION_TOKEN = "test-mutation-token";
+  process.env.HOMERAIL_MANAGER_ADMIN_TOKEN = "unused-admin-token";
   let syncHeaders;
   const server = http.createServer((request, response) => {
     response.setHeader("content-type", "application/json");
@@ -90,10 +92,13 @@ test("authenticates profile sync with the isolated DAG mutation token", async ()
       arbiterSelector: arbiter.model_name,
     });
     assert.equal(syncHeaders?.["x-homerail-dag-token"], "test-mutation-token");
+    assert.equal(syncHeaders?.authorization, undefined);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     if (previousToken === undefined) delete process.env.HOMERAIL_DAG_MUTATION_TOKEN;
     else process.env.HOMERAIL_DAG_MUTATION_TOKEN = previousToken;
+    if (previousAdminToken === undefined) delete process.env.HOMERAIL_MANAGER_ADMIN_TOKEN;
+    else process.env.HOMERAIL_MANAGER_ADMIN_TOKEN = previousAdminToken;
   }
 });
 

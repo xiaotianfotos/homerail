@@ -70,9 +70,6 @@ async function request(managerUrl, pathname, init) {
     ...init,
     headers: {
       ...(init?.headers ?? {}),
-      ...(process.env.HOMERAIL_MANAGER_ADMIN_TOKEN && isMutation
-        ? { Authorization: `Bearer ${process.env.HOMERAIL_MANAGER_ADMIN_TOKEN}` }
-        : {}),
       ...(process.env.HOMERAIL_DAG_MUTATION_TOKEN && isMutation
         ? { "x-homerail-dag-token": process.env.HOMERAIL_DAG_MUTATION_TOKEN }
         : {}),
