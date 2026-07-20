@@ -57,7 +57,8 @@ verify_production_dag_smoke() {
     echo "Production DAG mutation token is empty after service startup." >&2
     return 1
   fi
-  HOMERAIL_DAG_MUTATION_TOKEN="$token" \
+  HOMERAIL_REPO_ROOT="$production_root/current" \
+    HOMERAIL_DAG_MUTATION_TOKEN="$token" \
     "$production_root/current/runtime/node" \
     "$production_root/current/homerail_cli/dist/cli.js" \
     --base-url "$manager_url" \

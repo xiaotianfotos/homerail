@@ -183,7 +183,7 @@ test("production DAG smoke helper enforces token presence and command success", 
     fs.mkdirSync(path.join(current, "assets", "orchestrations"), { recursive: true });
     fs.writeFileSync(fakeCli, "// fake cli\n");
     fs.writeFileSync(path.join(current, "assets", "orchestrations", "public-two-node.yaml.template"), "schema_version: 1\n");
-    fs.writeFileSync(fakeNode, `#!/usr/bin/env bash\nprintf '{"token":"%s","args":"%s"}\\n' "$HOMERAIL_DAG_MUTATION_TOKEN" "$*" > "$CAPTURE_PATH"\nexit "${'${FAKE_SMOKE_EXIT:-0}'}"\n`);
+    fs.writeFileSync(fakeNode, `#!/usr/bin/env bash\nprintf '{"token":"%s","repoRoot":"%s","args":"%s"}\\n' "$HOMERAIL_DAG_MUTATION_TOKEN" "$HOMERAIL_REPO_ROOT" "$*" > "$CAPTURE_PATH"\nexit "${'${FAKE_SMOKE_EXIT:-0}'}"\n`);
     fs.chmodSync(fakeNode, 0o755);
 
     const missing = invoke();
@@ -200,6 +200,7 @@ test("production DAG smoke helper enforces token presence and command success", 
     assert.equal(passed.status, 0, passed.stderr);
     const observed = JSON.parse(fs.readFileSync(capture, "utf8"));
     assert.equal(observed.token, "test-dag-token");
+    assert.equal(observed.repoRoot, current);
     assert.match(observed.args, /--base-url http:\/\/127\.0\.0\.1:39191/);
     assert.match(observed.args, /smoke dag/);
     assert.match(observed.args, /public-two-node\.yaml\.template/);
