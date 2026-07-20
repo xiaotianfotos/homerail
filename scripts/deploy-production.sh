@@ -9,11 +9,10 @@ REVISION="${HOMERAIL_DEPLOY_REVISION:-}"
 SERVICE_NAME="homerail-production.service"
 UNIT_PATH="$HOME/.config/systemd/user/$SERVICE_NAME"
 MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
-MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-}"
-if [ -z "$MANAGER_HOST" ]; then
-  MANAGER_HOST="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
-fi
+DOCKER_BRIDGE_GATEWAY="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-$DOCKER_BRIDGE_GATEWAY}"
 MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://$MANAGER_HOST:$MANAGER_PORT}"
+ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-1}"
 UI_HOST="${HOMERAIL_PRODUCTION_UI_HOST:-0.0.0.0}"
 UI_PORT="${HOMERAIL_PRODUCTION_UI_PORT:-19192}"
 UI_HTTP_PORT="${HOMERAIL_PRODUCTION_UI_HTTP_PORT:-19193}"
@@ -23,16 +22,21 @@ UI_URL="${HOMERAIL_PRODUCTION_UI_URL:-}"
 case "$PRODUCTION_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_ROOT must be absolute." >&2; exit 1 ;; esac
 case "$HOMERAIL_HOME" in /*) ;; *) echo "HOMERAIL_PRODUCTION_HOME must be absolute." >&2; exit 1 ;; esac
 case "$RESOURCE_ROOT" in /*) ;; *) echo "HOMERAIL_PRODUCTION_RESOURCES must be absolute." >&2; exit 1 ;; esac
-if [ -z "$MANAGER_HOST" ]; then
+if [ -z "$DOCKER_BRIDGE_GATEWAY" ] || [ -z "$MANAGER_HOST" ]; then
   echo "Could not resolve the Docker bridge gateway for the production Manager bind." >&2
   exit 1
 fi
+case "$ALLOW_INSECURE_REMOTE_WS" in 0|1) ;; *) echo "HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS must be 0 or 1." >&2; exit 1 ;; esac
 case "$MANAGER_HOST" in
-  localhost|127.*|::1|\[::1\])
-    echo "HOMERAIL_PRODUCTION_MANAGER_HOST must be reachable from Docker Workers; loopback-only binds are not supported." >&2
+  localhost|127.*|::1|\[::1\]|0.0.0.0|::|\[::\])
+    echo "HOMERAIL_PRODUCTION_MANAGER_HOST must be the Docker bridge gateway; loopback and wildcard binds are not supported." >&2
     exit 1
     ;;
 esac
+if [ "$ALLOW_INSECURE_REMOTE_WS" = "1" ] && [ "$MANAGER_HOST" != "$DOCKER_BRIDGE_GATEWAY" ]; then
+  echo "Plaintext production WebSockets may bind only to the Docker bridge gateway." >&2
+  exit 1
+fi
 if [ "$UI_HOST" != "0.0.0.0" ] && [ "$UI_HOST" != "::" ]; then
   echo "HOMERAIL_PRODUCTION_UI_HOST must bind all interfaces (0.0.0.0 or ::)." >&2
   exit 1
@@ -195,7 +199,7 @@ Environment=HOMERAIL_PRODUCTION_MANAGER_URL=$MANAGER_URL
 Environment=HOMERAIL_PRODUCTION_MANAGER_HOST=$MANAGER_HOST
 Environment=HOMERAIL_PRODUCTION_MANAGER_PORT=$MANAGER_PORT
 Environment=HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL=${HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-$MANAGER_URL}
-Environment=HOMERAIL_ALLOW_INSECURE_REMOTE_WS=1
+Environment=HOMERAIL_ALLOW_INSECURE_REMOTE_WS=$ALLOW_INSECURE_REMOTE_WS
 Environment=HOMERAIL_PRODUCTION_UI_URL=$UI_URL
 Environment=HOMERAIL_PRODUCTION_UI_HOST=$UI_HOST
 Environment=HOMERAIL_PRODUCTION_UI_PORT=$UI_PORT

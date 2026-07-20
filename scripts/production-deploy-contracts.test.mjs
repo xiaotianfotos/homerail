@@ -36,7 +36,9 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_HOST=\$MANAGER_HOST/);
   assert.match(deploy, /docker network inspect bridge/);
   assert.match(deploy, /Could not resolve the Docker bridge gateway/);
-  assert.match(deploy, /must be reachable from Docker Workers/);
+  assert.match(deploy, /loopback and wildcard binds are not supported/);
+  assert.match(deploy, /MANAGER_HOST" != "\$DOCKER_BRIDGE_GATEWAY/);
+  assert.match(deploy, /Plaintext production WebSockets may bind only to the Docker bridge gateway/);
   assert.match(deploy, /smoke dag/);
   assert.match(deploy, /public-two-node\.yaml\.template/);
   assert.match(deploy, /--template "\$PRODUCTION_ROOT\/current\/assets\/orchestrations\/public-two-node\.yaml\.template"/);
@@ -46,7 +48,8 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /export HOMERAIL_DAG_MUTATION_TOKEN/);
   assert.match(deploy, /Production DAG mutation token is missing after service startup/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_PORT=\$MANAGER_PORT/);
-  assert.match(deploy, /Environment=HOMERAIL_ALLOW_INSECURE_REMOTE_WS=1/);
+  assert.match(deploy, /HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-1/);
+  assert.match(deploy, /Environment=HOMERAIL_ALLOW_INSECURE_REMOTE_WS=\$ALLOW_INSECURE_REMOTE_WS/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HOST=\$UI_HOST/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_PORT=\$UI_PORT/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HTTP_PORT=\$UI_HTTP_PORT/);
@@ -66,7 +69,9 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(service, /docker network inspect bridge/);
   assert.match(service, /HOMERAIL_MANAGER_HOST="\$MANAGER_HOST"/);
   assert.match(service, /HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-\$MANAGER_URL/);
-  assert.match(service, /HOMERAIL_ALLOW_INSECURE_REMOTE_WS="\$\{HOMERAIL_ALLOW_INSECURE_REMOTE_WS:-1\}"/);
+  assert.match(service, /HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS/);
+  assert.match(service, /export HOMERAIL_ALLOW_INSECURE_REMOTE_WS="\$ALLOW_INSECURE_REMOTE_WS"/);
+  assert.match(service, /Production Manager must bind the Docker bridge gateway/);
   assert.match(service, /manager\/secrets/);
   assert.match(service, /control-plane\.token/);
   assert.match(service, /dag-mutation\.token/);

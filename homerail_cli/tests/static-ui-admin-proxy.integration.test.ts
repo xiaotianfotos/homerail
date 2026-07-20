@@ -97,6 +97,7 @@ describe("static Agent UI mutation proxy", () => {
 
     expect((await fetch(`${uiOrigin}/api/read`)).status).toBe(200);
     expect(received[1]?.authorization).toBeUndefined();
+    expect(received[1]?.mutationToken).toBeUndefined();
   }, 15_000);
 
   it("derives the self Origin for a publicly bound development server", async () => {

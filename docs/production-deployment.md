@@ -32,7 +32,10 @@ runner environment file defines:
   Home. A separate 0600 token authorizes Manager Agent, CLI, and trusted
   same-origin UI proxy DAG mutations; ordinary DAG Workers never receive that
   mutation credential, and browser clients never receive either token. The
-  Manager socket is not bound to a LAN interface.
+  Manager socket is not bound to a LAN interface. Plaintext bridge WebSockets
+  default to enabled and may be overridden with
+  `HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS=0`; while enabled, startup
+  rejects every Manager host other than the discovered Docker bridge gateway.
 
 The installation also provides:
 

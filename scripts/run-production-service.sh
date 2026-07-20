@@ -7,12 +7,22 @@ RELEASE_ROOT="$(readlink -f "$CURRENT")"
 HOMERAIL_HOME="${HOMERAIL_HOME:-$HOME/.local/share/homerail-production-data}"
 RESOURCE_ROOT="${HOMERAIL_PRODUCTION_RESOURCES:-$HOME/.local/share/homerail-resources}"
 MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
-MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-}"
-if [ -z "$MANAGER_HOST" ]; then
-  MANAGER_HOST="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
-fi
-if [ -z "$MANAGER_HOST" ]; then
+DOCKER_BRIDGE_GATEWAY="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-$DOCKER_BRIDGE_GATEWAY}"
+ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-${HOMERAIL_ALLOW_INSECURE_REMOTE_WS:-1}}"
+if [ -z "$DOCKER_BRIDGE_GATEWAY" ] || [ -z "$MANAGER_HOST" ]; then
   echo "Could not resolve the Docker bridge gateway for the production Manager bind." >&2
+  exit 1
+fi
+case "$ALLOW_INSECURE_REMOTE_WS" in 0|1) ;; *) echo "HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS must be 0 or 1." >&2; exit 1 ;; esac
+case "$MANAGER_HOST" in
+  localhost|127.*|::1|\[::1\]|0.0.0.0|::|\[::\])
+    echo "Production Manager must bind the Docker bridge gateway, not loopback or a wildcard address." >&2
+    exit 1
+    ;;
+esac
+if [ "$ALLOW_INSECURE_REMOTE_WS" = "1" ] && [ "$MANAGER_HOST" != "$DOCKER_BRIDGE_GATEWAY" ]; then
+  echo "Plaintext production WebSockets may bind only to the Docker bridge gateway." >&2
   exit 1
 fi
 MANAGER_URL="${HOMERAIL_PRODUCTION_MANAGER_URL:-http://$MANAGER_HOST:$MANAGER_PORT}"
@@ -91,7 +101,7 @@ export HOMERAIL_MANAGER_URL="$MANAGER_URL"
 export HOMERAIL_MANAGER_PORT="$MANAGER_PORT"
 export HOMERAIL_MANAGER_HOST="$MANAGER_HOST"
 export HOMERAIL_MANAGER_PUBLIC_URL="${HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-$MANAGER_URL}"
-export HOMERAIL_ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_ALLOW_INSECURE_REMOTE_WS:-1}"
+export HOMERAIL_ALLOW_INSECURE_REMOTE_WS="$ALLOW_INSECURE_REMOTE_WS"
 export HOMERAIL_UI_HOST="$UI_HOST"
 export HOMERAIL_UI_PORT="$UI_PORT"
 export HOMERAIL_UI_HTTP_PORT="$UI_HTTP_PORT"
