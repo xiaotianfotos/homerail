@@ -17,7 +17,7 @@
   "runtime": {
     "ready": "Manager Agent runtime is ready",
     "currentHarness": "Current harness: {harness}",
-    "notReady": "Manager Agent runtime is not ready. Configure model credentials here, then resolve local dependencies and Docker access under Environment check.",
+    "notReady": "Manager Agent runtime is not ready. Configure model credentials here, then resolve its local dependencies under Environment check.",
     "existing": "Existing Manager Agent settings",
     "switching": "Switching...",
     "use": "Use",
@@ -25,7 +25,7 @@
     "nextAvailable": "You can continue to the next step"
   },
   "environmentCheck": {
-    "description": "Verify local runtime dependencies and Docker workspace access",
+    "description": "Verify Manager Agent dependencies; Docker is only needed for container DAGs",
     "hostNotRequired": "This Manager Agent does not require a Git Bash host-shell environment",
     "gitBashReadyPath": "Git Bash is ready: {path}",
     "gitBashReady": "Git Bash host-shell environment is ready",
@@ -38,6 +38,7 @@
     "dockerStartRequired": "Docker is installed but not running. Start Docker, then check again.",
     "dockerPermissionRequired": "The current user cannot access Docker. Grant Docker access, then check again.",
     "dockerCheckFailed": "Docker workspace check failed: {error}",
+    "dockerCheckUnavailable": "Docker cannot be checked right now. Try again shortly.",
     "passed": "Passed",
     "needsAttention": "Action needed",
     "dockerTitle": "Docker workspace access",

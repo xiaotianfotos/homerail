@@ -14,8 +14,6 @@
 //   HOMERAIL_UI_HTTPS_CERT      PEM cert path (HTTPS only)
 //   HOMERAIL_MANAGER_HTTP       manager HTTP origin, e.g. http://localhost:19191
 //   HOMERAIL_MANAGER_WS         manager WS origin, e.g. ws://localhost:19191
-//   HOMERAIL_UI_ORIGIN          exact browser-facing origin for this process
-//   HOMERAIL_UI_ADMIN_PROXY_ENABLED "1" only for runtime-verified loopback mode
 import http from "node:http";
 import https from "node:https";
 import fs from "node:fs";
@@ -23,9 +21,7 @@ import path from "node:path";
 import net from "node:net";
 import { URL } from "node:url";
 import {
-  HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
   authorizeUiAdminProxyMutation,
-  createUiAdminProxyPolicy,
   isProtectedApiMutation,
 } from "./ui-admin-proxy.js";
 
@@ -34,18 +30,8 @@ const PORT = Number(process.env.HOMERAIL_UI_PORT || 19192);
 const HOST = process.env.HOMERAIL_UI_HOST || "127.0.0.1";
 const MANAGER_HTTP = process.env.HOMERAIL_MANAGER_HTTP || "http://localhost:19191";
 const MANAGER_WS = process.env.HOMERAIL_MANAGER_WS || "ws://localhost:19191";
-const MANAGER_ADMIN_TOKEN = process.env.HOMERAIL_MANAGER_ADMIN_TOKEN || "";
 const USE_HTTPS = process.env.HOMERAIL_UI_HTTPS === "1";
 const BUILD_MANIFEST = "homerail-build.json";
-const UI_ADMIN_PROXY = createUiAdminProxyPolicy({
-  enabled: process.env.HOMERAIL_UI_ADMIN_PROXY_ENABLED === "1",
-  uiOrigin: process.env.HOMERAIL_UI_ORIGIN || "",
-  uiBindHost: HOST,
-  managerUrl: MANAGER_HTTP,
-  adminToken: MANAGER_ADMIN_TOKEN,
-  unsafeAllowPublicNoAuth:
-    process.env[HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH] === "1",
-});
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -179,11 +165,12 @@ function proxyHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
   const target = new URL(MANAGER_HTTP);
   const headers = { ...req.headers, host: target.host };
   if (isProtectedApiMutation(req.method, req.url)) {
-    const authorization = authorizeUiAdminProxyMutation(
-      UI_ADMIN_PROXY,
-      req.headers.origin,
-      req.headers["sec-fetch-site"],
-    );
+    const authorization = authorizeUiAdminProxyMutation({
+      protocol: USE_HTTPS ? "https" : "http",
+      host: req.headers.host,
+      origin: req.headers.origin,
+      secFetchSite: req.headers["sec-fetch-site"],
+    });
     if (!authorization.allowed) {
       req.resume();
       res.writeHead(403, {
@@ -193,12 +180,8 @@ function proxyHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
       res.end(JSON.stringify({ success: false, error: authorization.reason }));
       return;
     }
-    // The browser never receives or asserts the Manager credential. The
-    // same-origin UI proxy is the only component allowed to inject it.
+    // Browser credentials never override Manager's own trust decision.
     delete headers.authorization;
-    if (UI_ADMIN_PROXY.adminToken) {
-      headers.authorization = `Bearer ${UI_ADMIN_PROXY.adminToken}`;
-    }
   }
   const request = target.protocol === "https:" ? https.request : http.request;
   const proxyReq = request(

@@ -225,7 +225,9 @@ export function managerAgentReadiness(
     checks: {
       config: blockers.length === 0,
       docker_workspace: {
-        required: true,
+        // Docker is a DAG execution capability, not a prerequisite for using
+        // the host Manager Agent, settings, or text/voice interaction.
+        required: false,
         host_path: dockerWorkspaceRoot(),
         probe_endpoint: "/api/dag/docker-workspace-probe",
       },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { dockerWorkspaceGuidance } from './docker-workspace-status'
+import { dockerWorkspaceGuidance, readableDockerWorkspaceError } from './docker-workspace-status'
 
 describe('Docker workspace guidance', () => {
   it('does not add guidance before probing or after success', () => {
@@ -39,5 +39,16 @@ describe('Docker workspace guidance', () => {
       host_path: '/workspace',
       error: 'permission denied while trying to connect to the Docker daemon; add the user to the docker group',
     })).toBe('permission')
+  })
+
+  it('extracts plain API error objects without rendering object Object', () => {
+    expect(readableDockerWorkspaceError({
+      message: 'Manager mutation Origin is not trusted',
+      code: 403,
+    }, 'Docker check unavailable')).toBe('Manager mutation Origin is not trusted')
+    expect(readableDockerWorkspaceError({
+      error: { message: 'Docker daemon is unavailable' },
+    }, 'Docker check unavailable')).toBe('Docker daemon is unavailable')
+    expect(readableDockerWorkspaceError({}, 'Docker check unavailable')).toBe('Docker check unavailable')
   })
 })

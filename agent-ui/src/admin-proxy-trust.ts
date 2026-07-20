@@ -1,44 +1,10 @@
 const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
-export interface AdminProxyTrustOptions {
-  enabled: boolean
-  uiOrigin: string
-  uiBindHost: string
-  managerUrl: string
-  unsafeAllowPublicNoAuth?: boolean
-}
-
-export interface AdminProxyTrust {
-  enabled: boolean
-  uiOrigin?: string
-  unsafeAllowPublicNoAuth?: boolean
-  disabledReason?: string
-}
-
-export function resolveAdminProxyTrust(options: AdminProxyTrustOptions): AdminProxyTrust {
-  if (!options.enabled) return disabled('loopback-safe admin proxy switch is disabled')
-  const uiOrigin = exactOrigin(options.uiOrigin)
-  if (!uiOrigin) return disabled('UI Origin is invalid')
-  const unsafeAllowPublicNoAuth = Boolean(options.unsafeAllowPublicNoAuth)
-  if (
-    (!isLoopbackHost(options.uiBindHost) || !isLoopbackHost(new URL(uiOrigin).hostname))
-    && !unsafeAllowPublicNoAuth
-  ) {
-    return disabled('UI is reachable beyond loopback')
-  }
-  let manager: URL
-  try {
-    manager = new URL(options.managerUrl)
-  } catch {
-    return disabled('Manager URL is invalid')
-  }
-  if (
-    !['http:', 'https:'].includes(manager.protocol)
-    || !isLoopbackHost(manager.hostname)
-    || Boolean(manager.username)
-    || Boolean(manager.password)
-  ) return disabled('Manager is reachable beyond loopback')
-  return { enabled: true, uiOrigin, unsafeAllowPublicNoAuth }
+export interface UiMutationRequestTrust {
+  protocol: 'http' | 'https'
+  host: string | string[] | undefined
+  origin: string | string[] | undefined
+  secFetchSite?: string | string[]
 }
 
 export function isProtectedApiMutation(methodValue?: string, urlValue?: string): boolean {
@@ -51,56 +17,39 @@ export function isProtectedApiMutation(methodValue?: string, urlValue?: string):
   }
 }
 
+/**
+ * Authorize a browser mutation using the origin of the request that reached the
+ * UI server. This deliberately has no deployment switch or configured Origin:
+ * Vite already knows the browser-facing protocol and Host for every request.
+ * Manager remains the canonical trust boundary after the proxy hop.
+ */
 export function authorizeAdminProxyRequest(
-  trust: AdminProxyTrust,
-  origin: string | string[] | undefined,
-  secFetchSite?: string | string[],
+  request: UiMutationRequestTrust,
 ): { allowed: true } | { allowed: false; reason: string } {
-  if (!trust.enabled || !trust.uiOrigin) {
-    return { allowed: false, reason: trust.disabledReason || 'UI mutation proxy is disabled' }
+  const host = singleHeader(request.host)
+  const origin = singleHeader(request.origin)
+  if (!host || !origin) {
+    return { allowed: false, reason: 'UI mutation Origin is required' }
   }
-  if (typeof origin !== 'string' || origin !== trust.uiOrigin) {
-    return { allowed: false, reason: 'UI mutation Origin is missing or not self-origin' }
+
+  let selfOrigin: string
+  try {
+    selfOrigin = new URL(`${request.protocol}://${host}`).origin
+  } catch {
+    return { allowed: false, reason: 'UI request Host is invalid' }
   }
-  if (
-    secFetchSite !== undefined
-    && (typeof secFetchSite !== 'string' || secFetchSite.toLowerCase() !== 'same-origin')
-  ) return { allowed: false, reason: 'Cross-origin UI mutation proxy requests are forbidden' }
+  if (origin !== selfOrigin) {
+    return { allowed: false, reason: 'Cross-origin UI mutation requests are forbidden' }
+  }
+
+  const secFetchSite = singleHeader(request.secFetchSite)?.toLowerCase()
+  if (secFetchSite !== undefined && secFetchSite !== 'same-origin') {
+    return { allowed: false, reason: 'Cross-origin UI mutation requests are forbidden' }
+  }
   return { allowed: true }
 }
 
-function exactOrigin(value: string): string | undefined {
-  let parsed: URL
-  try {
-    parsed = new URL(value)
-  } catch {
-    return undefined
-  }
-  if (
-    !['http:', 'https:'].includes(parsed.protocol)
-    || Boolean(parsed.username)
-    || Boolean(parsed.password)
-    || parsed.pathname !== '/'
-    || Boolean(parsed.search)
-    || Boolean(parsed.hash)
-    || parsed.origin !== value
-  ) return undefined
-  return parsed.origin
-}
-
-function isLoopbackHost(value: string): boolean {
-  let host = value.trim().toLowerCase()
-  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1)
-  const zone = host.indexOf('%')
-  if (zone >= 0) host = host.slice(0, zone)
-  if (host === 'localhost' || host === '::1' || host === '0:0:0:0:0:0:0:1') return true
-  if (host.startsWith('::ffff:')) host = host.slice('::ffff:'.length)
-  const octets = host.split('.')
-  return octets.length === 4
-    && octets.every(octet => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
-    && Number(octets[0]) === 127
-}
-
-function disabled(reason: string): AdminProxyTrust {
-  return { enabled: false, disabledReason: reason }
+function singleHeader(value: string | string[] | undefined): string | undefined {
+  if (typeof value !== 'string' || !value || /[\r\n]/.test(value)) return undefined
+  return value
 }

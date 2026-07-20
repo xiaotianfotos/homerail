@@ -27,7 +27,7 @@ import {
 import type { Provider } from '@/api/types/orchestration-v2.types'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
 import OnboardingStepForm from './OnboardingStepForm.vue'
-import { dockerWorkspaceGuidance } from './docker-workspace-status'
+import { dockerWorkspaceGuidance, readableDockerWorkspaceError } from './docker-workspace-status'
 
 const props = withDefaults(defineProps<{
   manualDebug?: boolean
@@ -55,7 +55,7 @@ onMounted(async () => {
   const providersPromise = loadProviders()
   const settingsPromise = loadExistingSettings()
   await refresh()
-  const dockerProbePromise = status.value.dockerWorkspace?.required
+  const dockerProbePromise = status.value.dockerWorkspace
     ? checkDockerWorkspace()
     : Promise.resolve()
   await Promise.all([providersPromise, settingsPromise, dockerProbePromise])
@@ -200,8 +200,8 @@ const hostShellMessage = computed(() => {
 })
 const dockerWorkspaceHostPath = computed(() => status.value.dockerWorkspace?.hostPath || '')
 const dockerWorkspaceReady = computed(() => dockerProbeResult.value?.available === true)
-const dockerWorkspaceRequired = computed(() => status.value.dockerWorkspace?.required === true)
-const environmentNeedsAttention = computed(() => !hostShellReady.value || (dockerWorkspaceRequired.value && !dockerWorkspaceReady.value))
+const dockerWorkspaceAvailable = computed(() => Boolean(status.value.dockerWorkspace))
+const environmentNeedsAttention = computed(() => !hostShellReady.value)
 const dockerWorkspaceMessage = computed(() => {
   if (dockerProbeRunning.value) return t('onboarding.environmentCheck.checkingDocker')
   if (dockerProbeResult.value?.available) return t('onboarding.environmentCheck.dockerReady')
@@ -292,7 +292,7 @@ async function checkDockerWorkspace(): Promise<void> {
     dockerProbeResult.value = {
       available: false,
       host_path: dockerWorkspaceHostPath.value,
-      error: err instanceof Error ? err.message : String(err),
+      error: readableDockerWorkspaceError(err, t('onboarding.environmentCheck.dockerCheckUnavailable')),
       code: 'docker_workspace_probe_request_failed',
     }
   } finally {
@@ -301,7 +301,7 @@ async function checkDockerWorkspace(): Promise<void> {
 }
 
 function ensureDockerWorkspaceChecked(): void {
-  if (!dockerWorkspaceRequired.value || dockerProbeRunning.value || dockerProbeResult.value) return
+  if (!dockerWorkspaceAvailable.value || dockerProbeRunning.value || dockerProbeResult.value) return
   void checkDockerWorkspace()
 }
 
@@ -506,7 +506,6 @@ watch(activePane, (pane) => {
               class="onboarding-wizard__blocker"
             >
               <span>{{ blocker.message }}</span>
-              <code>{{ blocker.code }}</code>
             </div>
           </div>
         </section>
@@ -864,7 +863,7 @@ watch(activePane, (pane) => {
 
 .onboarding-wizard__blocker {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.55rem;
   align-items: center;
   padding: 0.55rem 0.65rem;
@@ -878,11 +877,6 @@ watch(activePane, (pane) => {
 .onboarding-wizard__blocker span {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.onboarding-wizard__blocker code {
-  color: var(--hr-text-3);
-  font-size: 0.66rem;
 }
 
 .onboarding-wizard__docker-check {

@@ -6,7 +6,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const TOKEN = "static-proxy-admin-token-0123456789abcdef";
 const children: ChildProcess[] = [];
 const servers: http.Server[] = [];
 const tempDirs: string[] = [];
@@ -51,7 +50,7 @@ describe("static Agent UI mutation proxy", () => {
     expect(upgradedPath).toBe("/api/voice/asr/realtime");
   }, 15_000);
 
-  it("rejects no-Origin/cross-origin requests and injects only for exact local self-Origin", async () => {
+  it("rejects no-Origin/cross-origin requests and proxies exact self-Origin without credentials", async () => {
     const received: Array<{ authorization?: string; origin?: string; method?: string }> = [];
     const manager = http.createServer((req, res) => {
       received.push({
@@ -86,7 +85,7 @@ describe("static Agent UI mutation proxy", () => {
       headers: { Origin: uiOrigin },
     })).status).toBe(200);
     expect(received[0]).toEqual({
-      authorization: `Bearer ${TOKEN}`,
+      authorization: undefined,
       origin: uiOrigin,
       method: "POST",
     });
@@ -95,7 +94,7 @@ describe("static Agent UI mutation proxy", () => {
     expect(received[1]?.authorization).toBeUndefined();
   }, 15_000);
 
-  it("fails a plaintext publicly bound mutation proxy closed even if the switch is forced on", async () => {
+  it("derives the self Origin for a publicly bound development server", async () => {
     let managerHits = 0;
     const manager = http.createServer((req, res) => {
       managerHits++;
@@ -112,8 +111,8 @@ describe("static Agent UI mutation proxy", () => {
       method: "POST",
       headers: { Origin: uiOrigin },
     });
-    expect(response.status).toBe(403);
-    expect(managerHits).toBe(0);
+    expect(response.status).toBe(200);
+    expect(managerHits).toBe(1);
   }, 15_000);
 
   it("rejects encoded traversal into a same-prefix sibling of the static root", async () => {
@@ -185,9 +184,6 @@ async function startStaticUi(options: {
       HOMERAIL_UI_HTTPS: "0",
       HOMERAIL_MANAGER_HTTP: options.managerUrl,
       HOMERAIL_MANAGER_WS: options.managerUrl.replace(/^http/, "ws"),
-      HOMERAIL_UI_ORIGIN: options.origin,
-      HOMERAIL_UI_ADMIN_PROXY_ENABLED: "1",
-      HOMERAIL_MANAGER_ADMIN_TOKEN: TOKEN,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
