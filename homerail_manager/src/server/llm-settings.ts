@@ -236,6 +236,9 @@ async function _detectMainModelRuntime(input: {
   ]);
   // Claude Agent SDK is the product default whenever the model actually
   // supports both protocols. Kimi Code is only the OpenAI-compatible fallback.
+  // Responses is retained as discovered endpoint metadata, but it does not
+  // select a harness: neither supported provider-backed harness executes the
+  // Responses protocol directly.
   const preferredHarness: MainModelHarness | null = anthropic.available
     ? "claude_agent_sdk"
     : openai.available

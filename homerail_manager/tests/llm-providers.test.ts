@@ -824,6 +824,57 @@ describe("custom LLM providers", () => {
     }
   });
 
+  it("reports a Responses-only endpoint without selecting an unsupported harness", async () => {
+    const upstream = http.createServer((req, res) => {
+      req.resume();
+      if (req.url === "/v1/responses") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ id: "responses-probe-result" }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+    });
+    const upstreamPort = await listen(upstream);
+
+    try {
+      const port = await listen(server);
+      const root = `http://127.0.0.1:${upstreamPort}/v1`;
+      const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/detect-runtime`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_url: root,
+          model: "responses-only-model",
+        }),
+      });
+      const body = await response.json() as {
+        data: {
+          available: boolean;
+          preferred_harness: string | null;
+          endpoints: {
+            anthropic: { available: boolean; status?: number };
+            openai: { available: boolean; status?: number };
+            responses: { available: boolean; status?: number; base_url?: string };
+          };
+        };
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.data).toMatchObject({
+        available: false,
+        preferred_harness: null,
+        endpoints: {
+          anthropic: { available: false, status: 404 },
+          openai: { available: false, status: 404 },
+          responses: { available: true, status: 200, base_url: root },
+        },
+      });
+    } finally {
+      await close(upstream);
+    }
+  });
+
   it("migrates legacy plaintext DB settings to Manager-encrypted storage", () => {
     getDb().prepare(`
       INSERT INTO llm_settings(id, provider_id, model_name, updated_at, data)
