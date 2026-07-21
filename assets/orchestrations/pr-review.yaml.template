@@ -20,7 +20,7 @@ spec:
 
   pattern:
     id: pr-review-scenario
-    version: 1.7.1
+    version: 1.7.2
     source: HomeRail concrete scenario composed from budget-gate, orchestrator-workers, and quorum
     parameters:
       reviewer_count: 4
@@ -404,7 +404,7 @@ spec:
 
   artifacts:
     - name: pr-review.json
-      source: { type: handoff, node: refine, port: finalized }
+      source: { type: handoff, node: normalize_review, port: normalized }
       media_type: application/json
       contract: FinalReview
       required: true
@@ -1219,6 +1219,26 @@ spec:
         verification: {}
       outputs: { finalized: { contract: FinalReview }, failed: {} }
 
+    normalize_review:
+      kind: command
+      depends_on: [refine]
+      inputs:
+        review: { contract: FinalReview }
+      outputs: { normalized: { contract: FinalReview }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - >-
+            let s='';const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),review=last(input,'review');if(!review||typeof review!=='object'||!review.report||typeof review.report!=='object'||!review.quorum||typeof review.quorum!=='object')throw new Error('final review is missing');const findings=Array.isArray(review.report.findings)?review.report.findings:[];const actionable_count=findings.length;const status=review.quorum.passed===false?'inconclusive':actionable_count>0?'findings':'pass';process.stdout.write(JSON.stringify({...review,report:{...review.report,findings,actionable_count,status}}))});
+        stdin_field: "$inputs"
+        timeout_ms: 10000
+        capture_limit: 700000
+        success_port: normalized
+        failure_port: failed
+        parse_stdout: json
+        result_payload: value
+
     publish:
       kind: agent
       agent: publisher
@@ -1279,6 +1299,11 @@ spec:
       inputs: { result: {} }
 
     refinement_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    normalization_failed:
       kind: terminal
       outcome: failure
       inputs: { result: {} }
@@ -1348,17 +1373,19 @@ spec:
     - { from: verification_quorum.accepted, to: quorum_result.accepted }
     - { from: verification_quorum.rejected, to: quorum_result.rejected }
     - { from: quorum_result.decided, to: refine.verification }
-    - { from: refine.finalized, to: publish.review }
+    - { from: refine.finalized, to: normalize_review.review }
+    - { from: normalize_review.normalized, to: publish.review }
     - { from: normalize_privacy_review.reviewed, to: publish.privacy }
     - { from: refine.failed, to: refinement_failed.result, condition: on_failure }
+    - { from: normalize_review.failed, to: normalization_failed.result, condition: on_failure }
     - { from: publish.published, to: publication_outcome.result }
     - { from: publication_outcome.accepted, to: done.result }
     - { from: publication_outcome.rejected, to: inconclusive.result }
     - { from: publish.failed, to: publication_failed.result, condition: on_failure }
 
   policies:
-    max_nodes: 36
-    max_edges: 64
+    max_nodes: 38
+    max_edges: 66
     max_parallelism: 5
     max_dispatches: 32
     max_handoffs: 64

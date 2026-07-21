@@ -143,7 +143,7 @@ describe("PR Review scenario assets", () => {
       }),
       expect.objectContaining({
         name: "pr-review.json",
-        source: { type: "handoff", node: "refine", port: "finalized" },
+        source: { type: "handoff", node: "normalize_review", port: "normalized" },
         contract: "FinalReview",
       }),
       expect.objectContaining({
@@ -220,6 +220,20 @@ describe("PR Review scenario assets", () => {
       mode: "any",
       field: "passed",
       passed_port: "decided",
+    });
+    expect(nodes.find((node) => node.id === "normalize_review")).toMatchObject({
+      kind: "command",
+      depends_on: ["refine"],
+      inputs: [expect.objectContaining({ name: "review", contract: "FinalReview" })],
+      outputs: expect.arrayContaining([
+        expect.objectContaining({ name: "normalized", contract: "FinalReview" }),
+      ]),
+      config: expect.objectContaining({
+        success_port: "normalized",
+        failure_port: "failed",
+        parse_stdout: "json",
+        result_payload: "value",
+      }),
     });
     expect(nodes.find((node) => node.id === "publication_outcome")?.config).toMatchObject({
       field: "quorum.passed",
@@ -656,6 +670,75 @@ describe("PR Review scenario assets", () => {
     expect(JSON.stringify(advisory)).not.toContain(privateEmail);
   });
 
+  it("deterministically normalizes final review status from findings and quorum", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "..", "assets", "orchestrations", "pr-review.yaml.template"),
+      "utf8",
+    );
+    const workflow = compileWorkflowSource(source);
+    const normalizer = workflow.canonical?.nodes.find((node) => node.id === "normalize_review");
+    const command = normalizer?.config?.command as unknown[] | undefined;
+    const code = String(command?.[2] ?? "");
+    const execute = (review: Record<string, unknown>) => {
+      const result = spawnSync(process.execPath, ["-e", code], {
+        encoding: "utf8",
+        input: JSON.stringify({ review: [review] }),
+      });
+      expect(result.status).toBe(0);
+      return JSON.parse(result.stdout) as {
+        report: Record<string, unknown>;
+        quorum: Record<string, unknown>;
+      };
+    };
+    const finding = {
+      category: "security",
+      severity: "low",
+      title: "Debug API remains available",
+      file: "agent-ui/src/debug.ts",
+      line: 12,
+      evidence: "The debug command is registered.",
+      recommendation: "Confirm the intended production support contract.",
+      confidence: "high",
+    };
+    const contradictoryPass = {
+      report: {
+        ...passingReviewReport(),
+        status: "pass",
+        actionable_count: 0,
+        findings: [finding],
+      },
+      quorum: { passed: true, successes: 3, total: 3, threshold: 2 },
+    };
+    expect(execute(contradictoryPass)).toMatchObject({
+      report: {
+        status: "findings",
+        actionable_count: 1,
+        findings: [finding],
+      },
+      quorum: contradictoryPass.quorum,
+    });
+
+    const contradictoryFindings = {
+      report: {
+        ...passingReviewReport(),
+        status: "findings",
+        actionable_count: 7,
+        findings: [],
+      },
+      quorum: { passed: true, successes: 2, total: 3, threshold: 2 },
+    };
+    expect(execute(contradictoryFindings)).toMatchObject({
+      report: { status: "pass", actionable_count: 0, findings: [] },
+    });
+
+    expect(execute({
+      ...contradictoryPass,
+      quorum: { passed: false, successes: 1, total: 3, threshold: 2 },
+    })).toMatchObject({
+      report: { status: "inconclusive", actionable_count: 1, findings: [finding] },
+    });
+  });
+
   it("keeps the trusted automatic GitHub adapter thin and the privacy advisory non-blocking", () => {
     const workflow = fs.readFileSync(path.resolve(process.cwd(), "..", ".github", "workflows", "pr-review.yml"), "utf8");
     const runner = fs.readFileSync(path.resolve(process.cwd(), "..", "scripts", "run-dag-patterns-live-runner.sh"), "utf8");
@@ -843,6 +926,11 @@ describe("PR Review scenario assets", () => {
     handoffActiveRun("pr-review-runtime", "refine", "finalized", finalReview);
     expect(executor.tick("pr-review-runtime")).toBeGreaterThan(0);
     expect(dispatcher.dispatched.at(-1)?.nodeId).toBe("publish");
+    expect(loadRunSnapshot("pr-review-runtime")?.handoffs).toContainEqual(expect.objectContaining({
+      fromNode: "normalize_review",
+      port: "normalized",
+      content: finalReview,
+    }));
 
     handoffActiveRun("pr-review-runtime", "publish", "published", {
       run_id: "pr-review-runtime",
