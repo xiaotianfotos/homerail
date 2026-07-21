@@ -85,6 +85,16 @@ const LEGACY_DOUBAO_SPEECH_ENDPOINT_IDS = new Set([
   DOUBAO_SPEECH_ENDPOINT_ID,
 ]);
 
+export type CatalogEndpointReferenceStatus = "current" | "migrated" | "missing";
+
+export interface CatalogEndpointReference {
+  provider_id: string;
+  stored_endpoint_id?: string;
+  effective_endpoint_id?: string;
+  status: CatalogEndpointReferenceStatus;
+  endpoint?: ProviderEndpointPreset;
+}
+
 function isDoubaoSpeechBaseUrl(value?: string): boolean {
   return normalizeBaseUrl(value) === "https://openspeech.bytedance.com/api/v3" ||
     normalizeBaseUrl(value) === "https://openspeech.bytedance.com/api/v3/plan";
@@ -100,6 +110,47 @@ export function normalizeCatalogEndpointId(endpointId?: string): string | undefi
   return LEGACY_DOUBAO_SPEECH_ENDPOINT_IDS.has(endpointId ?? "")
     ? DOUBAO_SPEECH_ENDPOINT_ID
     : endpointId;
+}
+
+/**
+ * Resolve only stable ids and explicit aliases. Runtime selection must not
+ * guess a replacement for a retired id from model overlap or endpoint order.
+ */
+export function resolveCatalogEndpointReference(
+  providerId: string,
+  endpointId?: string,
+): CatalogEndpointReference {
+  const canonicalProviderId = canonicalProviderIdForEndpoint(providerId, endpointId);
+  const provider = findCatalogProvider(canonicalProviderId);
+  if (!provider) {
+    return {
+      provider_id: canonicalProviderId,
+      stored_endpoint_id: endpointId,
+      status: "missing",
+    };
+  }
+  if (!endpointId) {
+    return {
+      provider_id: canonicalProviderId,
+      status: "missing",
+    };
+  }
+  const normalizedEndpointId = normalizeCatalogEndpointId(endpointId);
+  const endpoint = provider.endpoints.find((candidate) => candidate.id === normalizedEndpointId);
+  if (!endpoint) {
+    return {
+      provider_id: canonicalProviderId,
+      stored_endpoint_id: endpointId,
+      status: "missing",
+    };
+  }
+  return {
+    provider_id: canonicalProviderId,
+    stored_endpoint_id: endpointId,
+    effective_endpoint_id: endpoint.id,
+    status: endpoint.id === endpointId && canonicalProviderId === providerId ? "current" : "migrated",
+    endpoint,
+  };
 }
 
 export function canonicalProviderIdForEndpoint(
@@ -678,12 +729,10 @@ export function findCatalogProvider(providerId: string): CatalogProviderInfo | u
 }
 
 export function findCatalogEndpoint(providerId: string, endpointId?: string): ProviderEndpointPreset | undefined {
-  const canonicalProviderId = canonicalProviderIdForEndpoint(providerId, endpointId);
-  const provider = findCatalogProvider(canonicalProviderId);
-  if (!provider) return undefined;
-  const normalizedEndpointId = normalizeCatalogEndpointId(endpointId);
-  if (normalizedEndpointId) return provider.endpoints.find((endpoint) => endpoint.id === normalizedEndpointId);
-  return provider.endpoints[0];
+  if (!endpointId) {
+    return findCatalogProvider(canonicalProviderIdForEndpoint(providerId))?.endpoints[0];
+  }
+  return resolveCatalogEndpointReference(providerId, endpointId).endpoint;
 }
 
 function normalizeBaseUrl(value?: string): string {

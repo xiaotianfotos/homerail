@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _clearActiveRuns } from "../src/runtime/active-runs.js";
 import { createServer } from "../src/server/http.js";
 import { _clearAllSessions, createSession as createAgentSession } from "../src/persistence/agent-sessions.js";
-import { closeDb } from "../src/persistence/db.js";
+import { closeDb, getDb } from "../src/persistence/db.js";
 import { createSetting, upsertProvider, _clearAllSettings as clearLlmSettings } from "../src/persistence/llm-settings.js";
 import { _clearNodes } from "../src/node/registry.js";
 import { managerAgentRuntimePlacementForHarness } from "homerail-protocol";
@@ -1283,6 +1283,10 @@ describe("/api/manager/chat", () => {
       is_active: true,
       is_default: true,
     });
+    // Reproduce a pre-catalog legacy row. New built-in reference writes omit
+    // capability snapshots, so an explicit stale column value is required to
+    // exercise the historical corruption guard.
+    getDb().prepare("UPDATE llm_settings SET supports_llm = 1 WHERE id = ?").run(ttsSetting.id);
     const port = await listen(server);
     const response = await fetch(`http://127.0.0.1:${port}/api/manager-agent/config`, {
       method: "PUT",

@@ -916,6 +916,188 @@ describe("custom LLM providers", () => {
     expect(migrated).toContain("endpoint_id");
   });
 
+  it("persists built-in settings as lean catalog references", () => {
+    const setting = createSetting({
+      provider_id: "aliyun",
+      endpoint_id: "aliyun_dashscope_cn_token_plan",
+      model_name: "qwen3.8-max-preview",
+      api_key: "sk-sp-code-authoritative",
+      is_active: true,
+      is_default: true,
+    });
+
+    const stored = getDb().prepare(`
+      SELECT endpoint_id, plan_type, protocol, auth_type, key_hint, base_url,
+             chat_completions_base_url, responses_base_url, anthropic_base_url,
+             supports_llm, supports_image_input, data
+      FROM llm_settings WHERE id = ?
+    `).get(setting.id) as Record<string, unknown>;
+    expect(stored).toMatchObject({
+      endpoint_id: "aliyun_dashscope_cn_token_plan",
+      plan_type: null,
+      protocol: null,
+      auth_type: null,
+      key_hint: null,
+      base_url: null,
+      chat_completions_base_url: null,
+      responses_base_url: null,
+      anthropic_base_url: null,
+      supports_llm: null,
+      supports_image_input: null,
+    });
+    const storedData = JSON.parse(String(stored.data)) as Record<string, unknown>;
+    expect(storedData.storage_kind).toBe("builtin_ref_v1");
+    expect(storedData).not.toHaveProperty("base_url");
+    expect(storedData).not.toHaveProperty("protocol");
+    expect(storedData).not.toHaveProperty("auth_type");
+
+    expect(getSetting(setting.id)).toMatchObject({
+      endpoint_id: "aliyun_dashscope_cn_token_plan",
+      preset_source: "builtin",
+      preset_status: "current",
+      base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      anthropic_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      protocol: "openai_compatible",
+      auth_type: "bearer",
+      supports_llm: true,
+      supports_image_input: true,
+    });
+  });
+
+  it("keeps custom endpoint configuration database-authoritative", () => {
+    upsertProvider({
+      id: "private-gateway",
+      name: "Private gateway",
+      default_model: "private-model",
+      base_url: "https://gateway.example/v1",
+      chat_completions_base_url: "https://gateway.example/v1",
+      anthropic_base_url: "https://gateway.example/anthropic",
+      supports_llm: true,
+      supports_image_input: true,
+    });
+    const setting = createSetting({
+      provider_id: "private-gateway",
+      endpoint_id: "private-gateway_custom",
+      model_name: "private-model",
+      api_key: "private-key",
+      protocol: "custom",
+      auth_type: "bearer",
+      base_url: "https://override.example/v1",
+      chat_completions_base_url: "https://override.example/v1",
+      anthropic_base_url: "https://override.example/anthropic",
+      supports_llm: true,
+      supports_image_input: true,
+    });
+
+    const stored = getDb().prepare(`
+      SELECT base_url, chat_completions_base_url, anthropic_base_url, protocol,
+             auth_type, supports_llm, supports_image_input, data
+      FROM llm_settings WHERE id = ?
+    `).get(setting.id) as Record<string, unknown>;
+    expect(stored).toMatchObject({
+      base_url: "https://override.example/v1",
+      chat_completions_base_url: "https://override.example/v1",
+      anthropic_base_url: "https://override.example/anthropic",
+      protocol: "custom",
+      auth_type: "bearer",
+      supports_llm: 1,
+      supports_image_input: 1,
+    });
+    expect(JSON.parse(String(stored.data))).toMatchObject({ storage_kind: "custom_v1" });
+    expect(getSetting(setting.id)).toMatchObject({
+      preset_source: "custom",
+      preset_status: "custom",
+      base_url: "https://override.example/v1",
+    });
+  });
+
+  it("keeps an explicit custom transport database-authoritative when it reuses a built-in model family", () => {
+    const setting = createSetting({
+      provider_id: "glm",
+      endpoint_id: "glm_custom",
+      endpoint_name: "Private GLM gateway",
+      model_name: "glm-5.2",
+      api_key: "private-glm-key",
+      plan_type: "custom",
+      protocol: "custom",
+      base_url: "https://glm-gateway.example/v1",
+      chat_completions_base_url: "https://glm-gateway.example/v1",
+      supports_llm: true,
+    });
+
+    expect(setting).toMatchObject({
+      endpoint_id: "glm_custom",
+      preset_source: "custom",
+      preset_status: "custom",
+      base_url: "https://glm-gateway.example/v1",
+    });
+    expect(getSetting(setting.id)).toMatchObject({
+      endpoint_id: "glm_custom",
+      preset_source: "custom",
+      preset_status: "custom",
+      base_url: "https://glm-gateway.example/v1",
+      chat_completions_base_url: "https://glm-gateway.example/v1",
+    });
+    const persisted = getDb().prepare(`
+      SELECT base_url, chat_completions_base_url, data
+      FROM llm_settings WHERE id = ?
+    `).get(setting.id) as Record<string, unknown>;
+    expect(persisted).toMatchObject({
+      base_url: "https://glm-gateway.example/v1",
+      chat_completions_base_url: "https://glm-gateway.example/v1",
+    });
+    expect(JSON.parse(String(persisted.data))).toMatchObject({ storage_kind: "custom_v1" });
+  });
+
+  it("uses explicit endpoint aliases and reports their migration", () => {
+    const setting = createSetting({
+      provider_id: "volcengine",
+      endpoint_id: "volcengine_ark_voice_api",
+      model_name: "doubao-seed-tts-2.0",
+      api_key: "voice-key",
+      tts_voice: "zh_female_vv_jupiter_bigtts",
+      tts_format: "mp3",
+      tts_sample_rate: 24_000,
+      supports_llm: false,
+      supports_tts: true,
+    });
+
+    expect(setting).toMatchObject({
+      endpoint_id: "volcengine_openspeech_api",
+      stored_endpoint_id: "volcengine_ark_voice_api",
+      effective_endpoint_id: "volcengine_openspeech_api",
+      preset_source: "builtin",
+      preset_status: "migrated",
+      preset_diagnostic: {
+        code: "builtin_endpoint_migrated",
+      },
+      tts_voice: "zh_female_vv_jupiter_bigtts",
+      tts_format: "mp3",
+      tts_sample_rate: 24_000,
+    });
+    const persisted = getDb().prepare(`
+      SELECT endpoint_id, resource_id, tts_http_url, tts_voice, tts_format, tts_sample_rate
+      FROM llm_settings WHERE id = ?
+    `).get(setting.id);
+    expect(persisted).toEqual({
+      endpoint_id: "volcengine_openspeech_api",
+      resource_id: null,
+      tts_http_url: null,
+      tts_voice: "zh_female_vv_jupiter_bigtts",
+      tts_format: "mp3",
+      tts_sample_rate: 24_000,
+    });
+  });
+
+  it("rejects unknown built-in endpoint ids on create", () => {
+    expect(() => createSetting({
+      provider_id: "aliyun",
+      endpoint_id: "aliyun_retired_plan",
+      model_name: "qwen3.8-max-preview",
+      api_key: "sk-sp-invalid-endpoint",
+    })).toThrow("unknown or retired");
+  });
+
   it("reconciles stale built-in endpoint snapshots without asking users to edit their database", () => {
     const setting = createSetting({
       provider_id: "aliyun",
@@ -942,6 +1124,9 @@ describe("custom LLM providers", () => {
       "https://dashscope.aliyuncs.com/api/v2/apps/claude-code-proxy",
       setting.id,
     );
+    const encryptedBefore = getDb().prepare(`
+      SELECT api_key_encrypted FROM llm_settings WHERE id = ?
+    `).get(setting.id) as { api_key_encrypted: string };
 
     const reconciled = listSettings().find((candidate) => candidate.id === setting.id);
 
@@ -953,6 +1138,10 @@ describe("custom LLM providers", () => {
       chat_completions_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
       responses_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
       anthropic_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      preset_source: "builtin",
+      preset_status: "migrated",
+      stored_endpoint_id: "aliyun_dashscope_cn_api",
+      effective_endpoint_id: "aliyun_dashscope_cn_token_plan",
     });
     expect(resolveClaudeSdkBaseUrlForSetting(reconciled!)).toBe(
       "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
@@ -960,18 +1149,19 @@ describe("custom LLM providers", () => {
     expect(resolveClaudeSdkAuthModeForSetting(reconciled!)).toBe("auth_token");
 
     const persisted = getDb().prepare(`
-      SELECT endpoint_id, base_url, anthropic_base_url
+      SELECT endpoint_id, base_url, anthropic_base_url, api_key_encrypted
       FROM llm_settings
       WHERE id = ?
-    `).get(setting.id);
+    `).get(setting.id) as Record<string, unknown>;
     expect(persisted).toEqual({
-      endpoint_id: "aliyun_dashscope_cn_token_plan",
-      base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-      anthropic_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      endpoint_id: "aliyun_dashscope_cn_api",
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      anthropic_base_url: "https://dashscope.aliyuncs.com/api/v2/apps/claude-code-proxy",
+      api_key_encrypted: encryptedBefore.api_key_encrypted,
     });
   });
 
-  it("recovers a removed built-in endpoint id from unambiguous model availability", () => {
+  it("diagnoses a removed built-in endpoint instead of guessing from model availability", async () => {
     const setting = createSetting({
       provider_id: "aliyun",
       endpoint_id: "aliyun_dashscope_cn_token_plan",
@@ -997,13 +1187,37 @@ describe("custom LLM providers", () => {
     const reconciled = listSettings().find((candidate) => candidate.id === setting.id);
 
     expect(reconciled).toMatchObject({
-      endpoint_id: "aliyun_dashscope_cn_token_plan",
-      plan_type: "token_plan",
-      anthropic_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      endpoint_id: "aliyun_retired_token_plan",
+      plan_type: "custom",
+      base_url: "",
+      anthropic_base_url: "",
+      tts_http_url: "",
+      tts_realtime_url: "",
+      asr_realtime_url: "",
+      preset_source: "builtin",
+      preset_status: "missing",
+      preset_diagnostic: {
+        code: "builtin_endpoint_missing",
+        stored_endpoint_id: "aliyun_retired_token_plan",
+      },
     });
+    expect(findActiveSetting("aliyun", "qwen3.8-max-preview")).toBeUndefined();
+
+    const port = await listen(server);
+    const response = await fetch(`http://127.0.0.1:${port}/api/llm-settings/${setting.id}`);
+    const body = await response.json() as { data: Record<string, unknown> };
+    expect(body.data).toMatchObject({
+      preset_source: "builtin",
+      preset_status: "missing",
+      stored_endpoint_id: "aliyun_retired_token_plan",
+      preset_diagnostic: {
+        code: "builtin_endpoint_missing",
+      },
+    });
+    expect(body.data.api_key).not.toBe("legacy-token-plan-key-without-prefix");
   });
 
-  it("canonicalizes every model with the endpoint selected during legacy recovery", () => {
+  it("does not canonicalize models through an unknown endpoint guess", () => {
     const setting = createSetting({
       provider_id: "kimi_cn",
       endpoint_id: "kimi_coding_plan",
@@ -1029,9 +1243,13 @@ describe("custom LLM providers", () => {
     const reconciled = listSettings().find((candidate) => candidate.id === setting.id);
 
     expect(reconciled).toMatchObject({
-      endpoint_id: "kimi_coding_plan",
+      endpoint_id: "kimi_retired_coding_plan",
       model_name: "kimi-for-coding",
-      models: ["kimi-for-coding", "kimi-for-coding-highspeed"],
+      models: ["kimi-k2.7-code", "kimi-for-coding-highspeed"],
+      preset_status: "missing",
+      preset_diagnostic: {
+        code: "builtin_endpoint_missing",
+      },
     });
   });
 

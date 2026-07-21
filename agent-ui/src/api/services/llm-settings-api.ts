@@ -23,6 +23,16 @@ export interface LLMSetting {
   provider_base_url?: string
   endpoint_id?: string
   endpoint_name?: string
+  preset_source?: 'builtin' | 'custom'
+  preset_status?: 'current' | 'migrated' | 'missing' | 'custom'
+  stored_endpoint_id?: string
+  effective_endpoint_id?: string
+  preset_diagnostic?: {
+    code: 'builtin_endpoint_migrated' | 'builtin_endpoint_missing'
+    message: string
+    stored_endpoint_id?: string
+    effective_endpoint_id?: string
+  }
   plan_type: 'api_billing' | 'token_plan' | 'coding_plan' | 'agent_plan' | 'subscription' | 'custom'
   protocol:
     | 'openai_compatible'

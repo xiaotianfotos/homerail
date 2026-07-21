@@ -16,7 +16,7 @@ import {
   findCatalogEndpoint,
   findEndpointModel,
   inferCatalogEndpoint,
-  listCatalogProviders,
+  resolveCatalogEndpointReference,
   type LLMAuthType,
   type LLMPlanType,
   type LLMProtocol,
@@ -136,9 +136,37 @@ export interface LLMSetting extends Required<ModelCapabilities> {
   is_default: boolean;
   created_at: string;
   updated_at: string;
+  preset_source: "builtin" | "custom";
+  preset_status: "current" | "migrated" | "missing" | "custom";
+  stored_endpoint_id?: string;
+  effective_endpoint_id?: string;
+  preset_diagnostic?: {
+    code: "builtin_endpoint_migrated" | "builtin_endpoint_missing";
+    message: string;
+    stored_endpoint_id?: string;
+    effective_endpoint_id?: string;
+  };
 }
 
-interface StoredLLMSetting extends Omit<LLMSetting, "api_key"> {
+export interface StoredLLMSetting extends Partial<Omit<LLMSetting,
+  "id" | "provider_id" | "model_name" | "api_key" | "is_active" | "is_default" | "created_at" | "updated_at" |
+  "supports_llm" | "supports_asr" | "supports_tts" | "supports_audio_input" | "supports_image_input" |
+  "supports_video_input" | "preset_source" | "preset_status"
+>> {
+  storage_kind: "builtin_ref_v1" | "custom_v1";
+  id: string;
+  provider_id: string;
+  model_name: string;
+  is_active: boolean;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+  supports_llm?: boolean;
+  supports_asr?: boolean;
+  supports_tts?: boolean;
+  supports_audio_input?: boolean;
+  supports_image_input?: boolean;
+  supports_video_input?: boolean;
   api_key_encrypted?: EncryptedSecret;
   api_key?: string;
   secret_storage?: "manager_encrypted" | "legacy_plaintext";
@@ -203,40 +231,144 @@ function _normalizeEndpointFor(providerId: string, endpointId?: string, baseUrl?
   return (endpointId ? findCatalogEndpoint(providerId, endpointId) : undefined) ?? inferCatalogEndpoint(providerId, baseUrl);
 }
 
+interface StoredEndpointResolution {
+  endpoint?: ProviderEndpointPreset;
+  source: "builtin" | "custom";
+  status: "current" | "migrated" | "missing" | "custom";
+  storedEndpointId?: string;
+  diagnostic?: LLMSetting["preset_diagnostic"];
+}
+
+function _isExplicitCustomEndpointId(providerId: string, endpointId?: string): boolean {
+  return endpointId === `${providerId}_custom`;
+}
+
+const LEGACY_MISSING_ENDPOINT_MIGRATIONS: Record<string, string> = {
+  // Settings created before endpoint ids were introduced used the MiMo Token
+  // Plan provider default. Keep that historical contract explicit.
+  xiaomi: "xiaomi_mimo_token_plan",
+};
+
 /**
- * Repair legacy built-in settings whose persisted endpoint snapshot disagrees
- * with the credential that was actually configured. Older onboarding builds
- * could save a Token Plan key under the generic API endpoint id. Prefer an
- * unambiguous longest key-prefix match; otherwise retain a valid explicit
- * endpoint id. Model availability is only a recovery hint when that id no
- * longer exists, so newly released models do not get moved unexpectedly.
+ * Historical data repair rules are deliberately explicit. In particular, do
+ * not choose a replacement endpoint merely because a model currently happens
+ * to occur in only one catalog entry.
  */
-function _normalizeEndpointForStoredCredential(
+function _resolveEndpointForStoredCredential(
   providerId: string,
   endpointId: string | undefined,
   baseUrl: string | undefined,
-  modelName: string,
   apiKey: string,
-): ProviderEndpointPreset | undefined {
+): StoredEndpointResolution {
   const provider = findCatalogProvider(providerId);
-  if (provider) {
-    const prefixMatches = provider.endpoints
-      .filter((candidate) => candidate.key_prefix_hint && apiKey.startsWith(candidate.key_prefix_hint))
-      .sort((left, right) => (right.key_prefix_hint?.length ?? 0) - (left.key_prefix_hint?.length ?? 0));
-    if (prefixMatches.length > 0) {
-      const longestLength = prefixMatches[0]?.key_prefix_hint?.length ?? 0;
-      if (prefixMatches.filter((candidate) => candidate.key_prefix_hint?.length === longestLength).length === 1) {
-        return prefixMatches[0];
-      }
-    }
-
-    const storedEndpoint = endpointId ? findCatalogEndpoint(providerId, endpointId) : undefined;
-    if (storedEndpoint) return storedEndpoint;
-
-    const modelMatches = provider.endpoints.filter((candidate) => Boolean(findEndpointModel(candidate, modelName)));
-    if (modelMatches.length === 1) return modelMatches[0];
+  if (!provider) {
+    return {
+      endpoint: _normalizeEndpointFor(providerId, endpointId, baseUrl),
+      source: "custom",
+      status: "custom",
+      storedEndpointId: endpointId,
+    };
   }
-  return _normalizeEndpointFor(providerId, endpointId, baseUrl);
+
+  // A custom transport may intentionally reuse a built-in provider's model
+  // family. Its explicit `<provider>_custom` id keeps that endpoint and its
+  // capabilities database-authoritative instead of treating it as a retired
+  // catalog preset.
+  if (_isExplicitCustomEndpointId(providerId, endpointId)) {
+    return {
+      source: "custom",
+      status: "custom",
+      storedEndpointId: endpointId,
+    };
+  }
+
+  // #76/#82 production repair: affected onboarding builds stored a valid API
+  // endpoint id next to an unmistakable Token Plan credential. This is a
+  // bounded data migration, not a general key-prefix router.
+  if (
+    providerId === "aliyun" &&
+    endpointId === "aliyun_dashscope_cn_api" &&
+    apiKey.startsWith("sk-sp-")
+  ) {
+    const endpoint = findCatalogEndpoint(providerId, "aliyun_dashscope_cn_token_plan");
+    return {
+      endpoint,
+      source: "builtin",
+      status: "migrated",
+      storedEndpointId: endpointId,
+      diagnostic: {
+        code: "builtin_endpoint_migrated",
+        message: "Migrated legacy Aliyun Token Plan setting to aliyun_dashscope_cn_token_plan.",
+        stored_endpoint_id: endpointId,
+        effective_endpoint_id: endpoint?.id,
+      },
+    };
+  }
+
+  if (endpointId) {
+    const reference = resolveCatalogEndpointReference(providerId, endpointId);
+    if (reference.endpoint) {
+      return {
+        endpoint: reference.endpoint,
+        source: "builtin",
+        status: reference.status,
+        storedEndpointId: endpointId,
+        diagnostic: reference.status === "migrated"
+          ? {
+              code: "builtin_endpoint_migrated",
+              message: `Migrated built-in endpoint ${endpointId} to ${reference.endpoint.id}.`,
+              stored_endpoint_id: endpointId,
+              effective_endpoint_id: reference.endpoint.id,
+            }
+          : undefined,
+      };
+    }
+    return {
+      source: "builtin",
+      status: "missing",
+      storedEndpointId: endpointId,
+      diagnostic: {
+        code: "builtin_endpoint_missing",
+        message: `Built-in endpoint ${providerId}/${endpointId} is unknown or retired; choose a current endpoint before running this setting.`,
+        stored_endpoint_id: endpointId,
+      },
+    };
+  }
+
+  const explicitLegacyEndpointId = LEGACY_MISSING_ENDPOINT_MIGRATIONS[providerId];
+  const exactUrlEndpoint = baseUrl ? inferCatalogEndpoint(providerId, baseUrl) : undefined;
+  const endpoint = explicitLegacyEndpointId
+    ? findCatalogEndpoint(providerId, explicitLegacyEndpointId)
+    : exactUrlEndpoint && [
+        exactUrlEndpoint.base_url,
+        exactUrlEndpoint.chat_completions_base_url,
+        exactUrlEndpoint.responses_base_url,
+        exactUrlEndpoint.anthropic_base_url,
+      ].some((candidate) => candidate?.replace(/\/+$/, "") === baseUrl?.replace(/\/+$/, ""))
+      ? exactUrlEndpoint
+      : provider.endpoints.length === 1
+        ? provider.endpoints[0]
+        : undefined;
+  if (endpoint) {
+    return {
+      endpoint,
+      source: "builtin",
+      status: "migrated",
+      diagnostic: {
+        code: "builtin_endpoint_migrated",
+        message: `Migrated legacy ${providerId} setting without an endpoint id to ${endpoint.id}.`,
+        effective_endpoint_id: endpoint.id,
+      },
+    };
+  }
+  return {
+    source: "builtin",
+    status: "missing",
+    diagnostic: {
+      code: "builtin_endpoint_missing",
+      message: `Legacy built-in setting for ${providerId} has no unambiguous endpoint id; choose a current endpoint before running it.`,
+    },
+  };
 }
 
 function _canonicalProviderId(
@@ -685,71 +817,70 @@ function _migrateLegacyCustomProviders(): void {
   }
 }
 
-function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMigration: boolean } {
+function _resolveEffectiveSetting(raw: unknown): { setting?: LLMSetting; needsSecretMigration: boolean } {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return { needsMigration: false };
+    return { needsSecretMigration: false };
   }
   const rec = raw as Record<string, unknown>;
-  if (typeof rec.id !== "string") return { needsMigration: false };
-  if (typeof rec.provider_id !== "string") return { needsMigration: false };
-  if (typeof rec.model_name !== "string") return { needsMigration: false };
+  if (typeof rec.id !== "string") return { needsSecretMigration: false };
+  if (typeof rec.provider_id !== "string") return { needsSecretMigration: false };
+  if (typeof rec.model_name !== "string") return { needsSecretMigration: false };
 
   let apiKey = "";
-  let needsMigration = false;
+  let needsSecretMigration = false;
   if (isEncryptedSecret(rec.api_key_encrypted)) {
     apiKey = decryptSecret(rec.api_key_encrypted);
   } else if (typeof rec.api_key === "string") {
     apiKey = rec.api_key;
-    needsMigration = true;
+    needsSecretMigration = true;
   }
   const storedEndpointId = _stringField(rec, "endpoint_id");
   const storedBaseUrl = _stringField(rec, "base_url");
   const providerId = _canonicalProviderId(rec.provider_id, storedEndpointId, storedBaseUrl, rec.model_name);
   const provider = getProvider(providerId) ?? getProvider(rec.provider_id);
-  const endpoint = _normalizeEndpointForStoredCredential(
+  const endpointResolution = _resolveEndpointForStoredCredential(
     providerId,
     storedEndpointId,
     storedBaseUrl ?? provider?.base_url,
-    rec.model_name,
     apiKey,
   );
+  const endpoint = endpointResolution.endpoint;
+  const missingBuiltinPreset = endpointResolution.status === "missing";
   const resolvedEndpointId = endpoint?.id ?? storedEndpointId;
   const modelName = canonicalModelNameForEndpoint(providerId, resolvedEndpointId, rec.model_name);
   const modelPreset = findEndpointModel(endpoint, modelName);
-  const lockedEndpoint = _isLockedCatalogEndpoint(providerId, endpoint);
+  const builtinPreset = endpointResolution.source === "builtin";
+  const lockedEndpoint = builtinPreset && _isLockedCatalogEndpoint(providerId, endpoint);
   const endpointId = lockedEndpoint
     ? endpoint?.id ?? storedEndpointId ?? "custom"
     : storedEndpointId ?? endpoint?.id ?? "custom";
-  const protocol = lockedEndpoint && endpoint?.protocol
+  const protocol = endpointResolution.status === "missing"
+    ? "custom"
+    : lockedEndpoint && endpoint?.protocol
     ? endpoint.protocol
     : _normalizeProtocol(rec.protocol, endpoint?.protocol ?? "custom");
   const officialBaseUrl = _officialBaseUrlFor(providerId, endpoint, protocol);
-  const inferredBaseUrl = officialBaseUrl ?? (storedBaseUrl
+  const inferredBaseUrl = endpointResolution.status === "missing" ? "" : officialBaseUrl ?? (storedBaseUrl
     ? storedBaseUrl
     : baseUrlForProtocol(endpoint, protocol) || provider?.base_url || undefined);
   const storedChatBaseUrl = typeof rec.chat_completions_base_url === "string" ? rec.chat_completions_base_url : undefined;
   const storedResponsesBaseUrl = typeof rec.responses_base_url === "string" ? rec.responses_base_url : undefined;
   const storedAnthropicBaseUrl = typeof rec.anthropic_base_url === "string" ? rec.anthropic_base_url : undefined;
-  const inferredChatBaseUrl = lockedEndpoint
+  const inferredChatBaseUrl = endpointResolution.status === "missing"
+    ? ""
+    : lockedEndpoint
     ? endpoint?.chat_completions_base_url
     : storedChatBaseUrl ?? endpoint?.chat_completions_base_url ?? provider?.chat_completions_base_url;
-  const inferredResponsesBaseUrl = lockedEndpoint
+  const inferredResponsesBaseUrl = endpointResolution.status === "missing"
+    ? ""
+    : lockedEndpoint
     ? endpoint?.responses_base_url
     : storedResponsesBaseUrl ?? endpoint?.responses_base_url ?? provider?.responses_base_url;
-  const inferredAnthropicBaseUrl = lockedEndpoint
+  const inferredAnthropicBaseUrl = endpointResolution.status === "missing"
+    ? ""
+    : lockedEndpoint
     ? endpoint?.anthropic_base_url
     : storedAnthropicBaseUrl ?? endpoint?.anthropic_base_url ?? provider?.anthropic_base_url;
-  needsMigration = needsMigration || rec.provider_id !== providerId || rec.endpoint_id !== endpointId || rec.model_name !== modelName || typeof rec.plan_type !== "string" ||
-    typeof rec.protocol !== "string" || typeof rec.display_name !== "string" ||
-    (lockedEndpoint && _stringField(rec, "endpoint_name") !== endpoint?.name) ||
-    (lockedEndpoint && _normalizeAuthType(rec.auth_type) !== endpoint?.auth_type) ||
-    (lockedEndpoint && _stringField(rec, "key_hint") !== endpoint?.key_hint) ||
-    (lockedEndpoint && (storedBaseUrl || undefined) !== officialBaseUrl) ||
-    (lockedEndpoint && (storedChatBaseUrl || undefined) !== inferredChatBaseUrl) ||
-    (lockedEndpoint && (storedResponsesBaseUrl || undefined) !== inferredResponsesBaseUrl) ||
-    (lockedEndpoint && (storedAnthropicBaseUrl || undefined) !== inferredAnthropicBaseUrl) ||
-    (lockedEndpoint && endpoint?.plan_type !== undefined && rec.plan_type !== endpoint.plan_type) ||
-    (lockedEndpoint && endpoint?.protocol !== undefined && rec.protocol !== endpoint.protocol);
 
   // models 向后兼容：旧 setting 无 models 字段时，从 model_name 派生 [model_name]
   const models = Array.isArray(rec.models) && rec.models.every((m) => typeof m === "string")
@@ -764,35 +895,57 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
     api_key: apiKey,
     display_name: _stringField(rec, "display_name") ?? _stringField(rec, "alias") ?? rec.model_name,
     endpoint_id: endpointId,
-    endpoint_name: lockedEndpoint ? endpoint?.name : _stringField(rec, "endpoint_name") ?? endpoint?.name,
-    plan_type: lockedEndpoint && endpoint?.plan_type
+    endpoint_name: endpointResolution.status === "missing"
+      ? _stringField(rec, "endpoint_name")
+      : lockedEndpoint ? endpoint?.name : _stringField(rec, "endpoint_name") ?? endpoint?.name,
+    plan_type: endpointResolution.status === "missing"
+      ? "custom"
+      : lockedEndpoint && endpoint?.plan_type
       ? endpoint.plan_type
       : _normalizePlanType(rec.plan_type, endpoint?.plan_type ?? "custom"),
     protocol,
-    auth_type: lockedEndpoint ? endpoint?.auth_type : _normalizeAuthType(rec.auth_type, endpoint?.auth_type),
-    key_hint: lockedEndpoint ? endpoint?.key_hint : _stringField(rec, "key_hint") ?? endpoint?.key_hint,
+    auth_type: endpointResolution.status === "missing"
+      ? undefined
+      : lockedEndpoint ? endpoint?.auth_type : _normalizeAuthType(rec.auth_type, endpoint?.auth_type),
+    key_hint: endpointResolution.status === "missing"
+      ? undefined
+      : lockedEndpoint ? endpoint?.key_hint : _stringField(rec, "key_hint") ?? endpoint?.key_hint,
     base_url: inferredBaseUrl,
     chat_completions_base_url: inferredChatBaseUrl,
     responses_base_url: inferredResponsesBaseUrl,
     anthropic_base_url: inferredAnthropicBaseUrl,
-    resource_id: lockedEndpoint
+    resource_id: missingBuiltinPreset
+      ? undefined
+      : lockedEndpoint
       ? modelPreset?.resource_id ?? endpoint?.resource_id
       : _stringField(rec, "resource_id") ?? modelPreset?.resource_id ?? endpoint?.resource_id,
-    voice_adapter: lockedEndpoint ? endpoint?.voice_adapter : _stringField(rec, "voice_adapter") ?? endpoint?.voice_adapter,
-    tts_http_url: lockedEndpoint ? endpoint?.tts_http_url : _stringField(rec, "tts_http_url") ?? endpoint?.tts_http_url,
-    tts_realtime_url: lockedEndpoint ? endpoint?.tts_realtime_url : _stringField(rec, "tts_realtime_url") ?? endpoint?.tts_realtime_url,
-    tts_bidirectional_url: lockedEndpoint
+    voice_adapter: missingBuiltinPreset
+      ? undefined
+      : lockedEndpoint ? endpoint?.voice_adapter : _stringField(rec, "voice_adapter") ?? endpoint?.voice_adapter,
+    tts_http_url: missingBuiltinPreset
+      ? ""
+      : lockedEndpoint ? endpoint?.tts_http_url : _stringField(rec, "tts_http_url") ?? endpoint?.tts_http_url,
+    tts_realtime_url: missingBuiltinPreset
+      ? ""
+      : lockedEndpoint ? endpoint?.tts_realtime_url : _stringField(rec, "tts_realtime_url") ?? endpoint?.tts_realtime_url,
+    tts_bidirectional_url: missingBuiltinPreset
+      ? ""
+      : lockedEndpoint
       ? endpoint?.tts_bidirectional_url
       : _stringField(rec, "tts_bidirectional_url") ?? endpoint?.tts_bidirectional_url,
-    asr_realtime_url: lockedEndpoint ? endpoint?.asr_realtime_url : _stringField(rec, "asr_realtime_url") ?? endpoint?.asr_realtime_url,
-    asr_async_url: lockedEndpoint ? endpoint?.asr_async_url : _stringField(rec, "asr_async_url") ?? endpoint?.asr_async_url,
-    tts_voice: lockedEndpoint ? endpoint?.tts_voice : _stringField(rec, "tts_voice") ?? endpoint?.tts_voice,
-    tts_format: lockedEndpoint ? endpoint?.tts_format : _stringField(rec, "tts_format") ?? endpoint?.tts_format,
-    tts_sample_rate: lockedEndpoint
-      ? endpoint?.tts_sample_rate
-      : typeof rec.tts_sample_rate === "number"
-        ? rec.tts_sample_rate
-        : endpoint?.tts_sample_rate,
+    asr_realtime_url: missingBuiltinPreset
+      ? ""
+      : lockedEndpoint ? endpoint?.asr_realtime_url : _stringField(rec, "asr_realtime_url") ?? endpoint?.asr_realtime_url,
+    asr_async_url: missingBuiltinPreset
+      ? ""
+      : lockedEndpoint ? endpoint?.asr_async_url : _stringField(rec, "asr_async_url") ?? endpoint?.asr_async_url,
+    // Voice choice and output format are user-owned options even when the
+    // transport endpoint itself is a locked built-in preset.
+    tts_voice: _stringField(rec, "tts_voice") ?? endpoint?.tts_voice,
+    tts_format: _stringField(rec, "tts_format") ?? endpoint?.tts_format,
+    tts_sample_rate: typeof rec.tts_sample_rate === "number"
+      ? rec.tts_sample_rate
+      : endpoint?.tts_sample_rate,
     is_active: typeof rec.is_active === "boolean" ? rec.is_active : true,
     is_default: typeof rec.is_default === "boolean" ? rec.is_default : false,
     supports_llm: _capability(rec.supports_llm, modelPreset?.supports_llm, endpoint?.supports_llm, provider?.supports_llm, true),
@@ -821,9 +974,14 @@ function _normalizeStoredSetting(raw: unknown): { setting?: LLMSetting; needsMig
     ),
     created_at: typeof rec.created_at === "string" ? rec.created_at : new Date().toISOString(),
     updated_at: typeof rec.updated_at === "string" ? rec.updated_at : new Date().toISOString(),
+    preset_source: endpointResolution.source,
+    preset_status: endpointResolution.status,
+    stored_endpoint_id: endpointResolution.storedEndpointId,
+    effective_endpoint_id: endpoint?.id,
+    preset_diagnostic: endpointResolution.diagnostic,
   };
 
-  return { setting, needsMigration };
+  return { setting, needsSecretMigration };
 }
 
 function _encryptedSecretFromColumn(value: unknown): EncryptedSecret | undefined {
@@ -900,38 +1058,80 @@ function _readSettings(): LLMSetting[] {
   const rows = getDb()
     .prepare("SELECT * FROM llm_settings ORDER BY updated_at DESC, id")
     .all() as Record<string, unknown>[];
-  let needsMigration = false;
+  const secretMigrations: LLMSetting[] = [];
   const settings = rows
     .map((row) => {
       try {
-        const normalized = _normalizeStoredSetting(_settingRawFromDbRow(row));
-        needsMigration = needsMigration || normalized.needsMigration;
+        const normalized = _resolveEffectiveSetting(_settingRawFromDbRow(row));
+        if (normalized.needsSecretMigration && normalized.setting) {
+          secretMigrations.push(normalized.setting);
+        }
         return normalized.setting;
       } catch {
         return undefined;
       }
     })
     .filter((setting): setting is LLMSetting => setting !== undefined);
-  if (needsMigration) {
-    _writeSettings(settings);
+  // Plaintext-key migration is the only permitted read-side persistence. It
+  // touches only the affected row; catalog reconciliation itself is pure.
+  for (const setting of secretMigrations) {
+    _upsertSetting(setting);
   }
   return settings;
 }
 
-function _writeSettings(settings: LLMSetting[]): void {
-  const stored: StoredLLMSetting[] = settings.map(({ api_key, ...setting }) => {
-    const api_key_encrypted = encryptSecret(api_key);
+function _storedSetting(setting: LLMSetting): StoredLLMSetting {
+  const api_key_encrypted = encryptSecret(setting.api_key);
+  const common = {
+    id: setting.id,
+    provider_id: setting.provider_id,
+    model_name: setting.model_name,
+    models: setting.models ?? [setting.model_name],
+    display_name: setting.display_name,
+    endpoint_id: setting.preset_status === "missing"
+      ? setting.stored_endpoint_id ?? setting.endpoint_id
+      : setting.effective_endpoint_id ?? setting.endpoint_id,
+    tts_voice: setting.tts_voice,
+    tts_format: setting.tts_format,
+    tts_sample_rate: setting.tts_sample_rate,
+    is_active: setting.is_active,
+    is_default: setting.is_default,
+    created_at: setting.created_at,
+    updated_at: setting.updated_at,
+    api_key_encrypted,
+    secret_storage: "manager_encrypted" as const,
+  };
+  if (setting.preset_source === "builtin") {
     return {
-      ...setting,
-      api_key_encrypted,
-      secret_storage: "manager_encrypted",
+      storage_kind: "builtin_ref_v1",
+      ...common,
     };
-  });
+  }
+  const {
+    api_key: _apiKey,
+    preset_source: _presetSource,
+    preset_status: _presetStatus,
+    stored_endpoint_id: _storedEndpointId,
+    effective_endpoint_id: _effectiveEndpointId,
+    preset_diagnostic: _presetDiagnostic,
+    ...effective
+  } = setting;
+  return {
+    storage_kind: "custom_v1",
+    ...effective,
+    ...common,
+  };
+}
+
+function _nullableBool(value: boolean | undefined): number | null {
+  return value === undefined ? null : _boolToInt(value);
+}
+
+function _upsertSetting(setting: LLMSetting): void {
+  const stored = _storedSetting(setting);
   const db = getDb();
-  db.transaction(() => {
-    db.prepare("DELETE FROM llm_settings").run();
-    const stmt = db.prepare(`
-      INSERT INTO llm_settings(
+  db.prepare(`
+    INSERT INTO llm_settings(
         id, provider_id, model_name, endpoint_id, endpoint_name, display_name,
         plan_type, protocol, auth_type, key_hint, base_url,
         chat_completions_base_url, responses_base_url, anthropic_base_url, resource_id,
@@ -940,52 +1140,92 @@ function _writeSettings(settings: LLMSetting[]): void {
         models, supports_llm, supports_asr, supports_tts, supports_audio_input,
         supports_image_input, supports_video_input, is_active, is_default,
         created_at, updated_at, api_key_encrypted, secret_storage, data
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    for (const setting of stored) {
-      stmt.run(
-        setting.id,
-        setting.provider_id,
-        setting.model_name,
-        setting.endpoint_id ?? null,
-        setting.endpoint_name ?? null,
-        setting.display_name ?? null,
-        setting.plan_type,
-        setting.protocol,
-        setting.auth_type ?? null,
-        setting.key_hint ?? null,
-        setting.base_url ?? null,
-        setting.chat_completions_base_url ?? null,
-        setting.responses_base_url ?? null,
-        setting.anthropic_base_url ?? null,
-        setting.resource_id ?? null,
-        setting.voice_adapter ?? null,
-        setting.tts_http_url ?? null,
-        setting.tts_realtime_url ?? null,
-        setting.tts_bidirectional_url ?? null,
-        setting.asr_realtime_url ?? null,
-        setting.asr_async_url ?? null,
-        setting.tts_voice ?? null,
-        setting.tts_format ?? null,
-        setting.tts_sample_rate ?? null,
-        encodeJson(setting.models ?? [setting.model_name]),
-        _boolToInt(setting.supports_llm),
-        _boolToInt(setting.supports_asr),
-        _boolToInt(setting.supports_tts),
-        _boolToInt(setting.supports_audio_input),
-        _boolToInt(setting.supports_image_input),
-        _boolToInt(setting.supports_video_input),
-        _boolToInt(setting.is_active),
-        _boolToInt(setting.is_default),
-        setting.created_at,
-        setting.updated_at,
-        encodeJson(setting.api_key_encrypted),
-        setting.secret_storage ?? "manager_encrypted",
-        encodeJson(setting),
-      );
-    }
-  })();
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      provider_id = excluded.provider_id,
+      model_name = excluded.model_name,
+      endpoint_id = excluded.endpoint_id,
+      endpoint_name = excluded.endpoint_name,
+      display_name = excluded.display_name,
+      plan_type = excluded.plan_type,
+      protocol = excluded.protocol,
+      auth_type = excluded.auth_type,
+      key_hint = excluded.key_hint,
+      base_url = excluded.base_url,
+      chat_completions_base_url = excluded.chat_completions_base_url,
+      responses_base_url = excluded.responses_base_url,
+      anthropic_base_url = excluded.anthropic_base_url,
+      resource_id = excluded.resource_id,
+      voice_adapter = excluded.voice_adapter,
+      tts_http_url = excluded.tts_http_url,
+      tts_realtime_url = excluded.tts_realtime_url,
+      tts_bidirectional_url = excluded.tts_bidirectional_url,
+      asr_realtime_url = excluded.asr_realtime_url,
+      asr_async_url = excluded.asr_async_url,
+      tts_voice = excluded.tts_voice,
+      tts_format = excluded.tts_format,
+      tts_sample_rate = excluded.tts_sample_rate,
+      models = excluded.models,
+      supports_llm = excluded.supports_llm,
+      supports_asr = excluded.supports_asr,
+      supports_tts = excluded.supports_tts,
+      supports_audio_input = excluded.supports_audio_input,
+      supports_image_input = excluded.supports_image_input,
+      supports_video_input = excluded.supports_video_input,
+      is_active = excluded.is_active,
+      is_default = excluded.is_default,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      api_key_encrypted = excluded.api_key_encrypted,
+      secret_storage = excluded.secret_storage,
+      data = excluded.data
+  `).run(
+    stored.id,
+    stored.provider_id,
+    stored.model_name,
+    stored.endpoint_id ?? null,
+    stored.endpoint_name ?? null,
+    stored.display_name ?? null,
+    stored.plan_type ?? null,
+    stored.protocol ?? null,
+    stored.auth_type ?? null,
+    stored.key_hint ?? null,
+    stored.base_url ?? null,
+    stored.chat_completions_base_url ?? null,
+    stored.responses_base_url ?? null,
+    stored.anthropic_base_url ?? null,
+    stored.resource_id ?? null,
+    stored.voice_adapter ?? null,
+    stored.tts_http_url ?? null,
+    stored.tts_realtime_url ?? null,
+    stored.tts_bidirectional_url ?? null,
+    stored.asr_realtime_url ?? null,
+    stored.asr_async_url ?? null,
+    stored.tts_voice ?? null,
+    stored.tts_format ?? null,
+    stored.tts_sample_rate ?? null,
+    encodeJson(stored.models ?? [stored.model_name]),
+    _nullableBool(stored.supports_llm),
+    _nullableBool(stored.supports_asr),
+    _nullableBool(stored.supports_tts),
+    _nullableBool(stored.supports_audio_input),
+    _nullableBool(stored.supports_image_input),
+    _nullableBool(stored.supports_video_input),
+    _boolToInt(stored.is_active),
+    _boolToInt(stored.is_default),
+    stored.created_at,
+    stored.updated_at,
+    encodeJson(stored.api_key_encrypted),
+    stored.secret_storage ?? "manager_encrypted",
+    encodeJson(stored),
+  );
+}
+
+function _writeSettings(settings: LLMSetting[]): void {
+  const transaction = getDb().transaction((values: LLMSetting[]) => {
+    for (const setting of values) _upsertSetting(setting);
+  });
+  transaction(settings);
 }
 
 export function listSettings(): LLMSetting[] {
@@ -1117,7 +1357,7 @@ export function updateProvider(id: string, patch: Partial<Omit<ProviderInput, "i
   const endpoint = _customEndpointForProvider(provider);
   if (endpoint && previousEndpoint) {
     const settings = _readSettings();
-    let changed = false;
+    const changedSettings: LLMSetting[] = [];
     const updatedAt = new Date().toISOString();
     for (const setting of settings) {
       if (setting.provider_id !== id) continue;
@@ -1161,9 +1401,9 @@ export function updateProvider(id: string, patch: Partial<Omit<ProviderInput, "i
       if (!settingChanged) continue;
       Object.assign(setting, nextValues);
       setting.updated_at = updatedAt;
-      changed = true;
+      changedSettings.push(setting);
     }
-    if (changed) _writeSettings(settings);
+    if (changedSettings.length) _writeSettings(changedSettings);
   }
   return provider;
 }
@@ -1200,7 +1440,7 @@ export function findActiveSetting(providerId?: string, modelName?: string): LLMS
   if (!providerId) return undefined;
   const normalizedProviderId = _canonicalProviderId(providerId, undefined, undefined, modelName);
   const candidates = _readSettings().filter(
-    (s) => s.is_active && s.provider_id === normalizedProviderId,
+    (s) => s.is_active && s.preset_status !== "missing" && s.provider_id === normalizedProviderId,
   );
   if (candidates.length === 0) return undefined;
   if (modelName) {
@@ -1232,6 +1472,7 @@ export function findActiveClaudeSdkCompatibleSetting(): LLMSetting | undefined {
   // Manager Agent requires a dedicated LLM runtime. Dirty legacy voice rows can have supports_llm=true.
   const settings = _readSettings().filter((s) => {
     return s.is_active &&
+      s.preset_status !== "missing" &&
       s.supports_llm &&
       !isVoiceServiceSetting(s) &&
       Boolean(resolveClaudeSdkBaseUrlForSetting(s));
@@ -1246,7 +1487,7 @@ export function findActiveClaudeSdkCompatibleSetting(): LLMSetting | undefined {
 
 export function findActiveLlmRuntimeSetting(): LLMSetting | undefined {
   return _readSettings()
-    .filter((s) => s.is_active && s.supports_llm && !isVoiceServiceSetting(s))
+    .filter((s) => s.is_active && s.preset_status !== "missing" && s.supports_llm && !isVoiceServiceSetting(s))
     .sort((a, b) => {
       if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
       return b.updated_at.localeCompare(a.updated_at);
@@ -1322,6 +1563,16 @@ function _resolveSettingMetadata(
   tts_format?: string;
   tts_sample_rate?: number;
 } {
+  if (
+    input.endpoint_id &&
+    findCatalogProvider(input.provider_id) &&
+    !_isExplicitCustomEndpointId(input.provider_id, input.endpoint_id) &&
+    !resolveCatalogEndpointReference(input.provider_id, input.endpoint_id).endpoint
+  ) {
+    throw new Error(
+      `Built-in endpoint ${input.provider_id}/${input.endpoint_id} is unknown or retired; choose a current endpoint.`,
+    );
+  }
   const catalogEndpoint = input.endpoint_id
     ? (provider.endpoints ?? []).find((endpoint) => endpoint.id === input.endpoint_id) ??
       findCatalogEndpoint(input.provider_id, input.endpoint_id)
@@ -1376,11 +1627,9 @@ function _resolveSettingMetadata(
       ? endpoint?.asr_realtime_url
       : input.asr_realtime_url ?? endpoint?.asr_realtime_url ?? existing?.asr_realtime_url,
     asr_async_url: lockedEndpoint ? endpoint?.asr_async_url : input.asr_async_url ?? endpoint?.asr_async_url ?? existing?.asr_async_url,
-    tts_voice: lockedEndpoint ? endpoint?.tts_voice : input.tts_voice ?? endpoint?.tts_voice ?? existing?.tts_voice,
-    tts_format: lockedEndpoint ? endpoint?.tts_format : input.tts_format ?? endpoint?.tts_format ?? existing?.tts_format,
-    tts_sample_rate: lockedEndpoint
-      ? endpoint?.tts_sample_rate
-      : input.tts_sample_rate ?? endpoint?.tts_sample_rate ?? existing?.tts_sample_rate,
+    tts_voice: input.tts_voice ?? existing?.tts_voice ?? endpoint?.tts_voice,
+    tts_format: input.tts_format ?? existing?.tts_format ?? endpoint?.tts_format,
+    tts_sample_rate: input.tts_sample_rate ?? existing?.tts_sample_rate ?? endpoint?.tts_sample_rate,
   };
 }
 
@@ -1401,6 +1650,13 @@ function _buildSetting(
   const displayName = input.display_name?.trim() || input.alias?.trim() ||
     (existing && existing.model_name === input.model_name ? existing.display_name : undefined) ||
     input.model_name;
+  const builtinPreset = Boolean(
+    endpoint && findCatalogProvider(input.provider_id) && _isReadonlyEndpoint(input.provider_id, endpoint.id),
+  );
+  const endpointReference = builtinPreset && input.endpoint_id
+    ? resolveCatalogEndpointReference(input.provider_id, input.endpoint_id)
+    : undefined;
+  const migratedReference = endpointReference?.status === "migrated";
   return {
     id: existing?.id ?? _generateId(),
     provider_id: input.provider_id,
@@ -1442,6 +1698,18 @@ function _buildSetting(
       provider.supports_video_input ?? existing?.supports_video_input ?? false,
     created_at: existing?.created_at ?? now,
     updated_at: now,
+    preset_source: builtinPreset ? "builtin" : "custom",
+    preset_status: builtinPreset ? (migratedReference ? "migrated" : "current") : "custom",
+    stored_endpoint_id: input.endpoint_id ?? endpoint?.id,
+    effective_endpoint_id: endpoint?.id,
+    preset_diagnostic: migratedReference
+      ? {
+          code: "builtin_endpoint_migrated",
+          message: `Migrated built-in endpoint ${input.endpoint_id} to ${endpoint?.id}.`,
+          stored_endpoint_id: input.endpoint_id,
+          effective_endpoint_id: endpoint?.id,
+        }
+      : undefined,
   };
 }
 
@@ -1495,25 +1763,19 @@ export function createSetting(input: LLMSettingInput): LLMSetting {
       (s.endpoint_id ?? "custom") === metadata.endpoint_id,
   );
   if (input.is_default) {
-    for (const setting of settings) {
-      if (setting.provider_id === input.provider_id) {
-        setting.is_default = false;
-      }
-    }
+    getDb().prepare("UPDATE llm_settings SET is_default = 0 WHERE provider_id = ?").run(input.provider_id);
   }
 
   if (existingIdx !== -1) {
     const existing = settings[existingIdx];
     const updated = _buildSetting(provider, input, now, existing);
-    settings[existingIdx] = updated;
-    _writeSettings(settings);
+    _upsertSetting(updated);
     return updated;
   }
 
   const setting = _buildSetting(provider, input, now);
 
-  settings.push(setting);
-  _writeSettings(settings);
+  _upsertSetting(setting);
   return setting;
 }
 
@@ -1560,24 +1822,15 @@ export function updateSetting(id: string, patch: Partial<Omit<LLMSetting, "id" |
   }
   const updated = _buildSetting(provider, mergedInput, new Date().toISOString(), existing);
   if (updated.is_default) {
-    for (const setting of settings) {
-      if (setting.id !== updated.id && setting.provider_id === updated.provider_id) {
-        setting.is_default = false;
-      }
-    }
+    getDb().prepare("UPDATE llm_settings SET is_default = 0 WHERE provider_id = ? AND id <> ?")
+      .run(updated.provider_id, updated.id);
   }
-  settings[idx] = updated;
-  _writeSettings(settings);
+  _upsertSetting(updated);
   return updated;
 }
 
 export function deleteSetting(id: string): boolean {
-  const settings = _readSettings();
-  const idx = settings.findIndex((s) => s.id === id);
-  if (idx === -1) return false;
-  settings.splice(idx, 1);
-  _writeSettings(settings);
-  return true;
+  return getDb().prepare("DELETE FROM llm_settings WHERE id = ?").run(id).changes > 0;
 }
 
 export function maskApiKey(key: string): string {

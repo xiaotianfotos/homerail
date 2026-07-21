@@ -60,6 +60,10 @@ function runtimePlacementForAgentType(agentType: string, surface: AgentRuntimeSu
 }
 
 function assertLlmSetting(setting: LLMSetting, labels: { disabled: string; capability: string }): void {
+  if (setting.preset_status === "missing") {
+    throw new Error(setting.preset_diagnostic?.message ??
+      `Built-in endpoint is unavailable for ${setting.provider_id}/${setting.endpoint_id ?? "unknown"}`);
+  }
   if (!setting.is_active) {
     throw new Error(`${labels.disabled} LLM setting is disabled: ${setting.provider_id}/${setting.model_name}`);
   }
