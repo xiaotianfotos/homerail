@@ -275,8 +275,6 @@
   },
   "gamepad": {
     "generic": "手柄",
-    "hideMonitor": "隐藏手柄按键监视",
-    "showMonitor": "显示手柄按键监视",
     "buttonStatus": "手柄按键状态",
     "monitoring": "按键监视中",
     "connected": "已连接",

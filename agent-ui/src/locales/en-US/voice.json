@@ -275,8 +275,6 @@
   },
   "gamepad": {
     "generic": "Gamepad",
-    "hideMonitor": "Hide gamepad button monitor",
-    "showMonitor": "Show gamepad button monitor",
     "buttonStatus": "Gamepad button status",
     "monitoring": "Monitoring buttons",
     "connected": "Connected",
