@@ -27,6 +27,7 @@ concurrency:
 jobs:
   closeout:
     name: HomeRail PR Closeout
+    if: github.actor == 'xiaotianfotos'
     runs-on: [self-hosted, Linux, X64, homerail-live]
     timeout-minutes: 15
     env:

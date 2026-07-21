@@ -3,8 +3,16 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
     inputs:
       live_patterns:
@@ -35,14 +43,19 @@ jobs:
   core-linux:
     name: Core (Linux, Node ${{ matrix.node-version }})
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      github.actor == 'xiaotianfotos' &&
+      (github.event_name != 'pull_request' ||
+        (github.event.pull_request.user.login == 'xiaotianfotos' &&
+         github.event.pull_request.draft == false)) &&
       (github.event_name != 'workflow_dispatch' || !inputs.live_patterns)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 24]
+        # PRs validate the primary runtime, main validates compatibility, and
+        # a manual non-live run retains the complete compatibility matrix.
+        node-version: ${{ fromJSON(github.event_name == 'pull_request' && '[24]' || github.event_name == 'push' && '[20]' || '[20,24]') }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -73,8 +86,9 @@ jobs:
   core-windows:
     name: Core (Windows, Node 24)
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
-      (github.event_name != 'workflow_dispatch' || !inputs.live_patterns)
+      github.actor == 'xiaotianfotos' &&
+      (github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && !inputs.live_patterns))
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -113,8 +127,11 @@ jobs:
   agent-ui-coverage:
     name: Agent UI coverage
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
-      (github.event_name != 'workflow_dispatch' || !inputs.live_patterns)
+      github.actor == 'xiaotianfotos' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'xiaotianfotos' &&
+        github.event.pull_request.draft == false) ||
+       (github.event_name == 'workflow_dispatch' && !inputs.live_patterns))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -144,8 +161,11 @@ jobs:
   docker-smoke:
     name: Docker smoke
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
-      (github.event_name != 'workflow_dispatch' || !inputs.live_patterns)
+      github.actor == 'xiaotianfotos' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'xiaotianfotos' &&
+        github.event.pull_request.draft == false) ||
+       (github.event_name == 'workflow_dispatch' && !inputs.live_patterns))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
