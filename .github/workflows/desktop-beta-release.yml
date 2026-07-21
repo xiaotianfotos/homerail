@@ -1,0 +1,298 @@
+name: Desktop Beta Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Beta version, for example 0.1.0-beta.1
+        type: string
+        required: true
+      desktop_ref:
+        description: homerail_desktop branch, tag, or commit to build
+        type: string
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-beta-release
+  cancel-in-progress: false
+
+env:
+  HOMERAIL_NODE_VERSION: v24.18.0
+  RELEASE_NODE_VERSION: 24.18.0
+
+jobs:
+  prepare:
+    name: Validate release request
+    if: github.actor == 'xiaotianfotos'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Validate beta version
+        id: release
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            echo "version must look like 0.1.0-beta.1" >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$REQUESTED_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'tag=desktop-v%s\n' "$REQUESTED_VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build signed desktop beta (${{ matrix.label }})
+    needs: prepare
+    environment: desktop-beta-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x64
+            os: windows-latest
+            artifact: desktop-beta-windows-x64
+          - label: macOS arm64
+            os: macos-15
+            artifact: desktop-beta-macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      HOMERAIL_SOURCE_DIR: ${{ github.workspace }}/homerail-source
+    steps:
+      - name: Check out HomeRail runtime source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: homerail-source
+          persist-credentials: false
+
+      - name: Check out private desktop shell
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: xiaotianfotos/homerail_desktop
+          ref: ${{ inputs.desktop_ref }}
+          token: ${{ secrets.HOMERAIL_DESKTOP_READ_TOKEN }}
+          path: desktop
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.RELEASE_NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            homerail-source/homerail_protocol/package-lock.json
+            homerail-source/homerail_plugin_sdk/package-lock.json
+            homerail-source/homerail_manager/package-lock.json
+            homerail-source/homerail_node/package-lock.json
+            homerail-source/homerail_worker/package-lock.json
+            homerail-source/homerail_cli/package-lock.json
+            homerail-source/agent-ui/package-lock.json
+
+      - name: Install locked dependencies
+        run: |
+          npm --prefix desktop ci
+          npm --prefix homerail-source run install:all
+
+      - name: Set package version
+        run: npm --prefix desktop version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Build and sign Windows installer
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: npm run dist -- --win nsis --x64 --publish never --config.forceCodeSigning=true
+
+      - name: Verify Windows package and signature
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm --prefix desktop run verify:package
+          $installers = @(Get-ChildItem -Path desktop/dist-electron -Filter *.exe -File)
+          if ($installers.Count -eq 0) { throw "No Windows installer was produced" }
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
+            if ($null -eq $signature.SignerCertificate) {
+              throw "Missing Authenticode signature: $($installer.Name)"
+            }
+            if ($signature.Status -in @('NotSigned', 'HashMismatch')) {
+              throw "Invalid Authenticode signature on $($installer.Name): $($signature.Status)"
+            }
+            Write-Host "Signed installer: $($installer.Name) ($($signature.Status))"
+          }
+
+      - name: Write Windows checksums
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -Path desktop/dist-electron -File | Where-Object {
+            $_.Name -match '\.(exe|blockmap)$' -or $_.Name -eq 'latest.yml'
+          } | Sort-Object Name)
+          if ($files.Count -eq 0) { throw "No Windows release assets were produced" }
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          [System.IO.File]::WriteAllLines(
+            (Join-Path (Resolve-Path desktop/dist-electron) 'SHA256SUMS-windows.txt'),
+            $lines,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Install Apple notarization key
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/homerail-notarization.p8"
+          umask 077
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | openssl base64 -d -A -out "$key_path"
+          chmod 0600 "$key_path"
+          printf 'APPLE_API_KEY=%s\n' "$key_path" >> "$GITHUB_ENV"
+
+      - name: Build, sign, and notarize macOS app
+        if: runner.os == 'macOS'
+        working-directory: desktop
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: >-
+          npm run dist -- --mac dmg zip --arm64 --publish never
+          --config.forceCodeSigning=true
+          --config.mac.notarize=true
+          --config.mac.entitlements="$GITHUB_WORKSPACE/homerail-source/scripts/desktop-release/entitlements.mac.plist"
+          --config.mac.entitlementsInherit="$GITHUB_WORKSPACE/homerail-source/scripts/desktop-release/entitlements.mac.plist"
+
+      - name: Verify macOS package, signature, and notarization
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix desktop run verify:package
+          app_path="$(find desktop/dist-electron -type d -name HomeRail.app -print -quit)"
+          if [[ -z "$app_path" ]]; then
+            echo "No HomeRail.app was produced" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          xcrun stapler validate "$app_path"
+          spctl --assess --type execute --verbose=2 "$app_path"
+
+      - name: Remove Apple notarization key
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [[ -n "${APPLE_API_KEY:-}" ]]; then
+            rm -f "$APPLE_API_KEY"
+          fi
+
+      - name: Write macOS checksums
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd desktop/dist-electron
+          found=0
+          : > SHA256SUMS-macos.txt
+          while IFS= read -r asset; do
+            shasum -a 256 "$asset" >> SHA256SUMS-macos.txt
+            found=1
+          done < <(find . -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest-mac.yml' \) -print | sort)
+          if [[ $found -eq 0 ]]; then
+            echo "No macOS release assets were produced" >&2
+            exit 1
+          fi
+
+      - name: Upload Windows release assets
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            desktop/dist-electron/*.exe
+            desktop/dist-electron/*.blockmap
+            desktop/dist-electron/latest.yml
+            desktop/dist-electron/SHA256SUMS-windows.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload macOS release assets
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            desktop/dist-electron/*.dmg
+            desktop/dist-electron/*.zip
+            desktop/dist-electron/*.blockmap
+            desktop/dist-electron/latest-mac.yml
+            desktop/dist-electron/SHA256SUMS-macos.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  draft-release:
+    name: Create private-to-collaborators draft release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows assets
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: desktop-beta-windows-x64
+          path: release-assets/windows
+
+      - name: Download macOS assets
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: desktop-beta-macos-arm64
+          path: release-assets/macos
+
+      - name: Validate release asset boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r asset; do
+            case "${asset##*/}" in
+              *.exe|*.dmg|*.zip|*.blockmap|latest.yml|latest-mac.yml|SHA256SUMS-*.txt) ;;
+              *) echo "Unexpected release asset: $asset" >&2; exit 1 ;;
+            esac
+          done < <(find release-assets -type f -print | sort)
+
+      - name: Create draft prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          DESKTOP_REF: ${{ inputs.desktop_ref }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            release-assets/windows/* \
+            release-assets/macos/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "HomeRail Desktop $RELEASE_VERSION" \
+            --notes "Draft beta built from HomeRail $GITHUB_SHA and homerail_desktop $DESKTOP_REF. Install and test both platforms before publishing." \
+            --draft \
+            --prerelease
