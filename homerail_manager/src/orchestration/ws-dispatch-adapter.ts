@@ -610,6 +610,10 @@ export class WsDispatchAdapter implements DAGDispatcher {
       env: {
         ...(this.provisionerOpts?.env ?? {}),
         ...(agentBackend ? { AGENT_BACKEND: agentBackend } : {}),
+        // Worker workspaces are host-backed and survive container cleanup.
+        // Keep high-volume audit/SDK traces there instead of the ephemeral
+        // container home, but outside the model-owned workspace policy.
+        HOMERAIL_AUDIT_DIR: "/workspace/.homerail-runtime/audit",
         MANAGER_WORKER_WS_URL: this.getManagerWorkerWsUrl(workerId),
         HOMERAIL_WORKER_ID: workerId,
       },

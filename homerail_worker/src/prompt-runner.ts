@@ -5,6 +5,7 @@
  */
 
 import {
+  DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
   normalizeManagerAgentRuntimeAgentType,
   validateDagActorSurfaceMediaV1,
   type DagActorCheckpointV1,
@@ -28,6 +29,10 @@ import { createDagTools, createDagToolsState, deliverInbox } from "./dag-tools/i
 import type { DagToolsState } from "./dag-tools/index.js";
 import { createAuditWriters } from "./audit/index.js";
 import type { AuditWriters } from "./audit/index.js";
+import {
+  createClaudeSdkTraceWriter,
+  type ClaudeSdkTraceWriter,
+} from "./audit/claude-sdk-trace-writer.js";
 import { appendTranscriptEntry, redactAgentContext, saveSession } from "./session/session-store.js";
 import { redactTelemetry } from "./telemetry-redaction.js";
 import { snapshotWorkspace, verifyWorkspacePolicy, type WorkspaceSnapshot } from "./workspace-policy.js";
@@ -331,6 +336,21 @@ export async function runPrompt(
   } catch {
     // Non-fatal — audit is best-effort
   }
+  let claudeSdkTrace: ClaudeSdkTraceWriter | null = null;
+  const effectiveAgentBackend = normalizeManagerAgentRuntimeAgentType(
+    agentBackend ?? process.env.AGENT_BACKEND ?? DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
+  ) ?? DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE;
+  if (effectiveAgentBackend === "claude-sdk") {
+    try {
+      claudeSdkTrace = createClaudeSdkTraceWriter(job.runId, job.dagConfig.node_id, {
+        baseDir: auditDir,
+        redact: redactForTurn,
+      });
+    } catch {
+      // The trace is durable observability, not part of the scheduling path.
+      // Failure to open it must not prevent the agent turn from running.
+    }
+  }
 
   // Write initial transcript entry
   audit?.transcript.write({
@@ -446,6 +466,7 @@ export async function runPrompt(
       allowedBuiltinTools: job.dagConfig.allowed_builtin_tools,
       skillProjection: job.skillProjection,
       environmentVariables: job.credentialEnv,
+      rawTraceSink: claudeSdkTrace ?? undefined,
     };
     try {
       saveSession({
@@ -669,12 +690,10 @@ export async function runPrompt(
   );
 
   // Close audit writers
-  try {
-    await audit?.transcript.close();
-    await audit?.toolEvents.close();
-  } catch {
-    // Best-effort cleanup
-  }
+  await Promise.allSettled([
+    ...(audit ? [audit.transcript.close(), audit.toolEvents.close()] : []),
+    ...(claudeSdkTrace ? [claudeSdkTrace.close()] : []),
+  ]);
 
   function sendNodeError(message: string) {
     const redactedMessage = String(redactForTurn(message));

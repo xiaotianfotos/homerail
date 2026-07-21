@@ -660,6 +660,49 @@ describe("trace command", () => {
     expect(output).not.toContain("should-not-render");
     expect(process.exitCode).toBe(0);
   });
+
+  it("prints the complete local Claude SDK trace only when --raw is explicit", async () => {
+    const traceDir = path.join(
+      tempHome,
+      "workspace",
+      "run-raw",
+      ".homerail-runtime",
+      "audit",
+      "claude-sdk-traces",
+      "run-raw",
+    );
+    fs.mkdirSync(traceDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(traceDir, "triage.jsonl"),
+      [
+        JSON.stringify({ record_type: "query_start", prompt: "diagnose" }),
+        JSON.stringify({
+          record_type: "sdk_message",
+          sequence: 1,
+          message: { type: "system", subtype: "thinking_tokens" },
+        }),
+      ].join("\n") + "\n",
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const program = createProgram();
+    await program.parseAsync([
+      "node",
+      "homerail",
+      "trace",
+      "run-raw",
+      "--node",
+      "triage",
+      "--raw",
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain('"record_type":"query_start"');
+    expect(output).toContain('"subtype":"thinking_tokens"');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(0);
+  });
 });
 
 // -- Stats -------------------------------------------------------------------

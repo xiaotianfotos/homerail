@@ -141,6 +141,28 @@ describe("runtime pattern worker tools", () => {
     }
   });
 
+  it("ignores runtime-owned audit traces in workspace policy snapshots", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-runtime-audit-"));
+    try {
+      fs.mkdirSync(path.join(root, "src"));
+      fs.writeFileSync(path.join(root, "src", "code.ts"), "unchanged");
+      const policy = { writable_paths: ["src"], readonly_paths: [] };
+      const before = snapshotWorkspace(root, policy);
+      fs.mkdirSync(path.join(root, ".homerail-runtime", "audit"), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, ".homerail-runtime", "audit", "claude-sdk.jsonl"),
+        '{"record_type":"sdk_message"}\n',
+      );
+
+      const result = verifyWorkspacePolicy(before, snapshotWorkspace(root, policy), policy);
+      expect(result.valid).toBe(true);
+      expect(result.changed_paths).toEqual([]);
+      expect(result.before_hash).toBe(result.after_hash);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects workspace symlinks that escape the policy root", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-symlink-"));
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-outside-"));

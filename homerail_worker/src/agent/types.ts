@@ -44,6 +44,14 @@ export interface AgentUsage {
   cache_creation_input_tokens?: number;
 }
 
+/**
+ * Turn-local sink for complete backend-native trace records. Implementations
+ * must keep these records outside the Manager control-plane event stream.
+ */
+export interface AgentRawTraceSink {
+  write(record: Record<string, unknown>): Promise<void>;
+}
+
 /** Events emitted by an agent during execution. */
 export type AgentEvent =
   | { type: "text"; text: string }
@@ -115,4 +123,6 @@ export interface AgentRunContext {
   skillProjection?: AgentSkillProjection;
   /** Turn-scoped environment assembled from encrypted credential references. */
   environmentVariables?: Readonly<Record<string, string>>;
+  /** Optional durable backend-native trace sink owned by the prompt runner. */
+  rawTraceSink?: AgentRawTraceSink;
 }

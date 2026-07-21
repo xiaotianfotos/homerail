@@ -15,6 +15,9 @@ import {
   writeTranscriptChecksum,
   logError,
   checkAuditCompleteness,
+  claudeSdkTracePath,
+  createClaudeSdkTraceWriter,
+  readClaudeSdkTrace,
   readToolEvents,
 } from "../audit/index.js";
 
@@ -114,6 +117,49 @@ describe("audit writers", () => {
     it("rejects unsafe run IDs before creating audit files", () => {
       expect(() => createAuditWriters("../run", dir)).toThrow(/file-safe identifier/);
       expect(existsSync(join(dir, "..", "run.jsonl"))).toBe(false);
+    });
+  });
+
+  describe("Claude SDK trace writer", () => {
+    it("stores complete redacted SDK records outside the Manager transcript", async () => {
+      const writer = createClaudeSdkTraceWriter("run-trace", "node-a", {
+        baseDir: dir,
+        redact: (value) => JSON.parse(JSON.stringify(value).split("secret-value").join("***")),
+      });
+
+      await writer.write({
+        record_type: "query_start",
+        prompt: "use secret-value",
+      });
+      await writer.write({
+        record_type: "sdk_message",
+        sequence: 1,
+        message: { type: "system", subtype: "thinking_tokens" },
+      });
+      await writer.close();
+
+      expect(writer.filePath).toBe(claudeSdkTracePath("run-trace", "node-a", dir));
+      const records = readClaudeSdkTrace("run-trace", "node-a", dir);
+      expect(records).toHaveLength(2);
+      expect(records[0]).toMatchObject({
+        schema_version: "homerail.claude-sdk-trace/v1",
+        run_id: "run-trace",
+        node_id: "node-a",
+        record_type: "query_start",
+        prompt: "use ***",
+      });
+      expect(records[1]).toMatchObject({
+        record_type: "sdk_message",
+        sequence: 1,
+        message: { type: "system", subtype: "thinking_tokens" },
+      });
+    });
+
+    it("rejects unsafe run and node identifiers", () => {
+      expect(() => createClaudeSdkTraceWriter("../run", "node-a", { baseDir: dir }))
+        .toThrow(/file-safe identifier/);
+      expect(() => createClaudeSdkTraceWriter("run-a", "../node", { baseDir: dir }))
+        .toThrow(/file-safe identifier/);
     });
   });
 

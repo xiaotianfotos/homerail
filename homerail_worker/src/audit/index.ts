@@ -47,6 +47,15 @@ export function createAuditWriters(
 
 export type { TranscriptWriter } from "./transcript-writer.js";
 export {
+  claudeSdkTracePath,
+  createClaudeSdkTraceWriter,
+  readClaudeSdkTrace,
+} from "./claude-sdk-trace-writer.js";
+export type {
+  ClaudeSdkTraceWriter,
+  ClaudeSdkTraceWriterOptions,
+} from "./claude-sdk-trace-writer.js";
+export {
   hasToolEventsForRun,
   legacyToolEventsPath,
   readToolEvents,

@@ -261,6 +261,39 @@ function eventTimestamp(event: ToolAuditRecord): number {
   return typeof ts === "number" && Number.isFinite(ts) ? ts : 0;
 }
 
+function localClaudeSdkTracePath(runId: string, nodeId: string): string {
+  const safeRunId = safeAuditRunId(runId);
+  const safeNodeId = safeAuditRunId(nodeId);
+  return path.join(
+    getHomerailHome(),
+    "workspace",
+    safeRunId,
+    ".homerail-runtime",
+    "audit",
+    "claude-sdk-traces",
+    safeRunId,
+    `${safeNodeId}.jsonl`,
+  );
+}
+
+function printRawClaudeSdkTrace(runId: string, nodeId: string, json: boolean): number {
+  const filePath = localClaudeSdkTracePath(runId, nodeId);
+  if (!fs.existsSync(filePath)) {
+    console.error(`Error: no local Claude SDK raw trace for ${runId}/${nodeId}`);
+    console.error(`  Expected: ${filePath}`);
+    return 1;
+  }
+  const raw = fs.readFileSync(filePath, "utf8");
+  if (json) {
+    console.log(JSON.stringify(readJsonl(filePath), null, 2));
+  } else {
+    // Preserve the exact durable JSONL records. Default `trace` output remains
+    // the compact Manager-backed summary; raw output is explicit and local.
+    console.log(raw.replace(/\n$/, ""));
+  }
+  return 0;
+}
+
 function nodeIdsFromStatus(data: Record<string, unknown>): string[] {
   const execution = data.execution as Record<string, unknown> | undefined;
   const nodes = execution?.nodes;
@@ -353,7 +386,15 @@ export async function cmdTrace(
   runId: string,
   nodeFilter: string | undefined,
   json: boolean,
+  raw = false,
 ): Promise<number> {
+  if (raw) {
+    if (!nodeFilter) {
+      console.error("Error: --raw requires --node <id>");
+      return 1;
+    }
+    return printRawClaudeSdkTrace(runId, nodeFilter, json);
+  }
   let nodeIds: string[];
 
   if (nodeFilter) {

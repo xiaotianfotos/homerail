@@ -359,6 +359,7 @@ client.on("task", async (msg) => {
       wsSend: (d) => client.send(d),
       onTerminalMessage: (data) => deferredTerminalMessages.push(data),
       agentBackend: backend,
+      auditDir: process.env.HOMERAIL_AUDIT_DIR,
       abortSignal: abortController.signal,
       turnController,
       credentialBrokerCall: callCredentialBroker,

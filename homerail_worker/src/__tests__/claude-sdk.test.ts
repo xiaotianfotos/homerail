@@ -107,6 +107,157 @@ describe("ClaudeSdkAdapter", () => {
     ]);
   });
 
+  it("suppresses per-token thinking diagnostics and reports one aggregate count", async () => {
+    const thinkingTokenMessages = Array.from({ length: 10_000 }, () => ({
+      type: "system",
+      subtype: "thinking_tokens",
+    }));
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () =>
+      makeFakeSdk([
+        ...thinkingTokenMessages,
+        {
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "Finished reasoning." }],
+            stop_reason: "end_turn",
+          },
+        },
+        { type: "result", subtype: "success", is_error: false },
+      ]),
+    );
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    const events: AgentEvent[] = [];
+    const rawTrace: Array<Record<string, unknown>> = [];
+    for await (const event of adapter.run("test", [], {
+      ...ctx,
+      rawTraceSink: {
+        async write(record) {
+          rawTrace.push(record);
+        },
+      },
+    })) events.push(event);
+
+    const sdkMessageDebugEvents = events.filter(
+      (event) => event.type === "debug" && event.message === "sdk_message",
+    );
+    expect(sdkMessageDebugEvents).toHaveLength(2);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "debug",
+      message: "thinking_tokens_aggregated",
+      data: {
+        count: 10_000,
+        total: 10_000,
+        through_sequence: 10_000,
+      },
+    }));
+    expect(rawTrace).toHaveLength(10_004);
+    expect(rawTrace[0]).toMatchObject({ record_type: "query_start", prompt: "test" });
+    expect(rawTrace.filter((record) => (
+      record.record_type === "sdk_message"
+      && (record.message as Record<string, unknown>)?.subtype === "thinking_tokens"
+    ))).toHaveLength(10_000);
+    expect(rawTrace.at(-1)).toMatchObject({
+      record_type: "query_end",
+      message_count: 10_002,
+      suppressed_thinking_token_debug_count: 10_000,
+    });
+    expect(events).toContainEqual({ type: "text", text: "Finished reasoning." });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "debug",
+      message: "query_done",
+      data: expect.objectContaining({
+        message_count: 10_002,
+        suppressed_thinking_token_debug_count: 10_000,
+        raw_trace_configured: true,
+        raw_trace_records_written: 10_004,
+        raw_trace_write_failures: 0,
+      }),
+    }));
+  });
+
+  it("keeps the agent running when the raw trace sink fails", async () => {
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () =>
+      makeFakeSdk([
+        {
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "Still completed." }],
+            stop_reason: "end_turn",
+          },
+        },
+        { type: "result", subtype: "success", is_error: false },
+      ]),
+    );
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    const events: AgentEvent[] = [];
+    let writes = 0;
+    for await (const event of adapter.run("test", [], {
+      ...ctx,
+      rawTraceSink: {
+        async write() {
+          writes += 1;
+          throw new Error("trace disk unavailable");
+        },
+      },
+    })) events.push(event);
+
+    expect(writes).toBe(1);
+    expect(events).toContainEqual({ type: "text", text: "Still completed." });
+    expect(events.filter(
+      (event) => event.type === "debug" && event.message === "raw_trace_write_failed",
+    )).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "debug",
+      message: "query_done",
+      data: expect.objectContaining({
+        raw_trace_configured: true,
+        raw_trace_records_written: 0,
+        raw_trace_write_failures: 1,
+        raw_trace_last_error: "trace disk unavailable",
+      }),
+    }));
+  });
+
+  it("closes the raw trace when the consumer stops after a handoff event", async () => {
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () =>
+      makeFakeSdk([
+        {
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "Handoff accepted." }],
+            stop_reason: "tool_use",
+          },
+        },
+        { type: "result", subtype: "success", is_error: false },
+      ]),
+    );
+
+    const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+    const adapter = new ClaudeSdkAdapter();
+    const rawTrace: Array<Record<string, unknown>> = [];
+    for await (const event of adapter.run("test", [], {
+      ...ctx,
+      rawTraceSink: {
+        async write(record) {
+          rawTrace.push(record);
+        },
+      },
+    })) {
+      if (event.type === "progress") break;
+    }
+
+    expect(rawTrace).toHaveLength(3);
+    expect(rawTrace.at(-1)).toMatchObject({
+      record_type: "query_end",
+      termination: "consumer_closed",
+      message_count: 1,
+    });
+  });
+
   it("maps MCP tool results carried by SDK user messages", async () => {
     vi.doMock("@anthropic-ai/claude-agent-sdk", () =>
       makeFakeSdk([

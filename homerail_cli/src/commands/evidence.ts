@@ -63,10 +63,11 @@ export function registerEvidenceCommands(program: Command): void {
     .command("trace <runId>")
     .description("Show execution trace for a DAG run")
     .option("--node <id>", "Filter to a specific node ID")
-    .action(async (runId: string, opts: { node?: string }) => {
+    .option("--raw", "Print the complete local Claude SDK JSONL trace (requires --node)")
+    .action(async (runId: string, opts: { node?: string; raw?: boolean }) => {
       const globalOpts = program.opts<GlobalOpts>();
       const client = getClient(globalOpts);
-      process.exitCode = await cmdTrace(client, runId, opts.node, !!globalOpts.json);
+      process.exitCode = await cmdTrace(client, runId, opts.node, !!globalOpts.json, opts.raw === true);
     });
 
   program

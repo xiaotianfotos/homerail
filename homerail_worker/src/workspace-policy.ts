@@ -16,7 +16,10 @@ export interface WorkspacePolicyResult {
   after_hash: string;
 }
 
-const IGNORED_DIRECTORIES = new Set([".git", "node_modules"]);
+// Runtime-owned metadata lives in .homerail-runtime on the host-backed
+// workspace mount. It is not model output and must not trip readonly policy
+// checks when audit writers append transcripts or raw SDK traces.
+const IGNORED_DIRECTORIES = new Set([".git", ".homerail-runtime", "node_modules"]);
 
 function normalizedPolicyPath(value: string): string {
   const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");

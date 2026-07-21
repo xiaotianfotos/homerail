@@ -451,6 +451,31 @@ export class ClaudeSdkAdapter implements AgentClient {
     const accumulatedUsage: AgentUsage = {};
     let finalDurationMs: number | undefined;
     let finalNumTurns: number | undefined;
+    let messageCount = 0;
+    let suppressedThinkingTokenDebugCount = 0;
+    let pendingThinkingTokenDebugCount = 0;
+    let rawTraceTerminalWritten = false;
+    const rawTraceConfigured = context.rawTraceSink !== undefined;
+    let rawTraceSink = context.rawTraceSink;
+    let rawTraceRecordsWritten = 0;
+    let rawTraceWriteFailures = 0;
+    let rawTraceLastError: string | null = null;
+    const writeRawTrace = async (record: Record<string, unknown>): Promise<string | null> => {
+      if (!rawTraceSink) return null;
+      try {
+        await rawTraceSink.write(record);
+        rawTraceRecordsWritten += 1;
+        return null;
+      } catch (error) {
+        rawTraceWriteFailures += 1;
+        rawTraceLastError = error instanceof Error ? error.message : String(error);
+        // Do not retry every provider event after a local trace failure. The
+        // final aggregate reports that the trace is incomplete while the
+        // model and Manager control plane remain available.
+        rawTraceSink = undefined;
+        return rawTraceLastError;
+      }
+    };
     try {
       const effectiveModel = context.model || this.model;
       const authEnv = this.buildClaudeEnv(context, effectiveModel);
@@ -567,6 +592,26 @@ export class ClaudeSdkAdapter implements AgentClient {
         };
       }
 
+      const rawTraceStartError = await writeRawTrace({
+        record_type: "query_start",
+        prompt,
+        system_prompt: context.systemPrompt ?? null,
+        system_prompt_mode: systemPromptMode,
+        model: effectiveModel,
+        thinking_budget: effectiveThinkingBudget,
+        builtin_tools: builtinTools,
+        dag_tool_names: tools.map((tool) => tool.name),
+        session_id: context.sessionId ?? null,
+      });
+      if (rawTraceStartError) {
+        yield {
+          type: "debug",
+          source: "claude-sdk",
+          message: "raw_trace_write_failed",
+          data: { error: rawTraceStartError },
+        };
+      }
+
       yield {
         type: "debug",
         source: "claude-sdk",
@@ -603,7 +648,6 @@ export class ClaudeSdkAdapter implements AgentClient {
 
       const query = sdk.query({ prompt: inputQueue, options });
       const transportGuard = createSdkTransportGuard(abortController);
-      let messageCount = 0;
       try {
         const iterator = query[Symbol.asyncIterator]();
         while (true) {
@@ -633,48 +677,79 @@ export class ClaudeSdkAdapter implements AgentClient {
           }
           const msg = next.value;
           if (msg.type === "result") inputQueue.close();
-        messageCount += 1;
-        const stderrChunk = stderrTail.trim();
-        if (stderrChunk) {
-          yield {
-            type: "debug",
-            source: "claude-sdk",
-            message: "claude_code_stderr",
-            data: { sequence: messageCount, tail: stderrChunk.slice(-2000) },
-          };
-          stderrTail = "";
-        }
-        // Extract usage from this message. Per-message usage on assistant
-        // turns is additive (each turn's input/output); the result message
-        // carries an aggregate we prefer when present.
-        const msgUsage = msg.message?.usage ?? msg.usage;
-        let usageChanged = false;
-        if (msgUsage) {
-          usageChanged = true;
-          if (msg.type === "result") {
-            // Result message carries the authoritative aggregate — replace.
-            accumulatedUsage.input_tokens = msgUsage.input_tokens ?? accumulatedUsage.input_tokens;
-            accumulatedUsage.output_tokens = msgUsage.output_tokens ?? accumulatedUsage.output_tokens;
-            accumulatedUsage.cache_read_input_tokens = msgUsage.cache_read_input_tokens ?? accumulatedUsage.cache_read_input_tokens;
-            accumulatedUsage.cache_creation_input_tokens = msgUsage.cache_creation_input_tokens ?? accumulatedUsage.cache_creation_input_tokens;
-            finalDurationMs = msg.duration_ms;
-            finalNumTurns = msg.num_turns;
-          } else {
-            // Per-turn delta — accumulate.
-            accumulatedUsage.input_tokens = (accumulatedUsage.input_tokens ?? 0) + (msgUsage.input_tokens ?? 0);
-            accumulatedUsage.output_tokens = (accumulatedUsage.output_tokens ?? 0) + (msgUsage.output_tokens ?? 0);
-            accumulatedUsage.cache_read_input_tokens = (accumulatedUsage.cache_read_input_tokens ?? 0) + (msgUsage.cache_read_input_tokens ?? 0);
-            accumulatedUsage.cache_creation_input_tokens = (accumulatedUsage.cache_creation_input_tokens ?? 0) + (msgUsage.cache_creation_input_tokens ?? 0);
+          messageCount += 1;
+          const rawTraceMessageError = await writeRawTrace({
+            record_type: "sdk_message",
+            sequence: messageCount,
+            message: msg as unknown as Record<string, unknown>,
+          });
+          if (rawTraceMessageError) {
+            yield {
+              type: "debug",
+              source: "claude-sdk",
+              message: "raw_trace_write_failed",
+              data: { sequence: messageCount, error: rawTraceMessageError },
+            };
           }
-        }
-        // Emit a usage event inline (carrying the running total) so the
-        // prompt-runner has up-to-date totals even when the agent yields
-        // early via handoff and the outer loop breaks before we reach the
-        // post-loop aggregate emission below.
-        if (usageChanged) {
-          yield { type: "usage", usage: { ...accumulatedUsage } };
-        }
-        yield this.debugMessageEvent(msg, messageCount);
+          const stderrChunk = stderrTail.trim();
+          if (stderrChunk) {
+            yield {
+              type: "debug",
+              source: "claude-sdk",
+              message: "claude_code_stderr",
+              data: { sequence: messageCount, tail: stderrChunk.slice(-2000) },
+            };
+            stderrTail = "";
+          }
+          // Extract usage from this message. Per-message usage on assistant
+          // turns is additive (each turn's input/output); the result message
+          // carries an aggregate we prefer when present.
+          const msgUsage = msg.message?.usage ?? msg.usage;
+          let usageChanged = false;
+          if (msgUsage) {
+            usageChanged = true;
+            if (msg.type === "result") {
+              // Result message carries the authoritative aggregate — replace.
+              accumulatedUsage.input_tokens = msgUsage.input_tokens ?? accumulatedUsage.input_tokens;
+              accumulatedUsage.output_tokens = msgUsage.output_tokens ?? accumulatedUsage.output_tokens;
+              accumulatedUsage.cache_read_input_tokens = msgUsage.cache_read_input_tokens ?? accumulatedUsage.cache_read_input_tokens;
+              accumulatedUsage.cache_creation_input_tokens = msgUsage.cache_creation_input_tokens ?? accumulatedUsage.cache_creation_input_tokens;
+              finalDurationMs = msg.duration_ms;
+              finalNumTurns = msg.num_turns;
+            } else {
+              // Per-turn delta — accumulate.
+              accumulatedUsage.input_tokens = (accumulatedUsage.input_tokens ?? 0) + (msgUsage.input_tokens ?? 0);
+              accumulatedUsage.output_tokens = (accumulatedUsage.output_tokens ?? 0) + (msgUsage.output_tokens ?? 0);
+              accumulatedUsage.cache_read_input_tokens = (accumulatedUsage.cache_read_input_tokens ?? 0) + (msgUsage.cache_read_input_tokens ?? 0);
+              accumulatedUsage.cache_creation_input_tokens = (accumulatedUsage.cache_creation_input_tokens ?? 0) + (msgUsage.cache_creation_input_tokens ?? 0);
+            }
+          }
+          // Emit a usage event inline (carrying the running total) so the
+          // prompt-runner has up-to-date totals even when the agent yields
+          // early via handoff and the outer loop breaks before we reach the
+          // post-loop aggregate emission below.
+          if (usageChanged) {
+            yield { type: "usage", usage: { ...accumulatedUsage } };
+          }
+          if (this.shouldEmitSdkMessageDebug(msg)) {
+            if (pendingThinkingTokenDebugCount > 0) {
+              yield {
+                type: "debug",
+                source: "claude-sdk",
+                message: "thinking_tokens_aggregated",
+                data: {
+                  count: pendingThinkingTokenDebugCount,
+                  total: suppressedThinkingTokenDebugCount,
+                  through_sequence: messageCount - 1,
+                },
+              };
+              pendingThinkingTokenDebugCount = 0;
+            }
+            yield this.debugMessageEvent(msg, messageCount);
+          } else {
+            suppressedThinkingTokenDebugCount += 1;
+            pendingThinkingTokenDebugCount += 1;
+          }
           const events = this.mapSdkMessage(msg);
           for (const event of events) yield event;
         }
@@ -690,20 +765,62 @@ export class ClaudeSdkAdapter implements AgentClient {
       if (hasUsage) {
         yield { type: "usage", usage: accumulatedUsage };
       }
+      if (pendingThinkingTokenDebugCount > 0) {
+        yield {
+          type: "debug",
+          source: "claude-sdk",
+          message: "thinking_tokens_aggregated",
+          data: {
+            count: pendingThinkingTokenDebugCount,
+            total: suppressedThinkingTokenDebugCount,
+            through_sequence: messageCount,
+          },
+        };
+        pendingThinkingTokenDebugCount = 0;
+      }
+      rawTraceTerminalWritten = true;
+      const rawTraceEndError = await writeRawTrace({
+        record_type: "query_end",
+        termination: "completed",
+        message_count: messageCount,
+        suppressed_thinking_token_debug_count: suppressedThinkingTokenDebugCount,
+        usage: hasUsage ? accumulatedUsage : null,
+        duration_ms: finalDurationMs ?? null,
+        num_turns: finalNumTurns ?? null,
+      });
+      if (rawTraceEndError) {
+        yield {
+          type: "debug",
+          source: "claude-sdk",
+          message: "raw_trace_write_failed",
+          data: { error: rawTraceEndError },
+        };
+      }
       yield {
         type: "debug",
         source: "claude-sdk",
         message: "query_done",
         data: {
           message_count: messageCount,
+          suppressed_thinking_token_debug_count: suppressedThinkingTokenDebugCount,
           stderr_tail: stderrTail.trim().slice(-2000) || null,
           usage: hasUsage ? accumulatedUsage : null,
           duration_ms: finalDurationMs ?? null,
           num_turns: finalNumTurns ?? null,
+          raw_trace_configured: rawTraceConfigured,
+          raw_trace_records_written: rawTraceRecordsWritten,
+          raw_trace_write_failures: rawTraceWriteFailures,
+          raw_trace_last_error: rawTraceLastError,
         },
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      rawTraceTerminalWritten = true;
+      await writeRawTrace({
+        record_type: "query_error",
+        error: msg,
+        stderr_tail: stderrTail.trim().slice(-2000) || null,
+      });
       inputQueue.close(err instanceof Error ? err : new Error(msg));
       if (handoffStopRequested) {
         yield {
@@ -736,6 +853,21 @@ export class ClaudeSdkAdapter implements AgentClient {
         }
       }
     } finally {
+      if (!rawTraceTerminalWritten) {
+        const hasUsage = accumulatedUsage.input_tokens !== undefined
+          || accumulatedUsage.output_tokens !== undefined
+          || accumulatedUsage.cache_read_input_tokens !== undefined
+          || accumulatedUsage.cache_creation_input_tokens !== undefined;
+        await writeRawTrace({
+          record_type: "query_end",
+          termination: "consumer_closed",
+          message_count: messageCount,
+          suppressed_thinking_token_debug_count: suppressedThinkingTokenDebugCount,
+          usage: hasUsage ? accumulatedUsage : null,
+          duration_ms: finalDurationMs ?? null,
+          num_turns: finalNumTurns ?? null,
+        });
+      }
       inputQueue.close();
       if (timeout) clearTimeout(timeout);
       if (context.abortSignal && externalAbortHandler) {
@@ -790,6 +922,22 @@ export class ClaudeSdkAdapter implements AgentClient {
         raw_top_usage: rawTopUsage ?? null,
       },
     };
+  }
+
+  private shouldEmitSdkMessageDebug(msg: SdkMessage): boolean {
+    // Some Anthropic-compatible endpoints emit one system message for every
+    // thinking-token update. Persisting those otherwise-empty diagnostics can
+    // generate thousands of websocket events and starve Manager status and
+    // cancellation requests. Usage is handled separately above, so suppress
+    // only successful, token-only progress messages while retaining errors,
+    // text, tools, results, and the final aggregate query_done diagnostic.
+    return !(
+      msg.type === "system"
+      && msg.subtype === "thinking_tokens"
+      && !msg.error
+      && (msg.errors?.length ?? 0) === 0
+      && msg.is_error !== true
+    );
   }
 
   private buildClaudeEnv(context: AgentRunContext, effectiveModel: string): {
