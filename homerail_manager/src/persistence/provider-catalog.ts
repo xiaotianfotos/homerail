@@ -144,6 +144,9 @@ export function resolveCatalogEndpointReference(
       status: "missing",
     };
   }
+  // Canonicalizing either half of the persisted provider/endpoint identity is
+  // a migration: callers need provenance even when only the provider id was
+  // renamed and the endpoint id itself remained stable.
   return {
     provider_id: canonicalProviderId,
     stored_endpoint_id: endpointId,
@@ -730,6 +733,9 @@ export function findCatalogProvider(providerId: string): CatalogProviderInfo | u
 
 export function findCatalogEndpoint(providerId: string, endpointId?: string): ProviderEndpointPreset | undefined {
   if (!endpointId) {
+    // Compatibility lookup for older callers that use the provider's primary
+    // endpoint as a default. Persisted-setting resolution intentionally does
+    // not use this fallback: a missing reference must be diagnosed explicitly.
     return findCatalogProvider(canonicalProviderIdForEndpoint(providerId))?.endpoints[0];
   }
   return resolveCatalogEndpointReference(providerId, endpointId).endpoint;

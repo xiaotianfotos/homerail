@@ -1073,9 +1073,10 @@ function _readSettings(): LLMSetting[] {
     })
     .filter((setting): setting is LLMSetting => setting !== undefined);
   // Plaintext-key migration is the only permitted read-side persistence. It
-  // touches only the affected row; catalog reconciliation itself is pure.
-  for (const setting of secretMigrations) {
-    _upsertSetting(setting);
+  // touches only affected rows; catalog reconciliation itself is pure. Keep
+  // a multi-row legacy migration atomic and avoid one autocommit per secret.
+  if (secretMigrations.length > 0) {
+    _writeSettings(secretMigrations);
   }
   return settings;
 }

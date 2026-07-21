@@ -877,10 +877,11 @@ describe("custom LLM providers", () => {
   });
 
   it("migrates legacy plaintext DB settings to Manager-encrypted storage", () => {
-    getDb().prepare(`
+    const insertLegacy = getDb().prepare(`
       INSERT INTO llm_settings(id, provider_id, model_name, updated_at, data)
       VALUES (?, ?, ?, ?, ?)
-    `).run(
+    `);
+    insertLegacy.run(
       "legacy-setting",
       "xiaomi",
       "mimo-v2.5-pro",
@@ -903,6 +904,27 @@ describe("custom LLM providers", () => {
       },
       ),
     );
+    insertLegacy.run(
+      "legacy-setting-secondary",
+      "xiaomi",
+      "mimo-v2.5-pro",
+      "2026-01-01T00:00:01.000Z",
+      JSON.stringify({
+        id: "legacy-setting-secondary",
+        provider_id: "xiaomi",
+        model_name: "mimo-v2.5-pro",
+        api_key: "legacy-secondary-secret",
+        is_active: false,
+        is_default: false,
+        supports_llm: true,
+        supports_asr: false,
+        supports_tts: false,
+        supports_audio_input: false,
+        supports_image_input: false,
+        created_at: "2026-01-01T00:00:01.000Z",
+        updated_at: "2026-01-01T00:00:01.000Z",
+      }),
+    );
 
     const active = findActiveSetting("xiaomi", "mimo-v2.5-pro");
 
@@ -911,9 +933,16 @@ describe("custom LLM providers", () => {
     expect(active?.plan_type).toBe("token_plan");
     const migrated = storedLlmSettingsText();
     expect(migrated).not.toContain("legacy-secret-token");
+    expect(migrated).not.toContain("legacy-secondary-secret");
     expect(migrated).toContain("api_key_encrypted");
     expect(migrated).toContain("manager_encrypted");
     expect(migrated).toContain("endpoint_id");
+    const encryptedRows = getDb().prepare(`
+      SELECT COUNT(*) AS count
+      FROM llm_settings
+      WHERE id LIKE 'legacy-setting%' AND api_key_encrypted IS NOT NULL
+    `).get() as { count: number };
+    expect(encryptedRows.count).toBe(2);
   });
 
   it("persists built-in settings as lean catalog references", () => {
