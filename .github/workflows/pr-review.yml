@@ -2,7 +2,12 @@ name: HomeRail PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # Review once per coherent PR instead of on every pushed commit.
+    types: [opened, reopened, ready_for_review]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
     inputs:
       repo:

@@ -2,7 +2,9 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    # Draft PRs can receive any number of pushes without starting runners.
+    # Mark the PR ready once the change is coherent, or dispatch manually.
+    types: [opened, reopened, ready_for_review]
     paths-ignore:
       - "**/*.md"
       - "docs/**"
