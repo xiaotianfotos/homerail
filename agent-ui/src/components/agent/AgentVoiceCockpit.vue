@@ -117,6 +117,7 @@ import {
   type NativeGamepadAnalogDetail,
   type NativeGamepadButtonDetail
 } from '@/utils/native-gamepad-events'
+import { installGamepadMonitorDebugApi } from '@/utils/gamepad-monitor-debug'
 import {
   nativeVoiceCaptureAvailable,
   nativeTtsPlaybackAvailable,
@@ -133,7 +134,6 @@ import {
   ChevronRight,
   AlertTriangle,
   EyeOff,
-  Gamepad2,
   Mic,
   MessageSquareText,
   PanelLeftOpen,
@@ -393,6 +393,7 @@ let lastSubmittedVoiceTranscriptKey = ''
 let lastSubmittedVoiceTranscriptAt = 0
 let managerStatusTimer = 0
 let voiceStatusUnsub: (() => void) | null = null
+let uninstallGamepadMonitorDebugApi: (() => void) | null = null
 let pluginRegistryUnsub: (() => void) | null = null
 let pluginRegistryStateUnsub: (() => void) | null = null
 let statusFocusApplied = false
@@ -1150,6 +1151,10 @@ onMounted(() => {
   startVoiceGamepadControl()
   void loadVoiceSessionShortcuts()
   installCodexVoiceTextBridge()
+  uninstallGamepadMonitorDebugApi = installGamepadMonitorDebugApi(
+    window,
+    setVoiceGamepadMonitorVisible,
+  )
   managerStatusTimer = window.setInterval(() => {
     void refreshManagerStatus()
     // 同时刷新 sidebar 会话列表，让用户在当前 session 时也能看到其他 session 的运行状态。
@@ -1264,6 +1269,8 @@ onUnmounted(() => {
   resetTtsAudioElement()
   setVoiceRootLock(false)
   uninstallCodexVoiceTextBridge()
+  uninstallGamepadMonitorDebugApi?.()
+  uninstallGamepadMonitorDebugApi = null
 })
 
 function installCodexVoiceTextBridge(): void {
@@ -3785,12 +3792,13 @@ function handleNativeVoiceGamepadAnalog(event: Event): void {
   scrollConversationBy(applyVoiceGamepadDeadzone(detail.scrollY ?? 0) * VOICE_THREAD_SCROLL_SPEED)
 }
 
-function toggleVoiceGamepadLiveView(): void {
-  voiceGamepadLiveVisible.value = !voiceGamepadLiveVisible.value
+function setVoiceGamepadMonitorVisible(visible?: boolean): boolean {
+  if (typeof visible === 'boolean') voiceGamepadLiveVisible.value = visible
   if (voiceGamepadLiveVisible.value) {
     const gamepad = currentVoiceGamepad()
     if (gamepad) updateVoiceGamepadConnection(gamepad)
   }
+  return voiceGamepadLiveVisible.value
 }
 
 function currentVoiceGamepadInputContext(): VoiceGamepadInputContext {
@@ -4943,22 +4951,6 @@ function summarizeTask(value: string): string {
         >
           <Sparkles class="h-4 w-4" />
           <span>{{ t('voice.onboarding.button') }}</span>
-        </button>
-        <button
-          class="voice-runtime-pill voice-runtime-pill--gamepad flex h-9 items-center rounded-full border px-3 text-xs"
-          :class="{
-            'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)]': voiceGamepadConnected,
-            'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-4)]': !voiceGamepadConnected,
-            'voice-runtime-pill--gamepad-live': voiceGamepadLiveVisible
-          }"
-          :title="
-            voiceGamepadLiveVisible ? t('voice.gamepad.hideMonitor') : voiceGamepadStatus || t('voice.gamepad.showMonitor')
-          "
-          type="button"
-          data-testid="voice-gamepad-toggle"
-          @click="toggleVoiceGamepadLiveView"
-        >
-          <Gamepad2 class="h-4 w-4" />
         </button>
       </AgentModeTopBar>
 
@@ -6211,15 +6203,6 @@ function summarizeTask(value: string): string {
   padding: 10px 4px 2px;
   color: var(--vc-danger);
   font-size: 12px;
-}
-
-.voice-runtime-pill--gamepad {
-  min-width: 42px;
-  justify-content: center;
-}
-
-.voice-runtime-pill--gamepad-live {
-  box-shadow: 0 0 0 1px var(--vc-accent-border), 0 0 26px var(--vc-accent-soft);
 }
 
 /* --------------------------------------------------------------------------

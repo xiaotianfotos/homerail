@@ -73,4 +73,12 @@ describe('AgentVoiceCockpit responsive layout', () => {
     expect(cockpitSource).toContain("item.channel === 'progress' ? 'voice-thread-item--progress' : ''")
     expect(cockpitSource).toContain('>progress</span')
   })
+
+  it('keeps the gamepad monitor behind a console-only debug command', () => {
+    expect(cockpitSource).not.toContain('data-testid="voice-gamepad-toggle"')
+    expect(cockpitSource).not.toContain('toggleVoiceGamepadLiveView')
+    expect(cockpitSource).toContain('installGamepadMonitorDebugApi(')
+    expect(cockpitSource).toContain('setVoiceGamepadMonitorVisible')
+    expect(cockpitSource).toContain('uninstallGamepadMonitorDebugApi?.()')
+  })
 })
