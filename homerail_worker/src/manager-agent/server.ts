@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createAgentClient } from "../agent/factory.js";
-import type { AgentEvent, AgentRunContext, DagToolDefinition } from "../agent/types.js";
+import type { AgentRunContext, DagToolDefinition } from "../agent/types.js";
 import {
   buildManagerAgentSystemPrompt,
   createManagerAgentWidgetFileTools,

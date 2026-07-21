@@ -36,17 +36,57 @@ const only = (argValue('--only') || '').split(',').map((s) => s.trim()).filter(B
 const jsonOut = argValue('--json')
 
 const spec = YAML.parse(fs.readFileSync(path.join(here, 'cases.yaml'), 'utf8'))
-const cases = spec.cases.filter((c) => only.length === 0 || only.includes(c.id))
-const timeoutMs = (spec.defaults?.timeout_sec ?? 300) * 1000
+let cases = spec.cases.filter((c) => only.length === 0 || only.includes(c.id))
+const defaultTimeoutMs = (spec.defaults?.timeout_sec ?? 300) * 1000
 
-async function managerChat(message, projectId) {
+// Expand sequence cases: a case with `steps` replaces `message` and produces
+// one scored sub-entry per step, sharing the same session_id.
+// Each step can be a string (message only) or an object with per-step assertions:
+//   { message, must_call?, must_not_call?, expect_run?, timeout_sec? }
+function resolveStep(case_, step, i) {
+  const entry = {
+    ...case_,
+    _sessionId: `eval-${case_.id}`,
+    _stepIndex: i,
+    continue_chat: i > 0,
+  }
+  if (typeof step === 'string') {
+    entry.message = step
+  } else {
+    entry.message = String(step.message ?? '')
+    // Per-step assertions override top-level ones for this step
+    if (step.must_call) entry.step_must_call = step.must_call
+    if (step.must_not_call) entry.step_must_not_call = step.must_not_call
+    if (step.expect_run !== undefined) entry.step_expect_run = step.expect_run
+    // Per-step timeout (seconds), falls back to case-level then default
+    if (step.timeout_sec) entry._timeoutMs = step.timeout_sec * 1000
+  }
+  if (!entry._timeoutMs && case_.timeout_sec) entry._timeoutMs = case_.timeout_sec * 1000
+  if (!entry._timeoutMs) entry._timeoutMs = defaultTimeoutMs
+  return entry
+}
+
+function expandCase(original) {
+  if (!Array.isArray(original.steps) || original.steps.length === 0) {
+    return [{ ...original, _sessionId: `eval-${original.id}` }]
+  }
+  return original.steps.map((step, i) => resolveStep(original, step, i))
+}
+cases = cases.flatMap(expandCase)
+
+async function managerChat(message, projectId, sessionId, continueChat, timeoutMs) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const timer = setTimeout(() => controller.abort(), timeoutMs || defaultTimeoutMs)
   try {
     const resp = await fetch(`${baseUrl}/api/manager/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, message }),
+      body: JSON.stringify({
+        project_id: projectId,
+        session_id: sessionId,
+        continue_chat: continueChat,
+        message,
+      }),
       signal: controller.signal,
     })
     const body = await resp.json()
@@ -87,19 +127,30 @@ function scoreCase(c, data) {
   for (const name of c.must_not_call ?? []) {
     if (toolCalls.includes(name)) failures.push(`called forbidden tool: ${name}`)
   }
+  // Per-step assertions
+  for (const name of c.step_must_call ?? []) {
+    if (!toolCalls.includes(name)) failures.push(`missing step-required tool call: ${name}`)
+  }
+  for (const name of c.step_must_not_call ?? []) {
+    if (toolCalls.includes(name)) failures.push(`step called forbidden tool: ${name}`)
+  }
+  if (c.step_expect_run === true && !runId) failures.push('step expected a run_id but none was returned')
+  if (c.step_expect_run === false && runId) failures.push(`step should not start a run but got run_id=${runId}`)
   return { toolCalls, runId, failures, pass: failures.length === 0 }
 }
 
 const results = []
 for (const c of cases) {
   const startedAt = Date.now()
-  process.stdout.write(`[${c.id}] ${c.message.slice(0, 50)} ... `)
+  const stepLabel = c._stepIndex !== undefined ? `[${c.id} step ${c._stepIndex + 1}]` : `[${c.id}]`
+  process.stdout.write(`${stepLabel} ${c.message.slice(0, 50)} ... `)
   try {
-    const data = await managerChat(c.message, `eval-${c.id}`)
+    const data = await managerChat(c.message, c._sessionId, c._sessionId, c.continue_chat ?? false, c._timeoutMs)
     const scored = scoreCase(c, data)
     if (scored.runId) await stopRun(scored.runId)
     results.push({
       id: c.id,
+      step: c._stepIndex ?? 0,
       category: c.category,
       pass: scored.pass,
       failures: scored.failures,
@@ -112,6 +163,7 @@ for (const c of cases) {
   } catch (err) {
     results.push({
       id: c.id,
+      step: c._stepIndex ?? 0,
       category: c.category,
       pass: false,
       failures: [`error: ${err instanceof Error ? err.message : String(err)}`],

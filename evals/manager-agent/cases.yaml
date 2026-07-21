@@ -1,15 +1,20 @@
-# Manager Agent 评测集 v1
+# Manager Agent 评测集 v2
 #
 # 每个 case 模拟一条真实的用户请求,断言 Manager Agent 的行为:
 #   must_call     — 必须调用的工具(全部命中才得分)
 #   must_not_call — 不得调用的工具(命中任何一个即失败)
 #   expect_run    — 是否应当创建 DAG 运行(true: 必须返回 run_id / false: 不得返回)
 #
+# 多轮(sequence)支持:steps 字段代替 message,steps 中的每个字符串为同一 session
+# 中的连续对话轮次。step 级别的断言使用 step_* 前缀(step_must_call,step_must_not_call,
+# step_expect_run),优先于全局断言。
+#
 # 分类:
 #   A 明确任务    → 应该规划并启动 DAG
 #   B 状态查询    → 应该查询,绝不新建运行
 #   C 模糊请求    → 应该澄清或收敛,不得盲目开跑
 #   D 资产查询    → 应该列举项目/模板
+#   E 多轮场景    → 基于前一轮语境做正确决策
 #
 # 运行: node evals/manager-agent/run-eval.mjs
 
@@ -95,3 +100,40 @@ cases:
     message: "你都能帮我做什么?"
     expect_run: false
     must_not_call: [create_and_run]
+
+  # ---- E. 多轮对话:基于前一轮语境做正确决策 ----
+  - id: e1-checklist-add-security
+    category: multi_turn
+    description: "用户先生成检查清单,然后要求加更多安全项——第二轮应保持同一个 session 并再次调用 create_and_run"
+    steps:
+      - "帮我起草一份后端服务上线前的检查清单"
+      - "再加一些安全相关的检查项,特别是关于 API 鉴权和数据加密的"
+    step_must_call: [create_and_run]
+
+  - id: e2-list-then-report
+    category: multi_turn
+    description: "用户先列出项目,发现没有项目后要求生成一份简单报告——Agent 应做出合理回应"
+    steps:
+      - { message: "列一下我有哪些项目", must_call: [list_projects], must_not_call: [create_and_run] }
+      - { message: "那直接帮我生成一个本周状态报告吧", timeout_sec: 600 }
+
+  - id: e3-template-then-run
+    category: multi_turn
+    description: "用户先问模板,再让跑最短的那个——第二轮应调用 create_and_run"
+    steps:
+      - { message: "目前有哪些可用的工作流模板?", must_call: [list_orchestrations], must_not_call: [create_and_run] }
+      - { message: "用节点数最少那个模板跑一个检查", must_call: [create_and_run], expect_run: true }
+
+  - id: e4-follow-up-no-context
+    category: multi_turn
+    description: "用户只说'继续',没有 prior context——Agent 应要求clarify,不能盲目开跑"
+    message: "继续"
+    expect_run: false
+    must_not_call: [create_and_run]
+
+  - id: e5-interrupted
+    category: multi_turn
+    description: "用户话没说完被打断,下一条补全——Agent 应理解这是一个完整的请求并启动 DAG"
+    steps:
+      - { message: "帮我把那个后端服务的", must_not_call: [create_and_run], timeout_sec: 600 }
+      - { message: "上线检查 checklist 用 DAG 跑一下", must_call: [create_and_run], expect_run: true }
