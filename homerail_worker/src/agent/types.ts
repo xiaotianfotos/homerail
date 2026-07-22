@@ -5,7 +5,7 @@
  * @version 0.1.0
  */
 
-import type { AgentBuiltinToolName, AgentToolDefinition } from "homerail-protocol";
+import type { AgentBuiltinToolName, AgentToolDefinition, DagWorkspaceAccess } from "homerail-protocol";
 import type { AgentTurnController } from "./turn-controller.js";
 
 /** Tool definition with a runtime handler (extends protocol's AgentToolDefinition). */
@@ -113,6 +113,8 @@ export interface AgentRunContext {
   handoffOnly?: boolean;
   /** Exact allowlist for backend-provided shell and file tools. */
   allowedBuiltinTools?: AgentBuiltinToolName[];
+  /** Filesystem roots available to built-in tools for this DAG turn. */
+  workspaceAccess?: DagWorkspaceAccess;
   /**
    * Claude Agent SDK permission policy for this run. Docker DAG Workers use
    * the adapter default (`bypassPermissions`); the host Manager Agent uses

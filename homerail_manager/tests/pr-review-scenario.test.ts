@@ -135,6 +135,17 @@ describe("PR Review scenario assets", () => {
     expect(result.valid).toBe(true);
     expect(result.diagnostics).toEqual([]);
     expect(result.summary).toMatchObject({ workflow_id: "pr-review" });
+    const runtimeResult = {
+      reviewer: "runtime",
+      status: "complete",
+      summary: "Runtime review complete",
+      findings: [],
+    };
+    expect(validateJsonContract(result.canonical?.contracts.RuntimeReviewerResult, runtimeResult).valid).toBe(true);
+    expect(validateJsonContract(result.canonical?.contracts.RuntimeReviewerResult, {
+      ...runtimeResult,
+      reviewer: "tests",
+    }).valid).toBe(false);
     expect(result.canonical?.artifacts).toEqual([
       expect.objectContaining({
         name: "pr-privacy-review.json",
@@ -161,15 +172,25 @@ describe("PR Review scenario assets", () => {
       "security_review",
       "test_review",
     ]);
-    for (const reviewer of ["runtime", "security", "test", "frontend"]) {
-      expect(nodes.find((node) => node.id === `${reviewer}_review`)?.config).toMatchObject({
-        allowed_builtin_tools: ["Glob", "Grep", "LS", "Read"],
-        allowed_dag_tools: ["handoff"],
-        workspace_access: { writable_paths: [], readonly_paths: ["repository"] },
+    const reviewerContracts = {
+      runtime: "RuntimeReviewerResult",
+      security: "SecurityReviewerResult",
+      test: "TestReviewerResult",
+      frontend: "FrontendReviewerResult",
+    } as const;
+    for (const [reviewer, contract] of Object.entries(reviewerContracts)) {
+      expect(nodes.find((node) => node.id === `${reviewer}_review`)).toMatchObject({
+        outputs: expect.arrayContaining([expect.objectContaining({ name: "reviewed", contract })]),
+        config: {
+          allowed_builtin_tools: ["Glob", "Grep", "LS", "Read"],
+          allowed_dag_tools: ["handoff"],
+          workspace_access: { writable_paths: [], readonly_paths: ["repository"] },
+        },
       });
       expect(nodes.find((node) => node.id === `normalize_${reviewer}_review`)).toMatchObject({
         kind: "command",
         depends_on: [`${reviewer}_review`],
+        inputs: expect.arrayContaining([expect.objectContaining({ name: "success", contract })]),
         outputs: [expect.objectContaining({ name: "reviewed", contract: "ReviewerResult" })],
         config: expect.objectContaining({
           success_port: "reviewed",

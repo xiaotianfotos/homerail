@@ -1100,6 +1100,61 @@ describe("ClaudeSdkAdapter", () => {
     });
   });
 
+  it("wires a fail-closed read hook when DAG workspace access is declared", async () => {
+    const captured: Record<string, unknown>[] = [];
+    vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({
+      async *query(params: { options?: Record<string, unknown> }) {
+        captured.push(params.options ?? {});
+        yield { type: "result", subtype: "success", is_error: false };
+      },
+      createSdkMcpServer(_opts: { name: string }) {
+        return { type: "sdk", name: _opts.name };
+      },
+      tool(name: string) {
+        return { name };
+      },
+    }));
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-claude-read-hook-"));
+    fs.mkdirSync(path.join(workspace, "repository"));
+    fs.writeFileSync(path.join(workspace, "repository", "safe.txt"), "safe");
+    try {
+      const { ClaudeSdkAdapter } = await import("../agent/claude-sdk.js");
+      const adapter = new ClaudeSdkAdapter();
+      for await (const _event of adapter.run("inspect", [], {
+        ...ctx,
+        workspace,
+        workspaceAccess: { writable_paths: [], readonly_paths: ["repository"] },
+        allowedBuiltinTools: ["Read", "Grep", "Glob", "LS"],
+      })) {
+        // Drain the fake query.
+      }
+
+      const hooks = captured[0].hooks as {
+        PreToolUse: Array<{ hooks: Array<(input: unknown, id: string, options: { signal: AbortSignal }) => Promise<unknown>> }>;
+      };
+      expect(hooks.PreToolUse).toHaveLength(1);
+      const hook = hooks.PreToolUse[0].hooks[0];
+      await expect(hook({
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_input: { file_path: path.join(workspace, "repository", "safe.txt") },
+        tool_use_id: "tool-1",
+      }, "tool-1", { signal: new AbortController().signal })).resolves.toMatchObject({
+        hookSpecificOutput: { permissionDecision: "allow" },
+      });
+      await expect(hook({
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_input: { file_path: "/proc/self/environ" },
+        tool_use_id: "tool-2",
+      }, "tool-2", { signal: new AbortController().signal })).resolves.toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("disables all built-in tools during handoff-only correction turns", async () => {
     const captured: Record<string, unknown>[] = [];
     vi.doMock("@anthropic-ai/claude-agent-sdk", () => ({

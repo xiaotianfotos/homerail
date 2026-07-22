@@ -48,11 +48,15 @@ metadata.
    mounted read-only. Reviewers that need repository evidence receive only the
    SDK's read-only `Read`, `Grep`, `Glob`, and `LS` tools, so they can inspect
    complete files, trace callers, and search tests without granting untrusted PR
-   content a shell or write primitive. Synthesis, coverage, refinement, and
-   publication keep their built-in tool list empty. The supplied patch is an
-   index rather than the sole evidence source, and prompts require inspection to
-   stay proportional to the changed surface. HomeRail DAG tools remain scoped to
-   the node contract, with `handoff` carrying the structured result. Patch and
+   content a shell or write primitive. A Worker pre-tool hook resolves real paths
+   and denies omitted paths, traversal, absolute paths outside the declared
+   workspace roots, and symlink escapes before a read/search tool executes.
+   Synthesis, coverage, refinement, and publication keep their built-in tool list
+   empty. The supplied patch is an index rather than the sole evidence source,
+   and prompts require inspection to stay proportional to the changed surface.
+   Reviewer-specific output contracts reject a mislabeled reviewer identity and
+   trigger bounded contract correction. HomeRail DAG tools remain scoped to the
+   node contract, with `handoff` carrying the structured result. Patch and
    repository content are untrusted evidence, never instructions. If evidence
    had to be truncated, the main reviewers fail closed and the privacy advisory
    requests human inspection.

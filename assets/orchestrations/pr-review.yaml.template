@@ -170,6 +170,106 @@ spec:
               recommendation: { type: string, minLength: 1, maxLength: 8000 }
               confidence: { type: string, enum: [high, medium, low] }
 
+    RuntimeReviewerResult:
+      type: object
+      additionalProperties: false
+      required: [reviewer, status, summary, findings]
+      properties:
+        reviewer: { const: runtime }
+        status: { type: string, enum: [complete, failed] }
+        summary: { type: string, minLength: 1, maxLength: 12000 }
+        findings:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, severity, title, file, line, evidence, recommendation, confidence]
+            properties:
+              category: { type: string, enum: [runtime, security, tests, frontend] }
+              severity: { type: string, enum: [critical, high, medium, low] }
+              title: { type: string, minLength: 1, maxLength: 300 }
+              file: { type: string, minLength: 1, maxLength: 1000 }
+              line: { type: integer, minimum: 1 }
+              evidence: { type: string, minLength: 1, maxLength: 12000 }
+              recommendation: { type: string, minLength: 1, maxLength: 8000 }
+              confidence: { type: string, enum: [high, medium, low] }
+
+    SecurityReviewerResult:
+      type: object
+      additionalProperties: false
+      required: [reviewer, status, summary, findings]
+      properties:
+        reviewer: { const: security }
+        status: { type: string, enum: [complete, failed] }
+        summary: { type: string, minLength: 1, maxLength: 12000 }
+        findings:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, severity, title, file, line, evidence, recommendation, confidence]
+            properties:
+              category: { type: string, enum: [runtime, security, tests, frontend] }
+              severity: { type: string, enum: [critical, high, medium, low] }
+              title: { type: string, minLength: 1, maxLength: 300 }
+              file: { type: string, minLength: 1, maxLength: 1000 }
+              line: { type: integer, minimum: 1 }
+              evidence: { type: string, minLength: 1, maxLength: 12000 }
+              recommendation: { type: string, minLength: 1, maxLength: 8000 }
+              confidence: { type: string, enum: [high, medium, low] }
+
+    TestReviewerResult:
+      type: object
+      additionalProperties: false
+      required: [reviewer, status, summary, findings]
+      properties:
+        reviewer: { const: tests }
+        status: { type: string, enum: [complete, failed] }
+        summary: { type: string, minLength: 1, maxLength: 12000 }
+        findings:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, severity, title, file, line, evidence, recommendation, confidence]
+            properties:
+              category: { type: string, enum: [runtime, security, tests, frontend] }
+              severity: { type: string, enum: [critical, high, medium, low] }
+              title: { type: string, minLength: 1, maxLength: 300 }
+              file: { type: string, minLength: 1, maxLength: 1000 }
+              line: { type: integer, minimum: 1 }
+              evidence: { type: string, minLength: 1, maxLength: 12000 }
+              recommendation: { type: string, minLength: 1, maxLength: 8000 }
+              confidence: { type: string, enum: [high, medium, low] }
+
+    FrontendReviewerResult:
+      type: object
+      additionalProperties: false
+      required: [reviewer, status, summary, findings]
+      properties:
+        reviewer: { const: frontend }
+        status: { type: string, enum: [complete, failed] }
+        summary: { type: string, minLength: 1, maxLength: 12000 }
+        findings:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, severity, title, file, line, evidence, recommendation, confidence]
+            properties:
+              category: { type: string, enum: [runtime, security, tests, frontend] }
+              severity: { type: string, enum: [critical, high, medium, low] }
+              title: { type: string, minLength: 1, maxLength: 300 }
+              file: { type: string, minLength: 1, maxLength: 1000 }
+              line: { type: integer, minimum: 1 }
+              evidence: { type: string, minLength: 1, maxLength: 12000 }
+              recommendation: { type: string, minLength: 1, maxLength: 8000 }
+              confidence: { type: string, enum: [high, medium, low] }
+
     PrivacyReview:
       type: object
       additionalProperties: false
@@ -434,6 +534,9 @@ spec:
         input.context.repository_path. Use the SDK's available read-only
         repository tools whenever they help verify changed files, references,
         or metadata; invoke tools directly rather than printing proposed calls.
+        Every Read, Grep, Glob, or LS call must set its path explicitly to
+        input.context.repository_path or one of its descendants; keep Glob
+        patterns relative and traversal-free.
         The supplied diff is the starting index, not the only permitted
         evidence. Keep inspection proportional to the changed surface and stop
         after the concrete references needed for a decision. Do not modify the
@@ -478,7 +581,10 @@ spec:
         input.context.repository_path. Use the SDK's available read-only
         repository tools whenever useful to trace callers, implementations,
         persistence, and tests beyond the supplied patch; invoke tools directly
-        rather than printing proposed calls. The diff is the starting index,
+        rather than printing proposed calls.
+        Every Read, Grep, Glob, or LS call must set its path explicitly to
+        input.context.repository_path or one of its descendants; keep Glob
+        patterns relative and traversal-free. The diff is the starting index,
         not the only permitted evidence. Keep inspection proportional to the
         changed surface and follow only concrete affected paths needed for a
         decision. Do not modify the checkout. If
@@ -520,8 +626,11 @@ spec:
         input.context.repository_path. Use the SDK's available read-only
         repository tools whenever useful to trace real data flow, privilege
         boundaries, configuration, and affected callers beyond the supplied
-        patch; invoke tools directly rather than printing proposed calls. The
-        diff is the starting index, not the only permitted evidence. Keep
+        patch; invoke tools directly rather than printing proposed calls.
+        Every Read, Grep, Glob, or LS call must set its path explicitly to
+        input.context.repository_path or one of its descendants; keep Glob
+        patterns relative and traversal-free. The diff is the starting index,
+        not the only permitted evidence. Keep
         inspection proportional to concrete changed security boundaries. Do
         not modify the checkout. If `diff_truncated` is true, do not guess:
         call handoff on failed with
@@ -552,8 +661,11 @@ spec:
         input.context.repository_path. Use the SDK's available read-only
         repository tools whenever useful to inspect existing coverage and
         locate affected tests; invoke tools directly rather than
-        printing proposed calls. The diff is the starting index, not the only
-        permitted evidence. Keep inspection proportional to concrete changed
+        printing proposed calls. Every Read, Grep, Glob, or LS call must set its
+        path explicitly to input.context.repository_path or one of its
+        descendants; keep Glob patterns relative and traversal-free. The diff
+        is the starting index, not the only permitted evidence. Keep inspection
+        proportional to concrete changed
         behavior and its directly affected tests. Do not modify the checkout.
         If `diff_truncated` is true, do not guess:
         call handoff on failed with
@@ -592,8 +704,11 @@ spec:
         input.context.repository_path. Use the SDK's available read-only
         repository tools whenever useful to inspect components, styles, API
         consumers, and tests beyond the supplied patch; invoke tools directly
-        rather than printing proposed calls. The diff is the starting index,
-        not the only permitted evidence. Keep inspection proportional to the
+        rather than printing proposed calls. Every Read, Grep, Glob, or LS call
+        must set its path explicitly to input.context.repository_path or one of
+        its descendants; keep Glob patterns relative and traversal-free. The
+        diff is the starting index, not the only permitted evidence. Keep
+        inspection proportional to the
         changed user surface and directly affected consumers. Do not modify the
         checkout. If `diff_truncated` is true, do not guess:
         call handoff on failed with
@@ -686,7 +801,10 @@ spec:
         input.context.repository_path. Use the SDK's available read-only
         repository tools whenever needed to independently verify affected callers,
         tests, and observable behavior; invoke tools directly rather than
-        printing proposed calls. The diff is the starting index, not the only
+        printing proposed calls. Every Read, Grep, Glob, or LS call must set its
+        path explicitly to input.context.repository_path or one of its
+        descendants; keep Glob patterns relative and traversal-free. The diff
+        is the starting index, not the only
         permitted evidence. Keep inspection bounded to evidence needed to
         adjudicate the retained findings. Do not modify the checkout.
         Independently verify that every finding cites changed code or a directly
@@ -727,7 +845,10 @@ spec:
         input.context.repository_path. Use the SDK's available read-only
         repository tools whenever needed to challenge each finding against callers,
         tests, and exact base...head behavior; invoke tools directly rather than
-        printing proposed calls. The diff is the starting index, not the only
+        printing proposed calls. Every Read, Grep, Glob, or LS call must set its
+        path explicitly to input.context.repository_path or one of its
+        descendants; keep Glob patterns relative and traversal-free. The diff
+        is the starting index, not the only
         permitted evidence. Keep inspection bounded to evidence needed to
         accept or reject each retained finding. Do not modify the checkout. Act
         as a fresh false-positive challenger. Try to disprove each finding. Do not
@@ -1057,13 +1178,13 @@ spec:
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { context: { contract: ReviewContext } }
-      outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+      outputs: { reviewed: { contract: RuntimeReviewerResult }, failed: {} }
 
     normalize_runtime_review:
       kind: command
       depends_on: [runtime_review]
       inputs:
-        success: { contract: ReviewerResult }
+        success: { contract: RuntimeReviewerResult }
         failure: {}
       outputs: { reviewed: { contract: ReviewerResult } }
       config:
@@ -1088,13 +1209,13 @@ spec:
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { context: { contract: ReviewContext } }
-      outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+      outputs: { reviewed: { contract: SecurityReviewerResult }, failed: {} }
 
     normalize_security_review:
       kind: command
       depends_on: [security_review]
       inputs:
-        success: { contract: ReviewerResult }
+        success: { contract: SecurityReviewerResult }
         failure: {}
       outputs: { reviewed: { contract: ReviewerResult } }
       config:
@@ -1119,13 +1240,13 @@ spec:
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { context: { contract: ReviewContext } }
-      outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+      outputs: { reviewed: { contract: TestReviewerResult }, failed: {} }
 
     normalize_test_review:
       kind: command
       depends_on: [test_review]
       inputs:
-        success: { contract: ReviewerResult }
+        success: { contract: TestReviewerResult }
         failure: {}
       outputs: { reviewed: { contract: ReviewerResult } }
       config:
@@ -1150,13 +1271,13 @@ spec:
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository] }
       inputs: { context: { contract: ReviewContext } }
-      outputs: { reviewed: { contract: ReviewerResult }, failed: {} }
+      outputs: { reviewed: { contract: FrontendReviewerResult }, failed: {} }
 
     normalize_frontend_review:
       kind: command
       depends_on: [frontend_review]
       inputs:
-        success: { contract: ReviewerResult }
+        success: { contract: FrontendReviewerResult }
         failure: {}
       outputs: { reviewed: { contract: ReviewerResult } }
       config:

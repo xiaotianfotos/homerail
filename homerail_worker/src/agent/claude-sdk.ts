@@ -26,6 +26,7 @@ import {
   normalizeJsonObjectStringsBySchema,
 } from "./json-schema-zod.js";
 import { sanitizedAgentChildEnv } from "./child-env.js";
+import { createWorkspaceReadToolHook } from "./workspace-read-policy.js";
 
 const HANDOFF_ONLY_THINKING_BUDGET = 2048;
 const HANDOFF_STOP = Symbol("claude-sdk-handoff-stop");
@@ -495,6 +496,9 @@ export class ClaudeSdkAdapter implements AgentClient {
         ? Math.min(this.thinkingBudget, HANDOFF_ONLY_THINKING_BUDGET)
         : this.thinkingBudget;
       const systemPromptMode = context.systemPromptMode ?? "append";
+      const workspaceReadToolHook = context.workspace && context.workspaceAccess
+        ? createWorkspaceReadToolHook(context.workspace, context.workspaceAccess)
+        : undefined;
       skillRuntime = prepareClaudeSkillProjection(context);
       const options: Record<string, unknown> = {
         model: effectiveModel,
@@ -513,6 +517,9 @@ export class ClaudeSdkAdapter implements AgentClient {
         settingSources: skillRuntime?.skillCount ? ["user"] : [],
         skills: skillRuntime?.skillCount ? "all" : [],
         strictMcpConfig: true,
+        ...(workspaceReadToolHook
+          ? { hooks: { PreToolUse: [{ hooks: [workspaceReadToolHook] }] } }
+          : {}),
       };
       const nativeSessionId = persistentClaudeSessionId(context);
       if (nativeSessionId) {

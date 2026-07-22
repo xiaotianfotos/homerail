@@ -464,6 +464,7 @@ export async function runPrompt(
       turnController: deps.turnController,
       handoffOnly: correctionOnly,
       allowedBuiltinTools: job.dagConfig.allowed_builtin_tools,
+      workspaceAccess: job.dagConfig.workspace_access,
       skillProjection: job.skillProjection,
       environmentVariables: job.credentialEnv,
       rawTraceSink: claudeSdkTrace ?? undefined,
