@@ -462,7 +462,7 @@ spec:
       agent: publisher
       allowed_builtin_tools: []
       allowed_dag_tools: [handoff]
-      workspace_access: { writable_paths: [], readonly_paths: [source] }
+      workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
       inputs:
         issue: { contract: IssueContext }
         patch: { contract: FixCandidate }

@@ -48,6 +48,10 @@ describe("Auto Fix scenario asset", () => {
       kind: "agent",
       agent: "arbiter",
     });
+    expect(canonical.nodes.find((node) => node.id === "publish")?.config.workspace_access).toMatchObject({
+      writable_paths: [".homerail-runtime"],
+      readonly_paths: ["source"],
+    });
     expect(canonical.artifacts).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "auto-fix.json", contract: "AutoFixResult" }),
       expect.objectContaining({
