@@ -16,6 +16,7 @@ import { _clearAllPersistence, loadRunMetadata } from "../src/persistence/store.
 import { _clearNodes } from "../src/node/registry.js";
 import {
   _clearActiveRuns,
+  cancelActiveRun,
   createActiveRun,
   dispatchReadyNodes,
   getActiveRun,
@@ -277,6 +278,45 @@ describe("multi-round DAG HTTP API", () => {
     });
     expect(await jsonResponse(`${baseUrl}/api/dag-status/${runId}`)).toMatchObject({
       body: { data: { execution: { status: "completed", complete: true } } },
+    });
+  });
+
+  it("reports cancelled runs and nodes as terminal across status, detail, and metrics APIs", async () => {
+    const runId = "multi-round-http-cancelled";
+    const dispatcher = new CapturingDispatcher();
+    createActiveRun(runId, multiRoundDag());
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    cancelActiveRun(runId);
+    server = createServer(0, undefined, dispatcher, false, { autoDetectCodex: false });
+    const baseUrl = `http://127.0.0.1:${await listen(server)}`;
+
+    expect(await jsonResponse(`${baseUrl}/api/dag-status/${runId}`)).toMatchObject({
+      body: {
+        data: {
+          execution: {
+            status: "cancelled",
+            complete: true,
+            nodes: {
+              actor: { status: "cancelled", completed_at: expect.any(String) },
+            },
+          },
+        },
+      },
+    });
+    expect(await jsonResponse(`${baseUrl}/api/dag-status/${runId}/node/actor`)).toMatchObject({
+      body: {
+        data: { status: "cancelled", completed_at: expect.any(String) },
+      },
+    });
+    expect(await jsonResponse(`${baseUrl}/api/dag-status/${runId}/metrics`)).toMatchObject({
+      body: {
+        data: {
+          status: "cancelled",
+          nodes: {
+            actor: { status: "cancelled", completed_at: expect.any(String) },
+          },
+        },
+      },
     });
   });
 
