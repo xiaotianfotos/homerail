@@ -9,10 +9,18 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 test("stable runner uses the deployed release and never starts a transient Manager", () => {
   const bootstrap = fs.readFileSync(path.join(root, "scripts/lib/stable-automation-runtime.sh"), "utf8");
   const runner = fs.readFileSync(path.join(root, "scripts/run-stable-dag-runner.sh"), "utf8");
+  const reviewWorkflow = fs.readFileSync(path.join(root, ".github/workflows/pr-review.yml"), "utf8");
   assert.match(bootstrap, /HOMERAIL_STABLE_RELEASE=.*readlink -f.*current/);
   assert.match(bootstrap, /dag-mutation\.token/);
   assert.match(runner, /\$HOMERAIL_STABLE_RELEASE\/scripts\/configure-/);
   assert.doesNotMatch(runner, /npm run install:all|build:packages|run-pr-review-live-runner|docker compose/);
+  assert.match(reviewWorkflow, /adapter_mode=release/);
+  assert.match(reviewWorkflow, /steps\.stable\.outputs\.release }}\/scripts\/run-pr-review-stable-runner\.sh/);
+  assert.match(reviewWorkflow, /github\.event\.pull_request\.number == 101/);
+  assert.match(reviewWorkflow, /github\.ref == 'refs\/heads\/feat\/auto-fix-dag'/);
+  assert.match(reviewWorkflow, /sparse-checkout:[\s\S]*scripts\/run-pr-review-stable-runner\.sh[\s\S]*scripts\/run-stable-dag-runner\.sh[\s\S]*scripts\/lib\/stable-automation-runtime\.sh/);
+  assert.match(reviewWorkflow, /git -C "\$checkout_root" rev-parse HEAD/);
+  assert.doesNotMatch(reviewWorkflow, /npm run install:all|build:packages|run-pr-review-live-runner|docker compose/);
 });
 
 test("Auto Fix validation installs trusted dependencies before applying the patch", () => {
