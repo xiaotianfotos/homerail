@@ -15,6 +15,8 @@ const toastMocks = vi.hoisted(() => ({
   showToast: vi.fn()
 }))
 const voiceApiMocks = vi.hoisted(() => ({
+  getVoiceSettings: vi.fn(),
+  updateVoiceSettings: vi.fn(),
   testVoiceEndpoints: vi.fn()
 }))
 
@@ -28,6 +30,8 @@ vi.mock('@/api/services/providers-api', () => ({
 }))
 
 vi.mock('@/api/services/voice-api', () => ({
+  getVoiceSettings: voiceApiMocks.getVoiceSettings,
+  updateVoiceSettings: voiceApiMocks.updateVoiceSettings,
   testVoiceEndpoints: voiceApiMocks.testVoiceEndpoints
 }))
 
@@ -101,6 +105,34 @@ function inputValue(input: HTMLInputElement, value: string): void {
 beforeEach(() => {
   i18n.global.locale.value = 'zh-Hans'
   vi.clearAllMocks()
+  voiceApiMocks.getVoiceSettings.mockResolvedValue({
+    success: true,
+    data: {
+      recognition_mode: 'asr',
+      omni_base_url: '',
+      omni_model: '',
+      omni_llm_setting_id: null,
+      omni_token_set: false,
+      llm_base_url: 'http://manager.test/v1',
+      llm_model: 'manager-model',
+      llm_setting_id: 'manager-setting',
+      llm_token_set: true,
+      asr_base_url: 'http://asr.test/v1',
+      asr_realtime_url: 'ws://asr.test/v1/realtime',
+      asr_model: 'asr-model',
+      asr_llm_setting_id: 'asr-setting',
+      asr_token_set: true,
+      tts_base_url: '',
+      tts_model: 'edge-tts',
+      tts_llm_setting_id: null,
+      tts_voice: 'en-US-MichelleNeural',
+      tts_speed: null,
+      tts_token_set: false,
+      tts_stream: false,
+      tts_output_channels: ['commentary', 'final']
+    }
+  })
+  voiceApiMocks.updateVoiceSettings.mockResolvedValue({ success: true, data: {} })
   // 默认所有候选端点都可达（按请求原样返回 ok 结果）；
   // 需要失败场景时各用例用 mockResolvedValueOnce 覆盖。
   voiceApiMocks.testVoiceEndpoints.mockImplementation((endpoints: Array<{ id: string; kind: string; url: string }>) =>
@@ -127,6 +159,40 @@ afterEach(() => {
 })
 
 describe('OnboardingStepForm TTS persistence', () => {
+  it('offers built-in Edge TTS by default and saves it without a provider setting or key', async () => {
+    const onCreated = vi.fn()
+    const root = await mountForm({
+      capability: 'supports_tts',
+      providers: [],
+      existingSettings: [],
+      onCreated
+    })
+
+    const selects = root.querySelectorAll<HTMLSelectElement>('select')
+    expect(selects[0]!.value).toBe('builtin:microsoft-edge')
+    expect(selects[1]!.value).toBe('edge-tts')
+    expect(root.textContent).toContain('Microsoft Edge（在线、无需 Key）')
+    expect(root.textContent).toContain('HomeRail 内置，无需 API Key')
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(voiceApiMocks.updateVoiceSettings).toHaveBeenCalledTimes(1))
+    expect(voiceApiMocks.updateVoiceSettings).toHaveBeenCalledWith(expect.objectContaining({
+      llm_setting_id: 'manager-setting',
+      asr_llm_setting_id: 'asr-setting',
+      asr_realtime_url: 'ws://asr.test/v1/realtime',
+      tts_base_url: '',
+      tts_model: 'edge-tts',
+      tts_llm_setting_id: null,
+      tts_voice: 'en-US-MichelleNeural',
+      tts_token: null,
+      tts_stream: false
+    }))
+    expect(apiMocks.createLLMSetting).not.toHaveBeenCalled()
+    expect(apiMocks.createProvider).not.toHaveBeenCalled()
+    expect(onCreated).toHaveBeenCalledWith(undefined, 'builtin_edge_tts')
+  })
+
   it('uses the explicit credential reuse flag for a preset TTS model', async () => {
     vi.mocked(probeModels).mockResolvedValueOnce({ models: ['mimo-v2.5-tts'] })
     const root = await mountForm({

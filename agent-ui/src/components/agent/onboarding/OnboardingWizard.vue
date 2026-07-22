@@ -110,8 +110,9 @@ const currentStep = computed<StepDef>(() => steps.value[currentIdx.value])
 // ── 每阶段状态 ────────────────────────────────────────────────
 // agent 阶段：后端 Manager Agent runtime readiness 为准
 // asr 阶段：hasAsr 即 done
-// tts 阶段：hasTts 或用户主动跳过即 done
+// tts 阶段：有存储模型、已选择内置 Edge TTS，或用户主动跳过即 done
 const ttsSkipped = ref(false)
+const builtinEdgeTtsConfigured = ref(false)
 
 function stepStatus(id: StepId): 'done' | 'pending' | 'loading' {
   if (status.value.loading) return 'loading'
@@ -121,7 +122,7 @@ function stepStatus(id: StepId): 'done' | 'pending' | 'loading' {
   }
   if (id === 'asr') return status.value.hasAsr ? 'done' : 'pending'
   // tts
-  if (status.value.hasTts || ttsSkipped.value) return 'done'
+  if (status.value.hasTts || ttsSkipped.value || builtinEdgeTtsConfigured.value) return 'done'
   return 'pending'
 }
 
@@ -151,7 +152,11 @@ function maybeFinish(): void {
 }
 
 // ── 交互 ──────────────────────────────────────────────────────
-async function onCreated(setting?: LLMSetting): Promise<void> {
+async function onCreated(
+  setting?: LLMSetting,
+  completion?: 'builtin_edge_tts',
+): Promise<void> {
+  if (completion === 'builtin_edge_tts') builtinEdgeTtsConfigured.value = true
   await Promise.all([
     refresh(),
     loadExistingSettings(),

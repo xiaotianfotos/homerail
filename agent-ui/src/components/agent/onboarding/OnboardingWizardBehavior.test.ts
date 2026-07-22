@@ -28,3 +28,11 @@ describe('OnboardingWizard Manager Agent activation', () => {
     expect(wizardSource).toContain('await configureManagerAgentSetting(setting, detectedHarness)')
   })
 })
+
+describe('OnboardingWizard built-in TTS completion', () => {
+  it('treats the keyless Edge TTS selection as a completed TTS step', () => {
+    expect(wizardSource).toContain("completion?: 'builtin_edge_tts'")
+    expect(wizardSource).toContain("if (completion === 'builtin_edge_tts') builtinEdgeTtsConfigured.value = true")
+    expect(wizardSource).toContain('status.value.hasTts || ttsSkipped.value || builtinEdgeTtsConfigured.value')
+  })
+})
