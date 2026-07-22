@@ -37,9 +37,11 @@ validation evidence to `ready_for_review`, a blocked result, or a durable
 owner-only merge approval. Closeout never performs a GitHub merge mutation.
 `auto-fix.yaml.template` is the model-neutral two-pass issue repair example. It
 produces a structured report, unified patch, and Markdown summary after three
-independent reviewers and a two-of-three quorum. It never receives GitHub write
-credentials and never creates a branch or pull request; a trusted runner may
-validate and publish those artifacts separately.
+independent reviewers and a two-of-three quorum. Fixed command nodes capture
+the implementation worktree and assemble the final publication, so Agents do
+not need to copy large patch payloads through correction turns. It never
+receives GitHub write credentials and never creates a branch or pull request; a
+trusted runner may validate and publish those artifacts separately.
 Additional strict v1 examples cover reusable graph primitives:
 
 - `workflow-spec-v1-fanout.yaml.template`: fan-out plus explicit join;

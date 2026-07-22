@@ -85,13 +85,25 @@ spec:
         repository_path: { type: string, const: source }
         head: { type: string, pattern: '^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$' }
 
+    ImplementationReport:
+      type: object
+      additionalProperties: false
+      required: [status, explanation, test_plan]
+      properties:
+        status: { type: string, enum: [fixed, cannot_fix] }
+        explanation: { type: string, minLength: 1, maxLength: 12000 }
+        test_plan:
+          type: array
+          maxItems: 30
+          items: { type: string, minLength: 1, maxLength: 2000 }
+
     FixCandidate:
       type: object
       additionalProperties: false
       required: [status, patch, explanation, files_changed, test_plan]
       properties:
         status: { type: string, enum: [fixed, cannot_fix] }
-        patch: { type: string, maxLength: 1000000 }
+        patch: { type: string, maxLength: 400000 }
         explanation: { type: string, minLength: 1, maxLength: 12000 }
         files_changed:
           type: array
@@ -101,6 +113,14 @@ spec:
           type: array
           maxItems: 30
           items: { type: string, minLength: 1, maxLength: 2000 }
+
+    PublicationSummary:
+      type: object
+      additionalProperties: false
+      required: [review_summary, markdown]
+      properties:
+        review_summary: { type: string, minLength: 1, maxLength: 12000 }
+        markdown: { type: string, minLength: 1, maxLength: 50000 }
 
     ReviewDefect:
       type: object
@@ -152,7 +172,7 @@ spec:
         repo: { type: string }
         issue: { type: integer }
         revision: { type: string, pattern: '^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$' }
-        patch: { type: string, minLength: 1, maxLength: 1000000 }
+        patch: { type: string, minLength: 1, maxLength: 400000 }
         explanation: { type: string, minLength: 1, maxLength: 12000 }
         files_changed:
           type: array
@@ -168,7 +188,7 @@ spec:
 
   artifacts:
     - name: auto-fix.json
-      source: { type: handoff, node: publish, port: published }
+      source: { type: handoff, node: finalize_publication, port: published }
       media_type: application/json
       contract: AutoFixResult
       required: true
@@ -176,7 +196,7 @@ spec:
     - name: auto-fix.patch
       source:
         type: handoff
-        node: publish
+        node: finalize_publication
         port: published
         json_pointer: /patch
       media_type: text/plain
@@ -185,7 +205,7 @@ spec:
     - name: auto-fix.md
       source:
         type: handoff
-        node: publish
+        node: finalize_publication
         port: published
         json_pointer: /markdown
       media_type: text/markdown
@@ -228,14 +248,19 @@ spec:
 
         Run useful repository checks inside this Worker when practical. The
         output test_plan is descriptive evidence, never a command for a host to
-        execute. Finish by obtaining `git -C source diff --binary --no-ext-diff`
-        and repository-relative changed paths. status=fixed requires a nonempty
-        patch. status=cannot_fix requires an empty patch and a concrete reason.
+        execute. Do not copy the unified diff into the handoff: the trusted
+        collect_implementation_patch node captures the complete worktree,
+        including new files, with a temporary Git index after your turn.
+        status=fixed means the source worktree contains a nonempty completed
+        repair. status=cannot_fix means no usable repair was produced.
 
-        Your final action MUST call handoff on patched with exactly:
-        {"status":"fixed|cannot_fix","patch":"unified git diff","explanation":"...","files_changed":["..."],"test_plan":["..."]}
-        Do not end with prose. If input:correction exists, immediately resubmit
-        the corrected object using only handoff.
+        Your final action MUST call handoff on reported with exactly:
+        {"status":"fixed|cannot_fix","explanation":"...","test_plan":["..."]}
+        Call handoff immediately after the focused checks; do not write a prose
+        summary first. If input:correction exists because the prior turn ended
+        without a handoff, immediately submit status=fixed: the deterministic
+        collector will reject an empty or unsafe worktree. Use cannot_fix only
+        when the original task itself cannot be implemented.
 
     correctness_reviewer:
       system: |
@@ -276,11 +301,15 @@ spec:
         credentials, modify .git, .github/workflows, .gitmodules, dependency
         directories, or files outside source. Run useful checks in this Worker.
 
-        Return the complete current `git -C source diff --binary --no-ext-diff`,
-        not an incremental diff. status=fixed requires a nonempty patch.
-        Your final action MUST call handoff on patched with the exact
-        FixCandidate shape. Do not end with prose. If input:correction exists,
-        immediately resubmit the corrected object using only handoff.
+        Do not copy the unified diff into the handoff. The trusted
+        collect_revised_patch node captures the complete current worktree after
+        your turn. status=fixed means the worktree contains a nonempty complete
+        repair. Your final action MUST call handoff on reported with exactly:
+        {"status":"fixed|cannot_fix","explanation":"...","test_plan":["..."]}
+        Call handoff immediately after focused checks; do not write a prose
+        summary first. If input:correction exists because the prior turn ended
+        without a handoff, immediately submit status=fixed and let the
+        deterministic collector validate the worktree.
 
     arbiter:
       system: |
@@ -295,15 +324,16 @@ spec:
 
     publisher:
       system: |
-        Publish a faithful machine-readable result from input.issue,
-        input.patch, input.arbitration, and the final reviews. Do not invent or
-        modify code and do not use tools other than handoff. Copy the complete
-        unified diff exactly into patch. markdown must be concise and include
-        the issue, base revision, explanation, changed files, proposed tests,
-        and review outcome without secrets or local machine information.
-        Your final action MUST call handoff on published with exactly:
-        {"status":"ready","repo":"owner/repo","issue":1,"revision":"exact base revision","patch":"exact unified diff","explanation":"...","files_changed":["..."],"test_plan":["..."],"review_summary":"...","markdown":"..."}
-        Do not end with prose.
+        Summarize input.issue, input.patch, input.arbitration, and the final
+        reviews without inventing or modifying code. Do not copy the unified
+        diff or trusted repository metadata: finalize_publication does that
+        deterministically. markdown must be concise and include the issue
+        number, exact base revision, explanation, changed files, proposed
+        tests, and review outcome without secrets or local machine information.
+        Your final action MUST call handoff on summarized with exactly:
+        {"review_summary":"...","markdown":"..."}
+        Do not end with prose. If input:correction exists, immediately resubmit
+        only this small summary with handoff.
 
   nodes:
     prepare_repository:
@@ -411,18 +441,105 @@ spec:
       inputs:
         issue: { contract: IssueContext }
         investigation: { contract: Investigation }
-      outputs: { patched: { contract: FixCandidate }, failed: {} }
+      outputs: { reported: { contract: ImplementationReport }, failed: {} }
 
     implementation_gate:
       kind: condition
-      inputs: { patch: { contract: FixCandidate } }
+      inputs: { report: { contract: ImplementationReport } }
       outputs:
-        fixed: { contract: FixCandidate }
-        cannot_fix: { contract: FixCandidate }
+        fixed: { contract: ImplementationReport }
+        cannot_fix: { contract: ImplementationReport }
       config:
         field: status
         routes: { fixed: fixed, cannot_fix: cannot_fix }
         default: cannot_fix
+
+    collect_implementation_patch:
+      kind: command
+      inputs: { report: { contract: ImplementationReport } }
+      outputs: { patched: { contract: FixCandidate }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - |-
+            const { spawnSync } = require('node:child_process');
+            const { mkdirSync, rmSync } = require('node:fs');
+            const { resolve } = require('node:path');
+            let stdin = '';
+            const fail = (message) => { throw new Error(message); };
+            const protectedPaths = new Set([
+              'scripts/apply-auto-fix-patch.mjs', 'scripts/build-auto-fix-pr-body.mjs',
+              'scripts/configure-auto-fix-runtime-profile.mjs', 'scripts/github-token-askpass.sh',
+              'scripts/prepare-auto-fix-input.mjs', 'scripts/publish-auto-fix-pr.sh',
+              'scripts/run-auto-fix-stable-runner.sh', 'scripts/run-stable-dag-runner.sh',
+              'scripts/validate-auto-fix-artifacts.mjs', 'scripts/validate-auto-fix-checkout.sh',
+            ]);
+            const safePath = (file) => {
+              if (typeof file !== 'string' || !file || file.includes('\\') || file.includes('\0') || file.startsWith('/')) return false;
+              const parts = file.split('/');
+              if (parts.some((part) => !part || part === '.' || part === '..')) return false;
+              const lower = file.toLowerCase();
+              if (lower === '.gitmodules' || lower.startsWith('.git/') || lower.startsWith('.github/workflows/')) return false;
+              if (/(^|\/)\.env(?:\.|$)/.test(lower) && !/(^|\/)\.env\.example$/.test(lower)) return false;
+              if (protectedPaths.has(lower)) return false;
+              if (/(^|\/)(?:id_rsa|id_ed25519)(?:\.|$)/i.test(file)) return false;
+              if (/(^|\/)(?:credentials|secrets?)(?:$|\.(?:json|ya?ml|ini|toml|txt))$/i.test(file)) return false;
+              return !/\.(?:pem|key|p8|p12|pfx|jks|keystore|mobileprovision)$/i.test(file);
+            };
+            process.stdin.on('data', (chunk) => { stdin += chunk; }).on('end', () => {
+              const inputs = JSON.parse(stdin);
+              const report = Array.isArray(inputs.report) ? inputs.report.at(-1) : undefined;
+              if (!report || report.status !== 'fixed' || typeof report.explanation !== 'string' || !Array.isArray(report.test_plan)) {
+                fail('fixed ImplementationReport input is missing');
+              }
+              mkdirSync('.homerail-runtime', { recursive: true });
+              const index = resolve('.homerail-runtime/collect-implementation.index');
+              rmSync(index, { force: true });
+              const env = {};
+              for (const key of ['PATH','Path','PATHEXT','SystemRoot','WINDIR','COMSPEC','TMP','TEMP','TMPDIR','LANG','LC_ALL']) {
+                if (typeof process.env[key] === 'string') env[key] = process.env[key];
+              }
+              Object.assign(env, {
+                HOME: process.cwd(), USERPROFILE: process.cwd(), XDG_CONFIG_HOME: resolve('.homerail-runtime/config'),
+                GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
+                GIT_INDEX_FILE: index, GIT_ASKPASS: '', SSH_ASKPASS: '', GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never',
+              });
+              const git = (args, allowFailure = false) => {
+                const result = spawnSync('git', ['-c','credential.helper=','-c','core.hooksPath=/dev/null','-c','protocol.file.allow=never','-c','protocol.ext.allow=never','-C','source',...args], {
+                  encoding: 'buffer', maxBuffer: 2097152, env,
+                });
+                if (result.error) throw result.error;
+                if (!allowFailure && result.status !== 0) fail(String(result.stderr || result.stdout || ('git exited ' + result.status)).trim());
+                return result;
+              };
+              try {
+                git(['read-tree', 'HEAD']);
+                git(['add', '-A', '--', '.']);
+                const files = git(['diff','--cached','--name-only','-z','HEAD']).stdout.toString('utf8').split('\0').filter(Boolean);
+                if (files.length < 1 || files.length > 100) fail('repair must change 1 through 100 files');
+                const unsafe = files.find((file) => !safePath(file));
+                if (unsafe) fail('repair targets forbidden path: ' + unsafe);
+                const summary = git(['diff','--cached','--summary','HEAD']).stdout.toString('utf8');
+                if (/\b(?:120000|160000)\b/.test(summary)) fail('repair changes a symlink or submodule entry');
+                const check = git(['diff','--cached','--check','HEAD'], true);
+                if (check.status !== 0) fail(String(check.stderr || check.stdout || 'git diff --check failed').trim());
+                const patch = git(['diff','--cached','--binary','--no-ext-diff','HEAD']).stdout.toString('utf8');
+                if (!patch || Buffer.byteLength(patch) > 400000) fail('repair patch is empty or exceeds 400 kilobytes');
+                if (/GIT binary patch|Binary files .* differ/.test(patch)) fail('binary patches are unsupported');
+                process.stdout.write(JSON.stringify({ status: 'fixed', patch, explanation: report.explanation, files_changed: files, test_plan: report.test_plan }));
+              } finally {
+                rmSync(index, { force: true });
+              }
+            });
+        stdin_field: "$inputs"
+        cwd: "$run_workspace"
+        timeout_ms: 120000
+        capture_limit: 1000000
+        success_port: patched
+        failure_port: failed
+        parse_stdout: json
+        result_payload: value
 
     review_correctness_initial:
       kind: agent
@@ -463,18 +580,105 @@ spec:
         correctness: { contract: ReviewVote }
         regression: { contract: ReviewVote }
         adversarial: { contract: ReviewVote }
-      outputs: { patched: { contract: FixCandidate }, failed: {} }
+      outputs: { reported: { contract: ImplementationReport }, failed: {} }
 
     revision_gate:
       kind: condition
-      inputs: { patch: { contract: FixCandidate } }
+      inputs: { report: { contract: ImplementationReport } }
       outputs:
-        fixed: { contract: FixCandidate }
-        cannot_fix: { contract: FixCandidate }
+        fixed: { contract: ImplementationReport }
+        cannot_fix: { contract: ImplementationReport }
       config:
         field: status
         routes: { fixed: fixed, cannot_fix: cannot_fix }
         default: cannot_fix
+
+    collect_revised_patch:
+      kind: command
+      inputs: { report: { contract: ImplementationReport } }
+      outputs: { patched: { contract: FixCandidate }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - |-
+            const { spawnSync } = require('node:child_process');
+            const { mkdirSync, rmSync } = require('node:fs');
+            const { resolve } = require('node:path');
+            let stdin = '';
+            const fail = (message) => { throw new Error(message); };
+            const protectedPaths = new Set([
+              'scripts/apply-auto-fix-patch.mjs', 'scripts/build-auto-fix-pr-body.mjs',
+              'scripts/configure-auto-fix-runtime-profile.mjs', 'scripts/github-token-askpass.sh',
+              'scripts/prepare-auto-fix-input.mjs', 'scripts/publish-auto-fix-pr.sh',
+              'scripts/run-auto-fix-stable-runner.sh', 'scripts/run-stable-dag-runner.sh',
+              'scripts/validate-auto-fix-artifacts.mjs', 'scripts/validate-auto-fix-checkout.sh',
+            ]);
+            const safePath = (file) => {
+              if (typeof file !== 'string' || !file || file.includes('\\') || file.includes('\0') || file.startsWith('/')) return false;
+              const parts = file.split('/');
+              if (parts.some((part) => !part || part === '.' || part === '..')) return false;
+              const lower = file.toLowerCase();
+              if (lower === '.gitmodules' || lower.startsWith('.git/') || lower.startsWith('.github/workflows/')) return false;
+              if (/(^|\/)\.env(?:\.|$)/.test(lower) && !/(^|\/)\.env\.example$/.test(lower)) return false;
+              if (protectedPaths.has(lower)) return false;
+              if (/(^|\/)(?:id_rsa|id_ed25519)(?:\.|$)/i.test(file)) return false;
+              if (/(^|\/)(?:credentials|secrets?)(?:$|\.(?:json|ya?ml|ini|toml|txt))$/i.test(file)) return false;
+              return !/\.(?:pem|key|p8|p12|pfx|jks|keystore|mobileprovision)$/i.test(file);
+            };
+            process.stdin.on('data', (chunk) => { stdin += chunk; }).on('end', () => {
+              const inputs = JSON.parse(stdin);
+              const report = Array.isArray(inputs.report) ? inputs.report.at(-1) : undefined;
+              if (!report || report.status !== 'fixed' || typeof report.explanation !== 'string' || !Array.isArray(report.test_plan)) {
+                fail('fixed ImplementationReport input is missing');
+              }
+              mkdirSync('.homerail-runtime', { recursive: true });
+              const index = resolve('.homerail-runtime/collect-revised.index');
+              rmSync(index, { force: true });
+              const env = {};
+              for (const key of ['PATH','Path','PATHEXT','SystemRoot','WINDIR','COMSPEC','TMP','TEMP','TMPDIR','LANG','LC_ALL']) {
+                if (typeof process.env[key] === 'string') env[key] = process.env[key];
+              }
+              Object.assign(env, {
+                HOME: process.cwd(), USERPROFILE: process.cwd(), XDG_CONFIG_HOME: resolve('.homerail-runtime/config'),
+                GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
+                GIT_INDEX_FILE: index, GIT_ASKPASS: '', SSH_ASKPASS: '', GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never',
+              });
+              const git = (args, allowFailure = false) => {
+                const result = spawnSync('git', ['-c','credential.helper=','-c','core.hooksPath=/dev/null','-c','protocol.file.allow=never','-c','protocol.ext.allow=never','-C','source',...args], {
+                  encoding: 'buffer', maxBuffer: 2097152, env,
+                });
+                if (result.error) throw result.error;
+                if (!allowFailure && result.status !== 0) fail(String(result.stderr || result.stdout || ('git exited ' + result.status)).trim());
+                return result;
+              };
+              try {
+                git(['read-tree', 'HEAD']);
+                git(['add', '-A', '--', '.']);
+                const files = git(['diff','--cached','--name-only','-z','HEAD']).stdout.toString('utf8').split('\0').filter(Boolean);
+                if (files.length < 1 || files.length > 100) fail('repair must change 1 through 100 files');
+                const unsafe = files.find((file) => !safePath(file));
+                if (unsafe) fail('repair targets forbidden path: ' + unsafe);
+                const summary = git(['diff','--cached','--summary','HEAD']).stdout.toString('utf8');
+                if (/\b(?:120000|160000)\b/.test(summary)) fail('repair changes a symlink or submodule entry');
+                const check = git(['diff','--cached','--check','HEAD'], true);
+                if (check.status !== 0) fail(String(check.stderr || check.stdout || 'git diff --check failed').trim());
+                const patch = git(['diff','--cached','--binary','--no-ext-diff','HEAD']).stdout.toString('utf8');
+                if (!patch || Buffer.byteLength(patch) > 400000) fail('repair patch is empty or exceeds 400 kilobytes');
+                if (/GIT binary patch|Binary files .* differ/.test(patch)) fail('binary patches are unsupported');
+                process.stdout.write(JSON.stringify({ status: 'fixed', patch, explanation: report.explanation, files_changed: files, test_plan: report.test_plan }));
+              } finally {
+                rmSync(index, { force: true });
+              }
+            });
+        stdin_field: "$inputs"
+        cwd: "$run_workspace"
+        timeout_ms: 120000
+        capture_limit: 1000000
+        success_port: patched
+        failure_port: failed
+        parse_stdout: json
+        result_payload: value
 
     review_correctness_final:
       kind: agent
@@ -557,7 +761,65 @@ spec:
         regression: { contract: ReviewVote }
         adversarial: { contract: ReviewVote }
         arbitration: { contract: Arbitration }
+      outputs: { summarized: { contract: PublicationSummary }, failed: {} }
+
+    finalize_publication:
+      kind: command
+      inputs:
+        issue: { contract: IssueContext }
+        patch: { contract: FixCandidate }
+        arbitration: { contract: Arbitration }
+        summary: { contract: PublicationSummary }
       outputs: { published: { contract: AutoFixResult }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - |-
+            let stdin = '';
+            const fail = (message) => { throw new Error(message); };
+            const one = (value) => Array.isArray(value) ? value.at(-1) : undefined;
+            const safeText = (value) => {
+              const forbidden = [
+                /[A-Za-z]:\\(?:Users|Documents and Settings)\\/i,
+                /\/(?:Users|home|vol[0-9]*|mnt)\//,
+                /\b(?:10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(?:1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b/,
+                /-----BEGIN [A-Z ]+PRIVATE KEY-----/,
+                /\b(?:api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/i,
+                /\bgh[opsu]_[A-Za-z0-9]{20,}\b/,
+              ];
+              if (forbidden.some((pattern) => pattern.test(value))) fail('publication contains local or credential material');
+              const emails = value.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi) || [];
+              if (!emails.every((email) => /@users\.noreply\.github\.com$/i.test(email))) fail('publication contains a non-noreply email');
+            };
+            process.stdin.on('data', (chunk) => { stdin += chunk; }).on('end', () => {
+              const inputs = JSON.parse(stdin);
+              const issue = one(inputs.issue);
+              const patch = one(inputs.patch);
+              const arbitration = one(inputs.arbitration);
+              const summary = one(inputs.summary);
+              if (!issue || typeof issue.repo !== 'string' || !Number.isInteger(issue.issue) || typeof issue.revision !== 'string') fail('IssueContext input is invalid');
+              if (!patch || patch.status !== 'fixed' || typeof patch.patch !== 'string' || !patch.patch || !Array.isArray(patch.files_changed) || patch.files_changed.length < 1) fail('FixCandidate input is invalid');
+              if (!arbitration || arbitration.verdict !== 'approve') fail('approved Arbitration input is required');
+              if (!summary || typeof summary.review_summary !== 'string' || typeof summary.markdown !== 'string') fail('PublicationSummary input is invalid');
+              if (!summary.markdown.includes('#' + issue.issue) || !summary.markdown.includes(issue.revision)) fail('publication markdown must contain issue number and base revision');
+              safeText(JSON.stringify(summary));
+              safeText(patch.patch);
+              const result = {
+                status: 'ready', repo: issue.repo, issue: issue.issue, revision: issue.revision,
+                patch: patch.patch, explanation: patch.explanation, files_changed: patch.files_changed,
+                test_plan: patch.test_plan, review_summary: summary.review_summary, markdown: summary.markdown,
+              };
+              process.stdout.write(JSON.stringify(result));
+            });
+        stdin_field: "$inputs"
+        cwd: "$run_workspace"
+        timeout_ms: 30000
+        capture_limit: 1000000
+        success_port: published
+        failure_port: failed
+        parse_stdout: json
+        result_payload: value
 
     done:
       kind: terminal
@@ -599,6 +861,11 @@ spec:
       outcome: failure
       inputs: { result: {} }
 
+    implementation_collection_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
     initial_correctness_failed:
       kind: terminal
       outcome: failure
@@ -615,6 +882,11 @@ spec:
       inputs: { result: {} }
 
     revision_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
+    revision_collection_failed:
       kind: terminal
       outcome: failure
       inputs: { result: {} }
@@ -644,6 +916,11 @@ spec:
       outcome: failure
       inputs: { result: {} }
 
+    finalization_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
     preparation_failed:
       kind: terminal
       outcome: failure
@@ -659,12 +936,14 @@ spec:
     - { from: investigation_gate.ready, to: implement.investigation }
     - { from: investigation_gate.unsupported, to: unsupported.result }
     - { from: $run.input, to: implement.issue }
-    - { from: implement.patched, to: implementation_gate.patch }
+    - { from: implement.reported, to: implementation_gate.report }
     - { from: implement.failed, to: implementation_failed.result, condition: on_failure }
-    - { from: implementation_gate.fixed, to: review_correctness_initial.patch }
-    - { from: implementation_gate.fixed, to: review_regression_initial.patch }
-    - { from: implementation_gate.fixed, to: review_adversarial_initial.patch }
-    - { from: implementation_gate.fixed, to: revise.patch }
+    - { from: implementation_gate.fixed, to: collect_implementation_patch.report }
+    - { from: collect_implementation_patch.patched, to: review_correctness_initial.patch }
+    - { from: collect_implementation_patch.patched, to: review_regression_initial.patch }
+    - { from: collect_implementation_patch.patched, to: review_adversarial_initial.patch }
+    - { from: collect_implementation_patch.patched, to: revise.patch }
+    - { from: collect_implementation_patch.failed, to: implementation_collection_failed.result, condition: on_failure }
     - { from: implementation_gate.cannot_fix, to: implementation_cannot_fix.result }
     - { from: $run.input, to: review_correctness_initial.issue }
     - { from: $run.input, to: review_regression_initial.issue }
@@ -676,13 +955,16 @@ spec:
     - { from: review_regression_initial.failed, to: initial_regression_failed.result, condition: on_failure }
     - { from: review_adversarial_initial.failed, to: initial_adversarial_failed.result, condition: on_failure }
     - { from: $run.input, to: revise.issue }
-    - { from: revise.patched, to: revision_gate.patch }
+    - { from: revise.reported, to: revision_gate.report }
     - { from: revise.failed, to: revision_failed.result, condition: on_failure }
-    - { from: revision_gate.fixed, to: review_correctness_final.patch }
-    - { from: revision_gate.fixed, to: review_regression_final.patch }
-    - { from: revision_gate.fixed, to: review_adversarial_final.patch }
-    - { from: revision_gate.fixed, to: arbitrate.patch }
-    - { from: revision_gate.fixed, to: publish.patch }
+    - { from: revision_gate.fixed, to: collect_revised_patch.report }
+    - { from: collect_revised_patch.patched, to: review_correctness_final.patch }
+    - { from: collect_revised_patch.patched, to: review_regression_final.patch }
+    - { from: collect_revised_patch.patched, to: review_adversarial_final.patch }
+    - { from: collect_revised_patch.patched, to: arbitrate.patch }
+    - { from: collect_revised_patch.patched, to: publish.patch }
+    - { from: collect_revised_patch.patched, to: finalize_publication.patch }
+    - { from: collect_revised_patch.failed, to: revision_collection_failed.result, condition: on_failure }
     - { from: revision_gate.cannot_fix, to: revision_cannot_fix.result }
     - { from: $run.input, to: review_correctness_final.issue }
     - { from: $run.input, to: review_regression_final.issue }
@@ -705,13 +987,17 @@ spec:
     - { from: arbitrate.arbitrated, to: arbitration_gate.arbitration }
     - { from: arbitrate.failed, to: arbitration_failed.result, condition: on_failure }
     - { from: arbitration_gate.approved, to: publish.arbitration }
+    - { from: arbitration_gate.approved, to: finalize_publication.arbitration }
     - { from: arbitration_gate.rejected, to: arbitration_rejected.result }
     - { from: $run.input, to: publish.issue }
-    - { from: publish.published, to: done.result }
+    - { from: $run.input, to: finalize_publication.issue }
+    - { from: publish.summarized, to: finalize_publication.summary }
+    - { from: finalize_publication.published, to: done.result }
     - { from: publish.failed, to: publication_failed.result, condition: on_failure }
+    - { from: finalize_publication.failed, to: finalization_failed.result, condition: on_failure }
 
   policies:
-    max_nodes: 40
+    max_nodes: 44
     max_edges: 72
     max_parallelism: 4
     max_dispatches: 48

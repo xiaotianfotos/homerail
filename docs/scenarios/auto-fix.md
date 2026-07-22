@@ -13,21 +13,32 @@ Issue text, comments, paths, and patch content are untrusted evidence. The DAG:
 
 1. deterministically clones the credential-free HTTPS repository at the exact
    revision, then gives the investigator a read-only checkout;
-2. creates a focused patch and test plan;
+2. creates a focused repair and test plan, then deterministically captures the
+   complete worktree as a bounded unified patch;
 3. runs correctness, regression, and adversarial reviews independently;
-4. performs a second implementation pass using all three reviews;
+4. performs a second implementation pass using all three reviews and captures
+   the complete revised worktree again;
 5. repeats the three reviews, requires a two-of-three quorum, and asks a
    separate arbiter for the final decision;
-6. publishes `auto-fix.json`, `auto-fix.patch`, and `auto-fix.md`.
+6. lets a publisher write only the human-readable summary, then
+   deterministically joins trusted issue metadata, exact patch bytes, and the
+   approved review outcome into `auto-fix.json`, `auto-fix.patch`, and
+   `auto-fix.md`.
 
-The checkout is the only command node. Its executable and arguments are fixed
-in the template, its Git environment is credential-scrubbed, and its output is
-the verified checkout path and revision. Investigation and review Agents mount
-that checkout read-only; only implementation and revision Agents may edit it.
-There is no GitHub token, SSH key, push, comment, pull-request mutation, or
-model-selected host command in the workflow. The public YAML contains only
-logical role names. A private database Runtime Profile binds those roles to
-operator-selected model settings.
+The checkout, two patch collectors, and publication finalizer are fixed command
+nodes. Their executables and arguments are declared by the template rather than
+selected by a model. Checkout uses a credential-scrubbed Git environment. Each
+collector uses a temporary Git index outside `.git`, includes untracked files,
+and rejects empty, oversized, binary, symlink/submodule, credential, workflow,
+and trusted-adapter changes before review. This also means a model correction
+turn never needs to remember or reproduce a large unified diff. The finalizer
+copies exact patch and issue fields and rejects local/private/credential text.
+
+Investigation and review Agents mount the checkout read-only; only
+implementation and revision Agents may edit it. There is no GitHub token, SSH
+key, push, comment, pull-request mutation, or model-selected host command in the
+workflow. The public YAML contains only logical role names. A private database
+Runtime Profile binds those roles to operator-selected model settings.
 
 ## Trusted GitHub adapter
 
