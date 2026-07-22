@@ -60,6 +60,11 @@ They do not start alternate Managers, allocate dynamic Manager ports, or clone
 the production Home. Live DAG compatibility CI remains the only workflow that
 may start a transient current-commit runtime.
 
+The production Manager enables only the fixed `node` executable for
+deterministic DAG command nodes. Built-in PR Review and Auto Fix use that
+runtime for credential-scrubbed parsing and checkout helpers; arbitrary shell
+executables remain disabled, and model-selected dynamic commands remain off.
+
 Machine-local `~/.config/homerail/automation.env` (mode `0600`) supplies the
 stable release/Home/Manager paths, the dedicated Actions runner roots, and
 private model selectors. These values are intentionally absent from tracked

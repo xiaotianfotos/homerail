@@ -10,11 +10,16 @@ MANAGER_PORT="${HOMERAIL_PRODUCTION_MANAGER_PORT:-39191}"
 DOCKER_BRIDGE_GATEWAY="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
 MANAGER_HOST="${HOMERAIL_PRODUCTION_MANAGER_HOST:-$DOCKER_BRIDGE_GATEWAY}"
 ALLOW_INSECURE_REMOTE_WS="${HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-${HOMERAIL_ALLOW_INSECURE_REMOTE_WS:-0}}"
+DAG_COMMAND_ALLOWLIST="${HOMERAIL_PRODUCTION_DAG_COMMAND_ALLOWLIST:-node}"
 if [ -z "$DOCKER_BRIDGE_GATEWAY" ] || [ -z "$MANAGER_HOST" ]; then
   echo "Production requires Docker's default 'bridge' network because provisioned Workers use it; restore that network before starting HomeRail." >&2
   exit 1
 fi
 case "$ALLOW_INSECURE_REMOTE_WS" in 0|1) ;; *) echo "HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS must be 0 or 1." >&2; exit 1 ;; esac
+if [ "$DAG_COMMAND_ALLOWLIST" != "node" ]; then
+  echo "Production deterministic DAG commands are restricted to the built-in node runtime." >&2
+  exit 1
+fi
 case "$MANAGER_HOST" in
   localhost|127.*|::1|\[::1\]|0.0.0.0|::|\[::\])
     echo "Production Manager must bind the Docker bridge gateway, not loopback or a wildcard address." >&2
@@ -76,6 +81,7 @@ export HOMERAIL_MANAGER_PORT="$MANAGER_PORT"
 export HOMERAIL_MANAGER_HOST="$MANAGER_HOST"
 export HOMERAIL_MANAGER_PUBLIC_URL="${HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-$MANAGER_URL}"
 export HOMERAIL_ALLOW_INSECURE_REMOTE_WS="$ALLOW_INSECURE_REMOTE_WS"
+export HOMERAIL_DAG_COMMAND_ALLOWLIST="$DAG_COMMAND_ALLOWLIST"
 export HOMERAIL_UI_HOST="$UI_HOST"
 export HOMERAIL_UI_PORT="$UI_PORT"
 export HOMERAIL_UI_HTTP_PORT="$UI_HTTP_PORT"
