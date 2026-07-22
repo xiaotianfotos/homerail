@@ -67,6 +67,37 @@ describe("DAG workflow revisions", () => {
     expect(getDagWorkflowRevision("revision-test", 1)?.source_text).toBe(LEGACY_SOURCE);
   });
 
+  it("reactivates an existing canonical revision without inserting a duplicate", () => {
+    const first = upsertDagWorkflowFromYaml({ yaml_text: LEGACY_SOURCE });
+    const secondSource = LEGACY_SOURCE.replace("Work.", "Work and return evidence.");
+    const second = upsertDagWorkflowFromYaml({ yaml_text: secondSource });
+    expect(second.workflow.head_revision).toBe(2);
+
+    const reactivated = upsertDagWorkflowFromYaml({
+      yaml_text: `\n${LEGACY_SOURCE.trim()}\n`,
+      source_path: "assets/orchestrations/revision-test.yaml.template",
+    });
+    expect(reactivated).toMatchObject({
+      created: false,
+      revision_created: false,
+      workflow: {
+        head_revision: 1,
+        canonical_hash: first.workflow.canonical_hash,
+        source_path: "assets/orchestrations/revision-test.yaml.template",
+      },
+    });
+    expect(listDagWorkflowRevisions("revision-test").map((revision) => revision.revision)).toEqual([2, 1]);
+
+    const third = upsertDagWorkflowFromYaml({
+      yaml_text: LEGACY_SOURCE.replace("Work.", "Work, verify, and return evidence."),
+    });
+    expect(third).toMatchObject({
+      revision_created: true,
+      workflow: { head_revision: 3 },
+    });
+    expect(listDagWorkflowRevisions("revision-test").map((revision) => revision.revision)).toEqual([3, 2, 1]);
+  });
+
   it("migrates an existing mutable workflow row to legacy revision 1", () => {
     const now = new Date().toISOString();
     getDb().prepare(`

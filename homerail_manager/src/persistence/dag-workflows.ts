@@ -271,6 +271,26 @@ function _writeRevision(revision: DagWorkflowRevision): void {
   );
 }
 
+function _findRevisionByCanonicalHash(
+  workflowId: string,
+  canonicalHash: string,
+): DagWorkflowRevision | undefined {
+  const row = getDb().prepare(`
+    SELECT * FROM dag_workflow_revisions
+    WHERE workflow_id = ? AND canonical_hash = ?
+  `).get(workflowId, canonicalHash) as Record<string, unknown> | undefined;
+  return row ? _revisionFromRow(row) : undefined;
+}
+
+function _nextRevisionNumber(workflowId: string): number {
+  const row = getDb().prepare(`
+    SELECT COALESCE(MAX(revision), 0) + 1 AS next_revision
+    FROM dag_workflow_revisions
+    WHERE workflow_id = ?
+  `).get(workflowId) as Record<string, unknown> | undefined;
+  return Number(row?.next_revision ?? 1);
+}
+
 function _requireCanonical(compilation: WorkflowCompilationResult): CanonicalWorkflowIR {
   if (!compilation.valid || !compilation.canonical || !compilation.canonical_json || !compilation.canonical_hash) {
     const details = compilation.diagnostics
@@ -355,8 +375,14 @@ export function upsertDagWorkflowFromYaml(input: {
   if (!workflowId) throw new Error("DAG workflow must define a stable workflow id before it can be synced.");
   const existing = getDagWorkflow(workflowId);
   const now = nowIso();
-  const revisionCreated = !existing || existing.canonical_hash !== compilation.canonical_hash;
-  const headRevision = revisionCreated ? (existing?.head_revision ?? 0) + 1 : existing.head_revision;
+  const canonicalHash = compilation.canonical_hash!;
+  const matchingRevision = existing
+    ? _findRevisionByCanonicalHash(workflowId, canonicalHash)
+    : undefined;
+  const revisionCreated = !existing || !matchingRevision;
+  const headRevision = !existing
+    ? 1
+    : matchingRevision?.revision ?? _nextRevisionNumber(workflowId);
   const workflow: DagWorkflow = {
     workflow_id: workflowId,
     name: canonical.name || workflowId,
@@ -366,7 +392,7 @@ export function upsertDagWorkflowFromYaml(input: {
     yaml_hash: _sha256(input.yaml_text),
     head_revision: headRevision,
     api_version: canonical.source_api_version,
-    canonical_hash: compilation.canonical_hash!,
+    canonical_hash: canonicalHash,
     compiler_version: canonical.compiler_version,
     node_ids: canonical.nodes.filter((node) => node.kind !== "terminal").map((node) => node.id),
     agent_ids: Object.keys(canonical.agents).sort(),
@@ -384,7 +410,7 @@ export function upsertDagWorkflowFromYaml(input: {
         source_text: input.yaml_text,
         source_hash: workflow.yaml_hash,
         canonical_json: compilation.canonical_json!,
-        canonical_hash: compilation.canonical_hash!,
+        canonical_hash: canonicalHash,
         compiler_version: canonical.compiler_version,
         created_at: now,
       });
