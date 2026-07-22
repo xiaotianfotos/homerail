@@ -193,6 +193,68 @@ describe('OnboardingStepForm TTS persistence', () => {
     expect(onCreated).toHaveBeenCalledWith(undefined, 'builtin_edge_tts')
   })
 
+  it('does not save or complete built-in Edge TTS when current voice settings cannot be loaded', async () => {
+    voiceApiMocks.getVoiceSettings.mockResolvedValueOnce({ success: false, data: null })
+    const onCreated = vi.fn()
+    const root = await mountForm({
+      capability: 'supports_tts',
+      providers: [],
+      existingSettings: [],
+      onCreated
+    })
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(toastMocks.showToast).toHaveBeenCalledWith(
+      '保存失败',
+      'error',
+      6000
+    ))
+    expect(voiceApiMocks.updateVoiceSettings).not.toHaveBeenCalled()
+    expect(onCreated).not.toHaveBeenCalled()
+  })
+
+  it('does not complete built-in Edge TTS when updating voice settings rejects', async () => {
+    voiceApiMocks.updateVoiceSettings.mockRejectedValueOnce(new Error('network failed'))
+    const onCreated = vi.fn()
+    const root = await mountForm({
+      capability: 'supports_tts',
+      providers: [],
+      existingSettings: [],
+      onCreated
+    })
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(toastMocks.showToast).toHaveBeenCalledWith(
+      'network failed',
+      'error',
+      6000
+    ))
+    expect(onCreated).not.toHaveBeenCalled()
+  })
+
+  it('does not report success or complete built-in Edge TTS when updating voice settings fails', async () => {
+    voiceApiMocks.updateVoiceSettings.mockResolvedValueOnce({ success: false, data: null })
+    const onCreated = vi.fn()
+    const root = await mountForm({
+      capability: 'supports_tts',
+      providers: [],
+      existingSettings: [],
+      onCreated
+    })
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(toastMocks.showToast).toHaveBeenCalledWith(
+      '保存失败',
+      'error',
+      6000
+    ))
+    expect(toastMocks.showToast).not.toHaveBeenCalledWith(expect.any(String), 'success')
+    expect(onCreated).not.toHaveBeenCalled()
+  })
+
   it('uses the explicit credential reuse flag for a preset TTS model', async () => {
     vi.mocked(probeModels).mockResolvedValueOnce({ models: ['mimo-v2.5-tts'] })
     const root = await mountForm({

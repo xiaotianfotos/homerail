@@ -629,7 +629,8 @@ async function submit(): Promise<void> {
 async function submitBuiltinEdgeTts(): Promise<undefined> {
   const current = await getVoiceSettings()
   if (!current.data) throw new Error(t('onboarding.form.saveFailed'))
-  await updateVoiceSettings(builtinEdgeTtsRequest(current.data))
+  const response = await updateVoiceSettings(builtinEdgeTtsRequest(current.data))
+  if (!response.success) throw new Error(t('onboarding.form.saveFailed'))
   return undefined
 }
 
