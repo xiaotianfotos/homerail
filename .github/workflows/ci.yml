@@ -92,7 +92,10 @@ jobs:
       (github.event_name == 'push' ||
         (github.event_name == 'workflow_dispatch' && !inputs.live_patterns))
     runs-on: windows-latest
-    timeout-minutes: 25
+    # A cold Windows dependency install can consume roughly six minutes before
+    # the serialized cross-platform suite starts. Keep every package enabled
+    # while leaving enough bounded headroom for hosted-runner variance.
+    timeout-minutes: 35
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
