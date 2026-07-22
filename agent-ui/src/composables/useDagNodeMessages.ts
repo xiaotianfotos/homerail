@@ -25,8 +25,13 @@ export function useDagNodeMessages(
   const loading = ref(false)
   const error = ref<string | null>(null)
   const nodeName = ref('')
+  const REFRESH_INTERVAL_MS = 300
   let refreshTimer: number | undefined
+  let refreshInFlight = false
+  let refreshPending = false
+  let lastRefreshStartedAt = Number.NEGATIVE_INFINITY
   let requestGeneration = 0
+  let disposed = false
 
   // ==========================================================================
   // 获取聊天记录
@@ -54,14 +59,34 @@ export function useDagNodeMessages(
     }
   }
 
+  function runScheduledRefresh() {
+    refreshTimer = undefined
+    if (disposed || refreshInFlight) return
+
+    const runId = dagRunId.value
+    const nodeId = selectedNodeId.value
+    if (!runId || !nodeId) {
+      refreshPending = false
+      return
+    }
+
+    refreshPending = false
+    refreshInFlight = true
+    lastRefreshStartedAt = Date.now()
+    void fetchChat(runId, nodeId, isSelectedManager.value, true).finally(() => {
+      refreshInFlight = false
+      if (refreshPending && !disposed) scheduleRefresh()
+    })
+  }
+
   function scheduleRefresh() {
-    if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
-    refreshTimer = window.setTimeout(() => {
-      refreshTimer = undefined
-      const runId = dagRunId.value
-      const nodeId = selectedNodeId.value
-      if (runId && nodeId) void fetchChat(runId, nodeId, isSelectedManager.value, true)
-    }, 100)
+    if (disposed) return
+    refreshPending = true
+    if (refreshTimer !== undefined || refreshInFlight) return
+
+    const elapsed = Date.now() - lastRefreshStartedAt
+    const delay = Math.max(0, REFRESH_INTERVAL_MS - elapsed)
+    refreshTimer = window.setTimeout(runScheduledRefresh, delay)
   }
 
   // ==========================================================================
@@ -71,6 +96,11 @@ export function useDagNodeMessages(
   watch(
     [selectedNodeId, dagRunId],
     ([nodeId, runId]) => {
+      refreshPending = false
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer)
+        refreshTimer = undefined
+      }
       if (!nodeId || !runId) {
         messages.value = []
         nodeName.value = ''
@@ -109,6 +139,7 @@ export function useDagNodeMessages(
   eventBus.on('dag:node_chat_updated', onNodeChatUpdated)
 
   onUnmounted(() => {
+    disposed = true
     eventBus.off('dag:node_message', onNodeMessage)
     eventBus.off('dag:node_chat_updated', onNodeChatUpdated)
     if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)

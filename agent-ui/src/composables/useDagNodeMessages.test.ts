@@ -87,4 +87,52 @@ describe('useDagNodeMessages realtime invalidation', () => {
 
     expect(api.getDagNodeChat).toHaveBeenCalledTimes(1)
   })
+
+  it('refreshes periodically while chat invalidations continue without a quiet gap', async () => {
+    const Harness = defineComponent({
+      setup() {
+        useDagNodeMessages(ref('run-live'), ref('review'), ref(false))
+        return () => h('div')
+      },
+    })
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp(Harness)
+    app.mount(root)
+    await nextTick()
+    await vi.waitFor(() => expect(api.getDagNodeChat).toHaveBeenCalledTimes(1))
+
+    for (let elapsed = 0; elapsed < 1_200; elapsed += 50) {
+      eventBus.emit('dag:node_chat_updated', {
+        runId: 'run-live',
+        nodeId: 'review',
+        timestamp: new Date().toISOString(),
+      })
+      await vi.advanceTimersByTimeAsync(50)
+    }
+
+    expect(api.getDagNodeChat.mock.calls.length).toBeGreaterThanOrEqual(4)
+    expect(api.getDagNodeChat.mock.calls.length).toBeLessThanOrEqual(6)
+  })
+
+  it('loads the next node immediately when live selection follows a handoff', async () => {
+    const nodeId = ref<string | null>('review')
+    const Harness = defineComponent({
+      setup() {
+        useDagNodeMessages(ref('run-live'), nodeId, ref(false))
+        return () => h('div')
+      },
+    })
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp(Harness)
+    app.mount(root)
+    await nextTick()
+    await vi.waitFor(() => expect(api.getDagNodeChat).toHaveBeenCalledWith('run-live', 'review'))
+
+    nodeId.value = 'implement'
+    await nextTick()
+
+    expect(api.getDagNodeChat).toHaveBeenLastCalledWith('run-live', 'implement')
+  })
 })

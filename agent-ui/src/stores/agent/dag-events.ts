@@ -30,6 +30,7 @@ export function bindAgentDagEvents(ctx: AgentDagEventBindings): AgentDagEventCon
   let reconnectRefreshTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectRefreshInFlight: Promise<void> | null = null
   let reconnectRefreshPending = false
+  let pendingActiveFollowFromNode: string | null = null
   const cleanupHandlers: Array<() => void> = []
 
   function eventRunId(data: any): string | undefined {
@@ -300,13 +301,62 @@ export function bindAgentDagEvents(ctx: AgentDagEventBindings): AgentDagEventCon
       }),
       watch(
         () => ctx.nodes.value.map(n => ({ id: n.id, status: n.status })),
-        (newNodes) => {
-          const runningNode = newNodes.find(n => n.status === 'running')
-          if (runningNode && !ctx.selectedNodeId.value) {
-            ctx.selectNode(runningNode.id)
+        (newNodes, previousNodes) => {
+          const selectedId = ctx.selectedNodeId.value
+          const previousSelected = previousNodes?.find(n => n.id === selectedId)
+          const currentSelected = newNodes.find(n => n.id === selectedId)
+          const isLive = (status?: DAGNodeStatus) => (
+            status === 'running' || status === 'waiting_for_command' || status === 'ready'
+          )
+
+          // Remember that the user was following the active node even if the
+          // handoff and downstream dispatch arrive in separate websocket turns.
+          if (
+            selectedId
+            && isLive(previousSelected?.status)
+            && !isLive(currentSelected?.status)
+          ) {
+            pendingActiveFollowFromNode = selectedId
+          }
+
+          const liveNodes = newNodes.filter(n => isLive(n.status))
+          if (!selectedId) {
+            const preferred = liveNodes.find(n => n.status === 'running')
+              ?? liveNodes.find(n => n.status === 'waiting_for_command')
+              ?? liveNodes[0]
+            if (preferred) ctx.selectNode(preferred.id)
+            return
+          }
+
+          if (pendingActiveFollowFromNode !== selectedId || liveNodes.length === 0) return
+
+          const newlyLiveIds = new Set(liveNodes
+            .filter(node => !isLive(previousNodes?.find(previous => previous.id === node.id)?.status))
+            .map(node => node.id))
+          const directSuccessor = ctx.edges.value.find(edge => (
+            edge.source === selectedId && newlyLiveIds.has(edge.target)
+          ))?.target
+          const nextNode = liveNodes.find(node => node.id === directSuccessor)
+            ?? liveNodes.find(node => newlyLiveIds.has(node.id) && node.status === 'running')
+            ?? liveNodes.find(node => newlyLiveIds.has(node.id))
+            ?? liveNodes.find(node => node.status === 'running')
+            ?? liveNodes[0]
+
+          if (nextNode.id !== selectedId) {
+            pendingActiveFollowFromNode = null
+            ctx.selectNode(nextNode.id)
           }
         },
       ),
+      watch(ctx.selectedNodeId, (nodeId, previousNodeId) => {
+        if (
+          pendingActiveFollowFromNode
+          && nodeId !== previousNodeId
+          && nodeId !== pendingActiveFollowFromNode
+        ) {
+          pendingActiveFollowFromNode = null
+        }
+      }),
     )
     voiceWs.connect()
   }
@@ -316,6 +366,7 @@ export function bindAgentDagEvents(ctx: AgentDagEventBindings): AgentDagEventCon
     initialized = false
     lifecycle++
     reconnectRefreshPending = false
+    pendingActiveFollowFromNode = null
     reconnectRefreshInFlight = null
     if (reconnectRefreshTimer) {
       clearTimeout(reconnectRefreshTimer)

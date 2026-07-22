@@ -365,6 +365,22 @@ watch(() => store.nodes.length, () => {
   if (view.value === 'dag_graph' && !focusedNodeId.value) initNodeFocus()
 })
 
+// The store follows a live handoff only when the user was already following
+// the active node. Mirror that authoritative selection into the overlay's
+// keyboard focus and, when open, the detail drawer.
+watch(
+  () => store.selectedNodeId,
+  (nodeId) => {
+    if (view.value !== 'dag_graph') return
+    if (!nodeId) {
+      if (selectedNodeId.value) selectedNodeId.value = null
+      return
+    }
+    focusedNodeId.value = nodeId
+    if (selectedNodeId.value) selectedNodeId.value = nodeId
+  },
+)
+
 watch(
   () => props.initialRunId,
   (runId) => {

@@ -170,6 +170,23 @@ describe('DAG API', () => {
             content: { type: 'content', content: 'Verified' }
           },
           {
+            role: 'worker',
+            type: 'response',
+            timestamp: '2026-07-10T00:00:02Z',
+            targetId: 'worker-1',
+            content: {
+              text: 'Persisted worker response',
+              run_id: 'run-1',
+              node_id: 'plan',
+              session_id: 'session-1'
+            }
+          },
+          {
+            role: 'manager',
+            type: 'response',
+            content: { text: 'Not a node response' }
+          },
+          {
             targetId: 'worker-1',
             content: { event: 'thinking', summary: 'Checking behavior' }
           },
@@ -198,21 +215,26 @@ describe('DAG API', () => {
 
     const messages = await getDagNodeChat('run-1', 'plan')
 
-    expect(messages).toHaveLength(5)
+    expect(messages).toHaveLength(6)
     expect(messages[0]).toMatchObject({
       type: 'text',
       content: 'Implemented',
       worker_id: 'worker-1'
     })
     expect(messages[1]).toMatchObject({ type: 'text', content: 'Verified' })
-    expect(messages[2]).toMatchObject({ type: 'thinking', content: 'Checking behavior' })
-    expect(messages[3]).toMatchObject({
+    expect(messages[2]).toMatchObject({
+      type: 'text',
+      content: 'Persisted worker response',
+      worker_id: 'worker-1'
+    })
+    expect(messages[3]).toMatchObject({ type: 'thinking', content: 'Checking behavior' })
+    expect(messages[4]).toMatchObject({
       type: 'tool_use',
       message_id: 'tool-1',
       tool_name: 'handoff',
       tool_input: { artifact: 'review' }
     })
-    expect(messages[4]).toMatchObject({
+    expect(messages[5]).toMatchObject({
       type: 'tool_result',
       message_id: 'tool-1',
       tool_result: 'done',

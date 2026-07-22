@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { clearAllListeners, eventBus } from '@/utils/eventBus'
-import type { DAGExecution, DAGTaskNode } from '@/api/types/dag.types'
+import type { DAGEdge, DAGExecution, DAGTaskNode } from '@/api/types/dag.types'
 import { bindAgentDagEvents } from './dag-events'
 
 const ws = vi.hoisted(() => ({
@@ -29,10 +29,10 @@ const api = vi.hoisted(() => ({ getDagStatus: vi.fn() }))
 vi.mock('@/api/clients/events-ws', () => ({ voiceWs: ws }))
 vi.mock('@/api/services/dag-api', () => ({ getDagStatus: api.getDagStatus }))
 
-function taskNode(status: DAGTaskNode['status'] = 'ready'): DAGTaskNode {
+function taskNode(status: DAGTaskNode['status'] = 'ready', id = 'review'): DAGTaskNode {
   return {
-    id: 'review',
-    name: 'Review',
+    id,
+    name: id,
     status,
     agent_id: 'reviewer',
     agent_name: 'Reviewer',
@@ -52,9 +52,18 @@ function execution(status: DAGExecution['status'] = 'running'): DAGExecution {
   }
 }
 
-function bind() {
+function bind(options: {
+  nodes?: DAGTaskNode[]
+  edges?: DAGEdge[]
+  selectedNodeId?: string | null
+} = {}) {
   const dagExecution = ref<DAGExecution | null>(execution())
-  const nodes = ref<DAGTaskNode[]>(dagExecution.value!.nodes)
+  const nodes = ref<DAGTaskNode[]>(options.nodes ?? dagExecution.value!.nodes)
+  const edges = ref<DAGEdge[]>(options.edges ?? [])
+  const selectedNodeId = ref<string | null>(options.selectedNodeId ?? null)
+  const selectNode = vi.fn((nodeId: string | null) => {
+    selectedNodeId.value = nodeId
+  })
   const setDagExecution = vi.fn((next: DAGExecution) => {
     dagExecution.value = next
     nodes.value = next.nodes
@@ -63,16 +72,16 @@ function bind() {
     currentRunId: ref<string | null>('run-live'),
     dagExecution,
     nodes,
-    edges: ref([]),
-    selectedNodeId: ref<string | null>(null),
+    edges,
+    selectedNodeId,
     chatMessages: ref([]),
     wsStreamedCount: ref(0),
     persist: vi.fn(),
     setDagExecution,
-    selectNode: vi.fn(),
+    selectNode,
   })
   controller.initialize()
-  return { dagExecution, nodes, setDagExecution, controller }
+  return { dagExecution, nodes, selectedNodeId, selectNode, setDagExecution, controller }
 }
 
 describe('agent DAG websocket events', () => {
@@ -165,5 +174,46 @@ describe('agent DAG websocket events', () => {
     expect(ws.stateHandler).toBeUndefined()
     expect(state.dagExecution.value?.status).toBe('running')
     expect(ws.connect).toHaveBeenCalledOnce()
+  })
+
+  it('follows a handoff from the active node to its newly dispatched successor', async () => {
+    const state = bind({
+      nodes: [taskNode('running', 'review'), taskNode('pending', 'implement')],
+      edges: [{ id: 'review-implement', source: 'review', target: 'implement', condition: 'success' }],
+      selectedNodeId: 'review',
+    })
+
+    ws.wildcardHandler?.({
+      type: 'dag:handoff',
+      payload: { runId: 'run-live', fromNode: 'review', port: 'done' },
+    })
+    await nextTick()
+    expect(state.selectedNodeId.value).toBe('review')
+
+    ws.wildcardHandler?.({
+      type: 'dag:node_dispatched',
+      payload: { runId: 'run-live', nodeId: 'implement' },
+    })
+    await nextTick()
+
+    expect(state.selectNode).toHaveBeenCalledWith('implement')
+    expect(state.selectedNodeId.value).toBe('implement')
+  })
+
+  it('does not steal a manual selection of a historical node', async () => {
+    const state = bind({
+      nodes: [taskNode('completed', 'review'), taskNode('pending', 'implement')],
+      edges: [{ id: 'review-implement', source: 'review', target: 'implement', condition: 'success' }],
+      selectedNodeId: 'review',
+    })
+
+    ws.wildcardHandler?.({
+      type: 'dag:node_dispatched',
+      payload: { runId: 'run-live', nodeId: 'implement' },
+    })
+    await nextTick()
+
+    expect(state.selectNode).not.toHaveBeenCalled()
+    expect(state.selectedNodeId.value).toBe('review')
   })
 })

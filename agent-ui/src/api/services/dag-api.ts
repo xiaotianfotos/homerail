@@ -193,7 +193,22 @@ function transformChatEntries(entries: any[]): DAGChatMessage[] {
     const event = content.event || content.type
     const timestamp = entry.timestamp ? new Date(entry.timestamp).toISOString() : new Date().toISOString()
 
-    if (event === 'text' || event === 'content') {
+    // Worker sendContent() persists ordinary assistant output as a response
+    // envelope without an event discriminator:
+    // { role: "worker", type: "response", content: { text, run_id, node_id } }.
+    // Keep the discriminator-based stream formats, but also accept that
+    // production persistence contract without treating prompts/debug entries
+    // as assistant messages.
+    const isPersistedWorkerText = !event
+      && entry?.type === 'response'
+      && typeof content.text === 'string'
+      && (
+        entry?.role === 'worker'
+        || entry?.role === 'node'
+        || (typeof content.run_id === 'string' && typeof content.node_id === 'string')
+      )
+
+    if (event === 'text' || event === 'content' || isPersistedWorkerText) {
       // worker 的 sendContent 发 {type:"content", data:{text,...}} 或 stream {event:"text"...}
       const text = content.text ?? (typeof content.content === 'string' ? content.content : '')
       if (text) {
