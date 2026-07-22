@@ -8,16 +8,19 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("deploys only a successful main CI revision on the isolated deploy runner", () => {
-  const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "deploy-production.yml"), "utf8");
-  assert.match(workflow, /workflow_run:/);
-  assert.match(workflow, /workflows: \[CI\]/);
-  assert.match(workflow, /conclusion == 'success'/);
-  assert.match(workflow, /workflow_run\.event == 'push'/);
-  assert.match(workflow, /head_branch == 'main'/);
-  assert.match(workflow, /head_repository\.full_name == github\.repository/);
+test("deploys main daily or an owner-dispatched revision on the isolated deploy runner", () => {
+  const workflow = fs
+    .readFileSync(path.join(repoRoot, ".github", "workflows", "deploy-production.yml"), "utf8")
+    .replace(/\r\n/g, "\n");
+  assert.match(workflow, /schedule:\n\s+# GitHub cron is UTC/);
+  assert.match(workflow, /cron: "30 19 \* \* \*"/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /github\.event_name == 'schedule'/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && github\.actor == 'xiaotianfotos'/);
+  assert.doesNotMatch(workflow, /workflow_run:/);
   assert.match(workflow, /runs-on: \[self-hosted, Linux, X64, homerail-deploy\]/);
-  assert.match(workflow, /ref: \$\{\{ github\.event\.workflow_run\.head_sha/);
+  assert.match(workflow, /ref: \$\{\{ inputs\.revision \|\| 'main' \}\}/);
+  assert.match(workflow, /revision="\$\(git rev-parse HEAD\)"/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.doesNotMatch(workflow, /cache:\s*npm/);
@@ -56,6 +59,8 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_PORT=\$MANAGER_PORT/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-0/);
   assert.match(deploy, /Environment=HOMERAIL_ALLOW_INSECURE_REMOTE_WS=\$ALLOW_INSECURE_REMOTE_WS/);
+  assert.match(deploy, /HOMERAIL_PRODUCTION_DAG_COMMAND_ALLOWLIST:-node/);
+  assert.match(deploy, /Environment=HOMERAIL_PRODUCTION_DAG_COMMAND_ALLOWLIST=\$DAG_COMMAND_ALLOWLIST/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HOST=\$UI_HOST/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_PORT=\$UI_PORT/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_UI_HTTP_PORT=\$UI_HTTP_PORT/);
@@ -79,6 +84,9 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(service, /HOMERAIL_PRODUCTION_MANAGER_PUBLIC_URL:-\$MANAGER_URL/);
   assert.match(service, /HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS/);
   assert.match(service, /export HOMERAIL_ALLOW_INSECURE_REMOTE_WS="\$ALLOW_INSECURE_REMOTE_WS"/);
+  assert.match(service, /HOMERAIL_PRODUCTION_DAG_COMMAND_ALLOWLIST:-node/);
+  assert.match(service, /export HOMERAIL_DAG_COMMAND_ALLOWLIST="\$DAG_COMMAND_ALLOWLIST"/);
+  assert.match(service, /restricted to the built-in node runtime/);
   assert.match(service, /Production Manager must bind the Docker bridge gateway/);
   assert.match(service, /initialize_production_tokens/);
   assert.match(runtime, /node-registration\.token/);
@@ -93,6 +101,7 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(service, /Production UI must bind all interfaces/);
   assert.match(service, /HOMERAIL_UI_SERVE_STATIC=1/);
   assert.match(service, /RELEASE_ROOT="\$\(readlink -f "\$CURRENT"\)"/);
+  assert.match(service, /export PATH="\$RELEASE_ROOT\/runtime:\$PATH"/);
   assert.match(service, /HOMERAIL_REPO_ROOT="\$RELEASE_ROOT"/);
   assert.match(service, /--no-build-worker-image/);
   assert.match(service, /failed three consecutive health checks/);

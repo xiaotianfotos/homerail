@@ -1,10 +1,9 @@
 name: Deploy Production
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
+  schedule:
+    # GitHub cron is UTC. 19:30 UTC is 03:30 Asia/Shanghai.
+    - cron: "30 19 * * *"
   workflow_dispatch:
     inputs:
       revision:
@@ -23,12 +22,7 @@ jobs:
   deploy:
     name: Deploy persistent HomeRail service
     if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.actor.login == 'xiaotianfotos' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && github.actor == 'xiaotianfotos')
     runs-on: [self-hosted, Linux, X64, homerail-deploy]
     timeout-minutes: 45
@@ -36,7 +30,7 @@ jobs:
       - name: Check out the validated revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.workflow_run.head_sha || inputs.revision || 'main' }}
+          ref: ${{ inputs.revision || 'main' }}
           persist-credentials: false
 
       - name: Set up Node.js
@@ -53,8 +47,6 @@ jobs:
         run: npm run build:packages
 
       - name: Atomically deploy and verify
-        env:
-          DEPLOY_REVISION: ${{ github.event.workflow_run.head_sha || '' }}
         run: |
-          revision="${DEPLOY_REVISION:-$(git rev-parse HEAD)}"
+          revision="$(git rev-parse HEAD)"
           HOMERAIL_DEPLOY_REVISION="$revision" bash scripts/deploy-production.sh

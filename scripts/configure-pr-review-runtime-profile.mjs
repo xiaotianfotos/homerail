@@ -24,14 +24,14 @@ function yamlString(value) {
 
 export function selectRuntimeSetting(settings, selector, role) {
   const wanted = nonEmpty(selector);
-  if (!wanted) throw new Error(`HOMERAIL_PR_REVIEW_${role.toUpperCase()}_MODEL is required for Seed Home review`);
+  if (!wanted) throw new Error(`HOMERAIL_PR_REVIEW_${role.toUpperCase()}_MODEL is required for stable review`);
   const matches = settings.filter((setting) => (
     setting?.id === wanted || setting?.display_name === wanted || setting?.model_name === wanted
   ));
   if (matches.length !== 1) {
     throw new Error(matches.length === 0
-      ? `PR Review ${role} model was not found in Seed Home: ${wanted}`
-      : `PR Review ${role} model selector is ambiguous in Seed Home: ${wanted}`);
+      ? `PR Review ${role} model was not found in the stable Manager: ${wanted}`
+      : `PR Review ${role} model selector is ambiguous in the stable Manager: ${wanted}`);
   }
   const setting = matches[0];
   if (!bool(setting.is_active) || !bool(setting.supports_llm)) {
@@ -100,7 +100,7 @@ export async function configurePrReviewRuntimeProfile({
     body: JSON.stringify({
       yaml_text: yamlText,
       workflow_id: "pr-review",
-      source_path: "runner-seed:pr-review-mixed",
+      source_path: "stable-runner:pr-review-mixed",
     }),
   });
   if (synced?.profile?.profile_id !== profileId || synced?.profile?.workflow_id !== "pr-review") {

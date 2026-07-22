@@ -1,0 +1,116 @@
+name: HomeRail Auto Fix
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: homerail-auto-fix-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  auto-fix:
+    name: HomeRail Auto Fix
+    if: >-
+      github.actor == 'xiaotianfotos' &&
+      github.event.sender.login == 'xiaotianfotos' &&
+      github.event.label.name == 'auto-fix' &&
+      github.event.issue.pull_request == null
+    runs-on: [self-hosted, Linux, X64, homerail-auto-fix]
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      HOMERAIL_STABLE_RUN_ID: auto-fix-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out exact trusted base
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify stable runner environment
+        id: stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${HOMERAIL_STABLE_ROOT:-}"
+          test -n "${HOMERAIL_STABLE_HOME:-}"
+          test -n "${HOMERAIL_STABLE_MANAGER_URL:-}"
+          stable_release="$(readlink -f "$HOMERAIL_STABLE_ROOT/current")"
+          node_bin="$stable_release/runtime/node"
+          test -x "$node_bin"
+          test -f "$stable_release/assets/orchestrations/auto-fix.yaml.template"
+          echo "release=$stable_release" >> "$GITHUB_OUTPUT"
+          echo "node=$node_bin" >> "$GITHUB_OUTPUT"
+          artifact_dir="$RUNNER_TEMP/homerail-auto-fix-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "HOMERAIL_AUTO_FIX_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          echo "HOMERAIL_AUTO_FIX_INPUT_FILE=$artifact_dir/input.json" >> "$GITHUB_ENV"
+
+      - name: Prepare bounded issue evidence
+        env:
+          AUTO_FIX_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR"
+          revision="$(git rev-parse HEAD)"
+          test "$revision" = "$AUTO_FIX_REVISION"
+          AUTO_FIX_REVISION="$revision" "${{ steps.stable.outputs.node }}" \
+            "${{ steps.stable.outputs.release }}/scripts/prepare-auto-fix-input.mjs" \
+            "$HOMERAIL_AUTO_FIX_INPUT_FILE"
+
+      - name: Record durable DAG run
+        run: gh issue comment "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" --body "HomeRail Auto Fix started durable run \`$HOMERAIL_STABLE_RUN_ID\`."
+
+      - name: Run model-neutral Auto Fix DAG on stable Manager
+        id: dag
+        env:
+          HOMERAIL_NODE_BIN: ${{ steps.stable.outputs.node }}
+        run: bash "${{ steps.stable.outputs.release }}/scripts/run-auto-fix-stable-runner.sh"
+
+      - name: Validate candidate without credentials or network
+        id: validation
+        env:
+          HOMERAIL_NODE_BIN: ${{ steps.stable.outputs.node }}
+        run: |
+          set -euo pipefail
+          bash "${{ steps.stable.outputs.release }}/scripts/validate-auto-fix-checkout.sh" \
+            "$GITHUB_WORKSPACE" \
+            "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.json" \
+            "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.patch" \
+            2>&1 | tee "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/validation.log"
+
+      - name: Publish Draft pull request
+        id: publish
+        env:
+          HOMERAIL_NODE_BIN: ${{ steps.stable.outputs.node }}
+        run: >-
+          bash "${{ steps.stable.outputs.release }}/scripts/publish-auto-fix-pr.sh"
+          "$GITHUB_WORKSPACE"
+          "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR"
+          "auto-fix/issue-${{ github.event.issue.number }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          "${{ github.event.repository.default_branch }}"
+          "$HOMERAIL_STABLE_RUN_ID"
+
+      - name: Report failure for human inspection
+        if: failure()
+        continue-on-error: true
+        run: >-
+          gh issue comment "${{ github.event.issue.number }}"
+          --repo "$GITHUB_REPOSITORY"
+          --body "HomeRail Auto Fix run \`$HOMERAIL_STABLE_RUN_ID\` stopped before Draft PR publication. Inspect the retained runner evidence and durable DAG run; remove and re-add \`auto-fix\` to retry after correction."
+
+      - name: Upload Auto Fix evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: auto-fix-${{ github.event.issue.number }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/homerail-auto-fix-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: warn
+          retention-days: 14

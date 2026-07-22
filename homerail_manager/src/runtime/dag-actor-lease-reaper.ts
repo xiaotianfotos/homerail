@@ -32,6 +32,13 @@ export interface DagActorLeaseReaperReport {
 export interface DagActorLeaseReaperOptions extends DeprovisionOptions {
   now?: number;
   limit?: number;
+  onActiveWorkerDisconnected?: (input: {
+    runId: string;
+    nodeId: string;
+    actorId: string;
+    workerId: string;
+    reason: string;
+  }) => void;
 }
 
 function recordEntry(record: ReturnType<typeof listDagProvisionedWorkers>[number]): ProvisionedWorkerEntry {
@@ -93,16 +100,21 @@ export async function reapDagActorLeases(
   for (const worker of pending) {
     if (worker.status === "active") {
       const lease = getDagActorLease({ run_id: worker.run_id, actor_id: worker.actor_id });
+      const metadata = loadRunMetadata(worker.run_id);
+      const status = metadata?.status;
+      const activeNodeDisconnected = status === "active"
+        && metadata?.nodeStates[worker.node_id] === "RUNNING";
       const stillOwned = lease?.state === "leased"
         && lease.lease_generation === worker.lease_generation
         && (lease.target_type === "worker" || lease.target_type === "provisioned_worker")
         && lease.target_id === worker.worker_id;
       if (
         stillOwned
-        && runStatus(worker.run_id) === "waiting"
+        && (status === "active" || status === "waiting")
         && lease.idle_deadline! > now
         && !getWorker(worker.worker_id)
       ) {
+        const reason = "provisioned_worker_disconnected";
         try {
           transitionDagProvisionedWorker({
             run_id: worker.run_id,
@@ -114,8 +126,10 @@ export async function reapDagActorLeases(
             expected_version: worker.version,
             now,
             failure: {
-              reason: "provisioned_worker_disconnected",
-              message: "Provisioned Worker is no longer connected while its actor is waiting",
+              reason,
+              message: activeNodeDisconnected
+                ? "Provisioned Worker disconnected before its active node produced a terminal response"
+                : "Provisioned Worker is no longer connected while its actor is waiting",
             },
           });
           releaseDagActorLease({
@@ -132,11 +146,26 @@ export async function reapDagActorLeases(
             runId: lease.run_id,
             actorId: lease.actor_id,
             leaseGeneration: lease.lease_generation,
-            reason: "provisioned_worker_disconnected",
+            reason,
           });
         } catch {
           // A concurrent command, reconnect, or cleanup changed the durable row.
           continue;
+        }
+        if (activeNodeDisconnected) {
+          try {
+            options.onActiveWorkerDisconnected?.({
+              runId: worker.run_id,
+              nodeId: worker.node_id,
+              actorId: worker.actor_id,
+              workerId: worker.worker_id,
+              reason,
+            });
+          } catch (error) {
+            console.error(
+              `[homerail_manager] active DAG Worker disconnect handler failed for ${worker.run_id}/${worker.node_id}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
         }
       }
       if (stillOwned) continue;
@@ -206,13 +235,14 @@ function resolveIntervalMs(env: NodeJS.ProcessEnv): number {
 }
 
 export function startDagActorLeaseReaper(
+  options: DagActorLeaseReaperOptions = {},
   intervalMs = resolveIntervalMs(process.env),
 ): () => void {
   let running = false;
   const tick = () => {
     if (running) return;
     running = true;
-    void reapDagActorLeases()
+    void reapDagActorLeases(options)
       .catch((error) => {
         console.error(
           `[homerail_manager] DAG actor lease reaper failed: ${error instanceof Error ? error.message : String(error)}`,

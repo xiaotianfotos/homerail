@@ -85,6 +85,18 @@ describe("DAG actor lease reaper", () => {
     return lease;
   }
 
+  function registerConnectedWorker(workerId: string): void {
+    registerWorker({
+      worker_id: workerId,
+      project_id: "",
+      socket: {} as never,
+      status: "connected",
+      capabilities: [],
+      registered_at: now,
+      last_heartbeat: now,
+    });
+  }
+
   it("releases an idle waiting actor before deprovisioning its worker", async () => {
     setRunStatus("waiting");
     acquireWorker();
@@ -108,6 +120,7 @@ describe("DAG actor lease reaper", () => {
 
   it("renews an active long-running lease before it spends its hot TTL", async () => {
     acquireWorker();
+    registerConnectedWorker("worker-1");
     process.env.HOMERAIL_DAG_WORKER_IDLE_TTL_MS = "10";
     expect((await reapDagActorLeases({ now: now + 5 })).renewed).toBe(1);
     expect(getDagActorLease({ run_id: "run-reaper", actor_id: "actor-1" })).toMatchObject({
@@ -140,15 +153,7 @@ describe("DAG actor lease reaper", () => {
   it("does not release a waiting actor while its provisioned Worker remains connected", async () => {
     setRunStatus("waiting");
     acquireWorker("worker-connected");
-    registerWorker({
-      worker_id: "worker-connected",
-      project_id: "",
-      socket: {} as never,
-      status: "connected",
-      capabilities: [],
-      registered_at: now,
-      last_heartbeat: now,
-    });
+    registerConnectedWorker("worker-connected");
 
     const report = await reapDagActorLeases({ now: now + 2 });
 
@@ -163,9 +168,45 @@ describe("DAG actor lease reaper", () => {
     });
   });
 
+  it("reports an active node whose provisioned Worker disconnects before a terminal response", async () => {
+    setRunStatus("active");
+    const metadata = loadRunMetadata("run-reaper")!;
+    writeRunMetadata("run-reaper", {
+      ...metadata,
+      nodeStates: { ...metadata.nodeStates, "node-1": "RUNNING" },
+    });
+    acquireWorker("worker-active-disconnected");
+    const disconnected: Array<Record<string, string>> = [];
+
+    const report = await reapDagActorLeases({
+      now: now + 2,
+      onActiveWorkerDisconnected: (input) => disconnected.push(input),
+      deprovisionFn: async () => ({ stopped: true, removed: true, dockerCleanupVerified: true }),
+    });
+
+    expect(report).toMatchObject({ released: 1, worker_cleanup_attempted: 0 });
+    expect(disconnected).toEqual([expect.objectContaining({
+      runId: "run-reaper",
+      nodeId: "node-1",
+      actorId: "actor-1",
+      workerId: "worker-active-disconnected",
+      reason: "provisioned_worker_disconnected",
+    })]);
+    expect(getDagActorLease({ run_id: "run-reaper", actor_id: "actor-1" })).toMatchObject({
+      state: "dormant",
+      lease_generation: 1,
+    });
+    expect(listDagProvisionedWorkers({ run_id: "run-reaper" })[0]).toMatchObject({
+      worker_id: "worker-active-disconnected",
+      status: "failed",
+      failure: expect.objectContaining({ reason: "provisioned_worker_disconnected" }),
+    });
+  });
+
   it("reclaims an active provisioned worker detached from the current lease generation", async () => {
     acquireWorker("worker-1");
     acquireWorker("worker-2");
+    registerConnectedWorker("worker-2");
     const removed: string[] = [];
 
     const report = await reapDagActorLeases({
