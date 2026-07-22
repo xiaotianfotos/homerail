@@ -1,9 +1,11 @@
 # Persistent production deployment
 
-`.github/workflows/deploy-production.yml` deploys the exact `main` revision only
-after the repository's `CI` workflow succeeds for a `push` event. It runs on a
-dedicated self-hosted runner labeled `homerail-deploy`; the live DAG and PR
-review labels must stay on separate runners.
+`.github/workflows/deploy-production.yml` deploys the latest `main` revision
+once per day at 03:30 Asia/Shanghai (19:30 UTC), and also supports an
+owner-only manual dispatch for an immediate deployment. Merging a pull request
+does not start a second deployment workflow. It runs on a dedicated self-hosted
+runner labeled `homerail-deploy`; the live DAG, PR Review, and Auto Fix labels
+must stay on separate runners.
 
 Each deployment runner keeps its machine-specific paths and public address in
 `~/.config/homerail/production.env` with mode `0600`. The tracked workflow does
@@ -51,6 +53,27 @@ The installation also provides:
 - a LAN-facing HTTPS UI;
 - a dedicated Manager port bound to the Docker bridge interface;
 
+This Manager is also the single durable automation control plane. PR Review and
+Auto Fix use separate Actions runner processes so they can execute concurrently,
+but both submit to this service and retain their DAG history in its database.
+They do not start alternate Managers, allocate dynamic Manager ports, or clone
+the production Home. Live DAG compatibility CI remains the only workflow that
+may start a transient current-commit runtime.
+
+The production Manager enables only the fixed `node` executable for
+deterministic DAG command nodes. Built-in PR Review and Auto Fix use that
+release-pinned runtime for credential-scrubbed parsing and checkout helpers;
+arbitrary shell executables remain disabled, and model-selected dynamic
+commands remain off.
+
+Machine-local `~/.config/homerail/automation.env` (mode `0600`) supplies the
+stable release/Home/Manager paths, the dedicated Actions runner roots, and
+private model selectors. These values are intentionally absent from tracked
+workflows and GitHub repository variables. `ops/systemd` contains reference
+units for the `homerail-pr-review` and `homerail-auto-fix` runners. The standard
+operator UI remains HTTPS port `19192`; no automation runner exposes another UI
+port.
+
 Each deployment installs dependencies, builds all packages, builds a
 revision-tagged Worker image, copies the runnable tree plus its Node.js binary
 into a new release directory, and atomically switches `current`. The systemd
@@ -66,6 +89,8 @@ the production Manager. The newest three releases and their Worker images are
 retained; database, model settings, sessions, certificates, and external Skills
 remain outside release directories.
 
-The workflow also has a maintainer-only manual dispatch for recovery. Normal
-operation should use the CI-success trigger so unvalidated commits are never
-promoted automatically.
+The workflow also has a maintainer-only manual dispatch for immediate recovery
+or an explicitly selected revision. Scheduled and default manual deployments
+resolve `main` at job start. The release switch never changes
+`HOMERAIL_PRODUCTION_HOME`; database, settings, sessions, certificates, and
+external Skills continue to live in the persistent Home across deployments.

@@ -38,6 +38,7 @@ import { emit } from "../events/bus.js";
 import {
   consumeRecoveredDagActorLiveCommandFallbacks,
   dispatchRecoveredRuns,
+  failActiveRun,
 } from "../runtime/active-runs.js";
 import { recoverDagActorLiveCommands } from "../runtime/dag-actor-live-command-runtime.js";
 import {
@@ -297,7 +298,16 @@ export function createServer(
   const stopTriggerScheduler = startDagTriggerScheduler(changeOrchestrator);
   const stopWorkspaceCleanupScheduler = startWorkspaceCleanupScheduler();
   const stopRunArtifactService = startRunArtifactService();
-  const stopDagActorLeaseReaper = startDagActorLeaseReaper();
+  const stopDagActorLeaseReaper = startDagActorLeaseReaper({
+    onActiveWorkerDisconnected: ({ runId, nodeId }) => {
+      failActiveRun(
+        runId,
+        nodeId,
+        "Provisioned Worker disconnected before the node produced a terminal response",
+      );
+      graphExecutor.tick(runId);
+    },
+  });
 
   server = http.createServer((req, res) => {
     setCorsHeaders(res);

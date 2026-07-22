@@ -47,37 +47,76 @@ jobs:
     runs-on: [self-hosted, Linux, X64, homerail-pr-review]
     timeout-minutes: 90
     env:
-      HOMERAIL_GITHUB_API_BASE_URL: ${{ github.api_url }}
-      HOMERAIL_RUNNER_BASE: ${{ secrets.HOMERAIL_LIVE_RUNNER_BASE }}
-      HOMERAIL_MANAGER_PORT: ${{ secrets.HOMERAIL_LIVE_MANAGER_PORT }}
-      HOMERAIL_LIVE_WORKER_IMAGE_PREFIX: homerail-worker:pr-review
-      HOMERAIL_LIVE_RUN_KEY: pr-review-${{ github.run_id }}-${{ github.run_attempt }}
-      HOMERAIL_WAKE_MODEL: "1"
-      HOMERAIL_PATTERN_MODEL: qwen3.6
-      HOMERAIL_PATTERN_MODEL_BASE_URL: ${{ secrets.HOMERAIL_PATTERN_MODEL_BASE_URL }}
-      HOMERAIL_PATTERN_MODEL_PROTOCOL: anthropic_compatible
-      HOMERAIL_PATTERN_AGENT_TYPE: claude-sdk
-      HOMERAIL_LIVE_HOME_TEMPLATE: ${{ vars.HOMERAIL_PR_REVIEW_HOME_TEMPLATE }}
-      HOMERAIL_PR_REVIEW_PRIMARY_MODEL: ${{ vars.HOMERAIL_PR_REVIEW_PRIMARY_MODEL }}
-      HOMERAIL_PR_REVIEW_ARBITER_MODEL: ${{ vars.HOMERAIL_PR_REVIEW_ARBITER_MODEL }}
-      HOMERAIL_DAG_MUTATION_TOKEN: ${{ secrets.HOMERAIL_DAG_MUTATION_TOKEN }}
       GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      HOMERAIL_GITHUB_API_BASE_URL: ${{ github.api_url }}
     steps:
-      - name: Check out HomeRail CLI and tracked scenario
+      - name: Verify stable runner environment
+        id: stable
+        shell: bash
+        env:
+          BOOTSTRAP_ALLOWED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.number == 101) || (github.event_name == 'workflow_dispatch' && inputs.pr == 101 && github.ref == 'refs/heads/feat/auto-fix-dag') }}
+        run: |
+          set -euo pipefail
+          test -n "${HOMERAIL_STABLE_ROOT:-}"
+          test -n "${HOMERAIL_STABLE_HOME:-}"
+          test -n "${HOMERAIL_STABLE_MANAGER_URL:-}"
+          stable_release="$(readlink -f "$HOMERAIL_STABLE_ROOT/current")"
+          node_bin="$stable_release/runtime/node"
+          test -x "$node_bin"
+          test -f "$stable_release/assets/orchestrations/pr-review.yaml.template"
+          test -f "$stable_release/homerail_cli/dist/cli.js"
+          test -f "$stable_release/scripts/configure-pr-review-runtime-profile.mjs"
+          test -f "$stable_release/scripts/validate-pr-review-artifacts.mjs"
+          test -f "$stable_release/scripts/report-pr-privacy-advisory.mjs"
+          adapter_mode=release
+          if [ ! -f "$stable_release/scripts/run-pr-review-stable-runner.sh" ]; then
+            if [ "$BOOTSTRAP_ALLOWED" != "true" ]; then
+              echo "Stable release does not contain the PR Review adapter: $stable_release" >&2
+              exit 1
+            fi
+            adapter_mode=bootstrap
+          fi
+          echo "release=$stable_release" >> "$GITHUB_OUTPUT"
+          echo "node=$node_bin" >> "$GITHUB_OUTPUT"
+          echo "adapter_mode=$adapter_mode" >> "$GITHUB_OUTPUT"
+          echo "HOMERAIL_PR_REVIEW_ARTIFACT_DIR=$RUNNER_TEMP/homerail-pr-review-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
+
+      # #101 moves PR Review onto the durable Manager, while the deployed main
+      # release necessarily predates the new three-file adapter. Bootstrap only
+      # this PR from its immutable owner-authored SHA. After #101 is deployed,
+      # every run takes the release adapter path above and this step is skipped.
+      - name: Check out #101 bootstrap adapter
+        if: steps.stable.outputs.adapter_mode == 'bootstrap'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: .homerail-pr-review-bootstrap
           persist-credentials: false
+          sparse-checkout: |
+            scripts/run-pr-review-stable-runner.sh
+            scripts/run-stable-dag-runner.sh
+            scripts/lib/stable-automation-runtime.sh
+          sparse-checkout-cone-mode: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: npm run install:all
-
-      - name: Build current HomeRail runtime
-        run: npm run build:packages
+      - name: Resolve trusted PR Review adapter
+        id: adapter
+        shell: bash
+        env:
+          EXPECTED_ADAPTER_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.stable.outputs.adapter_mode }}" = "release" ]; then
+            adapter="${{ steps.stable.outputs.release }}/scripts/run-pr-review-stable-runner.sh"
+          else
+            checkout_root="$GITHUB_WORKSPACE/.homerail-pr-review-bootstrap"
+            test "$(git -C "$checkout_root" rev-parse HEAD)" = "$EXPECTED_ADAPTER_REVISION"
+            test -f "$checkout_root/scripts/run-pr-review-stable-runner.sh"
+            test -f "$checkout_root/scripts/run-stable-dag-runner.sh"
+            test -f "$checkout_root/scripts/lib/stable-automation-runtime.sh"
+            adapter="$checkout_root/scripts/run-pr-review-stable-runner.sh"
+          fi
+          echo "path=$adapter" >> "$GITHUB_OUTPUT"
 
       - name: Resolve immutable review input
         id: input
@@ -91,7 +130,7 @@ jobs:
           INPUT_BASE: ${{ inputs.base }}
           INPUT_HEAD: ${{ inputs.head }}
         run: |
-          node --input-type=module <<'NODE'
+          "${{ steps.stable.outputs.node }}" --input-type=module <<'NODE'
           import fs from 'node:fs'
           const input = {
             repo: process.env.INPUT_REPO || process.env.EVENT_REPO,
@@ -107,21 +146,19 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `json=${JSON.stringify(input)}\n`)
           NODE
 
-      - name: Run HomeRail PR Review DAG
+      - name: Run HomeRail PR Review DAG on stable Manager
         id: review
         env:
-          HOMERAIL_LIVE_SLOT: ${{ runner.name }}
           HOMERAIL_PR_REVIEW_INPUT: ${{ steps.input.outputs.json }}
-          HOMERAIL_PR_REVIEW_ARTIFACT_DIR: ${{ github.workspace }}/artifacts/pr-review
-        run: bash scripts/run-pr-review-live-runner.sh
+        run: bash "${{ steps.adapter.outputs.path }}"
 
       - name: Publish Check summary
         if: always()
         env:
           STEP_OUTCOME: ${{ steps.review.outcome }}
         run: |
-          if [ -s artifacts/pr-review/pr-review.md ]; then
-            cat artifacts/pr-review/pr-review.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -s "$HOMERAIL_PR_REVIEW_ARTIFACT_DIR/pr-review.md" ]; then
+            cat "$HOMERAIL_PR_REVIEW_ARTIFACT_DIR/pr-review.md" >> "$GITHUB_STEP_SUMMARY"
           else
             {
               echo '# HomeRail PR Review'
@@ -129,20 +166,25 @@ jobs:
               echo "Result: infrastructure error"
               echo "Command outcome: $STEP_OUTCOME"
               echo
-              echo 'No review conclusion was produced. Inspect the failed DAG step and uploaded diagnostics.'
+              echo 'No review conclusion was produced. Inspect the stable DAG run and uploaded diagnostics.'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Privacy advisory (human inspection only)
-        if: always() && hashFiles('artifacts/pr-review/pr-privacy-review.json') != ''
+        if: always()
         continue-on-error: true
-        run: node scripts/report-pr-privacy-advisory.mjs artifacts/pr-review/pr-privacy-review.json
+        run: |
+          if [ -s "$HOMERAIL_PR_REVIEW_ARTIFACT_DIR/pr-privacy-review.json" ]; then
+            "${{ steps.stable.outputs.node }}" \
+              "${{ steps.stable.outputs.release }}/scripts/report-pr-privacy-advisory.mjs" \
+              "$HOMERAIL_PR_REVIEW_ARTIFACT_DIR/pr-privacy-review.json"
+          fi
 
       - name: Upload review evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pr-review-${{ github.event.pull_request.number || inputs.pr }}-${{ github.run_id }}
-          path: artifacts/pr-review/
+          path: ${{ runner.temp }}/homerail-pr-review-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: warn
           retention-days: 14
