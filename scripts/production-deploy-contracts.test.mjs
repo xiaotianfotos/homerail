@@ -101,6 +101,7 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(service, /Production UI must bind all interfaces/);
   assert.match(service, /HOMERAIL_UI_SERVE_STATIC=1/);
   assert.match(service, /RELEASE_ROOT="\$\(readlink -f "\$CURRENT"\)"/);
+  assert.match(service, /export PATH="\$RELEASE_ROOT\/runtime:\$PATH"/);
   assert.match(service, /HOMERAIL_REPO_ROOT="\$RELEASE_ROOT"/);
   assert.match(service, /--no-build-worker-image/);
   assert.match(service, /failed three consecutive health checks/);

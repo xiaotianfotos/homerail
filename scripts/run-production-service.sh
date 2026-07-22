@@ -49,6 +49,7 @@ if [[ "$RELEASE_ROOT" != "$PRODUCTION_ROOT"/releases/* ]] \
   echo "Production release is incomplete." >&2
   exit 1
 fi
+export PATH="$RELEASE_ROOT/runtime:$PATH"
 source "$RELEASE_ROOT/scripts/lib/production-runtime.sh"
 if [ "$UI_HOST" != "0.0.0.0" ] && [ "$UI_HOST" != "::" ]; then
   echo "Production UI must bind all interfaces." >&2
