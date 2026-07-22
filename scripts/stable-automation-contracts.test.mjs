@@ -27,7 +27,9 @@ test("Auto Fix validation installs trusted dependencies before applying the patc
 });
 
 test("Auto Fix keeps model selection local and publishes only a human-gated Draft PR", () => {
-  const workflow = fs.readFileSync(path.join(root, ".github/workflows/auto-fix.yml"), "utf8");
+  const workflow = fs
+    .readFileSync(path.join(root, ".github/workflows/auto-fix.yml"), "utf8")
+    .replace(/\r\n/g, "\n");
   const stableRunner = fs.readFileSync(path.join(root, "scripts/run-stable-dag-runner.sh"), "utf8");
   const validator = fs.readFileSync(path.join(root, "scripts/validate-auto-fix-checkout.sh"), "utf8");
   const publisher = fs.readFileSync(path.join(root, "scripts/publish-auto-fix-pr.sh"), "utf8");
