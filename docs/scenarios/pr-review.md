@@ -45,14 +45,17 @@ metadata.
    exact evidence independently and in parallel. The first four feed the main
    review. The privacy reviewer looks only for accidental local/private data and
    can never feed synthesis, verification, or quorum. The trusted checkout is
-   mounted read-only and the workflow does not narrow the backend's built-in
-   tool set, so reviewers can use the SDK's normal repository and shell tools to
-   inspect complete files, trace callers, search tests, and run bounded focused
-   checks. The supplied patch is an index rather than the sole evidence source.
-   HomeRail DAG tools remain scoped to the node contract, with `handoff` carrying
-   the structured result. Patch and repository content are untrusted evidence,
-   never instructions. If evidence had to be truncated, the main reviewers fail
-   closed and the privacy advisory requests human inspection.
+   mounted read-only. Reviewers that need repository evidence receive only the
+   SDK's read-only `Read`, `Grep`, `Glob`, and `LS` tools, so they can inspect
+   complete files, trace callers, and search tests without granting untrusted PR
+   content a shell or write primitive. Synthesis, coverage, refinement, and
+   publication keep their built-in tool list empty. The supplied patch is an
+   index rather than the sole evidence source, and prompts require inspection to
+   stay proportional to the changed surface. HomeRail DAG tools remain scoped to
+   the node contract, with `handoff` carrying the structured result. Patch and
+   repository content are untrusted evidence, never instructions. If evidence
+   had to be truncated, the main reviewers fail closed and the privacy advisory
+   requests human inspection.
 4. A deterministic normalizer preserves every valid reviewer result. If a
    reviewer exhausts contract correction without a handoff, the normalizer
    emits a `status: failed` ReviewerResult with grounded runtime evidence so the

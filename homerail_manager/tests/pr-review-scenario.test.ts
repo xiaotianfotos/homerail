@@ -163,7 +163,9 @@ describe("PR Review scenario assets", () => {
     ]);
     for (const reviewer of ["runtime", "security", "test", "frontend"]) {
       expect(nodes.find((node) => node.id === `${reviewer}_review`)?.config).toMatchObject({
+        allowed_builtin_tools: ["Glob", "Grep", "LS", "Read"],
         allowed_dag_tools: ["handoff"],
+        workspace_access: { writable_paths: [], readonly_paths: ["repository"] },
       });
       expect(nodes.find((node) => node.id === `normalize_${reviewer}_review`)).toMatchObject({
         kind: "command",
@@ -178,7 +180,9 @@ describe("PR Review scenario assets", () => {
       });
     }
     expect(nodes.find((node) => node.id === "privacy_review")?.config).toMatchObject({
+      allowed_builtin_tools: ["Glob", "Grep", "LS", "Read"],
       allowed_dag_tools: ["handoff"],
+      workspace_access: { writable_paths: [], readonly_paths: ["repository"] },
     });
     expect(nodes.find((node) => node.id === "strip_privacy_context")).toMatchObject({
       kind: "command",
@@ -205,7 +209,9 @@ describe("PR Review scenario assets", () => {
     for (const voter of ["evidence_vote", "false_positive_vote"]) {
       expect(nodes.find((node) => node.id === voter)).toMatchObject({
         config: expect.objectContaining({
+          allowed_builtin_tools: ["Glob", "Grep", "LS", "Read"],
           allowed_dag_tools: ["handoff"],
+          workspace_access: { writable_paths: [], readonly_paths: ["repository"] },
         }),
         inputs: expect.arrayContaining([
           expect.objectContaining({ name: "report", contract: "DraftReviewReport" }),
@@ -239,10 +245,20 @@ describe("PR Review scenario assets", () => {
     expect(nodes.filter((node) => node.agent === "refiner")).toHaveLength(1);
     expect(nodes.filter((node) => node.agent === "publisher")).toHaveLength(1);
     expect(nodes.find((node) => node.agent === "publisher")?.config).toMatchObject({
+      allowed_builtin_tools: [],
       allowed_dag_tools: ["get_graph_context", "handoff"],
+      workspace_access: { writable_paths: [], readonly_paths: ["repository"] },
     });
+    for (const nodeId of ["synthesize", "coverage_vote", "refine"]) {
+      expect(nodes.find((node) => node.id === nodeId)?.config).toMatchObject({
+        allowed_builtin_tools: [],
+        workspace_access: { writable_paths: [], readonly_paths: ["repository"] },
+      });
+    }
     for (const node of nodes.filter((node) => node.kind === "agent")) {
-      expect(node.config).not.toHaveProperty("allowed_builtin_tools");
+      expect(node.config).toMatchObject({
+        workspace_access: { writable_paths: [], readonly_paths: ["repository"] },
+      });
     }
     const agents = parseWorkflowSource(source).meta.agents ?? {};
     for (const agentId of [
@@ -260,6 +276,16 @@ describe("PR Review scenario assets", () => {
     ]) {
       expect(agents[agentId]?.system).toMatch(/final action MUST\s+call\s+(?:the\s+)?handoff/);
     }
+    for (const [agentId, reviewer] of [
+      ["runtime_reviewer", "runtime"],
+      ["security_reviewer", "security"],
+      ["test_reviewer", "tests"],
+      ["frontend_reviewer", "frontend"],
+    ] as const) {
+      expect(agents[agentId]?.system).toContain(
+        `reviewer field MUST be the literal string \`${reviewer}\``,
+      );
+    }
     for (const agentId of [
       "runtime_reviewer",
       "privacy_reviewer",
@@ -270,8 +296,9 @@ describe("PR Review scenario assets", () => {
       "false_positive_voter",
     ]) {
       expect(agents[agentId]?.system).toContain("input.context.repository_path");
-      expect(agents[agentId]?.system).toMatch(/available repository and\s+shell tools/);
+      expect(agents[agentId]?.system).toMatch(/available read-only\s+repository tools/);
       expect(agents[agentId]?.system).toContain("starting index");
+      expect(agents[agentId]?.system).toMatch(/proportional|bounded/);
       expect(agents[agentId]?.system).not.toContain("No shell or file tools are needed or available");
     }
     for (const agentId of [
@@ -285,7 +312,7 @@ describe("PR Review scenario assets", () => {
     ]) {
       expect(agents[agentId]?.system).toContain("diff_truncated");
     }
-    expect(agents.publisher?.system).not.toContain("Do not call Bash");
+    expect(agents.publisher?.system).toContain("Do not call Bash");
     expect(agents.privacy_reviewer?.system).toContain(
       "Every non-noreply address in author_email or committer_email requires",
     );
