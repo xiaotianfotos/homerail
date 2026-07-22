@@ -35,6 +35,11 @@ presentation semantics.
 `pr-closeout.yaml.template` deterministically routes immutable GitHub and
 validation evidence to `ready_for_review`, a blocked result, or a durable
 owner-only merge approval. Closeout never performs a GitHub merge mutation.
+`auto-fix.yaml.template` is the model-neutral two-pass issue repair example. It
+produces a structured report, unified patch, and Markdown summary after three
+independent reviewers and a two-of-three quorum. It never receives GitHub write
+credentials and never creates a branch or pull request; a trusted runner may
+validate and publish those artifacts separately.
 Additional strict v1 examples cover reusable graph primitives:
 
 - `workflow-spec-v1-fanout.yaml.template`: fan-out plus explicit join;
@@ -143,6 +148,23 @@ URLs, syncs the tracked WorkflowSpec, and waits for its declared
 `pr-review.json` and `pr-review.md` artifacts. Retrieve
 either output with `hr dag artifact <run-id> <name> --output <path>`. The
 workflow never commits, approves, or merges a pull request.
+
+Use `auto-fix.yaml.template` to study an implement-review-revise-consensus
+workflow without copying an operator's model configuration into a public
+asset:
+
+```bash
+hr dag run-template auto-fix \
+  --profile <private-runtime-profile> \
+  --input '{"repo":"owner/repo","issue":12,"title":"...","body":"...","repository_url":"https://github.com/owner/repo.git","revision":"<40-hex-sha>","branch":"main","labels":[],"discussion":[]}' \
+  --wait
+hr dag artifact <run-id> auto-fix.patch --output auto-fix.patch
+```
+
+Runtime profiles bind logical roles to database settings. The tracked template
+contains no provider, endpoint, model name, or credential. Do not execute a
+model-proposed test command on the host: validate the patch with a fixed command
+inside an isolated, credential-free environment.
 
 ## Scorecard Policy
 

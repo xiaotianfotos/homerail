@@ -2,4 +2,5 @@ self-hosted-runner:
   labels:
     - homerail-live
     - homerail-pr-review
+    - homerail-auto-fix
     - homerail-deploy
