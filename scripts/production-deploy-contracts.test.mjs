@@ -9,7 +9,9 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("deploys main daily or an owner-dispatched revision on the isolated deploy runner", () => {
-  const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "deploy-production.yml"), "utf8");
+  const workflow = fs
+    .readFileSync(path.join(repoRoot, ".github", "workflows", "deploy-production.yml"), "utf8")
+    .replace(/\r\n/g, "\n");
   assert.match(workflow, /schedule:\n\s+# GitHub cron is UTC/);
   assert.match(workflow, /cron: "30 19 \* \* \*"/);
   assert.match(workflow, /workflow_dispatch:/);
