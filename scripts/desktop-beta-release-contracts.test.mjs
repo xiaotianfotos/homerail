@@ -8,7 +8,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const workflow = fs.readFileSync(
   path.join(repoRoot, ".github", "workflows", "desktop-beta-release.yml"),
   "utf8",
-);
+).replace(/\r\n/g, "\n");
 
 test("desktop beta release is manual, owner-only, and draft-only", () => {
   assert.match(workflow, /workflow_dispatch:/);

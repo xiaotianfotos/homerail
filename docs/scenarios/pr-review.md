@@ -91,19 +91,16 @@ submit a GitHub review, approve a PR, or merge code.
 ## CI Adapter
 
 `.github/workflows/pr-review.yml` is intentionally thin. It converts GitHub
-event fields into the public CLI input, then uses the shared isolated live-runner
-bootstrap to build and start the checked-out Manager and Worker revision. The
-runner registers its Qwen3.6 setting, calls `hr dag run-template ... --wait`,
-downloads the three declared artifacts through the generic run-artifact commands,
+event fields into the public CLI input, then submits it to the auto-deployed
+stable Manager. It does not install packages, build the pull-request checkout,
+copy a Seed Home, or start an ephemeral Manager. The stable release syncs its
+tracked template, binds a private database Runtime Profile, calls
+`hr dag run-template ... --wait`, downloads the three declared artifacts,
 uploads them as CI evidence, and copies `pr-review.md` into the GitHub Check
-summary. Running the checked-out revision keeps the template, compiler, runtime,
-and Worker protocol at the same commit instead of sending a new template to a
-stale long-lived Manager. Workflow contracts, per-finding verification, and the
-deterministic quorum remain authoritative; the adapter does not reconstruct a
-report from raw handoffs.
-The isolated Manager command allowlist includes `node` and `git`; checkout and
-diff capture use only the tracked fixed command and never accept an executable
-or argument vector from pull request content.
+summary. The run and its event history remain visible in the normal production
+UI. Workflow contracts, per-finding verification, and deterministic quorum
+remain authoritative; the adapter does not reconstruct a report from raw
+handoffs.
 The adapter verifies that the run reached the terminal state implied by quorum,
 all artifacts are structured and non-empty, the quorum is 2-of-3, and Markdown
 contains the exact HomeRail run id and report identity. A valid rejected quorum
@@ -130,39 +127,33 @@ review after evaluating that boundary.
 
 PR Review jobs require a dedicated self-hosted runner with the
 `homerail-pr-review` label. Live catalog validation continues to use the
-`homerail-live` label. When both runners share one host, the bootstrap derives a
-separate state, artifact, and cleanup slot from `runner.name`; Manager port
-selection is serialized only until each isolated Manager is healthy. Do not put
-both custom labels on one runner, because that would allow the two jobs to queue
-on the same worker instead of running concurrently.
+`homerail-live` label and may start a current-commit transient runtime because it
+is explicitly validating that commit's Manager/Worker protocol. Auto Fix uses a
+third Actions runner labeled `homerail-auto-fix`. PR Review and Auto Fix may run
+concurrently but both submit to the one stable Manager; do not combine their
+labels on one Actions runner process.
 
 Runner repository configuration:
 
-- `HOMERAIL_PR_REVIEW_HOME_TEMPLATE`: optional absolute path to a model-only
-  Seed Home. It must contain `manager/homerail.db` and
-  `manager/secrets/master.key`, contain no symlinks, and never be used as a live
-  Manager Home. The runner copies it into the isolated per-run Home;
+- `HOMERAIL_STABLE_ROOT`: immutable auto-deployed release root whose `current`
+  symlink identifies the active stable runtime;
+- `HOMERAIL_STABLE_HOME`: persistent Home used by that Manager;
+- `HOMERAIL_STABLE_MANAGER_URL`: host-local Manager URL. It must be loopback or
+  the Docker bridge gateway, never a LAN Manager endpoint;
 - `HOMERAIL_PR_REVIEW_PRIMARY_MODEL`: exact setting id, display name, or model
-  name selected from the Seed Home. It drives all four specialist reviewers and
+  name selected from the stable Manager database. It drives all four specialist reviewers and
   synthesis;
 - `HOMERAIL_PR_REVIEW_ARBITER_MODEL`: a distinct active setting selected from
-  the Seed Home. It drives the evidence, false-positive, and coverage votes,
+  the same database. It drives the evidence, false-positive, and coverage votes,
   refinement, and publication. Both settings must expose Anthropic-compatible
-  endpoints because these DAG workers use the Claude Agent SDK harness;
-
-- `HOMERAIL_PATTERN_MODEL_BASE_URL`: the Qwen3.6 Anthropic-compatible endpoint;
-- `HOMERAIL_LIVE_RUNNER_BASE`: optional persistent root for locks and diagnostic
-  logs;
-- `HOMERAIL_LIVE_MANAGER_PORT`: optional preferred isolated Manager port. The
-  bootstrap selects another free port if it is occupied;
-- `HOMERAIL_DAG_MUTATION_TOKEN`: optional Manager mutation token. A random token
-  is generated inside the isolated run when this secret is absent.
+  endpoints because these DAG workers use the Claude Agent SDK harness.
 
 The GitHub Actions adapter supplies `github.api_url` as
 `HOMERAIL_GITHUB_API_BASE_URL`, so credential-free-accessible GitHub Enterprise
 repositories use the correct metadata and checkout host instead of deriving a
 `github.com` URL.
 
-When Seed Home variables are configured, the mixed-model Runtime Profile
-replaces the legacy single `--setting-id` path. The legacy local-model path
-remains available when no Seed Home is configured.
+The model selectors are local runner environment values, not public GitHub
+variables. The synced Runtime Profile stores only database setting IDs. The
+stable runner reads the existing 0600 DAG mutation token from the persistent
+Home; it never places that token in GitHub Secrets or a Worker environment.

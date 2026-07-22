@@ -19,7 +19,8 @@ test("routes live jobs to isolated runner slots and serializes only Manager port
   assert.match(ci, /PR_BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
   assert.match(ci, /HOMERAIL_LIVE_ISSUE_REVISION=\$revision/);
   assert.match(review, /runs-on: \[self-hosted, Linux, X64, homerail-pr-review\]/);
-  assert.match(review, /HOMERAIL_LIVE_SLOT: \$\{\{ runner\.name \}\}/);
+  assert.match(review, /run-pr-review-stable-runner\.sh/);
+  assert.doesNotMatch(review, /HOMERAIL_LIVE_SLOT|HOMERAIL_MANAGER_PORT/);
   assert.match(actionlint, /- homerail-pr-review/);
   assert.match(runner, /org\.homerail\.live_slot=\$LIVE_SLOT/);
   assert.match(runner, /LIVE_RUN_LABEL="org\.homerail\.live_run_v2"/);
