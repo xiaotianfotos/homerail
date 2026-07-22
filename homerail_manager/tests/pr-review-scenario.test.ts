@@ -163,7 +163,6 @@ describe("PR Review scenario assets", () => {
     ]);
     for (const reviewer of ["runtime", "security", "test", "frontend"]) {
       expect(nodes.find((node) => node.id === `${reviewer}_review`)?.config).toMatchObject({
-        allowed_builtin_tools: [],
         allowed_dag_tools: ["handoff"],
       });
       expect(nodes.find((node) => node.id === `normalize_${reviewer}_review`)).toMatchObject({
@@ -179,7 +178,6 @@ describe("PR Review scenario assets", () => {
       });
     }
     expect(nodes.find((node) => node.id === "privacy_review")?.config).toMatchObject({
-      allowed_builtin_tools: [],
       allowed_dag_tools: ["handoff"],
     });
     expect(nodes.find((node) => node.id === "strip_privacy_context")).toMatchObject({
@@ -207,7 +205,6 @@ describe("PR Review scenario assets", () => {
     for (const voter of ["evidence_vote", "false_positive_vote"]) {
       expect(nodes.find((node) => node.id === voter)).toMatchObject({
         config: expect.objectContaining({
-          allowed_builtin_tools: [],
           allowed_dag_tools: ["handoff"],
         }),
         inputs: expect.arrayContaining([
@@ -242,9 +239,11 @@ describe("PR Review scenario assets", () => {
     expect(nodes.filter((node) => node.agent === "refiner")).toHaveLength(1);
     expect(nodes.filter((node) => node.agent === "publisher")).toHaveLength(1);
     expect(nodes.find((node) => node.agent === "publisher")?.config).toMatchObject({
-      allowed_builtin_tools: [],
       allowed_dag_tools: ["get_graph_context", "handoff"],
     });
+    for (const node of nodes.filter((node) => node.kind === "agent")) {
+      expect(node.config).not.toHaveProperty("allowed_builtin_tools");
+    }
     const agents = parseWorkflowSource(source).meta.agents ?? {};
     for (const agentId of [
       "runtime_reviewer",
@@ -270,8 +269,23 @@ describe("PR Review scenario assets", () => {
       "evidence_voter",
       "false_positive_voter",
     ]) {
+      expect(agents[agentId]?.system).toContain("input.context.repository_path");
+      expect(agents[agentId]?.system).toMatch(/available repository and\s+shell tools/);
+      expect(agents[agentId]?.system).toContain("starting index");
+      expect(agents[agentId]?.system).not.toContain("No shell or file tools are needed or available");
+    }
+    for (const agentId of [
+      "runtime_reviewer",
+      "privacy_reviewer",
+      "security_reviewer",
+      "test_reviewer",
+      "frontend_reviewer",
+      "evidence_voter",
+      "false_positive_voter",
+    ]) {
       expect(agents[agentId]?.system).toContain("diff_truncated");
     }
+    expect(agents.publisher?.system).not.toContain("Do not call Bash");
     expect(agents.privacy_reviewer?.system).toContain(
       "Every non-noreply address in author_email or committer_email requires",
     );
