@@ -31,7 +31,7 @@ const arbiter = {
   anthropic_base_url: "https://kimi.example.test/anthropic",
 };
 
-test("selects one active Anthropic-compatible Seed Home model", () => {
+test("selects one active Anthropic-compatible stable Manager model", () => {
   assert.equal(selectRuntimeSetting([primary, arbiter], "qwen3.8-max-preview", "primary"), primary);
   assert.equal(selectRuntimeSetting([primary, arbiter], "setting-k3", "arbiter"), arbiter);
   assert.throws(
@@ -102,18 +102,14 @@ test("authenticates profile sync with the isolated DAG mutation token", async ()
   }
 });
 
-test("live PR Review clones the Seed Home and switches from setting to profile", () => {
-  const runner = fs.readFileSync(path.join(root, "scripts/run-dag-patterns-live-runner.sh"), "utf8");
+test("formal PR Review submits to the durable stable Manager", () => {
+  const runner = fs.readFileSync(path.join(root, "scripts/run-stable-dag-runner.sh"), "utf8");
   const workflow = fs.readFileSync(path.join(root, ".github/workflows/pr-review.yml"), "utf8");
-  assert.match(runner, /cp -a --reflink=auto "\$HOME_TEMPLATE\/\." "\$HOMERAIL_HOME\/"/);
+  assert.match(runner, /initialize_stable_automation_runtime/);
   assert.match(runner, /configure-pr-review-runtime-profile\.mjs/);
-  assert.match(runner, /review_args\+=\(--profile "\$PROFILE_ID"\)/);
-  assert.match(runner, /HOMERAIL_LIVE_HOME_TEMPLATE must not contain symbolic links/);
-  assert.ok(
-    runner.indexOf('dag sync pr-review') < runner.indexOf('configure-pr-review-runtime-profile.mjs'),
-    "the workflow must be synced before its runtime profile",
-  );
-  assert.match(workflow, /vars\.HOMERAIL_PR_REVIEW_HOME_TEMPLATE/);
-  assert.match(workflow, /vars\.HOMERAIL_PR_REVIEW_PRIMARY_MODEL/);
-  assert.match(workflow, /vars\.HOMERAIL_PR_REVIEW_ARBITER_MODEL/);
+  assert.match(runner, /--profile "\$PROFILE_ID"/);
+  assert.match(workflow, /run-pr-review-stable-runner\.sh/);
+  assert.match(workflow, /homerail-pr-review/);
+  assert.doesNotMatch(workflow, /install:all|build:packages|run-pr-review-live-runner/);
+  assert.doesNotMatch(workflow, /vars\.HOMERAIL_PR_REVIEW_(?:HOME_TEMPLATE|PRIMARY_MODEL|ARBITER_MODEL)/);
 });

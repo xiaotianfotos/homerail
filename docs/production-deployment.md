@@ -51,6 +51,21 @@ The installation also provides:
 - a LAN-facing HTTPS UI;
 - a dedicated Manager port bound to the Docker bridge interface;
 
+This Manager is also the single durable automation control plane. PR Review and
+Auto Fix use separate Actions runner processes so they can execute concurrently,
+but both submit to this service and retain their DAG history in its database.
+They do not start alternate Managers, allocate dynamic Manager ports, or clone
+the production Home. Live DAG compatibility CI remains the only workflow that
+may start a transient current-commit runtime.
+
+Machine-local `~/.config/homerail/automation.env` (mode `0600`) supplies the
+stable release/Home/Manager paths, the dedicated Actions runner roots, and
+private model selectors. These values are intentionally absent from tracked
+workflows and GitHub repository variables. `ops/systemd` contains reference
+units for the `homerail-pr-review` and `homerail-auto-fix` runners. The standard
+operator UI remains HTTPS port `19192`; no automation runner exposes another UI
+port.
+
 Each deployment installs dependencies, builds all packages, builds a
 revision-tagged Worker image, copies the runnable tree plus its Node.js binary
 into a new release directory, and atomically switches `current`. The systemd
