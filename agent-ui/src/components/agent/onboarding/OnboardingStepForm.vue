@@ -21,9 +21,16 @@ import {
   type MainModelRuntimeDetection,
 } from '@/api/services/providers-api'
 import {
+  getVoiceSettings,
   testVoiceEndpoints,
+  updateVoiceSettings,
   type VoiceEndpointProbeResult,
 } from '@/api/services/voice-api'
+import {
+  BUILTIN_EDGE_TTS_MODEL,
+  BUILTIN_EDGE_TTS_OPTION_ID,
+  builtinEdgeTtsRequest,
+} from '@/components/agent/builtin-tts'
 import { useToast } from '@/components/controls/useToast'
 import { createProtocolLabels } from '@/lib/protocol-labels'
 import { cn } from '@/lib/utils'
@@ -47,7 +54,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'created', setting?: LLMSetting): void
+  (e: 'created', setting?: LLMSetting, completion?: 'builtin_edge_tts'): void
 }>()
 
 const { showToast } = useToast()
@@ -188,6 +195,11 @@ const selectedCredential = computed<CredentialOption | null>(() => {
   return credentials.value.find(c => c.key === selectedCredentialKey.value) ?? null
 })
 
+const isBuiltinEdgeTtsSelected = computed(() =>
+  props.capability === 'supports_tts' &&
+  selectedCredentialKey.value === BUILTIN_EDGE_TTS_OPTION_ID
+)
+
 // 当前所选 credential 是否已配置过 key
 const selectedCredentialHasKey = computed(() => {
   const cred = selectedCredential.value
@@ -254,6 +266,11 @@ function credentialLabel(c: CredentialOption): string {
 
 function selectCredential(key: string): void {
   selectedCredentialKey.value = key
+  if (key === BUILTIN_EDGE_TTS_OPTION_ID && props.capability === 'supports_tts') {
+    selectedModelId.value = BUILTIN_EDGE_TTS_MODEL
+    apiKey.value = ''
+    return
+  }
   // 内置目录只是候选集，不代表用户凭证实际可用的默认模型。
   selectedModelId.value = ''
   // 切换凭证时清空手动 key（若该 credential 已有 key 会自动复用）
@@ -341,9 +358,13 @@ const customFieldConfig = computed(() => {
 })
 
 // 切换能力时重置自定义字段；模型保持空值，避免绑定某个硬编码模型。
-watch(() => props.capability, () => {
-  selectedCredentialKey.value = ''
-  selectedModelId.value = ''
+watch(() => props.capability, (capability) => {
+  selectedCredentialKey.value = capability === 'supports_tts'
+    ? BUILTIN_EDGE_TTS_OPTION_ID
+    : ''
+  selectedModelId.value = capability === 'supports_tts'
+    ? BUILTIN_EDGE_TTS_MODEL
+    : ''
   apiKey.value = ''
   customFields.value = { baseUrl: '', model: customFieldConfig.value.defaultModel, voice: '' }
 }, { immediate: true })
@@ -443,6 +464,7 @@ onBeforeUnmount(() => {
 // ── 校验 ──────────────────────────────────────────────────────
 // credential 已有 key 时只需选模型；否则需模型 + key
 const presetCanSubmit = computed(() => {
+  if (isBuiltinEdgeTtsSelected.value) return true
   if (!selectedCredential.value || !selectedModelId.value) return false
   if (presetProbeRequired.value && (!presetProbeSettled.value || presetProbing.value)) return false
   if (selectedCredentialHasKey.value) return true
@@ -579,25 +601,37 @@ async function submit(): Promise<void> {
         checkingVoiceEndpoints.value = false
       }
     }
-    const setting =
-      mode.value === 'preset'
+    const builtinEdgeTts = mode.value === 'preset' && isBuiltinEdgeTtsSelected.value
+    const setting = builtinEdgeTts
+      ? await submitBuiltinEdgeTts()
+      : mode.value === 'preset'
         ? await submitPreset()
         : await submitCustom(mainModelDetection, customVoiceUrls, customTtsUrls)
-    if (!setting) throw new Error(t('onboarding.form.saveFailed'))
-    await props.activateSetting?.(setting, mainModelDetection?.preferred_harness ?? undefined)
+    if (!setting && !builtinEdgeTts) throw new Error(t('onboarding.form.saveFailed'))
+    if (setting) {
+      await props.activateSetting?.(setting, mainModelDetection?.preferred_harness ?? undefined)
+    }
     const successMessage = mode.value === 'custom' && props.capability === 'supports_llm'
       ? t('onboarding.form.mainModelReady', {
           harness: mainModelHarnessLabel(mainModelDetection!.preferred_harness!),
         })
       : t('onboarding.form.added', { capability: capabilityLabel(props.capability) })
     showToast(successMessage, 'success')
-    emit('created', setting)
+    emit('created', setting, builtinEdgeTts ? 'builtin_edge_tts' : undefined)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : t('onboarding.form.saveFailed')
     showToast(message, 'error', 6000)
   } finally {
     saving.value = false
   }
+}
+
+async function submitBuiltinEdgeTts(): Promise<undefined> {
+  const current = await getVoiceSettings()
+  if (!current.data) throw new Error(t('onboarding.form.saveFailed'))
+  const response = await updateVoiceSettings(builtinEdgeTtsRequest(current.data))
+  if (!response.success) throw new Error(t('onboarding.form.saveFailed'))
+  return undefined
 }
 
 async function submitPreset(): Promise<LLMSetting | undefined> {
@@ -766,7 +800,7 @@ async function submitCustom(
 
     <!-- ═══ 内置凭证模式 ═══════════════════════════════════════ -->
     <template v-if="mode === 'preset'">
-      <div v-if="!credentials.length" class="onboarding-step-form__empty">
+      <div v-if="!credentials.length && capability !== 'supports_tts'" class="onboarding-step-form__empty">
         {{ t('onboarding.form.noPreset', { capability: capabilityLabel(capability) }) }}
       </div>
 
@@ -779,6 +813,13 @@ async function submitCustom(
             @change="selectCredential(($event.target as HTMLSelectElement).value)"
           >
             <option value="">{{ t('onboarding.form.selectCredential') }}</option>
+            <option
+              v-if="capability === 'supports_tts'"
+              :value="BUILTIN_EDGE_TTS_OPTION_ID"
+              class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
+            >
+              {{ t('onboarding.form.edgeTts') }} · {{ t('onboarding.form.recommended') }}
+            </option>
             <option v-for="c in credentials" :key="c.key" :value="c.key" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">
               {{ credentialLabel(c) }}
             </option>
@@ -789,10 +830,17 @@ async function submitCustom(
           <span class="onboarding-step-form__field-label">{{ t('onboarding.form.model') }}</span>
           <select
             v-model="selectedModelId"
-            :disabled="!selectedCredential"
+            :disabled="isBuiltinEdgeTtsSelected || !selectedCredential"
             class="onboarding-step-form__select"
           >
             <option value="">{{ t('onboarding.form.selectModel') }}</option>
+            <option
+              v-if="isBuiltinEdgeTtsSelected"
+              :value="BUILTIN_EDGE_TTS_MODEL"
+              class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
+            >
+              {{ BUILTIN_EDGE_TTS_MODEL }}
+            </option>
             <option v-for="m in displayModels" :key="m.id" :value="m.id" class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]">
               {{ m.display_name }} · {{ m.detected ? t('onboarding.form.detected') : t('onboarding.form.catalog') }}
             </option>
@@ -810,7 +858,13 @@ async function submitCustom(
         </label>
 
         <!-- credential 已有 key：自动复用并显示 masked 值；否则填新 key -->
-        <div v-if="selectedCredentialHasKey" class="onboarding-step-form__field onboarding-step-form__field--key">
+        <div v-if="isBuiltinEdgeTtsSelected" class="onboarding-step-form__field onboarding-step-form__field--key">
+          <span class="onboarding-step-form__field-label">{{ t('onboarding.form.connection') }}</span>
+          <div class="onboarding-step-form__builtin-badge">
+            <span>{{ t('onboarding.form.edgeTtsHint') }}</span>
+          </div>
+        </div>
+        <div v-else-if="selectedCredentialHasKey" class="onboarding-step-form__field onboarding-step-form__field--key">
           <span class="onboarding-step-form__field-label">API Key</span>
           <div class="onboarding-step-form__reuse-badge" :title="t('onboarding.form.reuseKey')">
             <span>{{ selectedMaskedKey }}</span>
@@ -1109,6 +1163,19 @@ async function submitCustom(
 
 .onboarding-step-form__probe-status--warning {
   color: var(--hr-warning);
+}
+
+.onboarding-step-form__builtin-badge {
+  display: flex;
+  align-items: center;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--hr-accent-border);
+  background: var(--hr-accent-soft);
+  color: var(--hr-text-2);
+  font-size: 0.7rem;
+  line-height: 1.35;
 }
 
 /* 复用已有 Key 提示 */
