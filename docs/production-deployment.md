@@ -1,9 +1,11 @@
 # Persistent production deployment
 
-`.github/workflows/deploy-production.yml` deploys the exact `main` revision only
-after the repository's `CI` workflow succeeds for a `push` event. It runs on a
-dedicated self-hosted runner labeled `homerail-deploy`; the live DAG and PR
-review labels must stay on separate runners.
+`.github/workflows/deploy-production.yml` deploys the latest `main` revision
+once per day at 03:30 Asia/Shanghai (19:30 UTC), and also supports an
+owner-only manual dispatch for an immediate deployment. Merging a pull request
+does not start a second deployment workflow. It runs on a dedicated self-hosted
+runner labeled `homerail-deploy`; the live DAG, PR Review, and Auto Fix labels
+must stay on separate runners.
 
 Each deployment runner keeps its machine-specific paths and public address in
 `~/.config/homerail/production.env` with mode `0600`. The tracked workflow does
@@ -81,6 +83,8 @@ the production Manager. The newest three releases and their Worker images are
 retained; database, model settings, sessions, certificates, and external Skills
 remain outside release directories.
 
-The workflow also has a maintainer-only manual dispatch for recovery. Normal
-operation should use the CI-success trigger so unvalidated commits are never
-promoted automatically.
+The workflow also has a maintainer-only manual dispatch for immediate recovery
+or an explicitly selected revision. Scheduled and default manual deployments
+resolve `main` at job start. The release switch never changes
+`HOMERAIL_PRODUCTION_HOME`; database, settings, sessions, certificates, and
+external Skills continue to live in the persistent Home across deployments.

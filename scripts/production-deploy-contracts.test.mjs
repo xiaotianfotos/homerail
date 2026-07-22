@@ -8,16 +8,17 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("deploys only a successful main CI revision on the isolated deploy runner", () => {
+test("deploys main daily or an owner-dispatched revision on the isolated deploy runner", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "deploy-production.yml"), "utf8");
-  assert.match(workflow, /workflow_run:/);
-  assert.match(workflow, /workflows: \[CI\]/);
-  assert.match(workflow, /conclusion == 'success'/);
-  assert.match(workflow, /workflow_run\.event == 'push'/);
-  assert.match(workflow, /head_branch == 'main'/);
-  assert.match(workflow, /head_repository\.full_name == github\.repository/);
+  assert.match(workflow, /schedule:\n\s+# GitHub cron is UTC/);
+  assert.match(workflow, /cron: "30 19 \* \* \*"/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /github\.event_name == 'schedule'/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && github\.actor == 'xiaotianfotos'/);
+  assert.doesNotMatch(workflow, /workflow_run:/);
   assert.match(workflow, /runs-on: \[self-hosted, Linux, X64, homerail-deploy\]/);
-  assert.match(workflow, /ref: \$\{\{ github\.event\.workflow_run\.head_sha/);
+  assert.match(workflow, /ref: \$\{\{ inputs\.revision \|\| 'main' \}\}/);
+  assert.match(workflow, /revision="\$\(git rev-parse HEAD\)"/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.doesNotMatch(workflow, /cache:\s*npm/);
