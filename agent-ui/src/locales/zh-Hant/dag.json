@@ -49,7 +49,17 @@
     "userTask": "用戶任務",
     "noTask": "無任務描述",
     "logs": "聊天日誌",
-    "noLogs": "該節點暫無日誌"
+    "noLogs": "該節點暫無日誌",
+    "managerExecuted": "由 Manager 控制邏輯執行，不會調度 Worker 或模型。"
+  },
+  "nodeTypes": {
+    "legend": "DAG 執行節點圖例",
+    "execution": "執行類型",
+    "worker": "Worker",
+    "managerLogic": "Manager 邏輯",
+    "gate": "條件門",
+    "joinQuorum": "匯合 / 共識",
+    "control": "程式控制"
   },
   "overlay": {
     "loadingMetrics": "加載指標中...",

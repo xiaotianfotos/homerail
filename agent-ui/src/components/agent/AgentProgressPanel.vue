@@ -379,6 +379,7 @@ onUnmounted(() => {
             store.isFailed ? 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]' :
             store.isCompleted ? 'bg-[var(--hr-success-soft)] text-[var(--hr-success)]' :
             store.isRunning ? 'bg-[var(--hr-info-soft)] text-[var(--hr-info)]' :
+            store.isCancelled ? 'bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]' :
             'bg-[var(--hr-surface-2)] text-[var(--hr-text-3)]'
           )"
         >
@@ -388,7 +389,7 @@ onUnmounted(() => {
 
       <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--hr-surface-2)]">
         <div
-          :class="cn('h-full rounded-full transition-all', store.isFailed ? 'bg-[var(--hr-danger)]' : 'bg-[var(--hr-success)]')"
+          :class="cn('h-full rounded-full transition-all', store.isFailed ? 'bg-[var(--hr-danger)]' : store.isCancelled ? 'bg-[var(--hr-warning)]' : 'bg-[var(--hr-success)]')"
           :style="{ width: `${progressPercent}%` }"
         />
       </div>

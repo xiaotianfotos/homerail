@@ -10,6 +10,7 @@ vi.mock('@/stores/agent-store', () => ({
     isRunning: false,
     isCompleted: false,
     isFailed: false,
+    isCancelled: false,
     dagExecution: null,
     currentRunId: null,
   }),

@@ -14,7 +14,7 @@ import { eventBus } from '@/utils/eventBus'
 import { formatRepositoryPayloadForDisplay } from '@/components/agent/dag-runtime/dagRuntimePresentation'
 import type { ClaudeMessage } from '@/api/types/run.types'
 import type { DAGChatMessage } from '@/api/types/dag.types'
-import type { DAGNodeMessageEvent } from '@/utils/eventBus'
+import type { DAGNodeChatUpdatedEvent, DAGNodeMessageEvent } from '@/utils/eventBus'
 
 export function useDagNodeMessages(
   dagRunId: ComputedRef<string | undefined>,
@@ -25,28 +25,43 @@ export function useDagNodeMessages(
   const loading = ref(false)
   const error = ref<string | null>(null)
   const nodeName = ref('')
+  let refreshTimer: number | undefined
+  let requestGeneration = 0
 
   // ==========================================================================
   // 获取聊天记录
   // ==========================================================================
 
-  async function fetchChat(runId: string, nodeId: string, isManager: boolean) {
-    loading.value = true
+  async function fetchChat(runId: string, nodeId: string, isManager: boolean, background = false) {
+    const generation = ++requestGeneration
+    if (!background) loading.value = true
     error.value = null
-    messages.value = []
+    if (!background) messages.value = []
 
     try {
       const chatMsgs: DAGChatMessage[] = isManager
         ? await dagApi.getDagManagerChat(runId)
         : await dagApi.getDagNodeChat(runId, nodeId)
 
+      if (generation !== requestGeneration) return
       messages.value = formatRepositoryPayloadForDisplay(convertDagMessages(chatMsgs))
     } catch (e: any) {
+      if (generation !== requestGeneration) return
       error.value = e?.message || 'Failed to load chat'
-      messages.value = []
+      if (!background) messages.value = []
     } finally {
-      loading.value = false
+      if (generation === requestGeneration && !background) loading.value = false
     }
+  }
+
+  function scheduleRefresh() {
+    if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+    refreshTimer = window.setTimeout(() => {
+      refreshTimer = undefined
+      const runId = dagRunId.value
+      const nodeId = selectedNodeId.value
+      if (runId && nodeId) void fetchChat(runId, nodeId, isSelectedManager.value, true)
+    }, 100)
   }
 
   // ==========================================================================
@@ -82,10 +97,21 @@ export function useDagNodeMessages(
     }
   }
 
+  function onNodeChatUpdated(event: DAGNodeChatUpdatedEvent) {
+    const runId = dagRunId.value
+    const nodeId = selectedNodeId.value
+    if (!runId || !nodeId || event.runId !== runId) return
+    if (!isSelectedManager.value && event.nodeId !== nodeId) return
+    scheduleRefresh()
+  }
+
   eventBus.on('dag:node_message', onNodeMessage)
+  eventBus.on('dag:node_chat_updated', onNodeChatUpdated)
 
   onUnmounted(() => {
     eventBus.off('dag:node_message', onNodeMessage)
+    eventBus.off('dag:node_chat_updated', onNodeChatUpdated)
+    if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
   })
 
   return {

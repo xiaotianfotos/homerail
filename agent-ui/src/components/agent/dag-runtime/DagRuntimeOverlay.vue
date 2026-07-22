@@ -16,6 +16,7 @@ import { useDagRuntimeGamepad, type DagGamepadEvent, type DagGamepadAnalog } fro
 import { useRunList } from './useRunList'
 import DagRuntimeCanvas from './DagRuntimeCanvas.vue'
 import DagRuntimeToolbar from './DagRuntimeToolbar.vue'
+import DagRuntimeNodeLegend from './DagRuntimeNodeLegend.vue'
 import DagNodeDetailDrawer from './DagNodeDetailDrawer.vue'
 import DagRunList from './DagRunList.vue'
 import { nextDagTraversalNodeId } from './dagTraversal'
@@ -429,6 +430,8 @@ onUnmounted(() => {
             @select-node="(id) => { selectedNodeId = id; if (id) { store.selectNode(id); resetPanels() } }"
             @focus-node="(id) => focusedNodeId = id"
           />
+
+          <DagRuntimeNodeLegend />
 
           <div
             v-if="metricsLoading"

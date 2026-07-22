@@ -19,9 +19,10 @@ import { cn } from '@/lib/utils'
 import { http } from '@/api/clients/http-client'
 import { renderMarkdown } from '@/utils/message-formatter'
 import { formatRepositoryReferencesForDisplay } from './dagRuntimePresentation'
+import { resolveDagRuntimeNodeSemantic } from './dagRuntimeNodeSemantics'
 import MessageList from '@/components/message/MessageList.vue'
 import type { DAGRunMetrics } from '@/api/types/dag.types'
-import { X, ChevronDown, ChevronUp, FileText, MessageSquare, Wrench, AlertTriangle, Coins, Clock } from 'lucide-vue-next'
+import { X, ChevronDown, ChevronUp, FileText, MessageSquare, Wrench, AlertTriangle, Coins, Clock, Workflow } from 'lucide-vue-next'
 
 type PanelKey = 'task' | 'logs'
 
@@ -68,6 +69,21 @@ const persona = computed(() => {
   return node.value ? getAgentPersona(node.value.agent_name) : null
 })
 
+const nodeSemantic = computed(() => resolveDagRuntimeNodeSemantic(
+  node.value?.node_type,
+  node.value?.gateway_config,
+))
+
+const nodeHeading = computed(() => (
+  nodeSemantic.value.isWorker ? persona.value?.name : node.value?.name
+))
+
+const nodeSubtitle = computed(() => (
+  nodeSemantic.value.isWorker
+    ? `${t('dag.nodeTypes.worker')} · ${node.value?.name ?? ''}`
+    : `${t('dag.nodeTypes.managerLogic')} · ${nodeSemantic.value.label}`
+))
+
 // 任务详情：从原始 chat entries 提取 manager 发的 prompt（inputs + system）
 const taskPrompt = ref<string>('')
 const taskSystem = ref<string>('')
@@ -112,7 +128,7 @@ function statusLabel(status: string): string {
   const map: Record<string, string> = {
     pending: t('dag.status.pending'), ready: t('dag.status.ready'), running: t('dag.status.running'),
     waiting_for_command: t('dag.status.waitingForCommand'),
-    completed: t('dag.status.completed'), failed: t('dag.status.failed'), skipped: t('dag.status.skipped'),
+    completed: t('dag.status.completed'), failed: t('dag.status.failed'), cancelled: t('dag.status.cancelled'), skipped: t('dag.status.skipped'),
   }
   return map[status] ?? status
 }
@@ -123,6 +139,7 @@ function statusClass(status: string): string {
     case 'waiting_for_command': return 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
     case 'completed': return 'border-[var(--hr-info-border)] bg-[var(--hr-info-soft)] text-[var(--hr-info)]'
     case 'failed': return 'border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
+    case 'cancelled': return 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
     case 'ready': return 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
     case 'skipped': return 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
     default: return 'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-3)]'
@@ -179,18 +196,19 @@ defineExpose({ scrollBy })
       <!-- 头部 -->
       <div class="flex items-center gap-3 border-b-2 border-[var(--hr-border)] px-6 py-4 flex-shrink-0">
         <div
-          class="flex h-12 w-12 items-center justify-center rounded-2xl flex-shrink-0"
-          :style="{ backgroundColor: persona?.color ? `${persona.color}22` : 'var(--hr-surface-2)' }"
+          class="flex h-12 w-12 items-center justify-center flex-shrink-0 border"
+          :class="nodeSemantic.isWorker ? 'rounded-full border-[var(--hr-border)]' : 'rounded-xl border-[var(--hr-accent-border)]'"
+          :style="{ backgroundColor: nodeSemantic.isWorker && persona?.color ? `${persona.color}22` : 'var(--hr-accent-soft)' }"
         >
           <component
-            :is="persona?.icon"
+            :is="nodeSemantic.isWorker ? persona?.icon : Workflow"
             class="h-5 w-5"
-            :style="{ color: persona?.color ?? 'var(--hr-text-3)' }"
+            :style="{ color: nodeSemantic.isWorker ? (persona?.color ?? 'var(--hr-text-3)') : 'var(--hr-accent)' }"
           />
         </div>
         <div class="min-w-0 flex-1">
-          <div class="text-base font-semibold text-[var(--hr-text-1)] truncate">{{ persona?.name }}</div>
-          <div class="text-sm text-[var(--hr-text-3)] truncate">{{ node.name }}</div>
+          <div class="text-base font-semibold text-[var(--hr-text-1)] truncate">{{ nodeHeading }}</div>
+          <div data-testid="dag-node-execution-owner" class="text-sm text-[var(--hr-text-3)] truncate">{{ nodeSubtitle }}</div>
         </div>
         <span
           :class="cn('rounded-full border px-3 py-1 text-xs font-medium', statusClass(node.status))"
@@ -207,7 +225,7 @@ defineExpose({ scrollBy })
       </div>
 
       <!-- 指标条（紧凑） -->
-      <div v-if="nodeMetrics" class="flex items-center gap-4 px-6 py-2.5 flex-shrink-0 border-b border-[var(--hr-border)] text-sm">
+      <div v-if="nodeMetrics && nodeSemantic.isWorker" class="flex items-center gap-4 px-6 py-2.5 flex-shrink-0 border-b border-[var(--hr-border)] text-sm">
         <span class="flex items-center gap-1.5">
           <Wrench class="h-3.5 w-3.5 text-[var(--hr-info)]" />
           <span class="font-mono font-semibold text-[var(--hr-text-1)]">{{ nodeMetrics.tool_calls }}</span>
@@ -226,6 +244,13 @@ defineExpose({ scrollBy })
           <Clock class="h-3.5 w-3.5 text-[var(--hr-text-3)]" />
           <span class="font-mono text-[var(--hr-text-2)]">{{ fmtDuration(nodeMetrics.duration_ms) }}</span>
         </span>
+      </div>
+      <div
+        v-else-if="!nodeSemantic.isWorker"
+        class="flex items-center gap-2 border-b border-[var(--hr-border)] bg-[var(--hr-accent-soft)] px-6 py-2.5 text-xs text-[var(--hr-text-2)]"
+      >
+        <Workflow class="h-3.5 w-3.5 text-[var(--hr-accent)]" />
+        {{ t('dag.detail.managerExecuted') }}
       </div>
 
       <!-- 面板：任务详情 -->

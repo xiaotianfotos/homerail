@@ -110,6 +110,28 @@ describe("/ws/events", () => {
     ws.close();
   });
 
+  it("streams ephemeral node chat invalidations to browser clients", async () => {
+    const port = await listen(server);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/events`);
+
+    await nextMessage(ws);
+    const eventPromise = nextMessage(ws);
+    emit("dag:node_chat_updated", {
+      runId: "run-live-chat",
+      nodeId: "review",
+      timestamp: new Date().toISOString(),
+    });
+    const event = await eventPromise;
+
+    expect(event.type).toBe("dag:node_chat_updated");
+    expect(event.payload).toMatchObject({
+      runId: "run-live-chat",
+      nodeId: "review",
+    });
+
+    ws.close();
+  });
+
   it("closes malformed browser event sockets without crashing the manager", async () => {
     const port = await listen(server);
 

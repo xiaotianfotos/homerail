@@ -10,9 +10,17 @@
 // DAG 节点状态
 // ============================================================================
 
-export type DAGNodeStatus = 'pending' | 'ready' | 'running' | 'waiting_for_command' | 'completed' | 'failed' | 'skipped'
+export type DAGNodeStatus = 'pending' | 'ready' | 'running' | 'waiting_for_command' | 'completed' | 'failed' | 'cancelled' | 'skipped'
 
-export type DAGExecutionStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed'
+export type DAGExecutionStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled'
+
+export interface DAGGatewayConfig {
+  type?: string
+  kind?: string
+  mode?: string
+  threshold?: number
+  [key: string]: unknown
+}
 
 // ============================================================================
 // DAG 节点
@@ -21,6 +29,9 @@ export type DAGExecutionStatus = 'pending' | 'running' | 'waiting' | 'completed'
 export interface DAGTaskNode {
   id: string
   name: string
+  /** Runtime primitive. Agent nodes dispatch workers; gateway nodes execute in Manager. */
+  node_type?: string
+  gateway_config?: DAGGatewayConfig
   status: DAGNodeStatus
   agent_id: string
   agent_name: string

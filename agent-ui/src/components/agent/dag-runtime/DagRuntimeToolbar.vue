@@ -69,6 +69,7 @@ const statusItems = computed(() => [
   { key: 'waiting_for_command', label: t('dag.status.waitingForCommand'), color: 'bg-[var(--hr-warning)]' },
   { key: 'completed', label: t('dag.toolbar.legend.completed'), color: 'bg-[var(--hr-info)]' },
   { key: 'failed', label: t('dag.toolbar.legend.failed'), color: 'bg-[var(--hr-danger)]' },
+  { key: 'cancelled', label: t('dag.status.cancelled'), color: 'bg-[var(--hr-warning)]' },
   { key: 'ready', label: t('dag.toolbar.legend.ready'), color: 'bg-[var(--hr-info)]' },
   { key: 'pending', label: t('dag.toolbar.legend.pending'), color: 'bg-[var(--hr-text-3)]' },
   { key: 'skipped', label: t('dag.toolbar.legend.skipped'), color: 'bg-[var(--hr-warning)]' },
@@ -102,6 +103,7 @@ const statusItems = computed(() => [
               store.isWaiting ? 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]' :
               store.isCompleted ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]' :
               store.isFailed ? 'border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]' :
+              store.isCancelled ? 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]' :
               'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-3)]'
             )"
           >
@@ -119,7 +121,7 @@ const statusItems = computed(() => [
         <div class="h-2 overflow-hidden rounded-full bg-[var(--hr-surface-2)]">
           <div
             class="h-full rounded-full transition-all duration-500"
-            :class="store.isFailed ? 'bg-[var(--hr-danger)]' : 'bg-gradient-to-r from-[var(--hr-accent)] to-[var(--hr-success)]'"
+            :class="store.isFailed ? 'bg-[var(--hr-danger)]' : store.isCancelled ? 'bg-[var(--hr-warning)]' : 'bg-gradient-to-r from-[var(--hr-accent)] to-[var(--hr-success)]'"
             :style="{ width: `${progressPct}%` }"
           />
         </div>

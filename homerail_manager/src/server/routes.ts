@@ -116,7 +116,7 @@ function _buildExecutionStatus(metadata: ReturnType<typeof loadRunMetadata>) {
       status: state.toLowerCase(),
       retry_count: 0,
       started_at: null,
-      completed_at: ["COMPLETED", "FAILED", "SKIPPED"].includes(state) ? new Date(metadata.completedAt || Date.now()).toISOString() : null,
+      completed_at: _isTerminalNodeStatus(state) ? new Date(metadata.completedAt || Date.now()).toISOString() : null,
     };
   }
   const completedNodes = Object.entries(metadata.nodeStates)
@@ -135,6 +135,7 @@ function _buildExecutionStatus(metadata: ReturnType<typeof loadRunMetadata>) {
     .filter(([, state]) => state === "FAILED")
     .map(([id]) => id);
   return {
+    status: metadata.status,
     complete: isTerminalDagRunStatus(metadata.status),
     active_nodes: activeNodes,
     completed_nodes: completedNodes,
@@ -150,6 +151,12 @@ function _nodeStatus(metadata: PersistedRunMetadata, nodeId: string): string {
   return (metadata.nodeStates[nodeId] || "PENDING").toLowerCase();
 }
 
+const TERMINAL_NODE_STATUSES = new Set(["completed", "failed", "cancelled", "skipped"]);
+
+function _isTerminalNodeStatus(status: string): boolean {
+  return TERMINAL_NODE_STATUSES.has(status.toLowerCase());
+}
+
 function _buildNodeDetail(metadata: PersistedRunMetadata, nodeId: string) {
   const node = metadata.graph?.nodes.find((n) => n.node_id === nodeId);
   if (!node && !(nodeId in metadata.nodeStates)) return undefined;
@@ -161,7 +168,7 @@ function _buildNodeDetail(metadata: PersistedRunMetadata, nodeId: string) {
     agent_id: node?.agent || "",
     agent_name: node?.agent || node?.name || nodeId,
     started_at: null,
-    completed_at: ["completed", "failed", "skipped"].includes(status) ? new Date(metadata.completedAt || Date.now()).toISOString() : null,
+    completed_at: _isTerminalNodeStatus(status) ? new Date(metadata.completedAt || Date.now()).toISOString() : null,
   };
 }
 
@@ -374,7 +381,7 @@ function _buildMetricsSummary(snapshot: PersistedRunSnapshot) {
       duration_ms: usage?.duration_ms ?? null,
       num_turns: usage?.num_turns ?? null,
       started_at: null,
-      completed_at: ["completed", "failed", "skipped"].includes(status)
+      completed_at: _isTerminalNodeStatus(status)
         ? (metadata.completedAt ? new Date(metadata.completedAt).toISOString() : null)
         : null,
     };

@@ -49,7 +49,17 @@
     "userTask": "用户任务",
     "noTask": "无任务描述",
     "logs": "聊天日志",
-    "noLogs": "该节点暂无日志"
+    "noLogs": "该节点暂无日志",
+    "managerExecuted": "由 Manager 控制逻辑执行，不会调度 Worker 或模型。"
+  },
+  "nodeTypes": {
+    "legend": "DAG 执行节点图例",
+    "execution": "执行类型",
+    "worker": "Worker",
+    "managerLogic": "Manager 逻辑",
+    "gate": "条件门",
+    "joinQuorum": "汇合 / 共识",
+    "control": "程序控制"
   },
   "overlay": {
     "loadingMetrics": "加载指标中...",

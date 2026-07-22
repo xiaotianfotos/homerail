@@ -20,8 +20,11 @@ export type WebSocketState = 'connecting' | 'connected' | 'disconnected' | 'reco
 
 export interface WebSocketMessage<T = unknown> {
   type: string
-  data: T
-  timestamp?: number
+  /** Client-originated messages use data; Manager event messages use payload. */
+  data?: T
+  payload?: T
+  event?: string
+  timestamp?: number | string
 }
 
 export interface WebSocketClientConfig {

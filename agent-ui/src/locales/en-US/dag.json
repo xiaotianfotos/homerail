@@ -49,7 +49,17 @@
     "userTask": "User task",
     "noTask": "No task description",
     "logs": "Chat logs",
-    "noLogs": "No logs for this node"
+    "noLogs": "No logs for this node",
+    "managerExecuted": "Executed by Manager control logic; no worker or model is dispatched."
+  },
+  "nodeTypes": {
+    "legend": "DAG execution node legend",
+    "execution": "Execution",
+    "worker": "Worker",
+    "managerLogic": "Manager logic",
+    "gate": "Gate",
+    "joinQuorum": "Join / quorum",
+    "control": "Control"
   },
   "overlay": {
     "loadingMetrics": "Loading metrics...",

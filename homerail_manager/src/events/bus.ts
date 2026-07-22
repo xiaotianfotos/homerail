@@ -5,6 +5,7 @@ export type DAGEventType =
   | "dag:node_added"
   | "dag:status_update"
   | "dag:node_state_changed"
+  | "dag:node_chat_updated"
   | "dag:node_correction_requested"
   | "dag:node_auto_handoff"
   | "dag:node_dispatch_retry"
@@ -193,6 +194,17 @@ export interface NodeStateChangedPayload {
   status: string;
   previousStatus?: string;
   previous_status?: string;
+  timestamp: string;
+}
+
+/**
+ * Ephemeral browser invalidation sent after a node chat entry is committed.
+ * The transcript remains authoritative in SQLite and is fetched over REST;
+ * this event intentionally carries no chat content.
+ */
+export interface NodeChatUpdatedPayload {
+  runId: string;
+  nodeId: string;
   timestamp: string;
 }
 
@@ -467,6 +479,7 @@ export type DAGEventPayload =
   | NodeAddedPayload
   | StatusUpdatePayload
   | NodeStateChangedPayload
+  | NodeChatUpdatedPayload
   | NodeCorrectionRequestedPayload
   | NodeAutoHandoffPayload
   | NodeDispatchRetryPayload
