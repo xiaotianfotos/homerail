@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, onScopeDispose } from 'vue'
 import type { DAGTaskNode, DAGEdge, DAGExecution, DAGNodeStatus } from '@/api/types/dag.types'
 import { bindAgentDagEvents } from './agent/dag-events'
 import { mapManagerSessionMessages } from './agent/message-mapper'
@@ -80,6 +80,7 @@ export const useAgentStore = defineStore('agent', () => {
       waiting_for_command: 0,
       completed: 0,
       failed: 0,
+      cancelled: 0,
       skipped: 0,
     }
     for (const node of nodes.value) {
@@ -102,6 +103,10 @@ export const useAgentStore = defineStore('agent', () => {
 
   const isFailed = computed(() => {
     return dagExecution.value?.status === 'failed'
+  })
+
+  const isCancelled = computed(() => {
+    return dagExecution.value?.status === 'cancelled'
   })
 
   const selectedSessionInfo = computed<ManagerSessionItem | null>(() => {
@@ -534,7 +539,7 @@ export const useAgentStore = defineStore('agent', () => {
     wsStreamedCount.value = 0
   }
 
-  const initialize = bindAgentDagEvents({
+  const dagEvents = bindAgentDagEvents({
     currentRunId,
     dagExecution,
     nodes,
@@ -546,6 +551,8 @@ export const useAgentStore = defineStore('agent', () => {
     setDagExecution,
     selectNode,
   })
+  onScopeDispose(dagEvents.dispose)
+  if (import.meta.hot) import.meta.hot.dispose(dagEvents.dispose)
 
   return {
     // State
@@ -590,6 +597,7 @@ export const useAgentStore = defineStore('agent', () => {
     isWaiting,
     isCompleted,
     isFailed,
+    isCancelled,
     selectedSessionInfo,
     filteredSessions,
     activeManagerModels,
@@ -616,7 +624,7 @@ export const useAgentStore = defineStore('agent', () => {
     startNewSession,
     restoreSession,
     switchToRun,
-    initialize,
+    initialize: dagEvents.initialize,
     hasWsStreamed,
     resetWsStreamed,
     fetchManagerSessions,

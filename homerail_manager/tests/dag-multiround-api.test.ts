@@ -186,6 +186,7 @@ describe("multi-round DAG HTTP API", () => {
       body: {
         data: {
           execution: {
+            status: "waiting",
             complete: false,
             waiting_nodes: ["suspend"],
             nodes: { suspend: { status: "waiting_for_command" } },
@@ -275,7 +276,7 @@ describe("multi-round DAG HTTP API", () => {
       body: { data: { terminal: true } },
     });
     expect(await jsonResponse(`${baseUrl}/api/dag-status/${runId}`)).toMatchObject({
-      body: { data: { execution: { complete: true } } },
+      body: { data: { execution: { status: "completed", complete: true } } },
     });
   });
 

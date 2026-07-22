@@ -10,9 +10,9 @@
 // DAG 节点状态
 // ============================================================================
 
-export type DAGNodeStatus = 'pending' | 'ready' | 'running' | 'waiting_for_command' | 'completed' | 'failed' | 'skipped'
+export type DAGNodeStatus = 'pending' | 'ready' | 'running' | 'waiting_for_command' | 'completed' | 'failed' | 'cancelled' | 'skipped'
 
-export type DAGExecutionStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed'
+export type DAGExecutionStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled'
 
 export interface DAGGatewayConfig {
   type?: string

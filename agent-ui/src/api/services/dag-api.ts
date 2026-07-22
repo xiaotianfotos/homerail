@@ -39,6 +39,7 @@ interface BackendDagResponse {
     edges: Array<{ from_node: string; to_node: string; condition: string }>
   }
   execution: {
+    status?: 'active' | 'waiting' | 'completed' | 'failed' | 'cancelled'
     complete: boolean
     active_nodes: string[]
     completed_nodes: string[]
@@ -112,7 +113,15 @@ function transformDagResponse(raw: BackendDagResponse): DAGExecution {
 
   // 推导整体状态
   let status: DAGExecutionStatus = 'pending'
-  if (raw.execution.complete) {
+  if (raw.execution.status === 'cancelled') {
+    status = 'cancelled'
+  } else if (raw.execution.status === 'failed') {
+    status = 'failed'
+  } else if (raw.execution.status === 'completed') {
+    status = 'completed'
+  } else if (raw.execution.status === 'waiting') {
+    status = 'waiting'
+  } else if (raw.execution.complete) {
     status = raw.execution.failed_nodes.length > 0 ? 'failed' : 'completed'
   } else if (raw.execution.active_nodes.length > 0) {
     status = 'running'

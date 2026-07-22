@@ -112,6 +112,7 @@ describe('DAG API', () => {
   })
 
   it.each([
+    [{ status: 'cancelled', complete: true, failed_nodes: [] }, 'cancelled'],
     [{ complete: true, failed_nodes: [] }, 'completed'],
     [{ complete: true, failed_nodes: ['review'] }, 'failed'],
     [{ complete: false, active_nodes: [], ready_nodes: ['review'] }, 'running'],

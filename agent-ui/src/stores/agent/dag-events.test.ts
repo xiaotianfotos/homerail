@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
-import { clearAllListeners } from '@/utils/eventBus'
+import { clearAllListeners, eventBus } from '@/utils/eventBus'
 import type { DAGExecution, DAGTaskNode } from '@/api/types/dag.types'
 import { bindAgentDagEvents } from './dag-events'
 
@@ -8,13 +8,19 @@ const ws = vi.hoisted(() => ({
   connect: vi.fn(),
   wildcardHandler: undefined as ((message: any) => void) | undefined,
   stateHandler: undefined as ((state: string) => void) | undefined,
+  wildcardUnsubscribe: vi.fn(() => {
+    ws.wildcardHandler = undefined
+  }),
+  stateUnsubscribe: vi.fn(() => {
+    ws.stateHandler = undefined
+  }),
   on: vi.fn((type: string, handler: (message: any) => void) => {
     if (type === '*') ws.wildcardHandler = handler
-    return vi.fn()
+    return ws.wildcardUnsubscribe
   }),
   onStateChange: vi.fn((handler: (state: string) => void) => {
     ws.stateHandler = handler
-    return vi.fn()
+    return ws.stateUnsubscribe
   }),
 }))
 
@@ -53,7 +59,7 @@ function bind() {
     dagExecution.value = next
     nodes.value = next.nodes
   })
-  const initialize = bindAgentDagEvents({
+  const controller = bindAgentDagEvents({
     currentRunId: ref<string | null>('run-live'),
     dagExecution,
     nodes,
@@ -65,14 +71,15 @@ function bind() {
     setDagExecution,
     selectNode: vi.fn(),
   })
-  initialize()
-  return { dagExecution, nodes, setDagExecution }
+  controller.initialize()
+  return { dagExecution, nodes, setDagExecution, controller }
 }
 
 describe('agent DAG websocket events', () => {
   beforeEach(() => {
     clearAllListeners()
     vi.clearAllMocks()
+    api.getDagStatus.mockReset()
     ws.wildcardHandler = undefined
     ws.stateHandler = undefined
   })
@@ -100,6 +107,17 @@ describe('agent DAG websocket events', () => {
     expect(state.dagExecution.value?.status).toBe('failed')
   })
 
+  it('preserves cancellation as a distinct run status', () => {
+    const state = bind()
+
+    ws.wildcardHandler?.({
+      type: 'dag:run_cancelled',
+      payload: { runId: 'run-live' },
+    })
+
+    expect(state.dagExecution.value?.status).toBe('cancelled')
+  })
+
   it('reloads the authoritative snapshot after websocket reconnect', async () => {
     const state = bind()
     const snapshot = execution('completed')
@@ -110,5 +128,42 @@ describe('agent DAG websocket events', () => {
     await vi.waitFor(() => expect(state.setDagExecution).toHaveBeenCalledWith(snapshot))
 
     expect(state.nodes.value[0]?.status).toBe('completed')
+  })
+
+  it('coalesces reconnect refreshes and allows at most one trailing request', async () => {
+    const state = bind()
+    const snapshot = execution('completed')
+    let resolveFirst!: (value: DAGExecution) => void
+    api.getDagStatus
+      .mockImplementationOnce(() => new Promise<DAGExecution>(resolve => {
+        resolveFirst = resolve
+      }))
+      .mockResolvedValueOnce(snapshot)
+
+    ws.stateHandler?.('connected')
+    ws.stateHandler?.('connected')
+    await vi.waitFor(() => expect(api.getDagStatus).toHaveBeenCalledTimes(1))
+
+    ws.stateHandler?.('connected')
+    ws.stateHandler?.('connected')
+    expect(api.getDagStatus).toHaveBeenCalledTimes(1)
+
+    resolveFirst(snapshot)
+    await vi.waitFor(() => expect(api.getDagStatus).toHaveBeenCalledTimes(2))
+    expect(state.setDagExecution).toHaveBeenCalledTimes(2)
+  })
+
+  it('disposes shared websocket and event-bus subscriptions without disconnecting the socket', () => {
+    const state = bind()
+
+    state.controller.dispose()
+    eventBus.emit('dag:run_failed', { runId: 'run-live' })
+
+    expect(ws.wildcardUnsubscribe).toHaveBeenCalledOnce()
+    expect(ws.stateUnsubscribe).toHaveBeenCalledOnce()
+    expect(ws.wildcardHandler).toBeUndefined()
+    expect(ws.stateHandler).toBeUndefined()
+    expect(state.dagExecution.value?.status).toBe('running')
+    expect(ws.connect).toHaveBeenCalledOnce()
   })
 })

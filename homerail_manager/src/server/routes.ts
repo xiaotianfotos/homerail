@@ -116,7 +116,7 @@ function _buildExecutionStatus(metadata: ReturnType<typeof loadRunMetadata>) {
       status: state.toLowerCase(),
       retry_count: 0,
       started_at: null,
-      completed_at: ["COMPLETED", "FAILED", "SKIPPED"].includes(state) ? new Date(metadata.completedAt || Date.now()).toISOString() : null,
+      completed_at: ["COMPLETED", "FAILED", "CANCELLED", "SKIPPED"].includes(state) ? new Date(metadata.completedAt || Date.now()).toISOString() : null,
     };
   }
   const completedNodes = Object.entries(metadata.nodeStates)
@@ -135,6 +135,7 @@ function _buildExecutionStatus(metadata: ReturnType<typeof loadRunMetadata>) {
     .filter(([, state]) => state === "FAILED")
     .map(([id]) => id);
   return {
+    status: metadata.status,
     complete: isTerminalDagRunStatus(metadata.status),
     active_nodes: activeNodes,
     completed_nodes: completedNodes,

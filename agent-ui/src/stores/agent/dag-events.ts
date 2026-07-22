@@ -19,8 +19,18 @@ interface AgentDagEventBindings {
   selectNode: (nodeId: string | null) => void
 }
 
-export function bindAgentDagEvents(ctx: AgentDagEventBindings): () => void {
+export interface AgentDagEventController {
+  initialize: () => void
+  dispose: () => void
+}
+
+export function bindAgentDagEvents(ctx: AgentDagEventBindings): AgentDagEventController {
   let initialized = false
+  let lifecycle = 0
+  let reconnectRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  let reconnectRefreshInFlight: Promise<void> | null = null
+  let reconnectRefreshPending = false
+  const cleanupHandlers: Array<() => void> = []
 
   function eventRunId(data: any): string | undefined {
     return data?.runId ?? data?.run_id ?? data?.dag_run_id
@@ -87,16 +97,53 @@ export function bindAgentDagEvents(ctx: AgentDagEventBindings): () => void {
     }
   }
 
-  async function refreshCurrentRun(): Promise<void> {
+  async function refreshCurrentRun(generation: number): Promise<void> {
     const runId = ctx.currentRunId.value
     if (!runId) return
     try {
       const { getDagStatus } = await import('@/api/services/dag-api')
       const execution = await getDagStatus(runId)
-      if (execution && ctx.currentRunId.value === runId) ctx.setDagExecution(execution)
+      if (
+        execution
+        && initialized
+        && lifecycle === generation
+        && ctx.currentRunId.value === runId
+      ) {
+        ctx.setDagExecution(execution)
+      }
     } catch {
       // Live events continue to apply if a reconnect snapshot is unavailable.
     }
+  }
+
+  function runReconnectRefresh(): void {
+    if (!initialized) return
+    if (reconnectRefreshInFlight) {
+      reconnectRefreshPending = true
+      return
+    }
+
+    const generation = lifecycle
+    const request = refreshCurrentRun(generation)
+    reconnectRefreshInFlight = request
+    void request.finally(() => {
+      if (reconnectRefreshInFlight === request) reconnectRefreshInFlight = null
+      if (reconnectRefreshPending && initialized && lifecycle === generation) {
+        reconnectRefreshPending = false
+        scheduleReconnectRefresh()
+      }
+    })
+  }
+
+  function scheduleReconnectRefresh(): void {
+    if (!initialized) return
+    reconnectRefreshPending = true
+    if (reconnectRefreshTimer || reconnectRefreshInFlight) return
+    reconnectRefreshTimer = setTimeout(() => {
+      reconnectRefreshTimer = null
+      reconnectRefreshPending = false
+      runReconnectRefresh()
+    }, 50)
   }
 
   function forwardManagerEvent(message: WebSocketMessage): void {
@@ -233,34 +280,49 @@ export function bindAgentDagEvents(ctx: AgentDagEventBindings): () => void {
   function initialize(): void {
     if (initialized) return
     initialized = true
-    onEvent('dag:status_update', handleStatusUpdate)
-    onEvent('dag:node_state_changed', handleNodeStateChanged)
-    onEvent('dag:node_dispatched', handleNodeDispatched)
-    onEvent('dag:handoff', handleHandoff)
-    onEvent('dag:engine_started', handleEngineStarted)
-    onEvent('dag:engine_completed', handleEngineCompleted)
-    onEvent('dag:run_completed', handleRunStatus('completed'))
-    onEvent('dag:run_failed', handleRunStatus('failed'))
-    onEvent('dag:run_cancelled', handleRunStatus('failed'))
-    onEvent('dag:run_waiting', handleRunStatus('waiting'))
-    onEvent('dag:run_resumed', handleRunStatus('running'))
-    onEvent('manager:chat_event', handleManagerChatEvent)
-    voiceWs.on('*', forwardManagerEvent)
-    voiceWs.onStateChange((state) => {
-      if (state === 'connected') void refreshCurrentRun()
-    })
+    lifecycle++
+    cleanupHandlers.push(
+      onEvent('dag:status_update', handleStatusUpdate),
+      onEvent('dag:node_state_changed', handleNodeStateChanged),
+      onEvent('dag:node_dispatched', handleNodeDispatched),
+      onEvent('dag:handoff', handleHandoff),
+      onEvent('dag:engine_started', handleEngineStarted),
+      onEvent('dag:engine_completed', handleEngineCompleted),
+      onEvent('dag:run_completed', handleRunStatus('completed')),
+      onEvent('dag:run_failed', handleRunStatus('failed')),
+      onEvent('dag:run_cancelled', handleRunStatus('cancelled')),
+      onEvent('dag:run_waiting', handleRunStatus('waiting')),
+      onEvent('dag:run_resumed', handleRunStatus('running')),
+      onEvent('manager:chat_event', handleManagerChatEvent),
+      voiceWs.on('*', forwardManagerEvent),
+      voiceWs.onStateChange((state) => {
+        if (state === 'connected') scheduleReconnectRefresh()
+      }),
+      watch(
+        () => ctx.nodes.value.map(n => ({ id: n.id, status: n.status })),
+        (newNodes) => {
+          const runningNode = newNodes.find(n => n.status === 'running')
+          if (runningNode && !ctx.selectedNodeId.value) {
+            ctx.selectNode(runningNode.id)
+          }
+        },
+      ),
+    )
     voiceWs.connect()
   }
 
-  watch(
-    () => ctx.nodes.value.map(n => ({ id: n.id, status: n.status })),
-    (newNodes) => {
-      const runningNode = newNodes.find(n => n.status === 'running')
-      if (runningNode && !ctx.selectedNodeId.value) {
-        ctx.selectNode(runningNode.id)
-      }
-    },
-  )
+  function dispose(): void {
+    if (!initialized) return
+    initialized = false
+    lifecycle++
+    reconnectRefreshPending = false
+    reconnectRefreshInFlight = null
+    if (reconnectRefreshTimer) {
+      clearTimeout(reconnectRefreshTimer)
+      reconnectRefreshTimer = null
+    }
+    for (const cleanup of cleanupHandlers.splice(0)) cleanup()
+  }
 
-  return initialize
+  return { initialize, dispose }
 }

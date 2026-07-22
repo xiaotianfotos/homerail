@@ -101,6 +101,7 @@ function statusGlow(status: string): { color: string; pulse: boolean } {
     case 'waiting_for_command': return { color: canvasPalette.warning, pulse: false }
     case 'completed': return { color: canvasPalette.info, pulse: false }
     case 'failed': return { color: canvasPalette.danger, pulse: false }
+    case 'cancelled': return { color: canvasPalette.warning, pulse: false }
     case 'ready': return { color: canvasPalette.info, pulse: false }
     case 'skipped': return { color: canvasPalette.warning, pulse: false }
     default: return { color: canvasPalette.text2, pulse: false }

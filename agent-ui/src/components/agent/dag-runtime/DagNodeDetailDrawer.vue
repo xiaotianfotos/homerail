@@ -128,7 +128,7 @@ function statusLabel(status: string): string {
   const map: Record<string, string> = {
     pending: t('dag.status.pending'), ready: t('dag.status.ready'), running: t('dag.status.running'),
     waiting_for_command: t('dag.status.waitingForCommand'),
-    completed: t('dag.status.completed'), failed: t('dag.status.failed'), skipped: t('dag.status.skipped'),
+    completed: t('dag.status.completed'), failed: t('dag.status.failed'), cancelled: t('dag.status.cancelled'), skipped: t('dag.status.skipped'),
   }
   return map[status] ?? status
 }
@@ -139,6 +139,7 @@ function statusClass(status: string): string {
     case 'waiting_for_command': return 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
     case 'completed': return 'border-[var(--hr-info-border)] bg-[var(--hr-info-soft)] text-[var(--hr-info)]'
     case 'failed': return 'border-[var(--hr-danger-border)] bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]'
+    case 'cancelled': return 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
     case 'ready': return 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]'
     case 'skipped': return 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]'
     default: return 'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-3)]'

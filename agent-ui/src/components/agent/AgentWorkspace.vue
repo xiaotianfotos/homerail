@@ -184,6 +184,7 @@ onBeforeUnmount(stopExperienceIngestPoll)
             store.isRunning ? 'border-[var(--hr-success-border)] bg-[var(--hr-success-soft)] text-[var(--hr-success)]' :
             store.isCompleted ? 'border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] text-[var(--hr-accent)]' :
             store.isFailed ? 'bg-[var(--hr-danger-soft)] text-[var(--hr-danger)]' :
+            store.isCancelled ? 'border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] text-[var(--hr-warning)]' :
             'border-[var(--hr-border)] bg-[var(--hr-surface-1)] text-[var(--hr-text-3)]'
           )"
         >

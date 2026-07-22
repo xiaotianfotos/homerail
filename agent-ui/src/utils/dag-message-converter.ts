@@ -4,7 +4,21 @@ import type { DAGChatMessage } from '@/api/types/dag.types'
 export function convertDagMessages(dagMessages: DAGChatMessage[]): ClaudeMessage[] {
   const result: ClaudeMessage[] = []
   const pendingToolCallsById = new Map<string, { msg: ClaudeMessage; name: string }>()
-  const pendingToolCallsByName = new Map<string, { msg: ClaudeMessage; id: string }>()
+  const pendingToolCallsByName = new Map<string, Array<{ msg: ClaudeMessage; id: string }>>()
+
+  function enqueueToolCall(name: string, msg: ClaudeMessage, id: string): void {
+    const queue = pendingToolCallsByName.get(name) ?? []
+    queue.push({ msg, id })
+    pendingToolCallsByName.set(name, queue)
+  }
+
+  function removeQueuedToolCall(name: string, id: string): void {
+    const queue = pendingToolCallsByName.get(name)
+    if (!queue) return
+    const index = queue.findIndex(pending => pending.id === id)
+    if (index >= 0) queue.splice(index, 1)
+    if (queue.length === 0) pendingToolCallsByName.delete(name)
+  }
 
   for (let i = 0; i < dagMessages.length; i++) {
     const dag = dagMessages[i]
@@ -59,14 +73,14 @@ export function convertDagMessages(dagMessages: DAGChatMessage[]): ClaudeMessage
         }
         result.push(msg)
         pendingToolCallsById.set(toolId, { msg, name: toolName })
-        pendingToolCallsByName.set(toolName, { msg, id: toolId })
+        enqueueToolCall(toolName, msg, toolId)
         break
       }
       case 'tool_result': {
         const toolName = dag.tool_name || 'unknown'
         const isError = dag.is_error || (dag.role as string) === 'error'
         const matchById = dag.message_id ? pendingToolCallsById.get(dag.message_id) : undefined
-        const matchByName = pendingToolCallsByName.get(toolName)
+        const matchByName = pendingToolCallsByName.get(toolName)?.[0]
         const match = matchById ?? (matchByName
           ? { msg: matchByName.msg, name: toolName }
           : undefined)
@@ -82,8 +96,10 @@ export function convertDagMessages(dagMessages: DAGChatMessage[]): ClaudeMessage
             match.msg.status = tool.status
           }
           const matchedId = match.msg.tool_calls?.[0]?.id
-          if (matchedId) pendingToolCallsById.delete(matchedId)
-          pendingToolCallsByName.delete(match.name)
+          if (matchedId) {
+            pendingToolCallsById.delete(matchedId)
+            removeQueuedToolCall(match.name, matchedId)
+          }
         } else {
           result.push({
             id,
