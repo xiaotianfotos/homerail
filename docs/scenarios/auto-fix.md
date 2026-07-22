@@ -11,7 +11,8 @@ must stay inspectable after the job ends.
 The DAG receives a bounded issue envelope and an immutable repository revision.
 Issue text, comments, paths, and patch content are untrusted evidence. The DAG:
 
-1. clones the credential-free HTTPS repository and investigates the root cause;
+1. deterministically clones the credential-free HTTPS repository at the exact
+   revision, then gives the investigator a read-only checkout;
 2. creates a focused patch and test plan;
 3. runs correctness, regression, and adversarial reviews independently;
 4. performs a second implementation pass using all three reviews;
@@ -19,11 +20,14 @@ Issue text, comments, paths, and patch content are untrusted evidence. The DAG:
    separate arbiter for the final decision;
 6. publishes `auto-fix.json`, `auto-fix.patch`, and `auto-fix.md`.
 
-Every execution node is an Agent node. There is no command gateway, GitHub
-token, SSH key, push, comment, pull-request mutation, or model-selected host
-command in the workflow. The public YAML contains only logical role names. A
-private database Runtime Profile binds those roles to operator-selected model
-settings.
+The checkout is the only command node. Its executable and arguments are fixed
+in the template, its Git environment is credential-scrubbed, and its output is
+the verified checkout path and revision. Investigation and review Agents mount
+that checkout read-only; only implementation and revision Agents may edit it.
+There is no GitHub token, SSH key, push, comment, pull-request mutation, or
+model-selected host command in the workflow. The public YAML contains only
+logical role names. A private database Runtime Profile binds those roles to
+operator-selected model settings.
 
 ## Trusted GitHub adapter
 

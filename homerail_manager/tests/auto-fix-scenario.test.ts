@@ -21,8 +21,8 @@ describe("Auto Fix scenario asset", () => {
     expect(result.diagnostics).toEqual([]);
     expect(result.summary).toMatchObject({
       workflow_id: "auto-fix",
-      node_count: 33,
-      edge_count: 56,
+      node_count: 35,
+      edge_count: 59,
     });
     expect(source).not.toMatch(/^\s*(?:provider|model|llm_setting_id|api_key|base_url):/m);
     expect(source).not.toContain("qwen");
@@ -30,7 +30,27 @@ describe("Auto Fix scenario asset", () => {
     expect(source).not.toContain("glm");
 
     const canonical = result.canonical!;
-    expect(canonical.nodes.every((node) => node.kind !== "command")).toBe(true);
+    expect(canonical.nodes.filter((node) => node.kind === "command").map((node) => node.id)).toEqual([
+      "prepare_repository",
+    ]);
+    expect(canonical.nodes.find((node) => node.id === "prepare_repository")).toMatchObject({
+      kind: "command",
+      config: {
+        cwd: "$run_workspace",
+        stdin_field: "$inputs",
+        parse_stdout: "json",
+        result_payload: "value",
+      },
+    });
+    expect(canonical.nodes.find((node) => node.id === "investigate")?.config.workspace_access).toMatchObject({
+      writable_paths: [".homerail-runtime"],
+      readonly_paths: ["source"],
+    });
+    expect(canonical.nodes.find((node) => node.id === "investigate")?.config.allowed_builtin_tools).toEqual([
+      "Glob",
+      "Grep",
+      "Read",
+    ]);
     expect(canonical.nodes.find((node) => node.id === "verification_quorum")).toMatchObject({
       kind: "join",
       config: {
@@ -73,7 +93,9 @@ describe("Auto Fix scenario asset", () => {
 
     expect(source).not.toMatch(/\b(?:gh\s+pr|git\s+push|createPullRequest|test_command)\b/i);
     expect(source).not.toMatch(/^\s*credentials:/m);
-    expect(canonical.nodes.some((node) => node.kind === "command")).toBe(false);
+    const commands = canonical.nodes.filter((node) => node.kind === "command");
+    expect(commands.map((node) => node.id)).toEqual(["prepare_repository"]);
+    expect(JSON.stringify(commands)).not.toMatch(/(?:gh\s+pr|git\s+push|credential material|test_command)/i);
 
     for (const nodeId of [
       "review_correctness_initial",

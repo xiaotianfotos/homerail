@@ -62,7 +62,10 @@ test("applies a bounded patch to an exact clean revision", () => {
   const actualRevision = execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const artifacts = writeArtifacts(artifactDirectory, { ...publication, revision: actualRevision }, patch);
   assert.deepEqual(applyAutoFixPatch({ repository, publicationPath: artifacts.jsonPath, patchPath: artifacts.patchPath }), ["example.txt"]);
-  assert.equal(fs.readFileSync(path.join(repository, "example.txt"), "utf8"), "fixed\n");
+  assert.equal(
+    fs.readFileSync(path.join(repository, "example.txt"), "utf8").replace(/\r\n/g, "\n"),
+    "fixed\n",
+  );
 });
 
 test("rejects workflow changes even when the patch is syntactically valid", () => {

@@ -77,6 +77,14 @@ spec:
           maxItems: 20
           items: { type: string, minLength: 1, maxLength: 2000 }
 
+    RepositoryCheckout:
+      type: object
+      additionalProperties: false
+      required: [repository_path, head]
+      properties:
+        repository_path: { type: string, const: source }
+        head: { type: string, pattern: '^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$' }
+
     FixCandidate:
       type: object
       additionalProperties: false
@@ -193,12 +201,15 @@ spec:
         credentials, other host paths, or unrelated repositories. Never push,
         comment, open a pull request, or mutate a remote service.
 
-        Clone input.issue.repository_url without credentials into exactly
-        `source`, detach at input.issue.revision, and verify HEAD exactly equals
-        that revision. Read the relevant implementation and tests. Establish a
-        concrete root cause and a repository-specific test strategy. Do not
-        modify tracked files. If checkout or the requested work is genuinely
-        impossible, return status=unsupported with evidence in root_cause.
+        The deterministic prepare_repository node has already created a clean,
+        detached checkout at `source`; input.checkout records its exact verified
+        revision. Your role is investigation only: use Read, Grep, and Glob to
+        inspect the relevant implementation and tests, establish a concrete root
+        cause, and design a repository-specific test strategy. Do not call Bash,
+        do not run or implement a fix, and never modify tracked or untracked
+        files. The checkout is read-only for this node. If the requested work is
+        genuinely impossible, return status=unsupported with evidence in
+        root_cause.
 
         Your final action MUST call handoff on investigated with exactly:
         {"status":"ready|unsupported","repository_path":"source","head":"exact revision","root_cause":"...","relevant_files":["..."],"test_strategy":["..."]}
@@ -295,13 +306,89 @@ spec:
         Do not end with prose.
 
   nodes:
+    prepare_repository:
+      kind: command
+      inputs: { issue: { contract: IssueContext } }
+      outputs: { ready: { contract: RepositoryCheckout }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - |-
+            const { spawnSync } = require('node:child_process');
+            const { existsSync } = require('node:fs');
+            let stdin = '';
+            const fail = (message) => { throw new Error(message); };
+            const exactRevision = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+            const run = (args) => {
+              const env = {};
+              for (const key of [
+                'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'COMSPEC',
+                'TMP', 'TEMP', 'TMPDIR', 'LANG', 'LC_ALL', 'SSL_CERT_FILE',
+                'SSL_CERT_DIR', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY',
+                'https_proxy', 'http_proxy', 'no_proxy',
+              ]) if (typeof process.env[key] === 'string') env[key] = process.env[key];
+              const result = spawnSync('git', [
+                '-c', 'credential.helper=', '-c', 'http.extraHeader=',
+                '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.file.allow=never',
+                '-c', 'protocol.ext.allow=never', ...args,
+              ], {
+                encoding: 'utf8', maxBuffer: 16777216,
+                env: {
+                  ...env,
+                  HOME: process.cwd(), USERPROFILE: process.cwd(),
+                  XDG_CONFIG_HOME: process.cwd() + '/.config',
+                  GIT_CONFIG_NOSYSTEM: '1',
+                  GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
+                  GIT_ASKPASS: '', SSH_ASKPASS: '', GIT_TERMINAL_PROMPT: '0',
+                  GCM_INTERACTIVE: 'Never',
+                },
+              });
+              if (result.error) throw result.error;
+              if (result.status !== 0) fail(String(result.stderr || result.stdout || ('git exited ' + result.status)).trim());
+              return String(result.stdout || '');
+            };
+            process.stdin.on('data', (chunk) => { stdin += chunk; }).on('end', () => {
+              const inputs = JSON.parse(stdin);
+              const issue = Array.isArray(inputs.issue) ? inputs.issue.at(-1) : undefined;
+              if (!issue || typeof issue !== 'object') fail('IssueContext input is missing');
+              const { repo, repository_url: repositoryUrl, revision } = issue;
+              if (typeof repo !== 'string' || typeof repositoryUrl !== 'string' || !exactRevision.test(revision)) {
+                fail('invalid IssueContext checkout input');
+              }
+              let parsed;
+              try { parsed = new URL(repositoryUrl); } catch { fail('repository URL is invalid'); }
+              if (
+                parsed.protocol !== 'https:' || parsed.username || parsed.password ||
+                !parsed.hostname || parsed.search || parsed.hash ||
+                parsed.pathname !== '/' + repo + '.git'
+              ) fail('repository URL must exactly match repo and use credential-free HTTPS');
+              if (existsSync('source')) fail('run workspace source path already exists');
+              run(['clone', '--no-checkout', '--', repositoryUrl, 'source']);
+              run(['-C', 'source', 'fetch', '--no-tags', '--force', 'origin', revision]);
+              run(['-C', 'source', 'checkout', '--detach', revision]);
+              const head = run(['-C', 'source', 'rev-parse', '--verify', 'HEAD^{commit}']).trim();
+              if (head.toLowerCase() !== revision.toLowerCase()) fail('checked out HEAD does not equal requested revision');
+              process.stdout.write(JSON.stringify({ repository_path: 'source', head }));
+            });
+        stdin_field: "$inputs"
+        cwd: "$run_workspace"
+        timeout_ms: 300000
+        capture_limit: 100000
+        success_port: ready
+        failure_port: failed
+        parse_stdout: json
+        result_payload: value
+
     investigate:
       kind: agent
       agent: investigator
-      allowed_builtin_tools: [Bash, Read, Grep, Glob]
+      allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
-      workspace_access: { writable_paths: [source] }
-      inputs: { issue: { contract: IssueContext } }
+      workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
+      inputs:
+        issue: { contract: IssueContext }
+        checkout: { contract: RepositoryCheckout }
       outputs: { investigated: { contract: Investigation }, failed: {} }
 
     investigation_gate:
@@ -557,7 +644,15 @@ spec:
       outcome: failure
       inputs: { result: {} }
 
+    preparation_failed:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+
   edges:
+    - { from: $run.input, to: prepare_repository.issue }
+    - { from: prepare_repository.ready, to: investigate.checkout }
+    - { from: prepare_repository.failed, to: preparation_failed.result, condition: on_failure }
     - { from: $run.input, to: investigate.issue }
     - { from: investigate.investigated, to: investigation_gate.investigation }
     - { from: investigate.failed, to: investigation_failed.result, condition: on_failure }
