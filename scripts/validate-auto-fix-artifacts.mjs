@@ -47,7 +47,13 @@ export function validateAutoFixArtifacts(command, publication, patch, markdown) 
   invariant(typeof publication.patch === "string" && publication.patch.length > 0 && publication.patch.length <= 1_000_000, "Auto Fix JSON patch is invalid");
   invariant(typeof publication.markdown === "string" && publication.markdown.length > 0 && publication.markdown.length <= 50_000, "Auto Fix JSON markdown is invalid");
   invariant(patch === publication.patch, "auto-fix.patch is not byte-for-byte equal to the JSON patch");
-  invariant(markdown === publication.markdown, "auto-fix.md is not byte-for-byte equal to the JSON markdown");
+  const materializedMarkdown = publication.markdown.endsWith("\n")
+    ? publication.markdown
+    : `${publication.markdown}\n`;
+  invariant(
+    markdown === materializedMarkdown,
+    "auto-fix.md differs from the JSON markdown beyond artifact newline normalization",
+  );
   invariant(Array.isArray(publication.files_changed) && publication.files_changed.length > 0 && publication.files_changed.length <= 100, "Auto Fix JSON files_changed is invalid");
   invariant(new Set(publication.files_changed).size === publication.files_changed.length, "Auto Fix JSON files_changed contains duplicates");
   invariant(Array.isArray(publication.test_plan) && publication.test_plan.length <= 30, "Auto Fix JSON test_plan is invalid");

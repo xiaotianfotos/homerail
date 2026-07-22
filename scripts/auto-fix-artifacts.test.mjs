@@ -28,11 +28,30 @@ const command = {
   artifacts: ["auto-fix.json", "auto-fix.patch", "auto-fix.md"].map((name) => ({ name, status: "ready" })),
 };
 
-test("validates byte-identical structured Auto Fix artifacts", () => {
+test("validates exact patch bytes and normalized Markdown artifact bytes", () => {
   validateAutoFixArtifacts(command, publication, patch, publication.markdown);
+  const markdownWithoutTrailingNewline = publication.markdown.slice(0, -1);
+  validateAutoFixArtifacts(
+    command,
+    { ...publication, markdown: markdownWithoutTrailingNewline },
+    patch,
+    publication.markdown,
+  );
   assert.throws(() => validateAutoFixArtifacts(command, publication, `${patch}\n`, publication.markdown), /byte-for-byte/);
   assert.throws(
-    () => validateAutoFixArtifacts(command, { ...publication, markdown: `${publication.markdown}192.168.1.4` }, patch, `${publication.markdown}192.168.1.4`),
+    () => validateAutoFixArtifacts(command, publication, patch, `${publication.markdown}\n`),
+    /newline normalization/,
+  );
+  assert.throws(
+    () => {
+      const unsafeMarkdown = `${publication.markdown}192.168.1.4`;
+      validateAutoFixArtifacts(
+        command,
+        { ...publication, markdown: unsafeMarkdown },
+        patch,
+        `${unsafeMarkdown}\n`,
+      );
+    },
     /local or credential material/,
   );
 });
