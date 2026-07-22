@@ -14,7 +14,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useAgentStore } from '@/stores/agent-store'
 import { getAgentPersona, fmtTokens } from '@/lib/agentPersonas'
 import type { DAGNodeMetrics, DAGRunMetrics } from '@/api/types/dag.types'
-import type { DAGTaskNode, DAGEdge } from '@/api/types/dag.types'
+import type { DAGEdge } from '@/api/types/dag.types'
 import {
   observeCanvasAppearance,
   readCanvasAppearancePalette,
@@ -22,11 +22,17 @@ import {
 } from '@/appearance/canvas-appearance'
 import { isDagCanvasClick, pinDagCanvasNode } from './dagRuntimeInteraction'
 import { dedupeDagRuntimeEdges, layoutDagRuntimeGraph } from './dagRuntimeLayout'
+import {
+  resolveDagRuntimeNodeSemantic,
+  type DagRuntimeNodeSemantic,
+  type DagRuntimeNodeShape,
+} from './dagRuntimeNodeSemantics'
 
 interface RuntimeNode {
   id: string
   label: string
   agentName: string
+  semantic: DagRuntimeNodeSemantic
   status: string
   x: number
   y: number
@@ -101,7 +107,8 @@ function statusGlow(status: string): { color: string; pulse: boolean } {
   }
 }
 
-function nodeRadius(node: DAGTaskNode, metrics?: DAGNodeMetrics): number {
+function nodeRadius(metrics: DAGNodeMetrics | undefined, semantic: DagRuntimeNodeSemantic): number {
+  if (!semantic.isWorker) return 26
   // 基础半径 28（触摸目标 ≥44px 直径），按 token 消耗适度放大（对数缩放）
   const base = 28
   if (!metrics?.tokens) return base
@@ -136,14 +143,15 @@ function measuredTextWidth(
 }
 
 function nodeVisualSize(
-  agentName: string,
+  displayName: string,
   radius: number,
   metrics: DAGNodeMetrics | undefined,
+  semantic: DagRuntimeNodeSemantic,
   ctx: CanvasRenderingContext2D | null | undefined,
 ): { width: number; height: number } {
-  const label = getAgentPersona(agentName).name
-  const labelWidth = measuredTextWidth(ctx, label, '600 11px Inter, ui-sans-serif, system-ui, sans-serif')
-  const badges = badgeTexts(metrics)
+  const labelWidth = measuredTextWidth(ctx, displayName, '600 11px Inter, ui-sans-serif, system-ui, sans-serif')
+  const typeWidth = measuredTextWidth(ctx, semantic.label, '700 8px Inter, ui-sans-serif, system-ui, sans-serif') + 12
+  const badges = semantic.isWorker ? badgeTexts(metrics) : []
   const badgeWidth = badges.reduce((total, badge, index) => (
     total
     + measuredTextWidth(ctx, badge, '600 11px ui-monospace, SFMono-Regular, Menlo, monospace')
@@ -153,10 +161,11 @@ function nodeVisualSize(
 
   // 徽章组在节点上方居中，完整边界仍参与布局，但不会因为右侧徽章
   // 被镜像成双倍空白，从而在复杂 DAG 中制造过宽的列间距。
-  const horizontalReach = Math.max(radius + 8, labelWidth / 2 + 8, badgeWidth / 2 + 8)
+  const shapeReach = ['rounded-rect', 'capsule'].includes(semantic.shape) ? radius * 1.25 : radius + 8
+  const horizontalReach = Math.max(shapeReach, labelWidth / 2 + 8, typeWidth / 2 + 8, badgeWidth / 2 + 8)
   return {
     width: Math.max(88, horizontalReach * 2),
-    height: Math.max(92, (radius + 21) * 2),
+    height: Math.max(104, (radius + 27) * 2),
   }
 }
 
@@ -190,12 +199,14 @@ function rebuildGraph(fit = false): void {
   const drafts = storeNodes.map((node) => {
     const old = previous.get(node.id)
     const m = metricsMap[node.id]
-    const radius = nodeRadius(node, m)
-    const visualSize = nodeVisualSize(node.agent_name, radius, m, ctx)
+    const semantic = resolveDagRuntimeNodeSemantic(node.node_type, node.gateway_config)
+    const radius = nodeRadius(m, semantic)
+    const visualSize = nodeVisualSize(node.name, radius, m, semantic, ctx)
     return {
       id: node.id,
       label: node.name,
       agentName: node.agent_name,
+      semantic,
       status: node.status,
       x: old?.x ?? centerX,
       y: old?.y ?? centerY,
@@ -403,6 +414,73 @@ function drawArrowHead(ctx: CanvasRenderingContext2D, fromX: number, fromY: numb
   ctx.fill()
 }
 
+function semanticColor(semantic: DagRuntimeNodeSemantic): string {
+  switch (semantic.kind) {
+    case 'condition': return canvasPalette.warning
+    case 'join':
+    case 'quorum': return canvasPalette.speaking
+    case 'command': return canvasPalette.success
+    case 'approval':
+    case 'await': return canvasPalette.warning
+    case 'state': return canvasPalette.info
+    case 'fanout': return canvasPalette.accent
+    case 'loop': return canvasPalette.speaking
+    case 'control': return canvasPalette.text2
+    default: return canvasPalette.accent
+  }
+}
+
+function nodeShapePath(
+  ctx: CanvasRenderingContext2D,
+  shape: DagRuntimeNodeShape,
+  x: number,
+  y: number,
+  radius: number,
+): void {
+  ctx.beginPath()
+  switch (shape) {
+    case 'circle':
+      ctx.arc(x, y, radius, 0, Math.PI * 2)
+      return
+    case 'diamond':
+      ctx.moveTo(x, y - radius * 1.08)
+      ctx.lineTo(x + radius * 1.08, y)
+      ctx.lineTo(x, y + radius * 1.08)
+      ctx.lineTo(x - radius * 1.08, y)
+      ctx.closePath()
+      return
+    case 'rounded-rect':
+      roundRect(ctx, x - radius * 1.22, y - radius * 0.78, radius * 2.44, radius * 1.56, 8)
+      return
+    case 'square':
+      roundRect(ctx, x - radius * 0.88, y - radius * 0.88, radius * 1.76, radius * 1.76, 5)
+      return
+    case 'triangle':
+      ctx.moveTo(x, y - radius * 1.08)
+      ctx.lineTo(x + radius * 1.05, y + radius * 0.88)
+      ctx.lineTo(x - radius * 1.05, y + radius * 0.88)
+      ctx.closePath()
+      return
+    case 'capsule':
+      roundRect(ctx, x - radius * 1.2, y - radius * 0.72, radius * 2.4, radius * 1.44, radius * 0.72)
+      return
+    case 'hexagon':
+    case 'octagon': {
+      const sides = shape === 'hexagon' ? 6 : 8
+      const start = shape === 'hexagon' ? 0 : Math.PI / 8
+      for (let index = 0; index < sides; index += 1) {
+        const angle = start + (Math.PI * 2 * index) / sides
+        const px = x + Math.cos(angle) * radius * 1.04
+        const py = y + Math.sin(angle) * radius * 1.04
+        if (index === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      }
+      ctx.closePath()
+      return
+    }
+  }
+}
+
 function drawNodes(ctx: CanvasRenderingContext2D): void {
   const pulse = props.reducedMotion ? 0.5 : 0.5 + 0.5 * Math.sin(flowTick * 0.08)
   for (const node of canvasNodes.value) {
@@ -411,6 +489,7 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
     const active = selectedNodeId.value === node.id
     const focused = focusedNodeId.value === node.id
     const hovering = hoverNodeId.value === node.id
+    const semanticAccent = semanticColor(node.semantic)
     // 焦点节点轻微放大（手柄导航反馈）
     const renderR = focused ? node.r * 1.12 : node.r
 
@@ -419,8 +498,7 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
       ctx.strokeStyle = canvasPalette.focusRing
       ctx.globalAlpha = 0.7 + pulse * 0.3
       ctx.lineWidth = 2.5
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, renderR + 7 + pulse * 3, 0, Math.PI * 2)
+      nodeShapePath(ctx, node.semantic.shape, node.x, node.y, renderR + 7 + pulse * 3)
       ctx.stroke()
       ctx.globalAlpha = 1
     }
@@ -434,10 +512,9 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
       ctx.shadowBlur = active || focused ? 22 : 10
     }
 
-    // 主圆（agent 角色色）
-    ctx.fillStyle = persona.color
-    ctx.beginPath()
-    ctx.arc(node.x, node.y, renderR, 0, Math.PI * 2)
+    // Worker 使用角色色实心圆；Manager 控制节点使用语义形状和安静的面板底色。
+    ctx.fillStyle = node.semantic.isWorker ? persona.color : canvasPalette.panel
+    nodeShapePath(ctx, node.semantic.shape, node.x, node.y, renderR)
     ctx.fill()
     ctx.shadowBlur = 0
 
@@ -447,27 +524,54 @@ function drawNodes(ctx: CanvasRenderingContext2D): void {
       ? canvasPalette.text1
       : focused
         ? canvasPalette.accent
-        : glow.color
+        : node.semantic.isWorker ? glow.color : semanticAccent
     ctx.stroke()
+
+    // 程序控制节点增加一层内描边，避免状态色覆盖节点类型语义。
+    if (!node.semantic.isWorker) {
+      ctx.globalAlpha = active || focused ? 0.75 : 0.42
+      ctx.lineWidth = 1
+      ctx.strokeStyle = semanticAccent
+      nodeShapePath(ctx, node.semantic.shape, node.x, node.y, Math.max(8, renderR - 5))
+      ctx.stroke()
+      ctx.globalAlpha = 1
+    }
 
     if (zoom < 0.45) continue
 
-    // 节点中心：agent 名首字
+    // 节点中心：Worker 显示角色首字；控制节点显示稳定的程序语义图符。
     ctx.fillStyle = canvasPalette.onStrong
-    ctx.font = '600 11px Inter, ui-sans-serif, system-ui, sans-serif'
+    if (!node.semantic.isWorker) ctx.fillStyle = semanticAccent
+    ctx.font = node.semantic.glyph.length > 1
+      ? '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
+      : '700 13px Inter, ui-sans-serif, system-ui, sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(persona.name.slice(0, 1), node.x, node.y - 1)
+    ctx.fillText(node.semantic.isWorker ? persona.name.slice(0, 1) : node.semantic.glyph, node.x, node.y - 1)
 
     // 节点下方：标签
     if (zoom > 0.5) {
       ctx.fillStyle = active ? canvasPalette.text1 : canvasPalette.text2
       ctx.font = '600 11px Inter, ui-sans-serif, system-ui, sans-serif'
-      ctx.fillText(persona.name, node.x, node.y + node.r + 14)
+      ctx.fillText(node.label, node.x, node.y + node.r + 14)
+
+      const typeY = node.y + node.r + 29
+      const typeText = node.semantic.label
+      ctx.font = '700 8px Inter, ui-sans-serif, system-ui, sans-serif'
+      const typeWidth = ctx.measureText(typeText).width + 12
+      ctx.fillStyle = canvasPalette.panel
+      roundRect(ctx, node.x - typeWidth / 2, typeY - 7, typeWidth, 14, 7)
+      ctx.fill()
+      ctx.strokeStyle = node.semantic.isWorker ? canvasPalette.borderStrong : semanticAccent
+      ctx.lineWidth = 0.8
+      roundRect(ctx, node.x - typeWidth / 2, typeY - 7, typeWidth, 14, 7)
+      ctx.stroke()
+      ctx.fillStyle = node.semantic.isWorker ? canvasPalette.text2 : semanticAccent
+      ctx.fillText(typeText, node.x, typeY)
     }
 
     // 徽章组（右上角）：工具调用 / 失败 / token
-    if (zoom > 0.6 && node.metrics) {
+    if (zoom > 0.6 && node.metrics && node.semantic.isWorker) {
       drawBadges(ctx, node)
     }
   }
@@ -584,7 +688,8 @@ function canvasPoint(evt: MouseEvent): CanvasPoint {
 
 function nodeAt(point: CanvasPoint): RuntimeNode | null {
   for (const n of canvasNodes.value) {
-    if (Math.hypot(n.x - point.x, n.y - point.y) <= n.r + 4) return n
+    const hitRadius = ['rounded-rect', 'capsule'].includes(n.semantic.shape) ? n.r * 1.25 + 4 : n.r * 1.1 + 4
+    if (Math.hypot(n.x - point.x, n.y - point.y) <= hitRadius) return n
   }
   return null
 }

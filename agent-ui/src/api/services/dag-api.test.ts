@@ -17,8 +17,14 @@ function backendDag(overrides: Record<string, unknown> = {}) {
     instance_id: 'run-1',
     graph: {
       nodes: [
-        { node_id: 'plan', name: 'Plan' },
-        { node_id: 'review', name: 'Review' }
+        { node_id: 'plan', name: 'Plan', node_type: 'agent', agent: 'planner' },
+        {
+          node_id: 'review',
+          name: 'Review quorum',
+          node_type: 'join_gateway',
+          agent: '__gateway__',
+          gateway_config: { mode: 'n_of_m', threshold: 2 }
+        }
       ],
       edges: [
         { from_node: 'plan', to_node: 'review', condition: 'success' },
@@ -64,6 +70,9 @@ describe('DAG API', () => {
         expect.objectContaining({
           id: 'plan',
           name: 'Plan',
+          node_type: 'agent',
+          agent_id: 'planner',
+          agent_name: 'planner',
           status: 'running',
           dependencies: [],
           retry_count: 1,
@@ -81,6 +90,11 @@ describe('DAG API', () => {
         }),
         expect.objectContaining({
           id: 'review',
+          name: 'Review quorum',
+          node_type: 'join_gateway',
+          gateway_config: { mode: 'n_of_m', threshold: 2 },
+          agent_id: '',
+          agent_name: 'Review quorum',
           status: 'pending',
           dependencies: ['plan'],
           token_usage: undefined

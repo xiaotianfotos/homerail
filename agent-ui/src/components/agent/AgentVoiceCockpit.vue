@@ -1240,7 +1240,8 @@ onUnmounted(() => {
     pluginRegistryStateUnsub()
     pluginRegistryStateUnsub = null
   }
-  voiceWs.disconnect()
+  // /ws/events is shared with the DAG runtime store; component teardown only
+  // removes this cockpit's subscriptions and must not close the singleton.
   if (widgetHighlightTimer) window.clearTimeout(widgetHighlightTimer)
   window.removeEventListener('resize', updateViewportSize)
   window.removeEventListener('orientationchange', updateViewportSize)
@@ -1543,11 +1544,11 @@ function setupVoiceStatusSubscription(): void {
   if (voiceStatusUnsub) return
   try {
     voiceWs.connect()
-    voiceStatusUnsub = voiceWs.on<unknown>('voice:session_status', payload => {
+    voiceStatusUnsub = voiceWs.on<unknown>('voice:session_status', message => {
       void loadVoiceSessionShortcuts()
-      const status = payload as { voiceSessionId?: string }
+      const status = (message.payload ?? message.data) as { voiceSessionId?: string } | undefined
       if (
-        status.voiceSessionId === workspace.value?.session_id &&
+        status?.voiceSessionId === workspace.value?.session_id &&
         !loading.value &&
         !managerSubmitting.value
       ) {

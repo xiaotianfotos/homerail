@@ -7,7 +7,7 @@ import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { closeDb } from "../src/persistence/db.js";
-import { _clearAllPersistence } from "../src/persistence/store.js";
+import { _clearAllPersistence, appendChatEntry } from "../src/persistence/store.js";
 import {
   _clearActiveRuns,
   createActiveRun,
@@ -177,5 +177,27 @@ describe("DAG live event contract", () => {
         },
       ],
     });
+  });
+
+  it("emits a lightweight invalidation after a chat entry is committed", () => {
+    const updates: Record<string, unknown>[] = [];
+    subscribe("dag:node_chat_updated", (payload) => {
+      updates.push(payload as Record<string, unknown>);
+    });
+    createActiveRun("run-live-chat", parseDAGYaml(singleNodeYaml()));
+
+    appendChatEntry("run-live-chat", "start", {
+      role: "worker",
+      type: "response",
+      content: { event: "assistant_text", text: "working" },
+      timestamp: Date.now(),
+    });
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      runId: "run-live-chat",
+      nodeId: "start",
+    });
+    expect(updates[0]?.timestamp).toEqual(expect.any(String));
   });
 });

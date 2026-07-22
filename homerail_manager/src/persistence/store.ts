@@ -12,7 +12,7 @@ import type {
   PersistedDagRuntimeState,
 } from "./types.js";
 import type { DAGArtifactDeclaration, DAGGraphData, DAGPatternInstanceMeta, ScorecardPolicyConfig } from "../orchestration/graph.js";
-import { DAG_EVENT_TYPES, subscribe, type DAGEventPayload } from "../events/bus.js";
+import { DAG_EVENT_TYPES, emit, subscribe, type DAGEventPayload } from "../events/bus.js";
 import type { DAGRunCounters, DAGRunLimits } from "../runtime/active-runs.js";
 import { assertStatus, type DagRunStatus } from "./status.js";
 import { assertEpochMs, nowEpochMs } from "./time.js";
@@ -311,6 +311,11 @@ export function appendChatEntry(runId: string, nodeId: string, entry: ChatEntry)
       entry.timestamp === undefined ? null : assertEpochMs(entry.timestamp, "dag_chats.timestamp"),
       encodeJson(redactTelemetry(entry)),
     );
+  emit("dag:node_chat_updated", {
+    runId,
+    nodeId,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 export function appendNodeUsage(record: NodeUsageRecord): void {

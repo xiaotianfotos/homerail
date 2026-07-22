@@ -3,7 +3,8 @@ import type { DAGChatMessage } from '@/api/types/dag.types'
 
 export function convertDagMessages(dagMessages: DAGChatMessage[]): ClaudeMessage[] {
   const result: ClaudeMessage[] = []
-  const pendingToolCalls = new Map<string, { msg: ClaudeMessage }>()
+  const pendingToolCallsById = new Map<string, { msg: ClaudeMessage; name: string }>()
+  const pendingToolCallsByName = new Map<string, { msg: ClaudeMessage; id: string }>()
 
   for (let i = 0; i < dagMessages.length; i++) {
     const dag = dagMessages[i]
@@ -41,9 +42,11 @@ export function convertDagMessages(dagMessages: DAGChatMessage[]): ClaudeMessage
             // Non-JSON tool content is expected for some worker messages.
           }
         }
+        const toolId = dag.message_id || `dag-tool-${i}`
+        const toolName = dag.tool_name || 'unknown'
         const toolCall: ClaudeToolCall = {
-          id: dag.message_id || `dag-tool-${i}`,
-          name: dag.tool_name || 'unknown',
+          id: toolId,
+          name: toolName,
           input: toolInput || {},
         }
         const msg: ClaudeMessage = {
@@ -55,13 +58,18 @@ export function convertDagMessages(dagMessages: DAGChatMessage[]): ClaudeMessage
           status: 'pending',
         }
         result.push(msg)
-        pendingToolCalls.set(dag.tool_name || 'unknown', { msg })
+        pendingToolCallsById.set(toolId, { msg, name: toolName })
+        pendingToolCallsByName.set(toolName, { msg, id: toolId })
         break
       }
       case 'tool_result': {
         const toolName = dag.tool_name || 'unknown'
         const isError = dag.is_error || (dag.role as string) === 'error'
-        const match = pendingToolCalls.get(toolName)
+        const matchById = dag.message_id ? pendingToolCallsById.get(dag.message_id) : undefined
+        const matchByName = pendingToolCallsByName.get(toolName)
+        const match = matchById ?? (matchByName
+          ? { msg: matchByName.msg, name: toolName }
+          : undefined)
         if (match) {
           const tool = match.msg.tool_calls?.[0]
           if (tool) {
@@ -73,7 +81,9 @@ export function convertDagMessages(dagMessages: DAGChatMessage[]): ClaudeMessage
             tool.status = isError ? 'failed' : 'success'
             match.msg.status = tool.status
           }
-          pendingToolCalls.delete(toolName)
+          const matchedId = match.msg.tool_calls?.[0]?.id
+          if (matchedId) pendingToolCallsById.delete(matchedId)
+          pendingToolCallsByName.delete(match.name)
         } else {
           result.push({
             id,

@@ -79,6 +79,8 @@ export interface EventBusEvents {
   'dag:node_state_changed': DAGNodeStateChangedEvent
   /** DAG 节点新消息 */
   'dag:node_message': DAGNodeMessageEvent
+  /** DAG 节点聊天落库通知（正文仍通过 REST 获取） */
+  'dag:node_chat_updated': DAGNodeChatUpdatedEvent
   /** DAG 节点调度事件 */
   'dag:node_dispatched': DAGNodeDispatchedEvent
   /** DAG 节点 handoff 事件 */
@@ -223,6 +225,12 @@ export interface DAGNodeMessageEvent {
   dag_run_id: string
   node_id: string
   message: any
+  timestamp: string
+}
+
+export interface DAGNodeChatUpdatedEvent {
+  runId: string
+  nodeId: string
   timestamp: string
 }
 

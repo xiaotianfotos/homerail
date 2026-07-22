@@ -13,6 +13,14 @@ vi.mock('@/stores/agent-store', () => ({
       id: 'prepare_repository',
       name: 'prepare_repository',
       agent_name: 'prepare_repository',
+      node_type: 'agent',
+      status: 'completed',
+    }, {
+      id: 'verification_quorum',
+      name: 'verification_quorum',
+      agent_name: 'verification_quorum',
+      node_type: 'join_gateway',
+      gateway_config: { mode: 'n_of_m', threshold: 2 },
       status: 'completed',
     }],
   }),
@@ -151,5 +159,50 @@ describe('DagNodeDetailDrawer', () => {
 
     expect(root.querySelector('.dag-chat-log')).not.toBeNull()
     expect(logsButton!.textContent).toContain('Collapse')
+  })
+
+  it('identifies Manager-owned control nodes without worker metrics', () => {
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp(DagNodeDetailDrawer, {
+      metrics: {
+        run_id: 'run-1',
+        status: 'completed',
+        nodes: {
+          verification_quorum: {
+            node_id: 'verification_quorum',
+            node_name: 'verification_quorum',
+            agent_name: '__gateway__',
+            status: 'completed',
+            tool_calls: 0,
+            tool_failures: 0,
+            tokens: null,
+            usage_available: false,
+            duration_ms: null,
+            num_turns: null,
+            started_at: null,
+            completed_at: null,
+          },
+        },
+        totals: {
+          tool_calls: 0,
+          tool_failures: 0,
+          tokens: { input: 0, output: 0, cache_read: 0, cache_creation: 0 },
+          usage_available: false,
+          cost_usd: null,
+        },
+      },
+      selectedNodeId: 'verification_quorum',
+      open: true,
+      panelFocus: 'logs',
+      expandedPanels: new Set(['logs']),
+    })
+    app.use(i18n)
+    app.mount(root)
+
+    expect(root.querySelector('[data-testid="dag-node-execution-owner"]')?.textContent)
+      .toContain('Manager logic · QUORUM')
+    expect(root.textContent).toContain('no worker or model is dispatched')
+    expect(root.querySelector('.dag-detail-drawer')?.textContent).not.toContain('tokens')
   })
 })

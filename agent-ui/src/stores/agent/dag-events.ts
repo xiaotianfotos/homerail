@@ -1,6 +1,8 @@
 import type { Ref } from 'vue'
 import { watch } from 'vue'
-import { onEvent } from '@/utils/eventBus'
+import { eventBus, onEvent } from '@/utils/eventBus'
+import { voiceWs } from '@/api/clients/events-ws'
+import type { WebSocketMessage } from '@/api/clients/websocket-client'
 import type { DAGEdge, DAGExecution, DAGNodeStatus, DAGTaskNode } from '@/api/types/dag.types'
 import type { AgentChatMessage } from './types'
 
@@ -20,8 +22,20 @@ interface AgentDagEventBindings {
 export function bindAgentDagEvents(ctx: AgentDagEventBindings): () => void {
   let initialized = false
 
+  function eventRunId(data: any): string | undefined {
+    return data?.runId ?? data?.run_id ?? data?.dag_run_id
+  }
+
+  function eventNodeId(data: any): string | undefined {
+    return data?.nodeId ?? data?.node_id
+  }
+
+  function isCurrentRun(data: any): boolean {
+    return Boolean(ctx.currentRunId.value && eventRunId(data) === ctx.currentRunId.value)
+  }
+
   function handleStatusUpdate(data: any): void {
-    if (!ctx.currentRunId.value || data.run_id !== ctx.currentRunId.value) return
+    if (!isCurrentRun(data)) return
     if (data.status) {
       ctx.dagExecution.value = ctx.dagExecution.value
         ? { ...ctx.dagExecution.value, status: data.status }
@@ -36,34 +50,59 @@ export function bindAgentDagEvents(ctx: AgentDagEventBindings): () => void {
   }
 
   function handleNodeStateChanged(data: any): void {
-    if (!ctx.currentRunId.value || data.run_id !== ctx.currentRunId.value) return
-    const node = ctx.nodes.value.find(n => n.id === data.node_id)
+    if (!isCurrentRun(data)) return
+    const node = ctx.nodes.value.find(n => n.id === eventNodeId(data))
     if (node) node.status = data.status as DAGNodeStatus
   }
 
   function handleNodeDispatched(data: any): void {
-    if (!ctx.currentRunId.value || data.run_id !== ctx.currentRunId.value) return
-    const node = ctx.nodes.value.find(n => n.id === data.node_id)
+    if (!isCurrentRun(data)) return
+    const node = ctx.nodes.value.find(n => n.id === eventNodeId(data))
     if (node) node.status = 'running'
   }
 
   function handleHandoff(data: any): void {
-    if (!ctx.currentRunId.value || data.run_id !== ctx.currentRunId.value) return
-    const node = ctx.nodes.value.find(n => n.id === data.from_node)
+    if (!isCurrentRun(data)) return
+    const node = ctx.nodes.value.find(n => n.id === (data.fromNode ?? data.from_node))
     if (node) node.status = 'completed'
   }
 
   function handleEngineStarted(data: any): void {
-    if (!ctx.currentRunId.value || data.run_id !== ctx.currentRunId.value) return
+    if (!isCurrentRun(data)) return
     if (ctx.dagExecution.value) ctx.dagExecution.value.status = 'running'
   }
 
   function handleEngineCompleted(data: any): void {
-    if (!ctx.currentRunId.value || data.run_id !== ctx.currentRunId.value) return
+    if (!isCurrentRun(data)) return
     if (ctx.dagExecution.value) ctx.dagExecution.value.status = 'completed'
     for (const node of ctx.nodes.value) {
       if (node.status === 'running') node.status = 'completed'
     }
+  }
+
+  function handleRunStatus(status: DAGExecution['status']) {
+    return (data: any): void => {
+      if (!isCurrentRun(data) || !ctx.dagExecution.value) return
+      ctx.dagExecution.value.status = status
+    }
+  }
+
+  async function refreshCurrentRun(): Promise<void> {
+    const runId = ctx.currentRunId.value
+    if (!runId) return
+    try {
+      const { getDagStatus } = await import('@/api/services/dag-api')
+      const execution = await getDagStatus(runId)
+      if (execution && ctx.currentRunId.value === runId) ctx.setDagExecution(execution)
+    } catch {
+      // Live events continue to apply if a reconnect snapshot is unavailable.
+    }
+  }
+
+  function forwardManagerEvent(message: WebSocketMessage): void {
+    const payload = message.payload ?? message.data
+    if (payload === undefined) return
+    eventBus.emit(message.type, payload)
   }
 
   function handleManagerChatEvent(data: any): void {
@@ -200,7 +239,17 @@ export function bindAgentDagEvents(ctx: AgentDagEventBindings): () => void {
     onEvent('dag:handoff', handleHandoff)
     onEvent('dag:engine_started', handleEngineStarted)
     onEvent('dag:engine_completed', handleEngineCompleted)
+    onEvent('dag:run_completed', handleRunStatus('completed'))
+    onEvent('dag:run_failed', handleRunStatus('failed'))
+    onEvent('dag:run_cancelled', handleRunStatus('failed'))
+    onEvent('dag:run_waiting', handleRunStatus('waiting'))
+    onEvent('dag:run_resumed', handleRunStatus('running'))
     onEvent('manager:chat_event', handleManagerChatEvent)
+    voiceWs.on('*', forwardManagerEvent)
+    voiceWs.onStateChange((state) => {
+      if (state === 'connected') void refreshCurrentRun()
+    })
+    voiceWs.connect()
   }
 
   watch(

@@ -29,7 +29,13 @@ type BackendTokenUsage = Partial<NonNullable<DAGTaskNode['token_usage']>> & Reco
 interface BackendDagResponse {
   instance_id: string
   graph: {
-    nodes: Array<{ node_id: string; name: string }>
+    nodes: Array<{
+      node_id: string
+      name: string
+      node_type?: string
+      agent?: string
+      gateway_config?: Record<string, unknown>
+    }>
     edges: Array<{ from_node: string; to_node: string; condition: string }>
   }
   execution: {
@@ -76,9 +82,11 @@ function transformDagResponse(raw: BackendDagResponse): DAGExecution {
     return {
       id: gn.node_id,
       name: gn.name,
+      node_type: gn.node_type || 'agent',
+      gateway_config: gn.gateway_config,
       status: (execState?.status || 'pending') as DAGTaskNode['status'],
-      agent_id: '',
-      agent_name: gn.name,
+      agent_id: gn.agent && gn.agent !== '__gateway__' ? gn.agent : '',
+      agent_name: gn.agent && gn.agent !== '__gateway__' ? gn.agent : gn.name,
       dependencies: depMap.get(gn.node_id) || [],
       retry_count: execState?.retry_count || 0,
       pool_count: 0,

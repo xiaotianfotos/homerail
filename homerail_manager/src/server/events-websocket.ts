@@ -8,6 +8,7 @@ import {
 } from "../events/bus.js";
 
 const WS_EVENTS_URL_PATTERN = /^\/ws\/events(?:\?.*)?$/;
+const EPHEMERAL_BROWSER_EVENT_TYPES: DAGEventType[] = ["dag:node_chat_updated"];
 
 interface EventWebSocketMessage {
   type: string;
@@ -34,7 +35,7 @@ export function setupEventWebSocket(server: http.Server): WebSocketServer {
   });
 
   wss.on("connection", (ws: WebSocket) => {
-    const unsubscribe = DAG_EVENT_TYPES.map((type: DAGEventType) =>
+    const unsubscribe = [...DAG_EVENT_TYPES, ...EPHEMERAL_BROWSER_EVENT_TYPES].map((type: DAGEventType) =>
       subscribe(type, (payload) => {
         sendJson(ws, {
           type,
