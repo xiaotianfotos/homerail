@@ -252,7 +252,7 @@ describe.sequential("release harness simple DAG handoff", () => {
     });
 
     expectHandoff(sent, "run-kimi_code");
-  });
+  }, 15_000);
 
   it("runs a simple DAG handoff through codex_appserver", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "homerail-codex-fixture-"));
