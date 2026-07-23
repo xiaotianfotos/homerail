@@ -68,6 +68,38 @@ failed or redundant file probes rather than evidence-bearing work. This
 explains a substantial portion of latency and motivated exact changed-path
 guidance plus a 24-call read-only review budget.
 
+| Agent node | Messages | Tool calls | Tool errors | Completed handoff |
+| --- | ---: | ---: | ---: | ---: |
+| implement | 887 | 139 | 2 | 1 |
+| review_adversarial_initial | 437 | 80 | 54 | 1 |
+| investigate | 399 | 73 | 1 | 1 |
+| review_regression_initial | 347 | 60 | 20 | 1 |
+| review_correctness_initial | 324 | 59 | 18 | 1 |
+| review_correctness_final | 202 | 38 | 27 | 0 |
+| revise | 237 | 29 | 2 | 1 |
+| review_adversarial_final | 153 | 24 | 23 | 0 |
+| review_regression_final | 118 | 21 | 20 | 1 |
+
+The three initial reviewers spent 199 tool calls and encountered 92 errors
+(46%). The incomplete duplicated final review spent another 83 calls with 70
+errors (84%). Review depth was therefore not proportional to useful evidence.
+
+## What worked
+
+- Manager handoffs remained durable after the Action ended, which made exact
+  patch recovery possible even though the original public artifacts were not
+  available.
+- Independent review correctly found no blocker in the fourth candidate; the
+  three-role separation still provided useful correctness, regression, and
+  adversarial perspectives.
+- The isolated trusted CI boundary caught the second candidate's browser-only
+  build failure that model review missed.
+- Exact revision checkout and deterministic patch collection allowed the
+  recovered bytes to be reapplied and validated without trusting Agent prose.
+- The stable 112 Manager preserved model configuration and DAG evidence across
+  release deployments, so recovery did not require copying the production
+  database into a transient test server.
+
 ## Root causes
 
 ### 1. Approval did not control revision
@@ -125,6 +157,23 @@ therefore missed this second representation boundary. Both feedback sources now
 declare `depends_on: [review_cycle]`, and the scenario test must successfully
 run `projectCanonicalWorkflowToParsedDAG` as well as compile the source.
 
+### 8. An untaken feedback source could prevent a successful run from ending
+
+The first complete Qwen3.6 checkpoint-resume reached unanimous review,
+arbitration approval, publication, and deterministic finalization in 12 minutes
+27 seconds. The business result was complete, but the run remained `active`
+with 19 completed nodes, 3 skipped nodes, and one pending node. The pending node
+was `prepare_next_review`, the feedback source used only after revision.
+
+The runtime correctly kept that source pending while the `while` gateway was
+active, because a later iteration could still select the revision branch. It
+did not revisit the source after the loop exited. One predecessor was skipped,
+so it would never emit the after-dependency event needed for ordinary promotion
+or branch skipping. The engine now reconciles a pending node when every one of
+its dependencies is settled: it promotes the node if its required inputs were
+routed, otherwise it marks the unreachable branch skipped. A runtime regression
+test covers two feedback sources where the loop completes through only one.
+
 ## Corrective design
 
 The Auto Fix workflow now uses a durable bounded state machine:
@@ -147,6 +196,24 @@ The Auto Fix workflow now uses a durable bounded state machine:
     the patch from current state.
 11. asset tests project the canonical workflow into a validated runtime
     DAGGraph, preventing compile-valid but unsyncable feedback topologies.
+12. after each transition, the runtime settles unreachable pending branches
+    whose dependencies are all terminal, so dormant feedback cannot block run
+    completion.
+
+## Corrective-action matrix
+
+| Priority | Action | Verification |
+| --- | --- | --- |
+| P0 | Publish v1/v2 candidates with `publish: always` | failure/cancellation leaves a ready candidate artifact |
+| P0 | Record revision-bound Manager checkpoint | retry reports `checkout.mode=resumed` only at the exact same revision |
+| P0 | Make reviewer votes control revision | unanimous review never dispatches `revise`; rejection permits exactly one pass |
+| P0 | Stop a run that outlives its runner | timeout leaves no orphan active DAG and retains bounded diagnostics |
+| P0 | Validate runtime DAGGraph projection | scenario test fails on an unsyncable feedback cycle before deployment |
+| P0 | Settle dormant feedback after loop exit | success path terminalizes with the unused revision source marked skipped |
+| P1 | Feed trusted validation failure into retry | investigation receives at most the final 30 KB without duplicating patch bytes |
+| P1 | Bound reviewer exploration | each review starts from changed paths and uses at most 24 read-only calls |
+| P1 | Bound positive-checkpoint verification | resumed investigation/implementation use at most 16 tools and do not repeat passing suites |
+| P1 | Keep model binding private and replaceable | public template contains no provider/model URL/key; one or several settings are valid |
 
 Runtime profile selection now permits all roles to share one model for a
 controlled single-model validation, while preserving mixed-model bindings for
@@ -167,6 +234,31 @@ revision. The following checks pass:
 
 The production UI build no longer imports Node builtins through the public
 protocol barrel, directly closing the second attempt's trusted-CI failure.
+
+## First Qwen3.6 checkpoint-resume acceptance
+
+Run `auto-fix-qwen36-issue92-resume-2` used Qwen3.6 for investigation,
+implementation, all three concurrent reviewers, arbitration, and publication
+on the stable 112 Manager. It proved the following before exposing root cause
+8:
+
+- checkout reported `mode=resumed` at the exact base revision and applied the
+  recovered patch;
+- the model-facing sanitized Issue omitted the large checkpoint patch;
+- the three reviewers all approved, `revise` and `collect_revised_patch` were
+  skipped, and arbitration approved;
+- deterministic finalization produced the publication handoff;
+- total time from run creation to finalization was 12:27, versus 1:23:28 for
+  the cancelled fourth legacy attempt.
+
+The remaining time was not chiefly slow token output. Investigation used 51
+tool records and implementation used 37, and the implementer repeated focused
+package tests and a production build even though trusted validation already
+said those checks passed. The three reviewers then ran concurrently; their
+individual tool records were 28, 44, and 47. The resumed prompts now distinguish
+a concrete validation failure from a positive checkpoint, cap the positive
+path at 16 built-in calls, and leave repeated suite execution to the trusted
+runner.
 
 ## Exit criteria
 

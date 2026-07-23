@@ -231,6 +231,43 @@ function _skipDependentNodes(run: DAGRun, unavailableNodeId: string, sourceWasSk
   }
 }
 
+/**
+ * Settle nodes that can no longer receive every dependency they require.
+ *
+ * A bounded loop can have more than one feedback source. While the loop is
+ * active, an untaken source must remain pending because a later iteration may
+ * still select it. Once the loop exits, however, every predecessor can be
+ * settled while that source is still pending: skipped predecessors never emit
+ * an after-dependency transition. Revisit those nodes after each transition so
+ * a dormant feedback branch cannot keep an otherwise completed run active.
+ */
+function _reconcileSettledPendingNodes(run: DAGRun): Set<string> {
+  const affected = new Set<string>();
+  const settled = new Set<NodeState>(["COMPLETED", "FAILED", "CANCELLED", "SKIPPED"]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [nodeId, state] of run.nodeStates) {
+      if (state !== "PENDING") continue;
+      const dependencies = _incomingAfterDeps(run.graph.edges, nodeId);
+      if (dependencies.length === 0) continue;
+      if (!dependencies.every((edge) => settled.has(run.nodeStates.get(edge.from_node)!))) continue;
+
+      _tryPromote(run, nodeId);
+      if (run.nodeStates.get(nodeId) === "READY") {
+        affected.add(nodeId);
+        changed = true;
+        continue;
+      }
+
+      run.nodeStates.set(nodeId, "SKIPPED");
+      affected.add(nodeId);
+      changed = true;
+    }
+  }
+  return affected;
+}
+
 export function resetSkippedSuccessDescendants(run: DAGRun, retriedNodeId: string): void {
   const pending = run.graph.edges
     .filter((edge) => edge.from_node === retriedNodeId && edge.condition === "on_success")
@@ -395,6 +432,7 @@ export function handoff(
   if (terminalFailure) {
     _skipDependentNodes(run, fromNode);
   }
+  for (const nodeId of _reconcileSettledPendingNodes(run)) affected.add(nodeId);
   return {
     affectedNodes: Array.from(affected).sort(),
     routedNodes: Array.from(mailboxReceivers).sort(),
@@ -431,6 +469,7 @@ export function failNode(
     _wakeLoopSource(run, receiver);
   }
   _skipDependentNodes(run, nodeId);
+  for (const affectedNode of _reconcileSettledPendingNodes(run)) affected.add(affectedNode);
   return {
     affectedNodes: Array.from(affected).sort(),
     routedNodes: Array.from(mailboxReceivers).sort(),
