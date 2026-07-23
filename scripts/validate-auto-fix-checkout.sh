@@ -63,7 +63,7 @@ docker run --rm \
   --pids-limit 1024 \
   --memory "${HOMERAIL_AUTO_FIX_MEMORY_LIMIT:-8g}" \
   --cpus "${HOMERAIL_AUTO_FIX_CPU_LIMIT:-8}" \
-  --tmpfs /tmp:rw,nosuid,nodev,size=2g \
+  --tmpfs /tmp:rw,nosuid,nodev,exec,size=2g \
   -e HOME=/tmp/home \
   -e CI=1 \
   -e NPM_CONFIG_OFFLINE=true \

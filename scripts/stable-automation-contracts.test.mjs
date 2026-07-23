@@ -30,6 +30,11 @@ test("Auto Fix validation installs trusted dependencies before applying the patc
   const testIndex = source.indexOf("npm run ci");
   assert.ok(installIndex > 0 && applyIndex > installIndex && testIndex > applyIndex);
   assert.match(source.slice(applyIndex), /--network none/);
+  assert.match(
+    source.slice(applyIndex),
+    /--tmpfs \/tmp:rw,nosuid,nodev,exec,size=2g/,
+    "offline package tests must be able to execute isolated temporary fixtures",
+  );
   assert.match(source, /--cap-drop ALL/);
   assert.doesNotMatch(source, /docker\.sock|GITHUB_TOKEN|SSH_AUTH_SOCK/);
 });
