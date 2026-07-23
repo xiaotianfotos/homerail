@@ -243,6 +243,37 @@ describe("Auto Fix scenario asset", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ status: "ready", patch });
   });
 
+  it.each([
+    { field: "explanation", mutate: (candidate: Record<string, unknown>) => { candidate.explanation = { api_key: "hidden" }; } },
+    { field: "files_changed", mutate: (candidate: Record<string, unknown>) => { candidate.files_changed = [{ api_key: "hidden" }]; } },
+    { field: "test_plan", mutate: (candidate: Record<string, unknown>) => { candidate.test_plan = [{ api_key: "hidden" }]; } },
+  ])("rejects a non-string $field before publication scanning", ({ mutate }) => {
+    const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
+    const commandNode = canonical.nodes.find((node) => node.id === "finalize_publication");
+    if (commandNode?.kind !== "command" || !commandNode.config.command) throw new Error("finalizer command is missing");
+    const revision = "f".repeat(40);
+    const candidate: Record<string, unknown> = {
+      status: "fixed",
+      patch: "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n",
+      explanation: "repair",
+      files_changed: ["a.txt"],
+      test_plan: ["focused"],
+    };
+    mutate(candidate);
+    const input = {
+      issue: [{ repo: "owner/repo", issue: 92, revision }],
+      patch: [candidate],
+      arbitration: [{ verdict: "approve", summary: "approved", blocking_defects: [] }],
+      summary: [{ review_summary: "approved by consensus", markdown: `# Auto Fix #92\n\nBase: ${revision}\n` }],
+    };
+    const result = spawnSync(process.execPath, commandNode.config.command.slice(1), {
+      cwd: os.tmpdir(), encoding: "utf8", input: JSON.stringify(input),
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("FixCandidate input is invalid");
+    expect(result.stderr).not.toContain("hidden");
+  });
+
   it("rejects real-looking credentials with a redacted, actionable location", () => {
     const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
     const commandNode = canonical.nodes.find((node) => node.id === "finalize_publication");

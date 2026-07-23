@@ -842,15 +842,22 @@ spec:
               const arbitration = one(inputs.arbitration);
               const summary = one(inputs.summary);
               if (!issue || typeof issue.repo !== 'string' || !Number.isInteger(issue.issue) || typeof issue.revision !== 'string') fail('IssueContext input is invalid');
-              if (!patch || patch.status !== 'fixed' || typeof patch.patch !== 'string' || !patch.patch || !Array.isArray(patch.files_changed) || patch.files_changed.length < 1) fail('FixCandidate input is invalid');
+              if (
+                !patch || patch.status !== 'fixed' || typeof patch.patch !== 'string' || !patch.patch
+                || typeof patch.explanation !== 'string' || !patch.explanation
+                || !Array.isArray(patch.files_changed) || patch.files_changed.length < 1
+                || !patch.files_changed.every((item) => typeof item === 'string')
+                || !Array.isArray(patch.test_plan)
+                || !patch.test_plan.every((item) => typeof item === 'string')
+              ) fail('FixCandidate input is invalid');
               if (!arbitration || arbitration.verdict !== 'approve') fail('approved Arbitration input is required');
               if (!summary || typeof summary.review_summary !== 'string' || typeof summary.markdown !== 'string') fail('PublicationSummary input is invalid');
               if (!summary.markdown.includes('#' + issue.issue) || !summary.markdown.includes(issue.revision)) fail('publication markdown must contain issue number and base revision');
               safeText(summary.review_summary, 'review summary');
               safeText(summary.markdown, 'markdown');
-              if (typeof patch.explanation === 'string') safeText(patch.explanation, 'explanation');
-              for (const item of Array.isArray(patch.test_plan) ? patch.test_plan : []) safeText(String(item), 'test plan');
-              for (const item of patch.files_changed) safeText(String(item), 'changed file');
+              safeText(patch.explanation, 'explanation');
+              for (const item of patch.test_plan) safeText(item, 'test plan');
+              for (const item of patch.files_changed) safeText(item, 'changed file');
               safeText(patch.patch, 'patch');
               const result = {
                 status: 'ready', repo: issue.repo, issue: issue.issue, revision: issue.revision,
