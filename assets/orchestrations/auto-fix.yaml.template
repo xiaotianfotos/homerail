@@ -252,11 +252,14 @@ spec:
         background while changing the same checkout; keep the worktree visible
         and run focused checks serially.
 
-        Run useful repository checks inside this Worker when practical. The
-        output test_plan is descriptive evidence, never a command for a host to
-        execute. Do not copy the unified diff into the handoff: the trusted
-        collect_implementation_patch node captures the complete worktree,
-        including new files, with a temporary Git index after your turn.
+        Run focused checks for the changed packages inside this Worker when
+        practical. Do not run the root `npm run ci` or the full repository test
+        suite; the trusted runner performs one isolated full CI pass after
+        arbitration. The output test_plan is descriptive evidence, never a
+        command for a host to execute. Do not copy the unified diff into the
+        handoff: the trusted collect_implementation_patch node captures the
+        complete worktree, including new files, with a temporary Git index
+        after your turn.
         status=fixed means the source worktree contains a nonempty completed
         repair. status=cannot_fix means no usable repair was produced.
 
@@ -325,7 +328,10 @@ spec:
         every concrete blocker/high defect. Preserve a correct patch when a
         review contains only preference or speculation. Never push, access
         credentials, modify .git, .github/workflows, .gitmodules, dependency
-        directories, or files outside source. Run useful checks in this Worker.
+        directories, or files outside source. Run focused checks for the changed
+        packages in this Worker. Do not run the root `npm run ci` or the full
+        repository test suite; the trusted runner performs one isolated full CI
+        pass after arbitration.
         Never use `git stash` or `git clean`, and never run checks in the
         background while changing the same checkout; keep the worktree visible
         and run focused checks serially.

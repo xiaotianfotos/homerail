@@ -154,6 +154,8 @@ describe("Auto Fix scenario asset", () => {
     for (const agentId of ["implementer", "reviser"]) {
       expect(canonical.agents[agentId]?.system).toContain("Never use `git stash` or `git clean`");
       expect(canonical.agents[agentId]?.system).toContain("run focused checks serially");
+      expect(canonical.agents[agentId]?.system).toContain("Do not run the root `npm run ci`");
+      expect(canonical.agents[agentId]?.system).toMatch(/one isolated full CI\s+pass after\s+arbitration/);
     }
     expect(source).toMatch(/trusted runner\s+performs one isolated full CI pass after consensus/);
     expect(source).toMatch(/trusted runner\s+performs one isolated full CI pass after arbitration/);
