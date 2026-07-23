@@ -173,6 +173,8 @@ or branch skipping. The engine now reconciles a pending node when every one of
 its dependencies is settled: it promotes the node if its required inputs were
 routed, otherwise it marks the unreachable branch skipped. A runtime regression
 test covers two feedback sources where the loop completes through only one.
+Cold recovery performs the same reconciliation, so deploying the fix also
+heals a run that was persisted in this stranded state before the upgrade.
 
 ## Corrective design
 

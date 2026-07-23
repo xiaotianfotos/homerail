@@ -12,6 +12,7 @@ import {
   edgeMatchesHandoff,
   failNode,
   reconcileFailedDependencies,
+  reconcileSettledPendingNodes,
   getNodeState,
   getReadyNodes,
   handoff,
@@ -1161,12 +1162,21 @@ export function restoreActiveRun(
   store.set(metadata.runId, run);
 
   const demotedFromRunning = run.status === "active" ? _applyOrphanedNodeDemotion(run) : [];
-  writeRunMetadata(metadata.runId, serializeRunMetadata(run));
+  const settledPendingNodes = run.status === "active"
+    ? Array.from(reconcileSettledPendingNodes(run.dagRun)).sort()
+    : [];
+  for (const nodeId of settledPendingNodes) _markNodeSessionStatus(run, nodeId, "cancelled");
+  if (run.status === "active" && isRunTerminal(run.dagRun)) {
+    completeActiveRun(run.runId);
+  } else {
+    writeRunMetadata(metadata.runId, serializeRunMetadata(run));
+  }
 
   emit("dag:run_recovered", {
     runId: metadata.runId,
     recoveredAt: Date.now(),
     demotedFromRunning,
+    settledPendingNodes,
     reason: demotedFromRunning.length
       ? "orphaned running nodes demoted to failed"
       : undefined,

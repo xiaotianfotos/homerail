@@ -366,6 +366,24 @@ describe("manager cold recovery", () => {
     }
   });
 
+  it("terminalizes a recovered run stranded on an untaken settled branch", () => {
+    createActiveRun("run-settled-pending", chainedDag());
+    const beforeRestart = getActiveRun("run-settled-pending")!;
+    beforeRestart.dagRun.nodeStates.set("coder", "SKIPPED");
+    beforeRestart.dagRun.nodeStates.set("review", "PENDING");
+    beforeRestart.dagRun.afterSatisfied.set("review", new Set());
+    beforeRestart.dagRun.inputSatisfied.set("review", new Set());
+    beforeRestart.dagRun.mailboxes.set("review", new Map());
+    writeRunMetadata("run-settled-pending", serializeRunMetadata(beforeRestart));
+    _clearActiveRuns();
+
+    expect(recoverAllActiveRuns()).toMatchObject({ recovered: ["run-settled-pending"], failed: [] });
+    const recovered = getActiveRun("run-settled-pending");
+    expect(recovered?.dagRun.nodeStates.get("review")).toBe("SKIPPED");
+    expect(recovered?.status).toBe("completed");
+    expect(loadRunMetadata("run-settled-pending")?.status).toBe("completed");
+  });
+
   it("fills newly added counter collections when restoring older metadata", () => {
     createActiveRun("run-old-counters", singleNodeDag());
     const metadata = loadRunMetadata("run-old-counters")!;

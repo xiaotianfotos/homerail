@@ -241,7 +241,7 @@ function _skipDependentNodes(run: DAGRun, unavailableNodeId: string, sourceWasSk
  * an after-dependency transition. Revisit those nodes after each transition so
  * a dormant feedback branch cannot keep an otherwise completed run active.
  */
-function _reconcileSettledPendingNodes(run: DAGRun): Set<string> {
+export function reconcileSettledPendingNodes(run: DAGRun): Set<string> {
   const affected = new Set<string>();
   const settled = new Set<NodeState>(["COMPLETED", "FAILED", "CANCELLED", "SKIPPED"]);
   let changed = true;
@@ -432,7 +432,7 @@ export function handoff(
   if (terminalFailure) {
     _skipDependentNodes(run, fromNode);
   }
-  for (const nodeId of _reconcileSettledPendingNodes(run)) affected.add(nodeId);
+  for (const nodeId of reconcileSettledPendingNodes(run)) affected.add(nodeId);
   return {
     affectedNodes: Array.from(affected).sort(),
     routedNodes: Array.from(mailboxReceivers).sort(),
@@ -469,7 +469,7 @@ export function failNode(
     _wakeLoopSource(run, receiver);
   }
   _skipDependentNodes(run, nodeId);
-  for (const affectedNode of _reconcileSettledPendingNodes(run)) affected.add(affectedNode);
+  for (const affectedNode of reconcileSettledPendingNodes(run)) affected.add(affectedNode);
   return {
     affectedNodes: Array.from(affected).sort(),
     routedNodes: Array.from(mailboxReceivers).sort(),
