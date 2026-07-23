@@ -401,7 +401,7 @@ Auto Fix 候选修改已在精确 base revision 2d1d885f15f98358528e1b4f2f5e5800
 
 当前 PR 分支另外通过 73 项 live-validator 契约测试。精确 base 上数量较少，是因为它使用较早 base 加候选修改，并非跳过验证。
 
-PR 最终 HEAD：
+最终通过完整代码验收的 revision：
 
 `b759ba6568955d5507989809340e3442e145d7bf`
 
@@ -415,6 +415,8 @@ PR 最终 HEAD：
 - Live DAG job：本次按计划跳过，因为混合模型运行 5 已提供真实模型证据。
 
 [最终部署 run 30018424894](https://github.com/xiaotianfotos/homerail/actions/runs/30018424894) 也使用同一个 HEAD，并完成构建、原子部署、健康检查和 DAG smoke。
+
+该 revision 之后的提交只把本复盘翻译成中文并修正文档表述，不改变产品代码、运行时或工作流，因此没有重复消耗完整 CI 和生产部署。
 
 ## 九、退出条件与剩余工作
 
