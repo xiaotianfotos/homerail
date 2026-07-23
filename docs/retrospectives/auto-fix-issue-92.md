@@ -33,11 +33,14 @@ The second candidate was 3,432 lines / 137,932 bytes with digest
 `efcaa2f311730e762452b2408cb7dbaf02e93fbf2547db3880953ffdb81b8cfc`.
 Trusted validation, rather than a model review, found its browser build defect.
 
-The recovered fourth candidate is 2,570 lines / 108,920 bytes across 21 files.
-Both collection stages produced digest
-`7602d1df28f75577b260321702c8b74d3b6a673cc28ccec1a3d4248ebd089074`.
-Identical bytes prove that the unconditional revision consumed a full Agent
-turn without changing the candidate.
+The recovered fourth candidate is 2,570 lines / 108,919 bytes across 21 files.
+Both collection handoffs contain exactly the same patch bytes with digest
+`14f2c7e5c8d05d57a4926a0e2d918acade2a7aec318283f7322d2a063bc24ca7`.
+The temporary exported `.patch` files are one byte longer because the extraction
+command appended a second final newline; their file digest is `7602d1df...` and
+is not the canonical candidate digest. Identical handoff patch bytes prove that
+the unconditional revision consumed a full Agent turn without changing the
+candidate.
 
 ## What the fourth run did
 
