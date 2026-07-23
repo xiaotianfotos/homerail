@@ -113,6 +113,18 @@ dependencies against the recovered protocol removed the error. Validation must
 bind dependencies to the candidate worktree; a clean container remains the
 authoritative full-CI environment.
 
+### 7. Compile-only template tests did not prove runtime graph validity
+
+The first Qwen3.6 acceptance attempt hydrated the recovered checkpoint, then
+failed before model dispatch while `dag sync` projected the canonical workflow
+into the runtime DAGGraph. The two bounded feedback sources did not declare the
+`while` gateway as an execution dependency, so the legacy runtime graph
+validator could not identify those edges as bounded feedback and reported
+ordinary cycles. The original asset test stopped at canonical compilation and
+therefore missed this second representation boundary. Both feedback sources now
+declare `depends_on: [review_cycle]`, and the scenario test must successfully
+run `projectCanonicalWorkflowToParsedDAG` as well as compile the source.
+
 ## Corrective design
 
 The Auto Fix workflow now uses a durable bounded state machine:
@@ -133,6 +145,8 @@ The Auto Fix workflow now uses a durable bounded state machine:
    chats, handoffs, candidate artifacts, and checkpoint metadata;
 10. successful Draft PR publication marks the checkpoint complete and removes
     the patch from current state.
+11. asset tests project the canonical workflow into a validated runtime
+    DAGGraph, preventing compile-valid but unsyncable feedback topologies.
 
 Runtime profile selection now permits all roles to share one model for a
 controlled single-model validation, while preserving mixed-model bindings for

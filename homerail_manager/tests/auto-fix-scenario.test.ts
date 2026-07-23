@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   compileWorkflowSource,
+  projectCanonicalWorkflowToParsedDAG,
 } from "../src/orchestration/workflow-spec-v1.js";
 
 const WORKFLOW_FILE = path.resolve(
@@ -24,7 +25,7 @@ describe("Auto Fix scenario asset", () => {
     expect(result.summary).toMatchObject({
       workflow_id: "auto-fix",
       node_count: 47,
-      edge_count: 68,
+      edge_count: 70,
     });
     expect(source).not.toMatch(/^\s*(?:provider|model|llm_setting_id|api_key|base_url):/m);
     expect(source).not.toContain("qwen");
@@ -32,6 +33,7 @@ describe("Auto Fix scenario asset", () => {
     expect(source).not.toContain("glm");
 
     const canonical = result.canonical!;
+    expect(() => projectCanonicalWorkflowToParsedDAG(canonical)).not.toThrow();
     expect(canonical.nodes.filter((node) => node.kind === "command").map((node) => node.id)).toEqual([
       "aggregate_reviews",
       "collect_implementation_patch",

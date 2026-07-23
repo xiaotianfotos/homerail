@@ -825,6 +825,9 @@ spec:
 
     aggregate_reviews:
       kind: command
+      # Runtime DAGGraph feedback recognition requires the feedback source to
+      # declare the bounded gateway as an execution dependency.
+      depends_on: [review_cycle]
       inputs:
         state: { contract: ReviewLoopGate }
         correctness: { contract: ReviewVote }
@@ -978,6 +981,9 @@ spec:
 
     prepare_next_review:
       kind: command
+      # See aggregate_reviews: this marks the second bounded feedback source
+      # without making the ordinary dataflow cyclic.
+      depends_on: [review_cycle]
       inputs:
         state: { contract: ReviewLoopGate }
         candidate: { contract: FixCandidate }
