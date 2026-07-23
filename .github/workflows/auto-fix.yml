@@ -98,6 +98,26 @@ jobs:
           "${{ github.event.repository.default_branch }}"
           "$HOMERAIL_STABLE_RUN_ID"
 
+      - name: Finalize durable candidate checkpoint
+        if: always() && steps.dag.outcome == 'success'
+        env:
+          VALIDATION_OUTCOME: ${{ steps.validation.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+        run: |
+          set -euo pipefail
+          checkpoint="${{ steps.stable.outputs.release }}/scripts/auto-fix-checkpoint.mjs"
+          if [ "$PUBLISH_OUTCOME" = "success" ]; then
+            "${{ steps.stable.outputs.node }}" "$checkpoint" complete \
+              "$HOMERAIL_AUTO_FIX_INPUT_FILE" "$HOMERAIL_STABLE_RUN_ID"
+          elif [ "$VALIDATION_OUTCOME" = "failure" ]; then
+            "${{ steps.stable.outputs.node }}" "$checkpoint" record \
+              "$HOMERAIL_AUTO_FIX_INPUT_FILE" "$HOMERAIL_STABLE_RUN_ID" \
+              "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/validation.log"
+          else
+            "${{ steps.stable.outputs.node }}" "$checkpoint" record \
+              "$HOMERAIL_AUTO_FIX_INPUT_FILE" "$HOMERAIL_STABLE_RUN_ID"
+          fi
+
       - name: Report failure for human inspection
         if: failure()
         continue-on-error: true

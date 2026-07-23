@@ -9,7 +9,7 @@ fi
 TRUSTED_CHECKOUT="$(cd "$1" && pwd)"
 PUBLICATION_PATH="$(readlink -f "$2")"
 PATCH_PATH="$(readlink -f "$3")"
-VALIDATOR_IMAGE="${HOMERAIL_AUTO_FIX_VALIDATOR_IMAGE:-node:24-bookworm}"
+VALIDATOR_IMAGE="${HOMERAIL_AUTO_FIX_VALIDATOR_IMAGE:-mcr.microsoft.com/playwright:v1.57.0-noble@sha256:3bed4b1a12f2338642f3d8cba28e291deef3c66bd4a964bbeb3e57bbff511dbd}"
 RUNNER_TEMP_ROOT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 VALIDATION_ROOT="$(mktemp -d "$RUNNER_TEMP_ROOT/homerail-auto-fix-validation.XXXXXX")"
 VALIDATION_CHECKOUT="$VALIDATION_ROOT/source"
@@ -63,7 +63,7 @@ docker run --rm \
   --pids-limit 1024 \
   --memory "${HOMERAIL_AUTO_FIX_MEMORY_LIMIT:-8g}" \
   --cpus "${HOMERAIL_AUTO_FIX_CPU_LIMIT:-8}" \
-  --tmpfs /tmp:rw,nosuid,nodev,size=2g \
+  --tmpfs /tmp:rw,nosuid,nodev,exec,size=2g \
   -e HOME=/tmp/home \
   -e CI=1 \
   -e NPM_CONFIG_OFFLINE=true \

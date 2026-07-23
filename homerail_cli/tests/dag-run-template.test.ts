@@ -183,10 +183,12 @@ describe("PR Review run-template", () => {
     });
   });
 
-  it("waits for declared artifacts without materializing scenario-specific files", async () => {
+  it("waits across transient Manager reconnects without materializing scenario-specific files", async () => {
     const assetRoot = path.join(tmpDir, "asset");
     fs.mkdirSync(path.join(assetRoot, "orchestrations"), { recursive: true });
     fs.writeFileSync(path.join(assetRoot, "orchestrations", "pr-review.yaml.template"), "api_version: homerail.ai/v1\n");
+    let statusAttempts = 0;
+    let artifactAttempts = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
       const target = String(url);
       if (target === "https://api.github.com/repos/xiaotianfotos/homerail/pulls/25") {
@@ -199,9 +201,13 @@ describe("PR Review run-template", () => {
         return response({ success: true, data: { run_id: "review-run-artifacts" } });
       }
       if (target.endsWith("/api/runs/review-run-artifacts/status")) {
+        statusAttempts += 1;
+        if (statusAttempts === 1) throw new TypeError("fetch failed");
         return response({ success: true, data: { status: "completed" } });
       }
       if (target.endsWith("/api/runs/review-run-artifacts/artifacts")) {
+        artifactAttempts += 1;
+        if (artifactAttempts === 1) throw new TypeError("fetch failed");
         return response({ success: true, data: { artifacts: [
           { name: "pr-review.json", status: "ready", media_type: "application/json", sha256: "a".repeat(64) },
           { name: "pr-review.md", status: "ready", media_type: "text/markdown", sha256: "b".repeat(64) },
@@ -230,6 +236,8 @@ describe("PR Review run-template", () => {
         { name: "pr-review.md", status: "ready" },
       ],
     });
+    expect(statusAttempts).toBe(2);
+    expect(artifactAttempts).toBe(2);
   });
 
   it("isolates template discovery by HOMERAIL_HOME", () => {

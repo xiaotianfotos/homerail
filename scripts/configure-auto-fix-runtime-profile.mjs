@@ -10,9 +10,9 @@ export const AUTO_FIX_IMPLEMENTATION_AGENTS = Object.freeze([
 export const AUTO_FIX_REVIEW_AGENTS = Object.freeze([
   "correctness_reviewer",
   "regression_reviewer",
+  "adversarial_reviewer",
 ]);
 export const AUTO_FIX_ARBITRATION_AGENTS = Object.freeze([
-  "adversarial_reviewer",
   "arbiter",
   "publisher",
 ]);
@@ -59,9 +59,6 @@ function agentEntries(agentIds, setting) {
 }
 
 export function autoFixRuntimeProfileYaml({ profileId, implementation, review, arbitration }) {
-  if (new Set([implementation.id, review.id, arbitration.id]).size !== 3) {
-    throw new Error("Auto Fix implementation, review, and arbitration roles must use three distinct LLM settings");
-  }
   return [
     `profile_id: ${yamlString(profileId)}`,
     "workflow_id: auto-fix",

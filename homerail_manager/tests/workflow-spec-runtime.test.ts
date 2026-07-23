@@ -34,6 +34,7 @@ api_version: homerail.ai/v1
 kind: Workflow
 metadata: { id: v1-runtime-${outcome}, name: V1 Runtime ${outcome} }
 spec:
+  policies: { max_tool_calls_per_node: 9 }
   contracts:
     Text:
       type: string
@@ -45,6 +46,7 @@ spec:
       kind: agent
       agent: worker
       allowed_builtin_tools: [Write]
+      max_builtin_tool_calls: 7
       allowed_dag_tools: [handoff]
       inputs: { task: { contract: Text } }
       outputs: { result: { contract: Text } }
@@ -89,6 +91,22 @@ describe("WorkflowSpec v1 runtime projection", () => {
     _clearDagWorkflowTablesForTest();
   });
 
+  it("uses the workflow tool budget when an agent node has no tighter override", () => {
+    const source = workflowSource().replace("      max_builtin_tool_calls: 7\n", "");
+    upsertDagWorkflowFromYaml({ yaml_text: source });
+    syncDeterministicProfile("v1-runtime-success");
+    const dispatcher = new FakeDAGDispatcher();
+    const orchestrator = new ChangeOrchestrator(new GraphExecutor(dispatcher));
+    orchestrator.createAndRun({
+      workflowId: "v1-runtime-success",
+      runId: "v1-runtime-workflow-budget",
+      prompt: "hello",
+      profile: "deterministic",
+    });
+
+    expect(dispatcher.dispatched[0].maxBuiltinToolCalls).toBe(9);
+  });
+
   afterEach(() => {
     _clearActiveRuns();
     _clearDagWorkflowTablesForTest();
@@ -118,6 +136,7 @@ describe("WorkflowSpec v1 runtime projection", () => {
     });
     expect(dispatcher.dispatched[0].inputs).toMatchObject({ task: ["hello"] });
     expect(dispatcher.dispatched[0].allowedBuiltinTools).toEqual(["Write"]);
+    expect(dispatcher.dispatched[0].maxBuiltinToolCalls).toBe(7);
     expect(dispatcher.dispatched[0].allowedDagTools).toEqual(["handoff"]);
 
     const completed = handoffActiveRun(created.runId, "execute", "result", "verified");

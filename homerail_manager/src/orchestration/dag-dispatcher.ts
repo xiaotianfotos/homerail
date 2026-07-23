@@ -36,6 +36,7 @@ export interface DispatchEnvelope {
   advisors?: DagAdvisorConfig[];
   workspaceAccess?: DagWorkspaceAccess;
   allowedBuiltinTools?: AgentBuiltinToolName[];
+  maxBuiltinToolCalls?: number;
   allowedDagTools?: DagAgentToolName[];
   /** Turn-scoped secrets or opaque Manager-broker references. Never persist this field. */
   credentialProjections?: DagCredentialProjection[];

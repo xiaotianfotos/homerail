@@ -56,6 +56,35 @@ interface RunArtifactSummary {
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const TERMINAL_ARTIFACT_STATUSES = new Set(["ready", "failed", "skipped"]);
+const MAX_CONTINUOUS_MANAGER_OUTAGE_MS = 180_000;
+
+interface PollOutage {
+  startedAt?: number;
+  lastError?: unknown;
+}
+
+async function resilientPoll<T>(
+  operation: () => Promise<T>,
+  outage: PollOutage,
+  label: string,
+): Promise<T | undefined> {
+  try {
+    const result = await operation();
+    outage.startedAt = undefined;
+    outage.lastError = undefined;
+    return result;
+  } catch (error) {
+    const now = Date.now();
+    outage.startedAt ??= now;
+    outage.lastError = error;
+    if (now - outage.startedAt >= MAX_CONTINUOUS_MANAGER_OUTAGE_MS) {
+      throw new Error(
+        `${label} lost contact with the stable Manager for 180 seconds: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return undefined;
+  }
+}
 
 function parseObject(raw: string, label: string): Record<string, unknown> {
   let parsed: unknown;
@@ -236,13 +265,22 @@ async function waitForTerminal(
 ): Promise<Record<string, unknown>> {
   const deadline = Date.now() + timeoutSeconds * 1_000;
   let last: Record<string, unknown> = {};
+  const outage: PollOutage = {};
   while (Date.now() <= deadline) {
-    last = responseData(await client.get(`/api/runs/${encodeURIComponent(runId)}/status`));
-    const status = optionalString(last.status) ?? "unknown";
-    if (TERMINAL_STATUSES.has(status)) return last;
+    const response = await resilientPoll(
+      () => client.get(`/api/runs/${encodeURIComponent(runId)}/status`),
+      outage,
+      `DAG run ${runId}`,
+    );
+    if (response !== undefined) {
+      last = responseData(response);
+      const status = optionalString(last.status) ?? "unknown";
+      if (TERMINAL_STATUSES.has(status)) return last;
+    }
     await new Promise((resolve) => setTimeout(resolve, intervalSeconds * 1_000));
   }
-  throw new Error(`timed out waiting for DAG run ${runId}; last status: ${String(last.status ?? "unknown")}`);
+  const suffix = outage.lastError instanceof Error ? `; last poll error: ${outage.lastError.message}` : "";
+  throw new Error(`timed out waiting for DAG run ${runId}; last status: ${String(last.status ?? "unknown")}${suffix}`);
 }
 
 async function listRunArtifacts(client: HomeRailClient, runId: string): Promise<RunArtifactSummary[]> {
@@ -261,13 +299,22 @@ async function waitForArtifacts(
 ): Promise<RunArtifactSummary[]> {
   const deadline = Date.now() + timeoutSeconds * 1_000;
   let last: RunArtifactSummary[] = [];
+  const outage: PollOutage = {};
   while (Date.now() <= deadline) {
-    last = await listRunArtifacts(client, runId);
-    if (last.length === 0 || last.every((artifact) => TERMINAL_ARTIFACT_STATUSES.has(artifact.status))) return last;
+    const artifacts = await resilientPoll(
+      () => listRunArtifacts(client, runId),
+      outage,
+      `DAG artifacts for ${runId}`,
+    );
+    if (artifacts !== undefined) {
+      last = artifacts;
+      if (last.length === 0 || last.every((artifact) => TERMINAL_ARTIFACT_STATUSES.has(artifact.status))) return last;
+    }
     await new Promise((resolve) => setTimeout(resolve, intervalSeconds * 1_000));
   }
   const pending = last.filter((artifact) => !TERMINAL_ARTIFACT_STATUSES.has(artifact.status)).map((artifact) => artifact.name);
-  throw new Error(`timed out waiting for DAG artifacts for ${runId}: ${pending.join(", ") || "unknown"}`);
+  const suffix = outage.lastError instanceof Error ? `; last poll error: ${outage.lastError.message}` : "";
+  throw new Error(`timed out waiting for DAG artifacts for ${runId}: ${pending.join(", ") || "unknown"}${suffix}`);
 }
 
 function printTerminalSummary(

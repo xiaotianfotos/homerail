@@ -12,6 +12,7 @@ import {
   edgeMatchesHandoff,
   failNode,
   reconcileFailedDependencies,
+  reconcileSettledPendingNodes,
   getNodeState,
   getReadyNodes,
   handoff,
@@ -1161,12 +1162,21 @@ export function restoreActiveRun(
   store.set(metadata.runId, run);
 
   const demotedFromRunning = run.status === "active" ? _applyOrphanedNodeDemotion(run) : [];
-  writeRunMetadata(metadata.runId, serializeRunMetadata(run));
+  const settledPendingNodes = run.status === "active"
+    ? Array.from(reconcileSettledPendingNodes(run.dagRun)).sort()
+    : [];
+  for (const nodeId of settledPendingNodes) _markNodeSessionStatus(run, nodeId, "cancelled");
+  if (run.status === "active" && isRunTerminal(run.dagRun)) {
+    completeActiveRun(run.runId);
+  } else {
+    writeRunMetadata(metadata.runId, serializeRunMetadata(run));
+  }
 
   emit("dag:run_recovered", {
     runId: metadata.runId,
     recoveredAt: Date.now(),
     demotedFromRunning,
+    settledPendingNodes,
     reason: demotedFromRunning.length
       ? "orphaned running nodes demoted to failed"
       : undefined,
@@ -4330,6 +4340,20 @@ function _allowedBuiltinTools(node: DAGGraphNode): AgentBuiltinToolName[] | unde
   ));
 }
 
+function _maxBuiltinToolCalls(run: ActiveRun, node: DAGGraphNode): number | undefined {
+  const configured = _agentRuntimeConfig(node).max_builtin_tool_calls;
+  const nodeLimit = Number.isInteger(configured) && Number(configured) > 0
+    ? Number(configured)
+    : undefined;
+  const workflowLimit = run.limits.max_tool_calls_per_node > 0
+    ? run.limits.max_tool_calls_per_node
+    : undefined;
+  if (nodeLimit !== undefined && workflowLimit !== undefined) {
+    return Math.min(nodeLimit, workflowLimit);
+  }
+  return nodeLimit ?? workflowLimit;
+}
+
 function _allowedDagTools(node: DAGGraphNode): DagAgentToolName[] | undefined {
   const raw = _agentRuntimeConfig(node).allowed_dag_tools;
   if (!Array.isArray(raw)) return undefined;
@@ -4570,6 +4594,7 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
       advisors: advisorResolution.advisors,
       workspaceAccess: _workspaceAccess(node),
       allowedBuiltinTools: _allowedBuiltinTools(node),
+      maxBuiltinToolCalls: _maxBuiltinToolCalls(run, node),
       allowedDagTools: _allowedDagTools(node),
       ...(credentialProjections.length > 0 ? { credentialProjections } : {}),
       activity: {

@@ -23,6 +23,24 @@ test("stable runner uses the deployed release and never starts a transient Manag
   assert.doesNotMatch(reviewWorkflow, /npm run install:all|build:packages|run-pr-review-live-runner|docker compose/);
 });
 
+test("manual CI validates the requested target revision in every non-live job", () => {
+  const ci = fs.readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8");
+  const nonLiveCi = ci.slice(0, ci.indexOf("  live-dag-patterns:"));
+  const checkoutCount = [...nonLiveCi.matchAll(/uses: actions\/checkout@/g)].length;
+  const targetRefCount = [
+    ...nonLiveCi.matchAll(
+      /ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.target_ref \|\| github\.ref \}\}/g,
+    ),
+  ].length;
+
+  assert.equal(checkoutCount, 4, "update this contract when adding another non-live CI checkout");
+  assert.equal(
+    targetRefCount,
+    checkoutCount,
+    "every manual non-live CI checkout must honor target_ref instead of silently testing main",
+  );
+});
+
 test("Auto Fix validation installs trusted dependencies before applying the patch", () => {
   const source = fs.readFileSync(path.join(root, "scripts/validate-auto-fix-checkout.sh"), "utf8");
   const installIndex = source.indexOf("npm run install:all");
@@ -30,6 +48,16 @@ test("Auto Fix validation installs trusted dependencies before applying the patc
   const testIndex = source.indexOf("npm run ci");
   assert.ok(installIndex > 0 && applyIndex > installIndex && testIndex > applyIndex);
   assert.match(source.slice(applyIndex), /--network none/);
+  assert.match(
+    source.slice(applyIndex),
+    /--tmpfs \/tmp:rw,nosuid,nodev,exec,size=2g/,
+    "offline package tests must be able to execute isolated temporary fixtures",
+  );
+  assert.match(
+    source,
+    /mcr\.microsoft\.com\/playwright:v1\.57\.0-noble@sha256:[0-9a-f]{64}/,
+    "validator image must pin the Chromium version required by the trusted base",
+  );
   assert.match(source, /--cap-drop ALL/);
   assert.doesNotMatch(source, /docker\.sock|GITHUB_TOKEN|SSH_AUTH_SOCK/);
 });
@@ -54,6 +82,16 @@ test("Auto Fix keeps model selection local and publishes only a human-gated Draf
   assert.doesNotMatch(workflow, /ssh[_-]?key|SSH_AUTH_SOCK|id_rsa|id_ed25519/i);
   assert.match(stableRunner, /initialize_stable_automation_runtime/);
   assert.match(stableRunner, /HOMERAIL_AUTO_FIX_TIMEOUT_SECONDS:-10800/);
+  assert.match(stableRunner, /auto-fix-checkpoint\.mjs/);
+  assert.match(stableRunner, /hydrate "\$INPUT_FILE"/);
+  assert.ok(
+    stableRunner.indexOf('INPUT_FILE="$ARTIFACT_DIR/input.json"') < stableRunner.indexOf('hydrate "$INPUT_FILE"'),
+    "inline Auto Fix input must be materialized before checkpoint hydration",
+  );
+  assert.match(stableRunner, /candidate-v2\.json candidate-v2\.patch candidate-v1\.json candidate-v1\.patch/);
+  assert.match(stableRunner, /stable_hr stop "\$HOMERAIL_STABLE_RUN_ID"/);
+  assert.match(workflow, /Finalize durable candidate checkpoint/);
+  assert.match(workflow, /steps\.publish\.outcome/);
   assert.doesNotMatch(stableRunner, /start --host|install:all|build:packages/);
   assert.match(validator, /npm run install:all/);
   assert.match(validator, /--network none/);

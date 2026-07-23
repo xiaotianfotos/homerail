@@ -2,11 +2,17 @@ import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+function isWithin(candidate: string, root: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 export function getHomerailHome(): string {
   const configured = process.env.HOMERAIL_HOME || path.join(os.homedir(), ".homerail");
   if (process.env.VITEST && process.env.HOMERAIL_ALLOW_UNSAFE_TEST_HOME !== "1") {
-    const relative = path.relative(path.resolve(os.tmpdir()), path.resolve(configured));
-    const isTemporary = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    const temporaryRoots = [os.tmpdir(), process.env.RUNNER_TEMP]
+      .filter((root): root is string => Boolean(root?.trim()));
+    const isTemporary = temporaryRoots.some((root) => isWithin(configured, root));
     if (!isTemporary) {
       throw new Error(`Vitest refused non-temporary HOMERAIL_HOME: ${configured}`);
     }

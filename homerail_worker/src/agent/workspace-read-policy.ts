@@ -63,6 +63,14 @@ function policyRootPaths(workspaceRoot: string, access: DagWorkspaceAccess): str
   return [...roots];
 }
 
+function policyRootHint(access: DagWorkspaceAccess): string {
+  const configured = [...access.writable_paths, ...(access.readonly_paths ?? [])]
+    .map((value) => value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, ""));
+  const roots = [...new Set(configured)].sort();
+  if (roots.length === 0) return "no workspace roots are declared";
+  return `allowed workspace roots: ${roots.join(", ")}`;
+}
+
 function isInsideResolvedPolicyRoot(
   workspaceRoot: string,
   policyRootPath: string,
@@ -99,30 +107,32 @@ export function createWorkspaceReadToolHook(
 ): HookCallback {
   const workspaceRoot = realpathSync(path.resolve(workspace));
   const policyRoots = policyRootPaths(workspaceRoot, access);
+  const rootHint = policyRootHint(access);
+  const denyWithRoots = (reason: string) => deny(`${reason}; ${rootHint}`);
   return async (input) => {
     const event = input as PreToolUseHookInput;
     const pathField = READ_TOOL_PATH_FIELDS.get(event.tool_name);
     if (!pathField) return { continue: true };
     const toolInput = event.tool_input;
     if (!toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) {
-      return deny(`${event.tool_name} requires a path inside the declared workspace roots`);
+      return denyWithRoots(`${event.tool_name} requires a path inside the declared workspace roots`);
     }
     const record = toolInput as Record<string, unknown>;
     const requestedPath = record[pathField];
     if (typeof requestedPath !== "string" || !requestedPath.trim() || requestedPath.includes("\0")) {
-      return deny(`${event.tool_name}.${pathField} must name a path inside the declared workspace roots`);
+      return denyWithRoots(`${event.tool_name}.${pathField} must name a path inside the declared workspace roots`);
     }
     if (event.tool_name === "Glob" && !safeGlobPattern(record.pattern)) {
-      return deny("Glob.pattern must be relative and traversal-free");
+      return denyWithRoots("Glob.pattern must be relative and traversal-free");
     }
     let target: string;
     try {
       target = realpathSync(path.resolve(workspaceRoot, requestedPath));
     } catch {
-      return deny(`${event.tool_name} target could not be resolved inside the declared workspace roots`);
+      return denyWithRoots(`${event.tool_name} target could not be resolved inside the declared workspace roots`);
     }
     if (!policyRoots.some((root) => isInsideResolvedPolicyRoot(workspaceRoot, root, target))) {
-      return deny(`${event.tool_name} target is outside the declared workspace roots`);
+      return denyWithRoots(`${event.tool_name} target is outside the declared workspace roots`);
     }
     return {
       continue: true,

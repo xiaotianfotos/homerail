@@ -68,11 +68,23 @@ describe("Claude workspace read tool policy", () => {
     }
   });
 
+  it("names the safe relative roots in denial feedback without exposing host paths", async () => {
+    const result = await decide("Read", { file_path: "/workspace" });
+    expect(result).toMatchObject({
+      hookSpecificOutput: {
+        permissionDecision: "deny",
+        permissionDecisionReason: expect.stringContaining("allowed workspace roots: repository"),
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(workspace);
+    expect(JSON.stringify(result)).not.toContain(outside);
+  });
+
   it("denies Glob traversal independently of its safe root", async () => {
     await expect(decide("Glob", { pattern: "../../**/*", path: "repository" })).resolves.toMatchObject({
       hookSpecificOutput: {
         permissionDecision: "deny",
-        permissionDecisionReason: "Glob.pattern must be relative and traversal-free",
+        permissionDecisionReason: "Glob.pattern must be relative and traversal-free; allowed workspace roots: repository",
       },
     });
   });

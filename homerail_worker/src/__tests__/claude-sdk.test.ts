@@ -1125,6 +1125,7 @@ describe("ClaudeSdkAdapter", () => {
         workspace,
         workspaceAccess: { writable_paths: [], readonly_paths: ["repository"] },
         allowedBuiltinTools: ["Read", "Grep", "Glob", "LS"],
+        maxBuiltinToolCalls: 2,
       })) {
         // Drain the fake query.
       }
@@ -1150,6 +1151,23 @@ describe("ClaudeSdkAdapter", () => {
       }, "tool-2", { signal: new AbortController().signal })).resolves.toMatchObject({
         hookSpecificOutput: { permissionDecision: "deny" },
       });
+      await expect(hook({
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_input: { file_path: path.join(workspace, "repository", "safe.txt") },
+        tool_use_id: "tool-3",
+      }, "tool-3", { signal: new AbortController().signal })).resolves.toMatchObject({
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason: expect.stringContaining("Built-in tool budget exhausted (2/2)"),
+        },
+      });
+      await expect(hook({
+        hook_event_name: "PreToolUse",
+        tool_name: "mcp__dag-tools__handoff",
+        tool_input: {},
+        tool_use_id: "tool-4",
+      }, "tool-4", { signal: new AbortController().signal })).resolves.toEqual({ continue: true });
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
     }

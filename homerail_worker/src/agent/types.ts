@@ -113,6 +113,8 @@ export interface AgentRunContext {
   handoffOnly?: boolean;
   /** Exact allowlist for backend-provided shell and file tools. */
   allowedBuiltinTools?: AgentBuiltinToolName[];
+  /** Hard per-turn budget for built-in tools; HomeRail DAG tools are not counted or denied. */
+  maxBuiltinToolCalls?: number;
   /** Filesystem roots available to built-in tools for this DAG turn. */
   workspaceAccess?: DagWorkspaceAccess;
   /**

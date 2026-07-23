@@ -22,6 +22,7 @@ function git(repository, args, options = {}) {
 }
 
 const protectedAutomationPaths = new Set([
+  "scripts/auto-fix-checkpoint.mjs",
   "scripts/apply-auto-fix-patch.mjs",
   "scripts/build-auto-fix-pr-body.mjs",
   "scripts/configure-auto-fix-runtime-profile.mjs",

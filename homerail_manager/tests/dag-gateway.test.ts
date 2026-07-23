@@ -659,4 +659,104 @@ nodes:
     )).toThrow("edge retry limit (1) exceeded");
     expect(getActiveRun("run-while-retry-limit")?.status).toBe("failed");
   });
+
+  it("settles an untaken feedback source after a while gateway completes", () => {
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: dormant-feedback-source, name: Dormant feedback source }
+spec:
+  agents:
+    worker: { system: Return the requested state. }
+  nodes:
+    start:
+      kind: agent
+      agent: worker
+      outputs: { state: {} }
+    cycle:
+      kind: while
+      inputs: { state: {} }
+      outputs: { continue: {}, approved: {}, exhausted: {} }
+      config:
+        field: status
+        operator: eq
+        value: approved
+        continue_port: continue
+        done_port: approved
+        exhausted_port: exhausted
+        max_iterations: 2
+    phase:
+      kind: condition
+      inputs: { state: {} }
+      outputs: { primary: {}, alternate: {} }
+      config:
+        field: input.path
+        routes: { primary: primary, alternate: alternate }
+        default: alternate
+    primary_feedback:
+      kind: agent
+      agent: worker
+      depends_on: [cycle]
+      inputs: { state: {} }
+      outputs: { next: {} }
+    alternate_step:
+      kind: agent
+      agent: worker
+      inputs: { state: {} }
+      outputs: { candidate: {} }
+    unused_feedback:
+      kind: agent
+      agent: worker
+      depends_on: [cycle]
+      inputs: { state: {}, candidate: {} }
+      outputs: { next: {} }
+    done:
+      kind: terminal
+      outcome: success
+      inputs: { result: {} }
+    exhausted:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+  edges:
+    - { from: start.state, to: cycle.state }
+    - { from: cycle.continue, to: phase.state }
+    - { from: phase.primary, to: primary_feedback.state }
+    - { from: phase.alternate, to: alternate_step.state }
+    - { from: phase.alternate, to: unused_feedback.state }
+    - { from: alternate_step.candidate, to: unused_feedback.candidate }
+    - kind: feedback
+      from: primary_feedback.next
+      to: cycle.state
+      max_traversals: 2
+    - kind: feedback
+      from: unused_feedback.next
+      to: cycle.state
+      max_traversals: 2
+    - { from: cycle.approved, to: done.result }
+    - { from: cycle.exhausted, to: exhausted.result }
+`);
+    createActiveRun("run-dormant-feedback-source", parsed);
+    const dispatcher = new CollectingDispatcher();
+
+    handoffActiveRun("run-dormant-feedback-source", "start", "state", {
+      status: "reviewing",
+      path: "primary",
+    });
+    expect(dispatchReadyNodes("run-dormant-feedback-source", dispatcher)).toBe(1);
+    expect(dispatchReadyNodes("run-dormant-feedback-source", dispatcher)).toBe(1);
+    expect(getActiveRun("run-dormant-feedback-source")?.dagRun.nodeStates.get("primary_feedback")).toBe("READY");
+    expect(getActiveRun("run-dormant-feedback-source")?.dagRun.nodeStates.get("unused_feedback")).toBe("PENDING");
+
+    handoffActiveRun("run-dormant-feedback-source", "primary_feedback", "next", {
+      status: "approved",
+      path: "primary",
+    });
+    expect(dispatchReadyNodes("run-dormant-feedback-source", dispatcher)).toBe(1);
+
+    const run = getActiveRun("run-dormant-feedback-source");
+    expect(run?.dagRun.nodeStates.get("cycle")).toBe("COMPLETED");
+    expect(run?.dagRun.nodeStates.get("unused_feedback")).toBe("SKIPPED");
+    expect(run?.status).toBe("completed");
+  });
 });
