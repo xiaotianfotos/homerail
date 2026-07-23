@@ -23,6 +23,24 @@ test("stable runner uses the deployed release and never starts a transient Manag
   assert.doesNotMatch(reviewWorkflow, /npm run install:all|build:packages|run-pr-review-live-runner|docker compose/);
 });
 
+test("manual CI validates the requested target revision in every non-live job", () => {
+  const ci = fs.readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8");
+  const nonLiveCi = ci.slice(0, ci.indexOf("  live-dag-patterns:"));
+  const checkoutCount = [...nonLiveCi.matchAll(/uses: actions\/checkout@/g)].length;
+  const targetRefCount = [
+    ...nonLiveCi.matchAll(
+      /ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.target_ref \|\| github\.ref \}\}/g,
+    ),
+  ].length;
+
+  assert.equal(checkoutCount, 4, "update this contract when adding another non-live CI checkout");
+  assert.equal(
+    targetRefCount,
+    checkoutCount,
+    "every manual non-live CI checkout must honor target_ref instead of silently testing main",
+  );
+});
+
 test("Auto Fix validation installs trusted dependencies before applying the patch", () => {
   const source = fs.readFileSync(path.join(root, "scripts/validate-auto-fix-checkout.sh"), "utf8");
   const installIndex = source.indexOf("npm run install:all");
