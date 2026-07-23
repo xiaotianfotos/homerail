@@ -59,9 +59,6 @@ function agentEntries(agentIds, setting) {
 }
 
 export function autoFixRuntimeProfileYaml({ profileId, implementation, review, arbitration }) {
-  if (new Set([implementation.id, review.id, arbitration.id]).size !== 3) {
-    throw new Error("Auto Fix implementation, review, and arbitration roles must use three distinct LLM settings");
-  }
   return [
     `profile_id: ${yamlString(profileId)}`,
     "workflow_id: auto-fix",

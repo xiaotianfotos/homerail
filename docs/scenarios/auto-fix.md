@@ -2,9 +2,9 @@
 
 `assets/orchestrations/auto-fix.yaml.template` is a reusable, provider-neutral
 issue repair workflow. It demonstrates when a durable multi-actor DAG is more
-useful than a single Manager Agent turn: implementation benefits from a second
-pass, review roles must remain independent, and the complete decision history
-must stay inspectable after the job ends.
+useful than a single Manager Agent turn: implementation may need one
+evidence-driven revision, review roles must remain independent, and both the
+candidate and decision history must survive a stopped job.
 
 ## DAG boundary
 
@@ -16,16 +16,18 @@ Issue text, comments, paths, and patch content are untrusted evidence. The DAG:
 2. creates a focused repair and test plan, then deterministically captures the
    complete worktree as a bounded unified patch;
 3. runs correctness, regression, and adversarial reviews independently;
-4. performs a second implementation pass using all three reviews and captures
-   the complete revised worktree again;
-5. repeats the three reviews, requires a two-of-three quorum, and asks a
-   separate arbiter for the final decision;
+4. skips revision when all three reviews approve; otherwise it permits exactly
+   one revision using the concrete review defects, captures the worktree again,
+   and repeats the same three independent reviews;
+5. requires unanimous reviewer approval after at most one revision, then asks
+   a separate arbiter for the final decision;
 6. lets a publisher write only the human-readable summary, then
    deterministically joins trusted issue metadata, exact patch bytes, and the
    approved review outcome into `auto-fix.json`, `auto-fix.patch`, and
    `auto-fix.md`.
 
-The checkout, two patch collectors, and publication finalizer are fixed command
+The checkout, issue sanitizer, bounded review state machine, two patch
+collectors, and publication finalizer are fixed command
 nodes. Their executables and arguments are declared by the template rather than
 selected by a model. Checkout uses a credential-scrubbed Git environment. Each
 collector uses a temporary Git index outside `.git`, includes untracked files,
@@ -42,6 +44,16 @@ the isolated full CI command once after consensus. There is no GitHub token,
 SSH key, push, comment, pull-request mutation, or model-selected host command in
 the workflow. The public YAML contains only logical role names. A private
 database Runtime Profile binds those roles to operator-selected model settings.
+
+`candidate-v1.json/.patch` and, when revision actually runs,
+`candidate-v2.json/.patch` use `publish: always`. The stable runner copies the
+newest ready candidate into a Manager-owned checkpoint keyed by repository and
+Issue. A retry at the same immutable revision applies that patch before any
+Agent runs and includes bounded trusted validation feedback; the issue envelope
+sent to Agents is then sanitized so the large patch is not duplicated into
+every prompt. A changed base revision deliberately invalidates the checkpoint.
+Timeout handling stops the durable run and retains its candidate, chats,
+handoffs, and status instead of leaving an invisible active run behind.
 
 ## Trusted GitHub adapter
 
@@ -79,9 +91,11 @@ not GitHub repository variables and not this template, supplies:
   and publication;
 - `HOMERAIL_AUTO_FIX_RUNNER_ROOT` for the dedicated Actions runner.
 
-Each selector must resolve to one distinct active Anthropic-compatible setting
-in the stable Manager database. The profile stored in that database contains
-setting IDs only. Provider URLs and keys remain encrypted Manager settings.
+Each selector must resolve to an active Anthropic-compatible setting in the
+stable Manager database. Roles may deliberately share one setting for a
+single-model validation run, or use distinct settings for mixed-model review
+and arbitration. The profile stored in that database contains setting IDs only.
+Provider URLs and keys remain encrypted Manager settings.
 
 The workflow uses its short-lived `GITHUB_TOKEN` only after isolated validation.
 No Worker needs an SSH key. Repository settings must allow GitHub Actions to

@@ -54,6 +54,16 @@ test("Auto Fix keeps model selection local and publishes only a human-gated Draf
   assert.doesNotMatch(workflow, /ssh[_-]?key|SSH_AUTH_SOCK|id_rsa|id_ed25519/i);
   assert.match(stableRunner, /initialize_stable_automation_runtime/);
   assert.match(stableRunner, /HOMERAIL_AUTO_FIX_TIMEOUT_SECONDS:-10800/);
+  assert.match(stableRunner, /auto-fix-checkpoint\.mjs/);
+  assert.match(stableRunner, /hydrate "\$INPUT_FILE"/);
+  assert.ok(
+    stableRunner.indexOf('INPUT_FILE="$ARTIFACT_DIR/input.json"') < stableRunner.indexOf('hydrate "$INPUT_FILE"'),
+    "inline Auto Fix input must be materialized before checkpoint hydration",
+  );
+  assert.match(stableRunner, /candidate-v2\.json candidate-v2\.patch candidate-v1\.json candidate-v1\.patch/);
+  assert.match(stableRunner, /stable_hr stop "\$HOMERAIL_STABLE_RUN_ID"/);
+  assert.match(workflow, /Finalize durable candidate checkpoint/);
+  assert.match(workflow, /steps\.publish\.outcome/);
   assert.doesNotMatch(stableRunner, /start --host|install:all|build:packages/);
   assert.match(validator, /npm run install:all/);
   assert.match(validator, /--network none/);

@@ -15,7 +15,7 @@ const WORKFLOW_FILE = path.resolve(
 );
 
 describe("Auto Fix scenario asset", () => {
-  it("compiles a model-neutral two-pass repair with independent final consensus", () => {
+  it("compiles a model-neutral durable repair with one bounded revision", () => {
     const source = fs.readFileSync(WORKFLOW_FILE, "utf8");
     const result = compileWorkflowSource(source);
 
@@ -23,7 +23,7 @@ describe("Auto Fix scenario asset", () => {
     expect(result.diagnostics).toEqual([]);
     expect(result.summary).toMatchObject({
       workflow_id: "auto-fix",
-      node_count: 41,
+      node_count: 47,
       edge_count: 68,
     });
     expect(source).not.toMatch(/^\s*(?:provider|model|llm_setting_id|api_key|base_url):/m);
@@ -33,10 +33,15 @@ describe("Auto Fix scenario asset", () => {
 
     const canonical = result.canonical!;
     expect(canonical.nodes.filter((node) => node.kind === "command").map((node) => node.id)).toEqual([
+      "aggregate_reviews",
       "collect_implementation_patch",
       "collect_revised_patch",
+      "extract_approved_candidate",
       "finalize_publication",
+      "initialize_review_cycle",
+      "prepare_next_review",
       "prepare_repository",
+      "sanitize_issue",
     ]);
     expect(canonical.nodes.find((node) => node.id === "prepare_repository")).toMatchObject({
       kind: "command",
@@ -56,13 +61,13 @@ describe("Auto Fix scenario asset", () => {
       "Grep",
       "Read",
     ]);
-    expect(canonical.nodes.find((node) => node.id === "verification_quorum")).toMatchObject({
-      kind: "join",
+    expect(canonical.nodes.find((node) => node.id === "review_cycle")).toMatchObject({
+      kind: "while",
       config: {
-        mode: "n_of_m",
-        threshold: 2,
-        field: "verdict",
-        success_values: ["approve"],
+        field: "status",
+        operator: "eq",
+        value: "approved",
+        max_iterations: 4,
       },
     });
     expect(canonical.nodes.find((node) => node.id === "revise")).toMatchObject({
@@ -98,6 +103,18 @@ describe("Auto Fix scenario asset", () => {
       });
     }
     expect(canonical.artifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "candidate-v1.json",
+        contract: "FixCandidate",
+        publish: "always",
+        required: false,
+      }),
+      expect.objectContaining({
+        name: "candidate-v2.json",
+        contract: "FixCandidate",
+        publish: "always",
+        required: false,
+      }),
       expect.objectContaining({ name: "auto-fix.json", contract: "AutoFixResult" }),
       expect.objectContaining({
         name: "auto-fix.patch",
@@ -120,10 +137,15 @@ describe("Auto Fix scenario asset", () => {
     expect(source).not.toMatch(/^\s*credentials:/m);
     const commands = canonical.nodes.filter((node) => node.kind === "command");
     expect(commands.map((node) => node.id)).toEqual([
+      "aggregate_reviews",
       "collect_implementation_patch",
       "collect_revised_patch",
+      "extract_approved_candidate",
       "finalize_publication",
+      "initialize_review_cycle",
+      "prepare_next_review",
       "prepare_repository",
+      "sanitize_issue",
     ]);
     expect(JSON.stringify(commands)).not.toMatch(/(?:gh\s+pr|git\s+push|test_command)/i);
 
@@ -131,9 +153,6 @@ describe("Auto Fix scenario asset", () => {
       "review_correctness_initial",
       "review_regression_initial",
       "review_adversarial_initial",
-      "review_correctness_final",
-      "review_regression_final",
-      "review_adversarial_final",
       "arbitrate",
     ]) {
       const node = canonical.nodes.find((candidate) => candidate.id === nodeId);
@@ -142,7 +161,6 @@ describe("Auto Fix scenario asset", () => {
       expect(node?.config.allowed_builtin_tools).toEqual(["Glob", "Grep", "Read"]);
     }
     for (const agentId of [
-      "investigator",
       "correctness_reviewer",
       "regression_reviewer",
       "adversarial_reviewer",
@@ -150,15 +168,79 @@ describe("Auto Fix scenario asset", () => {
     ]) {
       expect(canonical.agents[agentId]?.system).toContain("`/workspace/source`");
       expect(canonical.agents[agentId]?.system).toContain("do not probe `/workspace`");
+      expect(canonical.agents[agentId]?.system).toContain("at most 24");
+      expect(canonical.agents[agentId]?.system).toMatch(/exact\s+changed paths named by/);
     }
+    expect(canonical.agents.investigator?.system).toContain("`/workspace/source`");
+    expect(canonical.agents.investigator?.system).toContain("do not probe `/workspace`");
     for (const agentId of ["implementer", "reviser"]) {
       expect(canonical.agents[agentId]?.system).toContain("Never use `git stash` or `git clean`");
       expect(canonical.agents[agentId]?.system).toContain("run focused checks serially");
       expect(canonical.agents[agentId]?.system).toContain("Do not run the root `npm run ci`");
-      expect(canonical.agents[agentId]?.system).toMatch(/one isolated full CI\s+pass after\s+arbitration/);
+      expect(canonical.agents[agentId]?.system).toMatch(
+        /one isolated full CI\s+pass after\s+arbitration/,
+      );
     }
     expect(source).toMatch(/trusted runner\s+performs one isolated full CI pass after consensus/);
     expect(source).toMatch(/trusted runner\s+performs one isolated full CI pass after arbitration/);
+  });
+
+  it("skips revision on unanimous approval and permits only one rejected review cycle", () => {
+    const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
+    const runCommand = (nodeId: string, input: unknown) => {
+      const node = canonical.nodes.find((candidate) => candidate.id === nodeId);
+      if (node?.kind !== "command" || !node.config.command) throw new Error(`${nodeId} command is missing`);
+      const result = spawnSync(process.execPath, node.config.command.slice(1), {
+        cwd: os.tmpdir(), encoding: "utf8", input: JSON.stringify(input),
+      });
+      expect(result.status, result.stderr).toBe(0);
+      return JSON.parse(result.stdout) as Record<string, unknown>;
+    };
+    const candidate = {
+      status: "fixed",
+      patch: "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n",
+      explanation: "repair",
+      files_changed: ["a.txt"],
+      test_plan: ["focused"],
+    };
+    const vote = (reviewer: string, verdict: "approve" | "reject") => ({
+      reviewer, verdict, summary: `${reviewer} ${verdict}`, defects: verdict === "approve" ? [] : [{
+        severity: "high", file: "a.txt", description: "concrete regression",
+      }],
+    });
+    const initial = runCommand("initialize_review_cycle", { candidate: [candidate] });
+    const initialGate = { input: initial, iteration: 1, max_iterations: 4, matched: false };
+    const approved = runCommand("aggregate_reviews", {
+      state: [initialGate],
+      correctness: [vote("correctness", "approve")],
+      regression: [vote("regression", "approve")],
+      adversarial: [vote("adversarial", "approve")],
+    });
+    expect(approved).toMatchObject({ status: "approved", phase: "done", revision_count: 0 });
+    expect(runCommand("extract_approved_candidate", {
+      cycle: [{ input: approved, iteration: 1, max_iterations: 4, matched: true }],
+    })).toEqual(candidate);
+
+    const needsRevision = runCommand("aggregate_reviews", {
+      state: [initialGate],
+      correctness: [vote("correctness", "approve")],
+      regression: [vote("regression", "reject")],
+      adversarial: [vote("adversarial", "approve")],
+    });
+    expect(needsRevision).toMatchObject({ status: "reviewing", phase: "revise", revision_count: 0 });
+    const revised = { ...candidate, explanation: "revised repair" };
+    const next = runCommand("prepare_next_review", {
+      state: [{ input: needsRevision, iteration: 2, max_iterations: 4, matched: false }],
+      candidate: [revised],
+    });
+    expect(next).toMatchObject({ status: "reviewing", phase: "review", revision_count: 1 });
+    const rejected = runCommand("aggregate_reviews", {
+      state: [{ input: next, iteration: 3, max_iterations: 4, matched: false }],
+      correctness: [vote("correctness", "approve")],
+      regression: [vote("regression", "reject")],
+      adversarial: [vote("adversarial", "approve")],
+    });
+    expect(rejected).toMatchObject({ status: "rejected", phase: "rejected", revision_count: 1 });
   });
 
   it("collects tracked and untracked repair files without mutating the real Git index", () => {

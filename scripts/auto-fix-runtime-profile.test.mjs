@@ -53,12 +53,13 @@ test("maps implementation, review, and arbitration roles without provider config
     assert.match(yaml, new RegExp(`${agent}:\\n    llm_setting_id: "setting-arbitration"`));
   }
   assert.doesNotMatch(yaml, /^\s*(?:provider|model|api_key|base_url):/m);
-  assert.throws(() => autoFixRuntimeProfileYaml({
-    profileId: "bad",
+  const singleModel = autoFixRuntimeProfileYaml({
+    profileId: "single-model",
     implementation: setting("same", "One"),
     review: setting("same", "Two"),
-    arbitration: setting("other", "Other"),
-  }), /three distinct/);
+    arbitration: setting("same", "Three"),
+  });
+  assert.equal((singleModel.match(/llm_setting_id: "same"/g) ?? []).length, 8);
 });
 
 test("syncs the private profile after resolving three stable settings", async () => {

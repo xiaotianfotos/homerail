@@ -21,6 +21,7 @@ case "$TASK" in
     ARTIFACT_DIR="${HOMERAIL_AUTO_FIX_ARTIFACT_DIR:-${GITHUB_WORKSPACE:-$PWD}/artifacts/auto-fix}"
     TIMEOUT_SECONDS="${HOMERAIL_AUTO_FIX_TIMEOUT_SECONDS:-10800}"
     PROFILE_SCRIPT="$HOMERAIL_STABLE_RELEASE/scripts/configure-auto-fix-runtime-profile.mjs"
+    CHECKPOINT_SCRIPT="$HOMERAIL_STABLE_RELEASE/scripts/auto-fix-checkpoint.mjs"
     ARTIFACT_NAMES=(auto-fix.json auto-fix.patch auto-fix.md)
     ;;
   *)
@@ -34,10 +35,19 @@ esac
 stable_hr dag sync "$TASK" >/dev/null
 PROFILE_ID="$("$HOMERAIL_STABLE_NODE" "$PROFILE_SCRIPT")"
 
+if [ -z "$INPUT_FILE" ] && [ "$TASK" = "auto-fix" ] && [ -n "$INPUT" ]; then
+  INPUT_FILE="$ARTIFACT_DIR/input.json"
+  mkdir -p "$ARTIFACT_DIR"
+  printf '%s\n' "$INPUT" >"$INPUT_FILE"
+  chmod 600 "$INPUT_FILE"
+fi
 if [ -n "$INPUT_FILE" ]; then
   if [ ! -f "$INPUT_FILE" ]; then
     echo "Structured input file does not exist: $INPUT_FILE" >&2
     exit 1
+  fi
+  if [ "$TASK" = "auto-fix" ]; then
+    "$HOMERAIL_STABLE_NODE" "$CHECKPOINT_SCRIPT" hydrate "$INPUT_FILE"
   fi
   INPUT="$(<"$INPUT_FILE")"
 fi
@@ -68,7 +78,28 @@ if [ -n "${HOMERAIL_STABLE_RUN_ID:-}" ]; then
 fi
 if ! stable_hr "${RUN_ARGS[@]}" \
   >"$COMMAND_TMP" 2> >(tee "$STDERR_PATH" >&2); then
-  rm -f "$COMMAND_TMP"
+  if [ -s "$COMMAND_TMP" ]; then
+    mv "$COMMAND_TMP" "$ARTIFACT_DIR/command.failed.json"
+  else
+    rm -f "$COMMAND_TMP"
+  fi
+  if [ "$TASK" = "auto-fix" ] && [ -n "${HOMERAIL_STABLE_RUN_ID:-}" ]; then
+    stable_hr stop "$HOMERAIL_STABLE_RUN_ID" >/dev/null 2>&1 || true
+    stable_hr dag quick "$HOMERAIL_STABLE_RUN_ID" --events 80 >"$ARTIFACT_DIR/dag-quick.txt" 2>&1 || true
+    stable_hr dag chats "$HOMERAIL_STABLE_RUN_ID" --tools 30 --raw-tools >"$ARTIFACT_DIR/dag-chats.txt" 2>&1 || true
+    stable_hr dag handoffs "$HOMERAIL_STABLE_RUN_ID" --content-limit 4000 >"$ARTIFACT_DIR/dag-handoffs.txt" 2>&1 || true
+    for artifact in candidate-v2.json candidate-v2.patch candidate-v1.json candidate-v1.patch; do
+      stable_hr dag artifact "$HOMERAIL_STABLE_RUN_ID" "$artifact" --output "$ARTIFACT_DIR/$artifact" >/dev/null 2>&1 || true
+    done
+    for _attempt in 1 2 3 4 5; do
+      checkpoint_result="$("$HOMERAIL_STABLE_NODE" "$CHECKPOINT_SCRIPT" record "$INPUT_FILE" "$HOMERAIL_STABLE_RUN_ID" 2>/dev/null || true)"
+      if [[ "$checkpoint_result" == *'"recorded":true'* ]]; then
+        printf '%s\n' "$checkpoint_result" >"$ARTIFACT_DIR/checkpoint.json"
+        break
+      fi
+      sleep 1
+    done
+  fi
   exit 1
 fi
 mv "$COMMAND_TMP" "$COMMAND_PATH"
@@ -94,6 +125,12 @@ if [ "$RUN_STATUS" != "completed" ]; then
   stable_hr dag quick "$RUN_ID" --events 80 >"$ARTIFACT_DIR/dag-quick.txt" 2>&1 || true
   stable_hr dag chats "$RUN_ID" --tools 30 --raw-tools >"$ARTIFACT_DIR/dag-chats.txt" 2>&1 || true
   stable_hr dag handoffs "$RUN_ID" --content-limit 4000 >"$ARTIFACT_DIR/dag-handoffs.txt" 2>&1 || true
+  if [ "$TASK" = "auto-fix" ]; then
+    for artifact in candidate-v2.json candidate-v2.patch candidate-v1.json candidate-v1.patch; do
+      stable_hr dag artifact "$RUN_ID" "$artifact" --output "$ARTIFACT_DIR/$artifact" >/dev/null 2>&1 || true
+    done
+    "$HOMERAIL_STABLE_NODE" "$CHECKPOINT_SCRIPT" record "$INPUT_FILE" "$RUN_ID" >"$ARTIFACT_DIR/checkpoint.json" || true
+  fi
   echo "$TASK DAG ended with status $RUN_STATUS (run $RUN_ID)." >&2
   exit 1
 fi
@@ -117,6 +154,7 @@ case "$TASK" in
       "$ARTIFACT_DIR/auto-fix.json" \
       "$ARTIFACT_DIR/auto-fix.patch" \
       "$ARTIFACT_DIR/auto-fix.md"
+    "$HOMERAIL_STABLE_NODE" "$CHECKPOINT_SCRIPT" record "$INPUT_FILE" "$RUN_ID" >"$ARTIFACT_DIR/checkpoint.json"
     ;;
 esac
 
