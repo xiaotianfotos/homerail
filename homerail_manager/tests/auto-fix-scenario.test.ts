@@ -169,12 +169,13 @@ describe("Auto Fix scenario asset", () => {
       "arbiter",
     ]) {
       expect(canonical.agents[agentId]?.system).toContain("`/workspace/source`");
-      expect(canonical.agents[agentId]?.system).toContain("do not probe `/workspace`");
+      expect(canonical.agents[agentId]?.system).toMatch(/Never probe bare\s+`\/workspace`/);
+      expect(canonical.agents[agentId]?.system).toContain("`source/<path>`");
       expect(canonical.agents[agentId]?.system).toContain("at most 24");
       expect(canonical.agents[agentId]?.system).toMatch(/exact\s+changed paths named by/);
     }
     expect(canonical.agents.investigator?.system).toContain("`/workspace/source`");
-    expect(canonical.agents.investigator?.system).toContain("do not probe `/workspace`");
+    expect(canonical.agents.investigator?.system).toMatch(/Never probe bare\s+`\/workspace`/);
     for (const agentId of ["implementer", "reviser"]) {
       expect(canonical.agents[agentId]?.system).toContain("Never use `git stash` or `git clean`");
       expect(canonical.agents[agentId]?.system).toContain("run focused checks serially");
@@ -211,6 +212,7 @@ describe("Auto Fix scenario asset", () => {
       }],
     });
     const initial = runCommand("initialize_review_cycle", { candidate: [candidate] });
+    expect(initial).toMatchObject({ workspace_root: "source" });
     const initialGate = { input: initial, iteration: 1, max_iterations: 4, matched: false };
     const approved = runCommand("aggregate_reviews", {
       state: [initialGate],
@@ -236,6 +238,7 @@ describe("Auto Fix scenario asset", () => {
       candidate: [revised],
     });
     expect(next).toMatchObject({ status: "reviewing", phase: "review", revision_count: 1 });
+    expect(next).toMatchObject({ workspace_root: "source" });
     const rejected = runCommand("aggregate_reviews", {
       state: [{ input: next, iteration: 3, max_iterations: 4, matched: false }],
       correctness: [vote("correctness", "approve")],
