@@ -141,6 +141,20 @@ describe("Auto Fix scenario asset", () => {
       expect(node?.config.workspace_access?.writable_paths).not.toContain("source");
       expect(node?.config.allowed_builtin_tools).toEqual(["Glob", "Grep", "Read"]);
     }
+    for (const agentId of [
+      "investigator",
+      "correctness_reviewer",
+      "regression_reviewer",
+      "adversarial_reviewer",
+      "arbiter",
+    ]) {
+      expect(canonical.agents[agentId]?.system).toContain("`/workspace/source`");
+      expect(canonical.agents[agentId]?.system).toContain("do not probe `/workspace`");
+    }
+    for (const agentId of ["implementer", "reviser"]) {
+      expect(canonical.agents[agentId]?.system).toContain("Never use `git stash` or `git clean`");
+      expect(canonical.agents[agentId]?.system).toContain("run focused checks serially");
+    }
     expect(source).toMatch(/trusted runner\s+performs one isolated full CI pass after consensus/);
     expect(source).toMatch(/trusted runner\s+performs one isolated full CI pass after arbitration/);
   });
