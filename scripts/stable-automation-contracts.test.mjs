@@ -35,6 +35,11 @@ test("Auto Fix validation installs trusted dependencies before applying the patc
     /--tmpfs \/tmp:rw,nosuid,nodev,exec,size=2g/,
     "offline package tests must be able to execute isolated temporary fixtures",
   );
+  assert.match(
+    source,
+    /mcr\.microsoft\.com\/playwright:v1\.57\.0-noble@sha256:[0-9a-f]{64}/,
+    "validator image must pin the Chromium version required by the trusted base",
+  );
   assert.match(source, /--cap-drop ALL/);
   assert.doesNotMatch(source, /docker\.sock|GITHUB_TOKEN|SSH_AUTH_SOCK/);
 });
