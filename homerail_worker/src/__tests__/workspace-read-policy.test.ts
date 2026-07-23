@@ -77,10 +77,58 @@ describe("Claude workspace read tool policy", () => {
     });
   });
 
+  it("defers missing declared roots until tool use and allows them after creation", async () => {
+    const hook = createWorkspaceReadToolHook(workspace, {
+      writable_paths: ["deferred"],
+      readonly_paths: [],
+    });
+
+    await expect(hook({
+      hook_event_name: "PreToolUse",
+      tool_name: "Read",
+      tool_input: { file_path: path.join(workspace, "deferred", "later.txt") },
+      tool_use_id: "tool-missing",
+    } as never, "tool-missing", { signal: new AbortController().signal })).resolves.toMatchObject({
+      hookSpecificOutput: { permissionDecision: "deny" },
+    });
+
+    fs.mkdirSync(path.join(workspace, "deferred"));
+    fs.writeFileSync(path.join(workspace, "deferred", "later.txt"), "later");
+
+    await expect(hook({
+      hook_event_name: "PreToolUse",
+      tool_name: "Read",
+      tool_input: { file_path: path.join(workspace, "deferred", "later.txt") },
+      tool_use_id: "tool-created",
+    } as never, "tool-created", { signal: new AbortController().signal })).resolves.toMatchObject({
+      hookSpecificOutput: { permissionDecision: "allow" },
+    });
+  });
+
+  it("denies a deferred declared root that is later created as an escaping symlink", async () => {
+    const hook = createWorkspaceReadToolHook(workspace, {
+      writable_paths: [],
+      readonly_paths: ["deferred-escape"],
+    });
+    fs.symlinkSync(
+      outside,
+      path.join(workspace, "deferred-escape"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    await expect(hook({
+      hook_event_name: "PreToolUse",
+      tool_name: "Read",
+      tool_input: { file_path: path.join(workspace, "deferred-escape", "secret.txt") },
+      tool_use_id: "tool-deferred-escape",
+    } as never, "tool-deferred-escape", { signal: new AbortController().signal })).resolves.toMatchObject({
+      hookSpecificOutput: { permissionDecision: "deny" },
+    });
+  });
+
   it("does not change policy for non-read built-in tools", async () => {
     await expect(decide("Write", { file_path: "/outside", content: "x" })).resolves.toEqual({
       continue: true,
     });
   });
 });
-

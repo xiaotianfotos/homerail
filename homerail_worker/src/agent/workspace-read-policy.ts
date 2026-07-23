@@ -36,20 +36,44 @@ function safeGlobPattern(value: unknown): boolean {
     && !normalized.split("/").includes("..");
 }
 
-function resolvedPolicyRoots(workspace: string, access: DagWorkspaceAccess): string[] {
-  const workspaceRoot = realpathSync(path.resolve(workspace));
+function policyRootPaths(workspaceRoot: string, access: DagWorkspaceAccess): string[] {
   const roots = new Set<string>();
   for (const configured of [...access.writable_paths, ...(access.readonly_paths ?? [])]) {
     if (!safePolicyPath(configured)) {
       throw new Error(`workspace read policy path must be relative and traversal-free: ${configured}`);
     }
-    const root = realpathSync(path.resolve(workspaceRoot, configured));
-    if (!isWithin(workspaceRoot, root)) {
+    const rootPath = path.resolve(workspaceRoot, configured);
+    if (!isWithin(workspaceRoot, rootPath)) {
       throw new Error(`workspace read policy root escapes workspace: ${configured}`);
     }
-    roots.add(root);
+    try {
+      const root = realpathSync(rootPath);
+      if (!isWithin(workspaceRoot, root)) {
+        throw new Error(`workspace read policy root escapes workspace: ${configured}`);
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+      // A writable path may be created later in the agent turn. Keep its
+      // lexical location now, then resolve and contain it at each tool call.
+    }
+    roots.add(rootPath);
   }
   return [...roots];
+}
+
+function isInsideResolvedPolicyRoot(
+  workspaceRoot: string,
+  policyRootPath: string,
+  target: string,
+): boolean {
+  try {
+    const root = realpathSync(policyRootPath);
+    return isWithin(workspaceRoot, root) && isWithin(root, target);
+  } catch {
+    return false;
+  }
 }
 
 function deny(reason: string): ReturnType<HookCallback> {
@@ -74,7 +98,7 @@ export function createWorkspaceReadToolHook(
   access: DagWorkspaceAccess,
 ): HookCallback {
   const workspaceRoot = realpathSync(path.resolve(workspace));
-  const allowedRoots = resolvedPolicyRoots(workspaceRoot, access);
+  const policyRoots = policyRootPaths(workspaceRoot, access);
   return async (input) => {
     const event = input as PreToolUseHookInput;
     const pathField = READ_TOOL_PATH_FIELDS.get(event.tool_name);
@@ -97,7 +121,7 @@ export function createWorkspaceReadToolHook(
     } catch {
       return deny(`${event.tool_name} target could not be resolved inside the declared workspace roots`);
     }
-    if (!allowedRoots.some((root) => isWithin(root, target))) {
+    if (!policyRoots.some((root) => isInsideResolvedPolicyRoot(workspaceRoot, root, target))) {
       return deny(`${event.tool_name} target is outside the declared workspace roots`);
     }
     return {
@@ -109,4 +133,3 @@ export function createWorkspaceReadToolHook(
     };
   };
 }
-
