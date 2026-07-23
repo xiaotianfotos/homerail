@@ -62,6 +62,15 @@ test("maps implementation, review, and arbitration roles without provider config
   assert.equal((singleModel.match(/llm_setting_id: "same"/g) ?? []).length, 8);
 });
 
+test("binds all three independent reviewers to the review model", () => {
+  assert.deepEqual(AUTO_FIX_REVIEW_AGENTS, [
+    "correctness_reviewer",
+    "regression_reviewer",
+    "adversarial_reviewer",
+  ]);
+  assert.deepEqual(AUTO_FIX_ARBITRATION_AGENTS, ["arbiter", "publisher"]);
+});
+
 test("syncs the private profile after resolving three stable settings", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

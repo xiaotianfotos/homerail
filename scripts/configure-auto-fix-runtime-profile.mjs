@@ -10,9 +10,9 @@ export const AUTO_FIX_IMPLEMENTATION_AGENTS = Object.freeze([
 export const AUTO_FIX_REVIEW_AGENTS = Object.freeze([
   "correctness_reviewer",
   "regression_reviewer",
+  "adversarial_reviewer",
 ]);
 export const AUTO_FIX_ARBITRATION_AGENTS = Object.freeze([
-  "adversarial_reviewer",
   "arbiter",
   "publisher",
 ]);
