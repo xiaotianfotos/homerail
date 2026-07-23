@@ -273,6 +273,44 @@ describe("Auto Fix scenario asset", () => {
 
   it.each([
     {
+      name: "placeholder outside a test fixture path",
+      file: "src/config.ts",
+      credential: ["test", "api", "key", "0000"].join("-"),
+    },
+    {
+      name: "marker-bearing value with an unrecognized secret token",
+      file: "tests/config.test.ts",
+      credential: ["sk", "test", "realcredential"].join("-"),
+    },
+  ])("rejects $name", ({ file, credential }) => {
+    const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
+    const commandNode = canonical.nodes.find((node) => node.id === "finalize_publication");
+    if (commandNode?.kind !== "command" || !commandNode.config.command) throw new Error("finalizer command is missing");
+    const revision = "e".repeat(40);
+    const patch = [
+      `diff --git a/${file} b/${file}`,
+      `--- a/${file}`,
+      `+++ b/${file}`,
+      "@@ -0,0 +1 @@",
+      `+const api_key = '${credential}';`,
+      "",
+    ].join("\n");
+    const input = {
+      issue: [{ repo: "owner/repo", issue: 92, revision }],
+      patch: [{ status: "fixed", patch, explanation: "repair", files_changed: [file], test_plan: [] }],
+      arbitration: [{ verdict: "approve", summary: "approved", blocking_defects: [] }],
+      summary: [{ review_summary: "approved by consensus", markdown: `# Auto Fix #92\n\nBase: ${revision}\n` }],
+    };
+    const result = spawnSync(process.execPath, commandNode.config.command.slice(1), {
+      cwd: os.tmpdir(), encoding: "utf8", input: JSON.stringify(input),
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`publication patch (${file}, patch line 5) contains credential-like api_key assignment`);
+    expect(result.stderr).not.toContain(credential);
+  });
+
+  it.each([
+    {
       name: "private network address",
       sensitive: ["192", "168", "100", "112"].join("."),
       diagnostic: "contains a private network address",

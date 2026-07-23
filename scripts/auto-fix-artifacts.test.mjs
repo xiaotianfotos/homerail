@@ -52,7 +52,87 @@ test("validates exact patch bytes and normalized Markdown artifact bytes", () =>
         `${unsafeMarkdown}\n`,
       );
     },
-    /local or credential material/,
+    /private network address/,
+  );
+});
+
+test("allows obvious credential placeholders only in test fixture patches", () => {
+  const placeholder = ["test", "api", "key", "0000"].join("-");
+  const testFile = "tests/provider.test.ts";
+  const testPatch = [
+    `diff --git a/${testFile} b/${testFile}`,
+    `--- a/${testFile}`,
+    `+++ b/${testFile}`,
+    "@@ -0,0 +1 @@",
+    `+const api_key = '${placeholder}';`,
+    "",
+  ].join("\n");
+  validateAutoFixArtifacts(
+    command,
+    { ...publication, patch: testPatch, files_changed: [testFile] },
+    testPatch,
+    publication.markdown,
+  );
+
+  const productionFile = "src/provider.ts";
+  const productionPatch = testPatch
+    .replaceAll(testFile, productionFile);
+  assert.throws(
+    () => validateAutoFixArtifacts(
+      command,
+      { ...publication, patch: productionPatch, files_changed: [productionFile] },
+      productionPatch,
+      publication.markdown,
+    ),
+    (error) => {
+      assert.match(error.message, /src\/provider\.ts, patch line 5.*credential-like api_key assignment/);
+      assert.equal(error.message.includes(placeholder), false);
+      return true;
+    },
+  );
+});
+
+test("rejects marker-bearing secret-like values and redacts the value", () => {
+  const credential = ["sk", "test", "realcredential"].join("-");
+  const file = "tests/provider.test.ts";
+  const unsafePatch = [
+    `diff --git a/${file} b/${file}`,
+    `--- a/${file}`,
+    `+++ b/${file}`,
+    "@@ -0,0 +1 @@",
+    `+const client_secret = '${credential}';`,
+    "",
+  ].join("\n");
+  assert.throws(
+    () => validateAutoFixArtifacts(
+      command,
+      { ...publication, patch: unsafePatch, files_changed: [file] },
+      unsafePatch,
+      publication.markdown,
+    ),
+    (error) => {
+      assert.match(error.message, /tests\/provider\.test\.ts, patch line 5.*credential-like client_secret assignment/);
+      assert.equal(error.message.includes(credential), false);
+      return true;
+    },
+  );
+});
+
+test("scans publication fields before JSON escaping", () => {
+  const credential = ["r4Nd0m", "S3cr3t", "V4lu3", "9XyZ"].join("");
+  const unsafeExplanation = `Configuration uses api_key: "${credential}"`;
+  assert.throws(
+    () => validateAutoFixArtifacts(
+      command,
+      { ...publication, explanation: unsafeExplanation },
+      patch,
+      publication.markdown,
+    ),
+    (error) => {
+      assert.match(error.message, /publication explanation contains credential-like api_key assignment/);
+      assert.equal(error.message.includes(credential), false);
+      return true;
+    },
   );
 });
 

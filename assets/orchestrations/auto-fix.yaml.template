@@ -787,22 +787,32 @@ spec:
                 return total - probability * Math.log2(probability);
               }, 0);
             };
-            const isObviousPlaceholder = (value) => {
-              if (value.length > 64) return false;
-              // A marker alone is too broad: require a bounded, low-entropy value as well.
-              const markers = new Set(['test', 'fake', 'dummy', 'example', 'placeholder', 'redacted', 'changeme', 'sample', 'fixture', 'mock']);
+            const placeholderMarkers = new Set(['test', 'fake', 'dummy', 'example', 'placeholder', 'redacted', 'changeme', 'sample', 'fixture', 'mock']);
+            const placeholderWords = new Set([...placeholderMarkers, 'sk', 'pk', 'api', 'key', 'apikey', 'token', 'local', 'dev', 'unit', 'e2e', 'notsecret', 'nosecret', 'notakey', 'nokey', 'testing', 'readiness']);
+            // Keep the exception narrow: explicit placeholder vocabulary is valid only in test-like files.
+            const isTestFixturePath = (file) => typeof file === 'string' && (
+              /(^|\/)(?:tests?|__tests__|fixtures?|examples?|samples?|mocks?)(?:\/|$)/i.test(file) ||
+              /(?:^|\/)[^/]+\.(?:test|spec)\.[^/]+$/i.test(file)
+            );
+            const isObviousPlaceholder = (value, file) => {
+              if (!isTestFixturePath(file) || value.length < 8 || value.length > 64) return false;
               const tokens = value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-              return tokens.some((token) => markers.has(token)) && entropy(value) <= 3.5;
+              const placeholderCounter = (token) => /^(?:0+|1+)$/.test(token) && token.length <= 6;
+              return tokens.length >= 2 && tokens.length <= 5 &&
+                tokens.some((token) => placeholderMarkers.has(token)) &&
+                tokens.every((token) => placeholderWords.has(token) || placeholderCounter(token)) &&
+                entropy(value) <= 3.5;
             };
-            const patchLocation = (value, index) => {
+            const patchContext = (value, index) => {
               const preceding = value.slice(0, index).split('\n');
               let file;
               for (const line of preceding) {
-                const match = /^diff --git a\/.+ b\/(.+)$/.exec(line);
-                if (match) file = match[1];
+                const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+                if (match) file = match[2];
               }
-              return file ? ' (' + file + ', patch line ' + preceding.length + ')' : '';
+              return { file, line: preceding.length };
             };
+            const locationLabel = (context) => context.file ? ' (' + context.file + ', patch line ' + context.line + ')' : '';
             const safeText = (value, source) => {
               const forbidden = [
                 ['a local Windows path', /[A-Za-z]:\\(?:Users|Documents and Settings)\\/i],
@@ -813,12 +823,13 @@ spec:
               ];
               for (const [category, pattern] of forbidden) {
                 const match = pattern.exec(value);
-                if (match) fail('publication ' + source + patchLocation(value, match.index) + ' contains ' + category);
+                if (match) fail('publication ' + source + locationLabel(patchContext(value, match.index)) + ' contains ' + category);
               }
               const credentialAssignment = /\b(api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["']?([A-Za-z0-9_./+=-]{12,})/gi;
               for (const match of value.matchAll(credentialAssignment)) {
-                if (!isObviousPlaceholder(match[2])) {
-                  fail('publication ' + source + patchLocation(value, match.index) + ' contains credential-like ' + match[1].toLowerCase() + ' assignment');
+                const context = patchContext(value, match.index);
+                if (source !== 'patch' || !isObviousPlaceholder(match[2], context.file)) {
+                  fail('publication ' + source + locationLabel(context) + ' contains credential-like ' + match[1].toLowerCase() + ' assignment');
                 }
               }
               const emails = value.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi) || [];
@@ -835,7 +846,11 @@ spec:
               if (!arbitration || arbitration.verdict !== 'approve') fail('approved Arbitration input is required');
               if (!summary || typeof summary.review_summary !== 'string' || typeof summary.markdown !== 'string') fail('PublicationSummary input is invalid');
               if (!summary.markdown.includes('#' + issue.issue) || !summary.markdown.includes(issue.revision)) fail('publication markdown must contain issue number and base revision');
-              safeText(JSON.stringify(summary), 'summary');
+              safeText(summary.review_summary, 'review summary');
+              safeText(summary.markdown, 'markdown');
+              if (typeof patch.explanation === 'string') safeText(patch.explanation, 'explanation');
+              for (const item of Array.isArray(patch.test_plan) ? patch.test_plan : []) safeText(String(item), 'test plan');
+              for (const item of patch.files_changed) safeText(String(item), 'changed file');
               safeText(patch.patch, 'patch');
               const result = {
                 status: 'ready', repo: issue.repo, issue: issue.issue, revision: issue.revision,
