@@ -34,11 +34,14 @@ and trusted-adapter changes before review. This also means a model correction
 turn never needs to remember or reproduce a large unified diff. The finalizer
 copies exact patch and issue fields and rejects local/private/credential text.
 
-Investigation and review Agents mount the checkout read-only; only
-implementation and revision Agents may edit it. There is no GitHub token, SSH
-key, push, comment, pull-request mutation, or model-selected host command in the
-workflow. The public YAML contains only logical role names. A private database
-Runtime Profile binds those roles to operator-selected model settings.
+Investigation, review, and arbitration Agents mount the checkout read-only.
+Review and arbitration roles inspect with `Read`, `Grep`, and `Glob`; they do
+not run builds, tests, or Git commands in the shared workspace. Only
+implementation and revision Agents may edit it, and the trusted adapter runs
+the isolated full CI command once after consensus. There is no GitHub token,
+SSH key, push, comment, pull-request mutation, or model-selected host command in
+the workflow. The public YAML contains only logical role names. A private
+database Runtime Profile binds those roles to operator-selected model settings.
 
 ## Trusted GitHub adapter
 

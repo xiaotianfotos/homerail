@@ -22,7 +22,7 @@ jobs:
       github.event.label.name == 'auto-fix' &&
       github.event.issue.pull_request == null
     runs-on: [self-hosted, Linux, X64, homerail-auto-fix]
-    timeout-minutes: 150
+    timeout-minutes: 210
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}

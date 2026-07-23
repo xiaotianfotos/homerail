@@ -139,7 +139,10 @@ describe("Auto Fix scenario asset", () => {
       const node = canonical.nodes.find((candidate) => candidate.id === nodeId);
       expect(node?.config.workspace_access).toMatchObject({ readonly_paths: ["source"] });
       expect(node?.config.workspace_access?.writable_paths).not.toContain("source");
+      expect(node?.config.allowed_builtin_tools).toEqual(["Glob", "Grep", "Read"]);
     }
+    expect(source).toMatch(/trusted runner\s+performs one isolated full CI pass after consensus/);
+    expect(source).toMatch(/trusted runner\s+performs one isolated full CI pass after arbitration/);
   });
 
   it("collects tracked and untracked repair files without mutating the real Git index", () => {
