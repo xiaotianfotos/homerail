@@ -92,6 +92,27 @@ test("allows obvious credential placeholders only in test fixture patches", () =
   );
 });
 
+test("scans many placeholder assignments without quadratic patch rescans", () => {
+  const additions = Array.from(
+    { length: 4_000 },
+    (_, index) => `+const fixture${index} = { api_key: 'test-api-key-0000' };`,
+  );
+  const patch = [
+    "diff --git a/tests/many.test.ts b/tests/many.test.ts",
+    "--- a/tests/many.test.ts",
+    "+++ b/tests/many.test.ts",
+    `@@ -0,0 +1,${additions.length} @@`,
+    ...additions,
+    "",
+  ].join("\n");
+  validateAutoFixArtifacts(
+    command,
+    { ...publication, patch, files_changed: ["tests/many.test.ts"] },
+    patch,
+    publication.markdown,
+  );
+});
+
 test("rejects marker-bearing secret-like values and redacts the value", () => {
   const credential = ["sk", "test", "realcredential"].join("-");
   const file = "tests/provider.test.ts";

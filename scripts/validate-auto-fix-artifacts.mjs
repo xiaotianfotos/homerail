@@ -47,14 +47,27 @@ function isObviousPlaceholder(value, file) {
     && entropy(value) <= 3.5;
 }
 
-function patchContext(value, index) {
-  const preceding = value.slice(0, index).split("\n");
+function patchLocationResolver(value) {
   let file;
-  for (const line of preceding) {
+  let offset = 0;
+  const locations = value.split("\n").map((line, lineIndex) => {
     const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
     if (match) file = match[2];
-  }
-  return { file, line: preceding.length };
+    const location = { offset, file, line: lineIndex + 1 };
+    offset += line.length + 1;
+    return location;
+  });
+  return (index) => {
+    let low = 0;
+    let high = locations.length - 1;
+    while (low <= high) {
+      const middle = (low + high) >>> 1;
+      if (locations[middle].offset <= index) low = middle + 1;
+      else high = middle - 1;
+    }
+    const location = locations[Math.max(0, high)];
+    return { file: location.file, line: location.line };
+  };
 }
 
 function locationLabel(context) {
@@ -62,6 +75,7 @@ function locationLabel(context) {
 }
 
 function assertSafePublicationText(value, source) {
+  const locate = patchLocationResolver(value);
   const forbidden = [
     ["a local Windows path", /[A-Za-z]:\\(?:Users|Documents and Settings)\\/i],
     ["a local Unix path", /\/(?:Users|home|vol[0-9]*|mnt)\//],
@@ -72,12 +86,12 @@ function assertSafePublicationText(value, source) {
   for (const [category, pattern] of forbidden) {
     const match = pattern.exec(value);
     if (match) {
-      invariant(false, `Auto Fix publication ${source}${locationLabel(patchContext(value, match.index))} contains ${category}`);
+      invariant(false, `Auto Fix publication ${source}${locationLabel(locate(match.index))} contains ${category}`);
     }
   }
   const credentialAssignment = /\b(api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["']?([A-Za-z0-9_./+=-]{12,})/gi;
   for (const match of value.matchAll(credentialAssignment)) {
-    const context = patchContext(value, match.index);
+    const context = locate(match.index);
     invariant(
       source === "patch" && isObviousPlaceholder(match[2], context.file),
       `Auto Fix publication ${source}${locationLabel(context)} contains credential-like ${match[1].toLowerCase()} assignment`,

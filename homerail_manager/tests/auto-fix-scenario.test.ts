@@ -243,6 +243,35 @@ describe("Auto Fix scenario asset", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ status: "ready", patch });
   });
 
+  it("scans many test placeholders without rescanning the patch for every match", () => {
+    const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
+    const commandNode = canonical.nodes.find((node) => node.id === "finalize_publication");
+    if (commandNode?.kind !== "command" || !commandNode.config.command) throw new Error("finalizer command is missing");
+    const revision = "1".repeat(40);
+    const additions = Array.from(
+      { length: 4_000 },
+      (_, index) => `+const fixture${index} = { api_key: 'test-api-key-0000' };`,
+    );
+    const patch = [
+      "diff --git a/tests/many.test.ts b/tests/many.test.ts",
+      "--- a/tests/many.test.ts",
+      "+++ b/tests/many.test.ts",
+      `@@ -0,0 +1,${additions.length} @@`,
+      ...additions,
+      "",
+    ].join("\n");
+    const input = {
+      issue: [{ repo: "owner/repo", issue: 92, revision }],
+      patch: [{ status: "fixed", patch, explanation: "repair", files_changed: ["tests/many.test.ts"], test_plan: [] }],
+      arbitration: [{ verdict: "approve", summary: "approved", blocking_defects: [] }],
+      summary: [{ review_summary: "approved by consensus", markdown: `# Auto Fix #92\n\nBase: ${revision}\n` }],
+    };
+    const result = spawnSync(process.execPath, commandNode.config.command.slice(1), {
+      cwd: os.tmpdir(), encoding: "utf8", input: JSON.stringify(input), timeout: 3_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it.each([
     { field: "explanation", mutate: (candidate: Record<string, unknown>) => { candidate.explanation = { api_key: "hidden" }; } },
     { field: "files_changed", mutate: (candidate: Record<string, unknown>) => { candidate.files_changed = [{ api_key: "hidden" }]; } },
