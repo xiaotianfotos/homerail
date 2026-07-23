@@ -779,18 +779,50 @@ spec:
             let stdin = '';
             const fail = (message) => { throw new Error(message); };
             const one = (value) => Array.isArray(value) ? value.at(-1) : undefined;
-            const safeText = (value) => {
+            const entropy = (value) => {
+              const counts = new Map();
+              for (const character of value) counts.set(character, (counts.get(character) || 0) + 1);
+              return [...counts.values()].reduce((total, count) => {
+                const probability = count / value.length;
+                return total - probability * Math.log2(probability);
+              }, 0);
+            };
+            const isObviousPlaceholder = (value) => {
+              if (value.length > 64) return false;
+              // A marker alone is too broad: require a bounded, low-entropy value as well.
+              const markers = new Set(['test', 'fake', 'dummy', 'example', 'placeholder', 'redacted', 'changeme', 'sample', 'fixture', 'mock']);
+              const tokens = value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+              return tokens.some((token) => markers.has(token)) && entropy(value) <= 3.5;
+            };
+            const patchLocation = (value, index) => {
+              const preceding = value.slice(0, index).split('\n');
+              let file;
+              for (const line of preceding) {
+                const match = /^diff --git a\/.+ b\/(.+)$/.exec(line);
+                if (match) file = match[1];
+              }
+              return file ? ' (' + file + ', patch line ' + preceding.length + ')' : '';
+            };
+            const safeText = (value, source) => {
               const forbidden = [
-                /[A-Za-z]:\\(?:Users|Documents and Settings)\\/i,
-                /\/(?:Users|home|vol[0-9]*|mnt)\//,
-                /\b(?:10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(?:1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b/,
-                /-----BEGIN [A-Z ]+PRIVATE KEY-----/,
-                /\b(?:api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/i,
-                /\bgh[opsu]_[A-Za-z0-9]{20,}\b/,
+                ['a local Windows path', /[A-Za-z]:\\(?:Users|Documents and Settings)\\/i],
+                ['a local Unix path', /\/(?:Users|home|vol[0-9]*|mnt)\//],
+                ['a private network address', /\b(?:10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(?:1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b/],
+                ['private key material', /-----BEGIN [A-Z ]+PRIVATE KEY-----/],
+                ['a GitHub token', /\bgh[opsu]_[A-Za-z0-9]{20,}\b/],
               ];
-              if (forbidden.some((pattern) => pattern.test(value))) fail('publication contains local or credential material');
+              for (const [category, pattern] of forbidden) {
+                const match = pattern.exec(value);
+                if (match) fail('publication ' + source + patchLocation(value, match.index) + ' contains ' + category);
+              }
+              const credentialAssignment = /\b(api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["']?([A-Za-z0-9_./+=-]{12,})/gi;
+              for (const match of value.matchAll(credentialAssignment)) {
+                if (!isObviousPlaceholder(match[2])) {
+                  fail('publication ' + source + patchLocation(value, match.index) + ' contains credential-like ' + match[1].toLowerCase() + ' assignment');
+                }
+              }
               const emails = value.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi) || [];
-              if (!emails.every((email) => /@users\.noreply\.github\.com$/i.test(email))) fail('publication contains a non-noreply email');
+              if (!emails.every((email) => /@users\.noreply\.github\.com$/i.test(email))) fail('publication ' + source + ' contains a non-noreply email');
             };
             process.stdin.on('data', (chunk) => { stdin += chunk; }).on('end', () => {
               const inputs = JSON.parse(stdin);
@@ -803,8 +835,8 @@ spec:
               if (!arbitration || arbitration.verdict !== 'approve') fail('approved Arbitration input is required');
               if (!summary || typeof summary.review_summary !== 'string' || typeof summary.markdown !== 'string') fail('PublicationSummary input is invalid');
               if (!summary.markdown.includes('#' + issue.issue) || !summary.markdown.includes(issue.revision)) fail('publication markdown must contain issue number and base revision');
-              safeText(JSON.stringify(summary));
-              safeText(patch.patch);
+              safeText(JSON.stringify(summary), 'summary');
+              safeText(patch.patch, 'patch');
               const result = {
                 status: 'ready', repo: issue.repo, issue: issue.issue, revision: issue.revision,
                 patch: patch.patch, explanation: patch.explanation, files_changed: patch.files_changed,
