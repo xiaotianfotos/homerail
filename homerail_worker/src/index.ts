@@ -219,6 +219,9 @@ client.on("task", async (msg) => {
         allowed_builtin_tools: Array.isArray(envelope.allowedBuiltinTools)
           ? envelope.allowedBuiltinTools as AgentBuiltinToolName[]
           : undefined,
+        max_builtin_tool_calls: typeof envelope.maxBuiltinToolCalls === "number"
+          ? envelope.maxBuiltinToolCalls
+          : undefined,
         allowed_dag_tools: Array.isArray(envelope.allowedDagTools)
           ? envelope.allowedDagTools as DagAgentToolName[]
           : undefined,

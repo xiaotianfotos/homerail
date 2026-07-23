@@ -343,7 +343,8 @@ spec:
         is still wrong; do not rebuild a correct candidate from scratch. If the
         trusted validation feedback reports passing focused checks and neither
         it nor the investigation identifies a remaining defect, do not rerun
-        package suites or production builds and do not rewrite files. Use at
+        package suites or production builds, do not install dependencies, do
+        not modify any lockfile, and do not rewrite files. Use at
         most 16 total built-in tool calls to verify the applied delta, then
         hand off status=fixed so the deterministic collector preserves it. If
         feedback names a failure, run only the smallest check that exercises
@@ -629,6 +630,7 @@ spec:
     investigate:
       kind: agent
       agent: investigator
+      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
@@ -651,6 +653,7 @@ spec:
     implement:
       kind: agent
       agent: implementer
+      max_builtin_tool_calls: 60
       allowed_builtin_tools: [Bash, Read, Write, Edit, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [source] }
@@ -820,6 +823,7 @@ spec:
     review_correctness_initial:
       kind: agent
       agent: correctness_reviewer
+      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
@@ -829,6 +833,7 @@ spec:
     review_regression_initial:
       kind: agent
       agent: regression_reviewer
+      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
@@ -838,6 +843,7 @@ spec:
     review_adversarial_initial:
       kind: agent
       agent: adversarial_reviewer
+      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
@@ -893,6 +899,7 @@ spec:
     revise:
       kind: agent
       agent: reviser
+      max_builtin_tool_calls: 60
       allowed_builtin_tools: [Bash, Read, Write, Edit, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [source] }
@@ -1077,6 +1084,7 @@ spec:
     arbitrate:
       kind: agent
       agent: arbiter
+      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }

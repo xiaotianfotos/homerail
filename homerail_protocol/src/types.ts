@@ -622,6 +622,8 @@ export interface DagNodeConfig {
   workspace_access?: DagWorkspaceAccess;
   /** Optional exact allowlist for backend-provided shell and file tools. */
   allowed_builtin_tools?: AgentBuiltinToolName[];
+  /** Hard per-turn budget for backend-provided tools; DAG handoff tools remain available. */
+  max_builtin_tool_calls?: number;
   /** Optional exact allowlist for HomeRail DAG tools. */
   allowed_dag_tools?: DagAgentToolName[];
 }

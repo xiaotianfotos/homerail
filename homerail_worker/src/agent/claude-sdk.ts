@@ -27,6 +27,7 @@ import {
 } from "./json-schema-zod.js";
 import { sanitizedAgentChildEnv } from "./child-env.js";
 import { createWorkspaceReadToolHook } from "./workspace-read-policy.js";
+import { createBuiltinToolBudgetHook } from "./builtin-tool-budget.js";
 
 const HANDOFF_ONLY_THINKING_BUDGET = 2048;
 const HANDOFF_STOP = Symbol("claude-sdk-handoff-stop");
@@ -499,6 +500,21 @@ export class ClaudeSdkAdapter implements AgentClient {
       const workspaceReadToolHook = context.workspace && context.workspaceAccess
         ? createWorkspaceReadToolHook(context.workspace, context.workspaceAccess)
         : undefined;
+      const builtinToolBudgetHook = context.maxBuiltinToolCalls !== undefined
+        ? createBuiltinToolBudgetHook(context.maxBuiltinToolCalls)
+        : undefined;
+      const preToolUseHook = workspaceReadToolHook || builtinToolBudgetHook
+        ? async (...args: Parameters<NonNullable<typeof workspaceReadToolHook>>) => {
+            if (builtinToolBudgetHook) {
+              const budgetResult = await builtinToolBudgetHook(...args);
+              const permissionDecision = (budgetResult as {
+                hookSpecificOutput?: { permissionDecision?: string };
+              }).hookSpecificOutput?.permissionDecision;
+              if (permissionDecision === "deny") return budgetResult;
+            }
+            return workspaceReadToolHook ? workspaceReadToolHook(...args) : { continue: true };
+          }
+        : undefined;
       skillRuntime = prepareClaudeSkillProjection(context);
       const options: Record<string, unknown> = {
         model: effectiveModel,
@@ -517,8 +533,8 @@ export class ClaudeSdkAdapter implements AgentClient {
         settingSources: skillRuntime?.skillCount ? ["user"] : [],
         skills: skillRuntime?.skillCount ? "all" : [],
         strictMcpConfig: true,
-        ...(workspaceReadToolHook
-          ? { hooks: { PreToolUse: [{ hooks: [workspaceReadToolHook] }] } }
+        ...(preToolUseHook
+          ? { hooks: { PreToolUse: [{ hooks: [preToolUseHook] }] } }
           : {}),
       };
       const nativeSessionId = persistentClaudeSessionId(context);

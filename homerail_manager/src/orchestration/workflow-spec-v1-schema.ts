@@ -167,6 +167,11 @@ const AgentNode = Type.Object({
     maxItems: AGENT_BUILTIN_TOOL_NAMES.length,
     description: "Exact allowlist for backend-provided shell and file tools; an empty list disables them.",
   })),
+  max_builtin_tool_calls: Type.Optional(Type.Integer({
+    minimum: 1,
+    maximum: 100_000,
+    description: "Per-node hard budget for backend-provided tools. HomeRail DAG tools remain available for final handoff.",
+  })),
   allowed_dag_tools: Type.Optional(Type.Array(DagAgentToolName, {
     uniqueItems: true,
     maxItems: DAG_AGENT_TOOL_NAMES.length,

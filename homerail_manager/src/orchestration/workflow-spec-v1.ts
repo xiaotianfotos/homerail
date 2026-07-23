@@ -751,6 +751,9 @@ function canonicalNode(id: string, node: WorkflowSpecV1Node): CanonicalNode {
       ...(node.allowed_builtin_tools !== undefined
         ? { allowed_builtin_tools: [...node.allowed_builtin_tools].sort() }
         : {}),
+      ...(node.max_builtin_tool_calls !== undefined
+        ? { max_builtin_tool_calls: node.max_builtin_tool_calls }
+        : {}),
       ...(node.allowed_dag_tools !== undefined
         ? { allowed_dag_tools: [...node.allowed_dag_tools].sort() }
         : {}),
@@ -1429,6 +1432,9 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
       ...(node.config?.workspace_access ? { workspace_access: node.config.workspace_access } : {}),
       ...(Array.isArray(node.config?.allowed_builtin_tools)
         ? { allowed_builtin_tools: node.config.allowed_builtin_tools }
+        : {}),
+      ...(typeof node.config?.max_builtin_tool_calls === "number"
+        ? { max_builtin_tool_calls: node.config.max_builtin_tool_calls }
         : {}),
       ...(Array.isArray(node.config?.allowed_dag_tools)
         ? { allowed_dag_tools: node.config.allowed_dag_tools }

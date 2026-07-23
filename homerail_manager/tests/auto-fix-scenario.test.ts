@@ -161,7 +161,11 @@ describe("Auto Fix scenario asset", () => {
       expect(node?.config.workspace_access).toMatchObject({ readonly_paths: ["source"] });
       expect(node?.config.workspace_access?.writable_paths).not.toContain("source");
       expect(node?.config.allowed_builtin_tools).toEqual(["Glob", "Grep", "Read"]);
+      expect(node?.config.max_builtin_tool_calls).toBe(40);
     }
+    expect(canonical.nodes.find((node) => node.id === "investigate")?.config.max_builtin_tool_calls).toBe(40);
+    expect(canonical.nodes.find((node) => node.id === "implement")?.config.max_builtin_tool_calls).toBe(60);
+    expect(canonical.nodes.find((node) => node.id === "revise")?.config.max_builtin_tool_calls).toBe(60);
     for (const agentId of [
       "correctness_reviewer",
       "regression_reviewer",
