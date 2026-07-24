@@ -44,7 +44,8 @@ docker run --rm \
   --memory "${HOMERAIL_AUTO_FIX_MEMORY_LIMIT:-8g}" \
   --cpus "${HOMERAIL_AUTO_FIX_CPU_LIMIT:-8}" \
   --tmpfs /tmp:rw,nosuid,nodev,size=2g \
-  -e HOME=/tmp/home \
+  --tmpfs "/home/homerail:rw,nosuid,nodev,size=512m,uid=$(id -u),gid=$(id -g),mode=0700" \
+  -e HOME=/home/homerail \
   -e CI=1 \
   -v "$VALIDATION_CHECKOUT:/workspace" \
   -w /workspace \
@@ -64,7 +65,8 @@ docker run --rm \
   --memory "${HOMERAIL_AUTO_FIX_MEMORY_LIMIT:-8g}" \
   --cpus "${HOMERAIL_AUTO_FIX_CPU_LIMIT:-8}" \
   --tmpfs /tmp:rw,nosuid,nodev,exec,size=2g \
-  -e HOME=/tmp/home \
+  --tmpfs "/home/homerail:rw,nosuid,nodev,size=512m,uid=$(id -u),gid=$(id -g),mode=0700" \
+  -e HOME=/home/homerail \
   -e CI=1 \
   -e NPM_CONFIG_OFFLINE=true \
   -v "$VALIDATION_CHECKOUT:/workspace" \

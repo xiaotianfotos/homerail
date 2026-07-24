@@ -55,6 +55,13 @@ test("Auto Fix validation installs trusted dependencies before applying the patc
   );
   assert.match(
     source,
+    /--tmpfs "\/home\/homerail:rw,nosuid,nodev,size=512m,uid=\$\(id -u\),gid=\$\(id -g\),mode=0700"/,
+    "the container Home must be isolated but remain outside the temporary root tested by Manager",
+  );
+  assert.match(source, /-e HOME=\/home\/homerail/);
+  assert.doesNotMatch(source, /-e HOME=\/tmp\//);
+  assert.match(
+    source,
     /mcr\.microsoft\.com\/playwright:v1\.57\.0-noble@sha256:[0-9a-f]{64}/,
     "validator image must pin the Chromium version required by the trusted base",
   );
