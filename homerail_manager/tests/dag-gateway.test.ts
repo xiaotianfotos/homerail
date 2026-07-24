@@ -565,6 +565,98 @@ nodes:
     expect(getActiveRun("run-multi-node-loop")?.dagRun.nodeStates.get("measure")).toBe("READY");
   });
 
+  it("preserves external inputs when a feedback loop selects a previously skipped condition branch", () => {
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: feedback-condition-external-input, name: Feedback condition external input }
+spec:
+  agents:
+    worker: { system: Return the requested state. }
+  nodes:
+    seed:
+      kind: agent
+      agent: worker
+      outputs: { state: {} }
+    cycle:
+      kind: while
+      inputs: { state: {} }
+      outputs: { continue: {}, approved: {}, exhausted: {} }
+      config:
+        field: status
+        operator: eq
+        value: approved
+        continue_port: continue
+        done_port: approved
+        exhausted_port: exhausted
+        max_iterations: 3
+    phase:
+      kind: condition
+      inputs: { state: {} }
+      outputs: { review: {}, revise: {} }
+      config:
+        field: input.phase
+        routes: { review: review, revise: revise }
+        default: review
+    review:
+      kind: agent
+      agent: worker
+      depends_on: [cycle]
+      inputs: { state: {} }
+      outputs: { next: {} }
+    revise:
+      kind: agent
+      agent: worker
+      depends_on: [cycle]
+      inputs: { state: {}, issue: {} }
+      outputs: { next: {} }
+    done:
+      kind: terminal
+      outcome: success
+      inputs: { result: {} }
+    exhausted:
+      kind: terminal
+      outcome: failure
+      inputs: { result: {} }
+  edges:
+    - { from: seed.state, to: cycle.state }
+    - { from: seed.state, to: revise.issue }
+    - { from: cycle.continue, to: phase.state }
+    - { from: phase.review, to: review.state }
+    - { from: phase.revise, to: revise.state }
+    - kind: feedback
+      from: review.next
+      to: cycle.state
+      max_traversals: 3
+    - kind: feedback
+      from: revise.next
+      to: cycle.state
+      max_traversals: 3
+    - { from: cycle.approved, to: done.result }
+    - { from: cycle.exhausted, to: exhausted.result }
+`);
+    createActiveRun("run-feedback-condition-external-input", parsed);
+    const dispatcher = new CollectingDispatcher();
+    const initial = { status: "reviewing", phase: "review", issue: 92 };
+
+    handoffActiveRun("run-feedback-condition-external-input", "seed", "state", initial);
+    expect(dispatchReadyNodes("run-feedback-condition-external-input", dispatcher)).toBe(1);
+    expect(dispatchReadyNodes("run-feedback-condition-external-input", dispatcher)).toBe(1);
+    expect(getActiveRun("run-feedback-condition-external-input")?.dagRun.nodeStates.get("review")).toBe("READY");
+    expect(getActiveRun("run-feedback-condition-external-input")?.dagRun.nodeStates.get("revise")).toBe("SKIPPED");
+
+    handoffActiveRun("run-feedback-condition-external-input", "review", "next", {
+      ...initial,
+      phase: "revise",
+    });
+    expect(dispatchReadyNodes("run-feedback-condition-external-input", dispatcher)).toBe(1);
+    expect(dispatchReadyNodes("run-feedback-condition-external-input", dispatcher)).toBe(1);
+
+    const run = getActiveRun("run-feedback-condition-external-input");
+    expect(run?.dagRun.nodeStates.get("revise")).toBe("READY");
+    expect(run?.dagRun.mailboxes.get("revise")?.get("issue")).toEqual([initial]);
+  });
+
   it("aggregates n-of-m join inputs and opens the passing branch", () => {
     const parsed = parseDAGYaml(joinGatewayYaml());
     createActiveRun("run-join-passed", parsed);

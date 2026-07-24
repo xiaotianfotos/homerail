@@ -327,31 +327,52 @@ function _resetLoopBodyDescendants(run: DAGRun, loopNodeId: string, entryNodeId:
     .filter((edge) => edge.from_node === entryNodeId && edge.label !== "after_dep" && edge.to_node !== loopNodeId)
     .map((edge) => edge.to_node)
     .filter(Boolean);
-  const visited = new Set<string>();
+  const descendants = new Set<string>();
   while (pending.length > 0) {
     const nodeId = pending.pop()!;
-    if (nodeId === loopNodeId || visited.has(nodeId)) continue;
-    visited.add(nodeId);
-    run.nodeStates.set(nodeId, "PENDING");
-    run.handoffedNodes.delete(nodeId);
-    const previousAfter = run.afterSatisfied.get(nodeId) ?? new Set<string>();
-    run.afterSatisfied.set(nodeId, new Set(previousAfter.has(loopNodeId) ? [loopNodeId] : []));
-    const directLoopEdges = run.graph.edges.filter((edge) =>
-      edge.from_node === loopNodeId && edge.to_node === nodeId && edge.label !== "after_dep"
-    );
-    const previousMailbox = run.mailboxes.get(nodeId);
-    const preservedMailbox = new Map<string, unknown[]>();
-    for (const edge of directLoopEdges) {
-      const values = previousMailbox?.get(edge.to_port) ?? [];
-      if (values.length > 0) preservedMailbox.set(edge.to_port, [values[values.length - 1]]);
-    }
-    run.inputSatisfied.set(nodeId, new Set(preservedMailbox.size > 0 ? [loopNodeId] : []));
-    run.mailboxes.set(nodeId, preservedMailbox);
+    if (nodeId === loopNodeId || descendants.has(nodeId)) continue;
+    descendants.add(nodeId);
     for (const edge of run.graph.edges) {
       if (edge.from_node === nodeId && edge.label !== "after_dep" && edge.to_node && edge.to_node !== loopNodeId) {
         pending.push(edge.to_node);
       }
     }
+  }
+
+  const bodyNodes = new Set([entryNodeId, ...descendants]);
+  for (const nodeId of descendants) {
+    const previousAfter = run.afterSatisfied.get(nodeId) ?? new Set<string>();
+    const previousInputs = run.inputSatisfied.get(nodeId) ?? new Set<string>();
+    const previousMailbox = run.mailboxes.get(nodeId) ?? new Map<string, unknown[]>();
+
+    run.nodeStates.set(nodeId, "PENDING");
+    run.handoffedNodes.delete(nodeId);
+    run.afterSatisfied.set(nodeId, new Set(
+      Array.from(previousAfter).filter((sourceNodeId) =>
+        sourceNodeId === loopNodeId || !bodyNodes.has(sourceNodeId)
+      ),
+    ));
+
+    const preservedInputs = new Set<string>();
+    const preservedMailbox = new Map<string, unknown[]>();
+    const preservedEdges = run.graph.edges.filter((edge) =>
+      edge.to_node === nodeId
+      && edge.label !== "after_dep"
+      && (edge.from_node === loopNodeId || !bodyNodes.has(edge.from_node))
+      && previousInputs.has(edge.from_node)
+    );
+    for (const edge of preservedEdges) {
+      const values = previousMailbox.get(edge.to_port) ?? [];
+      if (values.length === 0) continue;
+      preservedInputs.add(edge.from_node);
+      if (preservedMailbox.has(edge.to_port)) continue;
+      preservedMailbox.set(
+        edge.to_port,
+        edge.from_node === loopNodeId ? [values[values.length - 1]] : [...values],
+      );
+    }
+    run.inputSatisfied.set(nodeId, preservedInputs);
+    run.mailboxes.set(nodeId, preservedMailbox);
   }
 }
 
