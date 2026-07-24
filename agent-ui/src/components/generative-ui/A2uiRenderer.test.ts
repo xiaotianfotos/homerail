@@ -243,7 +243,44 @@ describe('A2uiRenderer', () => {
     expect(artifact?.children).toHaveLength(1)
     expect(rendererSource).toContain('height: 100%;')
     expect(rendererSource).toContain('.homerail-a2ui > div.hr-a2ui__artifact { height: 100%; }')
-    expect(rendererSource).toContain('.homerail-a2ui > div.hr-a2ui__artifact > iframe { pointer-events: auto; }')
+    expect(rendererSource).toContain('.homerail-a2ui > div.hr-a2ui__artifact > iframe,')
+    expect(rendererSource).toContain('pointer-events: auto;')
+  })
+
+  it('lets one HTML Artifact nested below root content fill the remaining canvas height', () => {
+    const mounted = mount(surface([
+      { id: 'root', component: 'Column', children: ['title', 'preview'] },
+      { id: 'title', component: 'Text', text: 'Beijing weather · 5 day forecast' },
+      {
+        id: 'preview', component: 'HrArtifact', kind: 'html',
+        uri: '/api/voice-agent/sessions/session-one/artifacts/by-id/weather/preview',
+        title: 'Weather card',
+      },
+    ]))
+
+    const column = mounted.querySelector<HTMLElement>('.homerail-a2ui > .hr-a2ui__column')
+    const artifact = column?.querySelector<HTMLElement>(':scope > div.hr-a2ui__artifact')
+    expect(column?.dataset.fillHtmlArtifact).toBe('preview')
+    expect(artifact?.dataset.artifactKind).toBe('html')
+    expect(artifact?.querySelector('iframe')).toBeTruthy()
+    expect(rendererSource).toContain('.homerail-a2ui > .hr-a2ui__column[data-fill-html-artifact]')
+    expect(rendererSource).toContain("div.hr-a2ui__artifact[data-artifact-kind='html']")
+  })
+
+  it('does not promote multiple nested HTML Artifacts into one primary preview', () => {
+    const mounted = mount(surface([
+      { id: 'root', component: 'Column', children: ['first', 'second'] },
+      {
+        id: 'first', component: 'HrArtifact', kind: 'html',
+        uri: '/api/voice-agent/sessions/session-one/artifacts/by-id/first/preview',
+      },
+      {
+        id: 'second', component: 'HrArtifact', kind: 'html',
+        uri: '/api/voice-agent/sessions/session-one/artifacts/by-id/second/preview',
+      },
+    ]))
+
+    expect(mounted.querySelector('.homerail-a2ui > .hr-a2ui__column')?.hasAttribute('data-fill-html-artifact')).toBe(false)
   })
 
   it('renders passive Actor media, metrics, comparisons, timelines, and routes without active controls', () => {
