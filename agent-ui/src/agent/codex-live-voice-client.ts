@@ -240,12 +240,14 @@ export class CodexLiveVoiceClient {
     let transportReady = false
     peer.addEventListener('connectionstatechange', () => {
       if (this.peer !== peer || this.stopped) return
-      if (peer.connectionState === 'connected') {
-        if (this.reconnectTimer !== null) {
-          window.clearTimeout(this.reconnectTimer)
-          this.reconnectTimer = null
-        }
-        this.reconnectAttempts = 0
+      if (
+        transportReady
+        && peer.connectionState === 'connected'
+        && this.reconnectTimer !== null
+      ) {
+        window.clearTimeout(this.reconnectTimer)
+        this.reconnectTimer = null
+        this.setActivityState('listening')
       }
       if (transportReady && peer.connectionState === 'disconnected') {
         this.scheduleReconnect(new Error('WebRTC connection was interrupted'), 1_500)
@@ -390,11 +392,16 @@ export class CodexLiveVoiceClient {
     } else if (message.type === 'transcript.done') {
       this.setActivityState('listening')
     } else if (message.type === 'session.error') {
-      this.fail(new Error(
+      const error = new Error(
         typeof message.message === 'string'
           ? message.message
           : 'Live Voice encountered an error',
-      ), false)
+      )
+      if (message.recoverable === true) {
+        this.setActivityState('listening')
+      } else {
+        await this.failAndStop(error, false)
+      }
     } else if (message.type === 'session.closed') {
       if (!this.stopped) this.scheduleReconnect(new Error('Live Voice session closed'), 0)
     }
@@ -409,27 +416,38 @@ export class CodexLiveVoiceClient {
     return false
   }
 
-  private fail(error: Error, emitEvent = true): void {
-    if (this.remoteDescription) {
-      window.clearTimeout(this.remoteDescription.timer)
-      this.remoteDescription.reject(error)
-      this.remoteDescription = null
+  private async failAndStop(error: Error, emitEvent = true): Promise<void> {
+    if (!this.stopped) {
+      this.stopped = true
+      this.connectionGeneration += 1
+      this.clearReconnectTimer()
+      if (this.remoteDescription) {
+        window.clearTimeout(this.remoteDescription.timer)
+        this.remoteDescription.reject(error)
+        this.remoteDescription = null
+      }
+      await this.cleanupTransport()
     }
     this.setState('error')
-    if (emitEvent) this.options.onEvent?.({ type: 'session.error', message: error.message })
+    if (emitEvent) {
+      this.options.onEvent?.({
+        type: 'session.error',
+        message: error.message,
+        recoverable: false,
+      })
+    }
   }
 
   private scheduleReconnect(error: Error, delayMs: number): void {
     if (this.stopped || this.reconnectTimer !== null) return
-    if (this.reconnectAttempts >= 3) {
-      this.fail(error)
-      void this.cleanupTransport()
-      return
-    }
-    this.reconnectAttempts += 1
     this.setState('reconnecting')
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null
+      if (this.reconnectAttempts >= 3) {
+        void this.failAndStop(error)
+        return
+      }
+      this.reconnectAttempts += 1
       const generation = ++this.connectionGeneration
       void this.cleanupTransport()
         .then(() => this.connect(true, generation))

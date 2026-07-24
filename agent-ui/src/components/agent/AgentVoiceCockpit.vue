@@ -3834,6 +3834,10 @@ function handleCodexLiveVoiceEvent(event: CodexLiveVoiceEvent): void {
     error.value = typeof event.message === 'string'
       ? event.message
       : t('voice.liveVoice.error')
+    if (event.recoverable !== true) {
+      stopCodexLiveVoiceMeter()
+      codexLiveVoiceMuted.value = false
+    }
     return
   }
 

@@ -21,7 +21,7 @@ export type CodexLiveVoiceRuntimeEvent =
   | { type: "manager.progress"; text: string }
   | { type: "manager.turn.completed"; status?: string }
   | { type: "manager.tool"; name: string; status: "started" | "completed" | "failed" }
-  | { type: "session.error"; message: string }
+  | { type: "session.error"; message: string; recoverable: false }
   | { type: "session.closed"; reason?: string };
 
 export interface CodexLiveVoiceInitialItem {
@@ -370,6 +370,7 @@ export class CodexLiveVoiceRuntime {
             this.options.onEvent({
               type: "session.error",
               message: "HomeRail Manager tools or permissions changed. Reconnect Live Voice to continue.",
+              recoverable: false,
             });
             await this.stop();
             break;
@@ -427,7 +428,11 @@ export class CodexLiveVoiceRuntime {
           this.answerSdp.reject(new Error(errorMessage));
           this.answerSdp = undefined;
         }
-        this.options.onEvent({ type: "session.error", message: errorMessage });
+        this.options.onEvent({
+          type: "session.error",
+          message: errorMessage,
+          recoverable: false,
+        });
         break;
       }
       case "thread/realtime/closed": {
@@ -456,6 +461,7 @@ export class CodexLiveVoiceRuntime {
       this.options.onEvent({
         type: "session.error",
         message: message || "Codex Live Voice message handling failed",
+        recoverable: false,
       });
     } catch {
       // A consumer callback must not turn recovery into another unhandled rejection.

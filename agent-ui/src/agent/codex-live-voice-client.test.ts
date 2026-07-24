@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CodexLiveVoiceClient,
+  type CodexLiveVoiceEvent,
   type CodexLiveVoiceState,
 } from './codex-live-voice-client'
 
@@ -126,6 +127,17 @@ class AlreadyFailedPeer extends FakePeer {
   override async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
     this.remoteDescription = description
     this.connectionState = 'failed'
+  }
+}
+
+class ConnectedWithoutDataChannelPeer extends FakePeer {
+  constructor() {
+    super(false)
+  }
+
+  override async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
+    this.remoteDescription = description
+    this.connectPeer()
   }
 }
 
@@ -458,6 +470,118 @@ describe('CodexLiveVoiceClient', () => {
     await client.stop()
   })
 
+  it('releases the microphone and transport after a fatal session error', async () => {
+    const socket = new FakeSocket()
+    const peer = new FakePeer()
+    const { stream, track } = fakeMedia()
+    const events: CodexLiveVoiceEvent[] = []
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-fatal-session-error',
+      ticketProvider: async () => ({ ticket: 'single-use-ticket' }),
+      webSocketFactory: () => {
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => peer as unknown as RTCPeerConnection,
+      getUserMedia: async () => stream,
+      audioFactory: fakeAudio,
+      onEvent: event => events.push(event),
+    })
+    await client.start()
+
+    socket.message({
+      type: 'session.error',
+      message: 'Realtime access was revoked',
+      recoverable: false,
+    })
+    await vi.waitFor(() => expect(client.currentState).toBe('error'))
+
+    expect(track.stop).toHaveBeenCalledTimes(1)
+    expect(peer.closed).toBe(true)
+    expect(socket.readyState).toBe(WebSocket.CLOSED)
+    expect(events).toContainEqual({
+      type: 'session.error',
+      message: 'Realtime access was revoked',
+      recoverable: false,
+    })
+  })
+
+  it('keeps listening after an explicitly recoverable session error', async () => {
+    const socket = new FakeSocket()
+    const peer = new FakePeer()
+    const { stream, track } = fakeMedia()
+    const events: CodexLiveVoiceEvent[] = []
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-recoverable-session-error',
+      ticketProvider: async () => ({ ticket: 'single-use-ticket' }),
+      webSocketFactory: () => {
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => peer as unknown as RTCPeerConnection,
+      getUserMedia: async () => stream,
+      audioFactory: fakeAudio,
+      onEvent: event => events.push(event),
+    })
+    await client.start()
+
+    socket.message({
+      type: 'session.error',
+      message: 'Invalid Live Voice text input',
+      recoverable: true,
+    })
+    await vi.waitFor(() => expect(events).toHaveLength(3))
+
+    expect(client.currentState).toBe('listening')
+    expect(track.stop).not.toHaveBeenCalled()
+    expect(peer.closed).toBe(false)
+    expect(socket.readyState).toBe(WebSocket.OPEN)
+
+    await client.stop()
+  })
+
+  it('exhausts reconnects when WebRTC connects but the data channel never opens', async () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const peers: FakePeer[] = []
+    const tracks: MediaStreamTrack[] = []
+    const ticketProvider = vi.fn(async () => ({ ticket: `ticket-${sockets.length + 1}` }))
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-partial-reconnect-exhausted',
+      ticketProvider,
+      webSocketFactory: () => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => {
+        const peer = peers.length === 0
+          ? new FakePeer()
+          : new ConnectedWithoutDataChannelPeer()
+        peers.push(peer)
+        return peer as unknown as RTCPeerConnection
+      },
+      getUserMedia: async () => {
+        const { stream, track } = fakeMedia()
+        tracks.push(track)
+        return stream
+      },
+      audioFactory: fakeAudio,
+    })
+    await client.start()
+
+    peers[0].fail()
+    await vi.runAllTimersAsync()
+    await vi.waitFor(() => expect(client.currentState).toBe('error'))
+
+    expect(ticketProvider).toHaveBeenCalledTimes(4)
+    expect(peers).toHaveLength(4)
+    expect(peers.every(peer => peer.closed)).toBe(true)
+    expect(tracks.every(track => vi.mocked(track.stop).mock.calls.length === 1)).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('stops retrying and cleans every transport after three reconnect failures', async () => {
     vi.useFakeTimers()
     const sockets: FakeSocket[] = []
@@ -503,6 +627,7 @@ describe('CodexLiveVoiceClient', () => {
     expect(events).toContainEqual({
       type: 'session.error',
       message: 'ticket service unavailable',
+      recoverable: false,
     })
     expect(vi.getTimerCount()).toBe(0)
   })

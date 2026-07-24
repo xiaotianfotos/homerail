@@ -160,6 +160,36 @@ describe("Codex Live Voice ticket and Origin boundary", () => {
     await expect(idleClosed).resolves.toBe(4401);
   });
 
+  it("marks input errors recoverable and impossible session state fatal", async () => {
+    server = ticketServer();
+    const port = await listen(server);
+    const response = await issueTicket(port, "voice-error-classification");
+    const body = await response.json() as { data: { ticket: string } };
+    const socket = await openTrustedSocket(port, "voice-error-classification");
+    sockets.push(socket);
+
+    let responsePromise = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "authenticate", ticket: body.data.ticket }));
+    await expect(responsePromise).resolves.toMatchObject({ type: "ready" });
+
+    responsePromise = nextMessage(socket);
+    socket.send("{invalid-json");
+    await expect(responsePromise).resolves.toEqual({
+      type: "session.error",
+      message: "Invalid Live Voice message",
+      recoverable: true,
+    });
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+
+    responsePromise = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "text", text: "not started" }));
+    await expect(responsePromise).resolves.toEqual({
+      type: "session.error",
+      message: "Live Voice is not started",
+      recoverable: false,
+    });
+  });
+
   it("rejects a WebSocket from an untrusted Origin before authentication", async () => {
     server = http.createServer();
     setupCodexLiveVoiceWebSocket(server, {

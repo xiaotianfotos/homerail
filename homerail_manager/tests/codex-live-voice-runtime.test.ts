@@ -211,6 +211,7 @@ describe("CodexLiveVoiceRuntime", () => {
     expect(events).toContainEqual({
       type: "session.error",
       message: "Realtime is unavailable for this account",
+      recoverable: false,
     });
     expect(fake.closed).toBe(true);
   });
@@ -243,6 +244,7 @@ describe("CodexLiveVoiceRuntime", () => {
     expect(events).toContainEqual({
       type: "session.error",
       message: "HomeRail Manager tools or permissions changed. Reconnect Live Voice to continue.",
+      recoverable: false,
     });
     expect(events.some(event => event.type === "handoff")).toBe(false);
   });
@@ -277,6 +279,7 @@ describe("CodexLiveVoiceRuntime", () => {
     expect(events).toContainEqual({
       type: "session.error",
       message: "tool permission snapshot is unavailable",
+      recoverable: false,
     });
     expect(events.some(event => event.type === "handoff")).toBe(false);
   });

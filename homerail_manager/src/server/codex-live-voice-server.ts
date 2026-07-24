@@ -163,6 +163,14 @@ function send(socket: WebSocket, message: Record<string, unknown>): void {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
 }
 
+function sendSessionError(
+  socket: WebSocket,
+  message: string,
+  recoverable = false,
+): void {
+  send(socket, { type: "session.error", message, recoverable });
+}
+
 function rawDataByteLength(raw: RawData): number {
   if (Array.isArray(raw)) return raw.reduce((total, chunk) => total + chunk.byteLength, 0);
   return raw.byteLength;
@@ -257,7 +265,7 @@ export function setupCodexLiveVoiceWebSocket(
           if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
           message = parsed as Record<string, unknown>;
         } catch {
-          send(socket, { type: "session.error", message: "Invalid Live Voice message" });
+          sendSessionError(socket, "Invalid Live Voice message", true);
           return;
         }
         const type = String(message.type ?? "");
@@ -277,19 +285,16 @@ export function setupCodexLiveVoiceWebSocket(
 
         if (type === "start") {
           if (runtime) {
-            send(socket, { type: "session.error", message: "Live Voice is already started" });
+            sendSessionError(socket, "Live Voice is already started", true);
             return;
           }
           if (activeSessions.has(sessionId) || pendingSessions.has(sessionId)) {
-            send(socket, {
-              type: "session.error",
-              message: "Another browser already owns this Live Voice session",
-            });
+            sendSessionError(socket, "Another browser already owns this Live Voice session");
             return;
           }
           const sdp = typeof message.sdp === "string" ? message.sdp : "";
           if (!sdp || Buffer.byteLength(sdp, "utf8") > MAX_SDP_BYTES) {
-            send(socket, { type: "session.error", message: "Invalid WebRTC SDP offer" });
+            sendSessionError(socket, "Invalid WebRTC SDP offer");
             return;
           }
           const projectId = typeof message.project_id === "string" ? message.project_id : null;
@@ -303,7 +308,7 @@ export function setupCodexLiveVoiceWebSocket(
               || /[\u0000-\u001f\u007f]/.test(selectedNodeId)
             )
           ) {
-            send(socket, { type: "session.error", message: "Invalid selected canvas node id" });
+            sendSessionError(socket, "Invalid selected canvas node id");
             return;
           }
           pendingSessions.set(sessionId, socket);
@@ -357,19 +362,19 @@ export function setupCodexLiveVoiceWebSocket(
             runtime = undefined;
             const messageText = error instanceof Error ? error.message : String(error);
             binding?.record_error(messageText);
-            send(socket, { type: "session.error", message: messageText });
+            sendSessionError(socket, messageText);
           }
           return;
         }
 
         if (type === "text") {
           if (!runtime || !binding) {
-            send(socket, { type: "session.error", message: "Live Voice is not started" });
+            sendSessionError(socket, "Live Voice is not started");
             return;
           }
           const text = typeof message.text === "string" ? message.text.trim() : "";
           if (!text || Buffer.byteLength(text, "utf8") > MAX_TEXT_BYTES) {
-            send(socket, { type: "session.error", message: "Invalid Live Voice text input" });
+            sendSessionError(socket, "Invalid Live Voice text input", true);
             return;
           }
           const workspace = binding.record_transcript("user", text);
@@ -392,12 +397,12 @@ export function setupCodexLiveVoiceWebSocket(
           return;
         }
 
-        send(socket, { type: "session.error", message: `Unsupported Live Voice message: ${type}` });
+        sendSessionError(socket, `Unsupported Live Voice message: ${type}`, true);
       }).catch((error) => {
-        send(socket, {
-          type: "session.error",
-          message: error instanceof Error ? error.message : String(error),
-        });
+        sendSessionError(
+          socket,
+          error instanceof Error ? error.message : String(error),
+        );
       });
     });
     socket.once("close", () => {
