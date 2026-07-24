@@ -8,6 +8,10 @@ class FakeSocket extends EventTarget {
   readyState = WebSocket.CONNECTING
   sent: Array<Record<string, unknown>> = []
 
+  constructor(private readonly authenticate = true) {
+    super()
+  }
+
   open(): void {
     this.readyState = WebSocket.OPEN
     this.dispatchEvent(new Event('open'))
@@ -17,7 +21,10 @@ class FakeSocket extends EventTarget {
     const message = JSON.parse(raw) as Record<string, unknown>
     this.sent.push(message)
     if (message.type === 'authenticate') {
-      queueMicrotask(() => this.message({ type: 'ready' }))
+      queueMicrotask(() => {
+        if (this.authenticate) this.message({ type: 'ready' })
+        else this.closeWith(4401, 'Live Voice authentication rejected')
+      })
     }
     if (message.type === 'start') {
       queueMicrotask(() => this.message({ type: 'session.sdp', sdp: 'answer-sdp' }))
@@ -29,8 +36,12 @@ class FakeSocket extends EventTarget {
   }
 
   close(): void {
+    this.closeWith(1000)
+  }
+
+  closeWith(code: number, reason = ''): void {
     this.readyState = WebSocket.CLOSED
-    this.dispatchEvent(new CloseEvent('close', { code: 1000 }))
+    this.dispatchEvent(new CloseEvent('close', { code, reason }))
   }
 }
 
@@ -248,6 +259,42 @@ describe('CodexLiveVoiceClient', () => {
     await client.stop()
   })
 
+  it('does not reconnect an abandoned client after initial authentication fails', async () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const peers: FakePeer[] = []
+    const { stream, track } = fakeMedia()
+    const ticketProvider = vi.fn(async () => ({ ticket: 'rejected-ticket' }))
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-initial-auth-failure',
+      ticketProvider,
+      webSocketFactory: () => {
+        const socket = new FakeSocket(false)
+        sockets.push(socket)
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => {
+        const peer = new FakePeer()
+        peers.push(peer)
+        return peer as unknown as RTCPeerConnection
+      },
+      getUserMedia: async () => stream,
+      audioFactory: fakeAudio,
+    })
+
+    await expect(client.start()).rejects.toThrow('Live Voice authentication rejected')
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(client.currentState).toBe('error')
+    expect(ticketProvider).toHaveBeenCalledTimes(1)
+    expect(sockets).toHaveLength(1)
+    expect(peers).toHaveLength(1)
+    expect(peers[0].closed).toBe(true)
+    expect(track.stop).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('fails immediately when WebRTC is already in a terminal state', async () => {
     const socket = new FakeSocket()
     const peer = new AlreadyFailedPeer()
@@ -300,6 +347,114 @@ describe('CodexLiveVoiceClient', () => {
     await vi.waitFor(() => expect(client.currentState).toBe('listening'))
 
     expect(ticketProvider).toHaveBeenCalledTimes(2)
+    await client.stop()
+  })
+
+  it('cancels a pending reconnect when the user stops the session', async () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const peers: FakePeer[] = []
+    const ticketProvider = vi.fn(async () => ({ ticket: `ticket-${sockets.length + 1}` }))
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-stop-before-reconnect',
+      ticketProvider,
+      webSocketFactory: () => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => {
+        const peer = new FakePeer()
+        peers.push(peer)
+        return peer as unknown as RTCPeerConnection
+      },
+      getUserMedia: async () => fakeMedia().stream,
+      audioFactory: fakeAudio,
+    })
+    await client.start()
+
+    peers[0].fail()
+    expect(client.currentState).toBe('reconnecting')
+    await client.stop()
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(client.currentState).toBe('closed')
+    expect(ticketProvider).toHaveBeenCalledTimes(1)
+    expect(sockets).toHaveLength(1)
+    expect(peers).toHaveLength(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('invalidates a reconnect that is already waiting for a fresh ticket', async () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const peers: FakePeer[] = []
+    let resolveReconnectTicket: ((ticket: { ticket: string }) => void) | undefined
+    const ticketProvider = vi.fn(async () => {
+      if (ticketProvider.mock.calls.length === 1) return { ticket: 'initial-ticket' }
+      return new Promise<{ ticket: string }>(resolve => {
+        resolveReconnectTicket = resolve
+      })
+    })
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-stop-during-reconnect',
+      ticketProvider,
+      webSocketFactory: () => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => {
+        const peer = new FakePeer()
+        peers.push(peer)
+        return peer as unknown as RTCPeerConnection
+      },
+      getUserMedia: async () => fakeMedia().stream,
+      audioFactory: fakeAudio,
+    })
+    await client.start()
+
+    peers[0].fail()
+    await vi.advanceTimersByTimeAsync(500)
+    await vi.waitFor(() => expect(ticketProvider).toHaveBeenCalledTimes(2))
+    await client.stop()
+    resolveReconnectTicket?.({ ticket: 'late-ticket' })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(client.currentState).toBe('closed')
+    expect(sockets).toHaveLength(1)
+    expect(peers).toHaveLength(2)
+    expect(peers.every(peer => peer.closed)).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('restores the latest activity state after unmuting', async () => {
+    const socket = new FakeSocket()
+    const peer = new FakePeer()
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-muted-activity',
+      ticketProvider: async () => ({ ticket: 'single-use-ticket' }),
+      webSocketFactory: () => {
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => peer as unknown as RTCPeerConnection,
+      getUserMedia: async () => fakeMedia().stream,
+      audioFactory: fakeAudio,
+    })
+    await client.start()
+
+    socket.message({ type: 'transcript.delta', role: 'assistant', text: 'Working on it' })
+    expect(client.currentState).toBe('assistant-speaking')
+    await client.setMuted(true)
+    socket.message({ type: 'manager.turn.started' })
+    expect(client.currentState).toBe('muted')
+    await client.setMuted(false)
+    expect(client.currentState).toBe('manager-working')
+
     await client.stop()
   })
 

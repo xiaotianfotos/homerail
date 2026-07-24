@@ -402,7 +402,7 @@ export async function requestCodexLiveVoiceTicket(
 }
 
 export function codexLiveVoiceWebSocketUrl(sessionId: string): string {
-  const configured = http.getBaseURL().replace(/\/$/, '')
+  const configured = http.getBaseURL().replace(/\/+$/, '')
   const origin = configured || (typeof window !== 'undefined' ? window.location.origin : '')
   if (!origin) throw new Error('Unable to determine the Live Voice WebSocket URL')
   const wsBase = origin.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')

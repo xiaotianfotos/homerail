@@ -15,6 +15,12 @@ export type CodexLiveVoiceState =
   | 'error'
   | 'closed'
 
+type CodexLiveVoiceActivityState =
+  | 'listening'
+  | 'user-speaking'
+  | 'manager-working'
+  | 'assistant-speaking'
+
 export interface CodexLiveVoiceEvent {
   type: string
   [key: string]: unknown
@@ -127,6 +133,8 @@ export class CodexLiveVoiceClient {
   private stopped = false
   private reconnectAttempts = 0
   private reconnectTimer: number | null = null
+  private connectionGeneration = 0
+  private activityState: CodexLiveVoiceActivityState = 'listening'
   private remoteDescription:
     | { resolve: () => void; reject: (error: Error) => void; timer: number }
     | null = null
@@ -155,10 +163,15 @@ export class CodexLiveVoiceClient {
     }
     this.stopped = false
     this.reconnectAttempts = 0
+    const generation = ++this.connectionGeneration
     this.setState('connecting')
     try {
-      await this.connect(false)
+      await this.connect(false, generation)
     } catch (error) {
+      if (this.stopped) throw error
+      this.stopped = true
+      this.connectionGeneration += 1
+      this.clearReconnectTimer()
       await this.cleanupTransport()
       this.setState('error')
       throw error
@@ -169,7 +182,7 @@ export class CodexLiveVoiceClient {
     this.muted = muted
     for (const track of this.localStream?.getAudioTracks() ?? []) track.enabled = !muted
     this.send({ type: 'mute', muted })
-    this.setState(muted ? 'muted' : 'listening')
+    this.setState(muted ? 'muted' : this.activityState)
   }
 
   async toggleMuted(): Promise<void> {
@@ -186,29 +199,33 @@ export class CodexLiveVoiceClient {
   async stop(notifyServer = true): Promise<void> {
     if (this.stopped) return
     this.stopped = true
-    if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
-    }
+    this.connectionGeneration += 1
+    this.clearReconnectTimer()
     if (notifyServer) this.send({ type: 'stop' })
     await this.cleanupTransport()
     this.setState('closed')
   }
 
-  private async connect(reconnecting: boolean): Promise<void> {
+  private async connect(reconnecting: boolean, generation: number): Promise<void> {
+    this.assertCurrentConnection(generation)
     this.setState(reconnecting ? 'reconnecting' : 'connecting')
     const getUserMedia = this.options.getUserMedia
       ?? (constraints => navigator.mediaDevices.getUserMedia(constraints))
-    this.localStream = await getUserMedia({
+    const localStream = await getUserMedia({
       audio: this.options.audioInputDeviceId
         ? { deviceId: { exact: this.options.audioInputDeviceId } }
         : true,
     })
+    if (!this.isCurrentConnection(generation)) {
+      for (const track of localStream.getTracks()) track.stop()
+      throw new Error('Live Voice connection attempt was superseded')
+    }
+    this.localStream = localStream
     const peer = (this.options.peerConnectionFactory ?? (() => new RTCPeerConnection()))()
     this.peer = peer
-    for (const track of this.localStream.getAudioTracks()) {
+    for (const track of localStream.getAudioTracks()) {
       track.enabled = !this.muted
-      peer.addTrack(track, this.localStream)
+      peer.addTrack(track, localStream)
     }
     const eventsChannel = peer.createDataChannel('oai-events')
     this.remoteAudio = (this.options.audioFactory ?? (() => new Audio()))()
@@ -238,15 +255,20 @@ export class CodexLiveVoiceClient {
       }
     })
     const offer = await peer.createOffer({ offerToReceiveAudio: true })
+    this.assertCurrentConnection(generation, peer)
     await peer.setLocalDescription(offer)
+    this.assertCurrentConnection(generation, peer)
     await waitForIceGathering(peer)
+    this.assertCurrentConnection(generation, peer)
     const sdp = peer.localDescription?.sdp
     if (!sdp) throw new Error('Browser did not create a WebRTC SDP offer')
 
     const ticket = await (this.options.ticketProvider ?? requestCodexLiveVoiceTicket)(
       this.options.sessionId,
     )
+    this.assertCurrentConnection(generation, peer)
     await this.openSocket(ticket.ticket)
+    this.assertCurrentConnection(generation, peer)
     const remotePromise = new Promise<void>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.remoteDescription = null
@@ -261,13 +283,12 @@ export class CodexLiveVoiceClient {
       selected_node_id: this.options.selectedNodeId || null,
     })
     await remotePromise
+    this.assertCurrentConnection(generation, peer)
     await waitForRealtimeTransport(peer, eventsChannel)
-    if (this.peer !== peer || this.stopped) {
-      throw new Error('Live Voice stopped before the media connection was ready')
-    }
+    this.assertCurrentConnection(generation, peer)
     transportReady = true
     this.reconnectAttempts = 0
-    this.setState(this.muted ? 'muted' : 'listening')
+    this.setActivityState('listening')
   }
 
   private async cleanupTransport(): Promise<void> {
@@ -359,15 +380,15 @@ export class CodexLiveVoiceClient {
         this.remoteDescription = null
       }
     } else if (message.type === 'manager.turn.started' || message.type === 'handoff') {
-      this.setState('manager-working')
+      this.setActivityState('manager-working')
     } else if (message.type === 'manager.turn.completed') {
-      this.setState(this.muted ? 'muted' : 'listening')
+      this.setActivityState('listening')
     } else if (message.type === 'transcript.delta') {
       const role = String(message.role || '').toLowerCase()
-      if (role === 'user') this.setState('user-speaking')
-      if (role === 'assistant') this.setState('assistant-speaking')
+      if (role === 'user') this.setActivityState('user-speaking')
+      if (role === 'assistant') this.setActivityState('assistant-speaking')
     } else if (message.type === 'transcript.done') {
-      if (!this.muted) this.setState('listening')
+      this.setActivityState('listening')
     } else if (message.type === 'session.error') {
       this.fail(new Error(
         typeof message.message === 'string'
@@ -409,15 +430,50 @@ export class CodexLiveVoiceClient {
     this.setState('reconnecting')
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null
+      const generation = ++this.connectionGeneration
       void this.cleanupTransport()
-        .then(() => this.connect(true))
-        .catch(nextError => {
+        .then(() => this.connect(true, generation))
+        .catch(async nextError => {
+          if (!this.isCurrentConnection(generation)) return
+          await this.cleanupTransport()
+          if (!this.isCurrentConnection(generation)) return
           this.scheduleReconnect(
             nextError instanceof Error ? nextError : new Error(String(nextError)),
             Math.min(4_000, 500 * (2 ** this.reconnectAttempts)),
           )
         })
     }, Math.max(500, delayMs))
+  }
+
+  private isCurrentConnection(
+    generation: number,
+    peer?: RTCPeerConnection,
+  ): boolean {
+    return (
+      !this.stopped
+      && generation === this.connectionGeneration
+      && (peer === undefined || this.peer === peer)
+    )
+  }
+
+  private assertCurrentConnection(
+    generation: number,
+    peer?: RTCPeerConnection,
+  ): void {
+    if (!this.isCurrentConnection(generation, peer)) {
+      throw new Error('Live Voice connection attempt was superseded')
+    }
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer === null) return
+    window.clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+  }
+
+  private setActivityState(state: CodexLiveVoiceActivityState): void {
+    this.activityState = state
+    this.setState(this.muted ? 'muted' : state)
   }
 
   private setState(state: CodexLiveVoiceState): void {
