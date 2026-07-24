@@ -98,6 +98,8 @@ jobs:
           PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: |
           set -euo pipefail
+          source "${{ steps.stable.outputs.release }}/scripts/lib/stable-automation-runtime.sh"
+          initialize_stable_automation_runtime
           checkpoint="${{ steps.stable.outputs.release }}/scripts/auto-fix-checkpoint.mjs"
           if [ "$PUBLISH_OUTCOME" = "success" ]; then
             "${{ steps.stable.outputs.node }}" "$checkpoint" complete \

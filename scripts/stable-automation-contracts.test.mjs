@@ -93,6 +93,8 @@ test("Auto Fix keeps model selection local and publishes only a human-gated Draf
   assert.match(stableRunner, /trap cancel_auto_fix INT TERM/);
   assert.match(stableRunner, /checkpoint\.cancelled\.json/);
   assert.match(goalLoop, /while true/);
+  assert.match(goalLoop, /source "\$SCRIPT_DIR\/lib\/stable-automation-runtime\.sh"/);
+  assert.match(goalLoop, /initialize_stable_automation_runtime/);
   assert.match(goalLoop, /run-auto-fix-stable-runner\.sh/);
   assert.match(goalLoop, /validate-auto-fix-checkout\.sh/);
   assert.match(goalLoop, /auto-fix-checkpoint\.mjs" record/);
@@ -105,6 +107,10 @@ test("Auto Fix keeps model selection local and publishes only a human-gated Draf
   assert.match(stableRunner, /candidate-v2\.json candidate-v2\.patch candidate-v1\.json candidate-v1\.patch/);
   assert.match(stableRunner, /stable_hr stop "\$HOMERAIL_STABLE_RUN_ID"/);
   assert.match(workflow, /Finalize durable candidate checkpoint/);
+  assert.match(
+    workflow,
+    /Finalize durable candidate checkpoint[\s\S]*source "\$\{\{ steps\.stable\.outputs\.release \}\}\/scripts\/lib\/stable-automation-runtime\.sh"[\s\S]*initialize_stable_automation_runtime/,
+  );
   assert.match(workflow, /steps\.publish\.outcome/);
   assert.doesNotMatch(stableRunner, /start --host|install:all|build:packages/);
   assert.match(validator, /npm run install:all/);

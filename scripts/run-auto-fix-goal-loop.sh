@@ -13,6 +13,15 @@ ARTIFACT_ROOT="$3"
 RUN_ID_PREFIX="$4"
 NODE_BIN="${HOMERAIL_NODE_BIN:-node}"
 
+# The per-cycle stable runner initializes these values in its own process.
+# The outer loop also needs them when it records validation feedback after that
+# process exits. Initialize the same stable runtime in this parent shell when
+# it is running under the persistent automation environment.
+if [ -n "${HOMERAIL_STABLE_ROOT:-}${HOMERAIL_STABLE_HOME:-}${HOMERAIL_STABLE_MANAGER_URL:-}" ]; then
+  source "$SCRIPT_DIR/lib/stable-automation-runtime.sh"
+  initialize_stable_automation_runtime
+fi
+
 if [ ! -f "$INPUT_FILE" ]; then
   echo "Auto Fix input file does not exist: $INPUT_FILE" >&2
   exit 1
