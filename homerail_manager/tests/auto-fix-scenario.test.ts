@@ -425,6 +425,110 @@ describe("Auto Fix scenario asset", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ status: "ready", patch });
   });
 
+  it.each([
+    {
+      name: "Unix fixture user",
+      file: "homerail_cli/tests/doctor.test.ts",
+      localPath: "/Users/user/.docker/run/docker.sock",
+    },
+    {
+      name: "Windows fixture user",
+      file: "tests/docker.spec.ts",
+      localPath: "C:\\Users\\test\\.docker\\run\\docker.sock",
+    },
+  ])("allows a clearly synthetic $name path only inside a test patch", ({ file, localPath }) => {
+    const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
+    const commandNode = canonical.nodes.find((node) => node.id === "finalize_publication");
+    if (commandNode?.kind !== "command" || !commandNode.config.command) throw new Error("finalizer command is missing");
+    const revision = "2".repeat(40);
+    const patch = [
+      `diff --git a/${file} b/${file}`,
+      `--- a/${file}`,
+      `+++ b/${file}`,
+      "@@ -0,0 +1 @@",
+      `+const fixturePath = ${JSON.stringify(localPath)};`,
+      "",
+    ].join("\n");
+    const input = {
+      issue: [{ repo: "owner/repo", issue: 92, revision }],
+      patch: [{ status: "fixed", patch, explanation: "repair", files_changed: [file], test_plan: [] }],
+      arbitration: [{ verdict: "approve", summary: "approved", blocking_defects: [] }],
+      summary: [{ review_summary: "approved by consensus", markdown: `# Auto Fix #92\n\nBase: ${revision}\n` }],
+    };
+    const result = spawnSync(process.execPath, commandNode.config.command.slice(1), {
+      cwd: os.tmpdir(), encoding: "utf8", input: JSON.stringify(input),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: "ready", patch });
+  });
+
+  it.each([
+    {
+      name: "real-looking user in a test",
+      file: "tests/docker.test.ts",
+      localPath: "/Users/matrix/.docker/run/docker.sock",
+    },
+    {
+      name: "synthetic user outside a test",
+      file: "src/docker.ts",
+      localPath: "/Users/user/.docker/run/docker.sock",
+    },
+  ])("rejects a $name local path", ({ file, localPath }) => {
+    const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
+    const commandNode = canonical.nodes.find((node) => node.id === "finalize_publication");
+    if (commandNode?.kind !== "command" || !commandNode.config.command) throw new Error("finalizer command is missing");
+    const revision = "3".repeat(40);
+    const patch = [
+      `diff --git a/${file} b/${file}`,
+      `--- a/${file}`,
+      `+++ b/${file}`,
+      "@@ -0,0 +1 @@",
+      `+const localPath = ${JSON.stringify(localPath)};`,
+      "",
+    ].join("\n");
+    const input = {
+      issue: [{ repo: "owner/repo", issue: 92, revision }],
+      patch: [{ status: "fixed", patch, explanation: "repair", files_changed: [file], test_plan: [] }],
+      arbitration: [{ verdict: "approve", summary: "approved", blocking_defects: [] }],
+      summary: [{ review_summary: "approved by consensus", markdown: `# Auto Fix #92\n\nBase: ${revision}\n` }],
+    };
+    const result = spawnSync(process.execPath, commandNode.config.command.slice(1), {
+      cwd: os.tmpdir(), encoding: "utf8", input: JSON.stringify(input),
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("contains a local Unix path");
+    expect(result.stderr).not.toContain(localPath);
+  });
+
+  it("continues scanning after an allowed synthetic fixture path", () => {
+    const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
+    const commandNode = canonical.nodes.find((node) => node.id === "finalize_publication");
+    if (commandNode?.kind !== "command" || !commandNode.config.command) throw new Error("finalizer command is missing");
+    const revision = "4".repeat(40);
+    const sensitive = "/Users/matrix/private.txt";
+    const patch = [
+      "diff --git a/tests/docker.test.ts b/tests/docker.test.ts",
+      "--- a/tests/docker.test.ts",
+      "+++ b/tests/docker.test.ts",
+      "@@ -0,0 +1,2 @@",
+      "+const fixturePath = \"/Users/user/.docker/run/docker.sock\";",
+      `+const leakedPath = ${JSON.stringify(sensitive)};`,
+      "",
+    ].join("\n");
+    const input = {
+      issue: [{ repo: "owner/repo", issue: 92, revision }],
+      patch: [{ status: "fixed", patch, explanation: "repair", files_changed: ["tests/docker.test.ts"], test_plan: [] }],
+      arbitration: [{ verdict: "approve", summary: "approved", blocking_defects: [] }],
+      summary: [{ review_summary: "approved by consensus", markdown: `# Auto Fix #92\n\nBase: ${revision}\n` }],
+    };
+    const result = spawnSync(process.execPath, commandNode.config.command.slice(1), {
+      cwd: os.tmpdir(), encoding: "utf8", input: JSON.stringify(input),
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("contains a local Unix path");
+    expect(result.stderr).not.toContain(sensitive);
+  });
+
   it("scans many test placeholders without rescanning the patch for every match", () => {
     const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
     const commandNode = canonical.nodes.find((node) => node.id === "finalize_publication");
