@@ -237,10 +237,17 @@ describe("Auto Fix scenario asset", () => {
     const needsRevision = runCommand("aggregate_reviews", {
       state: [initialGate],
       correctness: [vote("correctness", "approve")],
-      regression: [vote("regression", "reject")],
+      // The regression model may accidentally self-label as correctness.
+      // The trusted input port determines its canonical role.
+      regression: [vote("correctness", "reject")],
       adversarial: [vote("adversarial", "approve")],
     });
     expect(needsRevision).toMatchObject({ status: "reviewing", phase: "revise", revision_count: 0 });
+    expect(needsRevision.reviews).toMatchObject([
+      { reviewer: "correctness", verdict: "approve" },
+      { reviewer: "regression", verdict: "reject" },
+      { reviewer: "adversarial", verdict: "approve" },
+    ]);
     const revised = { ...candidate, explanation: "revised repair" };
     const next = runCommand("prepare_next_review", {
       state: [{ input: needsRevision, iteration: 2, max_iterations: 0, matched: false }],

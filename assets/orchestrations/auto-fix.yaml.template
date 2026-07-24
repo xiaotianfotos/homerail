@@ -869,12 +869,20 @@ spec:
               const inputs = JSON.parse(stdin);
               const gate = one(inputs.state);
               const state = gate?.input;
-              const reviews = [one(inputs.correctness), one(inputs.regression), one(inputs.adversarial)];
               const expected = ['correctness', 'regression', 'adversarial'];
+              const reported = [one(inputs.correctness), one(inputs.regression), one(inputs.adversarial)];
               if (!state || state.status !== 'reviewing' || state.phase !== 'review') throw new Error('review phase state is required');
-              if (reviews.some((review, index) => !review || review.reviewer !== expected[index] || !['approve', 'reject'].includes(review.verdict))) {
+              if (reported.some((review) => !review || !['approve', 'reject'].includes(review.verdict))) {
                 throw new Error('exactly three ordered review votes are required');
               }
+              // The trusted input port identifies each role. Normalize the
+              // model-authored self-label instead of failing the whole run on
+              // a harmless reviewer-name typo; verdicts and defects remain
+              // unchanged.
+              const reviews = reported.map((review, index) => ({
+                ...review,
+                reviewer: expected[index],
+              }));
               const unanimous = reviews.every((review) => review.verdict === 'approve');
               process.stdout.write(JSON.stringify({
                 ...state,
