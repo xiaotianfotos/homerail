@@ -67,6 +67,7 @@ test("Auto Fix keeps model selection local and publishes only a human-gated Draf
     .readFileSync(path.join(root, ".github/workflows/auto-fix.yml"), "utf8")
     .replace(/\r\n/g, "\n");
   const stableRunner = fs.readFileSync(path.join(root, "scripts/run-stable-dag-runner.sh"), "utf8");
+  const goalLoop = fs.readFileSync(path.join(root, "scripts/run-auto-fix-goal-loop.sh"), "utf8");
   const validator = fs.readFileSync(path.join(root, "scripts/validate-auto-fix-checkout.sh"), "utf8");
   const publisher = fs.readFileSync(path.join(root, "scripts/publish-auto-fix-pr.sh"), "utf8");
 
@@ -74,14 +75,20 @@ test("Auto Fix keeps model selection local and publishes only a human-gated Draf
   assert.match(workflow, /github\.event\.sender\.login == 'xiaotianfotos'/);
   assert.match(workflow, /github\.event\.label\.name == 'auto-fix'/);
   assert.match(workflow, /runs-on: \[self-hosted, Linux, X64, homerail-auto-fix\]/);
-  assert.match(workflow, /timeout-minutes: 210/);
-  assert.match(workflow, /run-auto-fix-stable-runner\.sh/);
-  assert.match(workflow, /steps\.stable\.outputs\.release }}\/scripts\/validate-auto-fix-checkout\.sh/);
+  assert.doesNotMatch(workflow, /timeout-minutes:/);
+  assert.match(workflow, /run-auto-fix-goal-loop\.sh/);
   assert.match(workflow, /steps\.stable\.outputs\.release }}\/scripts\/publish-auto-fix-pr\.sh/);
   assert.doesNotMatch(workflow, /HOMERAIL_AUTO_FIX_(?:IMPLEMENTATION|REVIEW|ARBITRATION)_MODEL/);
   assert.doesNotMatch(workflow, /ssh[_-]?key|SSH_AUTH_SOCK|id_rsa|id_ed25519/i);
   assert.match(stableRunner, /initialize_stable_automation_runtime/);
-  assert.match(stableRunner, /HOMERAIL_AUTO_FIX_TIMEOUT_SECONDS:-10800/);
+  assert.match(stableRunner, /HOMERAIL_AUTO_FIX_TIMEOUT_SECONDS:-0/);
+  assert.match(stableRunner, /Stable Auto Fix must use timeout 0/);
+  assert.match(stableRunner, /trap cancel_auto_fix INT TERM/);
+  assert.match(stableRunner, /checkpoint\.cancelled\.json/);
+  assert.match(goalLoop, /while true/);
+  assert.match(goalLoop, /run-auto-fix-stable-runner\.sh/);
+  assert.match(goalLoop, /validate-auto-fix-checkout\.sh/);
+  assert.match(goalLoop, /auto-fix-checkpoint\.mjs" record/);
   assert.match(stableRunner, /auto-fix-checkpoint\.mjs/);
   assert.match(stableRunner, /hydrate "\$INPUT_FILE"/);
   assert.ok(

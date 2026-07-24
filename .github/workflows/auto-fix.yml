@@ -22,7 +22,6 @@ jobs:
       github.event.label.name == 'auto-fix' &&
       github.event.issue.pull_request == null
     runs-on: [self-hosted, Linux, X64, homerail-auto-fix]
-    timeout-minutes: 210
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
@@ -68,23 +67,18 @@ jobs:
       - name: Record durable DAG run
         run: gh issue comment "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" --body "HomeRail Auto Fix started durable run \`$HOMERAIL_STABLE_RUN_ID\`."
 
-      - name: Run model-neutral Auto Fix DAG on stable Manager
-        id: dag
-        env:
-          HOMERAIL_NODE_BIN: ${{ steps.stable.outputs.node }}
-        run: bash "${{ steps.stable.outputs.release }}/scripts/run-auto-fix-stable-runner.sh"
-
-      - name: Validate candidate without credentials or network
-        id: validation
+      - name: Run goal-driven Auto Fix loop on stable Manager
+        id: goal
         env:
           HOMERAIL_NODE_BIN: ${{ steps.stable.outputs.node }}
         run: |
           set -euo pipefail
-          bash "${{ steps.stable.outputs.release }}/scripts/validate-auto-fix-checkout.sh" \
+          bash "${{ steps.stable.outputs.release }}/scripts/run-auto-fix-goal-loop.sh" \
             "$GITHUB_WORKSPACE" \
-            "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.json" \
-            "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.patch" \
-            2>&1 | tee "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/validation.log"
+            "$HOMERAIL_AUTO_FIX_INPUT_FILE" \
+            "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR" \
+            "$HOMERAIL_STABLE_RUN_ID"
+          echo "run_id=$(<"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/run-id.txt")" >> "$GITHUB_OUTPUT"
 
       - name: Publish Draft pull request
         id: publish
@@ -96,26 +90,21 @@ jobs:
           "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR"
           "auto-fix/issue-${{ github.event.issue.number }}-${{ github.run_id }}-${{ github.run_attempt }}"
           "${{ github.event.repository.default_branch }}"
-          "$HOMERAIL_STABLE_RUN_ID"
+          "${{ steps.goal.outputs.run_id }}"
 
       - name: Finalize durable candidate checkpoint
-        if: always() && steps.dag.outcome == 'success'
+        if: always() && steps.goal.outcome == 'success'
         env:
-          VALIDATION_OUTCOME: ${{ steps.validation.outcome }}
           PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: |
           set -euo pipefail
           checkpoint="${{ steps.stable.outputs.release }}/scripts/auto-fix-checkpoint.mjs"
           if [ "$PUBLISH_OUTCOME" = "success" ]; then
             "${{ steps.stable.outputs.node }}" "$checkpoint" complete \
-              "$HOMERAIL_AUTO_FIX_INPUT_FILE" "$HOMERAIL_STABLE_RUN_ID"
-          elif [ "$VALIDATION_OUTCOME" = "failure" ]; then
-            "${{ steps.stable.outputs.node }}" "$checkpoint" record \
-              "$HOMERAIL_AUTO_FIX_INPUT_FILE" "$HOMERAIL_STABLE_RUN_ID" \
-              "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/validation.log"
+              "$HOMERAIL_AUTO_FIX_INPUT_FILE" "${{ steps.goal.outputs.run_id }}"
           else
             "${{ steps.stable.outputs.node }}" "$checkpoint" record \
-              "$HOMERAIL_AUTO_FIX_INPUT_FILE" "$HOMERAIL_STABLE_RUN_ID"
+              "$HOMERAIL_AUTO_FIX_INPUT_FILE" "${{ steps.goal.outputs.run_id }}"
           fi
 
       - name: Report failure for human inspection

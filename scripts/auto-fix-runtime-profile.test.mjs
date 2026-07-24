@@ -2,18 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  AUTO_FIX_ARBITRATION_AGENTS,
+  DEFAULT_AUTO_FIX_IMPLEMENTATION_MODEL_NAME,
+  DEFAULT_AUTO_FIX_REVIEW_MODEL_NAME,
   AUTO_FIX_IMPLEMENTATION_AGENTS,
   AUTO_FIX_REVIEW_AGENTS,
+  assertAutoFixRoleModel,
   autoFixRuntimeProfileYaml,
   configureAutoFixRuntimeProfile,
   selectAutoFixRuntimeSetting,
 } from "./configure-auto-fix-runtime-profile.mjs";
 
-const setting = (id, displayName) => ({
+const setting = (id, displayName, modelName = `${id}-model`) => ({
   id,
   display_name: displayName,
-  model_name: `${id}-model`,
+  model_name: modelName,
   is_active: true,
   supports_llm: true,
   anthropic_base_url: `https://${id}.example.test/anthropic`,
@@ -41,7 +43,6 @@ test("maps implementation, review, and arbitration roles without provider config
     profileId: "auto-fix-mixed",
     implementation: setting("setting-implementation", "Implementation"),
     review: setting("setting-review", "Review"),
-    arbitration: setting("setting-arbitration", "Arbitration"),
   });
   for (const agent of AUTO_FIX_IMPLEMENTATION_AGENTS) {
     assert.match(yaml, new RegExp(`${agent}:\\n    llm_setting_id: "setting-implementation"`));
@@ -49,29 +50,47 @@ test("maps implementation, review, and arbitration roles without provider config
   for (const agent of AUTO_FIX_REVIEW_AGENTS) {
     assert.match(yaml, new RegExp(`${agent}:\\n    llm_setting_id: "setting-review"`));
   }
-  for (const agent of AUTO_FIX_ARBITRATION_AGENTS) {
-    assert.match(yaml, new RegExp(`${agent}:\\n    llm_setting_id: "setting-arbitration"`));
-  }
   assert.doesNotMatch(yaml, /^\s*(?:provider|model|api_key|base_url):/m);
   const singleModel = autoFixRuntimeProfileYaml({
     profileId: "single-model",
     implementation: setting("same", "One"),
     review: setting("same", "Two"),
-    arbitration: setting("same", "Three"),
   });
   assert.equal((singleModel.match(/llm_setting_id: "same"/g) ?? []).length, 8);
 });
 
-test("binds all three independent reviewers to the review model", () => {
+test("binds all reviewers, arbitration, and publication to the review model", () => {
   assert.deepEqual(AUTO_FIX_REVIEW_AGENTS, [
     "correctness_reviewer",
     "regression_reviewer",
     "adversarial_reviewer",
+    "arbiter",
+    "publisher",
   ]);
-  assert.deepEqual(AUTO_FIX_ARBITRATION_AGENTS, ["arbiter", "publisher"]);
 });
 
-test("syncs the private profile after resolving three stable settings", async () => {
+test("attests exact implementation and review model names", () => {
+  assert.equal(DEFAULT_AUTO_FIX_IMPLEMENTATION_MODEL_NAME, "qwen3.6");
+  assert.equal(DEFAULT_AUTO_FIX_REVIEW_MODEL_NAME, "qwen3.8-max-preview");
+  assert.equal(
+    assertAutoFixRoleModel(
+      setting("implementation", "Implementation", "qwen3.6"),
+      "QWEN3.6",
+      "implementation",
+    ).id,
+    "implementation",
+  );
+  assert.throws(
+    () => assertAutoFixRoleModel(
+      setting("wrong", "Wrong", "qwen3.8-max-preview"),
+      "qwen3.6",
+      "implementation",
+    ),
+    /resolved model qwen3\.8-max-preview; expected qwen3\.6/,
+  );
+});
+
+test("syncs the private profile after resolving and attesting two stable settings", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
@@ -80,9 +99,8 @@ test("syncs the private profile after resolving three stable settings", async ()
       return new Response(JSON.stringify({
         success: true,
         data: { settings: [
-          setting("implementation", "Implementation"),
-          setting("review", "Review"),
-          setting("arbitration", "Arbitration"),
+          setting("implementation", "Implementation", "qwen3.6"),
+          setting("review", "Review", "qwen3.8-max-preview"),
         ] },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -96,9 +114,11 @@ test("syncs the private profile after resolving three stable settings", async ()
   try {
     const configured = await configureAutoFixRuntimeProfile({
       managerUrl: "http://127.0.0.1:39191/",
+      profileId: "auto-fix-mixed",
       implementationSelector: "implementation",
       reviewSelector: "review",
-      arbitrationSelector: "arbitration",
+      expectedImplementationModelName: "qwen3.6",
+      expectedReviewModelName: "qwen3.8-max-preview",
     });
     assert.equal(configured.profileId, "auto-fix-mixed");
     assert.equal(calls.length, 2);

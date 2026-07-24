@@ -29,6 +29,7 @@ const protectedAutomationPaths = new Set([
   "scripts/github-token-askpass.sh",
   "scripts/prepare-auto-fix-input.mjs",
   "scripts/publish-auto-fix-pr.sh",
+  "scripts/run-auto-fix-goal-loop.sh",
   "scripts/run-auto-fix-stable-runner.sh",
   "scripts/run-stable-dag-runner.sh",
   "scripts/validate-auto-fix-artifacts.mjs",

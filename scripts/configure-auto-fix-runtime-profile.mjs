@@ -11,11 +11,11 @@ export const AUTO_FIX_REVIEW_AGENTS = Object.freeze([
   "correctness_reviewer",
   "regression_reviewer",
   "adversarial_reviewer",
-]);
-export const AUTO_FIX_ARBITRATION_AGENTS = Object.freeze([
   "arbiter",
   "publisher",
 ]);
+export const DEFAULT_AUTO_FIX_IMPLEMENTATION_MODEL_NAME = "qwen3.6";
+export const DEFAULT_AUTO_FIX_REVIEW_MODEL_NAME = "qwen3.8-max-preview";
 
 function nonEmpty(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -50,6 +50,18 @@ export function selectAutoFixRuntimeSetting(settings, selector, role) {
   return setting;
 }
 
+export function assertAutoFixRoleModel(setting, expectedModelName, role) {
+  const expected = nonEmpty(expectedModelName);
+  if (!expected) throw new Error(`Expected Auto Fix ${role} model name is required`);
+  const actual = nonEmpty(setting?.model_name);
+  if (actual?.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(
+      `Auto Fix ${role} resolved model ${actual ?? "<missing>"}; expected ${expected}`,
+    );
+  }
+  return setting;
+}
+
 function agentEntries(agentIds, setting) {
   return agentIds.flatMap((agentId) => [
     `  ${agentId}:`,
@@ -58,15 +70,14 @@ function agentEntries(agentIds, setting) {
   ]);
 }
 
-export function autoFixRuntimeProfileYaml({ profileId, implementation, review, arbitration }) {
+export function autoFixRuntimeProfileYaml({ profileId, implementation, review }) {
   return [
     `profile_id: ${yamlString(profileId)}`,
     "workflow_id: auto-fix",
-    "description: Private mixed-model bindings for the stable Auto Fix control plane.",
+    "description: Private Qwen implementation and independent review bindings for stable Auto Fix.",
     "agents:",
     ...agentEntries(AUTO_FIX_IMPLEMENTATION_AGENTS, implementation),
     ...agentEntries(AUTO_FIX_REVIEW_AGENTS, review),
-    ...agentEntries(AUTO_FIX_ARBITRATION_AGENTS, arbitration),
     "",
   ].join("\n");
 }
@@ -91,34 +102,50 @@ async function request(managerUrl, pathname, init) {
 
 export async function configureAutoFixRuntimeProfile({
   managerUrl = process.env.HOMERAIL_MANAGER_URL ?? "http://127.0.0.1:19191",
-  profileId = process.env.HOMERAIL_AUTO_FIX_PROFILE_ID ?? "auto-fix-mixed",
-  implementationSelector = process.env.HOMERAIL_AUTO_FIX_IMPLEMENTATION_MODEL,
-  reviewSelector = process.env.HOMERAIL_AUTO_FIX_REVIEW_MODEL,
-  arbitrationSelector = process.env.HOMERAIL_AUTO_FIX_ARBITRATION_MODEL,
+  profileId = process.env.HOMERAIL_AUTO_FIX_PROFILE_ID ?? "auto-fix-qwen36-qwen38-review",
+  expectedImplementationModelName = DEFAULT_AUTO_FIX_IMPLEMENTATION_MODEL_NAME,
+  expectedReviewModelName = DEFAULT_AUTO_FIX_REVIEW_MODEL_NAME,
+  implementationSelector = process.env.HOMERAIL_AUTO_FIX_IMPLEMENTATION_MODEL
+    ?? expectedImplementationModelName,
+  reviewSelector = process.env.HOMERAIL_AUTO_FIX_REVIEW_MODEL
+    ?? expectedReviewModelName,
 } = {}) {
   const normalizedManagerUrl = managerUrl.replace(/\/+$/, "");
   const listed = await request(normalizedManagerUrl, "/api/llm/settings");
   const settings = Array.isArray(listed?.settings) ? listed.settings : [];
-  const implementation = selectAutoFixRuntimeSetting(settings, implementationSelector, "implementation");
-  const review = selectAutoFixRuntimeSetting(settings, reviewSelector, "review");
-  const arbitration = selectAutoFixRuntimeSetting(settings, arbitrationSelector, "arbitration");
-  const yamlText = autoFixRuntimeProfileYaml({ profileId, implementation, review, arbitration });
+  const implementation = assertAutoFixRoleModel(
+    selectAutoFixRuntimeSetting(settings, implementationSelector, "implementation"),
+    expectedImplementationModelName,
+    "implementation",
+  );
+  const review = assertAutoFixRoleModel(
+    selectAutoFixRuntimeSetting(settings, reviewSelector, "review"),
+    expectedReviewModelName,
+    "review",
+  );
+  if (implementation.id === review.id) {
+    throw new Error("Auto Fix implementation and review must use different stable Manager settings");
+  }
+  const yamlText = autoFixRuntimeProfileYaml({ profileId, implementation, review });
   const synced = await request(normalizedManagerUrl, "/api/dag/profiles/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       yaml_text: yamlText,
       workflow_id: "auto-fix",
-      source_path: "stable-runner:auto-fix-mixed",
+      source_path: "stable-runner:auto-fix-qwen36-qwen38-review",
     }),
   });
   if (synced?.profile?.profile_id !== profileId || synced?.profile?.workflow_id !== "auto-fix") {
     throw new Error("Manager synced an unexpected Auto Fix runtime profile");
   }
-  return { profileId, implementation, review, arbitration, yamlText };
+  return { profileId, implementation, review, yamlText };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const configured = await configureAutoFixRuntimeProfile();
+  process.stderr.write(
+    `Auto Fix model binding verified: implementation=${configured.implementation.model_name}; review=${configured.review.model_name}\n`,
+  );
   process.stdout.write(configured.profileId);
 }

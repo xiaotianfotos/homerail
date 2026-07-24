@@ -10,13 +10,14 @@ metadata:
 
 spec:
   description: |
-    Model-neutral issue repair workflow. One implementation pass produces a
-    durable candidate checkpoint. Three independent reviewers either approve
-    it immediately or request one bounded revision; an arbiter then publishes
-    generic patch/report artifacts. Candidate artifacts survive cancellation
-    and failure so a later run can continue from evidence instead of starting
-    over. GitHub mutation, deterministic validation, and Draft PR creation
-    remain outside the DAG in the trusted runner adapter.
+    Model-neutral issue repair workflow. An implementation model works toward
+    a complete candidate, then three independent reviewers either approve it
+    or return concrete defects to the same implementation model. Review and
+    revision continue until unanimous approval, explicit cannot-fix evidence,
+    or human cancellation. Candidate artifacts survive interruption so a later
+    run can continue from evidence instead of starting over. GitHub mutation,
+    deterministic validation, and Draft PR creation remain outside the DAG in
+    the trusted runner adapter.
 
   workspace:
     mode: shared
@@ -26,9 +27,8 @@ spec:
     version: 1.0.0
     source: HomeRail durable implement-review-revise-consensus scenario
     parameters:
-      implementation_passes: 1
+      implementation_policy: until_approved
       reviewers: 3
-      max_revisions: 1
       approval_threshold: 3
 
   contracts:
@@ -184,18 +184,18 @@ spec:
     ReviewCycle:
       type: object
       additionalProperties: false
-      required: [status, phase, revision_count, max_revisions, workspace_root, candidate, reviews]
+      required: [status, phase, revision_count, workspace_root, candidate, reviews]
       properties:
-        status: { type: string, enum: [reviewing, approved, rejected] }
-        phase: { type: string, enum: [review, revise, done, rejected] }
-        revision_count: { type: integer, minimum: 0, maximum: 1 }
-        max_revisions: { type: integer, const: 1 }
+        status: { type: string, enum: [reviewing, approved] }
+        phase: { type: string, enum: [review, revise, done] }
+        revision_count: { type: integer, minimum: 0 }
         workspace_root: { type: string, const: source }
         candidate: { type: object }
         reviews:
           type: array
           maxItems: 3
           items: { type: object }
+        arbitration: { type: object }
 
     ReviewLoopGate:
       type: object
@@ -204,7 +204,7 @@ spec:
       properties:
         input: { type: object }
         iteration: { type: integer, minimum: 0 }
-        max_iterations: { type: integer, minimum: 1 }
+        max_iterations: { type: integer, minimum: 0 }
         matched: { type: boolean }
         exhausted: { type: boolean }
 
@@ -315,8 +315,8 @@ spec:
         diagnose only that delta instead of restarting the issue. When it says
         the focused checks passed and names no remaining failure, treat the
         applied candidate as the verified baseline: inspect only its changed
-        paths and direct contract boundaries, use at most 16 total Read, Grep,
-        and Glob calls, and do not repeat broad repository discovery. The
+        paths and direct contract boundaries, and do not repeat broad
+        repository discovery. The
         Claude SDK starts in `/workspace`; the repository is the relative root
         `source` (`/workspace/source`). Always pass `source`, `source/<path>`, or
         `/workspace/source/<path>` to Read, Grep, and Glob. Never probe bare
@@ -344,11 +344,10 @@ spec:
         trusted validation feedback reports passing focused checks and neither
         it nor the investigation identifies a remaining defect, do not rerun
         package suites or production builds, do not install dependencies, do
-        not modify any lockfile, and do not rewrite files. Use at
-        most 16 total built-in tool calls to verify the applied delta, then
-        hand off status=fixed so the deterministic collector preserves it. If
-        feedback names a failure, run only the smallest check that exercises
-        that failure after the repair.
+        not modify any lockfile, and do not rewrite files. Verify the applied
+        delta, then hand off status=fixed so the deterministic collector
+        preserves it. If feedback names a failure, run only the smallest check
+        that exercises that failure after the repair.
         Inspect the checkout under source and change only repository files that
         are necessary for the fix and focused regression tests. Never push or
         invoke a GitHub write API. Never modify .git, .github/workflows,
@@ -388,9 +387,9 @@ spec:
         or `/workspace/source/<path>` to Read, Grep, and Glob. Never probe bare
         `/workspace` or guess `/repo`, `/repository`, `/home`, or other roots.
         Start with the exact changed paths named by
-        input.state.input.candidate.files_changed, use at most 24
-        total Read, Grep, and Glob calls, and vote as soon as the concrete
-        evidence is sufficient. Inspect files only with Read, Grep, and Glob.
+        input.state.input.candidate.files_changed and vote as soon as the
+        concrete evidence is sufficient. Inspect files only with Read, Grep,
+        and Glob.
         Do not run shell commands, builds, tests, package installation, git
         stash, or other operations that can mutate the shared checkout; the
         trusted runner performs one isolated full CI pass after consensus. Do
@@ -409,9 +408,8 @@ spec:
         (`/workspace/source`), also recorded as input.state.input.workspace_root.
         Always pass `source`, `source/<path>`, or `/workspace/source/<path>` to
         Read, Grep, and Glob. Never probe bare `/workspace` or guess `/repo`,
-        `/repository`, `/home`, or other roots. Start with the exact changed paths named by
-        input.state.input.candidate.files_changed, use at most 24 total Read,
-        Grep, and Glob calls, and vote as
+        `/repository`, `/home`, or other roots. Start with the exact changed
+        paths named by input.state.input.candidate.files_changed and vote as
         soon as the concrete evidence is sufficient. Inspect files only with
         Read, Grep, and Glob. Do not run shell commands, builds, tests, package
         installation, git stash, or other operations that can mutate the
@@ -433,28 +431,32 @@ spec:
         or `/workspace/source/<path>` to Read, Grep, and Glob. Never probe bare
         `/workspace` or guess `/repo`, `/repository`, `/home`, or other roots.
         Start with the exact changed paths named by
-        input.state.input.candidate.files_changed, use at most 24
-        total Read, Grep, and Glob calls, and vote as soon as the concrete
-        evidence is sufficient. Inspect files only with Read, Grep, and Glob. Do
-        not run shell commands, builds, tests, package installation, git stash,
-        or other operations that can mutate the shared checkout; the trusted
-        runner performs one isolated full CI pass after consensus. Do not edit
-        files. Your final action MUST call handoff on voted with
+        input.state.input.candidate.files_changed and vote as soon as the
+        concrete evidence is sufficient. Inspect files only with Read, Grep,
+        and Glob. Do not run shell commands, builds, tests, package installation,
+        git stash, or other operations that can mutate the shared checkout; the
+        trusted runner performs one isolated full CI pass after consensus. Do
+        not edit files. Your final action MUST call handoff on voted with
         reviewer=adversarial, verdict approve or reject, summary, and concrete
         defects. No prose afterward.
 
     reviser:
       system: |
-        Perform the only permitted revision pass on the existing source
-        checkout. Re-read input.state.input.candidate and all three reviews in
-        input.state.input.reviews. Address
-        every concrete blocker/high defect. Preserve a correct patch when a
-        review contains only preference or speculation. Never push, access
-        credentials, modify .git, .github/workflows, .gitmodules, dependency
-        directories, or files outside source. Run focused checks for the changed
-        packages in this Worker. Do not run the root `npm run ci` or the full
-        repository test suite; the trusted runner performs one isolated full CI
-        pass after arbitration.
+        Continue the existing repair in the source checkout. Re-read
+        input.state.input.candidate and all three reviews in
+        input.state.input.reviews. When input.state.input.arbitration is
+        present, it is the latest final-arbitration rejection; address every
+        concrete blocking_defect from it as well. Address every concrete
+        blocker/high defect.
+        This node may be invoked repeatedly: preserve prior correct work and
+        make each revision respond to the newest evidence instead of rebuilding
+        the patch from scratch. Preserve a correct patch when a review contains
+        only preference or speculation. Never push, access credentials, modify
+        .git, .github/workflows, .gitmodules, dependency directories, or files
+        outside source. Run focused checks for the changed packages in this
+        Worker. Do not run the root `npm run ci` or the full repository test
+        suite; the trusted runner performs one isolated full CI pass after
+        arbitration.
 
         Never use `git stash` or `git clean`, and never run checks in the
         background while changing the same checkout; keep the worktree visible
@@ -482,11 +484,9 @@ spec:
         root `source` (`/workspace/source`). Always pass `source`,
         `source/<path>`, or `/workspace/source/<path>` to Read, Grep, and Glob.
         Never probe bare `/workspace` or guess `/repo`, `/repository`, `/home`,
-        or other roots. Start with the exact
-        changed paths named by input.patch, use at most 24 total Read, Grep, and
-        Glob calls, and arbitrate as soon as the concrete evidence is
-        sufficient. Do not run shell
-        commands, builds, tests, package installation,
+        or other roots. Start with the exact changed paths named by input.patch
+        and arbitrate as soon as the concrete evidence is sufficient. Do not run
+        shell commands, builds, tests, package installation,
         git stash, or other operations that can mutate the shared checkout; the
         trusted runner performs one isolated full CI pass after arbitration. Do
         not edit files. Your final action MUST call handoff on arbitrated with exactly:
@@ -630,7 +630,6 @@ spec:
     investigate:
       kind: agent
       agent: investigator
-      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
@@ -653,7 +652,6 @@ spec:
     implement:
       kind: agent
       agent: implementer
-      max_builtin_tool_calls: 60
       allowed_builtin_tools: [Bash, Read, Write, Edit, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [source] }
@@ -693,6 +691,7 @@ spec:
               'scripts/apply-auto-fix-patch.mjs', 'scripts/build-auto-fix-pr-body.mjs',
               'scripts/configure-auto-fix-runtime-profile.mjs', 'scripts/github-token-askpass.sh',
               'scripts/prepare-auto-fix-input.mjs', 'scripts/publish-auto-fix-pr.sh',
+              'scripts/run-auto-fix-goal-loop.sh',
               'scripts/run-auto-fix-stable-runner.sh', 'scripts/run-stable-dag-runner.sh',
               'scripts/validate-auto-fix-artifacts.mjs', 'scripts/validate-auto-fix-checkout.sh',
             ]);
@@ -780,7 +779,7 @@ spec:
               }
               process.stdout.write(JSON.stringify({
                 status: 'reviewing', phase: 'review', revision_count: 0,
-                max_revisions: 1, workspace_root: 'source', candidate, reviews: [],
+                workspace_root: 'source', candidate, reviews: [],
               }));
             });
         stdin_field: "$inputs"
@@ -806,7 +805,7 @@ spec:
         continue_port: continue
         done_port: approved
         exhausted_port: exhausted
-        max_iterations: 4
+        max_iterations: 0
 
     review_phase:
       kind: condition
@@ -823,7 +822,6 @@ spec:
     review_correctness_initial:
       kind: agent
       agent: correctness_reviewer
-      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
@@ -833,7 +831,6 @@ spec:
     review_regression_initial:
       kind: agent
       agent: regression_reviewer
-      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
@@ -843,7 +840,6 @@ spec:
     review_adversarial_initial:
       kind: agent
       agent: adversarial_reviewer
-      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
@@ -853,7 +849,7 @@ spec:
     aggregate_reviews:
       kind: command
       # Runtime DAGGraph feedback recognition requires the feedback source to
-      # declare the bounded gateway as an execution dependency.
+      # declare the loop gateway as an execution dependency.
       depends_on: [review_cycle]
       inputs:
         state: { contract: ReviewLoopGate }
@@ -879,11 +875,10 @@ spec:
                 throw new Error('exactly three ordered review votes are required');
               }
               const unanimous = reviews.every((review) => review.verdict === 'approve');
-              const mayRevise = state.revision_count < state.max_revisions;
               process.stdout.write(JSON.stringify({
                 ...state,
-                status: unanimous ? 'approved' : (mayRevise ? 'reviewing' : 'rejected'),
-                phase: unanimous ? 'done' : (mayRevise ? 'revise' : 'rejected'),
+                status: unanimous ? 'approved' : 'reviewing',
+                phase: unanimous ? 'done' : 'revise',
                 reviews,
               }));
             });
@@ -899,7 +894,6 @@ spec:
     revise:
       kind: agent
       agent: reviser
-      max_builtin_tool_calls: 60
       allowed_builtin_tools: [Bash, Read, Write, Edit, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [source] }
@@ -938,6 +932,7 @@ spec:
               'scripts/apply-auto-fix-patch.mjs', 'scripts/build-auto-fix-pr-body.mjs',
               'scripts/configure-auto-fix-runtime-profile.mjs', 'scripts/github-token-askpass.sh',
               'scripts/prepare-auto-fix-input.mjs', 'scripts/publish-auto-fix-pr.sh',
+              'scripts/run-auto-fix-goal-loop.sh',
               'scripts/run-auto-fix-stable-runner.sh', 'scripts/run-stable-dag-runner.sh',
               'scripts/validate-auto-fix-artifacts.mjs', 'scripts/validate-auto-fix-checkout.sh',
             ]);
@@ -1009,7 +1004,7 @@ spec:
 
     prepare_next_review:
       kind: command
-      # See aggregate_reviews: this marks the second bounded feedback source
+      # See aggregate_reviews: this marks the second feedback source
       # without making the ordinary dataflow cyclic.
       depends_on: [review_cycle]
       inputs:
@@ -1027,8 +1022,8 @@ spec:
               const inputs = JSON.parse(stdin);
               const previous = one(inputs.state)?.input;
               const candidate = one(inputs.candidate);
-              if (!previous || previous.phase !== 'revise' || previous.revision_count >= previous.max_revisions) {
-                throw new Error('bounded revision state is required');
+              if (!previous || previous.phase !== 'revise') {
+                throw new Error('revision state is required');
               }
               if (!candidate || candidate.status !== 'fixed' || typeof candidate.patch !== 'string' || !candidate.patch) {
                 throw new Error('revised fixed candidate is required');
@@ -1036,7 +1031,6 @@ spec:
               process.stdout.write(JSON.stringify({
                 status: 'reviewing', phase: 'review',
                 revision_count: previous.revision_count + 1,
-                max_revisions: previous.max_revisions,
                 workspace_root: previous.workspace_root,
                 candidate, reviews: [],
               }));
@@ -1084,7 +1078,6 @@ spec:
     arbitrate:
       kind: agent
       agent: arbiter
-      max_builtin_tool_calls: 40
       allowed_builtin_tools: [Read, Grep, Glob]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [.homerail-runtime], readonly_paths: [source] }
@@ -1104,6 +1097,52 @@ spec:
         field: verdict
         routes: { approve: approved, reject: rejected }
         default: rejected
+
+    prepare_arbitration_revision:
+      kind: command
+      # A final-arbitration rejection is repair evidence, not a terminal
+      # failure. Feed it into the same durable review/revision state machine.
+      depends_on: [review_cycle]
+      inputs:
+        cycle: { contract: ReviewLoopGate }
+        arbitration: { contract: Arbitration }
+      outputs: { next: { contract: ReviewCycle }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - |-
+            let stdin = '';
+            const one = (value) => Array.isArray(value) ? value.at(-1) : undefined;
+            process.stdin.on('data', (chunk) => { stdin += chunk; }).on('end', () => {
+              const inputs = JSON.parse(stdin);
+              const gate = one(inputs.cycle);
+              const state = gate?.input;
+              const arbitration = one(inputs.arbitration);
+              if (!gate?.matched || state?.status !== 'approved' || state?.phase !== 'done') {
+                throw new Error('approved review cycle is required');
+              }
+              if (!arbitration || arbitration.verdict !== 'reject' || !Array.isArray(arbitration.blocking_defects)) {
+                throw new Error('rejected arbitration with blocking defects is required');
+              }
+              process.stdout.write(JSON.stringify({
+                status: 'reviewing',
+                phase: 'revise',
+                revision_count: state.revision_count,
+                workspace_root: state.workspace_root,
+                candidate: state.candidate,
+                reviews: state.reviews,
+                arbitration,
+              }));
+            });
+        stdin_field: "$inputs"
+        cwd: "$run_workspace"
+        timeout_ms: 30000
+        capture_limit: 1000000
+        success_port: next
+        failure_port: failed
+        parse_stdout: json
+        result_payload: value
 
     publish:
       kind: agent
@@ -1389,6 +1428,7 @@ spec:
     - { from: review_cycle.continue, to: review_phase.state }
     - { from: review_cycle.approved, to: extract_approved_candidate.cycle }
     - { from: review_cycle.approved, to: arbitrate.cycle }
+    - { from: review_cycle.approved, to: prepare_arbitration_revision.cycle }
     - { from: review_cycle.approved, to: publish.cycle }
     - { from: review_cycle.exhausted, to: review_cycle_exhausted.result }
     - { from: review_phase.review, to: review_correctness_initial.state }
@@ -1411,7 +1451,7 @@ spec:
     - kind: feedback
       from: aggregate_reviews.next
       to: review_cycle.state
-      max_traversals: 2
+      max_traversals: 0
     - { from: aggregate_reviews.failed, to: review_aggregation_failed.result, condition: on_failure }
 
     - { from: sanitize_issue.sanitized, to: revise.issue }
@@ -1424,7 +1464,7 @@ spec:
     - kind: feedback
       from: prepare_next_review.next
       to: review_cycle.state
-      max_traversals: 1
+      max_traversals: 0
     - { from: prepare_next_review.failed, to: next_review_preparation_failed.result, condition: on_failure }
 
     - { from: extract_approved_candidate.patched, to: arbitrate.patch }
@@ -1436,7 +1476,12 @@ spec:
     - { from: arbitrate.failed, to: arbitration_failed.result, condition: on_failure }
     - { from: arbitration_gate.approved, to: publish.arbitration }
     - { from: arbitration_gate.approved, to: finalize_publication.arbitration }
-    - { from: arbitration_gate.rejected, to: arbitration_rejected.result }
+    - { from: arbitration_gate.rejected, to: prepare_arbitration_revision.arbitration }
+    - kind: feedback
+      from: prepare_arbitration_revision.next
+      to: review_cycle.state
+      max_traversals: 0
+    - { from: prepare_arbitration_revision.failed, to: arbitration_rejected.result, condition: on_failure }
     - { from: sanitize_issue.sanitized, to: publish.issue }
     - { from: sanitize_issue.sanitized, to: finalize_publication.issue }
     - { from: publish.summarized, to: finalize_publication.summary }
@@ -1445,10 +1490,7 @@ spec:
     - { from: finalize_publication.failed, to: finalization_failed.result, condition: on_failure }
 
   policies:
+    unbounded_execution: true
     max_nodes: 48
     max_edges: 80
     max_parallelism: 4
-    max_dispatches: 64
-    max_handoffs: 80
-    max_corrections_per_node: 4
-    max_tool_calls_per_node: 80

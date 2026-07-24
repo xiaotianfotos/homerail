@@ -19,7 +19,7 @@ case "$TASK" in
     INPUT="${HOMERAIL_AUTO_FIX_INPUT:-}"
     INPUT_FILE="${HOMERAIL_AUTO_FIX_INPUT_FILE:-}"
     ARTIFACT_DIR="${HOMERAIL_AUTO_FIX_ARTIFACT_DIR:-${GITHUB_WORKSPACE:-$PWD}/artifacts/auto-fix}"
-    TIMEOUT_SECONDS="${HOMERAIL_AUTO_FIX_TIMEOUT_SECONDS:-10800}"
+    TIMEOUT_SECONDS="${HOMERAIL_AUTO_FIX_TIMEOUT_SECONDS:-0}"
     PROFILE_SCRIPT="$HOMERAIL_STABLE_RELEASE/scripts/configure-auto-fix-runtime-profile.mjs"
     CHECKPOINT_SCRIPT="$HOMERAIL_STABLE_RELEASE/scripts/auto-fix-checkpoint.mjs"
     ARTIFACT_NAMES=(auto-fix.json auto-fix.patch auto-fix.md)
@@ -55,7 +55,12 @@ if [ -z "$INPUT" ]; then
   echo "Structured input is required for $TASK." >&2
   exit 1
 fi
-if [[ ! "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$TIMEOUT_SECONDS" -lt 60 ] || [ "$TIMEOUT_SECONDS" -gt 14400 ]; then
+if [ "$TASK" = "auto-fix" ]; then
+  if [ "$TIMEOUT_SECONDS" != "0" ]; then
+    echo "Stable Auto Fix must use timeout 0 so it runs until success, explicit cannot-fix, or cancellation." >&2
+    exit 1
+  fi
+elif [[ ! "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$TIMEOUT_SECONDS" -lt 60 ] || [ "$TIMEOUT_SECONDS" -gt 14400 ]; then
   echo "Stable DAG timeout must be an integer from 60 through 14400 seconds." >&2
   exit 1
 fi
@@ -76,8 +81,30 @@ RUN_ARGS=(
 if [ -n "${HOMERAIL_STABLE_RUN_ID:-}" ]; then
   RUN_ARGS+=(--run-id "$HOMERAIL_STABLE_RUN_ID")
 fi
+
+cancel_auto_fix() {
+  trap - INT TERM
+  if [ "$TASK" = "auto-fix" ] && [ -n "${HOMERAIL_STABLE_RUN_ID:-}" ]; then
+    echo "Cancelling durable Auto Fix run $HOMERAIL_STABLE_RUN_ID." >&2
+    stable_hr stop "$HOMERAIL_STABLE_RUN_ID" >/dev/null 2>&1 || true
+    for _attempt in 1 2 3 4 5; do
+      checkpoint_result="$("$HOMERAIL_STABLE_NODE" "$CHECKPOINT_SCRIPT" record "$INPUT_FILE" "$HOMERAIL_STABLE_RUN_ID" 2>/dev/null || true)"
+      if [[ "$checkpoint_result" == *'"recorded":true'* ]]; then
+        printf '%s\n' "$checkpoint_result" >"$ARTIFACT_DIR/checkpoint.cancelled.json"
+        break
+      fi
+      sleep 1
+    done
+  fi
+  exit 130
+}
+if [ "$TASK" = "auto-fix" ]; then
+  trap cancel_auto_fix INT TERM
+fi
+
 if ! stable_hr "${RUN_ARGS[@]}" \
   >"$COMMAND_TMP" 2> >(tee "$STDERR_PATH" >&2); then
+  trap - INT TERM
   if [ -s "$COMMAND_TMP" ]; then
     mv "$COMMAND_TMP" "$ARTIFACT_DIR/command.failed.json"
   else
@@ -102,6 +129,7 @@ if ! stable_hr "${RUN_ARGS[@]}" \
   fi
   exit 1
 fi
+trap - INT TERM
 mv "$COMMAND_TMP" "$COMMAND_PATH"
 [ -s "$STDERR_PATH" ] || rm -f "$STDERR_PATH"
 

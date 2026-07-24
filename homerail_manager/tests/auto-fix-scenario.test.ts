@@ -16,7 +16,7 @@ const WORKFLOW_FILE = path.resolve(
 );
 
 describe("Auto Fix scenario asset", () => {
-  it("compiles a model-neutral durable repair with one bounded revision", () => {
+  it("compiles a model-neutral durable repair that iterates until approval", () => {
     const source = fs.readFileSync(WORKFLOW_FILE, "utf8");
     const result = compileWorkflowSource(source);
 
@@ -24,8 +24,8 @@ describe("Auto Fix scenario asset", () => {
     expect(result.diagnostics).toEqual([]);
     expect(result.summary).toMatchObject({
       workflow_id: "auto-fix",
-      node_count: 47,
-      edge_count: 70,
+      node_count: 48,
+      edge_count: 74,
     });
     expect(source).not.toMatch(/^\s*(?:provider|model|llm_setting_id|api_key|base_url):/m);
     expect(source).not.toContain("qwen");
@@ -41,6 +41,7 @@ describe("Auto Fix scenario asset", () => {
       "extract_approved_candidate",
       "finalize_publication",
       "initialize_review_cycle",
+      "prepare_arbitration_revision",
       "prepare_next_review",
       "prepare_repository",
       "sanitize_issue",
@@ -69,7 +70,7 @@ describe("Auto Fix scenario asset", () => {
         field: "status",
         operator: "eq",
         value: "approved",
-        max_iterations: 4,
+        max_iterations: 0,
       },
     });
     expect(canonical.nodes.find((node) => node.id === "revise")).toMatchObject({
@@ -145,6 +146,7 @@ describe("Auto Fix scenario asset", () => {
       "extract_approved_candidate",
       "finalize_publication",
       "initialize_review_cycle",
+      "prepare_arbitration_revision",
       "prepare_next_review",
       "prepare_repository",
       "sanitize_issue",
@@ -161,11 +163,14 @@ describe("Auto Fix scenario asset", () => {
       expect(node?.config.workspace_access).toMatchObject({ readonly_paths: ["source"] });
       expect(node?.config.workspace_access?.writable_paths).not.toContain("source");
       expect(node?.config.allowed_builtin_tools).toEqual(["Glob", "Grep", "Read"]);
-      expect(node?.config.max_builtin_tool_calls).toBe(40);
+      expect(node?.config.max_builtin_tool_calls).toBeUndefined();
     }
-    expect(canonical.nodes.find((node) => node.id === "investigate")?.config.max_builtin_tool_calls).toBe(40);
-    expect(canonical.nodes.find((node) => node.id === "implement")?.config.max_builtin_tool_calls).toBe(60);
-    expect(canonical.nodes.find((node) => node.id === "revise")?.config.max_builtin_tool_calls).toBe(60);
+    expect(canonical.nodes.find((node) => node.id === "investigate")?.config.max_builtin_tool_calls).toBeUndefined();
+    expect(canonical.nodes.find((node) => node.id === "implement")?.config.max_builtin_tool_calls).toBeUndefined();
+    expect(canonical.nodes.find((node) => node.id === "revise")?.config.max_builtin_tool_calls).toBeUndefined();
+    expect(canonical.policies).toMatchObject({
+      unbounded_execution: true,
+    });
     for (const agentId of [
       "correctness_reviewer",
       "regression_reviewer",
@@ -175,8 +180,8 @@ describe("Auto Fix scenario asset", () => {
       expect(canonical.agents[agentId]?.system).toContain("`/workspace/source`");
       expect(canonical.agents[agentId]?.system).toMatch(/Never probe bare\s+`\/workspace`/);
       expect(canonical.agents[agentId]?.system).toContain("`source/<path>`");
-      expect(canonical.agents[agentId]?.system).toContain("at most 24");
-      expect(canonical.agents[agentId]?.system).toMatch(/exact\s+changed paths named by/);
+      expect(canonical.agents[agentId]?.system).not.toMatch(/at most \d+/);
+      expect(canonical.agents[agentId]?.system).toMatch(/exact\s+changed\s+paths named by/);
     }
     expect(canonical.agents.investigator?.system).toContain("`/workspace/source`");
     expect(canonical.agents.investigator?.system).toMatch(/Never probe bare\s+`\/workspace`/);
@@ -192,7 +197,7 @@ describe("Auto Fix scenario asset", () => {
     expect(source).toMatch(/trusted runner\s+performs one isolated full CI pass after arbitration/);
   });
 
-  it("skips revision on unanimous approval and permits only one rejected review cycle", () => {
+  it("skips revision on unanimous approval and keeps revising after repeated rejection", () => {
     const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
     const runCommand = (nodeId: string, input: unknown) => {
       const node = canonical.nodes.find((candidate) => candidate.id === nodeId);
@@ -217,7 +222,7 @@ describe("Auto Fix scenario asset", () => {
     });
     const initial = runCommand("initialize_review_cycle", { candidate: [candidate] });
     expect(initial).toMatchObject({ workspace_root: "source" });
-    const initialGate = { input: initial, iteration: 1, max_iterations: 4, matched: false };
+    const initialGate = { input: initial, iteration: 1, max_iterations: 0, matched: false };
     const approved = runCommand("aggregate_reviews", {
       state: [initialGate],
       correctness: [vote("correctness", "approve")],
@@ -226,7 +231,7 @@ describe("Auto Fix scenario asset", () => {
     });
     expect(approved).toMatchObject({ status: "approved", phase: "done", revision_count: 0 });
     expect(runCommand("extract_approved_candidate", {
-      cycle: [{ input: approved, iteration: 1, max_iterations: 4, matched: true }],
+      cycle: [{ input: approved, iteration: 1, max_iterations: 0, matched: true }],
     })).toEqual(candidate);
 
     const needsRevision = runCommand("aggregate_reviews", {
@@ -238,18 +243,63 @@ describe("Auto Fix scenario asset", () => {
     expect(needsRevision).toMatchObject({ status: "reviewing", phase: "revise", revision_count: 0 });
     const revised = { ...candidate, explanation: "revised repair" };
     const next = runCommand("prepare_next_review", {
-      state: [{ input: needsRevision, iteration: 2, max_iterations: 4, matched: false }],
+      state: [{ input: needsRevision, iteration: 2, max_iterations: 0, matched: false }],
       candidate: [revised],
     });
     expect(next).toMatchObject({ status: "reviewing", phase: "review", revision_count: 1 });
     expect(next).toMatchObject({ workspace_root: "source" });
-    const rejected = runCommand("aggregate_reviews", {
-      state: [{ input: next, iteration: 3, max_iterations: 4, matched: false }],
+    const needsAnotherRevision = runCommand("aggregate_reviews", {
+      state: [{ input: next, iteration: 3, max_iterations: 0, matched: false }],
       correctness: [vote("correctness", "approve")],
       regression: [vote("regression", "reject")],
       adversarial: [vote("adversarial", "approve")],
     });
-    expect(rejected).toMatchObject({ status: "rejected", phase: "rejected", revision_count: 1 });
+    expect(needsAnotherRevision).toMatchObject({
+      status: "reviewing",
+      phase: "revise",
+      revision_count: 1,
+    });
+    const secondRevision = { ...candidate, explanation: "second revised repair" };
+    const secondReview = runCommand("prepare_next_review", {
+      state: [{ input: needsAnotherRevision, iteration: 4, max_iterations: 0, matched: false }],
+      candidate: [secondRevision],
+    });
+    expect(secondReview).toMatchObject({ status: "reviewing", phase: "review", revision_count: 2 });
+    const finallyApproved = runCommand("aggregate_reviews", {
+      state: [{ input: secondReview, iteration: 5, max_iterations: 0, matched: false }],
+      correctness: [vote("correctness", "approve")],
+      regression: [vote("regression", "approve")],
+      adversarial: [vote("adversarial", "approve")],
+    });
+    expect(finallyApproved).toMatchObject({
+      status: "approved",
+      phase: "done",
+      revision_count: 2,
+    });
+    const arbitrationRevision = runCommand("prepare_arbitration_revision", {
+      cycle: [{
+        input: finallyApproved,
+        iteration: 6,
+        max_iterations: 0,
+        matched: true,
+      }],
+      arbitration: [{
+        verdict: "reject",
+        summary: "Final audit found a concrete defect",
+        blocking_defects: ["a.txt still mishandles the empty case"],
+      }],
+    });
+    expect(arbitrationRevision).toMatchObject({
+      status: "reviewing",
+      phase: "revise",
+      revision_count: 2,
+      workspace_root: "source",
+      candidate: secondRevision,
+      arbitration: {
+        verdict: "reject",
+        blocking_defects: ["a.txt still mishandles the empty case"],
+      },
+    });
   });
 
   it("collects tracked and untracked repair files without mutating the real Git index", () => {
