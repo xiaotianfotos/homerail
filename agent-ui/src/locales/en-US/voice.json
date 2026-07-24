@@ -28,6 +28,14 @@
     "serviceTierSaveFailed": "Failed to save Codex speed settings",
     "standardServiceTier": "Standard",
     "standardServiceTierDescription": "Standard speed and usage",
+    "liveVoice": "Live Voice",
+    "liveVoiceDescription": "Experimental · Realtime speech and server VAD",
+    "liveVoiceVoice": "Codex Voice",
+    "liveVoiceVoiceDescription": "Used for new Live Voice sessions",
+    "liveVoiceOn": "On",
+    "liveVoiceOff": "Off",
+    "liveVoiceUnavailable": "Paused. Requires Codex {version} or newer with realtime_conversation.",
+    "liveVoiceSaveFailed": "Failed to save Live Voice setting",
     "reasoningDescriptions": {
       "minimal": "Fastest; suited to simple organization.",
       "low": "Light reasoning; the default for voice interaction.",
@@ -60,6 +68,23 @@
     "listeningEditable": "Listening. You can edit when finished...",
     "omniProcessing": "Omni is understanding...",
     "notHeard": "I could not understand that. Please try again."
+  },
+  "liveVoice": {
+    "managed": "ASR, TTS, and server VAD are managed by Codex Live Voice",
+    "tapToStart": "Select to start Live Voice",
+    "connecting": "Connecting Live Voice...",
+    "reconnecting": "Reconnecting Live Voice...",
+    "listening": "Live Voice is listening",
+    "userSpeaking": "You are speaking",
+    "managerWorking": "Codex Manager is working",
+    "assistantSpeaking": "Live Voice is speaking",
+    "muted": "Live Voice microphone is muted",
+    "mute": "Mute Live Voice microphone",
+    "unmute": "Unmute Live Voice microphone",
+    "error": "Live Voice encountered an error",
+    "end": "End Live session",
+    "inputMeter": "Live Voice microphone input level",
+    "composerPlaceholder": "Send text through the active Live Voice session..."
   },
   "task": {
     "title": "Task",

@@ -12,10 +12,17 @@ import {
   parseGenerativeUiMode,
   type GenerativeUiMode,
 } from "../generative-ui/mode.js";
+import {
+  DEFAULT_CODEX_LIVE_VOICE_V3_VOICE,
+  parseCodexLiveVoiceV3Voice,
+  type CodexLiveVoiceV3Voice,
+} from "../domain/codex-live-voice.js";
 
 export interface ManagerAgentConfig {
   agent_type: "manager_agent";
   harness: ManagerAgentHarness;
+  live_voice_enabled: boolean;
+  live_voice_voice: CodexLiveVoiceV3Voice;
   llm_setting_id: string | null;
   provider_name: string | null;
   model_name: string | null;
@@ -29,6 +36,8 @@ export interface ManagerAgentConfig {
 export const DEFAULT_MANAGER_AGENT_CONFIG: ManagerAgentConfig = {
   agent_type: "manager_agent",
   harness: "claude_agent_sdk",
+  live_voice_enabled: false,
+  live_voice_voice: DEFAULT_CODEX_LIVE_VOICE_V3_VOICE,
   llm_setting_id: null,
   provider_name: null,
   model_name: null,
@@ -77,6 +86,8 @@ function _normalize(raw?: Record<string, unknown> | null): ManagerAgentConfig {
     return {
       agent_type: "manager_agent",
       harness,
+      live_voice_enabled: base.live_voice_enabled === true,
+      live_voice_voice: parseCodexLiveVoiceV3Voice(base.live_voice_voice),
       llm_setting_id: null,
       provider_name: null,
       model_name: modelName,
@@ -93,6 +104,8 @@ function _normalize(raw?: Record<string, unknown> | null): ManagerAgentConfig {
   return {
     agent_type: "manager_agent",
     harness,
+    live_voice_enabled: base.live_voice_enabled === true,
+    live_voice_voice: parseCodexLiveVoiceV3Voice(base.live_voice_voice),
     llm_setting_id: _string(base.llm_setting_id),
     provider_name: _string(base.provider_name),
     model_name: _string(base.model_name),

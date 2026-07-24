@@ -22,7 +22,9 @@
     "switching": "切换中...",
     "use": "使用",
     "stepReady": "{step}已就绪",
-    "nextAvailable": "可以进入下一步"
+    "nextAvailable": "可以进入下一步",
+    "liveVoiceManaged": "由 Codex Live Voice 接管",
+    "liveVoiceManagedHint": "实时识别、语音合成与服务端 VAD 由 Live Voice 会话提供。"
   },
   "environmentCheck": {
     "description": "确认主 Agent 依赖；Docker 仅在运行容器 DAG 时需要",

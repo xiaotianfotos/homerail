@@ -15,7 +15,11 @@
 
 import { ref, type Ref } from 'vue'
 import { listLLMSettings } from '@/api/services/llm-settings-api'
-import { getManagerAgentReadiness, type ManagerAgentReadiness } from '@/api/services/voice-agent-api'
+import {
+  getManagerAgentReadiness,
+  type CodexLiveVoiceV3Voice,
+  type ManagerAgentReadiness
+} from '@/api/services/voice-agent-api'
 
 function flagEnabled(value: unknown): boolean {
   if (typeof value !== 'string') return false
@@ -29,6 +33,11 @@ export interface OnboardingStatus {
   managerAgentHarness?: string
   managerAgentRuntimePlacement?: 'host' | 'host_shell' | 'container' | null
   managerAgentBlockers: Array<{ code: string; message: string; detail?: string }>
+  liveVoiceSupported: boolean
+  liveVoiceMinimumVersion?: string
+  liveVoiceVoices?: CodexLiveVoiceV3Voice[]
+  liveVoiceDefaultVoice?: CodexLiveVoiceV3Voice
+  liveVoiceEffective: boolean
   dockerWorkspace?: {
     required: boolean
     hostPath: string
@@ -56,6 +65,8 @@ export function useOnboardingStatus(): {
     codexAvailable: false,
     managerAgentReady: false,
     managerAgentBlockers: [],
+    liveVoiceSupported: false,
+    liveVoiceEffective: false,
     hasLlm: false,
     hasAsr: false,
     hasTts: false,
@@ -74,6 +85,8 @@ export function useOnboardingStatus(): {
         agent_type: null,
         provider_name: null,
         model_name: null,
+        live_voice_enabled: false,
+        live_voice_effective: false,
         blockers: [{ code: 'readiness_unavailable', message: 'Manager Agent readiness endpoint unavailable' }],
         checks: { config: false },
       }
@@ -90,6 +103,8 @@ export function useOnboardingStatus(): {
       const codex = managerReadiness.checks.codex
       const codexAvailable = Boolean(codex?.available && codex.logged_in)
       const managerAgentReady = managerReadiness.ready
+      const liveVoiceSupported = codex?.live_voice?.supported === true
+      const liveVoiceEffective = managerReadiness.live_voice_effective
 
       // 调试开关：VITE_HOMERAIL_FORCE_ONBOARDING=1 时强制触发新手引导
       const forceOnboarding = flagEnabled(import.meta.env.VITE_HOMERAIL_FORCE_ONBOARDING)
@@ -100,6 +115,11 @@ export function useOnboardingStatus(): {
         managerAgentHarness: managerReadiness.harness,
         managerAgentRuntimePlacement: managerReadiness.runtime_placement,
         managerAgentBlockers: managerReadiness.blockers,
+        liveVoiceSupported,
+        liveVoiceMinimumVersion: codex?.live_voice?.minimum_version,
+        liveVoiceVoices: codex?.live_voice?.voices,
+        liveVoiceDefaultVoice: codex?.live_voice?.default_voice,
+        liveVoiceEffective,
         dockerWorkspace: managerReadiness.checks.docker_workspace
           ? {
               required: managerReadiness.checks.docker_workspace.required,
@@ -119,7 +139,7 @@ export function useOnboardingStatus(): {
         hasLlm,
         hasAsr,
         hasTts,
-        needsOnboarding: forceOnboarding || (!managerAgentReady || !hasAsr),
+        needsOnboarding: forceOnboarding || (!managerAgentReady || (!liveVoiceEffective && !hasAsr)),
         loading: false,
       }
     } catch {
@@ -127,6 +147,8 @@ export function useOnboardingStatus(): {
         codexAvailable: false,
         managerAgentReady: false,
         managerAgentBlockers: [{ code: 'onboarding_status_error', message: 'Failed to load onboarding status' }],
+        liveVoiceSupported: false,
+        liveVoiceEffective: false,
         hasLlm: false,
         hasAsr: false,
         hasTts: false,

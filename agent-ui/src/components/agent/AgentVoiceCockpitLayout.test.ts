@@ -3,7 +3,10 @@ import cockpitSource from './AgentVoiceCockpit.vue?raw'
 
 describe('AgentVoiceCockpit responsive layout', () => {
   it('keeps the phone status message from covering canvas actions', () => {
-    expect(cockpitSource).toContain("'voice-stage--status-active': Boolean(processingText)")
+    expect(cockpitSource).toContain(
+      'Boolean(processingText) && !codexLiveVoiceConnecting'
+    )
+    expect(cockpitSource).toContain('v-if="processingText && !codexLiveVoiceConnecting"')
     expect(cockpitSource).toContain('voice-stage__status pointer-events-none')
     expect(cockpitSource).toContain(
       '.voice-cockpit--phone-portrait .voice-stage--status-active .voice-stage__content'
@@ -32,6 +35,52 @@ describe('AgentVoiceCockpit responsive layout', () => {
     expect(toggleModelMenu).toContain('modelMenuOpen.value = !modelMenuOpen.value')
     expect(toggleModelMenu).not.toContain('needsOnboardingHint')
     expect(toggleModelMenu).not.toContain('openOnboarding')
+  })
+
+  it('offers the supported Codex Live Voice switch in the quick model menu', () => {
+    expect(cockpitSource).toContain('data-testid="voice-model-live-toggle-row"')
+    expect(cockpitSource).toContain('data-testid="voice-model-live-toggle"')
+    expect(cockpitSource).toContain('role="switch"')
+    expect(cockpitSource).toContain(':aria-checked="codexLiveVoiceEnabled"')
+    expect(cockpitSource).toContain('@click="setCodexLiveVoiceEnabled(!codexLiveVoiceEnabled)"')
+    expect(cockpitSource).toContain('v-if="codexLiveVoiceSupported"')
+    expect(cockpitSource).toContain('data-testid="codex-live-voice-input-meter"')
+    expect(cockpitSource).toContain('v-for="path in codexLiveVoiceWavePaths"')
+    expect(cockpitSource).toContain('v-if="codexLiveVoiceConnecting"')
+    expect(cockpitSource).toContain(
+      "codexLiveVoiceState.value !== 'assistant-speaking'"
+    )
+    expect(cockpitSource).toContain(
+      "'codex-live-voice-meter--active': codexLiveVoiceHumanInputActive"
+    )
+    expect(cockpitSource).toContain('getFloatTimeDomainData(data)')
+    expect(cockpitSource).toContain('startCodexLiveVoiceMeter(stream)')
+    expect(cockpitSource).toContain('createMediaStreamSource(stream)')
+    expect(cockpitSource).toContain('data-testid="voice-model-live-voice-select"')
+    expect(cockpitSource).toContain('@change="handleCodexLiveVoiceVoiceChange"')
+    expect(cockpitSource).toContain("class=\"voice-live-button-glyph\"")
+    const toggleListening = cockpitSource.slice(
+      cockpitSource.indexOf('async function toggleListening(): Promise<void>'),
+      cockpitSource.indexOf('async function setupVoiceHidControl()'),
+    )
+    expect(toggleListening).toContain('if (codexLiveVoiceSessionActive.value)')
+    expect(toggleListening).toContain('await stopCodexLiveVoice()')
+    expect(toggleListening).not.toContain('toggleMuted()')
+    expect(cockpitSource).toContain(
+      'v-if="!codexLiveVoiceEffective && !isTvCompactViewport && (listening || speaking)"'
+    )
+    expect(cockpitSource).toContain('await refreshOnboarding()')
+  })
+
+  it('uses a dense glass model popover with an opaque fallback', () => {
+    expect(cockpitSource).toContain('background: var(--hr-bg-raised);')
+    expect(cockpitSource).toContain(
+      'color-mix(in srgb, var(--hr-accent) 3%, transparent)'
+    )
+    expect(cockpitSource).toContain('backdrop-filter: blur(36px) saturate(145%);')
+    expect(cockpitSource).toContain(
+      '@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px)))'
+    )
   })
 
   it('keeps voice output independently controllable and disabled before TTS requests', () => {

@@ -16,6 +16,14 @@ import {
   parseGenerativeUiMode,
   resolveConfiguredGenerativeUiModeDetails,
 } from "../generative-ui/mode.js";
+import {
+  inspectCodexInstallation,
+  type CodexLiveVoiceCapability,
+} from "./codex-live-voice-capability.js";
+import {
+  CODEX_LIVE_VOICE_V3_VOICES,
+  isCodexLiveVoiceV3Voice,
+} from "../domain/codex-live-voice.js";
 
 interface BaseResponse {
   success: boolean;
@@ -26,6 +34,7 @@ interface BaseResponse {
 
 export interface ManagerAgentConfigRoutesOptions {
   loadCodexModels?: () => Promise<CodexModelCatalog>;
+  loadCodexLiveVoiceCapability?: () => CodexLiveVoiceCapability | Promise<CodexLiveVoiceCapability>;
   autoDetectCodex?: boolean;
 }
 
@@ -109,6 +118,23 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
     ? current.generative_ui_mode
     : parseGenerativeUiMode(patch.generative_ui_mode);
   const harness = normalizeManagerAgentHarness(patch.harness) ?? current.harness;
+  if (patch.live_voice_enabled !== undefined && typeof patch.live_voice_enabled !== "boolean") {
+    throw new Error("live_voice_enabled must be a boolean");
+  }
+  if (
+    patch.live_voice_voice !== undefined
+    && !isCodexLiveVoiceV3Voice(patch.live_voice_voice)
+  ) {
+    throw new Error(
+      `live_voice_voice must be one of: ${CODEX_LIVE_VOICE_V3_VOICES.join(", ")}`,
+    );
+  }
+  const liveVoiceEnabled = patch.live_voice_enabled === undefined
+    ? current.live_voice_enabled
+    : patch.live_voice_enabled;
+  const liveVoiceVoice = patch.live_voice_voice === undefined
+    ? current.live_voice_voice
+    : patch.live_voice_voice as ManagerAgentConfig["live_voice_voice"];
   const mergedSettingId = settingId === undefined ? current.llm_setting_id : settingId;
   const mergedProviderName = providerName === undefined ? current.provider_name : providerName;
   const mergedModelName = modelName === undefined ? current.model_name : modelName;
@@ -122,6 +148,8 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
     return {
       ...current,
       harness,
+      live_voice_enabled: liveVoiceEnabled,
+      live_voice_voice: liveVoiceVoice,
       llm_setting_id: null,
       provider_name: null,
       // Ignore stale HomeRail provider/model patches while Codex is active.
@@ -140,6 +168,8 @@ function patchedConfig(patch: Record<string, unknown>): ManagerAgentConfig {
   return {
     ...current,
     harness,
+    live_voice_enabled: liveVoiceEnabled,
+    live_voice_voice: liveVoiceVoice,
     llm_setting_id: mergedSettingId,
     provider_name: mergedProviderName,
     model_name: mergedModelName,
@@ -236,21 +266,31 @@ export async function validateAndSaveManagerAgentConfig(
     throw validationError(error);
   }
   if (next.harness === "codex_appserver") {
-    const catalog = await (options.loadCodexModels ?? listCodexModels)();
+    const modelSelectionChanged = [
+      "harness",
+      "llm_setting_id",
+      "provider_name",
+      "model_name",
+      "reasoning_effort",
+      "service_tier",
+    ].some((key) => Object.prototype.hasOwnProperty.call(patch, key));
     try {
-      if (!next.model_name) {
-        const selected = preferredCodexConfig(catalog);
-        if (!selected) throw new Error("Codex app-server returned an empty model catalog.");
-        next = {
-          ...next,
-          ...selected,
-          reasoning_effort: _string(patch.reasoning_effort) ? next.reasoning_effort : selected.reasoning_effort,
-          service_tier: patch.service_tier === undefined ? selected.service_tier : next.service_tier,
-        };
+      if (!next.model_name || modelSelectionChanged) {
+        const catalog = await (options.loadCodexModels ?? listCodexModels)();
+        if (!next.model_name) {
+          const selected = preferredCodexConfig(catalog);
+          if (!selected) throw new Error("Codex app-server returned an empty model catalog.");
+          next = {
+            ...next,
+            ...selected,
+            reasoning_effort: _string(patch.reasoning_effort) ? next.reasoning_effort : selected.reasoning_effort,
+            service_tier: patch.service_tier === undefined ? selected.service_tier : next.service_tier,
+          };
+        }
+        validateCodexReasoningEffort(next, catalog);
+        validateCodexServiceTier(next, catalog);
       }
       validateManagerConfig(next);
-      validateCodexReasoningEffort(next, catalog);
-      validateCodexServiceTier(next, catalog);
     } catch (error) {
       throw validationError(error);
     }
@@ -259,6 +299,19 @@ export async function validateAndSaveManagerAgentConfig(
       validateManagerConfig(next);
     } catch (error) {
       throw validationError(error);
+    }
+  }
+  if (patch.live_voice_enabled === true) {
+    if (next.harness !== "codex_appserver") {
+      throw validationError(new Error("Live Voice requires the Codex app-server Manager runtime."));
+    }
+    const capability = await (options.loadCodexLiveVoiceCapability
+      ? options.loadCodexLiveVoiceCapability()
+      : inspectCodexInstallation().live_voice);
+    if (!capability.supported) {
+      throw validationError(new Error(
+        `Codex Live Voice requires Codex ${capability.minimum_version} or newer with ${capability.feature}.`,
+      ));
     }
   }
   // Validate the operational override before the persistence boundary. An

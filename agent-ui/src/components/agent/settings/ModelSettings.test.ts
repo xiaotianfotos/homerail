@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App } from 'vue'
 import { i18n } from '@/plugins/i18n'
 import { agentSettingsApi } from '@/api/agent'
+import type { ManagerAgentReadiness } from '@/api/agent'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
 import ModelSettings from './ModelSettings.vue'
 
@@ -27,7 +28,8 @@ vi.mock('@/components/controls/useToast', () => ({
 
 vi.mock('@/api/agent', () => ({
   agentSettingsApi: {
-    deleteLLMSetting: vi.fn(async () => ({ success: true }))
+    deleteLLMSetting: vi.fn(async () => ({ success: true })),
+    updateVoiceAgentConfig: vi.fn(async () => ({ success: true }))
   }
 }))
 
@@ -55,6 +57,8 @@ function managerConfig(harness: 'codex_appserver' | 'claude_agent_sdk') {
   return {
     agent_type: 'manager_agent' as const,
     harness,
+    live_voice_enabled: false,
+    live_voice_voice: 'cove' as const,
     llm_setting_id: null,
     provider_name: null,
     model_name: harness === 'codex_appserver' ? 'gpt-5.5' : null,
@@ -94,7 +98,8 @@ const modelSetting: LLMSetting = {
 
 async function mountSettings(
   harness: 'codex_appserver' | 'claude_agent_sdk',
-  llmSettings: LLMSetting[] = []
+  llmSettings: LLMSetting[] = [],
+  managerReadiness?: ManagerAgentReadiness
 ) {
   const root = document.createElement('div')
   document.body.appendChild(root)
@@ -102,6 +107,7 @@ async function mountSettings(
     providers: [],
     llmSettings,
     managerConfig: managerConfig(harness),
+    managerReadiness,
     codexModels,
     loading: false
   })
@@ -123,6 +129,38 @@ afterEach(() => {
 })
 
 describe('ModelSettings detected Codex runtime', () => {
+  const liveReadiness: ManagerAgentReadiness = {
+    ready: true,
+    status: 'ready',
+    harness: 'codex_appserver',
+    runtime_placement: 'host',
+    agent_type: 'manager_agent',
+    provider_name: null,
+    model_name: 'gpt-5.5',
+    live_voice_enabled: false,
+    live_voice_effective: false,
+    blockers: [],
+    checks: {
+      config: true,
+      codex: {
+        available: true,
+        logged_in: true,
+        version: 'codex-cli 0.145.0',
+        semantic_version: '0.145.0',
+        live_voice: {
+          supported: true,
+          minimum_version: '0.145.0',
+          protocol: 'v3',
+          transport: 'webrtc',
+          feature: 'realtime_conversation',
+          voices: ['juniper', 'maple', 'spruce', 'ember', 'vale', 'breeze', 'arbor', 'sol', 'cove'],
+          default_voice: 'cove',
+          stage: 'under development'
+        }
+      }
+    }
+  }
+
   it('opens a purpose menu beside Add model', async () => {
     const root = await mountSettings('claude_agent_sdk')
     const menuButton = root.querySelector<HTMLButtonElement>(
@@ -176,6 +214,37 @@ describe('ModelSettings detected Codex runtime', () => {
 
     expect(root.querySelector('[data-testid="agent-settings-model-item-codex"]')).not.toBeNull()
     expect(root.querySelectorAll('select')).toHaveLength(2)
+  })
+
+  it('shows and persists the experimental Live Voice toggle only for a supported Codex', async () => {
+    const root = await mountSettings('codex_appserver', [], liveReadiness)
+    const toggle = root.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-settings-live-voice-toggle"]'
+    )
+
+    expect(toggle).not.toBeNull()
+    expect(root.querySelector('[data-testid="agent-settings-live-voice"]')?.textContent).toContain(
+      '0.145.0'
+    )
+    toggle!.click()
+    await nextTick()
+    await nextTick()
+
+    expect(agentSettingsApi.updateVoiceAgentConfig).toHaveBeenCalledWith({
+      live_voice_enabled: true
+    })
+
+    const voiceSelect = root.querySelector<HTMLSelectElement>(
+      '[data-testid="agent-settings-live-voice-voice-select"]'
+    )!
+    voiceSelect.value = 'juniper'
+    voiceSelect.dispatchEvent(new Event('change'))
+    await nextTick()
+    await nextTick()
+
+    expect(agentSettingsApi.updateVoiceAgentConfig).toHaveBeenCalledWith({
+      live_voice_voice: 'juniper'
+    })
   })
 
   it('uses an adjacent inline confirmation before deleting a model', async () => {

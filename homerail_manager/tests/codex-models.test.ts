@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { listCodexModels, type CodexModelCatalog } from "../src/server/codex-models.js";
 import { managerAgentConfigRoutesHandler } from "../src/server/manager-agent-config.js";
+import { clearManagerAgentConfig } from "../src/persistence/manager-agent-config.js";
 
 class FakeChildProcess extends EventEmitter {
   stdin = new PassThrough();
@@ -23,9 +24,9 @@ class FakeChildProcess extends EventEmitter {
 let server: http.Server | undefined;
 
 afterEach(async () => {
-  if (!server) return;
-  await new Promise<void>((resolve) => server?.close(() => resolve()));
+  if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
   server = undefined;
+  clearManagerAgentConfig();
 });
 
 describe("Codex model catalog", () => {
@@ -407,6 +408,192 @@ describe("Codex model catalog", () => {
     expect(body).toMatchObject({
       success: false,
       error: "Codex model 'gpt-5.6-sol' does not support service tier 'flex'. Supported values: standard, priority.",
+    });
+  });
+
+  it("persists the Live Voice preference only when Codex capability is supported", async () => {
+    const catalog: CodexModelCatalog = {
+      binary: "/opt/homebrew/bin/codex",
+      models: [{
+        id: "gpt-5.6-sol",
+        model: "gpt-5.6-sol",
+        display_name: "GPT-5.6 Sol",
+        description: "",
+        is_default: true,
+        default_reasoning_effort: "low",
+        supported_reasoning_efforts: ["low"],
+        service_tiers: [],
+      }],
+    };
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res, {
+        loadCodexModels: async () => catalog,
+        loadCodexLiveVoiceCapability: () => ({
+          supported: true,
+          minimum_version: "0.145.0",
+          protocol: "v3",
+          transport: "webrtc",
+          feature: "realtime_conversation",
+          stage: "under development",
+        }),
+      });
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.6-sol",
+        live_voice_enabled: true,
+      }),
+    });
+    const body = await response.json() as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      success: true,
+      data: {
+        harness: "codex_appserver",
+        live_voice_enabled: true,
+      },
+    });
+  });
+
+  it("can enable Live Voice while logged out once the Codex model selection is already saved", async () => {
+    const catalog: CodexModelCatalog = {
+      binary: "/opt/homebrew/bin/codex",
+      models: [{
+        id: "gpt-5.6-sol",
+        model: "gpt-5.6-sol",
+        display_name: "GPT-5.6 Sol",
+        description: "",
+        is_default: true,
+        default_reasoning_effort: "low",
+        supported_reasoning_efforts: ["low"],
+        service_tiers: [],
+      }],
+    };
+    let catalogAvailable = true;
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res, {
+        loadCodexModels: async () => {
+          if (!catalogAvailable) throw new Error("Codex account is logged out");
+          return catalog;
+        },
+        loadCodexLiveVoiceCapability: () => ({
+          supported: true,
+          minimum_version: "0.145.0",
+          protocol: "v3",
+          transport: "webrtc",
+          feature: "realtime_conversation",
+          stage: "under development",
+        }),
+      });
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const configured = await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.6-sol",
+        reasoning_effort: "low",
+      }),
+    });
+    expect(configured.status).toBe(200);
+
+    catalogAvailable = false;
+    const response = await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ live_voice_enabled: true }),
+    });
+    const body = await response.json() as Record<string, unknown>;
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      data: {
+        harness: "codex_appserver",
+        live_voice_enabled: true,
+      },
+    });
+  });
+
+  it("rejects enabling Live Voice on an unsupported Codex without overwriting the preference", async () => {
+    const catalog: CodexModelCatalog = {
+      binary: "/opt/homebrew/bin/codex",
+      models: [{
+        id: "gpt-5.6-sol",
+        model: "gpt-5.6-sol",
+        display_name: "GPT-5.6 Sol",
+        description: "",
+        is_default: true,
+        default_reasoning_effort: "low",
+        supported_reasoning_efforts: ["low"],
+        service_tiers: [],
+      }],
+    };
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res, {
+        loadCodexModels: async () => catalog,
+        loadCodexLiveVoiceCapability: () => ({
+          supported: false,
+          minimum_version: "0.145.0",
+          protocol: "v3",
+          transport: "webrtc",
+          feature: "realtime_conversation",
+          reason: "too_old",
+        }),
+      });
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const response = await fetch(`${baseUrl}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.6-sol",
+        live_voice_enabled: true,
+      }),
+    });
+    expect(response.status).toBe(400);
+
+    const saved = await fetch(`${baseUrl}/api/manager-agent/config`);
+    const body = await saved.json() as { data: { live_voice_enabled: boolean } };
+    expect(body.data.live_voice_enabled).toBe(false);
+  });
+
+  it("rejects Live Voice for a non-Codex Manager harness", async () => {
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "claude_agent_sdk",
+        live_voice_enabled: true,
+      }),
+    });
+    const body = await response.json() as Record<string, unknown>;
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      success: false,
+      error: "Live Voice requires the Codex app-server Manager runtime.",
     });
   });
 });

@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getDataRoot } from "../config/env.js";
+import { getDataRoot, getHomerailHome } from "../config/env.js";
+import { repoRoot } from "../assets/root.js";
 import { encodeJson, getDb, parseJsonRow } from "../persistence/db.js";
 import { readManagerAgentConfig } from "../persistence/manager-agent-config.js";
 import { getProject } from "../persistence/projects-changes.js";
@@ -14,15 +15,25 @@ import {
 import type { HostShellManagerAgentOptions } from "./host-shell-manager-agent.js";
 import {
   composeVoiceUiRules,
+  buildHostCodexManagerAgentSystemPrompt,
+  createManagerTools,
+  emptyVoiceSurface,
   getUserVoiceRulesPath,
   loadUserVoiceUiRulesOverlay,
   loadVoiceUiRules,
+  loadVoiceSystemContract,
+  managerRestUrl,
+  materializeHostCodexManagerPluginSkills,
+  workspaceFromConfig,
   writeVoiceMemoWidget,
+  type HostCodexManagerToolState,
+  type ToolDefinition,
   type VoiceUiRules,
 } from "./host-codex-manager-agent.js";
 import {
   ManagerAgentRuntimeError,
   managerAgentRuntimePlacement,
+  resolveManagerAgentTurnAssets,
   runManagerAgentTurn,
   runManagerAgentTurnStream,
   type RunManagerAgentTurnInput,
@@ -88,6 +99,8 @@ import {
 import {
   assembleLegacyWidgetReservations,
 } from "../plugins/context-assembler.js";
+import { getPluginToolTurnAuthority } from "../plugins/action-bus.js";
+import { inspectCodexInstallation } from "./codex-live-voice-capability.js";
 
 interface BaseResponse {
   success: boolean;
@@ -1787,6 +1800,368 @@ async function processTurn(
     selectedNodeId,
     requiredToolCalls,
   );
+}
+
+export interface CodexLiveVoiceBinding {
+  session_id: string;
+  project_id?: string | null;
+  cwd: string;
+  model: string;
+  voice: string;
+  provider?: string;
+  service_tier?: string | null;
+  reasoning_effort?: string;
+  system_prompt: string;
+  tools: ToolDefinition[];
+  skill_roots: string[];
+  initial_items: Array<{ role: "user" | "assistant"; text: string }>;
+  environment: Record<string, string | undefined>;
+  workspace: () => Record<string, unknown>;
+  record_transcript: (role: string, text: string) => Record<string, unknown>;
+  record_manager_started: () => Record<string, unknown>;
+  record_manager_progress: (text: string) => Record<string, unknown>;
+  record_manager_completed: (status?: string) => Record<string, unknown>;
+  record_error: (message: string) => Record<string, unknown>;
+  flush_tool_state: () => Record<string, unknown>;
+  is_tool_schema_current: () => boolean;
+}
+
+function liveVoiceWorkspace(
+  sessionId: string,
+  projectId?: string | null,
+): VoiceWorkspace {
+  const safeSessionId = safeId(sessionId);
+  let workspace = loadWorkspace(safeSessionId);
+  if (!workspace) {
+    workspace = newWorkspace(projectId);
+    workspace.session_id = safeSessionId;
+    saveWorkspace(workspace);
+  } else if (
+    projectId
+    && workspace.project_id
+    && workspace.project_id !== projectId
+  ) {
+    throw new Error("Live Voice session does not belong to the requested project");
+  }
+  return workspace;
+}
+
+function liveVoiceCanvasContext(
+  workspace: VoiceWorkspace,
+  selectedNodeId?: string,
+) {
+  const mode = effectiveGenerativeUiMode(workspace);
+  if (mode !== "prefer") return undefined;
+  const document = persistentGenerativeUiDocumentService.findActiveForScope(
+    { type: "voice_session", id: workspace.session_id },
+    "canonical",
+  );
+  return buildGenerativeUiCanvasContext(document, selectedNodeId);
+}
+
+function clearLiveVoiceSurface(state: HostCodexManagerToolState): void {
+  state.voiceSurface.progress = null;
+  state.voiceSurface.taskDraft = null;
+  state.voiceSurface.widgets = [];
+  state.voiceSurface.removeWidgetIds = [];
+  state.voiceSurface.pluginProjections = [];
+}
+
+/**
+ * Build the trusted HomeRail side of one browser-owned Codex Live Voice call.
+ * The returned callbacks are the only place the realtime runtime can mutate a
+ * VoiceWorkspace; GPT Live itself never receives Manager credentials or Tools.
+ */
+export async function createCodexLiveVoiceBinding(input: {
+  sessionId: string;
+  projectId?: string | null;
+  selectedNodeId?: string;
+  managerAgentOptions?: HostShellManagerAgentOptions;
+  managerAgentConfigOptions?: ManagerAgentConfigRoutesOptions;
+}): Promise<CodexLiveVoiceBinding> {
+  const storedConfig = readManagerAgentConfig();
+  const storedConfigDigest = crypto.createHash("sha256")
+    .update(JSON.stringify(storedConfig))
+    .digest("hex");
+  if (storedConfig.harness !== "codex_appserver") {
+    throw new Error("Live Voice requires the Codex app-server Manager runtime");
+  }
+  if (!storedConfig.live_voice_enabled) {
+    throw new Error("Live Voice is not enabled for the current Manager Agent");
+  }
+  const installation = inspectCodexInstallation();
+  if (!installation.live_voice.supported) {
+    throw new Error(
+      `Codex Live Voice requires Codex ${installation.live_voice.minimum_version} or newer`,
+    );
+  }
+
+  const workspace = liveVoiceWorkspace(input.sessionId, input.projectId);
+  const agentConfig = resolveManagerAgentConfig(
+    workspace.project_id ?? undefined,
+    storedConfig.provider_name ?? undefined,
+    storedConfig.model_name ?? undefined,
+    storedConfig.llm_setting_id ?? undefined,
+    storedConfig.harness,
+    storedConfig.reasoning_effort,
+    storedConfig.service_tier,
+  );
+  const voiceUiRules = ensureWorkspaceVoiceUiRules(workspace);
+  const canvasContext = liveVoiceCanvasContext(workspace, input.selectedNodeId);
+  const dagContext = workspaceDagContext(workspace);
+  const generativeUiMode = effectiveGenerativeUiMode(workspace);
+  const turnAssets = resolveManagerAgentTurnAssets({
+    message: "Start the trusted HomeRail Live Voice Manager session.",
+    project_id: workspace.project_id ?? undefined,
+    session_id: workspace.manager_session_id ?? undefined,
+    voice_session_id: workspace.session_id,
+    continue_chat: true,
+    response_mode: "voice",
+    generative_ui_mode: generativeUiMode,
+    canvas_context: canvasContext,
+    dag_context: dagContext,
+    history: managerAgentHistory(workspace),
+    agent_config: agentConfig,
+    voice_ui_rules: voiceUiRules,
+  });
+  const pluginContext = turnAssets.plugin_context;
+  const restUrl = managerRestUrl(input.managerAgentOptions?.managerRestUrl);
+  const cwd = workspaceFromConfig(agentConfig);
+  const state: HostCodexManagerToolState = {
+    restUrl,
+    workspace: cwd,
+    projectId: workspace.project_id ?? agentConfig.project_id,
+    sessionId: workspace.session_id,
+    createdRunIds: [],
+    finalNotes: [],
+    objectiveToolCalls: [],
+    voiceSurface: emptyVoiceSurface(),
+  };
+  const pluginTokenSource = pluginContext.tools.length > 0 && generativeUiMode === "prefer"
+    ? () => getPluginToolTurnAuthority().issue({
+        context: pluginContext,
+        modality: "voice",
+        scope: { type: "voice_session", id: workspace.session_id },
+        generative_ui_mode: "prefer",
+      }).token
+    : undefined;
+  const tools = createManagerTools(
+    state,
+    "voice",
+    pluginContext,
+    pluginTokenSource,
+    canvasContext,
+    turnAssets.manager_skills,
+  );
+  const contextSections = [
+    buildHostCodexManagerAgentSystemPrompt(
+      agentConfig,
+      "voice",
+      voiceUiRules,
+      loadVoiceSystemContract(),
+      turnAssets.manager_skills,
+    ),
+    [
+      "Live Voice delegation rule:",
+      "At the beginning of every delegated user task, call get_homerail_live_context before planning or using another HomeRail tool.",
+      "That context is authoritative because the Workspace, canvas, DAG, and Manager configuration can change while this realtime session remains connected.",
+    ].join(" "),
+    canvasContext
+      ? `Current HomeRail canvas state (trusted read-only context):\n${JSON.stringify(canvasContext)}`
+      : "",
+    dagContext
+      ? `Current HomeRail DAG context (trusted read-only context):\n${JSON.stringify(dagContext)}`
+      : "",
+  ].filter(Boolean);
+
+  const skillRoots: string[] = [];
+  const localSkillRoot = path.join(getHomerailHome(), "skills");
+  try {
+    if (fs.statSync(localSkillRoot).isDirectory()) skillRoots.push(fs.realpathSync(localSkillRoot));
+  } catch {
+    // Optional local Skill root.
+  }
+  const pluginSkillRoot = materializeHostCodexManagerPluginSkills(turnAssets.manager_skills);
+  if (pluginSkillRoot) skillRoots.push(pluginSkillRoot);
+
+  const currentWorkspace = (): VoiceWorkspace => (
+    loadWorkspace(workspace.session_id) ?? workspace
+  );
+  tools.unshift({
+    name: "get_homerail_live_context",
+    description: "Read the latest trusted HomeRail Voice Workspace, canvas, DAG, and non-secret Manager configuration. Call this first for every new Live Voice delegation.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    async handler() {
+      const latest = currentWorkspace();
+      const latestConfig = readManagerAgentConfig();
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            workspace: {
+              session_id: latest.session_id,
+              project_id: latest.project_id ?? null,
+              manager_session_id: latest.manager_session_id ?? null,
+              manager_run_id: latest.manager_run_id ?? null,
+              progress_brief: latest.progress_brief,
+              active_objective: latest.active_objective ?? null,
+              task_draft: latest.task_draft ?? null,
+              pending_confirmations: latest.pending_confirmations,
+              recent_conversation: managerAgentHistory(latest).slice(-24),
+            },
+            canvas_context: liveVoiceCanvasContext(latest, input.selectedNodeId) ?? null,
+            dag_context: workspaceDagContext(latest) ?? null,
+            manager_config: {
+              harness: latestConfig.harness,
+              model_name: latestConfig.model_name ?? null,
+              reasoning_effort: latestConfig.reasoning_effort,
+              service_tier: latestConfig.service_tier ?? null,
+              live_voice_enabled: latestConfig.live_voice_enabled,
+              live_voice_voice: latestConfig.live_voice_voice,
+            },
+          }),
+        }],
+      };
+    },
+  });
+  const saveCurrent = (next: VoiceWorkspace): Record<string, unknown> => (
+    saveWorkspace(next) as unknown as Record<string, unknown>
+  );
+  const recordTranscript = (role: string, text: string): Record<string, unknown> => {
+    const normalizedRole = role.trim().toLowerCase();
+    const value = text.trim();
+    const next = currentWorkspace();
+    if (!value || (normalizedRole !== "user" && normalizedRole !== "assistant")) {
+      return next as unknown as Record<string, unknown>;
+    }
+    const last = next.conversation.at(-1);
+    if (last?.role === normalizedRole && last.text.trim() === value) {
+      return next as unknown as Record<string, unknown>;
+    }
+    if (normalizedRole === "user") {
+      appendConversation(next, "user", value);
+      ensureVoiceSessionTitle(next, value);
+    } else {
+      appendConversation(next, "assistant", value, "final", "message", voiceSpokenText(value));
+    }
+    return saveCurrent(next);
+  };
+
+  return {
+    session_id: workspace.session_id,
+    project_id: workspace.project_id,
+    cwd,
+    model: agentConfig.model || "codex",
+    voice: storedConfig.live_voice_voice,
+    provider: agentConfig.provider_name || undefined,
+    service_tier: agentConfig.service_tier,
+    reasoning_effort: agentConfig.reasoning_effort,
+    system_prompt: contextSections.join("\n\n"),
+    tools,
+    skill_roots: [...new Set(skillRoots)],
+    initial_items: managerAgentHistory(workspace)
+      .slice(-24)
+      .filter((item): item is { role: "user" | "assistant"; content: string } => (
+        (item.role === "user" || item.role === "assistant")
+        && typeof item.content === "string"
+      ))
+      .map((item) => ({ role: item.role, text: item.content })),
+    environment: {
+      HOMERAIL_CLI_ENTRYPOINT: path.join(repoRoot(), "homerail_cli", "dist", "cli.js"),
+      HOMERAIL_MANAGER_URL: restUrl.replace(/\/api\/?$/, ""),
+      ...(agentConfig.api_key ? { OPENAI_API_KEY: agentConfig.api_key } : {}),
+      ...(agentConfig.base_url ? { OPENAI_BASE_URL: agentConfig.base_url } : {}),
+    },
+    workspace: () => currentWorkspace() as unknown as Record<string, unknown>,
+    record_transcript: recordTranscript,
+    record_manager_started: () => {
+      const next = currentWorkspace();
+      next.progress_brief = {
+        status: "running",
+        short_text: "Codex Manager 正在处理",
+        updated_at: now(),
+      };
+      return saveCurrent(next);
+    },
+    record_manager_progress: (text: string) => {
+      const next = currentWorkspace();
+      const value = text.trim();
+      if (value) {
+        const last = next.conversation.at(-1);
+        if (!(last?.channel === "progress" && last.text.trim() === value)) {
+          appendConversation(next, "assistant", value, "progress", "message", "");
+        }
+        next.progress_brief = {
+          status: "running",
+          short_text: shortText(value, 80),
+          updated_at: now(),
+        };
+      }
+      return saveCurrent(next);
+    },
+    record_manager_completed: (status?: string) => {
+      const next = currentWorkspace();
+      next.progress_brief = {
+        status: status === "failed" ? "failed" : "done",
+        short_text: status === "failed" ? "Codex Manager 执行失败" : "Codex Manager 已完成",
+        updated_at: now(),
+      };
+      return saveCurrent(next);
+    },
+    record_error: (message: string) => {
+      const next = currentWorkspace();
+      appendDebugEvent(next, "codex_live_voice_error", shortText(message, 500), "error");
+      next.progress_brief = {
+        status: "failed",
+        short_text: "Live Voice 连接失败",
+        updated_at: now(),
+      };
+      return saveCurrent(next);
+    },
+    flush_tool_state: () => {
+      const next = currentWorkspace();
+      syncWorkspaceRunIds(next, state.createdRunIds);
+      applyVoiceSurfaceFromResult(next, {
+        voice_surface: {
+          progress: state.voiceSurface.progress,
+          task_draft: state.voiceSurface.taskDraft,
+          widgets: state.voiceSurface.widgets,
+          remove_widget_ids: state.voiceSurface.removeWidgetIds,
+          plugin_projections: state.voiceSurface.pluginProjections,
+        },
+      }, "", pluginContext);
+      clearLiveVoiceSurface(state);
+      return saveCurrent(next);
+    },
+    is_tool_schema_current: () => {
+      const latestConfig = readManagerAgentConfig();
+      const latestConfigDigest = crypto.createHash("sha256")
+        .update(JSON.stringify(latestConfig))
+        .digest("hex");
+      if (latestConfigDigest !== storedConfigDigest) return false;
+      const latest = currentWorkspace();
+      const latestCanvas = liveVoiceCanvasContext(latest, input.selectedNodeId);
+      const latestAssets = resolveManagerAgentTurnAssets({
+        message: "Refresh the trusted HomeRail Live Voice Manager session.",
+        project_id: latest.project_id ?? undefined,
+        session_id: latest.manager_session_id ?? undefined,
+        voice_session_id: latest.session_id,
+        continue_chat: true,
+        response_mode: "voice",
+        generative_ui_mode: effectiveGenerativeUiMode(latest),
+        canvas_context: latestCanvas,
+        dag_context: workspaceDagContext(latest),
+        history: managerAgentHistory(latest),
+        agent_config: agentConfig,
+        voice_ui_rules: ensureWorkspaceVoiceUiRules(latest),
+      });
+      return latestAssets.plugin_context.context_digest === pluginContext.context_digest;
+    },
+  };
 }
 
 function selectedGenerativeUiNodeId(body: Record<string, unknown>): string | undefined {

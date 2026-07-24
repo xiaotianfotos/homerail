@@ -13,7 +13,12 @@ import {
   Volume2
 } from 'lucide-vue-next'
 import { agentSettingsApi } from '@/api/agent'
-import type { CodexModel, VoiceAgentConfig } from '@/api/agent'
+import type {
+  CodexLiveVoiceV3Voice,
+  CodexModel,
+  ManagerAgentReadiness,
+  VoiceAgentConfig
+} from '@/api/agent'
 import { useAgentStore } from '@/stores/agent-store'
 import { useToast } from '@/components/controls/useToast'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
@@ -31,6 +36,7 @@ const props = defineProps<{
   providers: Provider[]
   llmSettings: LLMSetting[]
   managerConfig: VoiceAgentConfig | null
+  managerReadiness?: ManagerAgentReadiness | null
   codexModels: CodexModel[]
   loading: boolean
 }>()
@@ -56,6 +62,27 @@ const deleteConfirmId = ref<string | null>(null)
 const activeSettings = computed(() => props.llmSettings.filter(s => s.is_active))
 const inactiveSettings = computed(() => props.llmSettings.filter(s => !s.is_active))
 const currentManagerUsesCodex = computed(() => props.managerConfig?.harness === 'codex_appserver')
+const liveVoiceCapability = computed(() => props.managerReadiness?.checks.codex?.live_voice)
+const liveVoiceSupported = computed(
+  () => currentManagerUsesCodex.value && liveVoiceCapability.value?.supported === true
+)
+const liveVoiceEnabled = computed(() => props.managerConfig?.live_voice_enabled === true)
+const liveVoiceVoices = computed<CodexLiveVoiceV3Voice[]>(() => {
+  const voices = liveVoiceCapability.value?.voices
+  return voices?.length
+    ? voices
+    : ['juniper', 'maple', 'spruce', 'ember', 'vale', 'breeze', 'arbor', 'sol', 'cove']
+})
+const liveVoiceVoice = computed<CodexLiveVoiceV3Voice>(
+  () =>
+    props.managerConfig?.live_voice_voice ||
+    liveVoiceCapability.value?.default_voice ||
+    'cove'
+)
+const codexVersion = computed(() => {
+  const check = props.managerReadiness?.checks.codex
+  return check?.semantic_version || check?.version?.replace(/^codex-cli\s+/i, '') || ''
+})
 const showCodexRuntime = computed(
   () => currentManagerUsesCodex.value || props.codexModels.length > 0
 )
@@ -152,6 +179,35 @@ async function runAction<T>(key: string, action: () => Promise<T>): Promise<T | 
   } finally {
     savingId.value = null
   }
+}
+
+async function setLiveVoiceEnabled(enabled: boolean): Promise<void> {
+  await runAction('live-voice', async () => {
+    await agentSettingsApi.updateVoiceAgentConfig({ live_voice_enabled: enabled })
+    emit('refresh')
+    emit(
+      'set-notice',
+      enabled ? t('settings.models.liveVoiceEnabled') : t('settings.models.liveVoiceDisabled')
+    )
+  })
+}
+
+function liveVoiceVoiceLabel(voice: CodexLiveVoiceV3Voice): string {
+  return voice.charAt(0).toUpperCase() + voice.slice(1)
+}
+
+async function setLiveVoiceVoice(voice: CodexLiveVoiceV3Voice): Promise<void> {
+  await runAction('live-voice-voice', async () => {
+    await agentSettingsApi.updateVoiceAgentConfig({ live_voice_voice: voice })
+    emit('refresh')
+    emit('set-notice', t('settings.models.liveVoiceVoiceSaved', {
+      voice: liveVoiceVoiceLabel(voice)
+    }))
+  })
+}
+
+function handleLiveVoiceVoiceChange(event: Event): void {
+  void setLiveVoiceVoice((event.target as HTMLSelectElement).value as CodexLiveVoiceV3Voice)
 }
 
 async function handleSubmit(payload: ModelFormPayload): Promise<void> {
@@ -315,7 +371,12 @@ function capabilityList(
           data-testid="agent-settings-manager-runtime-provider-readonly"
           class="flex h-10 items-center justify-between rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm"
         >
-          <span>Codex</span>
+          <span class="inline-flex items-center gap-2">
+            Codex
+            <em v-if="codexVersion" class="font-mono text-[10px] not-italic text-[var(--hr-text-3)]">
+              {{ codexVersion }}
+            </em>
+          </span>
           <span class="inline-flex items-center gap-1 text-xs text-[var(--hr-text-2)]">
             <LockKeyhole class="h-3.5 w-3.5" />
             {{ t('settings.models.autoDetected') }}
@@ -364,6 +425,90 @@ function capabilityList(
       </div>
       <div v-else class="mt-3 text-xs leading-relaxed text-[var(--hr-text-3)]">
         {{ t('settings.models.runtimeHint') }}
+      </div>
+      <div
+        v-if="liveVoiceSupported"
+        data-testid="agent-settings-live-voice"
+        class="mt-4 rounded-lg border border-[var(--hr-accent-border)] bg-[var(--hr-accent-soft)] p-3"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2 text-sm font-medium text-[var(--hr-text-1)]">
+              <span>{{ t('settings.models.liveVoiceTitle') }}</span>
+              <span class="rounded-full bg-[var(--hr-surface-1)] px-2 py-0.5 text-[10px] text-[var(--hr-accent)]">
+                {{ t('settings.models.liveVoiceExperimental') }}
+              </span>
+              <span v-if="codexVersion" class="font-mono text-[10px] text-[var(--hr-text-3)]">
+                Codex {{ codexVersion }}
+              </span>
+            </div>
+            <p class="mt-1 text-xs leading-relaxed text-[var(--hr-text-3)]">
+              {{ t('settings.models.liveVoiceHint') }}
+            </p>
+          </div>
+          <div class="inline-flex shrink-0 items-center gap-3">
+            <span
+              class="text-xs font-medium"
+              :class="liveVoiceEnabled ? 'text-[var(--hr-info)]' : 'text-[var(--hr-text-3)]'"
+            >
+              {{ liveVoiceEnabled ? t('settings.actions.enabled') : t('settings.actions.disabled') }}
+            </span>
+            <button
+              data-testid="agent-settings-live-voice-toggle"
+              type="button"
+              role="switch"
+              class="relative h-7 w-12 rounded-full border transition disabled:cursor-not-allowed disabled:opacity-45"
+              :class="
+                liveVoiceEnabled
+                  ? 'border-[var(--hr-info-border)] bg-[var(--hr-info)]'
+                  : 'border-[var(--hr-border-strong)] bg-[var(--hr-surface-2)]'
+              "
+              :aria-checked="liveVoiceEnabled"
+              :disabled="savingId === 'live-voice'"
+              @click="setLiveVoiceEnabled(!liveVoiceEnabled)"
+            >
+              <span
+                class="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform"
+                :class="liveVoiceEnabled ? 'translate-x-5' : 'translate-x-0'"
+              />
+            </button>
+          </div>
+        </div>
+        <label
+          class="mt-3 grid gap-2 border-t border-[var(--hr-accent-border)] pt-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center"
+          data-testid="agent-settings-live-voice-voice-row"
+        >
+          <span>
+            <strong class="block text-sm font-medium text-[var(--hr-text-1)]">
+              {{ t('settings.models.liveVoiceVoiceTitle') }}
+            </strong>
+            <span class="mt-0.5 block text-xs text-[var(--hr-text-3)]">
+              {{ t('settings.models.liveVoiceVoiceHint') }}
+            </span>
+          </span>
+          <select
+            data-testid="agent-settings-live-voice-voice-select"
+            class="h-10 rounded-md border border-[var(--hr-border)] bg-[var(--hr-control)] px-3 text-sm outline-none"
+            :value="liveVoiceVoice"
+            :disabled="savingId === 'live-voice-voice'"
+            @change="handleLiveVoiceVoiceChange"
+          >
+            <option v-for="voice in liveVoiceVoices" :key="voice" :value="voice">
+              {{ liveVoiceVoiceLabel(voice) }}
+            </option>
+          </select>
+        </label>
+      </div>
+      <div
+        v-else-if="currentManagerUsesCodex && liveVoiceEnabled"
+        data-testid="agent-settings-live-voice-unavailable"
+        class="mt-4 rounded-lg border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] p-3 text-xs text-[var(--hr-warning)]"
+      >
+        {{
+          t('settings.models.liveVoiceUnavailable', {
+            version: liveVoiceCapability?.minimum_version || '0.145.0'
+          })
+        }}
       </div>
     </div>
 

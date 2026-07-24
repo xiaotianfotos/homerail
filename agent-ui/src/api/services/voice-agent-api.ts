@@ -130,9 +130,22 @@ export interface VoiceManagerStatus {
   dag?: Record<string, unknown> | null
 }
 
+export type CodexLiveVoiceV3Voice =
+  | 'juniper'
+  | 'maple'
+  | 'spruce'
+  | 'ember'
+  | 'vale'
+  | 'breeze'
+  | 'arbor'
+  | 'sol'
+  | 'cove'
+
 export interface ManagerAgentConfig {
   agent_type: 'manager_agent'
   harness: ManagerAgentHarness
+  live_voice_enabled: boolean
+  live_voice_voice: CodexLiveVoiceV3Voice
   llm_setting_id?: string | null
   provider_name?: string | null
   model_name?: string | null
@@ -146,6 +159,8 @@ export type VoiceAgentConfig = ManagerAgentConfig
 
 export interface UpdateManagerAgentConfigRequest {
   harness?: ManagerAgentHarness
+  live_voice_enabled?: boolean
+  live_voice_voice?: CodexLiveVoiceV3Voice
   llm_setting_id?: string | null
   provider_name?: string | null
   model_name?: string | null
@@ -300,10 +315,26 @@ export interface ManagerAgentReadiness {
   agent_type: string | null
   provider_name: string | null
   model_name: string | null
+  live_voice_enabled: boolean
+  live_voice_effective: boolean
   blockers: Array<{ code: string; message: string; detail?: string }>
   checks: {
     config: boolean
-    codex?: CodexStatus & { binary?: string }
+    codex?: CodexStatus & {
+      binary?: string
+      semantic_version?: string
+      live_voice: {
+        supported: boolean
+        minimum_version: string
+        protocol: 'v3'
+        transport: 'webrtc'
+        feature: 'realtime_conversation'
+        voices: CodexLiveVoiceV3Voice[]
+        default_voice: CodexLiveVoiceV3Voice
+        stage?: string
+        reason?: 'missing' | 'unparseable' | 'too_old' | 'feature_missing'
+      }
+    }
     docker_node?: {
       required: boolean
       available: boolean
@@ -358,6 +389,24 @@ export async function getCodexModels(): Promise<BaseResponse<CodexModelCatalog>>
 export async function getManagerAgentReadiness(): Promise<ManagerAgentReadiness> {
   const res = await http.get<BaseResponse<ManagerAgentReadiness>>('/api/manager-agent/readiness') as unknown as BaseResponse<ManagerAgentReadiness>
   return res.data
+}
+
+export async function requestCodexLiveVoiceTicket(
+  sessionId: string,
+): Promise<{ ticket: string; expires_in_ms: number }> {
+  const res = await http.post<BaseResponse<{ ticket: string; expires_in_ms: number }>>(
+    `/api/voice-agent/sessions/${encodeURIComponent(sessionId)}/live-ticket`,
+    {},
+  ) as unknown as BaseResponse<{ ticket: string; expires_in_ms: number }>
+  return res.data
+}
+
+export function codexLiveVoiceWebSocketUrl(sessionId: string): string {
+  const configured = http.getBaseURL().replace(/\/$/, '')
+  const origin = configured || (typeof window !== 'undefined' ? window.location.origin : '')
+  if (!origin) throw new Error('Unable to determine the Live Voice WebSocket URL')
+  const wsBase = origin.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
+  return `${wsBase}/api/voice-agent/sessions/${encodeURIComponent(sessionId)}/live`
 }
 
 export async function probeDockerWorkspaceMount(): Promise<DockerWorkspaceProbeResult> {
