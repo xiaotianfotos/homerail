@@ -360,7 +360,11 @@ const WhileNode = Type.Object({
     continue_port: Identifier,
     done_port: Identifier,
     exhausted_port: Type.Optional(Identifier),
-    max_iterations: Type.Integer({ minimum: 1, maximum: 10_000 }),
+    max_iterations: Type.Integer({
+      minimum: 0,
+      maximum: 10_000,
+      description: "Maximum iterations; 0 requires policies.unbounded_execution.",
+    }),
   }, { additionalProperties: false }),
 }, { additionalProperties: false });
 
@@ -411,7 +415,11 @@ const FeedbackEdge = Type.Object({
   kind: Type.Literal("feedback"),
   from: Type.String({ pattern: PORT_REFERENCE_PATTERN, maxLength: 130 }),
   to: Type.String({ pattern: PORT_REFERENCE_PATTERN, maxLength: 130 }),
-  max_traversals: Type.Integer({ minimum: 1, maximum: 10_000 }),
+  max_traversals: Type.Integer({
+    minimum: 0,
+    maximum: 10_000,
+    description: "Maximum feedback traversals; 0 requires policies.unbounded_execution.",
+  }),
 }, { additionalProperties: false });
 
 const WorkflowEdge = Type.Union([DataEdge, FeedbackEdge]);
@@ -527,6 +535,9 @@ export const WorkflowSpecV1Schema = Type.Object({
       parameters: Type.Optional(Type.Record(Identifier, JsonValue, { maxProperties: 128 })),
     }, { additionalProperties: false })),
     policies: Type.Optional(Type.Object({
+      unbounded_execution: Type.Optional(Type.Boolean({
+        description: "Disable runtime progress budgets; the run ends only by workflow outcome or cancellation.",
+      })),
       max_nodes: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
       max_edges: Type.Optional(Type.Integer({ minimum: 0, maximum: 10_000 })),
       max_parallelism: Type.Optional(Type.Integer({ minimum: 1, maximum: 256 })),

@@ -98,6 +98,7 @@ export interface CanonicalWorkflowIR {
     parameters: Record<string, unknown>;
   };
   policies: {
+    unbounded_execution: boolean;
     max_nodes: number;
     max_edges: number;
     max_parallelism: number;
@@ -719,6 +720,18 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
   }
 
   const policies = workflow.spec.policies;
+  const usesUnboundedLoop = Object.values(nodes).some((node) => (
+    node.kind === "while" && node.config.max_iterations === 0
+  )) || workflow.spec.edges.some((edge) => (
+    isFeedbackEdge(edge) && edge.max_traversals === 0
+  ));
+  if (usesUnboundedLoop && policies?.unbounded_execution !== true) {
+    add(
+      "/spec/policies/unbounded_execution",
+      "DAG_POLICY_UNBOUNDED_REQUIRED",
+      "zero-valued while or feedback limits require unbounded_execution: true",
+    );
+  }
   if (policies?.max_nodes !== undefined && Object.keys(nodes).length > policies.max_nodes) {
     add("/spec/policies/max_nodes", "DAG_POLICY_NODE_LIMIT", "workflow node count exceeds max_nodes");
   }
@@ -914,6 +927,7 @@ function compileV1(workflow: WorkflowSpecV1): CanonicalWorkflowIR {
       },
     } : {}),
     policies: {
+      unbounded_execution: workflow.spec.policies?.unbounded_execution === true,
       max_nodes: workflow.spec.policies?.max_nodes ?? 1000,
       max_edges: workflow.spec.policies?.max_edges ?? 10_000,
       max_parallelism: workflow.spec.policies?.max_parallelism ?? 32,
@@ -1051,6 +1065,7 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
       },
     } : {}),
     policies: {
+      unbounded_execution: false,
       max_nodes: 1000,
       max_edges: 10_000,
       max_parallelism: 32,
@@ -1373,6 +1388,7 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
       description: canonical.description,
       workspace: canonical.workspace,
       limits: {
+        unbounded_execution: canonical.policies.unbounded_execution,
         max_nodes: canonical.policies.max_nodes,
         max_dispatches: canonical.policies.max_dispatches,
         max_handoffs: canonical.policies.max_handoffs,
@@ -1586,7 +1602,8 @@ export function canonicalWorkflowToV1Document(canonical: CanonicalWorkflowIR): R
 }
 
 function _isDefaultPolicies(policies: CanonicalWorkflowIR["policies"]): boolean {
-  return policies.max_nodes === 1000 &&
+  return policies.unbounded_execution === false &&
+    policies.max_nodes === 1000 &&
     policies.max_edges === 10_000 &&
     policies.max_parallelism === 32 &&
     policies.max_dispatches === 30 &&

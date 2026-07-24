@@ -225,7 +225,7 @@ describe("PR Review run-template", () => {
         base: "a".repeat(40),
         head: "b".repeat(40),
       }),
-      "--wait", "--interval", "0.001",
+      "--wait", "--timeout", "0", "--interval", "0.001",
     ]);
 
     expect(JSON.parse(String(log.mock.calls[0][0]))).toMatchObject({

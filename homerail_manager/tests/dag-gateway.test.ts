@@ -640,6 +640,31 @@ nodes:
     expect(run?.dagRun.nodeStates.get("exhausted")).toBe("READY");
   });
 
+  it("keeps an unbounded while and feedback edge active until the predicate matches", () => {
+    const parsed = parseDAGYaml(whileGatewayYaml(0, 0));
+    parsed.meta.limits = {
+      ...(parsed.meta.limits ?? {}),
+      unbounded_execution: true,
+      max_dispatches: 1,
+      max_handoffs: 1,
+      max_edge_traversals: 1,
+    };
+    createActiveRun("run-while-unbounded", parsed);
+    const dispatcher = new CollectingDispatcher();
+
+    for (const score of [0, 1, 2, 2, 3]) {
+      expect(dispatchReadyNodes("run-while-unbounded", dispatcher)).toBe(1);
+      expect(dispatchReadyNodes("run-while-unbounded", dispatcher)).toBe(1);
+      handoffActiveRun("run-while-unbounded", "worker", "measured", { score });
+      expect(getActiveRun("run-while-unbounded")?.status).toBe("active");
+    }
+    expect(dispatchReadyNodes("run-while-unbounded", dispatcher)).toBe(1);
+    const run = getActiveRun("run-while-unbounded");
+    expect(run?.dagRun.nodeStates.get("success")).toBe("READY");
+    expect(run?.dagRun.nodeStates.get("exhausted")).toBe("SKIPPED");
+    expect(run?.counters.gateway_iterations.gate).toBe(5);
+  });
+
   it("enforces an edge-specific retry limit on feedback edges", () => {
     const parsed = parseDAGYaml(whileGatewayYaml(5, 1));
     createActiveRun("run-while-retry-limit", parsed);

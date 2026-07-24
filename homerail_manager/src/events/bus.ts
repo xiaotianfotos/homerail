@@ -314,7 +314,7 @@ export interface RunCancelledPayload {
 export interface EngineStartedPayload {
   runId: string;
   workflowId?: string;
-  limits?: Record<string, number>;
+  limits?: Record<string, number | boolean>;
 }
 
 export interface EngineCompletedPayload {

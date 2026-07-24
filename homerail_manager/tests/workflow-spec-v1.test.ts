@@ -663,6 +663,88 @@ spec:
     expect(result.canonical?.feedback_edges).toHaveLength(1);
   });
 
+  it("accepts zero-valued goal-loop limits as explicitly unbounded", () => {
+    const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
+    workflow.spec.nodes.loop = {
+      kind: "while",
+      inputs: { state: { contract: "Result" } },
+      outputs: {
+        again: { contract: "Result" },
+        complete: { contract: "Result" },
+        exhausted: { contract: "Result" },
+      },
+      config: {
+        field: "status",
+        operator: "eq",
+        value: "success",
+        continue_port: "again",
+        done_port: "complete",
+        exhausted_port: "exhausted",
+        max_iterations: 0,
+      },
+    };
+    workflow.spec.nodes.execute.inputs.feedback = { contract: "Result" };
+    workflow.spec.nodes.exhausted = {
+      kind: "terminal",
+      outcome: "failure",
+      inputs: { result: { contract: "Result" } },
+    };
+    workflow.spec.edges = [
+      { from: "$run.input", to: "execute.task" },
+      { from: "execute.result", to: "loop.state" },
+      { kind: "feedback", from: "loop.again", to: "loop.state", max_traversals: 0 },
+      { from: "loop.complete", to: "done.result" },
+      { from: "loop.exhausted", to: "exhausted.result" },
+    ];
+    workflow.spec.policies = {
+      unbounded_execution: true,
+    };
+    const result = compileWorkflowSource(YAML.stringify(workflow));
+
+    expect(result.valid, result.diagnostics.map((item) => item.message).join("\n")).toBe(true);
+    expect(result.canonical?.nodes.find((node) => node.id === "loop")?.config.max_iterations).toBe(0);
+    expect(result.canonical?.edges.find((edge) => edge.kind === "feedback")?.max_traversals).toBe(0);
+    expect(result.canonical?.policies).toMatchObject({
+      unbounded_execution: true,
+    });
+    const roundTripped = canonicalWorkflowToV1Document(result.canonical!);
+    expect((roundTripped.spec as any).policies).toMatchObject({ unbounded_execution: true });
+    expect(compileWorkflowSource(YAML.stringify(roundTripped)).canonical_hash).toBe(result.canonical_hash);
+  });
+
+  it("rejects zero-valued loop bounds unless unbounded execution is explicit", () => {
+    const workflow = structuredClone(MINIMAL_WORKFLOW) as any;
+    workflow.spec.nodes.loop = {
+      kind: "while",
+      inputs: { state: { contract: "Result" } },
+      outputs: {
+        again: { contract: "Result" },
+        complete: { contract: "Result" },
+      },
+      config: {
+        field: "status",
+        operator: "eq",
+        value: "success",
+        continue_port: "again",
+        done_port: "complete",
+        max_iterations: 0,
+      },
+    };
+    workflow.spec.edges = [
+      { from: "$run.input", to: "execute.task" },
+      { from: "execute.result", to: "loop.state" },
+      { kind: "feedback", from: "loop.again", to: "loop.state", max_traversals: 0 },
+      { from: "loop.complete", to: "done.result" },
+    ];
+
+    const result = compileWorkflowSource(YAML.stringify(workflow));
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "DAG_POLICY_UNBOUNDED_REQUIRED" }),
+    ]));
+  });
+
   it("accepts existing unversioned workflows through an isolated legacy adapter", () => {
     const result = compileWorkflowSource(`
 name: Legacy Review

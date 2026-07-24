@@ -219,8 +219,8 @@ function _validateGatewayConfigs(graph: DAGGraphData, errors: string[]): void {
         errors.push(`While gateway ${node.node_id} has unsupported operator: ${operator}`);
       }
       const maxIterations = config?.max_iterations ?? 3;
-      if (!Number.isInteger(maxIterations) || maxIterations < 1) {
-        errors.push(`While gateway ${node.node_id} requires max_iterations to be a positive integer`);
+      if (!Number.isInteger(maxIterations) || maxIterations < 0) {
+        errors.push(`While gateway ${node.node_id} requires max_iterations to be a non-negative integer`);
       }
     }
     if (node.node_type === "await_command_gateway") {

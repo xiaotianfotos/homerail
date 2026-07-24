@@ -325,6 +325,7 @@ export interface ResumeWaitingRunResult {
 }
 
 export interface DAGRunLimits {
+  unbounded_execution: boolean;
   max_nodes: number;
   max_dispatches: number;
   max_handoffs: number;
@@ -365,6 +366,7 @@ export interface CreateActiveRunOptions {
 const store = new Map<string, ActiveRun>();
 
 const DEFAULT_LIMITS: DAGRunLimits = {
+  unbounded_execution: false,
   max_nodes: 1000,
   max_dispatches: 30,
   max_handoffs: 50,
@@ -397,6 +399,7 @@ function _resolveLimits(raw: unknown): DAGRunLimits {
     ? raw as Record<string, unknown>
     : undefined;
   return {
+    unbounded_execution: value?.unbounded_execution === true,
     max_nodes: _limitValue(value, "max_nodes", DEFAULT_LIMITS.max_nodes),
     max_dispatches: _limitValue(value, "max_dispatches", DEFAULT_LIMITS.max_dispatches),
     max_handoffs: _limitValue(value, "max_handoffs", DEFAULT_LIMITS.max_handoffs),
@@ -1145,7 +1148,7 @@ export function restoreActiveRun(
     createdAt: metadata.createdAt,
     status: metadata.status,
     currentRound,
-    limits: metadata.limits ?? { ...DEFAULT_LIMITS },
+    limits: _resolveLimits(metadata.limits),
     counters: _restoreCounters(metadata.counters),
     nodeIndex: _buildNodeIndex(nodes),
     nodeSessions: new Map(),
@@ -1812,6 +1815,7 @@ function _correctionPrompt(
   outputContracts: Record<string, { contract: string; schema: unknown }>,
 ): string {
   const declaredPorts = outputPorts.length > 0 ? outputPorts.join(", ") : "done";
+  const attemptLabel = maxAttempts === 0 ? `${attempt}/unlimited` : `${attempt}/${maxAttempts}`;
   const contractGuidance = Object.keys(outputContracts).length > 0
     ? [
         "The handoff tool call shape is {\"port\":\"<declared port>\",\"content\":<value matching that port schema>}. Put contract fields only inside content.",
@@ -1819,7 +1823,7 @@ function _correctionPrompt(
       ]
     : [];
   return [
-    `Correction attempt ${attempt}/${maxAttempts} for DAG node ${nodeId}.`,
+    `Correction attempt ${attemptLabel} for DAG node ${nodeId}.`,
     `Previous attempt ended without a valid DAG handoff: ${reason}`,
     `Declared output ports for this node: ${declaredPorts}.`,
     `Preferred success ports: ${successPorts.length > 0 ? successPorts.join(", ") : "none declared"}.`,
@@ -1847,7 +1851,7 @@ export function requestNodeCorrection(
 
   const maxAttempts = run.limits.max_corrections_per_node;
   const previousAttempts = run.counters.corrections[nodeId] ?? 0;
-  if (previousAttempts >= maxAttempts) {
+  if (!run.limits.unbounded_execution && previousAttempts >= maxAttempts) {
     return { status: "exhausted", run, attempts: previousAttempts, maxAttempts };
   }
 
@@ -2266,7 +2270,10 @@ function _assertHandoffPreconditions(
   if (surfaceViolation) throw new Error(surfaceViolation);
   const contractViolation = _handoffContractViolation(run, fromNode, port, content);
   if (contractViolation) throw new Error(contractViolation);
-  if (run.counters.handoffs >= run.limits.max_handoffs) {
+  if (
+    !run.limits.unbounded_execution
+    && run.counters.handoffs >= run.limits.max_handoffs
+  ) {
     if (abortOnLimit) abortActiveRun(run.runId, `max_handoffs (${run.limits.max_handoffs}) exceeded`, fromNode);
     throw new Error(`max_handoffs (${run.limits.max_handoffs}) exceeded`);
   }
@@ -2276,7 +2283,7 @@ function _assertHandoffPreconditions(
     const key = `${edge.from_node}/${edge.from_port}->${edge.to_node}/${edge.to_port}`;
     const nextCount = (run.counters.edge_traversals[key] ?? 0) + 1;
     const edgeLimit = edge.retry_policy?.max_retries ?? run.limits.max_edge_traversals;
-    if (nextCount > edgeLimit) {
+    if (!run.limits.unbounded_execution && nextCount > edgeLimit) {
       if (abortOnLimit) abortActiveRun(run.runId, `edge retry limit (${edgeLimit}) exceeded for ${key}`, fromNode);
       throw new Error(`edge retry limit (${edgeLimit}) exceeded for ${key}`);
     }
@@ -3547,7 +3554,9 @@ function _whileGatewayResult(
   const selected = _fieldValue(input, config?.field);
   const matched = _gatewayComparison(selected, config?.operator, config?.value);
   const iteration = run.counters.gateway_iterations[node.node_id] ?? 0;
-  const maxIterations = Math.max(1, Math.floor(config?.max_iterations ?? 3));
+  const maxIterations = run.limits.unbounded_execution
+    ? 0
+    : Math.max(1, Math.floor(config?.max_iterations ?? 3));
   if (matched) {
     _terminateLoopSource(run, node.node_id);
     return {
@@ -3555,7 +3564,7 @@ function _whileGatewayResult(
       payload: { input, iteration, max_iterations: maxIterations, matched: true },
     };
   }
-  if (iteration >= maxIterations) {
+  if (iteration >= maxIterations && !run.limits.unbounded_execution) {
     _terminateLoopSource(run, node.node_id);
     return {
       port: config?.exhausted_port || "exhausted",
@@ -4341,6 +4350,7 @@ function _allowedBuiltinTools(node: DAGGraphNode): AgentBuiltinToolName[] | unde
 }
 
 function _maxBuiltinToolCalls(run: ActiveRun, node: DAGGraphNode): number | undefined {
+  if (run.limits.unbounded_execution) return undefined;
   const configured = _agentRuntimeConfig(node).max_builtin_tool_calls;
   const nodeLimit = Number.isInteger(configured) && Number(configured) > 0
     ? Number(configured)
@@ -4667,7 +4677,10 @@ export function dispatchReadyNodes(
       failActiveRun(runId, nodeId, built.reason);
       continue;
     }
-    if (run.counters.dispatches >= run.limits.max_dispatches) {
+    if (
+      !run.limits.unbounded_execution
+      && run.counters.dispatches >= run.limits.max_dispatches
+    ) {
       abortActiveRun(runId, `max_dispatches (${run.limits.max_dispatches}) exceeded`, nodeId);
       break;
     }
@@ -4681,7 +4694,10 @@ export function dispatchReadyNodes(
     if (result.status === "failed") {
       const retryable = result.retryable !== false;
       if (retryable && recordNodeDispatchRetry(runId, nodeId, result.reason)) {
-        if (run.counters.dispatches >= run.limits.max_dispatches) {
+        if (
+          !run.limits.unbounded_execution
+          && run.counters.dispatches >= run.limits.max_dispatches
+        ) {
           abortActiveRun(runId, `max_dispatches (${run.limits.max_dispatches}) exceeded`, nodeId);
           break;
         }
@@ -4748,7 +4764,10 @@ export function recordProvisionedNodeDispatchAttempt(
 ): boolean {
   const run = store.get(runId);
   if (!run || run.status !== "active" || getNodeState(run.dagRun, nodeId) !== "READY") return false;
-  if (run.counters.dispatches >= run.limits.max_dispatches) {
+  if (
+    !run.limits.unbounded_execution
+    && run.counters.dispatches >= run.limits.max_dispatches
+  ) {
     abortActiveRun(runId, `max_dispatches (${run.limits.max_dispatches}) exceeded`, nodeId);
     return false;
   }

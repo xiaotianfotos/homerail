@@ -344,6 +344,30 @@ spec:
     expect(run?.dagRun.nodeStates.get("finalize")).toBe("SKIPPED");
   });
 
+  it("keeps correction attempts available when unbounded execution is explicit", () => {
+    const parsed = parseDAGYaml(correctionYaml(0));
+    parsed.meta.limits = {
+      ...(parsed.meta.limits ?? {}),
+      unbounded_execution: true,
+    };
+    createActiveRun("run-unbounded-correction", parsed);
+    dispatchReadyNodes(
+      "run-unbounded-correction",
+      new FlakyDispatcher({ status: "dispatched", targetType: "fake", targetId: "worker" }),
+    );
+
+    expect(requestNodeCorrection(
+      "run-unbounded-correction",
+      "start",
+      "first missing handoff",
+    )).toMatchObject({ status: "scheduled", attempt: 1, maxAttempts: 0 });
+    expect(requestNodeCorrection(
+      "run-unbounded-correction",
+      "start",
+      "second missing handoff",
+    )).toMatchObject({ status: "scheduled", attempt: 2, maxAttempts: 0 });
+  });
+
   it("retries retryable dispatch failures once before marking the node running", () => {
     const parsed = parseDAGYaml(correctionYaml());
     createActiveRun("run-dispatch-retry", parsed);

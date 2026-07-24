@@ -67,6 +67,7 @@ async function resilientPoll<T>(
   operation: () => Promise<T>,
   outage: PollOutage,
   label: string,
+  maxContinuousOutageMs = MAX_CONTINUOUS_MANAGER_OUTAGE_MS,
 ): Promise<T | undefined> {
   try {
     const result = await operation();
@@ -77,9 +78,12 @@ async function resilientPoll<T>(
     const now = Date.now();
     outage.startedAt ??= now;
     outage.lastError = error;
-    if (now - outage.startedAt >= MAX_CONTINUOUS_MANAGER_OUTAGE_MS) {
+    if (
+      maxContinuousOutageMs > 0
+      && now - outage.startedAt >= maxContinuousOutageMs
+    ) {
       throw new Error(
-        `${label} lost contact with the stable Manager for 180 seconds: ${error instanceof Error ? error.message : String(error)}`,
+        `${label} lost contact with the stable Manager for ${Math.round(maxContinuousOutageMs / 1_000)} seconds: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
     return undefined;
@@ -102,6 +106,12 @@ function parseObject(raw: string, label: string): Record<string, unknown> {
 function positiveNumber(raw: string, label: string): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${label} must be a positive number`);
+  return parsed;
+}
+
+function nonNegativeNumber(raw: string, label: string): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} must be a non-negative number`);
   return parsed;
 }
 
@@ -263,14 +273,15 @@ async function waitForTerminal(
   timeoutSeconds: number,
   intervalSeconds: number,
 ): Promise<Record<string, unknown>> {
-  const deadline = Date.now() + timeoutSeconds * 1_000;
+  const deadline = timeoutSeconds === 0 ? undefined : Date.now() + timeoutSeconds * 1_000;
   let last: Record<string, unknown> = {};
   const outage: PollOutage = {};
-  while (Date.now() <= deadline) {
+  while (deadline === undefined || Date.now() <= deadline) {
     const response = await resilientPoll(
       () => client.get(`/api/runs/${encodeURIComponent(runId)}/status`),
       outage,
       `DAG run ${runId}`,
+      timeoutSeconds === 0 ? 0 : MAX_CONTINUOUS_MANAGER_OUTAGE_MS,
     );
     if (response !== undefined) {
       last = responseData(response);
@@ -297,14 +308,15 @@ async function waitForArtifacts(
   timeoutSeconds: number,
   intervalSeconds: number,
 ): Promise<RunArtifactSummary[]> {
-  const deadline = Date.now() + timeoutSeconds * 1_000;
+  const deadline = timeoutSeconds === 0 ? undefined : Date.now() + timeoutSeconds * 1_000;
   let last: RunArtifactSummary[] = [];
   const outage: PollOutage = {};
-  while (Date.now() <= deadline) {
+  while (deadline === undefined || Date.now() <= deadline) {
     const artifacts = await resilientPoll(
       () => listRunArtifacts(client, runId),
       outage,
       `DAG artifacts for ${runId}`,
+      timeoutSeconds === 0 ? 0 : MAX_CONTINUOUS_MANAGER_OUTAGE_MS,
     );
     if (artifacts !== undefined) {
       last = artifacts;
@@ -354,7 +366,7 @@ export function registerDagRunTemplateCommands(dag: Command, program: Command): 
     .option("--setting-id <id>", "Database LLM setting id")
     .option("--run-id <id>", "Explicit run id")
     .option("--wait", "Wait for terminal status and declared artifacts", false)
-    .option("--timeout <sec>", "Wait timeout in seconds", "1800")
+    .option("--timeout <sec>", "Wait timeout in seconds; 0 waits until terminal status", "1800")
     .option("--interval <sec>", "Status poll interval in seconds", "2")
     .action(async (template: string, opts: RunTemplateOptions) => {
       const global = program.opts<GlobalOpts>();
@@ -373,7 +385,7 @@ export function registerDagRunTemplateCommands(dag: Command, program: Command): 
           console.log(global.json ? JSON.stringify(output) : `Run started: ${started.runId}\nWorkflow: ${started.workflowId}`);
           return;
         }
-        const timeout = positiveNumber(opts.timeout, "--timeout");
+        const timeout = nonNegativeNumber(opts.timeout, "--timeout");
         const interval = positiveNumber(opts.interval, "--interval");
         const status = await waitForTerminal(client, started.runId, timeout, interval);
         const artifacts = await waitForArtifacts(client, started.runId, timeout, interval);

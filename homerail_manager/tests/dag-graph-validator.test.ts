@@ -316,6 +316,39 @@ nodes:
     expect(parsed.loop_sources).toContain("gate");
   });
 
+  it("allows zero to express an externally cancellable while loop", () => {
+    const parsed = parseDAGYaml(`
+name: valid-unbounded-while-cycle
+nodes:
+  work:
+    agent: worker
+    after: [gate]
+    outputs:
+      measured:
+        to: gate.in:measurement
+        retry_policy:
+          max_retries: 0
+  gate:
+    type: while_gateway
+    gateway_config:
+      operator: eq
+      value: done
+      max_iterations: 0
+    outputs:
+      continue:
+        to: work.in:task
+      done:
+        to: ""
+      exhausted:
+        to: ""
+`);
+
+    const result = validateGraph(parsed.graph);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(parsed.loop_sources).toContain("gate");
+  });
+
   it("rejects invalid join, while, and retry configurations before runtime", () => {
     expect(() => parseDAGYaml(`
 name: invalid-join
@@ -362,6 +395,19 @@ nodes:
         to: ""
         retry_policy:
           max_retries: -1
+`)).toThrow(/non-negative integer/);
+
+    expect(() => parseDAGYaml(`
+name: invalid-negative-while
+nodes:
+  gate:
+    type: while_gateway
+    gateway_config:
+      operator: eq
+      max_iterations: -1
+    outputs:
+      done:
+        to: ""
 `)).toThrow(/non-negative integer/);
   });
 

@@ -107,6 +107,26 @@ describe("WorkflowSpec v1 runtime projection", () => {
     expect(dispatcher.dispatched[0].maxBuiltinToolCalls).toBe(9);
   });
 
+  it("omits workflow and node tool budgets for explicitly unbounded execution", () => {
+    const source = workflowSource().replace(
+      "policies: { max_tool_calls_per_node: 9 }",
+      "policies: { unbounded_execution: true, max_tool_calls_per_node: 9 }",
+    );
+    upsertDagWorkflowFromYaml({ yaml_text: source });
+    syncDeterministicProfile("v1-runtime-success");
+    const dispatcher = new FakeDAGDispatcher();
+    const orchestrator = new ChangeOrchestrator(new GraphExecutor(dispatcher));
+    orchestrator.createAndRun({
+      workflowId: "v1-runtime-success",
+      runId: "v1-runtime-unbounded-tools",
+      prompt: "hello",
+      profile: "deterministic",
+    });
+
+    expect(dispatcher.dispatched[0].maxBuiltinToolCalls).toBeUndefined();
+    expect(getActiveRun("v1-runtime-unbounded-tools")?.limits.unbounded_execution).toBe(true);
+  });
+
   afterEach(() => {
     _clearActiveRuns();
     _clearDagWorkflowTablesForTest();
