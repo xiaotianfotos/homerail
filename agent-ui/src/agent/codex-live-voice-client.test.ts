@@ -362,6 +362,65 @@ describe('CodexLiveVoiceClient', () => {
     await client.stop()
   })
 
+  it('ignores delayed messages from an old socket after reconnecting', async () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const peers: FakePeer[] = []
+    const events: CodexLiveVoiceEvent[] = []
+    const ticketProvider = vi.fn(async () => ({ ticket: `ticket-${sockets.length + 1}` }))
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-stale-socket',
+      ticketProvider,
+      webSocketFactory: () => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => {
+        const peer = new FakePeer()
+        peers.push(peer)
+        return peer as unknown as RTCPeerConnection
+      },
+      getUserMedia: async () => fakeMedia().stream,
+      audioFactory: fakeAudio,
+      onEvent: event => events.push(event),
+    })
+    await client.start()
+
+    peers[0].fail()
+    await vi.advanceTimersByTimeAsync(500)
+    await vi.waitFor(() => expect(peers).toHaveLength(2))
+    await vi.waitFor(() => expect(client.currentState).toBe('listening'))
+
+    sockets[0].message({ type: 'session.sdp', sdp: 'stale-answer-sdp' })
+    sockets[0].message({
+      type: 'session.error',
+      message: 'Stale fatal error',
+      recoverable: false,
+    })
+    sockets[0].message({ type: 'session.closed' })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(client.currentState).toBe('listening')
+    expect(peers[1].remoteDescription).toEqual({ type: 'answer', sdp: 'answer-sdp' })
+    expect(peers[1].closed).toBe(false)
+    expect(sockets[1].readyState).toBe(WebSocket.OPEN)
+    expect(ticketProvider).toHaveBeenCalledTimes(2)
+    expect(sockets).toHaveLength(2)
+    expect(peers).toHaveLength(2)
+    expect(events).not.toContainEqual({ type: 'session.sdp', sdp: 'stale-answer-sdp' })
+    expect(events).not.toContainEqual({
+      type: 'session.error',
+      message: 'Stale fatal error',
+      recoverable: false,
+    })
+    expect(events).not.toContainEqual({ type: 'session.closed' })
+    expect(vi.getTimerCount()).toBe(0)
+
+    await client.stop()
+  })
+
   it('cancels a pending reconnect when the user stops the session', async () => {
     vi.useFakeTimers()
     const sockets: FakeSocket[] = []

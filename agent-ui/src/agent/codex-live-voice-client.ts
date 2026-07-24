@@ -269,7 +269,7 @@ export class CodexLiveVoiceClient {
       this.options.sessionId,
     )
     this.assertCurrentConnection(generation, peer)
-    await this.openSocket(ticket.ticket)
+    await this.openSocket(ticket.ticket, generation, peer)
     this.assertCurrentConnection(generation, peer)
     const remotePromise = new Promise<void>((resolve, reject) => {
       const timer = window.setTimeout(() => {
@@ -314,20 +314,52 @@ export class CodexLiveVoiceClient {
     this.remoteAudio = null
   }
 
-  private openSocket(ticket: string): Promise<void> {
+  private openSocket(
+    ticket: string,
+    generation: number,
+    peer: RTCPeerConnection,
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const socket = (this.options.webSocketFactory ?? (url => new WebSocket(url)))(
         codexLiveVoiceWebSocketUrl(this.options.sessionId),
       )
       this.socket = socket
       let ready = false
+      let settled = false
+      const supersededError = () => new Error('Live Voice connection attempt was superseded')
+      const isCurrent = () => this.isCurrentTransport(socket, generation, peer)
+      const finish = () => {
+        if (settled) return
+        settled = true
+        ready = true
+        window.clearTimeout(timer)
+        resolve()
+      }
+      const fail = (error: Error) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        reject(error)
+      }
       const timer = window.setTimeout(() => {
-        if (!ready) reject(new Error('Timed out authenticating Live Voice'))
+        if (!isCurrent()) {
+          fail(supersededError())
+          return
+        }
+        if (!ready) fail(new Error('Timed out authenticating Live Voice'))
       }, 10_000)
       socket.addEventListener('open', () => {
+        if (!isCurrent()) {
+          fail(supersededError())
+          return
+        }
         socket.send(JSON.stringify({ type: 'authenticate', ticket }))
       })
       socket.addEventListener('message', event => {
+        if (!isCurrent()) {
+          fail(supersededError())
+          return
+        }
         let message: CodexLiveVoiceEvent
         try {
           message = JSON.parse(String(event.data)) as CodexLiveVoiceEvent
@@ -335,23 +367,26 @@ export class CodexLiveVoiceClient {
           return
         }
         if (message.type === 'ready' && !ready) {
-          ready = true
-          window.clearTimeout(timer)
-          resolve()
+          finish()
         }
-        void this.handleMessage(message)
+        void this.handleMessage(message, socket, generation, peer)
       })
       socket.addEventListener('error', () => {
+        if (!isCurrent()) {
+          fail(supersededError())
+          return
+        }
         if (!ready) {
-          window.clearTimeout(timer)
-          reject(new Error('Live Voice WebSocket connection failed'))
+          fail(new Error('Live Voice WebSocket connection failed'))
         }
       })
       socket.addEventListener('close', event => {
-        if (this.socket !== socket) return
+        if (!isCurrent()) {
+          fail(supersededError())
+          return
+        }
         if (!ready) {
-          window.clearTimeout(timer)
-          reject(new Error(event.reason || 'Live Voice WebSocket closed'))
+          fail(new Error(event.reason || 'Live Voice WebSocket closed'))
         }
         if (!this.stopped && event.code !== 1000) {
           this.scheduleReconnect(
@@ -363,16 +398,24 @@ export class CodexLiveVoiceClient {
     })
   }
 
-  private async handleMessage(message: CodexLiveVoiceEvent): Promise<void> {
-    if (message.type === 'session.sdp' && typeof message.sdp === 'string' && this.peer) {
+  private async handleMessage(
+    message: CodexLiveVoiceEvent,
+    socket: WebSocket,
+    generation: number,
+    peer: RTCPeerConnection,
+  ): Promise<void> {
+    if (!this.isCurrentTransport(socket, generation, peer)) return
+    if (message.type === 'session.sdp' && typeof message.sdp === 'string') {
       try {
-        await this.peer.setRemoteDescription({ type: 'answer', sdp: message.sdp })
+        await peer.setRemoteDescription({ type: 'answer', sdp: message.sdp })
+        if (!this.isCurrentTransport(socket, generation, peer)) return
         if (this.remoteDescription) {
           window.clearTimeout(this.remoteDescription.timer)
           this.remoteDescription.resolve()
           this.remoteDescription = null
         }
       } catch (error) {
+        if (!this.isCurrentTransport(socket, generation, peer)) return
         if (this.remoteDescription) {
           window.clearTimeout(this.remoteDescription.timer)
           this.remoteDescription.reject(
@@ -472,6 +515,14 @@ export class CodexLiveVoiceClient {
       && generation === this.connectionGeneration
       && (peer === undefined || this.peer === peer)
     )
+  }
+
+  private isCurrentTransport(
+    socket: WebSocket,
+    generation: number,
+    peer: RTCPeerConnection,
+  ): boolean {
+    return this.socket === socket && this.isCurrentConnection(generation, peer)
   }
 
   private assertCurrentConnection(
