@@ -92,6 +92,73 @@ test("allows obvious credential placeholders only in test fixture patches", () =
   );
 });
 
+test("allows clearly synthetic local paths only inside test patches", () => {
+  for (const [file, localPath] of [
+    ["homerail_cli/tests/doctor.test.ts", "/Users/user/.docker/run/docker.sock"],
+    ["tests/docker.spec.ts", "C:\\Users\\test\\.docker\\run\\docker.sock"],
+  ]) {
+    const fixturePatch = [
+      `diff --git a/${file} b/${file}`,
+      `--- a/${file}`,
+      `+++ b/${file}`,
+      "@@ -0,0 +1 @@",
+      `+const fixturePath = ${JSON.stringify(localPath)};`,
+      "",
+    ].join("\n");
+    validateAutoFixArtifacts(
+      command,
+      { ...publication, patch: fixturePatch, files_changed: [file] },
+      fixturePatch,
+      publication.markdown,
+    );
+  }
+});
+
+test("rejects real local paths and continues after an allowed fixture path", () => {
+  const sensitive = "/Users/matrix/private.txt";
+  const unsafePatch = [
+    "diff --git a/tests/docker.test.ts b/tests/docker.test.ts",
+    "--- a/tests/docker.test.ts",
+    "+++ b/tests/docker.test.ts",
+    "@@ -0,0 +1,2 @@",
+    "+const fixturePath = \"/Users/user/.docker/run/docker.sock\";",
+    `+const leakedPath = ${JSON.stringify(sensitive)};`,
+    "",
+  ].join("\n");
+  assert.throws(
+    () => validateAutoFixArtifacts(
+      command,
+      { ...publication, patch: unsafePatch, files_changed: ["tests/docker.test.ts"] },
+      unsafePatch,
+      publication.markdown,
+    ),
+    (error) => {
+      assert.match(error.message, /tests\/docker\.test\.ts, patch line 6.*local Unix path/);
+      assert.equal(error.message.includes(sensitive), false);
+      return true;
+    },
+  );
+
+  const productionPath = "/Users/user/.docker/run/docker.sock";
+  const productionPatch = [
+    "diff --git a/src/docker.ts b/src/docker.ts",
+    "--- a/src/docker.ts",
+    "+++ b/src/docker.ts",
+    "@@ -0,0 +1 @@",
+    `+const localPath = ${JSON.stringify(productionPath)};`,
+    "",
+  ].join("\n");
+  assert.throws(
+    () => validateAutoFixArtifacts(
+      command,
+      { ...publication, patch: productionPatch, files_changed: ["src/docker.ts"] },
+      productionPatch,
+      publication.markdown,
+    ),
+    /local Unix path/,
+  );
+});
+
 test("scans many placeholder assignments without quadratic patch rescans", () => {
   const additions = Array.from(
     { length: 4_000 },

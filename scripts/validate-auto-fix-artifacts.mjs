@@ -74,18 +74,35 @@ function locationLabel(context) {
   return context.file ? ` (${context.file}, patch line ${context.line})` : "";
 }
 
+function isSyntheticFixtureLocalPath(value, index, category, file) {
+  if (!isTestFixturePath(file)) return false;
+  const tail = value.slice(index, index + 160);
+  const placeholderUser = "(?:user|test|example|fixture|sample)";
+  if (category === "a local Windows path") {
+    return new RegExp(`^[A-Za-z]:\\\\(?:Users|Documents and Settings)\\\\${placeholderUser}\\\\`, "i").test(tail);
+  }
+  if (category === "a local Unix path") {
+    return new RegExp(`^\\/(?:Users|home)\\/${placeholderUser}\\/`, "i").test(tail);
+  }
+  return false;
+}
+
 function assertSafePublicationText(value, source) {
   const locate = patchLocationResolver(value);
   const forbidden = [
-    ["a local Windows path", /[A-Za-z]:\\(?:Users|Documents and Settings)\\/i],
-    ["a local Unix path", /\/(?:Users|home|vol[0-9]*|mnt)\//],
-    ["a private network address", /\b(?:10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(?:1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b/],
-    ["private key material", /-----BEGIN [A-Z ]+PRIVATE KEY-----/],
-    ["a GitHub token", /\bgh[opsu]_[A-Za-z0-9]{20,}\b/],
+    ["a local Windows path", /[A-Za-z]:\\(?:Users|Documents and Settings)\\/gi],
+    ["a local Unix path", /\/(?:Users|home|vol[0-9]*|mnt)\//g],
+    ["a private network address", /\b(?:10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(?:1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b/g],
+    ["private key material", /-----BEGIN [A-Z ]+PRIVATE KEY-----/g],
+    ["a GitHub token", /\bgh[opsu]_[A-Za-z0-9]{20,}\b/g],
   ];
   for (const [category, pattern] of forbidden) {
-    const match = pattern.exec(value);
-    if (match) {
+    for (const match of value.matchAll(pattern)) {
+      const context = locate(match.index);
+      if (
+        source === "patch"
+        && isSyntheticFixtureLocalPath(value, match.index, category, context.file)
+      ) continue;
       invariant(false, `Auto Fix publication ${source}${locationLabel(locate(match.index))} contains ${category}`);
     }
   }
