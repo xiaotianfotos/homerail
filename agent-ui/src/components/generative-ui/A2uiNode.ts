@@ -365,10 +365,21 @@ function renderNode(
     const direction = component.component === 'Row'
       ? 'row'
       : component.component === 'List' && component.direction === 'horizontal' ? 'row' : 'column'
+    const directHtmlArtifacts = component.component === 'Column'
+      && ancestors.length === 0
+      && Array.isArray(component.children)
+      ? component.children.filter(id => {
+          const candidate = typeof id === 'string' ? runtime.components.get(id) : undefined
+          return candidate?.component === 'HrArtifact'
+            && candidate.kind === 'html'
+            && isSafeGenerativeUiPreviewUri(text(candidate.uri, runtime, scope))
+        })
+      : []
     return h('div', nodeAttrs({
       'data-direction': direction,
       'data-justify': 'justify' in component && JUSTIFY_VALUES.has(String(component.justify)) ? component.justify : 'start',
       'data-align': ALIGN_VALUES.has(String(component.align)) ? component.align : 'stretch',
+      ...(directHtmlArtifacts.length === 1 ? { 'data-fill-html-artifact': directHtmlArtifacts[0] } : {}),
     }), children(component.children))
   }
   if (component.component === 'Card') return h('article', nodeAttrs(), [child(component.child)])
@@ -712,7 +723,10 @@ function renderNode(
     const description = text(component.description, runtime, scope)
     const kind = component.kind === 'image' || component.kind === 'html' ? component.kind : 'file'
     if (!isSafeGenerativeUiPreviewUri(uri)) {
-      return h('div', { ...nodeAttrs(), 'data-unavailable': 'true' }, [h(File, { size: 18 }), h('span', title || 'Artifact unavailable')])
+      return h('div', {
+        ...nodeAttrs({ 'data-artifact-kind': kind }),
+        'data-unavailable': 'true',
+      }, [h(File, { size: 18 }), h('span', title || 'Artifact unavailable')])
     }
     const preview = () => runtime.openPreview({
       title: title || undefined,
@@ -721,7 +735,11 @@ function renderNode(
       layout: component.layout === 'portrait' ? 'portrait' : 'fluid',
     })
     if (kind === 'image') {
-      return h('button', { ...nodeAttrs(), type: 'button', onClick: preview }, [
+      return h('button', {
+        ...nodeAttrs({ 'data-artifact-kind': kind }),
+        type: 'button',
+        onClick: preview,
+      }, [
         h('img', {
           src: uri,
           alt: text(component.alt, runtime, scope) || title,
@@ -732,7 +750,7 @@ function renderNode(
       ])
     }
     if (kind === 'html') {
-      return h('div', nodeAttrs(), [
+      return h('div', nodeAttrs({ 'data-artifact-kind': kind }), [
         h('iframe', {
           src: uri,
           sandbox: 'allow-scripts',
@@ -748,7 +766,11 @@ function renderNode(
         }),
       ])
     }
-    return h('button', { ...nodeAttrs(), type: 'button', onClick: preview }, [
+    return h('button', {
+      ...nodeAttrs({ 'data-artifact-kind': kind }),
+      type: 'button',
+      onClick: preview,
+    }, [
       h(File, { size: 18, 'aria-hidden': true }),
       h('span', [h('strong', title || 'Artifact'), description ? h('small', description) : null]),
     ])

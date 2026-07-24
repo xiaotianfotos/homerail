@@ -519,8 +519,19 @@ button.hr-a2ui__artifact { display: grid; width: 100%; padding: 0; text-align: l
 .hr-a2ui__artifact p { color: var(--hr-text-3); font-size: 12px; }
 div.hr-a2ui__artifact { display: grid; min-height: 220px; }
 .homerail-a2ui > div.hr-a2ui__artifact { height: 100%; }
+.homerail-a2ui > .hr-a2ui__column[data-fill-html-artifact] {
+  height: 100%;
+  min-height: 0;
+}
+.homerail-a2ui > .hr-a2ui__column[data-fill-html-artifact] > div.hr-a2ui__artifact[data-artifact-kind='html'] {
+  min-height: 0;
+  flex: 1 1 220px;
+}
 .hr-a2ui__artifact iframe { width: 100%; height: 100%; min-height: 180px; border: 0; background: #fff; pointer-events: none; }
-.homerail-a2ui > div.hr-a2ui__artifact > iframe { pointer-events: auto; }
+.homerail-a2ui > div.hr-a2ui__artifact > iframe,
+.homerail-a2ui > .hr-a2ui__column[data-fill-html-artifact] > div.hr-a2ui__artifact[data-artifact-kind='html'] > iframe {
+  pointer-events: auto;
+}
 .hr-a2ui__artifact[data-unavailable='true'] { display: flex; min-height: 92px; align-items: center; gap: 12px; padding: 16px; }
 
 .hr-a2ui__link {
