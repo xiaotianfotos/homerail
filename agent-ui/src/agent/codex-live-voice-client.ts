@@ -65,6 +65,11 @@ function waitForRealtimeTransport(
   if (isReady()) return Promise.resolve()
   return new Promise((resolve, reject) => {
     let settled = false
+    const terminalPeerError = () => (
+      peer.connectionState === 'failed' || peer.connectionState === 'closed'
+        ? new Error(`Live Voice WebRTC connection ${peer.connectionState}`)
+        : null
+    )
     const cleanup = () => {
       window.clearTimeout(timer)
       peer.removeEventListener('connectionstatechange', onPeerStateChange)
@@ -85,8 +90,9 @@ function waitForRealtimeTransport(
       reject(error)
     }
     const onPeerStateChange = () => {
-      if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
-        fail(new Error(`Live Voice WebRTC connection ${peer.connectionState}`))
+      const error = terminalPeerError()
+      if (error) {
+        fail(error)
         return
       }
       finish()
@@ -101,6 +107,11 @@ function waitForRealtimeTransport(
     eventsChannel.addEventListener('open', onChannelOpen)
     eventsChannel.addEventListener('close', onChannelClose)
     eventsChannel.addEventListener('error', onChannelError)
+    const terminalError = terminalPeerError()
+    if (terminalError) {
+      fail(terminalError)
+      return
+    }
     finish()
   })
 }
@@ -167,7 +178,9 @@ export class CodexLiveVoiceClient {
 
   sendText(text: string): void {
     const value = text.trim()
-    if (value) this.send({ type: 'text', text: value })
+    if (value && !this.send({ type: 'text', text: value })) {
+      throw new Error('Live Voice is reconnecting. Wait until it is listening before sending text.')
+    }
   }
 
   async stop(notifyServer = true): Promise<void> {
@@ -367,10 +380,12 @@ export class CodexLiveVoiceClient {
     this.options.onEvent?.(message)
   }
 
-  private send(message: Record<string, unknown>): void {
+  private send(message: Record<string, unknown>): boolean {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(message))
+      return true
     }
+    return false
   }
 
   private fail(error: Error, emitEvent = true): void {

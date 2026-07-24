@@ -246,4 +246,38 @@ describe("CodexLiveVoiceRuntime", () => {
     });
     expect(events.some(event => event.type === "handoff")).toBe(false);
   });
+
+  it("turns tool-schema inspection failures into a session error and closes safely", async () => {
+    const fake = new FakeCodexClient();
+    const events: CodexLiveVoiceRuntimeEvent[] = [];
+    const runtime = new CodexLiveVoiceRuntime({
+      sessionId: "voice-session-schema-error",
+      cwd: "/workspace",
+      model: "gpt-5.6",
+      systemPrompt: "trusted instructions",
+      tools: [],
+      clientFactory: () => fake as unknown as CodexAppServerClient,
+      isToolSchemaCurrent: async () => {
+        throw new Error("tool permission snapshot is unavailable");
+      },
+      onEvent: event => events.push(event),
+    });
+    await runtime.start("offer-sdp");
+
+    fake.listener?.({
+      jsonrpc: "2.0",
+      method: "thread/realtime/itemAdded",
+      params: {
+        threadId: "thread-live-1",
+        item: { type: "delegation_request" },
+      },
+    });
+    await vi.waitFor(() => expect(fake.closed).toBe(true));
+
+    expect(events).toContainEqual({
+      type: "session.error",
+      message: "tool permission snapshot is unavailable",
+    });
+    expect(events.some(event => event.type === "handoff")).toBe(false);
+  });
 });

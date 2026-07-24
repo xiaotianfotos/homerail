@@ -146,7 +146,9 @@ export class CodexLiveVoiceRuntime {
         codexBin: this.options.codexBin,
       });
       this.client.onMessage((message) => {
-        void this.handleMessage(message);
+        void this.handleMessage(message).catch((error) => {
+          this.handleMessageFailure(error);
+        });
       });
       await this.client.start();
       await this.client.initialize();
@@ -446,6 +448,19 @@ export class CodexLiveVoiceRuntime {
         break;
       }
     }
+  }
+
+  private handleMessageFailure(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      this.options.onEvent({
+        type: "session.error",
+        message: message || "Codex Live Voice message handling failed",
+      });
+    } catch {
+      // A consumer callback must not turn recovery into another unhandled rejection.
+    }
+    void this.stop().catch(() => undefined);
   }
 
   private async handleToolCall(

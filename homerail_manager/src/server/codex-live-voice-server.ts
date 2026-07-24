@@ -21,6 +21,8 @@ const AUTH_TIMEOUT_MS = 5_000;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const MAX_SDP_BYTES = 192 * 1024;
 const MAX_TEXT_BYTES = 32 * 1024;
+const MAX_ACTIVE_TICKETS = 1_024;
+const MAX_ACTIVE_TICKETS_PER_SESSION = 8;
 
 interface TicketRecord {
   sessionId: string;
@@ -37,6 +39,9 @@ interface ActiveLiveVoiceSession {
 // with shared ticket/session ownership and sticky routing.
 const tickets = new Map<string, TicketRecord>();
 const activeSessions = new Map<string, ActiveLiveVoiceSession>();
+const pendingSessions = new Map<string, WebSocket>();
+
+class TicketCapacityError extends Error {}
 
 function safeSessionId(raw: string): string {
   const decoded = decodeURIComponent(raw).trim();
@@ -59,6 +64,16 @@ function pruneTickets(): void {
 
 function issueTicket(sessionId: string): string {
   pruneTickets();
+  if (tickets.size >= MAX_ACTIVE_TICKETS) {
+    throw new TicketCapacityError("Live Voice ticket capacity reached; try again shortly");
+  }
+  let sessionTicketCount = 0;
+  for (const record of tickets.values()) {
+    if (record.sessionId === sessionId) sessionTicketCount += 1;
+  }
+  if (sessionTicketCount >= MAX_ACTIVE_TICKETS_PER_SESSION) {
+    throw new TicketCapacityError("Too many active Live Voice tickets for this session");
+  }
   const ticket = randomBytes(32).toString("base64url");
   tickets.set(ticketDigest(ticket), {
     sessionId,
@@ -103,7 +118,7 @@ export function codexLiveVoiceTicketRoutesHandler(
       },
     });
   } catch (error) {
-    json(res, 400, {
+    json(res, error instanceof TicketCapacityError ? 429 : 400, {
       success: false,
       message: error instanceof Error ? error.message : String(error),
     });
@@ -185,6 +200,7 @@ export function setupCodexLiveVoiceWebSocket(
     trustPolicy: PluginHttpTrustPolicy;
     managerAgentOptions?: HostShellManagerAgentOptions;
     managerAgentConfigOptions?: ManagerAgentConfigRoutesOptions;
+    authTimeoutMs?: number;
   },
 ): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
@@ -218,11 +234,12 @@ export function setupCodexLiveVoiceWebSocket(
     let handling = Promise.resolve();
     const authTimer = setTimeout(() => {
       if (!authenticated) socket.close(4401, "Live Voice authentication timed out");
-    }, AUTH_TIMEOUT_MS);
+    }, options.authTimeoutMs ?? AUTH_TIMEOUT_MS);
     authTimer.unref?.();
 
     const cleanup = async (): Promise<void> => {
       clearTimeout(authTimer);
+      if (pendingSessions.get(sessionId) === socket) pendingSessions.delete(sessionId);
       if (activeSessions.get(sessionId)?.socket === socket) activeSessions.delete(sessionId);
       await runtime?.stop();
       runtime = undefined;
@@ -263,7 +280,7 @@ export function setupCodexLiveVoiceWebSocket(
             send(socket, { type: "session.error", message: "Live Voice is already started" });
             return;
           }
-          if (activeSessions.has(sessionId)) {
+          if (activeSessions.has(sessionId) || pendingSessions.has(sessionId)) {
             send(socket, {
               type: "session.error",
               message: "Another browser already owns this Live Voice session",
@@ -289,6 +306,7 @@ export function setupCodexLiveVoiceWebSocket(
             send(socket, { type: "session.error", message: "Invalid selected canvas node id" });
             return;
           }
+          pendingSessions.set(sessionId, socket);
           try {
             binding = await createCodexLiveVoiceBinding({
               sessionId,
@@ -297,6 +315,12 @@ export function setupCodexLiveVoiceWebSocket(
               managerAgentOptions: options.managerAgentOptions,
               managerAgentConfigOptions: options.managerAgentConfigOptions,
             });
+            if (
+              pendingSessions.get(sessionId) !== socket
+              || socket.readyState !== WebSocket.OPEN
+            ) {
+              throw new Error("Live Voice connection closed while the session was starting");
+            }
             runtime = new CodexLiveVoiceRuntime({
               sessionId,
               cwd: binding.cwd,
@@ -324,8 +348,10 @@ export function setupCodexLiveVoiceWebSocket(
               },
             });
             activeSessions.set(sessionId, { socket, runtime });
+            pendingSessions.delete(sessionId);
             await runtime.start(sdp);
           } catch (error) {
+            if (pendingSessions.get(sessionId) === socket) pendingSessions.delete(sessionId);
             if (activeSessions.get(sessionId)?.socket === socket) activeSessions.delete(sessionId);
             await runtime?.stop();
             runtime = undefined;
@@ -384,6 +410,7 @@ export function setupCodexLiveVoiceWebSocket(
 
   server.once("close", () => {
     for (const active of activeSessions.values()) void active.runtime.stop();
+    pendingSessions.clear();
     activeSessions.clear();
     tickets.clear();
     wss.close();
@@ -393,5 +420,6 @@ export function setupCodexLiveVoiceWebSocket(
 
 export function _clearCodexLiveVoiceServerStateForTest(): void {
   tickets.clear();
+  pendingSessions.clear();
   activeSessions.clear();
 }

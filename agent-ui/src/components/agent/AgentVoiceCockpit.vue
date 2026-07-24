@@ -3172,9 +3172,15 @@ async function handleVoiceStreamEvent(
 async function sendText(text: string, optimisticItemId?: string): Promise<void> {
   if (!workspace.value || !text || loading.value) return
   if (codexLiveVoiceSessionActive.value && codexLiveVoiceClient) {
+    try {
+      codexLiveVoiceClient.sendText(text)
+    } catch {
+      const message = t('voice.liveVoice.textUnavailable')
+      error.value = message
+      throw new Error(message)
+    }
     lastUserTranscript.value = text
     error.value = ''
-    codexLiveVoiceClient.sendText(text)
     return
   }
   const selectedNodeId = selectedGenerativeUiNodeId.value || null
@@ -3231,6 +3237,8 @@ async function submitCodexTextDraft(text = codexTextDraft.value): Promise<void> 
       item => item.id !== optimisticItem.id
     )
     codexTextDraft.value = clean
+    error.value = err?.message || t('voice.liveVoice.textUnavailable')
+    recordDebug('codex_live_text_failed', error.value)
     throw err
   } finally {
     codexTextSubmitting.value = false
@@ -3250,7 +3258,7 @@ function toggleVoiceOutput(): void {
 
 function submitComposerDraft(): void {
   if (composerSubmitDisabled.value) return
-  void submitCodexTextDraft()
+  void submitCodexTextDraft().catch(() => undefined)
 }
 
 function handleComposerKeydown(event: KeyboardEvent): void {

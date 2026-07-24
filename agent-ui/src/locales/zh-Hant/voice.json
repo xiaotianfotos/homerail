@@ -84,7 +84,8 @@
     "error": "Live Voice 發生錯誤",
     "end": "結束 Live 工作階段",
     "inputMeter": "Live Voice 麥克風輸入音量",
-    "composerPlaceholder": "透過目前 Live Voice 工作階段傳送文字…"
+    "composerPlaceholder": "透過目前 Live Voice 工作階段傳送文字…",
+    "textUnavailable": "Live Voice 正在重新連線，請等待恢復聆聽後再傳送文字。"
   },
   "task": {
     "title": "任務",

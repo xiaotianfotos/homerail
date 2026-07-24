@@ -84,7 +84,8 @@
     "error": "Live Voice 发生错误",
     "end": "结束 Live 会话",
     "inputMeter": "Live Voice 麦克风输入音量",
-    "composerPlaceholder": "通过当前 Live Voice 会话发送文字…"
+    "composerPlaceholder": "通过当前 Live Voice 会话发送文字…",
+    "textUnavailable": "Live Voice 正在重连，请等待恢复聆听后再发送文字。"
   },
   "task": {
     "title": "任务",

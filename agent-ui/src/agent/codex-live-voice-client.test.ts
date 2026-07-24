@@ -107,6 +107,17 @@ class FakePeer extends EventTarget {
   }
 }
 
+class AlreadyFailedPeer extends FakePeer {
+  constructor() {
+    super(false)
+  }
+
+  override async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
+    this.remoteDescription = description
+    this.connectionState = 'failed'
+  }
+}
+
 function fakeMedia() {
   const track = {
     enabled: true,
@@ -211,6 +222,51 @@ describe('CodexLiveVoiceClient', () => {
     await client.stop()
   })
 
+  it('rejects text instead of silently dropping it while the WebSocket is unavailable', async () => {
+    const socket = new FakeSocket()
+    const peer = new FakePeer()
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-text-unavailable',
+      ticketProvider: async () => ({ ticket: 'single-use-ticket' }),
+      webSocketFactory: () => {
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => peer as unknown as RTCPeerConnection,
+      getUserMedia: async () => fakeMedia().stream,
+      audioFactory: fakeAudio,
+    })
+    await client.start()
+    socket.readyState = WebSocket.CONNECTING
+
+    expect(() => client.sendText('do not lose this message')).toThrow(/reconnecting/i)
+    expect(socket.sent).not.toContainEqual({
+      type: 'text',
+      text: 'do not lose this message',
+    })
+
+    await client.stop()
+  })
+
+  it('fails immediately when WebRTC is already in a terminal state', async () => {
+    const socket = new FakeSocket()
+    const peer = new AlreadyFailedPeer()
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-terminal-peer',
+      ticketProvider: async () => ({ ticket: 'single-use-ticket' }),
+      webSocketFactory: () => {
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => peer as unknown as RTCPeerConnection,
+      getUserMedia: async () => fakeMedia().stream,
+      audioFactory: fakeAudio,
+    })
+
+    await expect(client.start()).rejects.toThrow(/connection failed/i)
+    expect(client.currentState).toBe('error')
+  })
+
   it('reconnects with a fresh ticket after WebRTC fails', async () => {
     vi.useFakeTimers()
     const sockets: FakeSocket[] = []
@@ -245,5 +301,54 @@ describe('CodexLiveVoiceClient', () => {
 
     expect(ticketProvider).toHaveBeenCalledTimes(2)
     await client.stop()
+  })
+
+  it('stops retrying and cleans every transport after three reconnect failures', async () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const peers: FakePeer[] = []
+    const events: Array<Record<string, unknown>> = []
+    const states: CodexLiveVoiceState[] = []
+    let ticketRequest = 0
+    const ticketProvider = vi.fn(async () => {
+      ticketRequest += 1
+      if (ticketRequest === 1) return { ticket: 'initial-ticket' }
+      throw new Error('ticket service unavailable')
+    })
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-reconnect-exhausted',
+      ticketProvider,
+      webSocketFactory: () => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => {
+        const peer = new FakePeer()
+        peers.push(peer)
+        return peer as unknown as RTCPeerConnection
+      },
+      getUserMedia: async () => fakeMedia().stream,
+      audioFactory: fakeAudio,
+      onEvent: event => events.push(event),
+      onState: state => states.push(state),
+    })
+    await client.start()
+
+    peers[0].fail()
+    await vi.runAllTimersAsync()
+    await vi.waitFor(() => expect(client.currentState).toBe('error'))
+    await vi.waitFor(() => expect(peers.every(peer => peer.closed)).toBe(true))
+
+    expect(ticketProvider).toHaveBeenCalledTimes(4)
+    expect(peers).toHaveLength(4)
+    expect(sockets).toHaveLength(1)
+    expect(states.at(-1)).toBe('error')
+    expect(events).toContainEqual({
+      type: 'session.error',
+      message: 'ticket service unavailable',
+    })
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

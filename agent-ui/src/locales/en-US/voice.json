@@ -84,7 +84,8 @@
     "error": "Live Voice encountered an error",
     "end": "End Live session",
     "inputMeter": "Live Voice microphone input level",
-    "composerPlaceholder": "Send text through the active Live Voice session..."
+    "composerPlaceholder": "Send text through the active Live Voice session...",
+    "textUnavailable": "Live Voice is reconnecting. Wait until it is listening before sending text."
   },
   "task": {
     "title": "Task",
