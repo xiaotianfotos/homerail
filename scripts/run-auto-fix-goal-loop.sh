@@ -47,6 +47,18 @@ while true; do
       echo "Auto Fix DAG $run_id ended after retaining a candidate checkpoint; continuing from it." >&2
       continue
     fi
+    if grep -q '^  Failed: ' "$cycle_dir/dag-quick.txt" 2>/dev/null && "$NODE_BIN" -e '
+      const fs = require("fs");
+      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const candidate = value?.checkpoint?.candidate;
+      if (
+        !candidate || candidate.status !== "fixed"
+        || typeof candidate.patch !== "string" || !candidate.patch
+      ) process.exit(1);
+    ' "$INPUT_FILE"; then
+      echo "Auto Fix DAG $run_id failed after hydrating an earlier candidate checkpoint; continuing from it." >&2
+      continue
+    fi
     echo "Auto Fix DAG $run_id ended before producing an approved candidate." >&2
     exit 1
   fi

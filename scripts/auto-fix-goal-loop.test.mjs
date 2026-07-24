@@ -123,3 +123,107 @@ printf 'revision\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/manager-revision.txt"
     "auto-fix-checkpoint-resume-cycle-0002\n",
   );
 });
+
+test("continues after a node failure when an earlier candidate was already hydrated", async () => {
+  const { scripts, checkout, artifacts, input, calls } = await fixture();
+  const storedInput = JSON.parse(await readFile(input, "utf8"));
+  storedInput.checkpoint = {
+    source_run_id: "earlier-run",
+    revision: storedInput.revision,
+    candidate: {
+      status: "fixed",
+      patch: "diff --git a/a.txt b/a.txt\n",
+      explanation: "retained repair",
+      files_changed: ["a.txt"],
+      test_plan: [],
+    },
+  };
+  await writeFile(input, `${JSON.stringify(storedInput)}\n`, { mode: 0o600 });
+  await writeFile(path.join(scripts, "run-auto-fix-stable-runner.sh"), `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR"
+cycle="$(basename "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR")"
+if [ "$cycle" = "cycle-0001" ]; then
+  printf '{"recorded":false,"reason":"no_ready_candidate"}\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/checkpoint.json"
+  printf '  Failed: implement\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/dag-quick.txt"
+  exit 1
+fi
+printf '{"cycle":"%s"}\\n' "$cycle" >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.json"
+printf 'patch-%s\\n' "$cycle" >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.patch"
+printf 'report-%s\\n' "$cycle" >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.md"
+printf '{"run_id":"%s","status":"completed"}\\n' "$HOMERAIL_STABLE_RUN_ID" >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/command.json"
+printf '{"recorded":true}\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/checkpoint.json"
+printf 'revision\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/manager-revision.txt"
+`);
+  await chmod(path.join(scripts, "run-auto-fix-stable-runner.sh"), 0o755);
+
+  const result = spawnSync("bash", [
+    path.join(scripts, "run-auto-fix-goal-loop.sh"),
+    checkout,
+    input,
+    artifacts,
+    "auto-fix-hydrated-resume",
+  ], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOMERAIL_NODE_BIN: process.execPath,
+      CHECKPOINT_CALLS: calls,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /failed after hydrating an earlier candidate checkpoint; continuing from it/);
+  assert.match(result.stdout, /goal reached after 2 cycle/);
+  assert.equal(
+    await readFile(path.join(artifacts, "run-id.txt"), "utf8"),
+    "auto-fix-hydrated-resume-cycle-0002\n",
+  );
+});
+
+test("stops on an explicit failure terminal even when an earlier candidate exists", async () => {
+  const { scripts, checkout, artifacts, input, calls } = await fixture();
+  const storedInput = JSON.parse(await readFile(input, "utf8"));
+  storedInput.checkpoint = {
+    source_run_id: "earlier-run",
+    revision: storedInput.revision,
+    candidate: {
+      status: "fixed",
+      patch: "diff --git a/a.txt b/a.txt\n",
+      explanation: "retained repair",
+      files_changed: ["a.txt"],
+      test_plan: [],
+    },
+  };
+  await writeFile(input, `${JSON.stringify(storedInput)}\n`, { mode: 0o600 });
+  await writeFile(path.join(scripts, "run-auto-fix-stable-runner.sh"), `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR"
+printf '{"recorded":false,"reason":"no_ready_candidate"}\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/checkpoint.json"
+printf 'DAG Quick: explicit-cannot-fix\\n  Run: failed  Phase: failed\\n  Running: -\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/dag-quick.txt"
+exit 1
+`);
+  await chmod(path.join(scripts, "run-auto-fix-stable-runner.sh"), 0o755);
+
+  const result = spawnSync("bash", [
+    path.join(scripts, "run-auto-fix-goal-loop.sh"),
+    checkout,
+    input,
+    artifacts,
+    "auto-fix-explicit-stop",
+  ], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOMERAIL_NODE_BIN: process.execPath,
+      CHECKPOINT_CALLS: calls,
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /ended before producing an approved candidate/);
+  assert.equal(
+    await readFile(path.join(artifacts, "cycle-0001/dag-quick.txt"), "utf8"),
+    "DAG Quick: explicit-cannot-fix\n  Run: failed  Phase: failed\n  Running: -\n",
+  );
+});
