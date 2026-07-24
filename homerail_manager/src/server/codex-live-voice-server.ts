@@ -32,6 +32,9 @@ interface ActiveLiveVoiceSession {
   runtime: CodexLiveVoiceRuntime;
 }
 
+// Process-local by design: HomeRail Manager currently owns Live Voice from one
+// server process. A horizontally scaled deployment must replace these Maps
+// with shared ticket/session ownership and sticky routing.
 const tickets = new Map<string, TicketRecord>();
 const activeSessions = new Map<string, ActiveLiveVoiceSession>();
 
@@ -350,6 +353,8 @@ export function setupCodexLiveVoiceWebSocket(
         }
 
         if (type === "mute") {
+          // The browser owns muting by toggling its local MediaStream track.
+          // Acknowledge pre-mute during negotiation; no server audio state changes.
           send(socket, { type: "session.muted", muted: message.muted === true });
           return;
         }
