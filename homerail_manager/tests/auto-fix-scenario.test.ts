@@ -355,7 +355,7 @@ describe("Auto Fix scenario asset", () => {
     expect(result.stderr).toContain("repair targets forbidden path");
   });
 
-  it("finalizes trusted metadata while preserving patch bytes", () => {
+  it("adds trusted issue metadata when the model summary omits it while preserving patch bytes", () => {
     const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
     const commandNode = canonical.nodes.find((node) => node.id === "finalize_publication");
     if (commandNode?.kind !== "command" || !commandNode.config.command) throw new Error("finalizer command is missing");
@@ -365,16 +365,19 @@ describe("Auto Fix scenario asset", () => {
       issue: [{ repo: "owner/repo", issue: 92, revision }],
       patch: [{ status: "fixed", patch, explanation: "repair", files_changed: ["a.txt"], test_plan: ["focused"] }],
       arbitration: [{ verdict: "approve", summary: "approved", blocking_defects: [] }],
-      summary: [{ review_summary: "approved by consensus", markdown: `# Auto Fix #92\n\nBase: ${revision}\n` }],
+      summary: [{ review_summary: "approved by consensus", markdown: "# Repair summary\n\nFocused checks passed." }],
     };
     const result = spawnSync(process.execPath, commandNode.config.command.slice(1), {
       cwd: os.tmpdir(), encoding: "utf8", input: JSON.stringify(input),
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const published = JSON.parse(result.stdout);
+    expect(published).toMatchObject({
       status: "ready", repo: "owner/repo", issue: 92, revision, patch,
       files_changed: ["a.txt"], review_summary: "approved by consensus",
     });
+    expect(published.markdown).toContain("Issue: #92");
+    expect(published.markdown).toContain(`Base revision: \`${revision}\``);
   });
 
   it("allows obvious test credential placeholders in a candidate patch", () => {

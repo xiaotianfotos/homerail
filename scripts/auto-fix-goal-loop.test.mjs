@@ -79,3 +79,47 @@ test("keeps iterating from validation evidence until a candidate passes", async 
   assert.match(await readFile(calls, "utf8"), /record\|.*input\.json\|auto-fix-test-cycle-0001\|.*validation\.log/);
   assert.match(await readFile(path.join(artifacts, "cycle-0001/validation.log"), "utf8"), /focused validation failed/);
 });
+
+test("continues after a DAG failure when the stable runner retained a candidate checkpoint", async () => {
+  const { scripts, checkout, artifacts, input, calls } = await fixture();
+  await writeFile(path.join(scripts, "run-auto-fix-stable-runner.sh"), `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR"
+cycle="$(basename "$HOMERAIL_AUTO_FIX_ARTIFACT_DIR")"
+if [ "$cycle" = "cycle-0001" ]; then
+  printf '{"recorded":true,"artifact":"candidate-v1.json"}\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/checkpoint.json"
+  exit 1
+fi
+printf '{"cycle":"%s"}\\n' "$cycle" >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.json"
+printf 'patch-%s\\n' "$cycle" >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.patch"
+printf 'report-%s\\n' "$cycle" >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/auto-fix.md"
+printf '{"run_id":"%s","status":"completed"}\\n' "$HOMERAIL_STABLE_RUN_ID" >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/command.json"
+printf '{"recorded":true}\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/checkpoint.json"
+printf 'revision\\n' >"$HOMERAIL_AUTO_FIX_ARTIFACT_DIR/manager-revision.txt"
+`);
+  await chmod(path.join(scripts, "run-auto-fix-stable-runner.sh"), 0o755);
+
+  const result = spawnSync("bash", [
+    path.join(scripts, "run-auto-fix-goal-loop.sh"),
+    checkout,
+    input,
+    artifacts,
+    "auto-fix-checkpoint-resume",
+  ], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOMERAIL_NODE_BIN: process.execPath,
+      CHECKPOINT_CALLS: calls,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /ended after retaining a candidate checkpoint; continuing from it/);
+  assert.match(result.stdout, /goal reached after 2 cycle/);
+  assert.equal(await readFile(path.join(artifacts, "cycle-count.txt"), "utf8"), "2\n");
+  assert.equal(
+    await readFile(path.join(artifacts, "run-id.txt"), "utf8"),
+    "auto-fix-checkpoint-resume-cycle-0002\n",
+  );
+});

@@ -39,6 +39,14 @@ while true; do
     HOMERAIL_STABLE_RUN_ID="$run_id" \
     HOMERAIL_AUTO_FIX_TIMEOUT_SECONDS=0 \
     bash "$SCRIPT_DIR/run-auto-fix-stable-runner.sh"; then
+    if [ -s "$cycle_dir/checkpoint.json" ] && "$NODE_BIN" -e '
+      const fs = require("fs");
+      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      if (value?.recorded !== true) process.exit(1);
+    ' "$cycle_dir/checkpoint.json"; then
+      echo "Auto Fix DAG $run_id ended after retaining a candidate checkpoint; continuing from it." >&2
+      continue
+    fi
     echo "Auto Fix DAG $run_id ended before producing an approved candidate." >&2
     exit 1
   fi
