@@ -62,13 +62,14 @@ import {
   type ResolvedPrCloseoutInput,
 } from "homerail-protocol";
 import { pluginJsonDigest } from "../plugins/descriptor.js";
+import { acquireCodexThreadLease } from "./codex-thread-lease.js";
 
 type ToolHandlerResult = {
   content: Array<{ type: "text"; text: string }>;
   is_error?: boolean;
 };
 
-interface ToolDefinition {
+export interface ToolDefinition {
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
@@ -108,13 +109,26 @@ function stableSkillPresenterRunId(sessionId: string | undefined, skillId: strin
   return `skill_${digest}`;
 }
 
-interface VoiceSurfaceState {
+export interface VoiceSurfaceState {
   progress: Record<string, unknown> | null;
   taskDraft: Record<string, unknown> | null;
   widgets: Record<string, unknown>[];
   removeWidgetIds: string[];
   pluginProjections: HomerailPluginToolExecutionEnvelopeV1[];
 }
+
+export interface HostCodexManagerToolState {
+  restUrl: string;
+  workspace: string;
+  projectId?: string;
+  sessionId?: string;
+  createdRunIds: string[];
+  finalNotes: string[];
+  objectiveToolCalls: Array<{ name: string; success: boolean; error?: string }>;
+  voiceSurface: VoiceSurfaceState;
+}
+
+export type PluginToolTurnTokenSource = string | (() => string | undefined);
 
 interface VoiceMemoTodo {
   text: string;
@@ -275,6 +289,10 @@ export function _setHostCodexAgentEventRunnerForTest(runner?: HostCodexAgentEven
 
 export function _buildCodexAppServerArgsForTest(): string[] {
   return ["app-server"];
+}
+
+export function buildCodexLiveAppServerArgs(): string[] {
+  return ["app-server", "--enable", "realtime_conversation"];
 }
 
 export function _buildCodexThreadStartParamsForTest(input: {
@@ -452,7 +470,7 @@ function short(value: unknown, max = 4000): string {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
-function managerRestUrl(raw?: string | (() => string)): string {
+export function managerRestUrl(raw?: string | (() => string)): string {
   const value = typeof raw === "function"
     ? raw()
     : raw || process.env.MANAGER_REST_URL || process.env.HOMERAIL_MANAGER_REST_URL || `http://127.0.0.1:${process.env.HOMERAIL_MANAGER_PORT || "19191"}/api`;
@@ -643,7 +661,7 @@ async function resolveGitHubCloseout(
   });
 }
 
-function workspaceFromConfig(config: ManagerAgentRuntimeConfig): string {
+export function workspaceFromConfig(config: ManagerAgentRuntimeConfig): string {
   const configured = config.project_workspace || process.env.HOMERAIL_PROJECT_WORKSPACE || process.env.HOMERAIL_REPO_ROOT;
   if (configured && fs.existsSync(configured) && fs.statSync(configured).isDirectory()) {
     return path.resolve(configured);
@@ -889,7 +907,7 @@ export function managerAgentChildEnv(
   return env;
 }
 
-function emptyVoiceSurface(): VoiceSurfaceState {
+export function emptyVoiceSurface(): VoiceSurfaceState {
   return {
     progress: null,
     taskDraft: null,
@@ -899,16 +917,14 @@ function emptyVoiceSurface(): VoiceSurfaceState {
   };
 }
 
-export function createManagerTools(state: {
-  restUrl: string;
-  workspace: string;
-  projectId?: string;
-  sessionId?: string;
-  createdRunIds: string[];
-  finalNotes: string[];
-  objectiveToolCalls: Array<{ name: string; success: boolean; error?: string }>;
-  voiceSurface: VoiceSurfaceState;
-}, responseMode: "chat" | "voice", pluginContext?: HomerailPluginTurnContextV1, pluginToolTurnToken?: string, canvasContext?: GenerativeUiCanvasContextV1, managerSkills?: ManagerAgentPromptSkill[]): ToolDefinition[] {
+export function createManagerTools(
+  state: HostCodexManagerToolState,
+  responseMode: "chat" | "voice",
+  pluginContext?: HomerailPluginTurnContextV1,
+  pluginToolTurnToken?: PluginToolTurnTokenSource,
+  canvasContext?: GenerativeUiCanvasContextV1,
+  managerSkills?: ManagerAgentPromptSkill[],
+): ToolDefinition[] {
   if (pluginContext && (
     !validateHomerailPluginTurnContext(pluginContext).valid
     || pluginJsonDigest(homerailPluginTurnContextDigestInput(pluginContext)) !== pluginContext.context_digest
@@ -1735,13 +1751,16 @@ export function createManagerTools(state: {
     args: Record<string, unknown>,
     context?: { tool_call_id?: string },
   ): Promise<ToolHandlerResult> => {
-    if (!pluginToolTurnToken) {
+    const currentPluginToolTurnToken = typeof pluginToolTurnToken === "function"
+      ? pluginToolTurnToken()
+      : pluginToolTurnToken;
+    if (!currentPluginToolTurnToken) {
       const envelope = executeHomerailPluginTool(descriptor, args);
       state.voiceSurface.pluginProjections.push(envelope);
       return { content: [{ type: "text", text: JSON.stringify(envelope) }] };
     }
     const identity = stablePluginModelCallIdentifiers({
-      turn_token: pluginToolTurnToken,
+      turn_token: currentPluginToolTurnToken,
       tool_wire_id: descriptor.wire_id,
       arguments: args,
       ...(context?.tool_call_id ? { model_tool_call_id: context.tool_call_id } : {}),
@@ -1751,7 +1770,7 @@ export function createManagerTools(state: {
       body: JSON.stringify({
         request_id: identity.request_id,
         idempotency_key: identity.request_id,
-        turn_token: pluginToolTurnToken,
+        turn_token: currentPluginToolTurnToken,
         tool_wire_id: descriptor.wire_id,
         call_id: identity.call_id,
         arguments: args,
@@ -2101,7 +2120,7 @@ export function _loadVoiceSystemContractForTest(): VoiceSystemContract {
   return loadVoiceSystemContract();
 }
 
-function systemPrompt(
+export function buildHostCodexManagerAgentSystemPrompt(
   config: ManagerAgentRuntimeConfig,
   responseMode: "chat" | "voice" = "chat",
   voiceUiRules?: VoiceUiRules,
@@ -2129,7 +2148,7 @@ export function _systemPromptForTest(
   voiceSystemContract?: VoiceSystemContract,
   skills?: ManagerAgentPromptSkill[],
 ): string {
-  return systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, skills);
+  return buildHostCodexManagerAgentSystemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, skills);
 }
 
 function buildPrompt(
@@ -2391,7 +2410,13 @@ async function* runHostCodexManagerAgentTurnEvents(
   );
   const context: AgentRunContext = {
     systemPrompt: [
-      systemPrompt(config, responseMode, voiceUiRules, voiceSystemContract, input.manager_skills),
+      buildHostCodexManagerAgentSystemPrompt(
+        config,
+        responseMode,
+        voiceUiRules,
+        voiceSystemContract,
+        input.manager_skills,
+      ),
       managerAgentRequiredToolObjectivePrompt(requiredToolCalls),
       managerAgentOutcomeObjectivePrompt(input.outcome_contracts),
     ].filter(Boolean).join("\n\n"),
@@ -2527,6 +2552,20 @@ class HostCodexAppServerAdapter {
       yield { type: "done" };
       return;
     }
+    const nativeSessionKey = context.persistSession && context.sessionId?.trim()
+      ? context.sessionId.trim()
+      : undefined;
+    const threadLease = nativeSessionKey
+      ? acquireCodexThreadLease(nativeSessionKey, `turn:${randomUUID()}`)
+      : null;
+    if (nativeSessionKey && !threadLease) {
+      yield {
+        type: "error",
+        message: "This Codex Manager session is currently owned by an active Live Voice connection.",
+      };
+      yield { type: "done" };
+      return;
+    }
     try {
       this.process = spawn(this.codexBin, _buildCodexAppServerArgsForTest(), {
         stdio: ["pipe", "pipe", "pipe"],
@@ -2537,6 +2576,7 @@ class HostCodexAppServerAdapter {
       });
       this.setupReadline();
     } catch (err) {
+      threadLease?.release();
       yield { type: "error", message: `Failed to start codex app-server: ${err}` };
       yield { type: "done" };
       return;
@@ -2617,9 +2657,6 @@ class HostCodexAppServerAdapter {
         instruction_transport: NATIVE_THREAD_CONTRACT_VERSION,
         dynamic_tools: dynamicTools,
       })).digest("hex");
-      const nativeSessionKey = context.persistSession && context.sessionId?.trim()
-        ? context.sessionId.trim()
-        : undefined;
       const sessionName = nativeSessionKey ? hostCodexSessionName(nativeSessionKey, toolDigest) : undefined;
       let session = nativeSessionKey ? hostCodexNativeSessions.get(nativeSessionKey) : undefined;
       if (session?.toolDigest !== toolDigest) session = undefined;
@@ -2762,6 +2799,7 @@ class HostCodexAppServerAdapter {
       }
       yield this.debugEvent("appserver_done", { stderr_tail: stderr.slice(-2000) || null });
       this.shutdown();
+      threadLease?.release();
     }
     yield { type: "done" };
   }

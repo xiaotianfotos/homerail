@@ -22,6 +22,7 @@ export type {
   VoiceSessionItem,
   VoiceManagerStatus,
   ManagerAgentConfig,
+  CodexLiveVoiceV3Voice,
   UpdateManagerAgentConfigRequest,
   ManagerAgentReadiness,
   CodexModel,

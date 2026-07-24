@@ -15,7 +15,10 @@ import {
   type LocalDockerNodeOptions,
 } from "./local-docker-node.js";
 import { readDagResourceStatus, type DagResourceStatus } from "./dag-resource-status.js";
-import { resolveCodexBinary, runCodexCommandSync } from "./codex-binary.js";
+import {
+  inspectCodexInstallation,
+  type CodexLiveVoiceCapability,
+} from "./codex-live-voice-capability.js";
 import {
   ensurePreferredManagerAgentConfig,
   type ManagerAgentConfigRoutesOptions,
@@ -27,14 +30,16 @@ interface ReadinessBlocker {
   detail?: string;
 }
 
-interface CodexCheck {
+export interface CodexCheck {
   available: boolean;
   logged_in: boolean;
   version?: string;
+  semantic_version?: string;
   binary?: string;
+  live_voice: CodexLiveVoiceCapability;
 }
 
-interface ManagerAgentReadiness {
+export interface ManagerAgentReadiness {
   ready: boolean;
   status: "ready" | "blocked";
   harness: string;
@@ -42,6 +47,8 @@ interface ManagerAgentReadiness {
   agent_type: string | null;
   provider_name: string | null;
   model_name: string | null;
+  live_voice_enabled: boolean;
+  live_voice_effective: boolean;
   blockers: ReadinessBlocker[];
   checks: {
     config: boolean;
@@ -75,17 +82,7 @@ function methodNotAllowed(res: http.ServerResponse): void {
 }
 
 function codexStatus(): CodexCheck {
-  const requested = process.env.HOMERAIL_CODEX_BIN || process.env.CODEX_BIN_PATH || "codex";
-  const resolved = resolveCodexBinary(requested);
-  let available = false;
-  let version: string | undefined;
-  if (resolved) {
-    const result = runCodexCommandSync(resolved.command, ["--version"]);
-    if (result.status === 0) {
-      available = true;
-      version = (result.stdout || "").trim().split("\n")[0] || undefined;
-    }
-  }
+  const installation = inspectCodexInstallation();
   let loggedIn = false;
   try {
     const authPath = path.join(os.homedir(), ".codex", "auth.json");
@@ -96,7 +93,14 @@ function codexStatus(): CodexCheck {
   } catch {
     loggedIn = false;
   }
-  return { available, logged_in: loggedIn, version, binary: resolved?.command ?? requested };
+  return {
+    available: installation.available,
+    logged_in: loggedIn,
+    version: installation.version,
+    semantic_version: installation.semantic_version,
+    binary: installation.binary,
+    live_voice: installation.live_voice,
+  };
 }
 
 /** Claude Agent SDK 的主机侧凭证是否存在：ANTHROPIC_API_KEY 环境变量，
@@ -237,6 +241,8 @@ export function managerAgentReadiness(
     agent_type: runtimeConfig?.agent_type ?? null,
     provider_name: runtimeConfig?.provider_name ?? config.provider_name,
     model_name: runtimeConfig?.model ?? config.model_name,
+    live_voice_enabled: config.live_voice_enabled,
+    live_voice_effective: false,
     blockers,
     checks: {
       config: blockers.length === 0,
@@ -256,6 +262,9 @@ export function managerAgentReadiness(
   if (runtimeConfig.runtime_placement === "host") {
     const codex = codexStatus();
     readiness.checks.codex = codex;
+    readiness.live_voice_effective = config.live_voice_enabled
+      && config.harness === "codex_appserver"
+      && codex.live_voice.supported;
     if (!codex.available) {
       blockers.push({ code: "codex_unavailable", message: "Codex CLI is not available" });
     }

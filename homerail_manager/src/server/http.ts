@@ -13,6 +13,10 @@ import {
 import { agentSessionRoutesHandler } from "./agent-sessions.js";
 import { llmSettingsRoutesHandler } from "./llm-settings.js";
 import { setupVoiceRealtimeWebSocket, voiceRoutesHandler } from "./voice.js";
+import {
+  codexLiveVoiceTicketRoutesHandler,
+  setupCodexLiveVoiceWebSocket,
+} from "./codex-live-voice-server.js";
 import { projectsChangesRoutesHandler } from "./projects-changes.js";
 import { gitServersRoutesHandler } from "./git-servers.js";
 import { mcpServersRoutesHandler } from "./mcp-servers.js";
@@ -368,6 +372,10 @@ export function createServer(
       return;
     }
 
+    if (codexLiveVoiceTicketRoutesHandler(req, res)) {
+      return;
+    }
+
     if (projectsChangesRoutesHandler(req, res)) {
       return;
     }
@@ -528,6 +536,11 @@ export function createServer(
   setupNodeWebSocket(server, nodeWebsocketOptions);
   setupEventWebSocket(server);
   setupVoiceRealtimeWebSocket(server);
+  setupCodexLiveVoiceWebSocket(server, {
+    trustPolicy: pluginHttpTrust,
+    managerAgentOptions: managerAgentRuntimeOptions,
+    managerAgentConfigOptions,
+  });
 
   return server;
 }

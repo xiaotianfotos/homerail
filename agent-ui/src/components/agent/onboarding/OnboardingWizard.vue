@@ -120,9 +120,9 @@ function stepStatus(id: StepId): 'done' | 'pending' | 'loading' {
     if (status.value.managerAgentReady) return 'done'
     return 'pending'
   }
-  if (id === 'asr') return status.value.hasAsr ? 'done' : 'pending'
+  if (id === 'asr') return status.value.liveVoiceEffective || status.value.hasAsr ? 'done' : 'pending'
   // tts
-  if (status.value.hasTts || ttsSkipped.value || builtinEdgeTtsConfigured.value) return 'done'
+  if (status.value.liveVoiceEffective || status.value.hasTts || ttsSkipped.value || builtinEdgeTtsConfigured.value) return 'done'
   return 'pending'
 }
 
@@ -438,8 +438,20 @@ watch(activePane, (pane) => {
           <div v-else-if="stepStatus(currentStep.id) === 'done'" class="onboarding-wizard__ready">
             <Check class="h-5 w-5 text-[var(--hr-success)]" />
             <div>
-              <div class="onboarding-wizard__ready-title">{{ t('onboarding.runtime.stepReady', { step: currentStep.title }) }}</div>
-              <div class="onboarding-wizard__ready-hint">{{ t('onboarding.runtime.nextAvailable') }}</div>
+              <div class="onboarding-wizard__ready-title">
+                {{
+                  status.liveVoiceEffective
+                    ? t('onboarding.runtime.liveVoiceManaged')
+                    : t('onboarding.runtime.stepReady', { step: currentStep.title })
+                }}
+              </div>
+              <div class="onboarding-wizard__ready-hint">
+                {{
+                  status.liveVoiceEffective
+                    ? t('onboarding.runtime.liveVoiceManagedHint')
+                    : t('onboarding.runtime.nextAvailable')
+                }}
+              </div>
             </div>
           </div>
 

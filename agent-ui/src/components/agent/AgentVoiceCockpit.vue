@@ -16,6 +16,7 @@ import {
   streamVoiceTurn,
   stopVoiceMonitor,
   updateVoiceAgentConfig,
+  type CodexLiveVoiceV3Voice,
   type CodexModel,
   type GenerativeUiStreamEventV1,
   type VoiceAgentConfig,
@@ -36,6 +37,11 @@ import {
   resolveVoiceSessionProjectRestore,
   VoiceSessionTransitionGuard,
 } from '@/agent/voice-session-restore'
+import {
+  CodexLiveVoiceClient,
+  type CodexLiveVoiceEvent,
+  type CodexLiveVoiceState
+} from '@/agent/codex-live-voice-client'
 import GenerativeUiCanonicalSurface from '@/components/generative-ui/GenerativeUiCanonicalSurface.vue'
 import GenerativeUiShadowPreview from '@/components/generative-ui/GenerativeUiShadowPreview.vue'
 import DagTaskCanvas from '@/components/generative-ui/DagTaskCanvas.vue'
@@ -220,6 +226,8 @@ const voiceSidebarOpen = ref(
 )
 const voiceSettings = ref<VoiceSettings | null>(null)
 const voiceAgentConfig = ref<VoiceAgentConfig | null>(null)
+const codexLiveVoiceState = ref<CodexLiveVoiceState>('idle')
+const codexLiveVoiceMuted = ref(false)
 const codexModels = ref<CodexModel[]>([])
 const codexModelsLoading = ref(false)
 const codexModelsLoaded = ref(false)
@@ -358,6 +366,11 @@ function selectGenerativeUiNode(payload: { node_id: string }): void {
 }
 
 let mediaStream: MediaStream | null = null
+let codexLiveVoiceClient: CodexLiveVoiceClient | null = null
+let codexLiveVoiceMeterAudioContext: AudioContext | null = null
+let codexLiveVoiceMeterAnalyser: AnalyserNode | null = null
+let codexLiveVoiceMeterSource: MediaStreamAudioSourceNode | null = null
+let codexLiveVoiceMeterFrame = 0
 let nativeVoiceCaptureSession: NativeVoiceCaptureSession | null = null
 let audioContext: AudioContext | null = null
 let analyser: AnalyserNode | null = null
@@ -496,6 +509,45 @@ const voiceAgentHarness = computed<VoiceAgentConfig['harness']>(
   () => voiceAgentConfig.value?.harness || 'claude_agent_sdk'
 )
 const codexHarnessActive = computed(() => voiceAgentHarness.value === 'codex_appserver')
+const codexLiveVoiceSupported = computed(
+  () => codexHarnessActive.value && onboardingStatus.value.liveVoiceSupported
+)
+const codexLiveVoiceEnabled = computed(
+  () => voiceAgentConfig.value?.live_voice_enabled === true
+)
+const codexLiveVoiceVoices = computed<CodexLiveVoiceV3Voice[]>(() =>
+  onboardingStatus.value.liveVoiceVoices?.length
+    ? onboardingStatus.value.liveVoiceVoices
+    : ['juniper', 'maple', 'spruce', 'ember', 'vale', 'breeze', 'arbor', 'sol', 'cove']
+)
+const selectedCodexLiveVoice = computed<CodexLiveVoiceV3Voice>(
+  () =>
+    voiceAgentConfig.value?.live_voice_voice ||
+    onboardingStatus.value.liveVoiceDefaultVoice ||
+    'cove'
+)
+const codexLiveVoiceEffective = computed(
+  () =>
+    codexHarnessActive.value &&
+    codexLiveVoiceEnabled.value &&
+    onboardingStatus.value.liveVoiceEffective
+)
+const codexLiveVoiceSessionActive = computed(
+  () =>
+    !['idle', 'error', 'closed'].includes(codexLiveVoiceState.value)
+)
+const codexLiveVoiceConnecting = computed(
+  () =>
+    codexLiveVoiceState.value === 'connecting' ||
+    codexLiveVoiceState.value === 'reconnecting'
+)
+const codexLiveVoiceHumanInputActive = computed(
+  () =>
+    codexLiveVoiceSessionActive.value &&
+    !codexLiveVoiceConnecting.value &&
+    !codexLiveVoiceMuted.value &&
+    codexLiveVoiceState.value !== 'assistant-speaking'
+)
 const kimiHarnessActive = computed(() => voiceAgentHarness.value === 'kimi_code')
 const configuredCodexModel = computed(() =>
   codexHarnessActive.value ? voiceAgentConfig.value?.model_name : null
@@ -590,7 +642,11 @@ const selectedTtsModelId = computed(() => {
 })
 const monitorRunning = computed(() => workspace.value?.codex_monitor_status === 'running')
 const agentRunning = computed(
-  () => managerSubmitting.value || (loading.value && !speaking.value) || monitorRunning.value
+  () =>
+    managerSubmitting.value ||
+    codexLiveVoiceState.value === 'manager-working' ||
+    (loading.value && !speaking.value) ||
+    monitorRunning.value
 )
 const agentActivityActive = computed(() => agentRunning.value || speaking.value)
 const agentRunStateText = computed(() => {
@@ -614,17 +670,42 @@ const workspaceTerminal = computed(() => {
     !managerSubmitting.value
   )
 })
-const voiceRuntimeLoading = computed(() => asrLoading.value || !voiceSettings.value)
-const voiceInputLocked = computed(
-  () =>
+const voiceRuntimeLoading = computed(() =>
+  codexLiveVoiceEffective.value
+    ? asrLoading.value || !voiceAgentConfig.value
+    : asrLoading.value || !voiceSettings.value
+)
+const voiceInputLocked = computed(() => {
+  if (codexLiveVoiceEffective.value) {
+    return (
+      codexLiveVoiceState.value === 'connecting' ||
+      codexLiveVoiceState.value === 'reconnecting' ||
+      voiceRuntimeLoading.value ||
+      onboardingStatus.value.needsOnboarding ||
+      !workspace.value
+    )
+  }
+  return (
     speaking.value ||
     loading.value ||
     voiceBusy.value ||
     managerSubmitting.value ||
     voiceRuntimeLoading.value ||
     onboardingStatus.value.needsOnboarding
-)
+  )
+})
 const voiceState = computed(() => {
+  if (codexLiveVoiceEffective.value) {
+    if (codexLiveVoiceState.value === 'assistant-speaking') return 'speaking'
+    if (
+      codexLiveVoiceState.value === 'listening' ||
+      codexLiveVoiceState.value === 'user-speaking' ||
+      codexLiveVoiceState.value === 'muted' ||
+      codexLiveVoiceState.value === 'manager-working'
+    ) return 'listening'
+    if (codexLiveVoiceState.value === 'connecting') return 'thinking'
+    if (codexLiveVoiceState.value === 'reconnecting') return 'thinking'
+  }
   if (speaking.value) return 'speaking'
   if (listening.value) return 'listening'
   if (voiceRuntimeLoading.value) return 'thinking'
@@ -633,6 +714,17 @@ const voiceState = computed(() => {
 })
 const voiceStateText = computed(() => {
   if (onboardingStatus.value.needsOnboarding) return t('voice.state.onboardingRequired')
+  if (codexLiveVoiceEffective.value) {
+    if (codexLiveVoiceState.value === 'connecting') return t('voice.liveVoice.connecting')
+    if (codexLiveVoiceState.value === 'reconnecting') return t('voice.liveVoice.reconnecting')
+    if (codexLiveVoiceState.value === 'muted') return t('voice.liveVoice.muted')
+    if (codexLiveVoiceState.value === 'user-speaking') return t('voice.liveVoice.userSpeaking')
+    if (codexLiveVoiceState.value === 'manager-working') return t('voice.liveVoice.managerWorking')
+    if (codexLiveVoiceState.value === 'assistant-speaking') return t('voice.liveVoice.assistantSpeaking')
+    if (codexLiveVoiceState.value === 'error') return t('voice.liveVoice.error')
+    if (codexLiveVoiceSessionActive.value) return t('voice.liveVoice.listening')
+    return t('voice.liveVoice.tapToStart')
+  }
   if (voiceState.value === 'speaking') return t('voice.state.aiSpeakingWait')
   if (voiceState.value === 'listening') {
     return speechActive ? t('voice.state.listeningToYou') : t('voice.state.waitingForSpeech')
@@ -700,6 +792,15 @@ const voiceButtonBars = computed(() => {
     return Math.min(1, Math.max(baseline[index], level * weight * 1.7 + movement * 0.32))
   })
 })
+const codexLiveVoiceButtonBars = computed(() => {
+  const baseline = [0.38, 0.72, 1, 0.68, 0.42]
+  if (
+    !codexLiveVoiceSessionActive.value ||
+    codexLiveVoiceConnecting.value ||
+    codexLiveVoiceMuted.value
+  ) return baseline
+  return voiceButtonBars.value
+})
 const voiceWavePaths = computed(() => {
   const source = listening.value
     ? waveformSamples.value
@@ -723,8 +824,39 @@ const voiceWavePaths = computed(() => {
     }
   ]
 })
+const codexLiveVoiceWavePaths = computed(() => {
+  const receiving = codexLiveVoiceHumanInputActive.value
+  const source = receiving
+    ? waveformSamples.value
+    : waveformSamples.value.map(() => 0)
+  const energy = receiving ? Math.max(0.05, voiceLevel.value) : 0
+  return [
+    {
+      id: 'main',
+      d: buildVoiceWavePath(source, energy, 0, 1.1, 0),
+      className: 'voice-wave-line voice-wave-line--main'
+    },
+    {
+      id: 'upper',
+      d: buildVoiceWavePath(source, energy, -7, 0.7, 11),
+      className: 'voice-wave-line voice-wave-line--upper'
+    },
+    {
+      id: 'lower',
+      d: buildVoiceWavePath(source, energy, 7, 0.64, 23),
+      className: 'voice-wave-line voice-wave-line--lower'
+    }
+  ]
+})
 const processingText = computed(() => {
   if (onboardingStatus.value.needsOnboarding) return t('voice.state.onboardingRequired')
+  if (codexLiveVoiceEffective.value) {
+    if (codexLiveVoiceState.value === 'connecting') return t('voice.liveVoice.connecting')
+    if (codexLiveVoiceState.value === 'reconnecting') return t('voice.liveVoice.reconnecting')
+    if (codexLiveVoiceState.value === 'manager-working') return t('voice.liveVoice.managerWorking')
+    if (codexLiveVoiceState.value === 'assistant-speaking') return t('voice.liveVoice.assistantSpeaking')
+    return ''
+  }
   if (speaking.value) return t('voice.state.aiSpeakingWait')
   if (asrLoading.value) return t('voice.state.settingsLoading')
   if (!voiceSettings.value) return t('voice.state.settingsUnavailable')
@@ -1032,10 +1164,17 @@ const captionText = computed(() => {
 })
 const voiceInputStatusVisible = computed(() => voiceStateText.value !== captionText.value)
 const composerPlaceholder = computed(() => {
+  if (codexLiveVoiceSessionActive.value) return t('voice.liveVoice.composerPlaceholder')
   if (listening.value) {
     return voiceInputAssist.value ? t('voice.state.listeningEditable') : t('voice.state.listening')
   }
   return t('voice.composer.placeholder')
+})
+const voiceInputButtonLabel = computed(() => {
+  if (!codexLiveVoiceEffective.value) return t('voice.composer.toggleVoice')
+  if (codexLiveVoiceConnecting.value) return voiceStateText.value
+  if (codexLiveVoiceSessionActive.value) return t('voice.liveVoice.end')
+  return t('voice.liveVoice.tapToStart')
 })
 const captionKind = computed(() => {
   if (liveTranscript.value && ![t('voice.state.listening'), t('voice.state.omniProcessing')].includes(liveTranscript.value))
@@ -1175,9 +1314,14 @@ watch(
 watch(
   () => store.managerProjectId,
   () => {
+    if (codexLiveVoiceClient) void stopCodexLiveVoice()
     void loadVoiceSessionShortcuts()
   }
 )
+
+watch(codexLiveVoiceEffective, effective => {
+  if (!effective && codexLiveVoiceClient) void stopCodexLiveVoice()
+})
 
 watch(detailsOpen, value => saveBooleanSetting(VOICE_DETAILS_PANE_KEY, value))
 watch(voiceSidebarOpen, value => {
@@ -1258,7 +1402,8 @@ onUnmounted(() => {
   removeFullscreenRetry()
   teardownVoiceHidControl()
   teardownVoiceGamepadControl()
-  stopVoiceCapture()
+  if (codexLiveVoiceClient) void stopCodexLiveVoice()
+  else stopVoiceCapture()
   teardownTtsCoordination()
   cancelLocalSpeech('unmount')
   stopNoSleepPlayer()
@@ -1325,6 +1470,7 @@ async function startSession(): Promise<void> {
 }
 
 async function createFreshVoiceSession(): Promise<void> {
+  if (codexLiveVoiceClient) await stopCodexLiveVoice()
   const previousWorkspace = workspace.value
   const generation = beginVoiceSessionTransition()
   loading.value = true
@@ -1417,6 +1563,7 @@ function isUnusedVoiceSessionItem(item: VoiceSessionItem): boolean {
 }
 
 async function handleVoiceProjectSelected(_projectId: string): Promise<void> {
+  if (codexLiveVoiceClient) await stopCodexLiveVoice()
   liveTranscript.value = ''
   lastUserTranscript.value = ''
   resetSubmittedTranscriptClear()
@@ -1435,6 +1582,7 @@ async function handleVoiceSessionSelected(sessionId: string): Promise<void> {
   // 切换 session 时停掉当前 session 的 TTS、语音采集和对话流，
   // 只对当前选中 session 发声，避免旧 turn 的回调污染新 workspace。
   cancelLocalSpeech('session_switch')
+  if (codexLiveVoiceClient) await stopCodexLiveVoice()
   if (listening.value) stopVoiceCapture()
   voiceTurnAbort?.abort()
   voiceTurnAbort = null
@@ -1478,6 +1626,7 @@ async function handleVoiceSessionDeleted(sessionId: string): Promise<void> {
 async function endSession(): Promise<void> {
   const sessionId = workspace.value?.session_id
   if (!sessionId) return
+  if (codexLiveVoiceClient) await stopCodexLiveVoice()
   workspace.value = null
   try {
     await closeVoiceSession(sessionId)
@@ -1485,6 +1634,10 @@ async function endSession(): Promise<void> {
 }
 
 async function stopAgentLoop(): Promise<void> {
+  if (codexLiveVoiceClient) {
+    await stopCodexLiveVoice()
+    return
+  }
   const sessionId = workspace.value?.session_id
   if (!sessionId) return
   try {
@@ -2518,6 +2671,7 @@ async function loadVoiceRuntime(): Promise<void> {
     ])
     voiceSettings.value = settingsRes.data
     voiceAgentConfig.value = voiceAgentRes?.data ?? null
+    await refreshOnboarding()
   } catch (err: any) {
     voiceConfigError.value = err?.message || t('voice.errors.settingsLoad')
   } finally {
@@ -2765,6 +2919,42 @@ function handleCodexServiceTierChange(event: Event): void {
   void setCodexServiceTier((event.target as HTMLSelectElement).value)
 }
 
+async function setCodexLiveVoiceEnabled(enabled: boolean): Promise<void> {
+  if (enabled && !codexLiveVoiceSupported.value) return
+  if (codexLiveVoiceEnabled.value === enabled) return
+  voiceAgentSaving.value = true
+  voiceConfigError.value = ''
+  try {
+    const response = await updateVoiceAgentConfig({ live_voice_enabled: enabled })
+    voiceAgentConfig.value = response.data
+    await refreshOnboarding()
+  } catch (err: any) {
+    voiceConfigError.value = err?.message || t('voice.model.liveVoiceSaveFailed')
+  } finally {
+    voiceAgentSaving.value = false
+  }
+}
+
+async function setCodexLiveVoiceVoice(voice: CodexLiveVoiceV3Voice): Promise<void> {
+  if (selectedCodexLiveVoice.value === voice) return
+  voiceAgentSaving.value = true
+  voiceConfigError.value = ''
+  try {
+    const response = await updateVoiceAgentConfig({ live_voice_voice: voice })
+    voiceAgentConfig.value = response.data
+  } catch (err: any) {
+    voiceConfigError.value = err?.message || t('voice.model.liveVoiceSaveFailed')
+  } finally {
+    voiceAgentSaving.value = false
+  }
+}
+
+function handleCodexLiveVoiceVoiceChange(event: Event): void {
+  void setCodexLiveVoiceVoice(
+    (event.target as HTMLSelectElement).value as CodexLiveVoiceV3Voice
+  )
+}
+
 async function setCodexModel(model: string): Promise<void> {
   if (!model || voiceAgentConfig.value?.model_name === model) return
   voiceAgentSaving.value = true
@@ -2981,6 +3171,18 @@ async function handleVoiceStreamEvent(
 
 async function sendText(text: string, optimisticItemId?: string): Promise<void> {
   if (!workspace.value || !text || loading.value) return
+  if (codexLiveVoiceSessionActive.value && codexLiveVoiceClient) {
+    try {
+      codexLiveVoiceClient.sendText(text)
+    } catch {
+      const message = t('voice.liveVoice.textUnavailable')
+      error.value = message
+      throw new Error(message)
+    }
+    lastUserTranscript.value = text
+    error.value = ''
+    return
+  }
   const selectedNodeId = selectedGenerativeUiNodeId.value || null
   if (listening.value) closeVoiceInputAfterSubmit()
   // 若调用方已提前 append 了 optimistic 消息（如文字输入为追求即时反馈），
@@ -3035,6 +3237,8 @@ async function submitCodexTextDraft(text = codexTextDraft.value): Promise<void> 
       item => item.id !== optimisticItem.id
     )
     codexTextDraft.value = clean
+    error.value = err?.message || t('voice.liveVoice.textUnavailable')
+    recordDebug('codex_live_text_failed', error.value)
     throw err
   } finally {
     codexTextSubmitting.value = false
@@ -3054,7 +3258,7 @@ function toggleVoiceOutput(): void {
 
 function submitComposerDraft(): void {
   if (composerSubmitDisabled.value) return
-  void submitCodexTextDraft()
+  void submitCodexTextDraft().catch(() => undefined)
 }
 
 function handleComposerKeydown(event: KeyboardEvent): void {
@@ -3563,8 +3767,196 @@ async function playTtsBlob(blob: Blob): Promise<void> {
   }
 }
 
+function applyCodexLiveVoiceState(state: CodexLiveVoiceState): void {
+  codexLiveVoiceState.value = state
+  const active = !['idle', 'error', 'closed'].includes(state)
+  const microphoneActive = [
+    'listening',
+    'user-speaking',
+    'manager-working',
+    'assistant-speaking',
+  ].includes(state)
+  codexLiveVoiceMuted.value = state === 'muted'
+  listening.value = microphoneActive && !codexLiveVoiceMuted.value
+  speaking.value = state === 'assistant-speaking'
+  managerSubmitting.value = state === 'manager-working'
+  if (!active) {
+    voiceLevel.value = 0
+    waveformBars.value = waveformBars.value.map(() => 0.1)
+    waveformSamples.value = waveformSamples.value.map(() => 0)
+  }
+}
+
+function handleCodexLiveVoiceEvent(event: CodexLiveVoiceEvent): void {
+  const eventWorkspace = event.workspace
+  if (eventWorkspace && typeof eventWorkspace === 'object' && !Array.isArray(eventWorkspace)) {
+    workspace.value = eventWorkspace as VoiceWorkspace
+    const latestUserText = [...workspace.value.conversation]
+      .reverse()
+      .find(item => item.role === 'user')
+      ?.text
+    if (latestUserText) {
+      const normalized = normalizeVoiceTranscriptForDuplicate(latestUserText)
+      optimisticConversationItems.value = optimisticConversationItems.value.filter(
+        item => normalizeVoiceTranscriptForDuplicate(item.text) !== normalized
+      )
+    }
+    const runId = workspace.value.manager_run_id
+    if (runId) store.setRunId(runId)
+  }
+
+  if (event.type === 'transcript.delta') {
+    const delta = typeof event.delta === 'string' ? event.delta : ''
+    const role = String(event.role || '').toLowerCase()
+    if (role === 'user') liveTranscript.value += delta
+    if (role === 'assistant') spokenText.value += delta
+    return
+  }
+
+  if (event.type === 'transcript.done') {
+    const text = typeof event.text === 'string' ? event.text.trim() : ''
+    const role = String(event.role || '').toLowerCase()
+    if (role === 'user') {
+      liveTranscript.value = text
+      lastUserTranscript.value = text
+      const normalized = normalizeVoiceTranscriptForDuplicate(text)
+      optimisticConversationItems.value = optimisticConversationItems.value.filter(
+        item => normalizeVoiceTranscriptForDuplicate(item.text) !== normalized
+      )
+    } else if (role === 'assistant') {
+      spokenText.value = text
+      liveTranscript.value = ''
+    }
+    return
+  }
+
+  if (event.type === 'session.error') {
+    error.value = typeof event.message === 'string'
+      ? event.message
+      : t('voice.liveVoice.error')
+    if (event.recoverable !== true) {
+      stopCodexLiveVoiceMeter()
+      codexLiveVoiceMuted.value = false
+    }
+    return
+  }
+
+  // Unexpected upstream closes are handled by the client reconnect loop. The
+  // explicit stop path marks the client stopped before closing the transport.
+}
+
+async function startCodexLiveVoice(): Promise<void> {
+  const sessionId = workspace.value?.session_id
+  if (!sessionId || !codexLiveVoiceEffective.value) return
+  if (codexLiveVoiceClient) await stopCodexLiveVoice(false)
+  cancelLocalSpeech('codex_live_voice_started')
+  closeVoiceInputAfterSubmit()
+  voiceTurnAbort?.abort()
+  voiceTurnAbort = null
+  loading.value = false
+  error.value = ''
+  liveTranscript.value = ''
+  spokenText.value = ''
+
+  const client = new CodexLiveVoiceClient({
+    sessionId,
+    projectId: store.managerProjectId || workspace.value?.project_id || null,
+    selectedNodeId: selectedGenerativeUiNodeId.value || null,
+    getUserMedia: async () => {
+      const stream = await createVoiceMediaStream()
+      startCodexLiveVoiceMeter(stream)
+      return stream
+    },
+    onState: applyCodexLiveVoiceState,
+    onEvent: handleCodexLiveVoiceEvent,
+  })
+  codexLiveVoiceClient = client
+  try {
+    await client.start()
+  } catch (err: any) {
+    if (codexLiveVoiceClient === client) codexLiveVoiceClient = null
+    stopCodexLiveVoiceMeter()
+    applyCodexLiveVoiceState('error')
+    error.value = err?.message || t('voice.liveVoice.error')
+  }
+}
+
+async function stopCodexLiveVoice(notifyServer = true): Promise<void> {
+  const client = codexLiveVoiceClient
+  codexLiveVoiceClient = null
+  if (client) await client.stop(notifyServer).catch(() => undefined)
+  stopCodexLiveVoiceMeter()
+  codexLiveVoiceMuted.value = false
+  applyCodexLiveVoiceState('idle')
+  liveTranscript.value = ''
+}
+
+function startCodexLiveVoiceMeter(stream: MediaStream): void {
+  stopCodexLiveVoiceMeter()
+  const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext
+  if (!AudioContextCtor) return
+  try {
+    codexLiveVoiceMeterAudioContext = new AudioContextCtor()
+    codexLiveVoiceMeterAnalyser = codexLiveVoiceMeterAudioContext.createAnalyser()
+    codexLiveVoiceMeterAnalyser.fftSize = 1024
+    codexLiveVoiceMeterSource =
+      codexLiveVoiceMeterAudioContext.createMediaStreamSource(stream)
+    codexLiveVoiceMeterSource.connect(codexLiveVoiceMeterAnalyser)
+    codexLiveVoiceMeterFrame = window.requestAnimationFrame(updateCodexLiveVoiceMeter)
+  } catch {
+    stopCodexLiveVoiceMeter()
+  }
+}
+
+function updateCodexLiveVoiceMeter(): void {
+  const meter = codexLiveVoiceMeterAnalyser
+  if (!meter) return
+  const data = new Float32Array(meter.fftSize)
+  meter.getFloatTimeDomainData(data)
+  let sum = 0
+  for (const value of data) sum += value * value
+  const rms = Math.sqrt(sum / data.length)
+  voiceLevel.value = Math.min(1, rms * 10)
+  waveformBars.value = waveformBars.value.map((_, index) => {
+    const sample = data[Math.floor((index * data.length) / waveformBars.value.length)] ?? 0
+    return Math.max(0.08, Math.min(1, Math.abs(sample) * 3.2 + voiceLevel.value * 0.48))
+  })
+  waveformSamples.value = waveformSamples.value.map((previous, index) => {
+    const sampleIndex = Math.floor(
+      (index * Math.max(1, data.length - 1)) /
+      Math.max(1, waveformSamples.value.length - 1)
+    )
+    const sample = Math.max(-1, Math.min(1, (data[sampleIndex] ?? 0) * 6))
+    return previous * 0.24 + sample * 0.76
+  })
+  codexLiveVoiceMeterFrame = window.requestAnimationFrame(updateCodexLiveVoiceMeter)
+}
+
+function stopCodexLiveVoiceMeter(): void {
+  if (codexLiveVoiceMeterFrame) window.cancelAnimationFrame(codexLiveVoiceMeterFrame)
+  codexLiveVoiceMeterFrame = 0
+  codexLiveVoiceMeterSource?.disconnect()
+  codexLiveVoiceMeterAnalyser?.disconnect()
+  codexLiveVoiceMeterAudioContext?.close().catch(() => undefined)
+  codexLiveVoiceMeterSource = null
+  codexLiveVoiceMeterAnalyser = null
+  codexLiveVoiceMeterAudioContext = null
+  voiceLevel.value = 0
+  waveformBars.value = waveformBars.value.map(() => 0.1)
+  waveformSamples.value = waveformSamples.value.map(() => 0)
+}
+
 async function toggleListening(): Promise<void> {
   if (voiceInputLocked.value) return
+  if (codexLiveVoiceEffective.value) {
+    activateNoSleepPlayer()
+    if (codexLiveVoiceSessionActive.value) {
+      await stopCodexLiveVoice()
+    } else {
+      await startCodexLiveVoice()
+    }
+    return
+  }
   if (!tabCanUseVoiceOutput()) return
   activateNoSleepPlayer()
   await unlockTtsPlayback().catch(err => {
@@ -4158,6 +4550,10 @@ function updateNativeVoiceWaveform(samples: Float32Array): void {
 }
 
 function stopVoiceCapture(): void {
+  if (codexLiveVoiceClient) {
+    void stopCodexLiveVoice()
+    return
+  }
   voiceSessionToken += 1
   voiceAbort?.abort()
   voiceAbort = null
@@ -4862,14 +5258,107 @@ function summarizeTask(value: string): string {
               </select>
             </label>
 
-            <label class="voice-model-menu__row">
+            <div
+              v-if="codexLiveVoiceSupported"
+              class="voice-model-menu__row"
+              data-testid="voice-model-live-toggle-row"
+            >
+              <span class="voice-model-menu__label">
+                <strong>{{ t('voice.model.liveVoice') }}</strong>
+                <em>{{ t('voice.model.liveVoiceDescription') }}</em>
+              </span>
+              <div class="inline-flex items-center gap-3">
+                <span
+                  class="text-xs font-medium"
+                  :class="codexLiveVoiceEnabled ? 'text-[var(--hr-info)]' : 'text-[var(--hr-text-3)]'"
+                >
+                  {{
+                    codexLiveVoiceEnabled
+                      ? t('voice.model.liveVoiceOn')
+                      : t('voice.model.liveVoiceOff')
+                  }}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  data-testid="voice-model-live-toggle"
+                  class="relative h-7 w-12 flex-none rounded-full border transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--hr-accent-border)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--hr-bg-raised)] disabled:cursor-not-allowed disabled:opacity-45"
+                  :class="
+                    codexLiveVoiceEnabled
+                      ? 'border-[var(--hr-info-border)] bg-[var(--hr-info)]'
+                      : 'border-[var(--hr-border-strong)] bg-[var(--hr-surface-2)]'
+                  "
+                  :aria-checked="codexLiveVoiceEnabled"
+                  :aria-label="`${t('voice.model.liveVoice')}: ${
+                    codexLiveVoiceEnabled
+                      ? t('voice.model.liveVoiceOn')
+                      : t('voice.model.liveVoiceOff')
+                  }`"
+                  :disabled="voiceAgentSaving"
+                  @click="setCodexLiveVoiceEnabled(!codexLiveVoiceEnabled)"
+                >
+                  <span
+                    aria-hidden="true"
+                    class="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-150"
+                    :class="codexLiveVoiceEnabled ? 'translate-x-5' : 'translate-x-0'"
+                  />
+                </button>
+              </div>
+            </div>
+            <label
+              v-if="codexLiveVoiceSupported"
+              class="voice-model-menu__row"
+              data-testid="voice-model-live-voice-row"
+            >
+              <span class="voice-model-menu__label">
+                <strong>{{ t('voice.model.liveVoiceVoice') }}</strong>
+                <em>{{ t('voice.model.liveVoiceVoiceDescription') }}</em>
+              </span>
+              <select
+                :value="selectedCodexLiveVoice"
+                :disabled="voiceAgentSaving"
+                :title="t('voice.model.liveVoiceVoice')"
+                data-testid="voice-model-live-voice-select"
+                @change="handleCodexLiveVoiceVoiceChange"
+              >
+                <option
+                  v-for="voice in codexLiveVoiceVoices"
+                  :key="voice"
+                  :value="voice"
+                  class="bg-[var(--hr-bg-raised)] text-[var(--hr-text-1)]"
+                >
+                  {{ voice.charAt(0).toUpperCase() + voice.slice(1) }}
+                </option>
+              </select>
+            </label>
+            <div
+              v-else-if="codexHarnessActive && codexLiveVoiceEnabled"
+              class="rounded-lg border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] px-3 py-2 text-xs text-[var(--hr-warning)]"
+              data-testid="voice-model-live-unavailable"
+            >
+              {{
+                t('voice.model.liveVoiceUnavailable', {
+                  version: onboardingStatus.liveVoiceMinimumVersion || '0.145.0'
+                })
+              }}
+            </div>
+
+            <div
+              v-if="codexLiveVoiceEffective"
+              class="rounded-lg border border-[var(--hr-info-border)] bg-[var(--hr-info-soft)] px-3 py-2 text-xs text-[var(--hr-info)]"
+              data-testid="voice-model-live-managed"
+            >
+              {{ t('voice.liveVoice.managed') }}
+            </div>
+
+            <label class="voice-model-menu__row" :class="{ 'opacity-45': codexLiveVoiceEffective }">
               <span class="voice-model-menu__label">
                 <strong>ASR</strong>
                 <em>{{ asrModelLabel }}</em>
               </span>
               <select
                 :value="selectedAsrModelId"
-                :disabled="asrLoading || asrSaving || !voiceSettings || !asrModelOptions.length"
+                :disabled="codexLiveVoiceEffective || asrLoading || asrSaving || !voiceSettings || !asrModelOptions.length"
                 :title="t('voice.model.asr')"
                 @change="changeAsrModel"
               >
@@ -4887,14 +5376,14 @@ function summarizeTask(value: string): string {
               </select>
             </label>
 
-            <label class="voice-model-menu__row">
+            <label class="voice-model-menu__row" :class="{ 'opacity-45': codexLiveVoiceEffective }">
               <span class="voice-model-menu__label">
                 <strong>TTS</strong>
                 <em>{{ arkTtsDetails || ttsModelLabel }}</em>
               </span>
               <select
                 :value="selectedTtsModelId"
-                :disabled="asrLoading || ttsSaving || !voiceSettings"
+                :disabled="codexLiveVoiceEffective || asrLoading || ttsSaving || !voiceSettings"
                 :title="t('voice.model.tts')"
                 @change="changeTtsModel"
               >
@@ -5007,10 +5496,13 @@ function summarizeTask(value: string): string {
         </div>
         <section
           class="voice-stage relative mx-6 my-0 flex min-h-0 flex-col overflow-hidden rounded-[28px] p-6"
-          :class="{ 'voice-stage--status-active': Boolean(processingText) }"
+          :class="{
+            'voice-stage--status-active':
+              Boolean(processingText) && !codexLiveVoiceConnecting
+          }"
         >
           <div
-            v-if="processingText"
+            v-if="processingText && !codexLiveVoiceConnecting"
             class="voice-stage__status pointer-events-none absolute right-5 top-5 z-10 rounded-full border border-[var(--hr-border)] px-3 py-1.5 text-xs backdrop-blur"
           >
             {{ processingText }}
@@ -5335,7 +5827,80 @@ function summarizeTask(value: string): string {
 
           <div class="voice-control mt-5 border-t border-[var(--hr-border)] pt-4">
             <div class="voice-control__deck">
-              <div v-if="!isTvCompactViewport" class="voice-composer__preferences">
+              <div
+                v-if="codexLiveVoiceEffective"
+                class="flex items-center gap-2 rounded-full border border-[var(--hr-info-border)] bg-[var(--hr-info-soft)] px-3 py-1.5 text-xs text-[var(--hr-info)]"
+                data-testid="codex-live-voice-managed"
+              >
+                <span>{{ t('voice.liveVoice.managed') }}</span>
+                <button
+                  v-if="codexLiveVoiceSessionActive"
+                  type="button"
+                  class="rounded-full border border-[var(--hr-info-border)] px-2 py-0.5 font-medium hover:bg-[var(--hr-surface-2)]"
+                  data-testid="codex-live-voice-end"
+                  @click="stopCodexLiveVoice()"
+                >
+                  {{ t('voice.liveVoice.end') }}
+                </button>
+              </div>
+              <div
+                v-if="codexLiveVoiceEffective"
+                class="codex-live-voice-meter"
+                :class="{
+                  'codex-live-voice-meter--active': codexLiveVoiceHumanInputActive,
+                  'codex-live-voice-meter--muted': codexLiveVoiceMuted
+                }"
+                :data-state="codexLiveVoiceState"
+                :aria-label="
+                  codexLiveVoiceConnecting
+                    ? voiceStateText
+                    : t('voice.liveVoice.inputMeter')
+                "
+                data-testid="codex-live-voice-input-meter"
+                role="img"
+              >
+                <span
+                  v-if="codexLiveVoiceConnecting"
+                  class="codex-live-voice-meter__connecting"
+                  aria-live="polite"
+                >
+                  <span class="codex-live-voice-meter__spinner" aria-hidden="true" />
+                  {{ voiceStateText }}
+                </span>
+                <svg
+                  v-else
+                  class="voice-wave-svg"
+                  viewBox="0 0 360 76"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <linearGradient id="codexLiveWaveMainGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stop-color="var(--hr-accent)" stop-opacity="0.08" />
+                      <stop offset="30%" stop-color="var(--hr-accent)" stop-opacity="0.9" />
+                      <stop offset="68%" stop-color="var(--hr-info)" stop-opacity="0.82" />
+                      <stop offset="100%" stop-color="var(--hr-info)" stop-opacity="0.08" />
+                    </linearGradient>
+                    <linearGradient id="codexLiveWaveUpperGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stop-color="var(--hr-info)" stop-opacity="0.04" />
+                      <stop offset="50%" stop-color="var(--hr-info)" stop-opacity="0.48" />
+                      <stop offset="100%" stop-color="var(--hr-accent)" stop-opacity="0.04" />
+                    </linearGradient>
+                    <linearGradient id="codexLiveWaveLowerGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stop-color="var(--hr-speaking)" stop-opacity="0.04" />
+                      <stop offset="50%" stop-color="var(--hr-speaking)" stop-opacity="0.42" />
+                      <stop offset="100%" stop-color="var(--hr-accent)" stop-opacity="0.04" />
+                    </linearGradient>
+                  </defs>
+                  <path
+                    v-for="path in codexLiveVoiceWavePaths"
+                    :key="path.id"
+                    :class="path.className"
+                    :d="path.d"
+                  />
+                </svg>
+              </div>
+              <div v-else-if="!isTvCompactViewport" class="voice-composer__preferences">
                 <div class="voice-composer__mode" role="group" :aria-label="t('voice.composer.modeLabel')">
                   <button
                     type="button"
@@ -5391,7 +5956,7 @@ function summarizeTask(value: string): string {
             </div>
 
             <div
-              v-if="!isTvCompactViewport && (listening || speaking)"
+              v-if="!codexLiveVoiceEffective && !isTvCompactViewport && (listening || speaking)"
               class="voice-caption-strip"
               :class="{
                 'voice-caption-strip--listening': listening,
@@ -5443,14 +6008,39 @@ function summarizeTask(value: string): string {
                   'voice-input-zone--active': listening && !voiceInputLocked,
                   'voice-input-zone--speaking': speaking,
                   'voice-input-zone--locked': voiceInputLocked,
-                  'voice-input-zone--agent-running': agentActivityActive && !listening
+                  'voice-input-zone--agent-running': agentActivityActive && !listening,
+                  'voice-input-zone--live': codexLiveVoiceEffective,
+                  'voice-input-zone--live-connected':
+                    codexLiveVoiceSessionActive && !codexLiveVoiceConnecting
                 }"
-                :title="voiceInputLocked ? processingText || voiceStateText : t('voice.composer.toggleVoice')"
+                :title="voiceInputButtonLabel"
                 :disabled="voiceInputLocked"
                 @click="toggleListening"
               >
-                <span class="voice-input-zone__mic" aria-hidden="true">
-                  <span v-if="speaking" class="voice-button-speaking">
+                <span
+                  class="voice-input-zone__mic"
+                  :class="{ 'voice-input-zone__mic--live': codexLiveVoiceEffective }"
+                  aria-hidden="true"
+                >
+                  <X
+                    v-if="
+                      codexLiveVoiceEffective &&
+                      codexLiveVoiceSessionActive &&
+                      !codexLiveVoiceConnecting
+                    "
+                    class="h-6 w-6"
+                  />
+                  <span
+                    v-else-if="codexLiveVoiceEffective"
+                    class="voice-live-button-glyph"
+                  >
+                    <span
+                      v-for="(bar, index) in codexLiveVoiceButtonBars"
+                      :key="index"
+                      :style="{ transform: `scaleY(${bar})` }"
+                    />
+                  </span>
+                  <span v-else-if="speaking" class="voice-button-speaking">
                     <Volume2 class="h-5 w-5" />
                   </span>
                   <span v-else-if="listening" class="voice-button-meter">
@@ -5512,15 +6102,36 @@ function summarizeTask(value: string): string {
                   :class="{
                     'voice-composer__mic--active': listening && !voiceInputLocked,
                     'voice-composer__mic--speaking': speaking,
-                    'voice-composer__mic--locked': voiceInputLocked
+                    'voice-composer__mic--locked': voiceInputLocked,
+                    'voice-composer__mic--live': codexLiveVoiceEffective,
+                    'voice-composer__mic--live-connected':
+                      codexLiveVoiceSessionActive && !codexLiveVoiceConnecting
                   }"
                   type="button"
-                  :title="voiceInputLocked ? processingText || voiceStateText : t('voice.composer.toggleVoice')"
+                  :title="voiceInputButtonLabel"
                   :disabled="voiceInputLocked"
-                  :aria-label="t('voice.composer.voiceInput')"
+                  :aria-label="voiceInputButtonLabel"
                   @click="toggleListening"
                 >
-                  <Volume2 v-if="speaking" class="h-5 w-5" />
+                  <X
+                    v-if="
+                      codexLiveVoiceEffective &&
+                      codexLiveVoiceSessionActive &&
+                      !codexLiveVoiceConnecting
+                    "
+                    class="h-6 w-6"
+                  />
+                  <span
+                    v-else-if="codexLiveVoiceEffective"
+                    class="voice-live-button-glyph"
+                  >
+                    <span
+                      v-for="(bar, index) in codexLiveVoiceButtonBars"
+                      :key="index"
+                      :style="{ transform: `scaleY(${bar})` }"
+                    />
+                  </span>
+                  <Volume2 v-else-if="speaking" class="h-5 w-5" />
                   <span v-else-if="listening" class="voice-composer__meter">
                     <span
                       v-for="(bar, index) in voiceButtonBars"
@@ -6111,10 +6722,22 @@ function summarizeTask(value: string): string {
   pointer-events: auto;
   border: 1px solid var(--vc-border-strong);
   border-radius: var(--vc-radius-lg);
-  background: var(--vc-panel);
+  background: var(--hr-bg-raised);
+  background-image: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--hr-accent) 3%, transparent),
+    transparent 42%
+  );
   padding: 12px;
   box-shadow: var(--hr-shadow-floating), 0 0 0 1px var(--hr-border) inset;
-  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(36px) saturate(145%);
+  backdrop-filter: blur(36px) saturate(145%);
+}
+
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .voice-model-menu__popover {
+    background: var(--hr-bg-raised);
+  }
 }
 
 .voice-model-menu__header {
@@ -6891,6 +7514,69 @@ function summarizeTask(value: string): string {
   gap: 12px;
 }
 
+.codex-live-voice-meter {
+  width: clamp(180px, 28vw, 340px);
+  height: 38px;
+  margin-left: auto;
+  overflow: hidden;
+  opacity: 0.34;
+  transition: opacity 180ms ease, filter 180ms ease;
+}
+
+.codex-live-voice-meter--active {
+  opacity: 1;
+  filter: drop-shadow(0 0 7px var(--vc-accent-soft));
+}
+
+.codex-live-voice-meter--muted {
+  opacity: 0.18;
+  filter: grayscale(0.72);
+}
+
+.codex-live-voice-meter__connecting {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  color: var(--vc-text-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.codex-live-voice-meter__spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--vc-border-strong);
+  border-top-color: var(--vc-accent);
+  border-radius: 999px;
+  animation: codex-live-connect-spin 720ms linear infinite;
+}
+
+@keyframes codex-live-connect-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.codex-live-voice-meter .voice-wave-line--main {
+  stroke: url(#codexLiveWaveMainGradient);
+  stroke-width: 1.25;
+  opacity: 0.86;
+}
+
+.codex-live-voice-meter .voice-wave-line--upper {
+  stroke: url(#codexLiveWaveUpperGradient);
+  stroke-width: 0.9;
+  opacity: 0.4;
+}
+
+.codex-live-voice-meter .voice-wave-line--lower {
+  stroke: url(#codexLiveWaveLowerGradient);
+  stroke-width: 0.9;
+  opacity: 0.36;
+}
+
 .voice-composer__preferences {
   display: flex;
   align-items: center;
@@ -7166,6 +7852,45 @@ function summarizeTask(value: string): string {
   opacity: 0.45;
 }
 
+.voice-composer__mic--live,
+.voice-composer__mic--live:hover:not(:disabled),
+.voice-composer__mic--live:focus-visible {
+  border-color: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.96);
+  color: #111318;
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.18),
+    0 0 0 1px rgba(255, 255, 255, 0.38);
+}
+
+.voice-composer__mic--live-connected {
+  box-shadow:
+    0 0 0 4px var(--hr-focus-ring),
+    0 4px 14px rgba(0, 0, 0, 0.2);
+}
+
+.voice-composer__mic--live:disabled {
+  opacity: 0.78;
+}
+
+.voice-live-button-glyph {
+  display: inline-flex;
+  width: 27px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.voice-live-button-glyph > span {
+  width: 3px;
+  height: 22px;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: center;
+  transition: transform 70ms linear;
+}
+
 .voice-composer__meter {
   display: inline-flex;
   align-items: flex-end;
@@ -7310,6 +8035,22 @@ function summarizeTask(value: string): string {
   background: var(--vc-accent-soft);
   color: var(--vc-accent);
   box-shadow: 0 0 0 8px var(--hr-focus-ring);
+}
+
+.voice-input-zone__mic--live,
+.voice-input-zone--active .voice-input-zone__mic--live {
+  border-color: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.96);
+  color: #111318;
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.18),
+    0 0 0 1px rgba(255, 255, 255, 0.38);
+}
+
+.voice-input-zone--live-connected .voice-input-zone__mic--live {
+  box-shadow:
+    0 0 0 6px var(--hr-focus-ring),
+    0 4px 14px rgba(0, 0, 0, 0.2);
 }
 
 .voice-input-zone__wave {
@@ -8597,4 +9338,5 @@ function summarizeTask(value: string): string {
     grid-row: auto;
   }
 }
+
 </style>

@@ -48,9 +48,11 @@ import {
   getAssetDiagnostics,
   getOrchestrationTemplates,
   getCodexModels,
+  getManagerAgentReadiness,
   type VoiceSettings,
   type VoiceTtsOutputChannel,
   type CodexModel,
+  type ManagerAgentReadiness,
   type ExperienceGraphSummary,
   type AssetDiagnostics,
   type OrchestrationTemplate,
@@ -157,6 +159,7 @@ const workspaceSettings = ref<AgentWorkspaceSettings | null>(null)
 const voiceSettings = ref<VoiceSettings | null>(null)
 const voiceAgentConfig = ref<VoiceAgentConfig | null>(null)
 const codexModels = ref<CodexModel[]>([])
+const managerAgentReadiness = ref<ManagerAgentReadiness | null>(null)
 const voiceForm = ref({
   recognition_mode: 'asr' as 'omni' | 'asr',
   omni_base_url: '',
@@ -212,6 +215,7 @@ const voiceButtonBindingMode = computed<'hid' | 'keyboard'>(() => voiceSettingsM
 const voiceAudioInputSelectorVisible = computed(() => voiceAudioInputDevices.value.length > 1)
 const singleVoiceAudioInputDevice = computed(() => voiceAudioInputDevices.value.length === 1 ? voiceAudioInputDevices.value[0] : null)
 const commentaryNarrationEnabled = computed(() => voiceForm.value.tts_output_channels.includes('commentary'))
+const codexLiveVoiceEffective = computed(() => managerAgentReadiness.value?.live_voice_effective === true)
 const androidTvLocalSettingsVisible = computed(() => androidTvWireGuardAvailable())
 const wireGuardProfileOptions = computed(() => {
   const names = new Set(
@@ -750,6 +754,7 @@ async function refreshAll(): Promise<void> {
       voiceRes,
       voiceAgentRes,
       codexModelRes,
+      managerReadinessRes,
       assetDiagRes,
       orchestrationTemplateRes,
       runtimeStatusRes,
@@ -767,6 +772,7 @@ async function refreshAll(): Promise<void> {
       agentSettingsApi.getVoiceSettings().catch(() => null),
       agentSettingsApi.getVoiceAgentConfig().catch(() => null),
       getCodexModels().catch(() => null),
+      getManagerAgentReadiness().catch(() => null),
       hiddenSettingsTabs.has('memory') ? Promise.resolve(null) : loadAssetDiagnostics(),
       hiddenSettingsTabs.has('memory') ? Promise.resolve(null) : loadOrchestrationTemplates(),
       agentSettingsApi.getRuntimeStatus().catch(() => null),
@@ -786,6 +792,7 @@ async function refreshAll(): Promise<void> {
     orchestrationTemplates.value = orchestrationTemplateRes ?? []
     voiceAgentConfig.value = voiceAgentRes?.data ?? null
     codexModels.value = codexModelRes?.data?.models ?? []
+    managerAgentReadiness.value = managerReadinessRes
     runtimeStatus.value = runtimeStatusRes ?? null
     workspaceSettings.value = workspaceSettingsRes ?? null
     if (voiceRes?.data) {
@@ -1656,6 +1663,7 @@ onUnmounted(() => {
           :llm-settings="llmSettings"
           :manager-config="voiceAgentConfig"
           :codex-models="codexModels"
+          :manager-readiness="managerAgentReadiness"
           :loading="loading"
           @refresh="refreshAll"
           @set-notice="setNotice"
@@ -1883,12 +1891,23 @@ onUnmounted(() => {
         </section>
 
         <section v-if="activeTab === 'voice'" data-testid="agent-settings-section-voice" class="mt-10 space-y-8">
+          <div
+            v-if="codexLiveVoiceEffective"
+            class="rounded-xl border border-[var(--hr-info-border)] bg-[var(--hr-info-soft)] px-4 py-3 text-sm text-[var(--hr-info)]"
+            data-testid="agent-settings-live-voice-managed"
+          >
+            <div class="font-medium">{{ t('settings.voice.liveVoiceManaged') }}</div>
+            <div class="mt-1 text-xs opacity-80">{{ t('settings.voice.liveVoiceManagedDescription') }}</div>
+          </div>
           <section class="space-y-3">
             <div>
               <h2 class="text-base font-semibold text-[var(--hr-text-1)]">{{ t('settings.voice.narration') }}</h2>
               <p class="mt-1 text-sm text-[var(--hr-text-3)]">{{ t('settings.voice.narrationDescription') }}</p>
             </div>
-            <div class="overflow-hidden rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)]">
+            <div
+              class="overflow-hidden rounded-xl border border-[var(--hr-border)] bg-[var(--hr-surface-1)]"
+              :class="{ 'opacity-45': codexLiveVoiceEffective }"
+            >
               <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 px-4 py-3.5">
                 <div class="min-w-0">
                   <div class="font-medium text-[var(--hr-text-1)]">{{ t('settings.voice.commentary') }}</div>
@@ -1903,7 +1922,7 @@ onUnmounted(() => {
                   class="relative h-7 w-12 rounded-full border transition disabled:opacity-45"
                   :class="commentaryNarrationEnabled ? 'border-[var(--hr-info-border)] bg-[var(--hr-info)]' : 'border-[var(--hr-border-strong)] bg-[var(--hr-surface-2)]'"
                   :aria-checked="commentaryNarrationEnabled"
-                  :disabled="saving === 'voice-save'"
+                  :disabled="codexLiveVoiceEffective || saving === 'voice-save'"
                   @click="setCommentaryNarration(!commentaryNarrationEnabled)"
                 >
                   <span
@@ -2028,7 +2047,10 @@ onUnmounted(() => {
                   </button>
                 </div>
               </div>
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-[var(--hr-border)] px-4 py-3.5">
+              <div
+                class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-[var(--hr-border)] px-4 py-3.5"
+                :class="{ 'opacity-45': codexLiveVoiceEffective }"
+              >
                 <div>
                   <label class="font-medium text-[var(--hr-text-1)]" for="voice-vad-silence-seconds">{{ t('settings.voice.sendDelay') }}</label>
                   <div class="mt-1 text-sm text-[var(--hr-text-3)]">{{ t('settings.voice.sendDelayDescription') }}</div>
@@ -2041,6 +2063,7 @@ onUnmounted(() => {
                     min="0.5"
                     max="6"
                     step="0.1"
+                    :disabled="codexLiveVoiceEffective"
                     class="h-9 w-24 rounded-lg border border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-3 text-sm text-[var(--hr-text-1)] outline-none"
                     @change="saveVoiceVadSilenceSetting"
                     @blur="saveVoiceVadSilenceSetting"

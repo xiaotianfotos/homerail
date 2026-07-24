@@ -22,7 +22,9 @@
     "switching": "Switching...",
     "use": "Use",
     "stepReady": "{step} is ready",
-    "nextAvailable": "You can continue to the next step"
+    "nextAvailable": "You can continue to the next step",
+    "liveVoiceManaged": "Managed by Codex Live Voice",
+    "liveVoiceManagedHint": "Realtime speech, TTS, and server VAD are provided by the active Live Voice session."
   },
   "environmentCheck": {
     "description": "Verify Manager Agent dependencies; Docker is only needed for container DAGs",
