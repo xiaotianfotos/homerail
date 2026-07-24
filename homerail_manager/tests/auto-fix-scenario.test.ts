@@ -183,6 +183,18 @@ describe("Auto Fix scenario asset", () => {
       expect(canonical.agents[agentId]?.system).not.toMatch(/at most \d+/);
       expect(canonical.agents[agentId]?.system).toMatch(/exact\s+changed\s+paths named by/);
     }
+    expect(canonical.agents.correctness_reviewer?.system).toContain(
+      "Trace every explicit acceptance criterion through the real end-to-end",
+    );
+    expect(canonical.agents.correctness_reviewer?.system).toContain(
+      "cached state while the requested runtime behavior remains unchanged",
+    );
+    expect(canonical.agents.regression_reviewer?.system).toContain(
+      "tests exercise the real production state-changing boundary",
+    );
+    expect(canonical.agents.regression_reviewer?.system).toContain(
+      "mocked successful read or state change that omits the side effect",
+    );
     expect(canonical.agents.investigator?.system).toContain("`/workspace/source`");
     expect(canonical.agents.investigator?.system).toMatch(/Never probe bare\s+`\/workspace`/);
     for (const agentId of ["implementer", "reviser"]) {

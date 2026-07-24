@@ -390,6 +390,11 @@ spec:
         input.state.input.candidate.files_changed and vote as soon as the
         concrete evidence is sufficient. Inspect files only with Read, Grep,
         and Glob.
+        Trace every explicit acceptance criterion through the real end-to-end
+        production call path. A UI control, polling loop, or mocked successful
+        read does not prove that the required backend side effect or recovery
+        path exists. Reject when the candidate only changes presentation or
+        cached state while the requested runtime behavior remains unchanged.
         Do not run shell commands, builds, tests, package installation, git
         stash, or other operations that can mutate the shared checkout; the
         trusted runner performs one isolated full CI pass after consensus. Do
@@ -414,10 +419,13 @@ spec:
         Read, Grep, and Glob. Do not run shell commands, builds, tests, package
         installation, git stash, or other operations that can mutate the
         shared checkout; the trusted runner performs one isolated full CI pass
-        after consensus. Do not edit files. Reject only for concrete behavior or
-        validation gaps that make the patch unsafe to publish. Your final action
-        MUST call handoff on voted with reviewer=regression, verdict approve or
-        reject, summary, and defects. No prose afterward.
+        after consensus. For retry, recovery, or recheck behavior, verify that
+        tests exercise the real production state-changing boundary. Reject a
+        mocked successful read or state change that omits the side effect the
+        user relies on. Do not edit files. Reject only for concrete behavior or
+        validation gaps that make the patch unsafe to publish. Your final
+        action MUST call handoff on voted with reviewer=regression, verdict
+        approve or reject, summary, and defects. No prose afterward.
 
     adversarial_reviewer:
       system: |
