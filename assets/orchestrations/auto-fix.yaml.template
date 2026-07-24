@@ -166,7 +166,10 @@ spec:
       additionalProperties: false
       required: [reviewer, verdict, summary, defects]
       properties:
-        reviewer: { type: string, enum: [correctness, regression, adversarial] }
+        # The trusted input port determines the canonical role. Models often
+        # self-label with their model name; rejecting an otherwise valid vote
+        # would discard useful defects during correction.
+        reviewer: { type: string, minLength: 1, maxLength: 200 }
         verdict: { type: string, enum: [approve, reject] }
         summary: { type: string, minLength: 1, maxLength: 8000 }
         defects:
@@ -180,6 +183,8 @@ spec:
               severity: { type: string, enum: [blocker, high, medium, low] }
               file: { type: string, minLength: 1, maxLength: 1000 }
               description: { type: string, minLength: 1, maxLength: 4000 }
+              fix: { type: string, minLength: 1, maxLength: 4000 }
+              suggestion: { type: string, minLength: 1, maxLength: 4000 }
 
     ReviewCycle:
       type: object
@@ -190,6 +195,7 @@ spec:
         phase: { type: string, enum: [review, revise, done] }
         revision_count: { type: integer, minimum: 0 }
         workspace_root: { type: string, const: source }
+        trusted_validation_feedback: { type: string, maxLength: 30000 }
         candidate: { type: object }
         reviews:
           type: array
@@ -348,6 +354,12 @@ spec:
         delta, then hand off status=fixed so the deterministic collector
         preserves it. If feedback names a failure, run only the smallest check
         that exercises that failure after the repair.
+        A claim in the prior candidate or in your explanation is not evidence
+        that validation feedback was addressed. On every resumed checkout with
+        nonempty validation_feedback, use the available repository tools to
+        inspect the actual worktree and diff, make any required edit, and
+        verify the named constraint before handoff. Never claim that a command
+        ran or a path changed unless you actually observed it.
         Inspect the checkout under source and change only repository files that
         are necessary for the fix and focused regression tests. Never push or
         invoke a GitHub write API. Never modify .git, .github/workflows,
@@ -395,6 +407,11 @@ spec:
         read does not prove that the required backend side effect or recovery
         path exists. Reject when the candidate only changes presentation or
         cached state while the requested runtime behavior remains unchanged.
+        input.state.input.trusted_validation_feedback is trusted evidence from
+        an outer validator. Any concrete failure or scope constraint named
+        there that is still present in the candidate is a blocker and requires
+        rejection, regardless of whether the underlying code is otherwise
+        functional. Do not downgrade an explicit unresolved constraint to low.
         Do not run shell commands, builds, tests, package installation, git
         stash, or other operations that can mutate the shared checkout; the
         trusted runner performs one isolated full CI pass after consensus. Do
@@ -423,7 +440,11 @@ spec:
         tests exercise the real production state-changing boundary. Reject a
         mocked successful read or state change that omits the side effect the
         user relies on. Do not edit files. Reject only for concrete behavior or
-        validation gaps that make the patch unsafe to publish. Your final
+        validation gaps that make the patch unsafe to publish.
+        input.state.input.trusted_validation_feedback is trusted outer
+        validation evidence. Reject any candidate that still violates a
+        concrete failure or scope constraint named there; treat that violation
+        as blocker severity even if it seems functionally harmless. Your final
         action MUST call handoff on voted with reviewer=regression, verdict
         approve or reject, summary, and defects. No prose afterward.
 
@@ -444,7 +465,10 @@ spec:
         and Glob. Do not run shell commands, builds, tests, package installation,
         git stash, or other operations that can mutate the shared checkout; the
         trusted runner performs one isolated full CI pass after consensus. Do
-        not edit files. Your final action MUST call handoff on voted with
+        not edit files. input.state.input.trusted_validation_feedback is trusted
+        outer validation evidence. A concrete failure or scope constraint
+        named there that remains in the candidate is a blocker, not harmless
+        noise, and requires rejection. Your final action MUST call handoff on voted with
         reviewer=adversarial, verdict approve or reject, summary, and concrete
         defects. No prose afterward.
 
@@ -456,6 +480,10 @@ spec:
         present, it is the latest final-arbitration rejection; address every
         concrete blocking_defect from it as well. Address every concrete
         blocker/high defect.
+        input.state.input.trusted_validation_feedback is trusted outer
+        validation evidence. Satisfy every concrete failure and scope
+        constraint it names, and verify the actual worktree rather than merely
+        repeating that it was addressed.
         This node may be invoked repeatedly: preserve prior correct work and
         make each revision respond to the newest evidence instead of rebuilding
         the patch from scratch. Preserve a correct patch when a review contains
@@ -497,7 +525,10 @@ spec:
         shell commands, builds, tests, package installation,
         git stash, or other operations that can mutate the shared checkout; the
         trusted runner performs one isolated full CI pass after arbitration. Do
-        not edit files. Your final action MUST call handoff on arbitrated with exactly:
+        not edit files. input.cycle.input.trusted_validation_feedback is trusted
+        outer validation evidence. Reject when a concrete failure or scope
+        constraint named there is still present, even if all reviewers called
+        it non-blocking. Your final action MUST call handoff on arbitrated with exactly:
         {"verdict":"approve|reject","summary":"...","blocking_defects":["..."]}
         Do not end with prose.
 
@@ -772,7 +803,9 @@ spec:
 
     initialize_review_cycle:
       kind: command
-      inputs: { candidate: { contract: FixCandidate } }
+      inputs:
+        candidate: { contract: FixCandidate }
+        checkout: { contract: RepositoryCheckout }
       outputs: { initialized: { contract: ReviewCycle }, failed: {} }
       config:
         command:
@@ -782,13 +815,22 @@ spec:
             let stdin = '';
             const one = (value) => Array.isArray(value) ? value.at(-1) : undefined;
             process.stdin.on('data', (chunk) => { stdin += chunk; }).on('end', () => {
-              const candidate = one(JSON.parse(stdin).candidate);
+              const inputs = JSON.parse(stdin);
+              const candidate = one(inputs.candidate);
+              const checkout = one(inputs.checkout);
               if (!candidate || candidate.status !== 'fixed' || typeof candidate.patch !== 'string' || !candidate.patch) {
                 throw new Error('fixed candidate is required');
               }
+              if (!checkout || !['fresh', 'resumed'].includes(checkout.mode)) {
+                throw new Error('repository checkout is required');
+              }
               process.stdout.write(JSON.stringify({
                 status: 'reviewing', phase: 'review', revision_count: 0,
-                workspace_root: 'source', candidate, reviews: [],
+                workspace_root: 'source',
+                ...(typeof checkout.validation_feedback === 'string' && checkout.validation_feedback
+                  ? { trusted_validation_feedback: checkout.validation_feedback }
+                  : {}),
+                candidate, reviews: [],
               }));
             });
         stdin_field: "$inputs"
@@ -885,12 +927,19 @@ spec:
               }
               // The trusted input port identifies each role. Normalize the
               // model-authored self-label instead of failing the whole run on
-              // a harmless reviewer-name typo; verdicts and defects remain
-              // unchanged.
-              const reviews = reported.map((review, index) => ({
-                ...review,
-                reviewer: expected[index],
-              }));
+              // a harmless reviewer-name typo. A structured blocker/high
+              // defect also deterministically overrides an inconsistent
+              // model-authored approve verdict.
+              const reviews = reported.map((review, index) => {
+                const hasBlockingDefect = Array.isArray(review.defects)
+                  && review.defects.some((defect) => defect
+                    && ['blocker', 'high'].includes(defect.severity));
+                return {
+                  ...review,
+                  reviewer: expected[index],
+                  verdict: hasBlockingDefect ? 'reject' : review.verdict,
+                };
+              });
               const unanimous = reviews.every((review) => review.verdict === 'approve');
               process.stdout.write(JSON.stringify({
                 ...state,
@@ -1049,6 +1098,10 @@ spec:
                 status: 'reviewing', phase: 'review',
                 revision_count: previous.revision_count + 1,
                 workspace_root: previous.workspace_root,
+                ...(typeof previous.trusted_validation_feedback === 'string'
+                  && previous.trusted_validation_feedback
+                  ? { trusted_validation_feedback: previous.trusted_validation_feedback }
+                  : {}),
                 candidate, reviews: [],
               }));
             });
@@ -1147,6 +1200,10 @@ spec:
                 phase: 'revise',
                 revision_count: state.revision_count,
                 workspace_root: state.workspace_root,
+                ...(typeof state.trusted_validation_feedback === 'string'
+                  && state.trusted_validation_feedback
+                  ? { trusted_validation_feedback: state.trusted_validation_feedback }
+                  : {}),
                 candidate: state.candidate,
                 reviews: state.reviews,
                 arbitration,
@@ -1460,6 +1517,7 @@ spec:
     - { from: implement.failed, to: implementation_failed.result, condition: on_failure }
     - { from: implementation_gate.fixed, to: collect_implementation_patch.report }
     - { from: collect_implementation_patch.patched, to: initialize_review_cycle.candidate }
+    - { from: prepare_repository.ready, to: initialize_review_cycle.checkout }
     - { from: collect_implementation_patch.failed, to: implementation_collection_failed.result, condition: on_failure }
     - { from: implementation_gate.cannot_fix, to: implementation_cannot_fix.result }
 

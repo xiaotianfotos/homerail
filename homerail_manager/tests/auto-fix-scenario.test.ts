@@ -25,7 +25,7 @@ describe("Auto Fix scenario asset", () => {
     expect(result.summary).toMatchObject({
       workflow_id: "auto-fix",
       node_count: 48,
-      edge_count: 74,
+      edge_count: 75,
     });
     expect(source).not.toMatch(/^\s*(?:provider|model|llm_setting_id|api_key|base_url):/m);
     expect(source).not.toContain("qwen");
@@ -232,8 +232,21 @@ describe("Auto Fix scenario asset", () => {
         severity: "high", file: "a.txt", description: "concrete regression",
       }],
     });
-    const initial = runCommand("initialize_review_cycle", { candidate: [candidate] });
-    expect(initial).toMatchObject({ workspace_root: "source" });
+    const trustedValidationFeedback =
+      "Remove package-lock.json; the repository intentionally has no root lockfile.";
+    const initial = runCommand("initialize_review_cycle", {
+      candidate: [candidate],
+      checkout: [{
+        repository_path: "source",
+        head: "a".repeat(40),
+        mode: "resumed",
+        validation_feedback: trustedValidationFeedback,
+      }],
+    });
+    expect(initial).toMatchObject({
+      workspace_root: "source",
+      trusted_validation_feedback: trustedValidationFeedback,
+    });
     const initialGate = { input: initial, iteration: 1, max_iterations: 0, matched: false };
     const approved = runCommand("aggregate_reviews", {
       state: [initialGate],
@@ -260,13 +273,49 @@ describe("Auto Fix scenario asset", () => {
       { reviewer: "regression", verdict: "reject" },
       { reviewer: "adversarial", verdict: "approve" },
     ]);
+    const inconsistentApproval = runCommand("aggregate_reviews", {
+      state: [initialGate],
+      correctness: [vote("correctness", "approve")],
+      regression: [{
+        reviewer: "qwen-review-model",
+        verdict: "approve",
+        summary: "approve despite blocker",
+        defects: [{
+          severity: "blocker",
+          file: "package-lock.json",
+          description: "Explicit trusted scope constraint remains unresolved",
+          fix: "Remove the file from the patch",
+        }],
+      }],
+      adversarial: [vote("adversarial", "approve")],
+    });
+    expect(inconsistentApproval).toMatchObject({
+      status: "reviewing",
+      phase: "revise",
+      reviews: [
+        { reviewer: "correctness", verdict: "approve" },
+        {
+          reviewer: "regression",
+          verdict: "reject",
+          defects: [{
+            severity: "blocker",
+            file: "package-lock.json",
+            fix: "Remove the file from the patch",
+          }],
+        },
+        { reviewer: "adversarial", verdict: "approve" },
+      ],
+    });
     const revised = { ...candidate, explanation: "revised repair" };
     const next = runCommand("prepare_next_review", {
       state: [{ input: needsRevision, iteration: 2, max_iterations: 0, matched: false }],
       candidate: [revised],
     });
     expect(next).toMatchObject({ status: "reviewing", phase: "review", revision_count: 1 });
-    expect(next).toMatchObject({ workspace_root: "source" });
+    expect(next).toMatchObject({
+      workspace_root: "source",
+      trusted_validation_feedback: trustedValidationFeedback,
+    });
     const needsAnotherRevision = runCommand("aggregate_reviews", {
       state: [{ input: next, iteration: 3, max_iterations: 0, matched: false }],
       correctness: [vote("correctness", "approve")],
@@ -313,6 +362,7 @@ describe("Auto Fix scenario asset", () => {
       phase: "revise",
       revision_count: 2,
       workspace_root: "source",
+      trusted_validation_feedback: trustedValidationFeedback,
       candidate: secondRevision,
       arbitration: {
         verdict: "reject",
