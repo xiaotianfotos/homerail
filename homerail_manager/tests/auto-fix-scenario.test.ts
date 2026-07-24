@@ -201,6 +201,7 @@ describe("Auto Fix scenario asset", () => {
       expect(canonical.agents[agentId]?.system).toContain("Never use `git stash` or `git clean`");
       expect(canonical.agents[agentId]?.system).toContain("run focused checks serially");
       expect(canonical.agents[agentId]?.system).toContain("Do not run the root `npm run ci`");
+      expect(canonical.agents[agentId]?.system).toMatch(/unchanged|patch bytes/i);
       expect(canonical.agents[agentId]?.system).toMatch(
         /one isolated full CI\s+pass after\s+arbitration/,
       );
@@ -245,6 +246,7 @@ describe("Auto Fix scenario asset", () => {
     });
     expect(initial).toMatchObject({
       workspace_root: "source",
+      unchanged_revision_count: 0,
       trusted_validation_feedback: trustedValidationFeedback,
     });
     const initialGate = { input: initial, iteration: 1, max_iterations: 0, matched: false };
@@ -306,7 +308,11 @@ describe("Auto Fix scenario asset", () => {
         { reviewer: "adversarial", verdict: "approve" },
       ],
     });
-    const revised = { ...candidate, explanation: "revised repair" };
+    const revised = {
+      ...candidate,
+      patch: candidate.patch.replace("+b\n", "+revised\n"),
+      explanation: "revised repair",
+    };
     const next = runCommand("prepare_next_review", {
       state: [{ input: needsRevision, iteration: 2, max_iterations: 0, matched: false }],
       candidate: [revised],
@@ -314,6 +320,7 @@ describe("Auto Fix scenario asset", () => {
     expect(next).toMatchObject({ status: "reviewing", phase: "review", revision_count: 1 });
     expect(next).toMatchObject({
       workspace_root: "source",
+      unchanged_revision_count: 0,
       trusted_validation_feedback: trustedValidationFeedback,
     });
     const needsAnotherRevision = runCommand("aggregate_reviews", {
@@ -327,7 +334,11 @@ describe("Auto Fix scenario asset", () => {
       phase: "revise",
       revision_count: 1,
     });
-    const secondRevision = { ...candidate, explanation: "second revised repair" };
+    const secondRevision = {
+      ...candidate,
+      patch: candidate.patch.replace("+b\n", "+second-revision\n"),
+      explanation: "second revised repair",
+    };
     const secondReview = runCommand("prepare_next_review", {
       state: [{ input: needsAnotherRevision, iteration: 4, max_iterations: 0, matched: false }],
       candidate: [secondRevision],
@@ -361,6 +372,7 @@ describe("Auto Fix scenario asset", () => {
       status: "reviewing",
       phase: "revise",
       revision_count: 2,
+      unchanged_revision_count: 0,
       workspace_root: "source",
       trusted_validation_feedback: trustedValidationFeedback,
       candidate: secondRevision,
@@ -368,6 +380,70 @@ describe("Auto Fix scenario asset", () => {
         verdict: "reject",
         blocking_defects: ["a.txt still mishandles the empty case"],
       },
+    });
+  });
+
+  it("retries revision in a fresh loop turn when blocking evidence produced no patch change", () => {
+    const canonical = compileWorkflowSource(fs.readFileSync(WORKFLOW_FILE, "utf8")).canonical!;
+    const node = canonical.nodes.find((candidate) => candidate.id === "prepare_next_review");
+    if (node?.kind !== "command" || !node.config.command) throw new Error("prepare_next_review command is missing");
+    const runCommand = (input: unknown) => {
+      const result = spawnSync(process.execPath, node.config.command!.slice(1), {
+        cwd: os.tmpdir(), encoding: "utf8", input: JSON.stringify(input),
+      });
+      expect(result.status, result.stderr).toBe(0);
+      return JSON.parse(result.stdout) as Record<string, unknown>;
+    };
+    const candidate = {
+      status: "fixed",
+      patch: "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n",
+      explanation: "reviewed candidate",
+      files_changed: ["a.txt"],
+      test_plan: ["focused"],
+    };
+    const rejectedState = {
+      status: "reviewing",
+      phase: "revise",
+      revision_count: 0,
+      unchanged_revision_count: 0,
+      workspace_root: "source",
+      candidate,
+      reviews: [{
+        reviewer: "correctness",
+        verdict: "reject",
+        summary: "blocking defect remains",
+        defects: [{ severity: "high", file: "a.txt", description: "empty case is broken" }],
+      }],
+    };
+    const unchanged = runCommand({
+      state: [{ input: rejectedState, iteration: 2, max_iterations: 0, matched: false }],
+      candidate: [{ ...candidate, explanation: "claimed a fix without editing files" }],
+    });
+    expect(unchanged).toMatchObject({
+      status: "reviewing",
+      phase: "revise",
+      revision_count: 1,
+      unchanged_revision_count: 1,
+      candidate,
+      reviews: rejectedState.reviews,
+    });
+
+    const changedCandidate = {
+      ...candidate,
+      patch: candidate.patch.replace("+b\n", "+fixed\n"),
+      explanation: "actually fixed",
+    };
+    const changed = runCommand({
+      state: [{ input: unchanged, iteration: 3, max_iterations: 0, matched: false }],
+      candidate: [changedCandidate],
+    });
+    expect(changed).toMatchObject({
+      status: "reviewing",
+      phase: "review",
+      revision_count: 2,
+      unchanged_revision_count: 0,
+      candidate: changedCandidate,
+      reviews: [],
     });
   });
 

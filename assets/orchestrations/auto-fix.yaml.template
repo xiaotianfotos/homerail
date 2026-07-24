@@ -189,11 +189,12 @@ spec:
     ReviewCycle:
       type: object
       additionalProperties: false
-      required: [status, phase, revision_count, workspace_root, candidate, reviews]
+      required: [status, phase, revision_count, unchanged_revision_count, workspace_root, candidate, reviews]
       properties:
         status: { type: string, enum: [reviewing, approved] }
         phase: { type: string, enum: [review, revise, done] }
         revision_count: { type: integer, minimum: 0 }
+        unchanged_revision_count: { type: integer, minimum: 0 }
         workspace_root: { type: string, const: source }
         trusted_validation_feedback: { type: string, maxLength: 30000 }
         candidate: { type: object }
@@ -384,9 +385,12 @@ spec:
         {"status":"fixed|cannot_fix","explanation":"...","test_plan":["..."]}
         Call handoff immediately after the focused checks; do not write a prose
         summary first. If input:correction exists because the prior turn ended
-        without a handoff, immediately submit status=fixed: the deterministic
-        collector will reject an empty or unsafe worktree. Use cannot_fix only
-        when the original task itself cannot be implemented.
+        without a handoff, report only work and checks that actually happened
+        before correction mode began. Never turn tool-like prose into a claim
+        that files changed or tests passed. The deterministic review loop
+        compares patch bytes and will not treat an unchanged candidate as
+        progress while blocking evidence remains. Use cannot_fix only when the
+        original task itself cannot be implemented.
 
     correctness_reviewer:
       system: |
@@ -498,6 +502,14 @@ spec:
         background while changing the same checkout; keep the worktree visible
         and run focused checks serially.
 
+        input.state.input.unchanged_revision_count records consecutive revision
+        attempts that returned the same patch while blocker/high evidence
+        remained. When it is greater than zero, treat this invocation as a
+        fresh repair attempt over the preserved workspace: inspect the real
+        diff with repository tools, make the required edit, and run the smallest
+        relevant check before handoff. Do not repeat a previous explanation or
+        simulate Bash/Edit calls in prose.
+
         Do not copy the unified diff into the handoff. The trusted
         collect_revised_patch node captures the complete current worktree after
         your turn. status=fixed means the worktree contains a nonempty complete
@@ -505,8 +517,10 @@ spec:
         {"status":"fixed|cannot_fix","explanation":"...","test_plan":["..."]}
         Call handoff immediately after focused checks; do not write a prose
         summary first. If input:correction exists because the prior turn ended
-        without a handoff, immediately submit status=fixed and let the
-        deterministic collector validate the worktree.
+        without a handoff, report only work and checks that actually happened
+        before correction mode began. Never claim that tool-like prose changed
+        the workspace. The deterministic loop rejects unchanged patch bytes
+        while blocking evidence remains.
 
     arbiter:
       system: |
@@ -826,6 +840,7 @@ spec:
               }
               process.stdout.write(JSON.stringify({
                 status: 'reviewing', phase: 'review', revision_count: 0,
+                unchanged_revision_count: 0,
                 workspace_root: 'source',
                 ...(typeof checkout.validation_feedback === 'string' && checkout.validation_feedback
                   ? { trusted_validation_feedback: checkout.validation_feedback }
@@ -1094,9 +1109,30 @@ spec:
               if (!candidate || candidate.status !== 'fixed' || typeof candidate.patch !== 'string' || !candidate.patch) {
                 throw new Error('revised fixed candidate is required');
               }
+              const blockingReview = Array.isArray(previous.reviews)
+                && previous.reviews.some((review) => Array.isArray(review?.defects)
+                  && review.defects.some((defect) => defect
+                    && ['blocker', 'high'].includes(defect.severity)));
+              const blockingArbitration = Array.isArray(previous.arbitration?.blocking_defects)
+                && previous.arbitration.blocking_defects.length > 0;
+              const unchanged = candidate.patch === previous.candidate?.patch;
+              if (unchanged && (blockingReview || blockingArbitration)) {
+                process.stdout.write(JSON.stringify({
+                  ...previous,
+                  status: 'reviewing',
+                  phase: 'revise',
+                  revision_count: previous.revision_count + 1,
+                  unchanged_revision_count: (previous.unchanged_revision_count || 0) + 1,
+                  // Preserve the last reviewed candidate rather than laundering
+                  // unverified explanation/test claims over identical bytes.
+                  candidate: previous.candidate,
+                }));
+                return;
+              }
               process.stdout.write(JSON.stringify({
                 status: 'reviewing', phase: 'review',
                 revision_count: previous.revision_count + 1,
+                unchanged_revision_count: 0,
                 workspace_root: previous.workspace_root,
                 ...(typeof previous.trusted_validation_feedback === 'string'
                   && previous.trusted_validation_feedback
@@ -1199,6 +1235,7 @@ spec:
                 status: 'reviewing',
                 phase: 'revise',
                 revision_count: state.revision_count,
+                unchanged_revision_count: state.unchanged_revision_count || 0,
                 workspace_root: state.workspace_root,
                 ...(typeof state.trusted_validation_feedback === 'string'
                   && state.trusted_validation_feedback
