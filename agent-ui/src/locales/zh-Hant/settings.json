@@ -50,6 +50,32 @@
         "zhHant": "繁體中文",
         "enUS": "英語"
       }
+    },
+    "updates": {
+      "title": "桌面版更新",
+      "description": "選擇此裝置可以接收哪些已簽署且已公開發佈的 HomeRail Desktop 版本。",
+      "channels": {
+        "stable": {
+          "label": "穩定版",
+          "description": "只接收正式版本，不會看到 Alpha 或 Beta 預發佈版。"
+        },
+        "early-access": {
+          "label": "搶先體驗",
+          "description": "跟隨目前 Alpha 通道，未來會自然升級到 Beta 和穩定版，無需再次選擇。"
+        }
+      },
+      "currentVersion": "目前安裝版本：{version}",
+      "waitingForStable": "目前預發佈版本會繼續保留，直到出現版本號更高的穩定版；HomeRail 不會自動降級。",
+      "error": "更新通道切換失敗：{message}",
+      "state": {
+        "idle": "可以檢查更新",
+        "checking": "正在檢查更新…",
+        "available": "找到新版本",
+        "downloading": "正在下載更新…",
+        "downloaded": "更新已下載，重新啟動後安裝",
+        "not-available": "此通道暫無更高版本",
+        "error": "更新檢查失敗"
+      }
     }
   },
   "environment": {
