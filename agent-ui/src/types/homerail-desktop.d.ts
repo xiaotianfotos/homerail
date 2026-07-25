@@ -10,10 +10,14 @@ declare global {
     | 'not-available'
     | 'error'
 
+  type DesktopUpdateChannel = 'stable' | 'early-access'
+
   interface DesktopUpdateStatus {
     supported: boolean
     state: DesktopUpdateState
     currentVersion: string
+    channel: DesktopUpdateChannel
+    channelNotice?: 'waiting-for-newer-stable'
     update?: {
       version?: string
       releaseName?: string | null
@@ -34,6 +38,7 @@ declare global {
     version?: () => Promise<unknown>
     updateStatus?: () => Promise<DesktopUpdateStatus>
     checkForUpdates?: () => Promise<DesktopUpdateStatus>
+    setUpdateChannel?: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateStatus>
     installUpdate?: () => Promise<DesktopUpdateStatus>
     onUpdateStatus?: (handler: (status: DesktopUpdateStatus) => void) => () => void
   }

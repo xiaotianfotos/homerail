@@ -50,6 +50,32 @@
         "zhHant": "Traditional Chinese",
         "enUS": "English"
       }
+    },
+    "updates": {
+      "title": "Desktop updates",
+      "description": "Choose which signed, published HomeRail Desktop releases this device can receive.",
+      "channels": {
+        "stable": {
+          "label": "Stable",
+          "description": "Receive final releases only. Alpha and Beta releases stay hidden."
+        },
+        "early-access": {
+          "label": "Early Access",
+          "description": "Follow the current Alpha train, then Beta and Stable without opting in again."
+        }
+      },
+      "currentVersion": "Installed version: {version}",
+      "waitingForStable": "This prerelease will stay installed until a newer Stable version is available. HomeRail will not downgrade it.",
+      "error": "Update channel change failed: {message}",
+      "state": {
+        "idle": "Ready to check",
+        "checking": "Checking for updates…",
+        "available": "Update found",
+        "downloading": "Downloading update…",
+        "downloaded": "Update downloaded; restart to install",
+        "not-available": "No newer update on this channel",
+        "error": "Update check failed"
+      }
     }
   },
   "environment": {

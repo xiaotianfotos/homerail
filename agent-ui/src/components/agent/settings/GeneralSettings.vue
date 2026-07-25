@@ -9,6 +9,7 @@ import {
   subscribeAppearanceRegistry,
   type AppearancePlugin,
 } from '@/appearance/appearance-registry'
+import DesktopUpdateSettings from './DesktopUpdateSettings.vue'
 
 const uiStore = useUiStore()
 const { locale, t } = useI18n()
@@ -124,5 +125,7 @@ function selectLocale(nextLocale: AppLocale): void {
         </div>
       </div>
     </div>
+
+    <DesktopUpdateSettings />
   </section>
 </template>
