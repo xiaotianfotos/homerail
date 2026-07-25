@@ -1,6 +1,6 @@
 {
   "name": "homerail-plugin-sdk",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "HomeRail declarative plugin development kit and deterministic HRP package codec.",
   "license": "MIT",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "homerail-worker",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "HomeRail TypeScript Worker runtime for Claude Agent SDK and compatible agent backends.",
   "license": "MIT",
