@@ -56,6 +56,54 @@ test("current public packages satisfy the unified version contract", () => {
   );
 });
 
+test("unified version validation checks Desktop package metadata", () => {
+  const desktopRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-desktop-version-"));
+  const packageFile = path.join(desktopRoot, "package.json");
+  const packageName = "homerail-desktop";
+  const version = "0.1.0";
+  try {
+    fs.writeFileSync(
+      packageFile,
+      `${JSON.stringify({ name: packageName, version }, null, 2)}\n`,
+    );
+    fs.writeFileSync(
+      path.join(desktopRoot, "package-lock.json"),
+      `${JSON.stringify({
+        name: packageName,
+        version,
+        lockfileVersion: 3,
+        packages: {
+          "": { name: packageName, version },
+        },
+      }, null, 2)}\n`,
+    );
+
+    assert.doesNotThrow(() =>
+      validateUnifiedVersion({
+        publicRoot: repoRoot,
+        desktopRoot,
+        version,
+      }),
+    );
+
+    fs.writeFileSync(
+      packageFile,
+      `${JSON.stringify({ name: packageName, version: "0.0.0" }, null, 2)}\n`,
+    );
+    assert.throws(
+      () =>
+        validateUnifiedVersion({
+          publicRoot: repoRoot,
+          desktopRoot,
+          version,
+        }),
+      /package\.json has version "0\.0\.0"; expected 0\.1\.0/,
+    );
+  } finally {
+    fs.rmSync(desktopRoot, { recursive: true, force: true });
+  }
+});
+
 test("unified version validation catches stale local-package lock snapshots", () => {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-unified-version-"));
   const packageDirs = [
@@ -296,28 +344,25 @@ test("candidate manifest is reproducibly verified and detects artifact tampering
       "SHA256SUMS-macos.txt",
     );
 
-    const create = spawnSync(
-      process.execPath,
-      [
-        script,
-        "create",
-        "--candidate-dir",
-        candidateDir,
-        "--version",
-        "0.1.0-alpha.1",
-        "--tag",
-        "v0.1.0-alpha.1",
-        "--channel",
-        "alpha",
-        "--source-commit",
-        "a".repeat(40),
-        "--desktop-commit",
-        "b".repeat(40),
-        "--run-id",
-        "12345",
-      ],
-      { encoding: "utf8" },
-    );
+    const createArgs = [
+      script,
+      "create",
+      "--candidate-dir",
+      candidateDir,
+      "--version",
+      "0.1.0-alpha.1",
+      "--tag",
+      "v0.1.0-alpha.1",
+      "--channel",
+      "alpha",
+      "--source-commit",
+      "a".repeat(40),
+      "--desktop-commit",
+      "b".repeat(40),
+      "--run-id",
+      "12345",
+    ];
+    const create = spawnSync(process.execPath, createArgs, { encoding: "utf8" });
     assert.equal(create.status, 0, create.stderr);
 
     const verify = spawnSync(
@@ -335,6 +380,50 @@ test("candidate manifest is reproducibly verified and detects artifact tampering
       { encoding: "utf8" },
     );
     assert.equal(verify.status, 0, verify.stderr);
+
+    const wrongVersion = spawnSync(
+      process.execPath,
+      [
+        script,
+        "verify",
+        "--candidate-dir",
+        candidateDir,
+        "--version",
+        "0.1.0-alpha.2",
+        "--run-id",
+        "12345",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(wrongVersion.status, 1, wrongVersion.stderr);
+    assert.match(
+      wrongVersion.stderr,
+      /candidate version 0\.1\.0-alpha\.1 does not match 0\.1\.0-alpha\.2/,
+    );
+
+    const wrongRun = spawnSync(
+      process.execPath,
+      [
+        script,
+        "verify",
+        "--candidate-dir",
+        candidateDir,
+        "--version",
+        "0.1.0-alpha.1",
+        "--run-id",
+        "99999",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(wrongRun.status, 1, wrongRun.stderr);
+    assert.match(wrongRun.stderr, /candidate run 12345 does not match 99999/);
+
+    const duplicateCreate = spawnSync(process.execPath, createArgs, { encoding: "utf8" });
+    assert.equal(duplicateCreate.status, 1, duplicateCreate.stderr);
+    assert.match(
+      duplicateCreate.stderr,
+      /candidate create directory must contain only release-assets/,
+    );
 
     const globalChecksums = path.join(candidateDir, "SHA256SUMS.txt");
     const originalGlobalChecksums = fs.readFileSync(globalChecksums, "utf8");
