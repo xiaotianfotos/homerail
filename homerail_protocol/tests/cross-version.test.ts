@@ -1,6 +1,6 @@
 /**
  * Cross-version compatibility tests.
- * @version 0.1.0
+ * @version 0.1.0-alpha.1
  */
 
 import { describe, it, expect } from "vitest";
@@ -18,7 +18,8 @@ describe("Protocol version consistency", () => {
   });
 
   it("PROTOCOL_VERSION is a valid semver", () => {
-    const semverRegex = /^\d+\.\d+\.\d+$/;
+    const semverRegex =
+      /^\d+\.\d+\.\d+(?:-(?:alpha|beta)(?:\.(?:0|[1-9]\d*))+)?$/;
     expect(semverRegex.test(PROTOCOL_VERSION)).toBe(true);
   });
 

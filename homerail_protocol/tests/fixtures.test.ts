@@ -98,12 +98,9 @@ describe("No-drift: TS codec faithfully round-trips fixtures", () => {
 
 describe("Cross-version markers", () => {
   it("PROTOCOL_VERSION is defined and semver parseable", () => {
-    expect(PROTOCOL_VERSION).toBe("0.1.0");
-    const parts = PROTOCOL_VERSION.split(".");
-    expect(parts.length).toBe(3);
-    expect(Number.isInteger(Number(parts[0]))).toBe(true);
-    expect(Number.isInteger(Number(parts[1]))).toBe(true);
-    expect(Number.isInteger(Number(parts[2]))).toBe(true);
+    expect(PROTOCOL_VERSION).toMatch(
+      /^\d+\.\d+\.\d+(?:-(?:alpha|beta)(?:\.(?:0|[1-9]\d*))+)?$/,
+    );
   });
 
   for (const file of fixtureFiles) {
