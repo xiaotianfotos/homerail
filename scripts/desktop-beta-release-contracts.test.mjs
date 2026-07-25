@@ -10,7 +10,7 @@ const workflow = fs.readFileSync(
   "utf8",
 ).replace(/\r\n/g, "\n");
 
-test("desktop beta release is manual, owner-only, and draft-only", () => {
+test("desktop prerelease is manual, owner-only, and draft-only", () => {
   assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /^\s{2}(?:push|pull_request|schedule):/m);
   assert.match(workflow, /if: github\.actor == 'xiaotianfotos'/);
@@ -21,7 +21,7 @@ test("desktop beta release is manual, owner-only, and draft-only", () => {
   assert.match(workflow, /cancel-in-progress: false/);
 });
 
-test("desktop beta release uses isolated hosted builders and a read-only private checkout", () => {
+test("desktop prerelease uses isolated hosted builders and a read-only private checkout", () => {
   assert.match(workflow, /os: windows-latest/);
   assert.match(workflow, /os: macos-15/);
   assert.match(workflow, /repository: xiaotianfotos\/homerail_desktop/);
@@ -29,6 +29,24 @@ test("desktop beta release uses isolated hosted builders and a read-only private
   assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 2);
   assert.doesNotMatch(workflow, /runs-on:.*self-hosted/);
   assert.match(workflow, /HOMERAIL_SOURCE_DIR: \$\{\{ github\.workspace \}\}\/homerail-source/);
+});
+
+test("release versions use updater-compatible unified SemVer tags", () => {
+  assert.match(workflow, /0\.1\.0-alpha\.1/);
+  assert.match(workflow, /\(alpha\|beta\)/);
+  assert.match(workflow, /printf 'tag=v%s\\n' "\$REQUESTED_VERSION"/);
+  assert.match(workflow, /printf 'channel=%s\\n' "\$\{BASH_REMATCH\[4\]\}"/);
+  assert.doesNotMatch(workflow, /desktop-v/);
+  assert.doesNotMatch(workflow, /rust-v/);
+});
+
+test("locked builder receives the channel and only matching metadata is uploaded", () => {
+  assert.equal((workflow.match(/--config\.publish\.channel=/g) ?? []).length, 2);
+  assert.match(workflow, /verify:update-metadata/);
+  assert.match(workflow, /needs\.prepare\.outputs\.channel \}\}\.yml/);
+  assert.match(workflow, /needs\.prepare\.outputs\.channel \}\}-mac\.yml/);
+  assert.match(workflow, /alpha\.yml\|alpha-mac\.yml\|beta\.yml\|beta-mac\.yml/);
+  assert.doesNotMatch(workflow, /desktop\/dist-electron\/latest(?:-mac)?\.yml/);
 });
 
 test("both packages must be signed and macOS must be notarized", () => {
@@ -86,4 +104,17 @@ test("tracked release configuration contains no machine-local identity", () => {
   assert.doesNotMatch(tracked, /\b(?:10|192\.168|172\.(?:1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}\b/);
   assert.doesNotMatch(tracked, /\/(?:Users|home|vol[0-9]*)\//);
   assert.doesNotMatch(tracked, /@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+});
+
+test("release documentation states the current Alpha and draft visibility boundaries", () => {
+  const docs = fs.readFileSync(
+    path.join(repoRoot, "docs", "desktop-beta-release.md"),
+    "utf8",
+  );
+  assert.match(docs, /current public\s+release train starts at package\/release version `0\.1\.0-alpha\.1`/);
+  assert.match(docs, /`v0\.1\.0-alpha\.1`/);
+  assert.match(docs, /Prefixes such as `desktop-v` and `rust-v` are forbidden/);
+  assert.match(docs, /draft releases are invisible to electron-updater/);
+  assert.match(docs, /`latest\.yml` \/ `latest-mac\.yml` plus byte-identical Alpha and Beta/s);
+  assert.match(docs, /Beta .* and Stable .* are reserved/s);
 });
