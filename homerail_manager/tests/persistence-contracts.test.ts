@@ -12,11 +12,13 @@ import { closeDb, getDb } from "../src/persistence/db.js";
 import { createInitialDagRunRound } from "../src/persistence/dag-run-rounds.js";
 import {
   appendSessionTranscriptEntry,
+  checkpointForkSession,
   loadSessionTranscript,
 } from "../src/persistence/dag-session-files.js";
 import { createChangeRun } from "../src/persistence/change-runs.js";
 import { createChange, createProject, updateProject } from "../src/persistence/projects-changes.js";
 import {
+  ensureRunDir,
   listPersistedRunIdsByStatus,
   listPersistedRunSummaries,
   loadPersistedRunControlState,
@@ -166,6 +168,18 @@ describe("SQLite persistence contracts", () => {
     }]);
   });
 
+  it("reports zero nodes for a minimal persisted run", () => {
+    ensureRunDir("minimal-run");
+
+    expect(listPersistedRunSummaries()).toEqual([
+      expect.objectContaining({
+        runId: "minimal-run",
+        nodeCount: 0,
+        status: "active",
+      }),
+    ]);
+  });
+
   it("installs indexes for status filtering and updated-time run ordering", () => {
     const db = getDb();
     expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
@@ -222,6 +236,54 @@ describe("SQLite persistence contracts", () => {
     expect(finalBytes.split("\n").filter(Boolean)).toHaveLength(2);
     expect(loadSessionTranscript("append-only", baseDir)).toEqual([first, second]);
   });
+
+  it.runIf(process.platform !== "win32")(
+    "creates and repairs private session-store paths",
+    () => {
+      const baseDir = path.join(tmpHome, "private-session-store");
+      const sessionId = "private-session";
+      const sessionRoot = path.join(baseDir, sessionId);
+      const transcript = path.join(sessionRoot, "transcript.jsonl");
+      const snapshot = path.join(sessionRoot, "session.json");
+
+      appendSessionTranscriptEntry({
+        type: "assistant",
+        sessionId,
+        content: { text: "first" },
+        timestamp: 1,
+      }, baseDir);
+
+      expect(fs.statSync(sessionRoot).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(transcript).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(snapshot).mode & 0o777).toBe(0o600);
+
+      fs.chmodSync(sessionRoot, 0o755);
+      fs.chmodSync(transcript, 0o644);
+      fs.chmodSync(snapshot, 0o644);
+      appendSessionTranscriptEntry({
+        type: "assistant",
+        sessionId,
+        content: { text: "second" },
+        timestamp: 2,
+      }, baseDir);
+
+      expect(fs.statSync(sessionRoot).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(transcript).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(snapshot).mode & 0o777).toBe(0o600);
+
+      checkpointForkSession({
+        runId: "run-private-fork",
+        nodeId: "worker",
+        parentSessionId: sessionId,
+        newSessionId: "private-fork",
+        last: 1,
+      }, baseDir);
+      const forkRoot = path.join(baseDir, "private-fork");
+      expect(fs.statSync(forkRoot).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.join(forkRoot, "transcript.jsonl")).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(path.join(forkRoot, "session.json")).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it("rejects invalid status and missing required secret payloads in compatibility records", () => {
     expect(() => upsertCompatRecord("nodes", {
