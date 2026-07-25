@@ -1,0 +1,172 @@
+name: Desktop Release Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Desktop Release Candidate workflow run ID
+        type: string
+        required: true
+      version:
+        description: Candidate version, for example 0.1.0-alpha.1
+        type: string
+        required: true
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: desktop-release-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish verified candidate
+    if: github.actor == 'xiaotianfotos' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: desktop-release-publishing
+      deployment: false
+    steps:
+      - name: Check out release validation tooling
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: homerail-source
+          persist-credentials: false
+
+      - name: Validate candidate workflow run
+        id: run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "candidate_run_id must be a positive integer" >&2
+            exit 1
+          fi
+          run_path="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" --jq .path)"
+          run_event="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" --jq .event)"
+          run_branch="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" --jq .head_branch)"
+          run_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" --jq .head_sha)"
+          run_conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" --jq .conclusion)"
+          if [[ "$run_path" != ".github/workflows/desktop-release-candidate.yml" ||
+                "$run_event" != "workflow_dispatch" ||
+                "$run_branch" != "main" ||
+                "$run_conclusion" != "success" ||
+                ! "$run_sha" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "candidate run is not a successful main-branch Desktop Release Candidate run" >&2
+            exit 1
+          fi
+          printf 'source_sha=%s\n' "$run_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Download immutable candidate
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: desktop-release-candidate
+          path: candidate
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+
+      - name: Verify candidate identity, assets, and checksums
+        id: candidate
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          EXPECTED_SOURCE_SHA: ${{ steps.run.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node homerail-source/scripts/desktop-release/release-candidate.mjs verify \
+            --candidate-dir candidate \
+            --version "$RELEASE_VERSION" \
+            --run-id "$CANDIDATE_RUN_ID"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const manifest = JSON.parse(fs.readFileSync("candidate/release-manifest.json", "utf8"));
+          if (manifest.source_commit !== process.env.EXPECTED_SOURCE_SHA) {
+            throw new Error(`candidate source ${manifest.source_commit} does not match workflow ${process.env.EXPECTED_SOURCE_SHA}`);
+          }
+          for (const [name, value] of Object.entries({
+            tag: manifest.tag,
+            channel: manifest.channel,
+            source_sha: manifest.source_commit,
+          })) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+          }
+          NODE
+
+      - name: Refuse to replace an existing tag or release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "tag $RELEASE_TAG already exists; release artifacts are immutable" >&2
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $RELEASE_TAG already exists; release artifacts are immutable" >&2
+            exit 1
+          fi
+
+      - name: Create immutable annotated tag
+        id: tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          tag_object_sha="$(
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f tag="$RELEASE_TAG" \
+              -f message="Release $RELEASE_VERSION" \
+              -f object="$SOURCE_SHA" \
+              -f type=commit \
+              --jq .sha
+          )"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" \
+            -f sha="$tag_object_sha" >/dev/null
+
+      - name: Publish exact candidate as a GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CHANNEL: ${{ steps.candidate.outputs.channel }}
+        run: |
+          set -euo pipefail
+          release_flags=(--verify-tag)
+          if [[ "$RELEASE_CHANNEL" != "latest" ]]; then
+            release_flags+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" \
+            candidate/release-assets/windows/* \
+            candidate/release-assets/macos/* \
+            candidate/release-manifest.json \
+            candidate/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "HomeRail $RELEASE_VERSION" \
+            --notes-file candidate/release-notes.md \
+            "${release_flags[@]}"
+
+      - name: Record installed-update test boundary
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+        run: |
+          {
+            echo "## Published $RELEASE_VERSION"
+            echo
+            echo "Tag: \`$RELEASE_TAG\`"
+            echo
+            echo "The release is now visible to its update channel. Test the previous Alpha upgrading to this exact release before announcing it publicly. If it fails, do not replace this tag or its assets; fix forward with the next Alpha."
+          } >> "$GITHUB_STEP_SUMMARY"
