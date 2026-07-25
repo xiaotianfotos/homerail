@@ -171,6 +171,45 @@ test("candidate signs, notarizes, verifies, and creates channel metadata", () =>
   assert.match(candidateWorkflow, /release-candidate\.mjs create/);
 });
 
+test("Windows candidate runs Node 24 CI before signing and smoke-tests NSIS", () => {
+  assert.match(candidateWorkflow, /RELEASE_NODE_VERSION: 24\.18\.0/);
+  assert.match(candidateWorkflow, /name: Run public Windows Node 24 CI/);
+  assert.match(candidateWorkflow, /npm --prefix homerail-source run ci/);
+  assert.match(candidateWorkflow, /name: Verify public Windows CLI release version/);
+  assert.match(candidateWorkflow, /Built CLI version .* does not match/);
+  assert.match(candidateWorkflow, /name: Run Desktop Windows CI/);
+  assert.match(candidateWorkflow, /working-directory: desktop\n\s+env:[\s\S]*?run: npm run ci/);
+  assert.match(candidateWorkflow, /VITEST_MAX_WORKERS: "1"/);
+  assert.match(candidateWorkflow, /VITEST_TEST_TIMEOUT: "15000"/);
+  assert.match(candidateWorkflow, /VITEST_HOOK_TIMEOUT: "30000"/);
+  assert.match(candidateWorkflow, /if \(\$signature\.Status -ne 'Valid'\)/);
+  assert.match(candidateWorkflow, /-ArgumentList @\('\/S', "\/D=\$installRoot"\)/);
+  assert.match(candidateWorkflow, /--user-data-dir=\$electronUserData/);
+  assert.match(candidateWorkflow, /Installed CLI version .* does not match/);
+  assert.match(candidateWorkflow, /Silent NSIS uninstall left HomeRail\.exe installed/);
+  assert.match(candidateWorkflow, /\$_\.Name -match '\\\.\(exe\|blockmap\)\$'/);
+
+  const install = candidateWorkflow.indexOf("Install locked dependencies");
+  const publicCi = candidateWorkflow.indexOf("Run public Windows Node 24 CI");
+  const publicCliVersion = candidateWorkflow.indexOf("Verify public Windows CLI release version");
+  const desktopCi = candidateWorkflow.indexOf("Run Desktop Windows CI");
+  const build = candidateWorkflow.indexOf("Build and sign Windows installer");
+  const metadata = candidateWorkflow.indexOf("Prepare and verify Windows update metadata");
+  const packageVerification = candidateWorkflow.indexOf("Verify Windows package and signature");
+  const checksums = candidateWorkflow.indexOf("Write Windows checksums");
+  const installSmoke = candidateWorkflow.indexOf("Smoke-test silent Windows installation");
+  assert.ok(
+    install < publicCi
+      && publicCi < publicCliVersion
+      && publicCliVersion < desktopCi
+      && desktopCi < build
+      && build < metadata
+      && metadata < packageVerification
+      && packageVerification < checksums
+      && checksums < installSmoke,
+  );
+});
+
 test("publish consumes a successful candidate without rebuilding it", () => {
   assert.match(publishWorkflow, /workflow_dispatch:/);
   assert.match(publishWorkflow, /actions: read/);
@@ -202,6 +241,8 @@ test("release docs preserve candidate, publish, update-test, and fix-forward bou
   assert.match(releaseDocs, /Fix forward with `0\.1\.0-alpha\.3`/i);
   assert.match(releaseDocs, /Do not create the version tag\s+when merging code/);
   assert.match(releaseDocs, /byte-identical Alpha and Beta compatibility metadata/);
+  assert.match(releaseDocs, /complete public Node 24 CI suite/);
+  assert.match(releaseDocs, /does not replace.*real Windows machine/s);
 });
 
 test("candidate pins a merged Desktop commit before installing or signing", () => {
@@ -325,6 +366,58 @@ test("candidate manifest is reproducibly verified and detects artifact tampering
     );
     assert.notEqual(tampered.status, 0);
     assert.match(tampered.stderr, /checksum mismatch|manifest mismatch/);
+  } finally {
+    fs.rmSync(candidateDir, { recursive: true, force: true });
+  }
+});
+
+test("candidate rejects a Windows artifact set without a blockmap", () => {
+  const candidateDir = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-no-blockmap-"));
+  const script = path.join(repoRoot, "scripts", "desktop-release", "release-candidate.mjs");
+  try {
+    writePlatformFixture(
+      candidateDir,
+      "windows",
+      {
+        "HomeRail Setup 0.1.0-alpha.1.exe": "windows-installer",
+        "alpha.yml": "version: 0.1.0-alpha.1\n",
+      },
+      "SHA256SUMS-windows.txt",
+    );
+    writePlatformFixture(
+      candidateDir,
+      "macos",
+      {
+        "HomeRail-0.1.0-alpha.1-arm64.dmg": "mac-dmg",
+        "HomeRail-0.1.0-alpha.1-arm64.zip": "mac-zip",
+        "alpha-mac.yml": "version: 0.1.0-alpha.1\n",
+      },
+      "SHA256SUMS-macos.txt",
+    );
+    const create = spawnSync(
+      process.execPath,
+      [
+        script,
+        "create",
+        "--candidate-dir",
+        candidateDir,
+        "--version",
+        "0.1.0-alpha.1",
+        "--tag",
+        "v0.1.0-alpha.1",
+        "--channel",
+        "alpha",
+        "--source-commit",
+        "a".repeat(40),
+        "--desktop-commit",
+        "b".repeat(40),
+        "--run-id",
+        "12347",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(create.status, 0);
+    assert.match(create.stderr, /windowsBlockmap/);
   } finally {
     fs.rmSync(candidateDir, { recursive: true, force: true });
   }

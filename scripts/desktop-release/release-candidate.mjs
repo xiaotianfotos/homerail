@@ -85,6 +85,7 @@ function validateAssetBoundary(candidateDir, channel) {
   const metadata = expectedMetadata(channel);
   const required = {
     windowsInstaller: false,
+    windowsBlockmap: false,
     windowsMetadata: false,
     macDmg: false,
     macZip: false,
@@ -107,6 +108,7 @@ function validateAssetBoundary(candidateDir, channel) {
         name === "SHA256SUMS-windows.txt";
       if (!allowed) throw new Error(`unexpected Windows release asset: ${name}`);
       if (name.endsWith(".exe")) required.windowsInstaller = true;
+      if (name.endsWith(".blockmap")) required.windowsBlockmap = true;
       if (isMetadata) required.windowsMetadata = true;
     } else {
       const isMetadata = metadata.macos.includes(name);

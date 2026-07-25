@@ -111,8 +111,19 @@ aliases let a persisted Early Access installation traverse Alpha → Beta → St
 without relying on updater fallback behavior. Every emitted metadata file is
 covered by both the platform checksum list and the combined candidate manifest.
 
-The candidate does not create a Git tag or GitHub Release. Download it from the
-workflow run and perform direct-install checks:
+The candidate does not create a Git tag or GitHub Release.
+
+The hosted Windows build gate runs the complete public Node 24 CI suite and the
+private Desktop CI suite before packaging. After signing and static package
+verification, it uses an isolated temporary profile to silently install the
+NSIS package, execute the packaged CLI and verify its release version, keep the
+Desktop process alive for a bounded startup smoke, and silently uninstall it.
+This non-interactive runner smoke does not prove that a visible GUI rendered,
+that onboarding works, or that an installed update preserves real user data. It
+does not replace the following acceptance checks on a real Windows machine.
+
+After the hosted-runner gates pass, download the candidate from the workflow
+run and perform direct-install checks:
 
 - Windows: install the NSIS package, launch HomeRail, complete onboarding,
   restart, and uninstall once.

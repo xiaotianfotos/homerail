@@ -96,7 +96,7 @@ jobs:
             platform: macos
             artifact: desktop-release-macos-arm64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       HOMERAIL_SOURCE_DIR: ${{ github.workspace }}/homerail-source
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
@@ -160,6 +160,37 @@ jobs:
           npm --prefix desktop ci
           npm --prefix homerail-source run install:all
 
+      - name: Run public Windows Node 24 CI
+        if: runner.os == 'Windows'
+        env:
+          HOMERAIL_HOME: ${{ runner.temp }}/homerail-candidate-public-ci
+          VITEST_MAX_WORKERS: "1"
+          VITEST_TEST_TIMEOUT: "15000"
+          VITEST_HOOK_TIMEOUT: "30000"
+        run: npm --prefix homerail-source run ci
+
+      - name: Verify public Windows CLI release version
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cliVersion = (& node homerail-source/homerail_cli/dist/cli.js --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Built HomeRail CLI exited with $LASTEXITCODE"
+          }
+          if ($cliVersion -ne $env:EXPECTED_VERSION) {
+            throw "Built CLI version $cliVersion does not match $env:EXPECTED_VERSION"
+          }
+
+      - name: Run Desktop Windows CI
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        env:
+          HOMERAIL_HOME: ${{ runner.temp }}/homerail-candidate-desktop-ci
+        run: npm run ci
+
       - name: Build and sign Windows installer
         if: runner.os == 'Windows'
         working-directory: desktop
@@ -199,7 +230,7 @@ jobs:
             if ($null -eq $signature.SignerCertificate) {
               throw "Missing Authenticode signature: $($installer.Name)"
             }
-            if ($signature.Status -in @('NotSigned', 'HashMismatch')) {
+            if ($signature.Status -ne 'Valid') {
               throw "Invalid Authenticode signature on $($installer.Name): $($signature.Status)"
             }
             Write-Host "Signed installer: $($installer.Name) ($($signature.Status))"
@@ -227,6 +258,98 @@ jobs:
             $lines,
             [System.Text.UTF8Encoding]::new($false)
           )
+
+      - name: Smoke-test silent Windows installation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -Path desktop/dist-electron -Filter *.exe -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one Windows installer, found $($installers.Count)"
+          }
+
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "homerail-nsis-smoke-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $installRoot = Join-Path $smokeRoot 'install'
+          $profileRoot = Join-Path $smokeRoot 'profile'
+          $electronUserData = Join-Path $profileRoot 'electron-user-data'
+          $env:USERPROFILE = $profileRoot
+          $env:APPDATA = Join-Path $profileRoot 'AppData\Roaming'
+          $env:LOCALAPPDATA = Join-Path $profileRoot 'AppData\Local'
+          $env:HOMERAIL_HOME = Join-Path $profileRoot '.homerail'
+          New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA, $env:HOMERAIL_HOME | Out-Null
+
+          $appProcess = $null
+          try {
+            $installProcess = Start-Process `
+              -FilePath $installers[0].FullName `
+              -ArgumentList @('/S', "/D=$installRoot") `
+              -PassThru `
+              -Wait `
+              -WindowStyle Hidden
+            if ($installProcess.ExitCode -ne 0) {
+              throw "Silent NSIS installation failed with exit code $($installProcess.ExitCode)"
+            }
+
+            $appPath = Join-Path $installRoot 'HomeRail.exe'
+            $nodePath = Join-Path $installRoot 'resources\node-bin\node.exe'
+            $cliPath = Join-Path $installRoot 'resources\homerail-runtime\homerail_cli\dist\cli.js'
+            foreach ($required in @($appPath, $nodePath, $cliPath)) {
+              if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+                throw "Silent NSIS installation is missing $required"
+              }
+            }
+
+            $cliVersion = (& $nodePath $cliPath --version | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) {
+              throw "Installed HomeRail CLI exited with $LASTEXITCODE"
+            }
+            if ($cliVersion -ne $env:EXPECTED_VERSION) {
+              throw "Installed CLI version $cliVersion does not match $env:EXPECTED_VERSION"
+            }
+
+            $appProcess = Start-Process `
+              -FilePath $appPath `
+              -ArgumentList @("--user-data-dir=$electronUserData") `
+              -PassThru `
+              -WindowStyle Hidden
+            Start-Sleep -Seconds 12
+            if ($appProcess.HasExited) {
+              throw "Installed HomeRail exited during the bounded startup smoke with code $($appProcess.ExitCode)"
+            }
+            Write-Host "Installed HomeRail remained alive for the bounded startup smoke"
+          } finally {
+            if ($null -ne $appProcess -and -not $appProcess.HasExited) {
+              Stop-Process -Id $appProcess.Id -Force
+              $appProcess.WaitForExit()
+            }
+
+            $uninstaller = Join-Path $installRoot 'Uninstall HomeRail.exe'
+            if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
+              $uninstallProcess = Start-Process `
+                -FilePath $uninstaller `
+                -ArgumentList @('/S') `
+                -PassThru `
+                -Wait `
+                -WindowStyle Hidden
+              if ($uninstallProcess.ExitCode -ne 0) {
+                throw "Silent NSIS uninstall failed with exit code $($uninstallProcess.ExitCode)"
+              }
+            }
+          }
+
+          $uninstallDeadline = [DateTime]::UtcNow.AddSeconds(20)
+          while (
+            (Test-Path -LiteralPath (Join-Path $installRoot 'HomeRail.exe')) -and
+            [DateTime]::UtcNow -lt $uninstallDeadline
+          ) {
+            Start-Sleep -Seconds 1
+          }
+          if (Test-Path -LiteralPath (Join-Path $installRoot 'HomeRail.exe')) {
+            throw "Silent NSIS uninstall left HomeRail.exe installed"
+          }
 
       - name: Install Apple notarization key
         if: runner.os == 'macOS'
