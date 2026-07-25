@@ -319,6 +319,50 @@ function writePlatformFixture(candidateDir, platform, files, sidecar) {
   fs.writeFileSync(path.join(platformDir, sidecar), `${checksumLines.sort().join("\n")}\n`);
 }
 
+function writeAlphaCandidateFixture(candidateDir) {
+  writePlatformFixture(
+    candidateDir,
+    "windows",
+    {
+      "HomeRail Setup 0.1.0-alpha.1.exe": "windows-installer",
+      "HomeRail Setup 0.1.0-alpha.1.exe.blockmap": "windows-blockmap",
+      "alpha.yml": "version: 0.1.0-alpha.1\n",
+    },
+    "SHA256SUMS-windows.txt",
+  );
+  writePlatformFixture(
+    candidateDir,
+    "macos",
+    {
+      "HomeRail-0.1.0-alpha.1-arm64.dmg": "mac-dmg",
+      "HomeRail-0.1.0-alpha.1-arm64.zip": "mac-zip",
+      "alpha-mac.yml": "version: 0.1.0-alpha.1\n",
+    },
+    "SHA256SUMS-macos.txt",
+  );
+}
+
+function alphaCandidateCreateArgs(script, candidateDir, runId) {
+  return [
+    script,
+    "create",
+    "--candidate-dir",
+    candidateDir,
+    "--version",
+    "0.1.0-alpha.1",
+    "--tag",
+    "v0.1.0-alpha.1",
+    "--channel",
+    "alpha",
+    "--source-commit",
+    "a".repeat(40),
+    "--desktop-commit",
+    "b".repeat(40),
+    "--run-id",
+    runId,
+  ];
+}
+
 test("candidate manifest is reproducibly verified and detects artifact tampering", () => {
   const candidateDir = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-candidate-"));
   const script = path.join(repoRoot, "scripts", "desktop-release", "release-candidate.mjs");
@@ -455,6 +499,106 @@ test("candidate manifest is reproducibly verified and detects artifact tampering
     );
     assert.notEqual(tampered.status, 0);
     assert.match(tampered.stderr, /checksum mismatch|manifest mismatch/);
+  } finally {
+    fs.rmSync(candidateDir, { recursive: true, force: true });
+  }
+});
+
+test("candidate create and verify reject symlinks that escape release-assets", (t) => {
+  const createDir = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-symlink-create-"));
+  const verifyDir = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-symlink-verify-"));
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-symlink-outside-"));
+  const script = path.join(repoRoot, "scripts", "desktop-release", "release-candidate.mjs");
+  const outsideTarget = path.join(outsideDir, "outside.exe");
+
+  try {
+    fs.writeFileSync(outsideTarget, "outside-candidate");
+    writeAlphaCandidateFixture(createDir);
+    writeAlphaCandidateFixture(verifyDir);
+
+    const createLink = path.join(
+      createDir,
+      "release-assets",
+      "windows",
+      "outside.exe",
+    );
+    try {
+      fs.symlinkSync(outsideTarget, createLink, "file");
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        ["EPERM", "EACCES", "ENOTSUP"].includes(error.code)
+      ) {
+        t.skip(`symbolic links are unavailable on this host (${error.code})`);
+        return;
+      }
+      throw error;
+    }
+
+    const create = spawnSync(
+      process.execPath,
+      alphaCandidateCreateArgs(script, createDir, "12348"),
+      { encoding: "utf8" },
+    );
+    assert.equal(create.status, 1, create.stderr);
+    assert.match(create.stderr, /must not contain symlinks/);
+
+    const validCreate = spawnSync(
+      process.execPath,
+      alphaCandidateCreateArgs(script, verifyDir, "12349"),
+      { encoding: "utf8" },
+    );
+    assert.equal(validCreate.status, 0, validCreate.stderr);
+    fs.symlinkSync(
+      outsideTarget,
+      path.join(verifyDir, "release-assets", "windows", "outside.exe"),
+      "file",
+    );
+
+    const verify = spawnSync(
+      process.execPath,
+      [script, "verify", "--candidate-dir", verifyDir],
+      { encoding: "utf8" },
+    );
+    assert.equal(verify.status, 1, verify.stderr);
+    assert.match(verify.stderr, /must not contain symlinks/);
+  } finally {
+    fs.rmSync(createDir, { recursive: true, force: true });
+    fs.rmSync(verifyDir, { recursive: true, force: true });
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test("candidate verify rejects internally inconsistent manifest identity", () => {
+  const candidateDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "homerail-manifest-identity-"),
+  );
+  const script = path.join(repoRoot, "scripts", "desktop-release", "release-candidate.mjs");
+  try {
+    writeAlphaCandidateFixture(candidateDir);
+    const create = spawnSync(
+      process.execPath,
+      alphaCandidateCreateArgs(script, candidateDir, "12350"),
+      { encoding: "utf8" },
+    );
+    assert.equal(create.status, 0, create.stderr);
+
+    const manifestFile = path.join(candidateDir, "release-manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+    manifest.channel = "beta";
+    fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const verify = spawnSync(
+      process.execPath,
+      [script, "verify", "--candidate-dir", candidateDir],
+      { encoding: "utf8" },
+    );
+    assert.equal(verify.status, 1, verify.stderr);
+    assert.match(
+      verify.stderr,
+      /version, tag, channel, and prerelease fields disagree/,
+    );
   } finally {
     fs.rmSync(candidateDir, { recursive: true, force: true });
   }
