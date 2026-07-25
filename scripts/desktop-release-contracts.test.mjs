@@ -28,6 +28,9 @@ const releaseDocs = fs.readFileSync(
   path.join(repoRoot, "docs", "desktop-release.md"),
   "utf8",
 );
+const currentPublicVersion = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"),
+).version;
 
 test("release versions follow the unified Codex-style SemVer train", () => {
   assert.deepEqual(classifyReleaseVersion("0.1.0-alpha.1"), {
@@ -52,7 +55,7 @@ test("release versions follow the unified Codex-style SemVer train", () => {
 
 test("current public packages satisfy the unified version contract", () => {
   assert.doesNotThrow(() =>
-    validateUnifiedVersion({ publicRoot: repoRoot, version: "0.1.0" }),
+    validateUnifiedVersion({ publicRoot: repoRoot, version: currentPublicVersion }),
   );
 });
 
@@ -60,7 +63,7 @@ test("unified version validation checks Desktop package metadata", () => {
   const desktopRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-desktop-version-"));
   const packageFile = path.join(desktopRoot, "package.json");
   const packageName = "homerail-desktop";
-  const version = "0.1.0";
+  const version = currentPublicVersion;
   try {
     fs.writeFileSync(
       packageFile,
