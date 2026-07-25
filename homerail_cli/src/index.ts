@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Command, InvalidArgumentError } from "commander";
 import { HomeRailClient } from "./client.js";
 import { registerTemplatesCommand } from "./commands/templates.js";
@@ -24,12 +25,26 @@ import { registerCredentialCommand } from "./commands/credential.js";
 export { HomeRailClient } from "./client.js";
 export type { BaseResponse, HomeRailClientOptions } from "./client.js";
 
+export function readCliPackageVersion(
+  packageJsonUrl = new URL("../package.json", import.meta.url),
+): string {
+  const metadata = JSON.parse(readFileSync(packageJsonUrl, "utf8")) as {
+    version?: unknown;
+  };
+  if (typeof metadata.version !== "string" || metadata.version.trim() === "") {
+    throw new Error(`HomeRail CLI package metadata has no valid version: ${packageJsonUrl.href}`);
+  }
+  return metadata.version;
+}
+
+export const CLI_VERSION = readCliPackageVersion();
+
 export function createProgram(): Command {
   const program = new Command();
   program
     .name("hr")
     .description("HomeRail CLI - DAG orchestration control (TypeScript)")
-    .version("0.1.0")
+    .version(CLI_VERSION)
     .option("--base-url <url>", `Manager API URL (default: $HOMERAIL_MANAGER_URL or ${DEFAULT_MANAGER_URL})`)
     .option("--request-timeout <ms>", "HTTP request timeout in milliseconds", parseTimeoutOption, 30_000)
     .option("--json", "Output as JSON");
