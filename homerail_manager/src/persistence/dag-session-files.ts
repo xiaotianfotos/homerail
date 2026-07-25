@@ -1,8 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { getSessionStoreRoot } from "../config/env.js";
 import { redactTelemetry } from "homerail-protocol";
+
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
 
 export interface SessionTranscriptEntry {
   uuid?: string;
@@ -46,6 +56,30 @@ function safeSegment(value: string, label: string): string {
 
 function sessionRoot(sessionId: string, baseDir?: string): string {
   return join(sessionDir(baseDir), safeSegment(sessionId, "sessionId"));
+}
+
+function enforcePrivateMode(path: string, mode: number): void {
+  if (process.platform === "win32") return;
+  try {
+    chmodSync(path, mode);
+  } catch {
+    // Best effort on filesystems that do not support POSIX modes.
+  }
+}
+
+function ensurePrivateSessionRoot(sessionId: string, baseDir?: string): string {
+  const dir = sessionRoot(sessionId, baseDir);
+  mkdirSync(dir, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+  enforcePrivateMode(dir, PRIVATE_DIRECTORY_MODE);
+  return dir;
+}
+
+function writePrivateFile(path: string, content: string): void {
+  writeFileSync(path, content, {
+    encoding: "utf-8",
+    mode: PRIVATE_FILE_MODE,
+  });
+  enforcePrivateMode(path, PRIVATE_FILE_MODE);
 }
 
 function transcriptPath(sessionId: string, baseDir?: string): string {
@@ -124,8 +158,7 @@ export function appendSessionTranscriptEntry(
     ? entry.sessionId.trim()
     : "";
   if (!sessionId) throw new Error("sessionId must be non-empty");
-  const dir = sessionRoot(sessionId, baseDir);
-  mkdirSync(dir, { recursive: true });
+  ensurePrivateSessionRoot(sessionId, baseDir);
   const normalized: SessionTranscriptEntry = {
     ...entry,
     content: redactTelemetry(entry.content),
@@ -136,11 +169,13 @@ export function appendSessionTranscriptEntry(
   const path = transcriptPath(sessionId, baseDir);
   appendFileSync(path, `${JSON.stringify(normalized)}\n`, {
     encoding: "utf-8",
-    mode: 0o600,
+    mode: PRIVATE_FILE_MODE,
   });
-  if (!existsSync(sessionPath(sessionId, baseDir))) {
-    writeFileSync(
-      sessionPath(sessionId, baseDir),
+  enforcePrivateMode(path, PRIVATE_FILE_MODE);
+  const snapshotPath = sessionPath(sessionId, baseDir);
+  if (!existsSync(snapshotPath)) {
+    writePrivateFile(
+      snapshotPath,
       JSON.stringify({
         sessionId,
         runId: entry.runId,
@@ -149,8 +184,9 @@ export function appendSessionTranscriptEntry(
         toolCallState: { inFlight: false },
         timestamp: normalized.timestamp,
       }, null, 2),
-      "utf-8",
     );
+  } else {
+    enforcePrivateMode(snapshotPath, PRIVATE_FILE_MODE);
   }
   return normalized;
 }
@@ -184,12 +220,10 @@ export function checkpointForkSession(
     },
   }));
 
-  const dir = sessionRoot(request.newSessionId, baseDir);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
+  ensurePrivateSessionRoot(request.newSessionId, baseDir);
+  writePrivateFile(
     transcriptPath(request.newSessionId, baseDir),
     forkedEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
-    "utf-8",
   );
 
   const parentSnapshot = loadSessionSnapshot(request.parentSessionId, baseDir);
@@ -202,7 +236,10 @@ export function checkpointForkSession(
     forkedFromEntryUuid: checkpoint.entryUuid,
     timestamp: Date.now(),
   };
-  writeFileSync(sessionPath(request.newSessionId, baseDir), JSON.stringify(nextSnapshot, null, 2), "utf-8");
+  writePrivateFile(
+    sessionPath(request.newSessionId, baseDir),
+    JSON.stringify(nextSnapshot, null, 2),
+  );
 
   return {
     entryUuid: checkpoint.entryUuid,
@@ -216,8 +253,7 @@ export function appendSessionTranscriptForTest(
   entries: Array<Partial<SessionTranscriptEntry>>,
   baseDir?: string,
 ): void {
-  const dir = sessionRoot(sessionId, baseDir);
-  mkdirSync(dir, { recursive: true });
+  ensurePrivateSessionRoot(sessionId, baseDir);
   const normalized = entries.map((entry) => ({
     uuid: entry.uuid ?? randomUUID(),
     type: entry.type ?? "test",
@@ -225,14 +261,12 @@ export function appendSessionTranscriptForTest(
     timestamp: typeof entry.timestamp === "number" ? entry.timestamp : Date.now(),
     ...entry,
   }));
-  writeFileSync(
+  writePrivateFile(
     transcriptPath(sessionId, baseDir),
     normalized.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
-    "utf-8",
   );
-  writeFileSync(
+  writePrivateFile(
     sessionPath(sessionId, baseDir),
     JSON.stringify({ sessionId, messages: [], toolCallState: { inFlight: false }, timestamp: Date.now() }, null, 2),
-    "utf-8",
   );
 }
