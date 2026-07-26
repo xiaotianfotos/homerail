@@ -19,6 +19,7 @@ DAG_COMMAND_ALLOWLIST="${HOMERAIL_PRODUCTION_DAG_COMMAND_ALLOWLIST:-node}"
 UI_HOST="${HOMERAIL_PRODUCTION_UI_HOST:-0.0.0.0}"
 UI_PORT="${HOMERAIL_PRODUCTION_UI_PORT:-19192}"
 UI_HTTP_PORT="${HOMERAIL_PRODUCTION_UI_HTTP_PORT:-19193}"
+HEALTH_ATTEMPTS="${HOMERAIL_PRODUCTION_HEALTH_ATTEMPTS:-60}"
 PUBLIC_HOST="${HOMERAIL_PRODUCTION_PUBLIC_HOST:-}"
 UI_URL="${HOMERAIL_PRODUCTION_UI_URL:-}"
 
@@ -60,6 +61,10 @@ for port in "$UI_PORT" "$UI_HTTP_PORT"; do
     exit 1
   fi
 done
+if [[ ! "$HEALTH_ATTEMPTS" =~ ^[0-9]+$ ]] || [ "$HEALTH_ATTEMPTS" -lt 1 ] || [ "$HEALTH_ATTEMPTS" -gt 300 ]; then
+  echo "HOMERAIL_PRODUCTION_HEALTH_ATTEMPTS must be an integer from 1 through 300." >&2
+  exit 1
+fi
 if [ -z "$UI_URL" ]; then
   if [[ "$PUBLIC_HOST" == *:* ]]; then
     UI_URL="https://[$PUBLIC_HOST]:$UI_PORT"
@@ -96,6 +101,43 @@ if [ -d "$SOURCE_ROOT/.git" ]; then
     exit 1
   fi
 fi
+
+NODE_BIN="$(command -v node)"
+WORKER_METADATA="$(
+  cd "$SOURCE_ROOT"
+  "$NODE_BIN" --input-type=module -e '
+    import fs from "node:fs";
+    import path from "node:path";
+    import { pathToFileURL } from "node:url";
+
+    const repoRoot = process.cwd();
+    const environmentModule = await import(pathToFileURL(
+      path.join(repoRoot, "homerail_manager", "dist", "server", "dag-environment.js"),
+    ).href);
+    const protocolModule = await import(pathToFileURL(
+      path.join(repoRoot, "homerail_protocol", "dist", "index.js"),
+    ).href);
+    const fingerprint = environmentModule.dagWorkerSourceFingerprint(repoRoot);
+    const workerPackage = JSON.parse(fs.readFileSync(
+      path.join(repoRoot, "homerail_worker", "package.json"),
+      "utf8",
+    ));
+    if (!fingerprint || typeof workerPackage.version !== "string" || !protocolModule.PROTOCOL_VERSION) {
+      throw new Error("Worker image metadata is incomplete.");
+    }
+    process.stdout.write(`${fingerprint}\n${protocolModule.PROTOCOL_VERSION}\n${workerPackage.version}\n`);
+  '
+)"
+WORKER_SOURCE_FINGERPRINT="$(printf '%s\n' "$WORKER_METADATA" | sed -n '1p')"
+WORKER_PROTOCOL_VERSION="$(printf '%s\n' "$WORKER_METADATA" | sed -n '2p')"
+WORKER_VERSION="$(printf '%s\n' "$WORKER_METADATA" | sed -n '3p')"
+if [[ ! "$WORKER_SOURCE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] \
+  || [[ ! "$WORKER_PROTOCOL_VERSION" =~ ^[0-9A-Za-z._+-]+$ ]] \
+  || [[ ! "$WORKER_VERSION" =~ ^[0-9A-Za-z._+-]+$ ]]; then
+  echo "Production Worker image metadata is invalid." >&2
+  exit 1
+fi
+WORKER_IMAGE_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 mkdir -p "$PRODUCTION_ROOT/releases" "$PRODUCTION_ROOT/locks" "$HOMERAIL_HOME" "$(dirname "$UNIT_PATH")"
 HOMERAIL_HOME="$(realpath "$HOMERAIL_HOME")"
@@ -164,6 +206,15 @@ WORKER_IMAGE="homerail-worker:production-$SHORT_REVISION"
 echo "Building production Worker image $WORKER_IMAGE"
 docker build \
   --label "org.homerail.production_revision=$REVISION" \
+  --label "org.homerail.worker.source_fingerprint=$WORKER_SOURCE_FINGERPRINT" \
+  --label "org.homerail.worker.protocol_version=$WORKER_PROTOCOL_VERSION" \
+  --label "org.opencontainers.image.version=$WORKER_VERSION" \
+  --label "org.opencontainers.image.revision=$REVISION" \
+  --label "org.opencontainers.image.created=$WORKER_IMAGE_CREATED" \
+  --build-arg "HOMERAIL_WORKER_SOURCE_FINGERPRINT=$WORKER_SOURCE_FINGERPRINT" \
+  --build-arg "HOMERAIL_WORKER_PROTOCOL_VERSION=$WORKER_PROTOCOL_VERSION" \
+  --build-arg "HOMERAIL_WORKER_VERSION=$WORKER_VERSION" \
+  --build-arg "HOMERAIL_WORKER_IMAGE_REVISION=$REVISION" \
   -t "$WORKER_IMAGE" \
   -f "$SOURCE_ROOT/homerail_worker/Dockerfile" \
   "$SOURCE_ROOT"
@@ -182,7 +233,7 @@ rsync -a --delete \
   --exclude '/agent-ui/test-results/' \
   "$SOURCE_ROOT/" "$STAGING/"
 mkdir -p "$STAGING/runtime"
-install -m 0755 "$(command -v node)" "$STAGING/runtime/node"
+install -m 0755 "$NODE_BIN" "$STAGING/runtime/node"
 if [ -n "$CODEX_BIN" ]; then
   cat > "$STAGING/runtime/codex" <<WRAPPER
 #!/bin/sh
@@ -232,7 +283,7 @@ Environment=HOMERAIL_PRODUCTION_PUBLIC_HOST=$PUBLIC_HOST
 Environment=PATH=$SERVICE_PATH
 $CODEX_UNIT_ENV
 # /bin/bash and %h exist before the data volume is mounted. Wait for the atomic
-# `current` release, then preserve the release working-directory contract.
+# current release, then preserve the release working-directory contract.
 ExecStart=/bin/bash -c 'release="\$HOMERAIL_PRODUCTION_ROOT/current"; until [ -x "\$release/scripts/run-production-service.sh" ]; do sleep 10; done; cd "\$release"; exec "\$release/scripts/run-production-service.sh"'
 Restart=always
 RestartSec=10
@@ -247,9 +298,69 @@ TasksMax=4096
 WantedBy=default.target
 UNIT
 chmod 0644 "$UNIT_PATH.tmp"
-mv "$UNIT_PATH.tmp" "$UNIT_PATH"
 
 PREVIOUS_TARGET="$(readlink "$PRODUCTION_ROOT/current" 2>/dev/null || true)"
+PREVIOUS_RELEASE=""
+if [[ "$PREVIOUS_TARGET" == releases/* ]] && [ -d "$PRODUCTION_ROOT/$PREVIOUS_TARGET" ]; then
+  PREVIOUS_RELEASE="$PRODUCTION_ROOT/$PREVIOUS_TARGET"
+fi
+
+DATABASE_PATH="$HOMERAIL_HOME/manager/homerail.db"
+DATABASE_BACKUP="$PRODUCTION_ROOT/locks/homerail.db.pre-$SHORT_REVISION-$$"
+DATABASE_WAL_BACKUP="$DATABASE_BACKUP-wal"
+DATABASE_EXISTED=0
+PREVIOUS_DATABASE_COMPATIBLE=0
+PROBE_HOME="$PRODUCTION_ROOT/locks/database-probe-$SHORT_REVISION-$$"
+SERVICE_STOPPED_FOR_SNAPSHOT=0
+
+cleanup_deploy_temporaries() {
+  local exit_status=$?
+  rm -rf "$PROBE_HOME"
+  if [ "$SERVICE_STOPPED_FOR_SNAPSHOT" = "1" ]; then
+    systemctl --user start "$SERVICE_NAME" >/dev/null 2>&1 || true
+  fi
+  exit "$exit_status"
+}
+trap cleanup_deploy_temporaries EXIT
+
+# Stop the old release before snapshotting SQLite so the database and any WAL
+# file represent the same point in time. A failed rollout restores this pair
+# before an older release is allowed to start.
+systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+SERVICE_STOPPED_FOR_SNAPSHOT=1
+if [ -f "$DATABASE_PATH" ]; then
+  DATABASE_EXISTED=1
+  cp -p "$DATABASE_PATH" "$DATABASE_BACKUP"
+  if [ -f "$DATABASE_PATH-wal" ]; then
+    cp -p "$DATABASE_PATH-wal" "$DATABASE_WAL_BACKUP"
+  fi
+fi
+
+# Probe rollback compatibility against a private copy. This catches an already
+# upgraded database before the deployment can switch back to code that refuses
+# to open it.
+if [ "$DATABASE_EXISTED" = "0" ]; then
+  PREVIOUS_DATABASE_COMPATIBLE=1
+elif [ -n "$PREVIOUS_RELEASE" ] \
+  && [ -x "$PREVIOUS_RELEASE/runtime/node" ] \
+  && [ -f "$PREVIOUS_RELEASE/homerail_manager/dist/persistence/db.js" ]; then
+  mkdir -p "$PROBE_HOME/manager"
+  cp -p "$DATABASE_BACKUP" "$PROBE_HOME/manager/homerail.db"
+  if [ -f "$DATABASE_WAL_BACKUP" ]; then
+    cp -p "$DATABASE_WAL_BACKUP" "$PROBE_HOME/manager/homerail.db-wal"
+  fi
+  if HOMERAIL_HOME="$PROBE_HOME" "$PREVIOUS_RELEASE/runtime/node" --input-type=module -e '
+    import { pathToFileURL } from "node:url";
+    const databaseModule = await import(pathToFileURL(process.argv[1]).href);
+    databaseModule.getDb();
+    databaseModule.closeDb();
+  ' "$PREVIOUS_RELEASE/homerail_manager/dist/persistence/db.js" >/dev/null 2>&1; then
+    PREVIOUS_DATABASE_COMPATIBLE=1
+  fi
+fi
+rm -rf "$PROBE_HOME"
+
+mv "$UNIT_PATH.tmp" "$UNIT_PATH"
 NEXT_TARGET="releases/$RELEASE_NAME"
 NEXT_LINK="$PRODUCTION_ROOT/.current-$RELEASE_NAME-$$"
 ln -s "$NEXT_TARGET" "$NEXT_LINK"
@@ -258,9 +369,10 @@ mv -Tf "$NEXT_LINK" "$PRODUCTION_ROOT/current"
 systemctl --user daemon-reload
 systemctl --user enable "$SERVICE_NAME" >/dev/null
 systemctl --user restart "$SERVICE_NAME"
+SERVICE_STOPPED_FOR_SNAPSHOT=0
 
 healthy=0
-for _ in $(seq 1 60); do
+for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
   if systemctl --user is-active --quiet "$SERVICE_NAME" \
     && curl -fsS --connect-timeout 3 --max-time 5 "$MANAGER_URL/health" >/dev/null \
     && curl -fkSs --connect-timeout 3 --max-time 5 "${UI_URL%/}/" >/dev/null \
@@ -283,29 +395,53 @@ fi
 
 if [ "$healthy" != "1" ]; then
   echo "Production health check failed for $REVISION; rolling back." >&2
-  if [ "$UNIT_EXISTED" = "1" ]; then
-    mv "$UNIT_BACKUP" "$UNIT_PATH"
-  else
-    rm -f "$UNIT_PATH" "$UNIT_BACKUP"
+  systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+  rm -f "$DATABASE_PATH" "$DATABASE_PATH-wal" "$DATABASE_PATH-shm"
+  if [ "$DATABASE_EXISTED" = "1" ]; then
+    mkdir -p "$(dirname "$DATABASE_PATH")"
+    cp -p "$DATABASE_BACKUP" "$DATABASE_PATH.rollback-$$"
+    mv "$DATABASE_PATH.rollback-$$" "$DATABASE_PATH"
+    if [ -f "$DATABASE_WAL_BACKUP" ]; then
+      cp -p "$DATABASE_WAL_BACKUP" "$DATABASE_PATH-wal.rollback-$$"
+      mv "$DATABASE_PATH-wal.rollback-$$" "$DATABASE_PATH-wal"
+    fi
   fi
-  if [[ "$PREVIOUS_TARGET" == releases/* ]] && [ -d "$PRODUCTION_ROOT/$PREVIOUS_TARGET" ]; then
+  if [ "$PREVIOUS_DATABASE_COMPATIBLE" = "1" ] && [ -n "$PREVIOUS_RELEASE" ]; then
+    if [ "$UNIT_EXISTED" = "1" ]; then
+      mv "$UNIT_BACKUP" "$UNIT_PATH"
+    else
+      rm -f "$UNIT_PATH" "$UNIT_BACKUP"
+    fi
     ROLLBACK_LINK="$PRODUCTION_ROOT/.rollback-$$"
     ln -s "$PREVIOUS_TARGET" "$ROLLBACK_LINK"
     mv -Tf "$ROLLBACK_LINK" "$PRODUCTION_ROOT/current"
     systemctl --user daemon-reload
     systemctl --user restart "$SERVICE_NAME"
+  elif [ -n "$PREVIOUS_RELEASE" ]; then
+    echo "Previous release cannot open the pre-deployment database; refusing an incompatible code rollback." >&2
+    rm -f "$UNIT_BACKUP"
+    systemctl --user daemon-reload
+    systemctl --user restart "$SERVICE_NAME"
   else
+    rm -f "$UNIT_PATH" "$UNIT_BACKUP"
     systemctl --user daemon-reload
     systemctl --user stop "$SERVICE_NAME" || true
   fi
   journalctl --user-unit "$SERVICE_NAME" -n 80 --no-pager >&2 || true
+  rm -f "$DATABASE_BACKUP" "$DATABASE_WAL_BACKUP"
+  trap - EXIT
   exit 1
 fi
 
-rm -f "$UNIT_BACKUP"
+rm -f "$UNIT_BACKUP" "$DATABASE_BACKUP" "$DATABASE_WAL_BACKUP"
+trap - EXIT
 printf '%s\n' "$REVISION" > "$PRODUCTION_ROOT/last-successful-revision"
-mapfile -t OLD_RELEASES < <(find "$PRODUCTION_ROOT/releases" -mindepth 1 -maxdepth 1 -type d ! -name '.staging-*' -printf '%T@ %p\n' | sort -rn | tail -n +4 | cut -d' ' -f2-)
+OLD_RELEASES=("")
+while IFS= read -r old_release; do
+  [ -n "$old_release" ] && OLD_RELEASES+=("$old_release")
+done < <(find "$PRODUCTION_ROOT/releases" -mindepth 1 -maxdepth 1 -type d ! -name '.staging-*' -printf '%T@ %p\n' | sort -rn | tail -n +4 | cut -d' ' -f2-)
 for old_release in "${OLD_RELEASES[@]}"; do
+  [ -n "$old_release" ] || continue
   old_revision="$(tr -d '[:space:]' < "$old_release/REVISION" 2>/dev/null || true)"
   rm -rf "$old_release"
   if [[ "$old_revision" =~ ^[0-9a-f]{40}$ ]] \

@@ -33,17 +33,30 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   const runtime = fs.readFileSync(path.join(repoRoot, "scripts", "lib", "production-runtime.sh"), "utf8");
   assert.match(deploy, /flock -w 60/);
   assert.match(deploy, /homerail-worker:production-/);
+  assert.match(deploy, /org\.homerail\.worker\.source_fingerprint=\$WORKER_SOURCE_FINGERPRINT/);
+  assert.match(deploy, /org\.homerail\.worker\.protocol_version=\$WORKER_PROTOCOL_VERSION/);
+  assert.match(deploy, /org\.opencontainers\.image\.version=\$WORKER_VERSION/);
+  assert.match(deploy, /HOMERAIL_WORKER_SOURCE_FINGERPRINT=\$WORKER_SOURCE_FINGERPRINT/);
+  assert.match(deploy, /HOMERAIL_WORKER_PROTOCOL_VERSION=\$WORKER_PROTOCOL_VERSION/);
+  assert.match(deploy, /HOMERAIL_WORKER_VERSION=\$WORKER_VERSION/);
+  assert.match(deploy, /HOMERAIL_WORKER_IMAGE_REVISION=\$REVISION/);
   assert.match(deploy, /mv -Tf "\$NEXT_LINK" "\$PRODUCTION_ROOT\/current"/);
   assert.match(deploy, /systemctl --user restart/);
   assert.match(deploy, /rolling back/);
   assert.match(deploy, /PREVIOUS_TARGET/);
   assert.match(deploy, /UNIT_BACKUP/);
+  assert.match(deploy, /systemctl --user stop "\$SERVICE_NAME"/);
+  assert.match(deploy, /DATABASE_BACKUP/);
+  assert.match(deploy, /DATABASE_WAL_BACKUP/);
+  assert.match(deploy, /PREVIOUS_DATABASE_COMPATIBLE/);
+  assert.match(deploy, /refusing an incompatible code rollback/);
   assert.match(deploy, /loginctl show-user "\$DEPLOY_USER" --property=Linger --value/);
   assert.match(deploy, /sudo loginctl enable-linger \$DEPLOY_USER/);
   assert.match(deploy, /StartLimitIntervalSec=0/);
   assert.doesNotMatch(deploy, /StartLimitBurst=/);
   assert.match(deploy, /WorkingDirectory=%h/);
   assert.doesNotMatch(deploy, /WorkingDirectory=\$PRODUCTION_ROOT\/current/);
+  assert.doesNotMatch(deploy, /# `current` release/);
   assert.match(
     deploy,
     /ExecStart=\/bin\/bash -c 'release="\\\$HOMERAIL_PRODUCTION_ROOT\/current"; until \[ -x "\\\$release\/scripts\/run-production-service\.sh" \]; do sleep 10; done; cd "\\\$release"; exec "\\\$release\/scripts\/run-production-service\.sh"'/,
@@ -231,12 +244,13 @@ test("production DAG smoke helper enforces token presence and command success", 
   }
 });
 
-test("production deployment rolls back a failed DAG smoke and accepts a successful one", { skip: process.platform === "win32" }, () => {
+test("production deployment preserves database compatibility across success and rollback", { skip: process.platform === "win32" }, () => {
   const deployScript = path.join(repoRoot, "scripts", "deploy-production.sh");
   const revision = "a".repeat(40);
   const previousRevision = "b".repeat(40);
+  const workerFingerprint = "c".repeat(64);
 
-  const runDeployment = (smokeExit) => {
+  const runDeployment = (smokeExit, { previousDatabaseCompatible = true } = {}) => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-production-deploy-"));
     const sourceRoot = path.join(tempRoot, "source");
     const productionRoot = path.join(tempRoot, "production");
@@ -246,6 +260,8 @@ test("production deployment rolls back a failed DAG smoke and accepts a successf
     const resources = path.join(tempRoot, "resources");
     const unitPath = path.join(fakeHome, ".config", "systemd", "user", "homerail-production.service");
     const previousRelease = path.join(productionRoot, "releases", "previous");
+    const databasePath = path.join(home, "manager", "homerail.db");
+    const dockerBuildArgsPath = path.join(tempRoot, "docker-build-args.txt");
     const write = (relative, content, mode) => {
       const target = path.join(sourceRoot, relative);
       fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -261,25 +277,53 @@ test("production deployment rolls back a failed DAG smoke and accepts a successf
 
     fs.mkdirSync(previousRelease, { recursive: true });
     fs.writeFileSync(path.join(previousRelease, "REVISION"), `${previousRevision}\n`);
+    fs.mkdirSync(path.join(previousRelease, "runtime"), { recursive: true });
+    fs.symlinkSync(process.execPath, path.join(previousRelease, "runtime", "node"));
+    fs.mkdirSync(path.join(previousRelease, "homerail_manager", "dist", "persistence"), { recursive: true });
+    fs.writeFileSync(path.join(previousRelease, "homerail_manager", "package.json"), '{"type":"module"}\n');
+    fs.writeFileSync(
+      path.join(previousRelease, "homerail_manager", "dist", "persistence", "db.js"),
+      previousDatabaseCompatible
+        ? "export function getDb() {};\nexport function closeDb() {};\n"
+        : 'export function getDb() { throw new Error("Database schema version is newer than supported version"); };\nexport function closeDb() {};\n',
+    );
     fs.symlinkSync("releases/previous", path.join(productionRoot, "current"));
     fs.mkdirSync(path.dirname(unitPath), { recursive: true });
     fs.writeFileSync(unitPath, "previous-unit\n");
     fs.mkdirSync(path.join(home, "manager", "secrets"), { recursive: true });
+    fs.writeFileSync(databasePath, "pre-deployment-database\n", { mode: 0o600 });
     fs.writeFileSync(path.join(home, "manager", "secrets", "dag-mutation.token"), "sandbox-token\n", { mode: 0o600 });
     fs.mkdirSync(resources, { recursive: true });
 
     write("homerail_manager/dist/index.js", "// manager\n");
+    write("homerail_manager/package.json", '{"type":"module"}\n');
+    write(
+      "homerail_manager/dist/server/dag-environment.js",
+      `export function dagWorkerSourceFingerprint() { return "${workerFingerprint}"; }\n`,
+    );
     write("homerail_node/dist/cli.js", "// node\n");
-    write("homerail_cli/dist/cli.js", "process.exit(Number(process.env.FAKE_SMOKE_EXIT || 0));\n");
+    write(
+      "homerail_cli/dist/cli.js",
+      'require("node:fs").appendFileSync(require("node:path").join(process.env.HOMERAIL_PRODUCTION_HOME, "manager", "homerail.db"), "rollout-write\\n");\n'
+        + "process.exit(Number(process.env.FAKE_SMOKE_EXIT || 0));\n",
+    );
+    write("homerail_protocol/package.json", '{"type":"module"}\n');
+    write("homerail_protocol/dist/index.js", 'export const PROTOCOL_VERSION = "0.1.0";\n');
+    write("homerail_worker/package.json", '{"version":"0.1.0"}\n');
     write("agent-ui/dist/index.html", "<!doctype html>\n");
     write("homerail_worker/Dockerfile", "FROM scratch\n");
     write("assets/orchestrations/public-two-node.yaml.template", "schema_version: 1\n");
     write("scripts/run-production-service.sh", "#!/usr/bin/env bash\nexit 0\n", 0o755);
     write("scripts/lib/production-runtime.sh", fs.readFileSync(path.join(repoRoot, "scripts", "lib", "production-runtime.sh"), "utf8"), 0o755);
 
-    fakeCommand("docker", `#!/usr/bin/env bash\nif [ "${'${1:-}'}" = network ] && [ "${'${2:-}'}" = inspect ] && [ "${'${3:-}'}" = bridge ]; then echo 172.17.0.1; fi\nexit 0\n`);
+    fakeCommand("docker", `#!/usr/bin/env bash\nif [ "${'${1:-}'}" = network ] && [ "${'${2:-}'}" = inspect ] && [ "${'${3:-}'}" = bridge ]; then echo 172.17.0.1; fi\nif [ "${'${1:-}'}" = build ]; then printf '%s\\n' "$@" > "$CAPTURE_DOCKER_BUILD_ARGS"; fi\nexit 0\n`);
     fakeCommand("codex", "#!/usr/bin/env bash\nexit 0\n");
+    fakeCommand("find", "#!/usr/bin/env bash\nexit 0\n");
+    fakeCommand("flock", "#!/usr/bin/env bash\nexit 0\n");
+    fakeCommand("install", `#!/usr/bin/env bash\nsource_path="${'${3:-}'}"; destination="${'${4:-}'}"; ln -s "$source_path" "$destination"\n`);
     fakeCommand("loginctl", "#!/usr/bin/env bash\nprintf 'yes\\n'\n");
+    fakeCommand("mv", `#!/usr/bin/env bash\nif [ "${'${1:-}'}" = -Tf ]; then source_path="$2"; destination="$3"; /bin/rm -f "$destination"; exec /bin/mv -f "$source_path" "$destination"; fi\nexec /bin/mv "$@"\n`);
+    fakeCommand("stat", `#!/usr/bin/env bash\ncase "${'${2:-}'}" in '%u') id -u ;; '%a') printf '755\\n' ;; *) exit 1 ;; esac\n`);
     fakeCommand("systemctl", "#!/usr/bin/env bash\nexit 0\n");
     fakeCommand("journalctl", "#!/usr/bin/env bash\nexit 0\n");
     fakeCommand("curl", `#!/usr/bin/env bash\nurl="${'${!#}'}"\ncase "$url" in */runtime/status) printf '{"connected_nodes":1}\\n' ;; esac\nexit 0\n`);
@@ -298,11 +342,13 @@ test("production deployment rolls back a failed DAG smoke and accepts a successf
         HOMERAIL_DEPLOY_REVISION: revision,
         HOMERAIL_PRODUCTION_PUBLIC_HOST: "production.test",
         HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS: "1",
+        HOMERAIL_PRODUCTION_HEALTH_ATTEMPTS: "1",
         HOMERAIL_CODEX_BIN: path.join(fakeBin, "codex"),
         FAKE_SMOKE_EXIT: String(smokeExit),
+        CAPTURE_DOCKER_BUILD_ARGS: dockerBuildArgsPath,
       },
     });
-    return { result, tempRoot, productionRoot, unitPath };
+    return { result, tempRoot, productionRoot, unitPath, databasePath, dockerBuildArgsPath };
   };
 
   const failed = runDeployment(7);
@@ -312,16 +358,38 @@ test("production deployment rolls back a failed DAG smoke and accepts a successf
     assert.match(failed.result.stderr, /rolling back/);
     assert.equal(fs.readlinkSync(path.join(failed.productionRoot, "current")), "releases/previous");
     assert.equal(fs.readFileSync(failed.unitPath, "utf8"), "previous-unit\n");
+    assert.equal(fs.readFileSync(failed.databasePath, "utf8"), "pre-deployment-database\n");
     assert.equal(fs.existsSync(path.join(failed.productionRoot, "last-successful-revision")), false);
   } finally {
     fs.rmSync(failed.tempRoot, { recursive: true, force: true });
+  }
+
+  const incompatible = runDeployment(7, { previousDatabaseCompatible: false });
+  try {
+    assert.notEqual(incompatible.result.status, 0);
+    assert.match(incompatible.result.stderr, /refusing an incompatible code rollback/);
+    assert.notEqual(fs.readlinkSync(path.join(incompatible.productionRoot, "current")), "releases/previous");
+    assert.equal(fs.readFileSync(incompatible.databasePath, "utf8"), "pre-deployment-database\n");
+    assert.equal(fs.existsSync(path.join(incompatible.productionRoot, "last-successful-revision")), false);
+  } finally {
+    fs.rmSync(incompatible.tempRoot, { recursive: true, force: true });
   }
 
   const passed = runDeployment(0);
   try {
     assert.equal(passed.result.status, 0, passed.result.stderr);
     assert.equal(fs.readFileSync(path.join(passed.productionRoot, "last-successful-revision"), "utf8"), `${revision}\n`);
+    assert.equal(fs.readFileSync(passed.databasePath, "utf8"), "pre-deployment-database\nrollout-write\n");
     assert.notEqual(fs.readlinkSync(path.join(passed.productionRoot, "current")), "releases/previous");
+    const dockerBuildArgs = fs.readFileSync(passed.dockerBuildArgsPath, "utf8");
+    assert.match(dockerBuildArgs, new RegExp(`org\\.homerail\\.worker\\.source_fingerprint=${workerFingerprint}`));
+    assert.match(dockerBuildArgs, /org\.homerail\.worker\.protocol_version=0\.1\.0/);
+    assert.match(dockerBuildArgs, /org\.opencontainers\.image\.version=0\.1\.0/);
+    assert.match(dockerBuildArgs, new RegExp(`org\\.opencontainers\\.image\\.revision=${revision}`));
+    assert.match(dockerBuildArgs, new RegExp(`HOMERAIL_WORKER_SOURCE_FINGERPRINT=${workerFingerprint}`));
+    assert.match(dockerBuildArgs, /HOMERAIL_WORKER_PROTOCOL_VERSION=0\.1\.0/);
+    assert.match(dockerBuildArgs, /HOMERAIL_WORKER_VERSION=0\.1\.0/);
+    assert.match(dockerBuildArgs, new RegExp(`HOMERAIL_WORKER_IMAGE_REVISION=${revision}`));
     const unit = fs.readFileSync(passed.unitPath, "utf8");
     assert.match(unit, /StartLimitIntervalSec=0/);
     assert.doesNotMatch(unit, /StartLimitBurst=/);
