@@ -36,6 +36,16 @@ function currentRepoRoot(): string {
   return path.resolve(import.meta.dirname, "../..");
 }
 
+function currentWorkerVersion(): string {
+  const packageJson = JSON.parse(
+    fs.readFileSync(
+      path.join(currentRepoRoot(), "homerail_worker", "package.json"),
+      "utf8",
+    ),
+  ) as { version: string };
+  return packageJson.version;
+}
+
 function dockerVersion() {
   return {
     stdout: JSON.stringify({
@@ -56,7 +66,7 @@ function dockerInfo() {
 function imageInspection(
   fingerprint: string,
   protocol = PROTOCOL_VERSION,
-  workerVersion = "0.1.0",
+  workerVersion = currentWorkerVersion(),
 ) {
   return {
     stdout: JSON.stringify([{
