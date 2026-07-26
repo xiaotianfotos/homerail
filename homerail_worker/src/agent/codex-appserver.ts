@@ -13,6 +13,7 @@ import * as path from "node:path";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { AgentClient, AgentEvent, AgentRunContext, DagToolDefinition } from "./types.js";
 import { sanitizedAgentChildEnv } from "./child-env.js";
+import { WORKER_RUNTIME_VERSION } from "../runtime-version.js";
 
 const CLIENT_NAME = "homerail_codex_appserver";
 const CLIENT_TITLE = "HomeRail Codex AppServer Adapter";
@@ -172,7 +173,7 @@ export class CodexAppServerAdapter implements AgentClient {
         clientInfo: {
           name: CLIENT_NAME,
           title: CLIENT_TITLE,
-          version: "0.1.0",
+          version: WORKER_RUNTIME_VERSION,
         },
         capabilities: {
           experimentalApi: true,

@@ -1,4 +1,5 @@
 import * as os from "node:os";
+import { MANAGER_RUNTIME_VERSION } from "../runtime-version.js";
 
 const startTime = Date.now();
 
@@ -31,7 +32,7 @@ export function healthHandler(port: number) {
 
 export function versionHandler() {
   return {
-    version: "0.1.0",
+    version: MANAGER_RUNTIME_VERSION,
     runtime: "typescript",
     commit: process.env.GIT_COMMIT || "unknown",
   };

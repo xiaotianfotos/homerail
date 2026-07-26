@@ -53,6 +53,7 @@ import {
   parseHomeRailPromptToolCalls,
   stripHomeRailPromptMarkers,
 } from "homerail-protocol";
+import { WORKER_RUNTIME_VERSION } from "../runtime-version.js";
 
 /** Redact known secret values from a string. */
 export function redactSecrets(str: string, secret: string): string {
@@ -1025,7 +1026,7 @@ export class KimiCodeAdapter implements AgentClient {
       skillsDir: mergedKimiSdkSkillsDir(skillDirectories, kimiHome),
       yoloMode: true,
       externalTools: this.toSdkExternalTools(tools, executedTools),
-      clientInfo: { name: "homerail-worker", version: "0.1.0" },
+      clientInfo: { name: "homerail-worker", version: WORKER_RUNTIME_VERSION },
     });
     const turn = session.prompt(this.buildAgentPrompt(prompt));
     let cancelled = false;
@@ -1530,7 +1531,7 @@ export class KimiCodeAdapter implements AgentClient {
         executablePath: this.sdkExecutable,
         environmentVariables: env as Record<string, string>,
         externalTools: [],
-        clientInfo: { name: "homerail-worker", version: "0.1.0" },
+        clientInfo: { name: "homerail-worker", version: WORKER_RUNTIME_VERSION },
       });
       const result = await Promise.race([
         start,
@@ -1930,7 +1931,7 @@ rl.on("line", async (line) => {
         result(id, {
           protocolVersion: request.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "homerail-tools", version: "0.1.0" }
+          serverInfo: { name: "homerail-tools", version: ${JSON.stringify(WORKER_RUNTIME_VERSION)} }
         });
         break;
       case "notifications/initialized":

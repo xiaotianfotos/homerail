@@ -27,6 +27,7 @@ import {
 } from "./json-schema-zod.js";
 import { sanitizedAgentChildEnv } from "./child-env.js";
 import { createWorkspaceReadToolHook } from "./workspace-read-policy.js";
+import { WORKER_RUNTIME_VERSION } from "../runtime-version.js";
 import { createBuiltinToolBudgetHook } from "./builtin-tool-budget.js";
 
 const HANDOFF_ONLY_THINKING_BUDGET = 2048;
@@ -596,7 +597,7 @@ export class ClaudeSdkAdapter implements AgentClient {
         );
         const mcpServer = sdk.createSdkMcpServer({
           name: DAG_TOOLS_MCP_SERVER_NAME,
-          version: "0.1.0",
+          version: WORKER_RUNTIME_VERSION,
           tools: sdkTools,
         });
         options.mcpServers = { [DAG_TOOLS_MCP_SERVER_NAME]: mcpServer };

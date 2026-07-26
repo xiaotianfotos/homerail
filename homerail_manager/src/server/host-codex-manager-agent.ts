@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { ensureDefaultWorkspacePath, getHomerailHome } from "../config/env.js";
 import { repoRoot, resolveAssetDirectory } from "../assets/root.js";
+import { MANAGER_RUNTIME_VERSION } from "../runtime-version.js";
 import { codexBinaryNotFoundMessage, resolveCodexBinary } from "./codex-binary.js";
 import {
   readWidgetFile,
@@ -2620,7 +2621,7 @@ class HostCodexAppServerAdapter {
         clientInfo: {
           name: CLIENT_NAME,
           title: CLIENT_TITLE,
-          version: "0.1.0",
+          version: MANAGER_RUNTIME_VERSION,
         },
         capabilities: {
           experimentalApi: true,

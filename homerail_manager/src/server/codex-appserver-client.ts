@@ -5,6 +5,7 @@ import {
   resolveCodexBinary,
 } from "./codex-binary.js";
 import { managerAgentChildEnv } from "./host-codex-manager-agent.js";
+import { MANAGER_RUNTIME_VERSION } from "../runtime-version.js";
 
 interface JsonRpcError {
   code: number;
@@ -102,7 +103,7 @@ export class CodexAppServerClient {
       clientInfo: {
         name: "homerail-manager",
         title: "HomeRail Manager",
-        version: "0.1.0",
+        version: MANAGER_RUNTIME_VERSION,
       },
       capabilities: {
         experimentalApi: true,

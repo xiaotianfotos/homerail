@@ -11,6 +11,7 @@ import {
   jsonSchemaObjectToZodRawShape,
   normalizeJsonObjectStringsBySchema,
 } from "../agent/json-schema-zod.js";
+import { WORKER_RUNTIME_VERSION } from "../runtime-version.js";
 
 type TestZodParser = { parse: (value: unknown) => unknown };
 
@@ -1243,7 +1244,9 @@ describe("ClaudeSdkAdapter", () => {
       events.push(e);
     }
 
-    expect(vi.mocked(sdkMod.createSdkMcpServer)).toHaveBeenCalled();
+    expect(vi.mocked(sdkMod.createSdkMcpServer)).toHaveBeenCalledWith(expect.objectContaining({
+      version: WORKER_RUNTIME_VERSION,
+    }));
     expect(vi.mocked(sdkMod.tool)).toHaveBeenCalled();
     expect(events.some((e) => e.type === "debug" && e.message === "mcp_server_registered")).toBe(true);
   });

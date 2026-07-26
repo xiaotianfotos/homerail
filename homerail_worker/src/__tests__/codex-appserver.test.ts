@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import type { AgentEvent, AgentRunContext, DagToolDefinition } from "../agent/types.js";
+import { WORKER_RUNTIME_VERSION } from "../runtime-version.js";
 
 // --- Helpers to mock child_process.spawn ---
 
@@ -788,6 +789,7 @@ describe("CodexAppServerAdapter", () => {
       clientInfo: {
         name: "homerail_codex_appserver",
         title: "HomeRail Codex AppServer Adapter",
+        version: WORKER_RUNTIME_VERSION,
       },
       capabilities: {
         experimentalApi: true,

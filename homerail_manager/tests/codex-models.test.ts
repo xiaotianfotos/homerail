@@ -5,6 +5,7 @@ import type { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { listCodexModels, type CodexModelCatalog } from "../src/server/codex-models.js";
+import { MANAGER_RUNTIME_VERSION } from "../src/runtime-version.js";
 import { managerAgentConfigRoutesHandler } from "../src/server/manager-agent-config.js";
 import { clearManagerAgentConfig } from "../src/persistence/manager-agent-config.js";
 
@@ -99,6 +100,13 @@ describe("Codex model catalog", () => {
     });
 
     expect(requests.map((request) => request.method)).toEqual(["initialize", "model/list", "model/list"]);
+    expect(requests[0]).toMatchObject({
+      params: {
+        clientInfo: {
+          version: MANAGER_RUNTIME_VERSION,
+        },
+      },
+    });
     expect(requests[1]).toMatchObject({
       params: { limit: 100, includeHidden: false },
     });

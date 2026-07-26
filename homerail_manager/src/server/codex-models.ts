@@ -10,6 +10,7 @@ import {
   resolveCodexBinary,
   type CodexBinaryResolution,
 } from "./codex-binary.js";
+import { MANAGER_RUNTIME_VERSION } from "../runtime-version.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -257,7 +258,7 @@ function queryCodexModels(
       clientInfo: {
         name: "homerail_codex_model_catalog",
         title: "HomeRail Codex Model Catalog",
-        version: "0.1.0",
+        version: MANAGER_RUNTIME_VERSION,
       },
       capabilities: {
         experimentalApi: true,
