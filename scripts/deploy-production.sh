@@ -141,6 +141,7 @@ WORKER_IMAGE_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 mkdir -p "$PRODUCTION_ROOT/releases" "$PRODUCTION_ROOT/locks" "$HOMERAIL_HOME" "$(dirname "$UNIT_PATH")"
 HOMERAIL_HOME="$(realpath "$HOMERAIL_HOME")"
+chmod 700 "$PRODUCTION_ROOT/locks"
 chmod 700 "$HOMERAIL_HOME"
 
 # An enabled user unit starts during boot only when the account lingers without
