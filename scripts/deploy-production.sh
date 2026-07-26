@@ -316,6 +316,7 @@ SERVICE_STOPPED_FOR_SNAPSHOT=0
 cleanup_deploy_temporaries() {
   local exit_status=$?
   rm -rf "$PROBE_HOME"
+  rm -f "$DATABASE_BACKUP" "$DATABASE_WAL_BACKUP"
   if [ "$SERVICE_STOPPED_FOR_SNAPSHOT" = "1" ]; then
     systemctl --user start "$SERVICE_NAME" >/dev/null 2>&1 || true
   fi

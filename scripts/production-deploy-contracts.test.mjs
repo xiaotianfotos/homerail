@@ -50,6 +50,10 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /DATABASE_WAL_BACKUP/);
   assert.match(deploy, /PREVIOUS_DATABASE_COMPATIBLE/);
   assert.match(deploy, /refusing an incompatible code rollback/);
+  assert.match(
+    deploy,
+    /cleanup_deploy_temporaries\(\)[\s\S]*rm -f "\$DATABASE_BACKUP" "\$DATABASE_WAL_BACKUP"/,
+  );
   assert.match(deploy, /loginctl show-user "\$DEPLOY_USER" --property=Linger --value/);
   assert.match(deploy, /sudo loginctl enable-linger \$DEPLOY_USER/);
   assert.match(deploy, /StartLimitIntervalSec=0/);
