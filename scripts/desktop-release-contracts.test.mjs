@@ -173,6 +173,10 @@ test("candidate build is manual, owner-only, main-only, and creates no public re
   );
   assert.match(candidateWorkflow, /desktop_sha must be a full lowercase 40-character commit SHA/);
   assert.match(candidateWorkflow, /validate-unified-version\.mjs/);
+  assert.match(
+    candidateWorkflow,
+    /--desktop-root desktop\n\s+--version "\$\{\{ needs\.prepare\.outputs\.version \}\}"/,
+  );
   assert.doesNotMatch(candidateWorkflow, /npm --prefix desktop version/);
   assert.doesNotMatch(candidateWorkflow, /gh release create|git tag|git\/refs/);
   assert.match(candidateWorkflow, /name: desktop-release-candidate/);

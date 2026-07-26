@@ -138,7 +138,7 @@ jobs:
           node homerail-source/scripts/desktop-release/validate-unified-version.mjs
           --public-root homerail-source
           --desktop-root desktop
-          --version "$RELEASE_VERSION"
+          --version "${{ needs.prepare.outputs.version }}"
 
       - name: Verify Desktop commit is merged to main
         shell: bash
