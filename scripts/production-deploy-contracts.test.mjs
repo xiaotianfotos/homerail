@@ -248,7 +248,7 @@ test("production deployment preserves database compatibility across success and 
   const deployScript = path.join(repoRoot, "scripts", "deploy-production.sh");
   const revision = "a".repeat(40);
   const previousRevision = "b".repeat(40);
-  const workerFingerprint = "c".repeat(64);
+  const workerFingerprint = "c".repeat(16);
 
   const runDeployment = (smokeExit, { previousDatabaseCompatible = true } = {}) => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-production-deploy-"));

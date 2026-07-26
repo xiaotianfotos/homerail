@@ -131,7 +131,7 @@ WORKER_METADATA="$(
 WORKER_SOURCE_FINGERPRINT="$(printf '%s\n' "$WORKER_METADATA" | sed -n '1p')"
 WORKER_PROTOCOL_VERSION="$(printf '%s\n' "$WORKER_METADATA" | sed -n '2p')"
 WORKER_VERSION="$(printf '%s\n' "$WORKER_METADATA" | sed -n '3p')"
-if [[ ! "$WORKER_SOURCE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] \
+if [[ ! "$WORKER_SOURCE_FINGERPRINT" =~ ^[0-9a-f]{16}$ ]] \
   || [[ ! "$WORKER_PROTOCOL_VERSION" =~ ^[0-9A-Za-z._+-]+$ ]] \
   || [[ ! "$WORKER_VERSION" =~ ^[0-9A-Za-z._+-]+$ ]]; then
   echo "Production Worker image metadata is invalid." >&2
