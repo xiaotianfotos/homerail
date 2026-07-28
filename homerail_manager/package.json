@@ -1,6 +1,6 @@
 {
   "name": "homerail-manager",
-  "version": "0.1.0-alpha.2.3",
+  "version": "0.1.0-alpha.2.4",
   "private": true,
   "description": "HomeRail TypeScript Manager service and DAG coordinator.",
   "license": "MIT",

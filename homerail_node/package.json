@@ -1,6 +1,6 @@
 {
   "name": "homerail-node",
-  "version": "0.1.0-alpha.2.3",
+  "version": "0.1.0-alpha.2.4",
   "private": true,
   "description": "HomeRail TypeScript Node service for Docker-backed Worker provisioning.",
   "license": "MIT",

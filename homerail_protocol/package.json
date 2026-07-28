@@ -1,6 +1,6 @@
 {
   "name": "homerail-protocol",
-  "version": "0.1.0-alpha.2.3",
+  "version": "0.1.0-alpha.2.4",
   "description": "HomeRail protocol contract package \u2014 single source of truth for runtime communication between homerail_worker, homerail_node, and homerail_manager",
   "license": "MIT",
   "type": "module",
