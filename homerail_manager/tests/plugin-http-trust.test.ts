@@ -7,6 +7,7 @@ import { closeDb } from "../src/persistence/db.js";
 import { createServer } from "../src/server/http.js";
 import { _requestManagerForTest } from "../src/server/host-codex-manager-agent.js";
 import {
+  HOMERAIL_ANDROID_APPASSETS_ORIGIN,
   HOMERAIL_MANAGER_ADMIN_ORIGINS,
   HOMERAIL_MANAGER_ADMIN_TOKEN,
   HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
@@ -294,6 +295,59 @@ describe("Manager HTTP mutation trust gate", () => {
     });
     expect(untrusted.status).toBe(403);
     expect(untrusted.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("trusts the Android appassets Origin as a built-in Manager UI without a wildcard", async () => {
+    await start();
+    const ticketPath = "/api/voice-agent/sessions/android-device/live-ticket";
+
+    const preflight = await fetch(`${baseUrl}${ticketPath}`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin"))
+      .toBe(HOMERAIL_ANDROID_APPASSETS_ORIGIN);
+    expect(preflight.headers.get("access-control-allow-origin")).not.toBe("*");
+    expect(preflight.headers.get("vary")).toContain("Origin");
+
+    const ticket = await fetch(`${baseUrl}${ticketPath}`, {
+      method: "POST",
+      headers: {
+        Origin: HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    expect(ticket.status).toBe(200);
+    expect(ticket.headers.get("access-control-allow-origin"))
+      .toBe(HOMERAIL_ANDROID_APPASSETS_ORIGIN);
+
+    const unrelatedMutation = await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+        "Access-Control-Request-Method": "POST",
+      },
+    });
+    expect(unrelatedMutation.status).toBe(204);
+    expect(unrelatedMutation.headers.get("access-control-allow-origin"))
+      .toBe(HOMERAIL_ANDROID_APPASSETS_ORIGIN);
+    expect(unrelatedMutation.headers.get("access-control-allow-origin")).not.toBe("*");
+
+    const unrelatedOrigin = await fetch(`${baseUrl}${ticketPath}`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://evil.example",
+        "Access-Control-Request-Method": "POST",
+      },
+    });
+    expect(unrelatedOrigin.status).toBe(403);
+    expect(unrelatedOrigin.headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("keeps read APIs public and rejects wildcard or non-origin allowlist entries", async () => {

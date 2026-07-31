@@ -5,6 +5,7 @@ import { HOMERAIL_MANAGER_TURN_HEADER } from "homerail-protocol";
 export const HOMERAIL_MANAGER_ADMIN_TOKEN = "HOMERAIL_MANAGER_ADMIN_TOKEN";
 export const HOMERAIL_MANAGER_ADMIN_ORIGINS = "HOMERAIL_MANAGER_ADMIN_ORIGINS";
 export const HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH = "HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH";
+export const HOMERAIL_ANDROID_APPASSETS_ORIGIN = "https://appassets.androidplatform.net";
 export const MIN_ADMIN_TOKEN_BYTES = 32;
 /**
  * Manager admin-token authentication is intentionally disabled for this
@@ -219,7 +220,10 @@ function validateAdminToken(raw: string | undefined): string | undefined {
 
 function parseAllowedOrigins(raw: string | undefined): string[] {
   const values = (raw ?? "").split(",").map((value) => value.trim()).filter(Boolean);
-  const origins = new Set<string>();
+  // WebViewAssetLoader uses this stable Origin on every Android device. Treat
+  // the bundled Android UI like the bundled loopback UI; configured origins
+  // remain additive and arbitrary web origins still fail closed.
+  const origins = new Set<string>([HOMERAIL_ANDROID_APPASSETS_ORIGIN]);
   for (const value of values) {
     if (value === "*" || value === "null") {
       throw new Error(

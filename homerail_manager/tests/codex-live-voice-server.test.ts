@@ -6,7 +6,10 @@ import {
   codexLiveVoiceTicketRoutesHandler,
   setupCodexLiveVoiceWebSocket,
 } from "../src/server/codex-live-voice-server.js";
-import { createPluginHttpTrustPolicy } from "../src/server/plugin-http-trust.js";
+import {
+  HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+  createPluginHttpTrustPolicy,
+} from "../src/server/plugin-http-trust.js";
 
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -40,10 +43,14 @@ async function issueTicket(port: number, sessionId: string): Promise<Response> {
   );
 }
 
-async function openTrustedSocket(port: number, sessionId: string): Promise<WebSocket> {
+async function openTrustedSocket(
+  port: number,
+  sessionId: string,
+  origin = "http://allowed.test",
+): Promise<WebSocket> {
   const socket = new WebSocket(
     `ws://127.0.0.1:${port}/api/voice-agent/sessions/${sessionId}/live`,
-    { origin: "http://allowed.test" },
+    { origin },
   );
   await new Promise<void>((resolve, reject) => {
     socket.once("open", resolve);
@@ -99,6 +106,24 @@ describe("Codex Live Voice ticket and Origin boundary", () => {
     const closed = new Promise<number>(resolve => reused.once("close", code => resolve(code)));
     reused.send(JSON.stringify({ type: "authenticate", ticket: body.data.ticket }));
     await expect(closed).resolves.toBe(4401);
+  });
+
+  it("accepts the Android appassets Origin for the authenticated Live Voice socket", async () => {
+    server = ticketServer();
+    const port = await listen(server);
+    const response = await issueTicket(port, "android-live-voice");
+    const body = await response.json() as { data: { ticket: string } };
+
+    const socket = await openTrustedSocket(
+      port,
+      "android-live-voice",
+      HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+    );
+    sockets.push(socket);
+    const readyPromise = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "authenticate", ticket: body.data.ticket }));
+
+    await expect(readyPromise).resolves.toMatchObject({ type: "ready" });
   });
 
   it("rejects a ticket issued for a different session", async () => {
