@@ -49,6 +49,13 @@ export function validatePrReviewArtifacts(command, publication, markdown) {
   if (report.status === "findings") {
     invariant(Number.isInteger(report.actionable_count) && report.actionable_count > 0, "a findings report has no actionable findings");
   }
+  invariant(report.execution_health === "healthy", "report execution_health is not healthy");
+  const expectedDomainOutcome = report.status === "pass"
+    ? "approved"
+    : report.status === "findings"
+      ? "changes_requested"
+      : "inconclusive";
+  invariant(report.domain_outcome === expectedDomainOutcome, "report domain_outcome does not match report status");
   invariant(Array.isArray(report.findings), "report findings are missing");
   invariant(report.actionable_count === report.findings.length, "actionable_count does not match report findings");
   invariant(
@@ -106,6 +113,14 @@ export function validatePrReviewArtifacts(command, publication, markdown) {
   invariant(markdown.includes(report.repo), "Markdown does not contain the reviewed repository");
   invariant(markdown.includes(report.base) && markdown.includes(report.head), "Markdown does not contain the reviewed base and head");
   invariant(markdown.toLowerCase().includes(String(report.status).toLowerCase()), "Markdown does not contain the report status");
+  invariant(
+    markdown.includes(`Execution health: **${report.execution_health}**`),
+    "Markdown does not separate execution health from the review outcome",
+  );
+  invariant(
+    markdown.includes(`Outcome: **${report.domain_outcome}**`),
+    "Markdown does not contain the explicit domain outcome",
+  );
   invariant(/quorum/i.test(markdown), "Markdown does not contain the quorum result");
 }
 
