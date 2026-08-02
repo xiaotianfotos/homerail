@@ -2031,6 +2031,7 @@ function _correctionPrompt(
   outputContracts: Record<string, { contract: string; schema: unknown }>,
   brokerRequirements: BrokerActionRequirement[],
   reviewerStateProvided: boolean,
+  persistedDiagnostics: readonly string[] = [],
 ): string {
   const declaredPorts = outputPorts.length > 0 ? outputPorts.join(", ") : "done";
   const contractGuidance = Object.keys(outputContracts).length > 0
@@ -2046,9 +2047,16 @@ function _correctionPrompt(
         "If the corrected output triggers one of those requirements and no valid receipt exists, call that declared broker action before the handoff. Otherwise call handoff directly.",
       ]
     : ["Correction mode permits only the handoff tool. Do not repeat investigation, file changes, or other side effects."];
+  const persistedDiagnosticGuidance = persistedDiagnostics.length > 0
+    ? [
+        "Persisted bounded attempt diagnostics: "
+          + persistedDiagnostics.join(" | ").slice(0, 8192),
+      ]
+    : [];
   return [
     `Correction attempt ${attempt}/${maxAttempts} for DAG node ${nodeId}.`,
     `Previous attempt ended without a valid DAG handoff: ${reason}`,
+    ...persistedDiagnosticGuidance,
     `Declared output ports for this node: ${declaredPorts}.`,
     `Preferred success ports: ${successPorts.length > 0 ? successPorts.join(", ") : "none declared"}.`,
     `Failure ports: ${failurePorts.length > 0 ? failurePorts.join(", ") : "none declared"}.`,
@@ -2103,8 +2111,15 @@ export function requestNodeCorrection(
   const mailbox = run.dagRun.mailboxes.get(nodeId);
   if (mailbox) {
     const node = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === nodeId);
-    const reviewerStateProvided = Boolean(node && _correctionInputPorts(node).includes("reviewer_state")
-      && reviewEvidenceCorrectionState(runId, nodeId));
+    const acceptedState = node && _correctionInputPorts(node).includes("reviewer_state")
+      ? reviewEvidenceCorrectionState(runId, nodeId)
+      : undefined;
+    const reviewerStateProvided = Boolean(acceptedState);
+    const persistedDiagnostics = Array.from(new Set(
+      (acceptedState?.attempts ?? [])
+        .map((attempt) => String(attempt.redacted_reason ?? "").trim())
+        .filter((text) => text.length > 0),
+    ));
     const values = mailbox.get("correction") ?? [];
     values.push(_correctionPrompt(
       nodeId,
@@ -2117,10 +2132,10 @@ export function requestNodeCorrection(
       outputContracts,
       _outputBrokerActionRequirements(run, nodeId),
       reviewerStateProvided,
+      persistedDiagnostics,
     ));
     mailbox.set("correction", values);
     if (node && _correctionInputPorts(node).includes("reviewer_state")) {
-      const acceptedState = reviewEvidenceCorrectionState(runId, nodeId);
       if (acceptedState) {
         const stateValues = mailbox.get("reviewer_state") ?? [];
         stateValues.push(acceptedState);

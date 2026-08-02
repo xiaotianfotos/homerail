@@ -72,7 +72,7 @@ function attemptDiagnostic(overrides: Record<string, unknown> = {}) {
 function modelReview(
   reviewer: ModelId,
   vote: Vote = "approve",
-  options: { failed?: boolean; intentionalAbstention?: boolean; findings?: unknown[] } = {},
+  options: { failed?: boolean; intentionalAbstention?: boolean; findings?: unknown[]; coverage?: unknown } = {},
 ): Record<string, unknown> {
   const failed = options.failed ?? vote === "abstain";
   return {
@@ -80,7 +80,7 @@ function modelReview(
     status: failed ? "failed" : "complete",
     vote: failed ? "abstain" : vote,
     summary: failed ? `${reviewer} could not complete the review` : `${reviewer} review complete`,
-    coverage: coverageFor(),
+    coverage: options.coverage ?? coverageFor(),
     evidence_truncated: failed ? options.intentionalAbstention !== true : false,
     findings: options.findings ?? (!failed && vote === "request_changes" ? [finding] : []),
   };
@@ -450,6 +450,7 @@ describe("PR Review scenario assets", () => {
 
     const accepted = execute(modelReview("qwen", "request_changes", {
       findings: [finding],
+      coverage,
     }), {
       findings: [finding],
       attempts: [attemptDiagnostic()],
