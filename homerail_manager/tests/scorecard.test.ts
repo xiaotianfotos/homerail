@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ScorecardPolicyConfig } from "../src/orchestration/graph.js";
-import type { PersistedRunSnapshot } from "../src/persistence/types.js";
+import type { PersistedRunMetadata, PersistedRunSnapshot } from "../src/persistence/types.js";
 import { buildEvalReport } from "../src/server/eval.js";
 import { computeScorecard } from "../src/server/scorecard.js";
 
@@ -100,6 +100,105 @@ function snapshotWithHandoff(
     },
   };
 }
+
+function snapshotWithRunStatus(
+  status: string,
+  nodeStates: Record<string, string>,
+): PersistedRunSnapshot {
+  return {
+    metadata: {
+      runId: `run-${status}`,
+      workflowId: "status-run",
+      workflowName: "status-run",
+      nodeCount: Object.keys(nodeStates).length,
+      createdAt: Date.now(),
+      completedAt: ["completed", "failed", "cancelled"].includes(status)
+        ? Date.now()
+        : undefined,
+      status: status as PersistedRunMetadata["status"],
+      nodeStates,
+      handoffedNodes: [],
+    },
+    events: [],
+    handoffs: [],
+    chats: {},
+  };
+}
+
+describe("scorecard DAG run terminal status", () => {
+  it.each(["completed", "failed", "cancelled"])(
+    "treats %s as terminal",
+    (status) => {
+      const scorecard = computeScorecard(snapshotWithRunStatus(status, { work: "COMPLETED" }));
+      const terminalCheck = scorecard.checks.find((check) => check.name === "run_terminal");
+
+      expect(terminalCheck?.passed).toBe(true);
+      expect(terminalCheck?.detail).toBe(`run status: ${status}`);
+      expect(terminalCheck?.detail).not.toContain("run still active");
+    },
+  );
+
+  it.each(["active", "waiting"])(
+    "keeps %s non-terminal",
+    (status) => {
+      const scorecard = computeScorecard(snapshotWithRunStatus(status, { work: "READY" }));
+      const terminalCheck = scorecard.checks.find((check) => check.name === "run_terminal");
+
+      expect(terminalCheck?.passed).toBe(false);
+      expect(terminalCheck?.detail).toBe(`run still active: ${status}`);
+    },
+  );
+
+  it("does not treat a failed run as healthy", () => {
+    const scorecard = computeScorecard(snapshotWithRunStatus("failed", { work: "FAILED" }));
+    const terminalCheck = scorecard.checks.find((check) => check.name === "run_terminal");
+    const failedNodesCheck = scorecard.checks.find((check) => check.name === "no_failed_nodes");
+
+    expect(terminalCheck?.passed).toBe(true);
+    expect(failedNodesCheck?.passed).toBe(false);
+    expect(scorecard.passed).toBe(false);
+    expect(scorecard.verdict).toBe("fail");
+  });
+
+  it("allows a cancelled run with no failed nodes to score as healthy execution", () => {
+    const snapshot = snapshotWithRunStatus("cancelled", { work: "COMPLETED" });
+    snapshot.handoffs = [
+      {
+        runId: "run-cancelled",
+        fromNode: "work",
+        port: "done",
+        content: "work complete",
+        timestamp: Date.now(),
+      },
+    ];
+    snapshot.chats = {
+      work: [
+        {
+          role: "worker",
+          type: "response",
+          content: { type: "tool_use", name: "Bash", input: { command: "true" } },
+          timestamp: Date.now(),
+        },
+      ],
+    };
+    snapshot.events = [
+      {
+        type: "dag:run_cancelled",
+        payload: { runId: "run-cancelled" },
+        timestamp: Date.now(),
+      },
+    ];
+
+    const scorecard = computeScorecard(snapshot);
+    const terminalCheck = scorecard.checks.find((check) => check.name === "run_terminal");
+    const failedNodesCheck = scorecard.checks.find((check) => check.name === "no_failed_nodes");
+
+    expect(terminalCheck?.passed).toBe(true);
+    expect(failedNodesCheck?.passed).toBe(true);
+    expect(scorecard.passed).toBe(true);
+    expect(scorecard.verdict).toBe("pass");
+  });
+});
 
 describe("scorecard handoff blocker detection", () => {
   it("does not apply DAG-specific blocker terms without a scorecard policy", () => {
