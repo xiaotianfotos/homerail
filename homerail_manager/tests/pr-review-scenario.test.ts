@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { changedFilesCoverage } from "homerail-protocol";
+import { changedFilesCoverage, classifyReviewAttemptCategory } from "homerail-protocol";
 
 import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
@@ -756,6 +756,62 @@ describe("PR Review scenario assets", () => {
         termination_reason: "max_tokens",
         output_tokens: 411,
       });
+  });
+
+  it("classifies every bounded attempt failure category deterministically", () => {
+    expect(classifyReviewAttemptCategory({ terminationReason: "max_tokens" }))
+      .toBe("provider_output_truncated");
+    expect(classifyReviewAttemptCategory({ toolArgumentParse: "invalid" }))
+      .toBe("handoff_arguments_invalid");
+    expect(classifyReviewAttemptCategory({
+      redactedReason: "DAG_HANDOFF_CONTRACT_VIOLATION qwen_review.voted (ReviewerHandoff)",
+    })).toBe("contract_validation_failed");
+    expect(classifyReviewAttemptCategory({ redactedReason: "COVERAGE_ATTESTATION mismatch" }))
+      .toBe("contract_validation_failed");
+    expect(classifyReviewAttemptCategory({
+      transport: true,
+      redactedReason: "DAG_TRANSPORT_LEASE_STALE run/node",
+    })).toBe("transport_failed");
+    expect(classifyReviewAttemptCategory({ redactedReason: "DAG_TRANSPORT_GENERATION_CONFLICT" }))
+      .toBe("transport_failed");
+    expect(classifyReviewAttemptCategory({ status: "failed", vote: "abstain" }))
+      .toBe("reviewer_abstained");
+    expect(classifyReviewAttemptCategory({ status: "complete", contractStage: "accepted" }))
+      .toBe("accepted");
+    expect(classifyReviewAttemptCategory({})).toBe("unknown");
+  });
+
+  it("persists invalid handoff tool arguments as a distinct attempt category", () => {
+    const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
+    for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    installPrepareCommandStub(parsed);
+    const dispatcher = new FakeDAGDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    const runId = "pr-review-invalid-arguments";
+    executor.createRun(runId, parsed, JSON.stringify(reviewInput()));
+    executor.tick(runId);
+
+    expect(recordReviewerAttemptEvidence(
+      {
+        ...reviewerTerminalPayload(runId, "qwen_review", modelReview("qwen")),
+        termination_metadata: {
+          stop_reason: "end_turn",
+          output_tokens: 9,
+          output_token_limit: null,
+          tool_argument_parse: "invalid",
+        },
+      },
+      {
+        contractStage: "not_reached",
+        redactedReason: "handoff top-level keys are outside the allowed shape",
+      },
+    )).toBe(true);
+    expect(loadReviewAttemptEvidence(runId, "qwen_review").attempts.at(-1)).toMatchObject({
+      category: "handoff_arguments_invalid",
+      tool_argument_parse: "invalid",
+      contract_stage: "not_reached",
+      output_tokens: 9,
+    });
   });
 
   it("rejects hostile clone URLs before invoking git", () => {
