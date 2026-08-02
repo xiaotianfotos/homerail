@@ -36,6 +36,8 @@ export function renderPrReviewMarkdown(command, publication) {
     `- Base: \`${text(report.base)}\``,
     `- Head: \`${text(report.head)}\``,
     `- Status: **${text(report.status)}**`,
+    `- Execution health: **${text(report.execution_health)}**`,
+    `- Outcome: **${text(report.domain_outcome)}**`,
     `- Confidence: ${text(report.confidence)}`,
     `- Actionable findings: ${report.actionable_count}`,
     `- Quorum: ${quorum.successes}/${quorum.total} approvals (threshold ${quorum.threshold}) — ${quorum.passed ? "passed" : "blocked"}`,
