@@ -1,16 +1,14 @@
 import type { PersistedEvent, PersistedRunMetadata } from "../persistence/types.js";
+import { isTerminalDagRunStatus } from "./run-status.js";
 
-const TERMINAL_DAG_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "expired"]);
+export { isTerminalDagRunStatus };
+
 const TERMINAL_DAG_RUN_EVENTS = new Set([
   "dag:run_completed",
   "dag:run_failed",
   "dag:run_cancelled",
   "dag:run_expired",
 ]);
-
-export function isTerminalDagRunStatus(status: string): boolean {
-  return TERMINAL_DAG_RUN_STATUSES.has(status);
-}
 
 export function isTerminalDagRunEvent(eventType: string): boolean {
   return TERMINAL_DAG_RUN_EVENTS.has(eventType);
