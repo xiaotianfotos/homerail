@@ -27,7 +27,7 @@ import { finalizeRunArtifacts } from "../src/runtime/run-artifact-service.js";
 import { _invokeHostCodexVoiceToolForTest } from "../src/server/host-codex-manager-agent.js";
 import { ensureManagerSkillsInstalled, readManagerSkill } from "../src/server/manager-skills.js";
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")";
 const workflowPath = path.join(repositoryRoot, "assets", "orchestrations", "pr-review.yaml.template");
 
 type ModelId = "qwen" | "kimi" | "glm";
@@ -110,7 +110,7 @@ function installPrepareCommandStub(
     "-e",
     "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const i=JSON.parse(s),r=Array.isArray(i.request)?i.request.at(-1):undefined,p=r?.payload;if(!p)throw new Error('missing request');process.stdout.write(JSON.stringify({repo:p.repo,pr:p.pr,base:p.base,head:p.head,repository_path:'/workspace/repository',changed_files:['src/run.ts'],diff_stat:'1 file changed',diff_patch:'diff --git a/src/run.ts b/src/run.ts',diff_chunks:[{index:1,path:'review-evidence/diff-0001.patch',bytes:39,files:['src/run.ts']}],diff_bytes:39,diff_truncated:" +
       JSON.stringify(options.diffTruncated ?? false) +
-      ",commit_metadata:[],commit_metadata_truncated:false}))})",
+      ",commit_metadata:[],commit_metadata_truncated:false})})",
   ];
 }
 
@@ -627,7 +627,7 @@ describe("PR Review scenario assets", () => {
     const previousGithubApi = process.env.HOMERAIL_GITHUB_API_BASE_URL;
     process.env.HOMERAIL_GITHUB_API_BASE_URL = baseUrl;
     try {
-      const invokked = await _invokeHostCodexVoiceToolForTest(
+      const invoked = await _invokeHostCodexVoiceToolForTest(
         "run_pr_review",
         { repo: "xiaotianfotos/homerail", pr: 25 },
         { managerRestUrl: `${baseUrl}/api` },
@@ -695,7 +695,7 @@ describe("PR Review scenario assets", () => {
       quorum: Record<string, unknown>,
       markdown = [
         "# Review",
-        `**HomeRail Run ID:** `${runId}\``,
+        `**HomeRail Run ID:** \`${runId}\``,
         `Repo: ${report.repo}`,
         `Base: ${report.base}`,
         `Head: ${report.head}`,

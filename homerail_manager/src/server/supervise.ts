@@ -7,7 +7,10 @@ const TERMINAL_DAG_RUN_EVENTS = new Set([
   "dag:run_completed",
   "dag:run_failed",
   "dag:run_cancelled",
-  "dag:run_expired",
+  // Deliberately excludes "dag:run_expired": an expired waiting run is
+  // persisted with status "failed" and emits "dag:run_failed" immediately
+  // after, so the event set stays aligned with TERMINAL_DAG_RUN_STATUSES,
+  // which only contains statuses that can actually be persisted.
 ]);
 
 export function isTerminalDagRunEvent(eventType: string): boolean {

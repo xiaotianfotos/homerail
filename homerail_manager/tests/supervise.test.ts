@@ -35,9 +35,12 @@ describe("DAG supervise terminal boundaries", () => {
     "dag:run_completed",
     "dag:run_failed",
     "dag:run_cancelled",
-    "dag:run_expired",
   ])("closes SSE on %s", (eventType) => {
     expect(isTerminalDagRunEvent(eventType)).toBe(true);
+  });
+
+  it("does not close SSE on dag:run_expired because the run is persisted as failed", () => {
+    expect(isTerminalDagRunEvent("dag:run_expired")).toBe(false);
   });
 
   it("does not close SSE when a run starts waiting", () => {
