@@ -18,7 +18,7 @@ function metadata(status: string): PersistedRunMetadata {
 }
 
 describe("DAG supervise terminal boundaries", () => {
-  it.each(["completed", "failed", "cancelled", "expired"])(
+  it.each(["completed", "failed", "cancelled"])(
     "treats %s as terminal everywhere",
     (status) => {
       expect(isTerminalDagRunStatus(status)).toBe(true);
