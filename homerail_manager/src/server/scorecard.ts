@@ -579,8 +579,9 @@ interface QualityGateParseResult {
 const QG_PASS_PATTERN = /pass|success|ok|exit\s*0|exit\s*code\s*0/i;
 const QG_NA_PATTERN = /n\/a(?:\s*\([^)]+\)|\s*[-:]\s*\S.+)?/i;
 const QG_FAIL_PATTERN = /fail|error|nonzero|exit\s*[1-9]/i;
+
 function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^\{}()|[\]\\]]/g, "\\$&");
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function labelRegex(value: string): string {
