@@ -40,6 +40,42 @@
         "paper": {
           "label": "柔霧淺色",
           "description": "以低亮度青灰和柔和表面構成的耐看工作區。"
+        },
+        "skin-01": {
+          "label": "櫻粉花園",
+          "description": "柔粉玫瑰與低對比表面的輕盈主題。"
+        },
+        "skin-02": {
+          "label": "財神金",
+          "description": "暖金、朱紅與玉綠構成的喜慶主題。"
+        },
+        "skin-03": {
+          "label": "紅白未來",
+          "description": "高亮紅白與未來感介面的明快主題。"
+        },
+        "skin-04": {
+          "label": "千紙鶴",
+          "description": "米白、橄欖綠與紙張質感的清新主題。"
+        },
+        "skin-05": {
+          "label": "靈感彩虹",
+          "description": "青綠、珊瑚與黃色信號組成的活力主題。"
+        },
+        "skin-06": {
+          "label": "紫夜星光",
+          "description": "紫色、藍色與柔光層疊的夢幻主題。"
+        },
+        "skin-07": {
+          "label": "未來音符",
+          "description": "青藍、粉紫和霓虹光感的音樂主題。"
+        },
+        "skin-08": {
+          "label": "黑金舞台",
+          "description": "深黑背景與金色高光構成的沉浸主題。"
+        },
+        "skin-09": {
+          "label": "星航員",
+          "description": "深空藍、星光與冷色高光構成的探索主題。"
         }
       }
     },

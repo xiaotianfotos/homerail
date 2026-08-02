@@ -159,6 +159,22 @@
   --hr-shadow-accent: 0 8px 22px rgba(37, 50, 58, 0.08);
 }
 
+/* Gallery-derived skins share a live Homerail shell while each appearance
+   supplies its own palette through the semantic token contract. The original
+   reference files are composite screenshots, so the UI stays native here. */
+:root[data-hr-appearance^='skin-'] body {
+  background:
+    radial-gradient(circle at 84% 4%, var(--hr-ambient-accent), transparent 28%),
+    radial-gradient(circle at 18% 10%, var(--hr-ambient-info), transparent 30%),
+    var(--hr-bg);
+}
+
+:root[data-hr-appearance^='skin-'] #app {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+}
+
 ::selection {
   background: var(--hr-selection);
   color: var(--hr-text-1);

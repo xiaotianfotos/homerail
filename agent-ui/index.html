@@ -24,13 +24,13 @@
           const legacyTheme = storage.getItem('omni_theme')
           const systemLight = legacyTheme === 'system'
             && window.matchMedia?.('(prefers-color-scheme: light)').matches
-          const stored = current
+          const stored = current === 'dream' ? 'skin-09' : current
             || (legacySkin === 'paper' || legacySkin === 'cockpit' ? legacySkin : '')
             || (legacyTheme === 'light' || systemLight ? 'paper' : 'cockpit')
           const storedScheme = storage.getItem('homerail.appearance-color-scheme')
-          const scheme = stored === 'paper'
+          const scheme = stored === 'paper' || (stored.startsWith('skin-') && stored !== 'skin-08' && stored !== 'skin-09')
             ? 'light'
-            : stored === 'cockpit'
+            : stored === 'cockpit' || stored === 'skin-08' || stored === 'skin-09'
               ? 'dark'
               : storedScheme === 'light' ? 'light' : 'dark'
           document.documentElement.dataset.hrAppearance = stored
@@ -38,7 +38,7 @@
           document.documentElement.style.colorScheme = scheme
           document.querySelector('meta[name="theme-color"]')?.setAttribute(
             'content',
-            scheme === 'light' ? '#f5f6f8' : '#06080d',
+            stored === 'skin-08' ? '#141313' : stored === 'skin-09' ? '#061124' : scheme === 'light' ? '#f5f6f8' : '#06080d',
           )
         } catch {
           document.documentElement.classList.add('dark')
