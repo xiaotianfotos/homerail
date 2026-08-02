@@ -62,14 +62,16 @@ function modelReview(
   };
 }
 
-function passingReviewReport(): Record<string, unknown> {
+function passingReviewReport(status: "pass" | "findings" | "inconclusive" = "pass"): Record<string, unknown> {
   return {
     repo: "xiaotianfotos/homerail",
     pr: 25,
     base: "a".repeat(40),
     head: "b".repeat(40),
-    status: "pass",
-    confidence: "medium",
+    status,
+    execution_health: "healthy",
+    domain_outcome: status === "pass" ? "approved" : status === "findings" ? "changes_requested" : "inconclusive",
+    confidence: status === "inconclusive" ? "low" : "medium",
     summary: "Three-model review: 2 approve, 1 request changes, 0 abstain.",
     actionable_count: 0,
     findings: [],
@@ -328,6 +330,93 @@ describe("PR Review scenario assets", () => {
     });
   });
 
+  const completeAliasFixtures: Array<{ reviewer: ModelId; alias: string; vote: Vote }> = [
+    { reviewer: "qwen", alias: "claude", vote: "approve" },
+    { reviewer: "kimi", alias: "kimi-k2", vote: "request_changes" },
+    { reviewer: "glm", alias: "glm-5.2", vote: "request_changes" },
+  ];
+
+  it.each(completeAliasFixtures)(
+    "canonicalizes a complete $alias payload to the configured $reviewer identity",
+    ({ reviewer, alias, vote }) => {
+      const { code, args } = commandCode(`normalize_${reviewer}_review`);
+      const aliasPayload = {
+        ...modelReview(reviewer, vote),
+        reviewer: alias,
+      };
+      const result = spawnSync(process.execPath, ["-e", code, ...args], {
+        encoding: "utf8",
+        input: JSON.stringify({
+          context: [{ changed_files: ["src/run.ts"] }],
+          success: [aliasPayload],
+        }),
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ ...aliasPayload, reviewer });
+    },
+  );
+
+  const incompleteAliasFixtures: Array<{
+    reviewer: ModelId;
+    alias: string;
+    payload: Record<string, unknown>;
+  }> = [
+    {
+      reviewer: "qwen",
+      alias: "qwen-2.5",
+      payload: {
+        ...modelReview("qwen"),
+        reviewer: "qwen-2.5",
+        reviewed_files: ["src/run.ts"],
+        unreviewed_files: ["src/other.ts"],
+      },
+    },
+    {
+      reviewer: "kimi",
+      alias: "moonshot-kimi-k2",
+      payload: {
+        ...modelReview("kimi"),
+        reviewer: "moonshot-kimi-k2",
+        evidence_truncated: true,
+        unreviewed_files: ["src/other.ts"],
+      },
+    },
+    {
+      reviewer: "glm",
+      alias: "zhipu-glm-4.6",
+      payload: {
+        ...modelReview("glm"),
+        reviewer: "zhipu-glm-4.6",
+        vote: "approve",
+        findings: [finding],
+      },
+    },
+  ];
+
+  it.each(incompleteAliasFixtures)(
+    "abstains when an incomplete $alias payload fails strict checks for $reviewer",
+    ({ reviewer, payload }) => {
+      const { code, args } = commandCode(`normalize_${reviewer}_review`);
+      const result = spawnSync(process.execPath, ["-e", code, ...args], {
+        encoding: "utf8",
+        input: JSON.stringify({
+          context: [{ changed_files: ["src/run.ts", "src/other.ts"] }],
+          success: [payload],
+        }),
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        reviewer,
+        status: "failed",
+        vote: "abstain",
+        reviewed_files: [],
+        unreviewed_files: ["src/run.ts", "src/other.ts"],
+        evidence_truncated: true,
+        findings: [],
+      });
+    },
+  );
+
   it("executes the compact graph with exactly three model calls", async () => {
     const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
     for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
@@ -538,7 +627,7 @@ describe("PR Review scenario assets", () => {
     const previousGithubApi = process.env.HOMERAIL_GITHUB_API_BASE_URL;
     process.env.HOMERAIL_GITHUB_API_BASE_URL = baseUrl;
     try {
-      const invoked = await _invokeHostCodexVoiceToolForTest(
+      const invokked = await _invokeHostCodexVoiceToolForTest(
         "run_pr_review",
         { repo: "xiaotianfotos/homerail", pr: 25 },
         { managerRestUrl: `${baseUrl}/api` },
@@ -606,11 +695,13 @@ describe("PR Review scenario assets", () => {
       quorum: Record<string, unknown>,
       markdown = [
         "# Review",
-        `**HomeRail Run ID:** \`${runId}\``,
+        `**HomeRail Run ID:** `${runId}\``,
         `Repo: ${report.repo}`,
         `Base: ${report.base}`,
         `Head: ${report.head}`,
         `Status: ${report.status}`,
+        `Execution health: **${report.execution_health}**`,
+        `Outcome: **${report.domain_outcome}**`,
         "Quorum result",
       ].join("\n\n"),
     ) => {
@@ -639,8 +730,7 @@ describe("PR Review scenario assets", () => {
     ).status).toBe(0);
 
     const findingsReport = {
-      ...passingReviewReport(),
-      status: "findings",
+      ...passingReviewReport("findings"),
       actionable_count: 1,
       findings: [finding],
       reviewer_results: [
@@ -656,9 +746,7 @@ describe("PR Review scenario assets", () => {
     ).status).toBe(0);
 
     const inconclusiveReport = {
-      ...passingReviewReport(),
-      status: "inconclusive",
-      confidence: "low",
+      ...passingReviewReport("inconclusive"),
       reviewer_results: [
         modelReview("qwen"),
         modelReview("kimi", "request_changes"),
