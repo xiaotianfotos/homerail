@@ -3,7 +3,7 @@
  * @version 0.2.0
  */
 
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./sha256.js";
 
 const FULL_GIT_REVISION = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const SHA256_HEX = /^[0-9a-f]{64}$/i;
@@ -23,7 +23,9 @@ export function isFullGitRevision(value: unknown): value is string {
 /**
  * Compact trusted changed-file coverage. The canonical representation is the
  * ordered array serialized with JSON.stringify; any other representation must
- * not be used for attestation digests.
+ * not be used for attestation digests. The digest is deterministic SHA-256
+ * (lowercase hex) computed with the browser-safe `sha256Hex` primitive, which
+ * matches Node's `createHash("sha256").update(json, "utf8").digest("hex")`.
  */
 export interface ChangedFilesCoverage {
   digest: string;
@@ -32,7 +34,7 @@ export interface ChangedFilesCoverage {
 
 export function changedFilesCoverage(changedFiles: readonly string[]): ChangedFilesCoverage {
   return {
-    digest: createHash("sha256").update(JSON.stringify(changedFiles), "utf8").digest("hex"),
+    digest: sha256Hex(JSON.stringify(changedFiles)),
     count: changedFiles.length,
   };
 }

@@ -3,10 +3,15 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { changedFilesCoverage, classifyReviewAttemptCategory } from "homerail-protocol";
+import {
+  changedFilesCoverage,
+  classifyReviewAttemptCategory,
+  coverageAttestationMatches,
+} from "homerail-protocol";
 
 import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
@@ -486,6 +491,28 @@ describe("PR Review scenario assets", () => {
     });
     expect((mismatched.attempts as Array<Record<string, unknown>>).at(-1))
       .toMatchObject({ category: "contract_validation_failed", contract_stage: "rejected" });
+  });
+
+  it("keeps changed-file coverage deterministic SHA-256 and rejects mismatches", () => {
+    const cases = [
+      [],
+      ["src/run.ts"],
+      Array.from({ length: 49 }, (_, index) => `src/file-${String(index + 1).padStart(2, "0")}.ts`),
+      ["src/unicodé.ts", "docs/说明.md", "a/b c.ts"],
+      ["src/lone\uD800.ts"],
+      ["a\nb\tc", "\"quoted\\\\path\""],
+    ];
+    for (const files of cases) {
+      const expected = createHash("sha256").update(JSON.stringify(files), "utf8").digest("hex");
+      expect(changedFilesCoverage(files)).toEqual({ digest: expected, count: files.length });
+    }
+    const coverage = coverageFor(["src/run.ts", "src/store.ts"]);
+    expect(coverageAttestationMatches({ digest: coverage.digest, count: coverage.count }, coverage))
+      .toBe(true);
+    expect(coverageAttestationMatches({ digest: coverage.digest, count: coverage.count - 1 }, coverage))
+      .toBe(false);
+    expect(coverageAttestationMatches({ digest: "a".repeat(64), count: coverage.count }, coverage))
+      .toBe(false);
   });
 
   it("preserves accepted findings across an incomplete Qwen final handoff", () => {
