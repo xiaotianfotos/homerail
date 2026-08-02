@@ -4509,6 +4509,8 @@ function _assertFanoutGitCommitResult(
   index: number,
   content: unknown,
 ): void {
+  const canonicalPath = (target: string): string =>
+    process.platform === "win32" ? realpathSync.native(target) : realpathSync(target);
   const validation = parent.gateway_config?.result_git_commit;
   if (!validation) return;
   if (parent.gateway_config?.workspace_strategy !== "isolated_git_worktree") {
@@ -4550,16 +4552,16 @@ function _assertFanoutGitCommitResult(
   let resolvedGitDir: string;
   let expectedCommonDir: string;
   try {
-    resolvedTopLevel = realpathSync(String(topLevel.stdout).trim());
-    resolvedCommonDir = realpathSync(String(commonDir.stdout).trim());
-    resolvedGitDir = realpathSync(String(gitDir.stdout).trim());
-    expectedCommonDir = realpathSync(path.join(repository, ".git"));
+    resolvedTopLevel = canonicalPath(String(topLevel.stdout).trim());
+    resolvedCommonDir = canonicalPath(String(commonDir.stdout).trim());
+    resolvedGitDir = canonicalPath(String(gitDir.stdout).trim());
+    expectedCommonDir = canonicalPath(path.join(repository, ".git"));
   } catch {
     throw new Error("DAG_FANOUT_GIT_RESULT_INVALID isolated worktree Git metadata could not be resolved");
   }
   if (
     topLevel.status !== 0 || commonDir.status !== 0 || gitDir.status !== 0
-    || resolvedTopLevel !== realpathSync(workspace)
+    || resolvedTopLevel !== canonicalPath(workspace)
     || resolvedCommonDir !== expectedCommonDir
     || !_pathIsWithin(path.join(expectedCommonDir, "worktrees"), resolvedGitDir)
   ) {

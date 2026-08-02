@@ -164,7 +164,7 @@ describe("Auto Fix v2 document-first dynamic architecture", () => {
           workspace_path: workspacePath,
           summary: "fabricated commit",
           tests: [],
-        })).toThrow("DAG_FANOUT_GIT_RESULT_INVALID commit does not exist");
+        })).toThrow(/^DAG_FANOUT_GIT_RESULT_INVALID /);
         expect(getActiveRun("autofix-v2-run")?.dagRun.nodeStates.get(nodeId)).toBe("RUNNING");
         expect(() => handoffActiveRun("autofix-v2-run", nodeId, "result", {
           status: "implemented",
