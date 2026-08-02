@@ -45,6 +45,18 @@ export interface AgentUsage {
 }
 
 /**
+ * Bounded, provider-neutral termination metadata for one agent turn. Provider
+ * details stay in raw run-scoped traces; this summary is what reaches the
+ * Manager diagnostics. Missing provider fields remain explicitly unknown/null.
+ */
+export interface AgentTerminationMetadata {
+  stop_reason?: string | null;
+  output_tokens?: number | null;
+  output_token_limit?: number | null;
+  tool_argument_parse?: "ok" | "invalid" | "not_applicable" | "unknown";
+}
+
+/**
  * Turn-local sink for complete backend-native trace records. Implementations
  * must keep these records outside the Manager control-plane event stream.
  */
@@ -64,7 +76,13 @@ export type AgentEvent =
   | { type: "usage"; usage: AgentUsage }
   | { type: "error"; message: string }
   | { type: "turn_complete" }
-  | { type: "done"; usage?: AgentUsage; duration_ms?: number; num_turns?: number };
+  | {
+      type: "done";
+      usage?: AgentUsage;
+      duration_ms?: number;
+      num_turns?: number;
+      termination?: AgentTerminationMetadata;
+    };
 
 /** Abstract agent client interface. */
 export interface AgentClient {

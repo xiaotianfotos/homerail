@@ -183,7 +183,7 @@ describe("SQLite persistence contracts", () => {
   it("installs indexes for status filtering and updated-time run ordering", () => {
     const db = getDb();
     expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 34 });
+      .toEqual({ version: 35 });
     expect(db.prepare("PRAGMA index_info(idx_dag_runs_updated)").all())
       .toEqual([
         expect.objectContaining({ seqno: 0, name: "updated_at" }),

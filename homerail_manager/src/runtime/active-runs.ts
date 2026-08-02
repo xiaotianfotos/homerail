@@ -165,6 +165,7 @@ import {
   pinDagRunSkillContext,
   pinDagRunSkillContexts,
 } from "../persistence/dag-run-skill-contexts.js";
+import { reviewEvidenceCorrectionState } from "../persistence/dag-review-evidence.js";
 import {
   assertDagWorkerSurfaceViewAllowlist,
   resolveDagWorkerSkillContext,
@@ -2029,6 +2030,7 @@ function _correctionPrompt(
   failurePorts: string[],
   outputContracts: Record<string, { contract: string; schema: unknown }>,
   brokerRequirements: BrokerActionRequirement[],
+  reviewerStateProvided: boolean,
 ): string {
   const declaredPorts = outputPorts.length > 0 ? outputPorts.join(", ") : "done";
   const contractGuidance = Object.keys(outputContracts).length > 0
@@ -2055,6 +2057,9 @@ function _correctionPrompt(
     "Use a failure port only when the original task itself cannot complete; never use it merely to report this correction error.",
     "Treat that error as authoritative. Preserve required field names and JSON array/object/number types exactly.",
     "Reuse completed evidence when it is available in the original inputs or current workspace.",
+    ...(reviewerStateProvided
+      ? ["Bounded accepted reviewer evidence is provided as input:reviewer_state; reuse its findings and coverage verbatim instead of re-analyzing."]
+      : []),
     ...brokerGuidance,
     "Never print a pseudo-tool call as prose, XML, or JSON. Invoke the SDK tool itself.",
     "Finish by calling the handoff tool exactly once with one declared output port and contract-valid content. Do not end with prose.",
@@ -2097,6 +2102,9 @@ export function requestNodeCorrection(
   run.counters.corrections[nodeId] = attempt;
   const mailbox = run.dagRun.mailboxes.get(nodeId);
   if (mailbox) {
+    const node = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === nodeId);
+    const reviewerStateProvided = Boolean(node && _correctionInputPorts(node).includes("reviewer_state")
+      && reviewEvidenceCorrectionState(runId, nodeId));
     const values = mailbox.get("correction") ?? [];
     values.push(_correctionPrompt(
       nodeId,
@@ -2108,8 +2116,17 @@ export function requestNodeCorrection(
       failurePorts,
       outputContracts,
       _outputBrokerActionRequirements(run, nodeId),
+      reviewerStateProvided,
     ));
     mailbox.set("correction", values);
+    if (node && _correctionInputPorts(node).includes("reviewer_state")) {
+      const acceptedState = reviewEvidenceCorrectionState(runId, nodeId);
+      if (acceptedState) {
+        const stateValues = mailbox.get("reviewer_state") ?? [];
+        stateValues.push(acceptedState);
+        mailbox.set("reviewer_state", stateValues);
+      }
+    }
   }
   resetSkippedSuccessDescendants(run.dagRun, nodeId);
   run.dagRun.nodeStates.set(nodeId, "READY");
@@ -4799,6 +4816,16 @@ function _agentRuntimeConfig(node: DAGGraphNode): Record<string, unknown> {
     : {};
 }
 
+function _correctionInputPorts(node: DAGGraphNode): string[] {
+  const raw = _agentRuntimeConfig(node).correction_input_ports;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((port): port is string => (
+    typeof port === "string"
+    && /^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/.test(port)
+    && port.length <= 64
+  ));
+}
+
 function _advisorConfigs(run: ActiveRun, node: DAGGraphNode): DispatchCredentialResolution & { advisors?: DagAdvisorConfig[] } {
   const raw = _agentRuntimeConfig(node).advisors;
   if (!Array.isArray(raw) || raw.length === 0) return { ok: true, agentConfig: {}, advisors: [] };
@@ -5096,9 +5123,23 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
     && command.status !== "cancelled"
     && command.status !== "failed"
   );
-  const dispatchInputs = nodeSession.resumeInstruction
+  let dispatchInputs = nodeSession.resumeInstruction
     ? { ...inputs, checkpoint_resume: [nodeSession.resumeInstruction] }
     : inputs;
+  if (correctionOnly) {
+    // A correction reuses only the exact missing stage plus bounded accepted
+    // state. The heavy trusted context (diff chunks, changed-file list) is not
+    // replayed, so the correction cannot re-run repository analysis or
+    // reserialize the full changed-file list.
+    const allowedCorrectionPorts = new Set<string>([
+      "correction",
+      ..._correctionInputPorts(node),
+    ]);
+    if (nodeSession.resumeInstruction) allowedCorrectionPorts.add("checkpoint_resume");
+    dispatchInputs = Object.fromEntries(
+      Object.entries(dispatchInputs).filter(([port]) => allowedCorrectionPorts.has(port)),
+    );
+  }
   const outgoingEdges = run.dagRun.graph.edges.filter(
     (e) => e.from_node === nodeId && e.label !== "after_dep",
   );

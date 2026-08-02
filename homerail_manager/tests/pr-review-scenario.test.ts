@@ -6,22 +6,29 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
+import { changedFilesCoverage } from "homerail-protocol";
 
 import { FakeDAGDispatcher } from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import { validateJsonContract } from "../src/orchestration/json-contract.js";
+import { recordReviewerAttemptEvidence } from "../src/orchestration/response-bridge.js";
 import {
   compileWorkflowSource,
   parseWorkflowSource,
 } from "../src/orchestration/workflow-spec-v1.js";
+import { getDagActorByNode } from "../src/persistence/dag-actors.js";
+import { loadReviewAttemptEvidence } from "../src/persistence/dag-review-evidence.js";
 import { closeDb } from "../src/persistence/db.js";
 import { getRunArtifactBlobPath } from "../src/persistence/run-artifacts.js";
 import { loadRunSnapshot } from "../src/persistence/store.js";
 import {
   _clearActiveRuns,
+  buildCurrentDispatchEnvelope,
   failActiveRun,
   getActiveRun,
+  getCurrentNodeSession,
   handoffActiveRun,
+  requestNodeCorrection,
 } from "../src/runtime/active-runs.js";
 import { finalizeRunArtifacts } from "../src/runtime/run-artifact-service.js";
 import { _invokeHostCodexVoiceToolForTest } from "../src/server/host-codex-manager-agent.js";
@@ -44,10 +51,28 @@ const finding = {
   confidence: "high",
 };
 
+function coverageFor(files: readonly string[] = ["src/run.ts"]) {
+  return changedFilesCoverage(files);
+}
+
+function attemptDiagnostic(overrides: Record<string, unknown> = {}) {
+  return {
+    attempt: 1,
+    category: "accepted",
+    termination_reason: "end_turn",
+    output_tokens: 12,
+    output_token_limit: null,
+    tool_argument_parse: "ok",
+    contract_stage: "accepted",
+    redacted_reason: "",
+    ...overrides,
+  };
+}
+
 function modelReview(
   reviewer: ModelId,
   vote: Vote = "approve",
-  options: { failed?: boolean } = {},
+  options: { failed?: boolean; intentionalAbstention?: boolean; findings?: unknown[] } = {},
 ): Record<string, unknown> {
   const failed = options.failed ?? vote === "abstain";
   return {
@@ -55,11 +80,58 @@ function modelReview(
     status: failed ? "failed" : "complete",
     vote: failed ? "abstain" : vote,
     summary: failed ? `${reviewer} could not complete the review` : `${reviewer} review complete`,
+    coverage: coverageFor(),
+    evidence_truncated: failed ? options.intentionalAbstention !== true : false,
+    findings: options.findings ?? (!failed && vote === "request_changes" ? [finding] : []),
+  };
+}
+
+function normalizedReview(
+  reviewer: ModelId,
+  vote: Vote = "approve",
+  options: { failed?: boolean; intentionalAbstention?: boolean } = {},
+): Record<string, unknown> {
+  const failed = options.failed ?? vote === "abstain";
+  const attempts = failed
+    ? [attemptDiagnostic({
+        attempt: 1,
+        category: options.intentionalAbstention ? "reviewer_abstained" : "provider_output_truncated",
+        termination_reason: options.intentionalAbstention ? "end_turn" : "max_tokens",
+        contract_stage: options.intentionalAbstention ? "accepted" : "not_reached",
+      })]
+    : [attemptDiagnostic()];
+  return {
+    ...modelReview(reviewer, vote, options),
     reviewed_files: failed ? [] : ["src/run.ts"],
     unreviewed_files: failed ? ["src/run.ts"] : [],
-    evidence_truncated: failed,
-    findings: !failed && vote === "request_changes" ? [finding] : [],
+    attempts,
+    coverage: failed ? null : coverageFor(),
   };
+}
+
+function reviewerTerminalPayload(runId: string, nodeId: string, content: unknown): Record<string, unknown> {
+  const session = getCurrentNodeSession(runId, nodeId);
+  const actor = getDagActorByNode(runId, nodeId);
+  return {
+    runId,
+    nodeId,
+    ...(session?.sessionId ? { session_id: session.sessionId } : {}),
+    ...(actor ? { generation: actor.generation } : {}),
+    content,
+    termination_metadata: {
+      stop_reason: "end_turn",
+      output_tokens: 12,
+      output_token_limit: null,
+      tool_argument_parse: "ok",
+    },
+  };
+}
+
+function recordAcceptedReviewerAttempt(runId: string, nodeId: string, content: unknown): void {
+  expect(recordReviewerAttemptEvidence(reviewerTerminalPayload(runId, nodeId, content), {
+    category: "accepted",
+    contractStage: "accepted",
+  })).toBe(true);
 }
 
 function passingReviewReport(): Record<string, unknown> {
@@ -74,9 +146,9 @@ function passingReviewReport(): Record<string, unknown> {
     actionable_count: 0,
     findings: [],
     reviewer_results: [
-      modelReview("qwen"),
-      modelReview("kimi"),
-      modelReview("glm", "request_changes"),
+      normalizedReview("qwen"),
+      normalizedReview("kimi"),
+      normalizedReview("glm", "request_changes"),
     ],
   };
 }
@@ -108,7 +180,7 @@ function installPrepareCommandStub(
     "-e",
     "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const i=JSON.parse(s),r=Array.isArray(i.request)?i.request.at(-1):undefined,p=r?.payload;if(!p)throw new Error('missing request');process.stdout.write(JSON.stringify({repo:p.repo,pr:p.pr,base:p.base,head:p.head,repository_path:'/workspace/repository',changed_files:['src/run.ts'],diff_stat:'1 file changed',diff_patch:'diff --git a/src/run.ts b/src/run.ts',diff_chunks:[{index:1,path:'review-evidence/diff-0001.patch',bytes:39,files:['src/run.ts']}],diff_bytes:39,diff_truncated:" +
       JSON.stringify(options.diffTruncated ?? false) +
-      ",commit_metadata:[],commit_metadata_truncated:false}))})",
+      ",commit_metadata:[],commit_metadata_truncated:false,changed_files_digest:" + JSON.stringify(changedFilesCoverage(["src/run.ts"]).digest) + ",changed_files_count:1}))})",
   ];
 }
 
@@ -198,7 +270,7 @@ describe("PR Review scenario assets", () => {
       .toEqual([...modelNodes].sort());
     for (const nodeId of modelNodes) {
       expect(nodes.find((node) => node.id === nodeId)).toMatchObject({
-        outputs: expect.arrayContaining([expect.objectContaining({ name: "voted", contract: "VerificationVote" })]),
+        outputs: expect.arrayContaining([expect.objectContaining({ name: "voted", contract: "ReviewerHandoff" })]),
         config: expect.objectContaining({
           allowed_builtin_tools: ["Glob", "Grep", "LS", "Read"],
           allowed_dag_tools: ["handoff"],
@@ -236,11 +308,23 @@ describe("PR Review scenario assets", () => {
 
     const contracts = parseWorkflowSource(source).meta.contracts ?? {};
     for (const reviewer of ["qwen", "kimi", "glm"] as const) {
-      expect(validateJsonContract(contracts.VerificationVote, modelReview(reviewer))).toMatchObject({ valid: true });
+      expect(validateJsonContract(contracts.ReviewerHandoff, modelReview(reviewer))).toMatchObject({ valid: true });
     }
-    expect(validateJsonContract(contracts.VerificationVote, {
+    expect(validateJsonContract(contracts.ReviewerHandoff, {
       ...modelReview("qwen"),
       reviewer: "runtime",
+    })).toMatchObject({ valid: false });
+    expect(validateJsonContract(contracts.ReviewerHandoff, {
+      ...modelReview("qwen"),
+      coverage: { digest: "a".repeat(64), count: 1 },
+    })).toMatchObject({ valid: true });
+    expect(validateJsonContract(contracts.ReviewerHandoff, {
+      ...modelReview("qwen", "approve"),
+      findings: [finding],
+    })).toMatchObject({ valid: false });
+    expect(validateJsonContract(contracts.ReviewerHandoff, {
+      ...modelReview("qwen", "request_changes"),
+      findings: [],
     })).toMatchObject({ valid: false });
 
     const agents = parseWorkflowSource(source).meta.agents ?? {};
@@ -251,8 +335,9 @@ describe("PR Review scenario assets", () => {
       expect(agents[agentId]?.system).toContain("input.context.diff_chunks");
       expect(agents[agentId]?.system).toMatch(/Independently review/);
       expect(agents[agentId]?.system).toContain("No draft report exists or is required");
-      expect(agents[agentId]?.system).toMatch(/copy\s+input\.context\.changed_files exactly/);
-      expect(agents[agentId]?.system).toContain("including lockfiles");
+      expect(agents[agentId]?.system).toContain("changed_files_digest");
+      expect(agents[agentId]?.system).toContain("Never echo");
+      expect(agents[agentId]?.system).toContain("input:reviewer_state");
       expect(agents[agentId]?.system).toContain("untrusted source");
     }
   });
@@ -303,29 +388,201 @@ describe("PR Review scenario assets", () => {
     });
   });
 
-  it("normalizes incomplete model output to an abstention", () => {
+  it("normalizes incomplete model output to a classified abstention", () => {
     const { code, args } = commandCode("normalize_qwen_review");
+    const files = ["src/run.ts", "src/other.ts"];
+    const coverage = coverageFor(files);
     const result = spawnSync(process.execPath, ["-e", code, ...args], {
       encoding: "utf8",
       input: JSON.stringify({
-        context: [{ changed_files: ["src/run.ts", "src/other.ts"] }],
-        success: [{
-          ...modelReview("qwen"),
-          reviewed_files: ["src/run.ts"],
-          unreviewed_files: ["src/other.ts"],
+        context: [{
+          changed_files: files,
+          changed_files_digest: coverage.digest,
+          changed_files_count: coverage.count,
+        }],
+        failure: [{ error: "provider output ended mid-JSON" }],
+        evidence: [{
+          findings: [],
+          attempts: [attemptDiagnostic({
+            category: "provider_output_truncated",
+            termination_reason: "max_tokens",
+            contract_stage: "not_reached",
+          })],
+          coverage: null,
         }],
       }),
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const normalized = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(normalized).toMatchObject({
       reviewer: "qwen",
       status: "failed",
       vote: "abstain",
       reviewed_files: [],
-      unreviewed_files: ["src/run.ts", "src/other.ts"],
+      unreviewed_files: files,
       evidence_truncated: true,
       findings: [],
     });
+    expect((normalized.attempts as Array<Record<string, unknown>>).at(-1))
+      .toMatchObject({ category: "provider_output_truncated", termination_reason: "max_tokens" });
+  });
+
+  it("expands a valid compact attestation to canonical coverage and rejects mismatches", () => {
+    const { code, args } = commandCode("normalize_qwen_review");
+    const files = Array.from({ length: 49 }, (_, index) => `src/file-${String(index + 1).padStart(2, "0")}.ts`);
+    const coverage = coverageFor(files);
+    const execute = (success: unknown, evidence: unknown) => {
+      const result = spawnSync(process.execPath, ["-e", code, ...args], {
+        encoding: "utf8",
+        input: JSON.stringify({
+          context: [{
+            changed_files: files,
+            changed_files_digest: coverage.digest,
+            changed_files_count: coverage.count,
+          }],
+          success: Array.isArray(success) ? success : [success],
+          evidence: [evidence],
+        }),
+      });
+      expect(result.status, result.stderr).toBe(0);
+      return JSON.parse(result.stdout) as Record<string, unknown>;
+    };
+
+    const accepted = execute(modelReview("qwen", "request_changes", {
+      findings: [finding],
+    }), {
+      findings: [finding],
+      attempts: [attemptDiagnostic()],
+      coverage,
+    });
+    expect(accepted).toMatchObject({
+      reviewer: "qwen",
+      status: "complete",
+      vote: "request_changes",
+      reviewed_files: files,
+      unreviewed_files: [],
+      evidence_truncated: false,
+      findings: [finding],
+      coverage: { digest: coverage.digest, count: 49 },
+    });
+    expect(accepted.attempts).toEqual([attemptDiagnostic()]);
+
+    const mismatched = execute({
+      ...modelReview("qwen", "approve"),
+      coverage: { digest: "a".repeat(64), count: 49 },
+    }, {
+      findings: [],
+      attempts: [attemptDiagnostic()],
+      coverage,
+    });
+    expect(mismatched).toMatchObject({
+      reviewer: "qwen",
+      status: "failed",
+      vote: "abstain",
+      reviewed_files: [],
+      unreviewed_files: files,
+      evidence_truncated: true,
+    });
+    expect((mismatched.attempts as Array<Record<string, unknown>>).at(-1))
+      .toMatchObject({ category: "contract_validation_failed", contract_stage: "rejected" });
+  });
+
+  it("preserves accepted findings across an incomplete Qwen final handoff", () => {
+    const { code, args } = commandCode("normalize_qwen_review");
+    const files = Array.from({ length: 49 }, (_, index) => `src/file-${String(index + 1).padStart(2, "0")}.ts`);
+    const coverage = coverageFor(files);
+    const threeFindings = [
+      { ...finding, title: "First regression", file: "src/run.ts" },
+      { ...finding, title: "Second regression", file: "src/store.ts", line: 22 },
+      { ...finding, title: "Third regression", file: "src/queue.ts", line: 31 },
+    ];
+    const result = spawnSync(process.execPath, ["-e", code, ...args], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        context: [{
+          changed_files: files,
+          changed_files_digest: coverage.digest,
+          changed_files_count: coverage.count,
+        }],
+        failure: [{ error: "provider output ended mid-JSON" }],
+        evidence: [{
+          findings: threeFindings,
+          attempts: [
+            attemptDiagnostic({ attempt: 1 }),
+            attemptDiagnostic({
+              attempt: 2,
+              category: "contract_validation_failed",
+              termination_reason: "end_turn",
+              contract_stage: "rejected",
+              redacted_reason: "coverage attestation mismatch",
+            }),
+            attemptDiagnostic({
+              attempt: 3,
+              category: "provider_output_truncated",
+              termination_reason: "max_tokens",
+              contract_stage: "not_reached",
+            }),
+          ],
+          coverage,
+        }],
+      }),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const normalized = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(normalized).toMatchObject({
+      reviewer: "qwen",
+      status: "failed",
+      vote: "abstain",
+      evidence_truncated: true,
+      reviewed_files: [],
+      unreviewed_files: files,
+    });
+    expect(normalized.findings).toEqual(threeFindings);
+    expect((normalized.attempts as Array<Record<string, unknown>>).map((attempt) => attempt.category)).toEqual([
+      "accepted",
+      "contract_validation_failed",
+      "provider_output_truncated",
+    ]);
+  });
+
+  it("keeps an intentional abstention distinct from structured-output loss", () => {
+    const { code, args } = commandCode("normalize_kimi_review");
+    const files = ["src/run.ts", "src/store.ts"];
+    const coverage = coverageFor(files);
+    const result = spawnSync(process.execPath, ["-e", code, ...args], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        context: [{
+          changed_files: files,
+          changed_files_digest: coverage.digest,
+          changed_files_count: coverage.count,
+        }],
+        success: [{
+          ...modelReview("kimi", "abstain", { intentionalAbstention: true }),
+          coverage,
+        }],
+        evidence: [{
+          findings: [],
+          attempts: [attemptDiagnostic({
+            category: "reviewer_abstained",
+            termination_reason: "end_turn",
+          })],
+          coverage,
+        }],
+      }),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const normalized = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(normalized).toMatchObject({
+      reviewer: "kimi",
+      status: "failed",
+      vote: "abstain",
+      evidence_truncated: false,
+      reviewed_files: [],
+      unreviewed_files: files,
+    });
+    expect((normalized.attempts as Array<Record<string, unknown>>).at(-1))
+      .toMatchObject({ category: "reviewer_abstained" });
   });
 
   it("executes the compact graph with exactly three model calls", async () => {
@@ -346,6 +603,9 @@ describe("PR Review scenario assets", () => {
     handoffActiveRun(runId, "qwen_review", "voted", modelReview("qwen"));
     handoffActiveRun(runId, "kimi_review", "voted", modelReview("kimi"));
     handoffActiveRun(runId, "glm_review", "voted", modelReview("glm", "request_changes"));
+    recordAcceptedReviewerAttempt(runId, "qwen_review", modelReview("qwen"));
+    recordAcceptedReviewerAttempt(runId, "kimi_review", modelReview("kimi"));
+    recordAcceptedReviewerAttempt(runId, "glm_review", modelReview("glm", "request_changes"));
 
     expect(executor.tick(runId)).toBeGreaterThan(0);
     expect(dispatcher.dispatched.map((envelope) => envelope.nodeId)).toEqual([
@@ -404,6 +664,98 @@ describe("PR Review scenario assets", () => {
       report: { status: "inconclusive" },
       quorum: { passed: false, successes: 1, total: 3, threshold: 2 },
     });
+  });
+
+  it("correction reuses bounded accepted state without the full context", () => {
+    const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
+    for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    installPrepareCommandStub(parsed);
+    const dispatcher = new FakeDAGDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    const runId = "pr-review-correction-state";
+    executor.createRun(runId, parsed, JSON.stringify(reviewInput()));
+    executor.tick(runId);
+
+    // Attempt 1: parseable JSON with three findings but an invalid compact
+    // coverage attestation. The Manager persists the findings as accepted
+    // evidence even though the handoff is contract-rejected for correction.
+    const content = {
+      ...modelReview("qwen", "request_changes", {
+        findings: [finding, { ...finding, title: "Second regression", line: 22 }],
+      }),
+      coverage: { digest: "b".repeat(64), count: 1 },
+    };
+    expect(recordReviewerAttemptEvidence(
+      reviewerTerminalPayload(runId, "qwen_review", content),
+      {
+        category: "contract_validation_failed",
+        contractStage: "rejected",
+        redactedReason: "coverage attestation mismatch",
+      },
+    )).toBe(true);
+    expect(loadReviewAttemptEvidence(runId, "qwen_review").findings).toHaveLength(2);
+
+    const correction = requestNodeCorrection(
+      runId,
+      "qwen_review",
+      "DAG_HANDOFF_CONTRACT_VIOLATION qwen_review.voted (ReviewerHandoff): coverage mismatch",
+    );
+    expect(correction.status).toBe("scheduled");
+
+    const envelope = buildCurrentDispatchEnvelope(runId, "qwen_review");
+    expect(envelope.ok).toBe(true);
+    const inputs = envelope.envelope.inputs;
+    expect(Object.keys(inputs).sort()).toEqual(["correction", "reviewer_state"]);
+    expect(inputs.context).toBeUndefined();
+    expect(inputs.correction.at(-1)).toContain("Correction attempt 1/2");
+    expect(inputs.correction.at(-1)).toContain("coverage attestation mismatch");
+    const state = inputs.reviewer_state.at(-1) as Record<string, unknown>;
+    expect(state.findings).toHaveLength(2);
+    expect(state.coverage).toMatchObject({ count: 1, digest: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect(JSON.stringify(state).length).toBeLessThan(64 * 1024);
+  });
+
+  it("records bounded attempt diagnostics for every failure category", () => {
+    const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
+    for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    installPrepareCommandStub(parsed);
+    const dispatcher = new FakeDAGDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    const runId = "pr-review-attempt-categories";
+    executor.createRun(runId, parsed, JSON.stringify(reviewInput()));
+    executor.tick(runId);
+
+    expect(recordReviewerAttemptEvidence(
+      reviewerTerminalPayload(runId, "qwen_review", modelReview("qwen")),
+      { transport: true, contractStage: "not_reached", redactedReason: "DAG_TRANSPORT_LEASE_STALE run/node" },
+    )).toBe(true);
+    expect(recordReviewerAttemptEvidence(
+      reviewerTerminalPayload(runId, "kimi_review", modelReview("kimi")),
+      { contractStage: "rejected", redactedReason: "DAG_HANDOFF_CONTRACT_VIOLATION kimi_review.voted (ReviewerHandoff): coverage mismatch" },
+    )).toBe(true);
+    expect(recordReviewerAttemptEvidence(
+      {
+        ...reviewerTerminalPayload(runId, "glm_review", modelReview("glm")),
+        termination_metadata: {
+          stop_reason: "max_tokens",
+          output_tokens: 411,
+          output_token_limit: null,
+          tool_argument_parse: "unknown",
+        },
+      },
+      { contractStage: "not_reached", redactedReason: "provider output ended mid-JSON" },
+    )).toBe(true);
+
+    expect(loadReviewAttemptEvidence(runId, "qwen_review").attempts.at(-1))
+      .toMatchObject({ category: "transport_failed", contract_stage: "not_reached" });
+    expect(loadReviewAttemptEvidence(runId, "kimi_review").attempts.at(-1))
+      .toMatchObject({ category: "contract_validation_failed", contract_stage: "rejected" });
+    expect(loadReviewAttemptEvidence(runId, "glm_review").attempts.at(-1))
+      .toMatchObject({
+        category: "provider_output_truncated",
+        termination_reason: "max_tokens",
+        output_tokens: 411,
+      });
   });
 
   it("rejects hostile clone URLs before invoking git", () => {
@@ -644,9 +996,9 @@ describe("PR Review scenario assets", () => {
       actionable_count: 1,
       findings: [finding],
       reviewer_results: [
-        modelReview("qwen", "request_changes"),
-        modelReview("kimi", "request_changes"),
-        modelReview("glm"),
+        normalizedReview("qwen", "request_changes"),
+        normalizedReview("kimi", "request_changes"),
+        normalizedReview("glm"),
       ],
     };
     expect(runValidator(
@@ -660,9 +1012,9 @@ describe("PR Review scenario assets", () => {
       status: "inconclusive",
       confidence: "low",
       reviewer_results: [
-        modelReview("qwen"),
-        modelReview("kimi", "request_changes"),
-        modelReview("glm", "abstain"),
+        normalizedReview("qwen"),
+        normalizedReview("kimi", "request_changes"),
+        normalizedReview("glm", "abstain"),
       ],
     };
     expect(runValidator(

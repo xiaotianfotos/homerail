@@ -196,6 +196,12 @@ describe("ClaudeSdkAdapter", () => {
       },
       duration_ms: undefined,
       num_turns: undefined,
+      termination: {
+        stop_reason: "end_turn",
+        output_tokens: 0,
+        output_token_limit: null,
+        tool_argument_parse: "unknown",
+      },
     });
   });
 

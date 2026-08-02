@@ -149,7 +149,7 @@ describe("voice artifact publishing", () => {
     const artifact = publishVoiceArtifact({ session_id: "session-schema", source_path: "schema.html" });
 
     const db = getDb();
-    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 34 });
+    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 35 });
     expect(() => db.prepare(`
       UPDATE voice_artifact_revisions SET title = 'changed'
       WHERE session_id = ? AND artifact_id = ? AND revision = 1

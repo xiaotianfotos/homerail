@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 function invariant(condition, message) {
@@ -68,6 +69,42 @@ export function validatePrReviewArtifacts(command, publication, markdown) {
     invariant(Array.isArray(reviewer.reviewed_files), `${reviewer.reviewer} reviewed_files is missing`);
     invariant(Array.isArray(reviewer.unreviewed_files), `${reviewer.reviewer} unreviewed_files is missing`);
     invariant(typeof reviewer.evidence_truncated === "boolean", `${reviewer.reviewer} evidence_truncated is missing`);
+    invariant(Array.isArray(reviewer.attempts) && reviewer.attempts.length >= 1 && reviewer.attempts.length <= 10,
+      `${reviewer.reviewer} attempts are missing or out of bounds`);
+    const attemptCategories = new Set([
+      "accepted",
+      "provider_output_truncated",
+      "handoff_arguments_invalid",
+      "contract_validation_failed",
+      "transport_failed",
+      "reviewer_abstained",
+      "unknown",
+    ]);
+    const toolParseStates = new Set(["ok", "invalid", "not_applicable", "unknown"]);
+    const contractStages = new Set(["accepted", "rejected", "not_reached", "unknown"]);
+    for (const attempt of reviewer.attempts) {
+      invariant(attempt && typeof attempt === "object" && !Array.isArray(attempt), `${reviewer.reviewer} attempt is not an object`);
+      invariant(Number.isInteger(attempt.attempt) && attempt.attempt >= 1 && attempt.attempt <= 10,
+        `${reviewer.reviewer} attempt number is invalid`);
+      invariant(attemptCategories.has(attempt.category), `${reviewer.reviewer} attempt category is invalid`);
+      invariant(typeof attempt.termination_reason === "string" && attempt.termination_reason.length <= 200,
+        `${reviewer.reviewer} termination reason is invalid`);
+      invariant(attempt.output_tokens === null || (Number.isInteger(attempt.output_tokens) && attempt.output_tokens >= 0),
+        `${reviewer.reviewer} output tokens are invalid`);
+      invariant(attempt.output_token_limit === null || (Number.isInteger(attempt.output_token_limit) && attempt.output_token_limit >= 0),
+        `${reviewer.reviewer} output token limit is invalid`);
+      invariant(toolParseStates.has(attempt.tool_argument_parse), `${reviewer.reviewer} tool argument parse state is invalid`);
+      invariant(contractStages.has(attempt.contract_stage), `${reviewer.reviewer} contract stage is invalid`);
+      invariant(typeof attempt.redacted_reason === "string" && attempt.redacted_reason.length <= 1000,
+        `${reviewer.reviewer} redacted reason is invalid`);
+    }
+    invariant(
+      reviewer.coverage === null
+        || (reviewer.coverage && typeof reviewer.coverage === "object" && !Array.isArray(reviewer.coverage)
+          && typeof reviewer.coverage.digest === "string" && /^[0-9a-f]{64}$/i.test(reviewer.coverage.digest)
+          && Number.isInteger(reviewer.coverage.count) && reviewer.coverage.count >= 0),
+      `${reviewer.reviewer} coverage is invalid`,
+    );
     const reviewedFiles = new Set(reviewer.reviewed_files);
     for (const file of reviewer.reviewed_files) {
       invariant(typeof file === "string" && file.length > 0, `${reviewer.reviewer} reviewed_files contains an invalid path`);
@@ -79,6 +116,16 @@ export function validatePrReviewArtifacts(command, publication, markdown) {
     if (reviewer.status === "complete") {
       invariant(reviewer.evidence_truncated === false, `${reviewer.reviewer} used truncated evidence`);
       invariant(reviewer.unreviewed_files.length === 0, `${reviewer.reviewer} left changed files unreviewed`);
+      invariant(reviewer.coverage !== null, `${reviewer.reviewer} has no verified coverage attestation`);
+      invariant(
+        reviewer.coverage.count === reviewer.reviewed_files.length,
+        `${reviewer.reviewer} coverage count does not match reviewed_files`,
+      );
+      invariant(
+        reviewer.coverage.digest.toLowerCase()
+          === createHash("sha256").update(JSON.stringify(reviewer.reviewed_files), "utf8").digest("hex"),
+        `${reviewer.reviewer} coverage digest does not match canonical reviewed_files`,
+      );
       if (reviewer.vote === "approve") {
         approvals++;
         invariant(reviewer.findings.length === 0, `${reviewer.reviewer} approved with actionable findings`);
@@ -89,7 +136,15 @@ export function validatePrReviewArtifacts(command, publication, markdown) {
       }
     } else {
       invariant(reviewer.vote === "abstain", `${reviewer.reviewer} failed without abstaining`);
-      invariant(reviewer.evidence_truncated === true, `${reviewer.reviewer} failed without marking incomplete evidence`);
+      const lastAttempt = reviewer.attempts.at(-1);
+      if (reviewer.evidence_truncated === false) {
+        invariant(
+          lastAttempt?.category === "reviewer_abstained",
+          `${reviewer.reviewer} intentional abstention lacks a reviewer_abstained attempt`,
+        );
+      } else {
+        invariant(lastAttempt?.category !== "accepted", `${reviewer.reviewer} failed attempt was marked accepted`);
+      }
     }
   }
   invariant(reviewerNames.size === 3, "model reviewer identities are not distinct");

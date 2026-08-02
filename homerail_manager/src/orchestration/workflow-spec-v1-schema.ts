@@ -210,6 +210,11 @@ const AgentRuntimeFields = {
   ], {
     description: "node resumes one provider session; dispatch creates a fresh provider context for every dispatch.",
   })),
+  correction_input_ports: Type.Optional(Type.Array(Identifier, {
+    uniqueItems: true,
+    maxItems: 8,
+    description: "Input ports kept when a contract correction re-dispatches this node; heavy review context is dropped.",
+  })),
 };
 
 const AgentNode = Type.Object({

@@ -17,6 +17,7 @@ import { resolveLifecycleResponse, rejectAllPendingRequests } from "./lifecycle-
 import {
   applyResponseHandoff,
   assessDagTransportFence,
+  recordReviewerAttemptEvidence,
 } from "../orchestration/response-bridge.js";
 import { handleDagMessageResponse } from "../orchestration/dag-message-router.js";
 import { clearByTargetId, isCurrentDispatchTarget } from "../orchestration/dispatch-tracker.js";
@@ -655,6 +656,10 @@ export function setupNodeWebSocket(
             nodeId: msg.data.nodeId,
             session_id: msg.data.session_id,
           })) return;
+          recordReviewerAttemptEvidence(rawData, {
+            contractStage: "not_reached",
+            redactedReason: msg.data.message,
+          });
           appendChatEntry(msg.data.runId, msg.data.nodeId, {
             role: "node",
             type: "response",

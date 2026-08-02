@@ -23,6 +23,7 @@ import { createAgentClient } from "./agent/factory.js";
 import type {
   AgentEvent,
   AgentRunContext,
+  AgentTerminationMetadata,
   AgentSkillProjection,
   AgentUsage,
 } from "./agent/types.js";
@@ -438,6 +439,7 @@ export async function runPrompt(
   const usageExecutionId = randomUUID();
   let nodeDurationMs: number | undefined;
   let nodeNumTurns: number | undefined;
+  let nodeTermination: AgentTerminationMetadata | undefined;
   let lastUsageEmission: string | undefined;
   let workspaceBefore: WorkspaceSnapshot | undefined;
   let terminalActivityEmitted = false;
@@ -446,6 +448,22 @@ export async function runPrompt(
     reason: "agent turn ended without a successful DAG handoff",
   };
   const toolNamesById = new Map<string, string>();
+
+  const boundedTerminationMetadata = (): Record<string, unknown> => ({
+    stop_reason: String(nodeTermination?.stop_reason ?? "unknown")
+      .replace(/[\u0000-\u001f\u007f]+/g, " ")
+      .trim()
+      .slice(0, 200) || "unknown",
+    output_tokens: typeof nodeTermination?.output_tokens === "number" && Number.isFinite(nodeTermination.output_tokens)
+      ? Math.max(0, Math.floor(nodeTermination.output_tokens))
+      : null,
+    output_token_limit: typeof nodeTermination?.output_token_limit === "number" && Number.isFinite(nodeTermination.output_token_limit)
+      ? Math.max(0, Math.floor(nodeTermination.output_token_limit))
+      : null,
+    tool_argument_parse: dagState.handoffArgumentParse?.status
+      ?? nodeTermination?.tool_argument_parse
+      ?? "unknown",
+  });
 
   activityEmitter.emit("started", {
     session_id: job.dagConfig.session_id ?? job.runId,
@@ -618,6 +636,7 @@ export async function runPrompt(
           if (event.usage) Object.assign(nodeUsage, event.usage);
           if (event.duration_ms !== undefined) nodeDurationMs = event.duration_ms;
           if (event.num_turns !== undefined) nodeNumTurns = event.num_turns;
+          if (event.termination) nodeTermination = event.termination;
           break;
       }
 
@@ -661,7 +680,10 @@ export async function runPrompt(
         sendTerminalMessage(JSON.stringify({
           type: "response",
           session_id: dagState.sessionId,
-          data: dagState.handoffData,
+          data: {
+            ...dagState.handoffData,
+            termination_metadata: boundedTerminationMetadata(),
+          },
         }));
         promptResult = { status: "completed" };
       }
@@ -733,6 +755,7 @@ export async function runPrompt(
       ...(job.dagConfig.generation !== undefined ? { generation: job.dagConfig.generation } : {}),
       ...(job.dagConfig.lease_generation !== undefined ? { lease_generation: job.dagConfig.lease_generation } : {}),
       ...(job.dagConfig.command_id !== undefined ? { command_id: job.dagConfig.command_id } : {}),
+      termination_metadata: boundedTerminationMetadata(),
     };
     sendTerminalMessage(JSON.stringify({ type: "node_error", data }));
   }

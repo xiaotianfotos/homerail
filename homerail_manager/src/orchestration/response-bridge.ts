@@ -1,7 +1,22 @@
-import type { DagTransportFenceMetadata } from "homerail-protocol";
+import {
+  classifyReviewAttemptCategory,
+  coverageAttestationMatches,
+  type DagTransportFenceMetadata,
+  type ReviewAttemptCategory,
+  type ReviewAttemptContractStage,
+  type ReviewAttemptToolParseState,
+} from "homerail-protocol";
 import { getDagActorByNode, getDagActorCommand } from "../persistence/dag-actors.js";
 import { getDagActorLiveCommand } from "../persistence/dag-actor-live-commands.js";
 import { acquireDagActorLease, assessDagActorLease } from "../persistence/dag-actor-leases.js";
+import {
+  injectReviewerEvidenceMailbox,
+  isPrReviewReviewerNode,
+  persistReviewAttemptEvidence,
+  resolveTrustedCoverageFromRun,
+  reviewerFromNodeId,
+} from "../persistence/dag-review-evidence.js";
+import { loadRunSnapshot, serializeRunMetadata, writeRunMetadata } from "../persistence/store.js";
 import { getActiveRun, handoffActiveRun } from "../runtime/active-runs.js";
 
 export type TransportFenceDisposition = "stale" | "duplicate" | "invalid";
@@ -35,6 +50,81 @@ export type ResponseBridgeResult =
   | { status: "malformed_payload"; reason: string }
   | { status: "unknown_run"; runId: string }
   | { status: "handoff_failed"; runId: string; nodeId: string; reason: string };
+
+export interface RecordReviewerAttemptOptions {
+  category?: ReviewAttemptCategory;
+  contractStage: ReviewAttemptContractStage;
+  redactedReason?: string;
+  transport?: boolean;
+}
+
+/**
+ * Persist one bounded PR-review attempt from a terminal transport payload and
+ * inject the durable evidence into the downstream normalize node. Writes are
+ * session/generation fenced by the evidence store; stale or cross-node payloads
+ * are rejected and never reach normalization.
+ */
+export function recordReviewerAttemptEvidence(
+  payload: unknown,
+  options: RecordReviewerAttemptOptions,
+): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const obj = payload as Record<string, unknown>;
+  const runId = typeof obj.runId === "string" ? obj.runId : "";
+  const nodeId = typeof obj.nodeId === "string" ? obj.nodeId : "";
+  if (!runId || !nodeId || !isPrReviewReviewerNode(nodeId)) return false;
+  const content = obj.content;
+  const contentObject = content && typeof content === "object" && !Array.isArray(content)
+    ? content as Record<string, unknown>
+    : undefined;
+  const run = getActiveRun(runId);
+  if (!run || run.status !== "active") return false;
+  const actor = getDagActorByNode(runId, nodeId);
+  if (!actor) return false;
+  const meta = obj.termination_metadata && typeof obj.termination_metadata === "object"
+    ? obj.termination_metadata as Record<string, unknown>
+    : {};
+  const sessionId = typeof obj.session_id === "string" && obj.session_id
+    ? obj.session_id
+    : actor.session_id ?? "";
+  const generation = typeof obj.generation === "number" ? obj.generation : actor.generation;
+  const attempt = (run.counters.corrections[nodeId] ?? 0) + 1;
+  const trusted = resolveTrustedCoverageFromRun(runId, loadRunSnapshot(runId)?.handoffs ?? []);
+  if (!trusted) return false;
+  const category = options.category ?? classifyReviewAttemptCategory({
+    terminationReason: meta.stop_reason,
+    toolArgumentParse: meta.tool_argument_parse,
+    redactedReason: options.redactedReason,
+    status: contentObject?.status,
+    vote: contentObject?.vote,
+    transport: options.transport,
+  });
+  const toolArgumentParse = (meta.tool_argument_parse as ReviewAttemptToolParseState | undefined) ?? "unknown";
+  const findings = Array.isArray(contentObject?.findings)
+    ? contentObject?.findings as unknown[]
+    : undefined;
+  const result = persistReviewAttemptEvidence({
+    runId,
+    nodeId,
+    attempt,
+    sessionId,
+    generation,
+    category,
+    terminationReason: typeof meta.stop_reason === "string" ? meta.stop_reason : null,
+    outputTokens: typeof meta.output_tokens === "number" ? meta.output_tokens : null,
+    outputTokenLimit: typeof meta.output_token_limit === "number" ? meta.output_token_limit : null,
+    toolArgumentParse,
+    contractStage: options.contractStage,
+    redactedReason: options.redactedReason ?? "",
+    findings,
+    coverage: trusted,
+  });
+  if (!result.stored) return false;
+  if (injectReviewerEvidenceMailbox(run, nodeId)) {
+    writeRunMetadata(run.runId, serializeRunMetadata(run));
+  }
+  return true;
+}
 
 function transportMetadataError(obj: Record<string, unknown>): string | undefined {
   for (const field of ["round_id", "actor_id", "command_id"] as const) {
@@ -271,6 +361,11 @@ export function applyResponseHandoff(
     return { status: "unknown_run", runId: assessment.runId };
   }
   if (assessment.status === "ignored") {
+    recordReviewerAttemptEvidence(obj, {
+      contractStage: "not_reached",
+      transport: true,
+      redactedReason: assessment.reason,
+    });
     return {
       status: "handoff_ignored",
       disposition: assessment.disposition,
@@ -291,11 +386,16 @@ export function applyResponseHandoff(
       ...(typeof obj.command_id === "string" ? { commandId: obj.command_id } : {}),
     });
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    recordReviewerAttemptEvidence(obj, {
+      contractStage: "rejected",
+      redactedReason: reason,
+    });
     return {
       status: "handoff_failed",
       runId: obj.runId,
       nodeId: obj.nodeId,
-      reason: error instanceof Error ? error.message : String(error),
+      reason,
     };
   }
   if (!run) {
@@ -304,6 +404,31 @@ export function applyResponseHandoff(
       runId: obj.runId,
     };
   }
+  const nodeReviewer = reviewerFromNodeId(obj.nodeId);
+  const contentObjectForHandoff = obj.content && typeof obj.content === "object" && !Array.isArray(obj.content)
+    ? obj.content as Record<string, unknown>
+    : undefined;
+  const identityOk = nodeReviewer !== undefined
+    && (typeof contentObjectForHandoff?.reviewer !== "string"
+      || contentObjectForHandoff.reviewer === nodeReviewer);
+  const trusted = resolveTrustedCoverageFromRun(obj.runId, loadRunSnapshot(obj.runId)?.handoffs ?? []);
+  const coverageOk = trusted !== null
+    && coverageAttestationMatches(contentObjectForHandoff?.coverage, trusted);
+  const handoffAccepted = identityOk && coverageOk;
+  const intentionalAbstention = handoffAccepted
+    && contentObjectForHandoff?.status === "failed"
+    && contentObjectForHandoff?.vote === "abstain";
+  recordReviewerAttemptEvidence(obj, {
+    category: !handoffAccepted
+      ? "contract_validation_failed"
+      : intentionalAbstention
+        ? "reviewer_abstained"
+        : "accepted",
+    contractStage: handoffAccepted ? "accepted" : "rejected",
+    redactedReason: identityOk
+      ? (coverageOk ? "" : "coverage attestation mismatch")
+      : "reviewer identity mismatch",
+  });
 
   return {
     status: "handoff_applied",

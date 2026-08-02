@@ -119,6 +119,100 @@ describe("prompt runner", () => {
     expect(parsed.map((msg) => msg.type)).toContain("SESSION_END");
   });
 
+  it("attaches bounded termination metadata to handoff responses and node errors", async () => {
+    const mockAgent: AgentClient = {
+      run(_prompt, tools) {
+        return (async function* () {
+          await tools.find((tool) => tool.name === "handoff")!.handler({
+            port: "done",
+            content: { ok: true },
+          });
+          yield {
+            type: "done" as const,
+            termination: {
+              stop_reason: "max_tokens",
+              output_tokens: 320,
+              output_token_limit: null,
+              tool_argument_parse: "ok",
+            },
+          };
+        })();
+      },
+    };
+    registerAgentBackend("test-termination", () => mockAgent);
+
+    const sent: string[] = [];
+    await runPrompt(
+      {
+        task: "test",
+        sender: "test",
+        runId: "run-termination",
+        dagConfig: makeConfig(),
+      },
+      {
+        wsSend: (d) => sent.push(d),
+        agentBackend: "test-termination",
+      },
+    );
+    const parsed = sent.map((message) => JSON.parse(message));
+    expect(parsed).toContainEqual(expect.objectContaining({
+      type: "response",
+      data: expect.objectContaining({
+        runId: "run-termination",
+        nodeId: "coder",
+        content: { ok: true },
+        termination_metadata: {
+          stop_reason: "max_tokens",
+          output_tokens: 320,
+          output_token_limit: null,
+          tool_argument_parse: "ok",
+        },
+      }),
+    }));
+
+    const failingAgent: AgentClient = {
+      run() {
+        return (async function* () {
+          yield {
+            type: "done" as const,
+            termination: {
+              stop_reason: "max_tokens",
+              output_tokens: 99,
+              output_token_limit: null,
+              tool_argument_parse: "invalid",
+            },
+          };
+        })();
+      },
+    };
+    registerAgentBackend("test-termination-error", () => failingAgent);
+    const errorSent: string[] = [];
+    await runPrompt(
+      {
+        task: "test",
+        sender: "test",
+        runId: "run-termination-error",
+        dagConfig: makeConfig(),
+      },
+      {
+        wsSend: (d) => errorSent.push(d),
+        agentBackend: "test-termination-error",
+      },
+    );
+    const errorParsed = errorSent.map((message) => JSON.parse(message));
+    expect(errorParsed).toContainEqual(expect.objectContaining({
+      type: "node_error",
+      data: expect.objectContaining({
+        termination_metadata: {
+          stop_reason: "max_tokens",
+          output_tokens: 99,
+          output_token_limit: null,
+          tool_argument_parse: "invalid",
+        },
+      }),
+    }));
+  });
+
   it("streams cumulative usage snapshots with the authoritative node-turn scope", async () => {
     const mockAgent: AgentClient = {
       run() {
@@ -621,6 +715,12 @@ describe("prompt runner", () => {
         nodeId: "coder",
         message: "agent ended without DAG handoff",
         session_id: "session-deferred",
+        termination_metadata: {
+          stop_reason: "unknown",
+          output_tokens: null,
+          output_token_limit: null,
+          tool_argument_parse: "unknown",
+        },
       },
     }]);
   });
@@ -670,6 +770,12 @@ describe("prompt runner", () => {
         generation: 3,
         lease_generation: 8,
         command_id: "command-2",
+        termination_metadata: {
+          stop_reason: "unknown",
+          output_tokens: null,
+          output_token_limit: null,
+          tool_argument_parse: "unknown",
+        },
       },
     }]);
   });

@@ -74,7 +74,7 @@ spec:
     ReviewContext:
       type: object
       additionalProperties: false
-      required: [repo, pr, base, head, repository_path, changed_files, diff_stat, diff_patch, diff_chunks, diff_bytes, diff_truncated]
+      required: [repo, pr, base, head, repository_path, changed_files, changed_files_digest, changed_files_count, diff_stat, diff_patch, diff_chunks, diff_bytes, diff_truncated]
       properties:
         repo: { type: string }
         pr: { type: integer }
@@ -85,6 +85,8 @@ spec:
           type: array
           maxItems: 5000
           items: { type: string }
+        changed_files_digest: { type: string, pattern: '^[0-9a-f]{64}$' }
+        changed_files_count: { type: integer, minimum: 0, maximum: 5000 }
         diff_stat: { type: string, maxLength: 20000 }
         diff_patch: { type: string, maxLength: 150000 }
         diff_chunks:
@@ -110,7 +112,7 @@ spec:
     PreparedReviewContext:
       type: object
       additionalProperties: false
-      required: [repo, pr, base, head, repository_path, changed_files, diff_stat, diff_patch, diff_chunks, diff_bytes, diff_truncated, commit_metadata, commit_metadata_truncated]
+      required: [repo, pr, base, head, repository_path, changed_files, changed_files_digest, changed_files_count, diff_stat, diff_patch, diff_chunks, diff_bytes, diff_truncated, commit_metadata, commit_metadata_truncated]
       properties:
         repo: { type: string }
         pr: { type: integer }
@@ -121,6 +123,8 @@ spec:
           type: array
           maxItems: 5000
           items: { type: string }
+        changed_files_digest: { type: string, pattern: '^[0-9a-f]{64}$' }
+        changed_files_count: { type: integer, minimum: 0, maximum: 5000 }
         diff_stat: { type: string, maxLength: 20000 }
         diff_patch: { type: string, maxLength: 150000 }
         diff_chunks:
@@ -159,10 +163,82 @@ spec:
         author: { type: string }
 
 
+    CoverageAttestation:
+      type: object
+      additionalProperties: false
+      required: [digest, count]
+      properties:
+        digest: { type: string, pattern: '^[0-9a-f]{64}$' }
+        count: { type: integer, minimum: 0, maximum: 5000 }
+
+    AttemptDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [attempt, category, termination_reason, output_tokens, output_token_limit, tool_argument_parse, contract_stage, redacted_reason]
+      properties:
+        attempt: { type: integer, minimum: 1, maximum: 10 }
+        category:
+          type: string
+          enum: [accepted, provider_output_truncated, handoff_arguments_invalid, contract_validation_failed, transport_failed, reviewer_abstained, unknown]
+        termination_reason: { type: string, maxLength: 200 }
+        output_tokens:
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 100000000 }
+            - { type: 'null' }
+        output_token_limit:
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 100000000 }
+            - { type: 'null' }
+        tool_argument_parse: { type: string, enum: [ok, invalid, not_applicable, unknown] }
+        contract_stage: { type: string, enum: [accepted, rejected, not_reached, unknown] }
+        redacted_reason: { type: string, maxLength: 1000 }
+
+    ReviewerEvidence:
+      type: object
+      additionalProperties: false
+      required: [findings, attempts, coverage]
+      properties:
+        findings:
+          type: array
+          maxItems: 50
+          items: { type: object }
+        attempts:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required: [attempt, category, termination_reason, output_tokens, output_token_limit, tool_argument_parse, contract_stage, redacted_reason]
+            properties:
+              attempt: { type: integer, minimum: 1, maximum: 10 }
+              category:
+                type: string
+                enum: [accepted, provider_output_truncated, handoff_arguments_invalid, contract_validation_failed, transport_failed, reviewer_abstained, unknown]
+              termination_reason: { type: string, maxLength: 200 }
+              output_tokens:
+                oneOf:
+                  - { type: integer, minimum: 0, maximum: 100000000 }
+                  - { type: 'null' }
+              output_token_limit:
+                oneOf:
+                  - { type: integer, minimum: 0, maximum: 100000000 }
+                  - { type: 'null' }
+              tool_argument_parse: { type: string, enum: [ok, invalid, not_applicable, unknown] }
+              contract_stage: { type: string, enum: [accepted, rejected, not_reached, unknown] }
+              redacted_reason: { type: string, maxLength: 1000 }
+        coverage:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              properties:
+                digest: { type: string, pattern: '^[0-9a-f]{64}$' }
+                count: { type: integer, minimum: 0, maximum: 5000 }
+            - { type: 'null' }
+
     ReviewerResult:
       type: object
       additionalProperties: false
-      required: [reviewer, status, vote, summary, reviewed_files, unreviewed_files, evidence_truncated, findings]
+      required: [reviewer, status, vote, summary, reviewed_files, unreviewed_files, evidence_truncated, findings, attempts, coverage]
       properties:
         reviewer: { type: string, enum: [qwen, kimi, glm] }
         status: { type: string, enum: [complete, failed] }
@@ -193,25 +269,56 @@ spec:
               evidence: { type: string, minLength: 1, maxLength: 12000 }
               recommendation: { type: string, minLength: 1, maxLength: 8000 }
               confidence: { type: string, enum: [high, medium, low] }
+        attempts:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required: [attempt, category, termination_reason, output_tokens, output_token_limit, tool_argument_parse, contract_stage, redacted_reason]
+            properties:
+              attempt: { type: integer, minimum: 1, maximum: 10 }
+              category:
+                type: string
+                enum: [accepted, provider_output_truncated, handoff_arguments_invalid, contract_validation_failed, transport_failed, reviewer_abstained, unknown]
+              termination_reason: { type: string, maxLength: 200 }
+              output_tokens:
+                oneOf:
+                  - { type: integer, minimum: 0, maximum: 100000000 }
+                  - { type: 'null' }
+              output_token_limit:
+                oneOf:
+                  - { type: integer, minimum: 0, maximum: 100000000 }
+                  - { type: 'null' }
+              tool_argument_parse: { type: string, enum: [ok, invalid, not_applicable, unknown] }
+              contract_stage: { type: string, enum: [accepted, rejected, not_reached, unknown] }
+              redacted_reason: { type: string, maxLength: 1000 }
+        coverage:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              properties:
+                digest: { type: string, pattern: '^[0-9a-f]{64}$' }
+                count: { type: integer, minimum: 0, maximum: 5000 }
+            - { type: 'null' }
 
 
-    VerificationVote:
+    ReviewerHandoff:
       type: object
       additionalProperties: false
-      required: [reviewer, status, vote, summary, reviewed_files, unreviewed_files, evidence_truncated, findings]
+      required: [reviewer, status, vote, summary, coverage, evidence_truncated, findings]
       properties:
         reviewer: { type: string, enum: [qwen, kimi, glm] }
         status: { type: string, enum: [complete, failed] }
         vote: { type: string, enum: [approve, request_changes, abstain] }
         summary: { type: string, minLength: 1, maxLength: 12000 }
-        reviewed_files:
-          type: array
-          maxItems: 5000
-          items: { type: string }
-        unreviewed_files:
-          type: array
-          maxItems: 5000
-          items: { type: string }
+        coverage:
+          type: object
+          additionalProperties: false
+          required: [digest, count]
+          properties:
+            digest: { type: string, pattern: '^[0-9a-f]{64}$' }
+            count: { type: integer, minimum: 0, maximum: 5000 }
         evidence_truncated: { type: boolean }
         findings:
           type: array
@@ -229,6 +336,29 @@ spec:
               evidence: { type: string, minLength: 1, maxLength: 12000 }
               recommendation: { type: string, minLength: 1, maxLength: 8000 }
               confidence: { type: string, enum: [high, medium, low] }
+      allOf:
+        - if:
+            properties:
+              status: { const: complete }
+              vote: { const: approve }
+          then:
+            properties:
+              findings: { type: array, maxItems: 0 }
+              evidence_truncated: { const: false }
+        - if:
+            properties:
+              status: { const: complete }
+              vote: { const: request_changes }
+          then:
+            properties:
+              findings: { type: array, minItems: 1 }
+              evidence_truncated: { const: false }
+        - if:
+            properties:
+              status: { const: failed }
+          then:
+            properties:
+              vote: { const: abstain }
 
 
     FinalReview:
@@ -325,16 +455,22 @@ spec:
         precise changed or directly affected line and reproducible evidence.
         Do not report style, optional hardening, speculative risks, or
         pre-existing behavior. Never modify the checkout or reveal secrets.
+        Coverage attestation: trusted code computes reviewed_files from
+        input.context.changed_files_digest and changed_files_count. Never echo,
+        enumerate, or reserialize changed-file paths in your output; the
+        coverage object is the only model-facing coverage field.
         If diff_truncated is true or any changed file cannot be reviewed, set
-        status=failed, vote=abstain, evidence_truncated=true, and list the
-        missing paths. Otherwise set status=complete and copy
-        input.context.changed_files exactly, in order and including lockfiles,
-        into reviewed_files. Leave unreviewed_files empty and set vote=approve when
-        findings is empty or request_changes when findings is non-empty.
+        status=failed, vote=abstain, evidence_truncated=true. If you
+        intentionally abstain for another reason, set status=failed,
+        vote=abstain, evidence_truncated=false. Otherwise set status=complete,
+        evidence_truncated=false, and set vote=approve when findings is empty or
+        request_changes when findings is non-empty.
         Do not end with prose. Your final action MUST call handoff on voted with:
-        {"reviewer":"qwen","status":"complete|failed","vote":"approve|request_changes|abstain","summary":"text","reviewed_files":["path"],"unreviewed_files":[],"evidence_truncated":false,"findings":[{"category":"runtime|security|tests|frontend","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
-        If input:correction exists, do not re-analyze or call any tool except
-        handoff; immediately resubmit the existing review in the exact shape.
+        {"reviewer":"qwen","status":"complete|failed","vote":"approve|request_changes|abstain","summary":"text","coverage":{"digest":"<exact input.context.changed_files_digest>","count":<exact input.context.changed_files_count>},"evidence_truncated":false,"findings":[{"category":"runtime|security|tests|frontend","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
+        If input:correction exists, do not re-analyze and do not call any tool
+        except handoff. Reuse the accepted findings and coverage from
+        input:reviewer_state when present, and submit exactly one compact
+        handoff on voted. Never reserialize changed-file paths.
 
     kimi_reviewer:
       system: |
@@ -354,14 +490,21 @@ spec:
         introduced by this PR with a precise changed or directly affected line
         and reproducible evidence. Exclude style, speculative risks, optional
         hardening, and pre-existing behavior. Never modify the checkout or
-        reveal secrets. If evidence is incomplete, abstain. Otherwise copy
-        input.context.changed_files exactly, in order and including lockfiles,
-        into reviewed_files, leave unreviewed_files empty, and approve only
-        when no actionable finding remains after your challenge.
+        reveal secrets. Coverage attestation: trusted code computes
+        reviewed_files from input.context.changed_files_digest and
+        changed_files_count. Never echo, enumerate, or reserialize changed-file
+        paths; the coverage object is the only model-facing coverage field. If
+        evidence is incomplete, set status=failed, vote=abstain,
+        evidence_truncated=true. If you intentionally abstain for another
+        reason, set status=failed, vote=abstain, evidence_truncated=false.
+        Otherwise set status=complete, evidence_truncated=false, and approve
+        only when no actionable finding remains after your challenge.
         Do not end with prose. Your final action MUST call handoff on voted with:
-        {"reviewer":"kimi","status":"complete|failed","vote":"approve|request_changes|abstain","summary":"text","reviewed_files":["path"],"unreviewed_files":[],"evidence_truncated":false,"findings":[{"category":"runtime|security|tests|frontend","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
-        If input:correction exists, do not re-analyze or call any tool except
-        handoff; immediately resubmit the existing review in the exact shape.
+        {"reviewer":"kimi","status":"complete|failed","vote":"approve|request_changes|abstain","summary":"text","coverage":{"digest":"<exact input.context.changed_files_digest>","count":<exact input.context.changed_files_count>},"evidence_truncated":false,"findings":[{"category":"runtime|security|tests|frontend","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
+        If input:correction exists, do not re-analyze and do not call any tool
+        except handoff. Reuse the accepted findings and coverage from
+        input:reviewer_state when present, and submit exactly one compact
+        handoff on voted. Never reserialize changed-file paths.
 
     glm_reviewer:
       system: |
@@ -380,14 +523,22 @@ spec:
         Report only concrete defects introduced by this PR with a precise
         changed or directly affected line. Do not report generic requests for
         more tests, style, speculative risks, or pre-existing behavior. Never
-        modify the checkout or reveal secrets. If evidence is incomplete,
-        abstain. Otherwise copy input.context.changed_files exactly, in order
-        and including lockfiles, into reviewed_files, leave unreviewed_files
-        empty, and approve only when there are no actionable findings.
+        modify the checkout or reveal secrets. Coverage attestation: trusted
+        code computes reviewed_files from input.context.changed_files_digest
+        and changed_files_count. Never echo, enumerate, or reserialize
+        changed-file paths; the coverage object is the only model-facing
+        coverage field. If evidence is incomplete, set status=failed,
+        vote=abstain, evidence_truncated=true. If you intentionally abstain for
+        another reason, set status=failed, vote=abstain,
+        evidence_truncated=false. Otherwise set status=complete,
+        evidence_truncated=false, and approve only when there are no actionable
+        findings.
         Do not end with prose. Your final action MUST call handoff on voted with:
-        {"reviewer":"glm","status":"complete|failed","vote":"approve|request_changes|abstain","summary":"text","reviewed_files":["path"],"unreviewed_files":[],"evidence_truncated":false,"findings":[{"category":"runtime|security|tests|frontend","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
-        If input:correction exists, do not re-analyze or call any tool except
-        handoff; immediately resubmit the existing review in the exact shape.
+        {"reviewer":"glm","status":"complete|failed","vote":"approve|request_changes|abstain","summary":"text","coverage":{"digest":"<exact input.context.changed_files_digest>","count":<exact input.context.changed_files_count>},"evidence_truncated":false,"findings":[{"category":"runtime|security|tests|frontend","severity":"critical|high|medium|low","title":"text","file":"path","line":1,"evidence":"text","recommendation":"text","confidence":"high|medium|low"}]}
+        If input:correction exists, do not re-analyze and do not call any tool
+        except handoff. Reuse the accepted findings and coverage from
+        input:reviewer_state when present, and submit exactly one compact
+        handoff on voted. Never reserialize changed-file paths.
 
 
   nodes:
@@ -401,6 +552,7 @@ spec:
           - -e
           - |-
             const { spawnSync } = require('node:child_process');
+            const { createHash } = require('node:crypto');
             const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
             let stdin = '';
             const fail = (message) => { throw new Error(message); };
@@ -619,6 +771,8 @@ spec:
                 repo, pr, base, head,
                 repository_path: '/workspace/repository',
                 changed_files: changed,
+                changed_files_digest: createHash('sha256').update(JSON.stringify(changed), 'utf8').digest('hex'),
+                changed_files_count: changed.length,
                 diff_stat: diffStat,
                 diff_patch: inlinePreview + continuation + truncation,
                 diff_chunks: diffChunks,
@@ -667,16 +821,17 @@ spec:
       kind: command
       depends_on: [qwen_review, build_review_context]
       inputs:
-        success: { contract: VerificationVote }
+        success: { contract: ReviewerHandoff }
         failure: {}
         context: { contract: ReviewContext }
+        evidence: { contract: ReviewerEvidence }
       outputs: { reviewed: { contract: ReviewerResult } }
       config:
         command:
           - node
           - -e
           - >-
-            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),context=last(input,'context'),changed=Array.isArray(context?.changed_files)?context.changed_files:[],success=last(input,'success'),reviewed=Array.isArray(success?.reviewed_files)?success.reviewed_files:[],complete=success&&success.reviewer===reviewer&&success.status==='complete'&&(success.vote==='approve'||success.vote==='request_changes')&&success.evidence_truncated===false&&Array.isArray(success.findings)&&Array.isArray(success.unreviewed_files)&&success.unreviewed_files.length===0&&reviewed.length===changed.length&&new Set(reviewed).size===changed.length&&changed.every(path=>reviewed.includes(path))&&((success.vote==='approve'&&success.findings.length===0)||(success.vote==='request_changes'&&success.findings.length>0));if(complete){process.stdout.write(JSON.stringify(success));return}const candidate=success??last(input,'failure'),raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a complete vote'),failure=raw.slice(0,2048);process.stdout.write(JSON.stringify({reviewer,status:'failed',vote:'abstain',summary:reviewer+' reviewer abstained because its review was incomplete: '+failure,reviewed_files:[],unreviewed_files:changed,evidence_truncated:true,findings:[]}))});
+            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),context=last(input,'context'),changed=Array.isArray(context?.changed_files)?context.changed_files:[],trustedDigest=typeof context?.changed_files_digest==='string'?context.changed_files_digest.toLowerCase():'',trustedCount=typeof context?.changed_files_count==='number'?context.changed_files_count:changed.length,evidence=last(input,'evidence'),attempts=Array.isArray(evidence?.attempts)?evidence.attempts:[],acceptedFindings=Array.isArray(evidence?.findings)?evidence.findings:[],trustedCoverage=evidence?.coverage&&typeof evidence.coverage==='object'&&evidence.coverage!==null?evidence.coverage:null,success=last(input,'success'),failure=last(input,'failure');const attestationMatches=value=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value)&&typeof value.digest==='string'&&/^[0-9a-f]{64}$/i.test(value.digest)&&value.digest.toLowerCase()===trustedDigest&&Number.isInteger(value.count)&&value.count===trustedCount;const compactCoverage=value=>({digest:value.digest.toLowerCase(),count:value.count});const result={reviewer,status:'failed',vote:'abstain',summary:'',reviewed_files:[],unreviewed_files:changed,evidence_truncated:true,findings:acceptedFindings,attempts,coverage:trustedCoverage};if(success&&success.reviewer===reviewer&&success.status==='complete'&&(success.vote==='approve'||success.vote==='request_changes')&&success.evidence_truncated===false&&Array.isArray(success.findings)&&((success.vote==='approve'&&success.findings.length===0)||(success.vote==='request_changes'&&success.findings.length>0))&&attestationMatches(success.coverage)){result.status='complete';result.vote=success.vote;result.summary=String(success.summary||'');result.reviewed_files=changed;result.unreviewed_files=[];result.evidence_truncated=false;result.findings=success.findings;result.coverage=compactCoverage(success.coverage);process.stdout.write(JSON.stringify(result));return}if(success&&success.reviewer===reviewer&&success.status==='failed'&&success.vote==='abstain'){result.status='failed';result.vote='abstain';result.summary=String(success.summary||(reviewer+' reviewer abstained'));result.evidence_truncated=success.evidence_truncated===true;result.findings=Array.isArray(success.findings)&&success.findings.length>0?success.findings:acceptedFindings;if(attestationMatches(success.coverage))result.coverage=compactCoverage(success.coverage);process.stdout.write(JSON.stringify(result));return}const candidate=success??failure,raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a complete vote'),invalidHandoff=Boolean(success)&&(success.reviewer!==reviewer||!attestationMatches(success.coverage)),lastAttempt=attempts.at(-1),category=invalidHandoff?'contract_validation_failed':(typeof lastAttempt?.category==='string'?lastAttempt.category:'unknown'),stageNames={provider_output_truncated:'output was truncated',contract_validation_failed:'handoff failed contract validation',handoff_arguments_invalid:'handoff arguments were invalid',transport_failed:'transport failed',reviewer_abstained:'abstained'};result.summary=reviewer+' reviewer '+(stageNames[category]??'ended without a complete vote')+': '+String(raw).slice(0,2048);if(invalidHandoff){result.attempts=[...(attempts.length>0?attempts.slice(0,-1):[]),{attempt:Math.max(1,attempts.length+1),category:'contract_validation_failed',termination_reason:lastAttempt?.termination_reason??'unknown',output_tokens:lastAttempt?.output_tokens??null,output_token_limit:lastAttempt?.output_token_limit??null,tool_argument_parse:lastAttempt?.tool_argument_parse??'unknown',contract_stage:'rejected',redacted_reason:'coverage attestation or reviewer identity mismatch'}]}else if(attempts.length===0){result.attempts=[{attempt:1,category,termination_reason:'unknown',output_tokens:null,output_token_limit:null,tool_argument_parse:'unknown',contract_stage:'unknown',redacted_reason:String(raw).slice(0,1000)}]}process.stdout.write(JSON.stringify(result))});
           - qwen
         stdin_field: "$inputs"
         timeout_ms: 10000
@@ -690,16 +845,17 @@ spec:
       kind: command
       depends_on: [kimi_review, build_review_context]
       inputs:
-        success: { contract: VerificationVote }
+        success: { contract: ReviewerHandoff }
         failure: {}
         context: { contract: ReviewContext }
+        evidence: { contract: ReviewerEvidence }
       outputs: { reviewed: { contract: ReviewerResult } }
       config:
         command:
           - node
           - -e
           - >-
-            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),context=last(input,'context'),changed=Array.isArray(context?.changed_files)?context.changed_files:[],success=last(input,'success'),reviewed=Array.isArray(success?.reviewed_files)?success.reviewed_files:[],complete=success&&success.reviewer===reviewer&&success.status==='complete'&&(success.vote==='approve'||success.vote==='request_changes')&&success.evidence_truncated===false&&Array.isArray(success.findings)&&Array.isArray(success.unreviewed_files)&&success.unreviewed_files.length===0&&reviewed.length===changed.length&&new Set(reviewed).size===changed.length&&changed.every(path=>reviewed.includes(path))&&((success.vote==='approve'&&success.findings.length===0)||(success.vote==='request_changes'&&success.findings.length>0));if(complete){process.stdout.write(JSON.stringify(success));return}const candidate=success??last(input,'failure'),raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a complete vote'),failure=raw.slice(0,2048);process.stdout.write(JSON.stringify({reviewer,status:'failed',vote:'abstain',summary:reviewer+' reviewer abstained because its review was incomplete: '+failure,reviewed_files:[],unreviewed_files:changed,evidence_truncated:true,findings:[]}))});
+            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),context=last(input,'context'),changed=Array.isArray(context?.changed_files)?context.changed_files:[],trustedDigest=typeof context?.changed_files_digest==='string'?context.changed_files_digest.toLowerCase():'',trustedCount=typeof context?.changed_files_count==='number'?context.changed_files_count:changed.length,evidence=last(input,'evidence'),attempts=Array.isArray(evidence?.attempts)?evidence.attempts:[],acceptedFindings=Array.isArray(evidence?.findings)?evidence.findings:[],trustedCoverage=evidence?.coverage&&typeof evidence.coverage==='object'&&evidence.coverage!==null?evidence.coverage:null,success=last(input,'success'),failure=last(input,'failure');const attestationMatches=value=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value)&&typeof value.digest==='string'&&/^[0-9a-f]{64}$/i.test(value.digest)&&value.digest.toLowerCase()===trustedDigest&&Number.isInteger(value.count)&&value.count===trustedCount;const compactCoverage=value=>({digest:value.digest.toLowerCase(),count:value.count});const result={reviewer,status:'failed',vote:'abstain',summary:'',reviewed_files:[],unreviewed_files:changed,evidence_truncated:true,findings:acceptedFindings,attempts,coverage:trustedCoverage};if(success&&success.reviewer===reviewer&&success.status==='complete'&&(success.vote==='approve'||success.vote==='request_changes')&&success.evidence_truncated===false&&Array.isArray(success.findings)&&((success.vote==='approve'&&success.findings.length===0)||(success.vote==='request_changes'&&success.findings.length>0))&&attestationMatches(success.coverage)){result.status='complete';result.vote=success.vote;result.summary=String(success.summary||'');result.reviewed_files=changed;result.unreviewed_files=[];result.evidence_truncated=false;result.findings=success.findings;result.coverage=compactCoverage(success.coverage);process.stdout.write(JSON.stringify(result));return}if(success&&success.reviewer===reviewer&&success.status==='failed'&&success.vote==='abstain'){result.status='failed';result.vote='abstain';result.summary=String(success.summary||(reviewer+' reviewer abstained'));result.evidence_truncated=success.evidence_truncated===true;result.findings=Array.isArray(success.findings)&&success.findings.length>0?success.findings:acceptedFindings;if(attestationMatches(success.coverage))result.coverage=compactCoverage(success.coverage);process.stdout.write(JSON.stringify(result));return}const candidate=success??failure,raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a complete vote'),invalidHandoff=Boolean(success)&&(success.reviewer!==reviewer||!attestationMatches(success.coverage)),lastAttempt=attempts.at(-1),category=invalidHandoff?'contract_validation_failed':(typeof lastAttempt?.category==='string'?lastAttempt.category:'unknown'),stageNames={provider_output_truncated:'output was truncated',contract_validation_failed:'handoff failed contract validation',handoff_arguments_invalid:'handoff arguments were invalid',transport_failed:'transport failed',reviewer_abstained:'abstained'};result.summary=reviewer+' reviewer '+(stageNames[category]??'ended without a complete vote')+': '+String(raw).slice(0,2048);if(invalidHandoff){result.attempts=[...(attempts.length>0?attempts.slice(0,-1):[]),{attempt:Math.max(1,attempts.length+1),category:'contract_validation_failed',termination_reason:lastAttempt?.termination_reason??'unknown',output_tokens:lastAttempt?.output_tokens??null,output_token_limit:lastAttempt?.output_token_limit??null,tool_argument_parse:lastAttempt?.tool_argument_parse??'unknown',contract_stage:'rejected',redacted_reason:'coverage attestation or reviewer identity mismatch'}]}else if(attempts.length===0){result.attempts=[{attempt:1,category,termination_reason:'unknown',output_tokens:null,output_token_limit:null,tool_argument_parse:'unknown',contract_stage:'unknown',redacted_reason:String(raw).slice(0,1000)}]}process.stdout.write(JSON.stringify(result))});
           - kimi
         stdin_field: "$inputs"
         timeout_ms: 10000
@@ -713,16 +869,17 @@ spec:
       kind: command
       depends_on: [glm_review, build_review_context]
       inputs:
-        success: { contract: VerificationVote }
+        success: { contract: ReviewerHandoff }
         failure: {}
         context: { contract: ReviewContext }
+        evidence: { contract: ReviewerEvidence }
       outputs: { reviewed: { contract: ReviewerResult } }
       config:
         command:
           - node
           - -e
           - >-
-            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),context=last(input,'context'),changed=Array.isArray(context?.changed_files)?context.changed_files:[],success=last(input,'success'),reviewed=Array.isArray(success?.reviewed_files)?success.reviewed_files:[],complete=success&&success.reviewer===reviewer&&success.status==='complete'&&(success.vote==='approve'||success.vote==='request_changes')&&success.evidence_truncated===false&&Array.isArray(success.findings)&&Array.isArray(success.unreviewed_files)&&success.unreviewed_files.length===0&&reviewed.length===changed.length&&new Set(reviewed).size===changed.length&&changed.every(path=>reviewed.includes(path))&&((success.vote==='approve'&&success.findings.length===0)||(success.vote==='request_changes'&&success.findings.length>0));if(complete){process.stdout.write(JSON.stringify(success));return}const candidate=success??last(input,'failure'),raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a complete vote'),failure=raw.slice(0,2048);process.stdout.write(JSON.stringify({reviewer,status:'failed',vote:'abstain',summary:reviewer+' reviewer abstained because its review was incomplete: '+failure,reviewed_files:[],unreviewed_files:changed,evidence_truncated:true,findings:[]}))});
+            let s='';const reviewer=process.argv[1];const last=(input,key)=>Array.isArray(input[key])?input[key].at(-1):undefined;const text=value=>{if(typeof value==='string')return value;try{return JSON.stringify(value)}catch{return String(value)}};process.stdin.on('data',chunk=>s+=chunk).on('end',()=>{const input=JSON.parse(s),context=last(input,'context'),changed=Array.isArray(context?.changed_files)?context.changed_files:[],trustedDigest=typeof context?.changed_files_digest==='string'?context.changed_files_digest.toLowerCase():'',trustedCount=typeof context?.changed_files_count==='number'?context.changed_files_count:changed.length,evidence=last(input,'evidence'),attempts=Array.isArray(evidence?.attempts)?evidence.attempts:[],acceptedFindings=Array.isArray(evidence?.findings)?evidence.findings:[],trustedCoverage=evidence?.coverage&&typeof evidence.coverage==='object'&&evidence.coverage!==null?evidence.coverage:null,success=last(input,'success'),failure=last(input,'failure');const attestationMatches=value=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value)&&typeof value.digest==='string'&&/^[0-9a-f]{64}$/i.test(value.digest)&&value.digest.toLowerCase()===trustedDigest&&Number.isInteger(value.count)&&value.count===trustedCount;const compactCoverage=value=>({digest:value.digest.toLowerCase(),count:value.count});const result={reviewer,status:'failed',vote:'abstain',summary:'',reviewed_files:[],unreviewed_files:changed,evidence_truncated:true,findings:acceptedFindings,attempts,coverage:trustedCoverage};if(success&&success.reviewer===reviewer&&success.status==='complete'&&(success.vote==='approve'||success.vote==='request_changes')&&success.evidence_truncated===false&&Array.isArray(success.findings)&&((success.vote==='approve'&&success.findings.length===0)||(success.vote==='request_changes'&&success.findings.length>0))&&attestationMatches(success.coverage)){result.status='complete';result.vote=success.vote;result.summary=String(success.summary||'');result.reviewed_files=changed;result.unreviewed_files=[];result.evidence_truncated=false;result.findings=success.findings;result.coverage=compactCoverage(success.coverage);process.stdout.write(JSON.stringify(result));return}if(success&&success.reviewer===reviewer&&success.status==='failed'&&success.vote==='abstain'){result.status='failed';result.vote='abstain';result.summary=String(success.summary||(reviewer+' reviewer abstained'));result.evidence_truncated=success.evidence_truncated===true;result.findings=Array.isArray(success.findings)&&success.findings.length>0?success.findings:acceptedFindings;if(attestationMatches(success.coverage))result.coverage=compactCoverage(success.coverage);process.stdout.write(JSON.stringify(result));return}const candidate=success??failure,raw=candidate&&typeof candidate==='object'&&typeof candidate.error==='string'?candidate.error:text(candidate??'reviewer ended without a complete vote'),invalidHandoff=Boolean(success)&&(success.reviewer!==reviewer||!attestationMatches(success.coverage)),lastAttempt=attempts.at(-1),category=invalidHandoff?'contract_validation_failed':(typeof lastAttempt?.category==='string'?lastAttempt.category:'unknown'),stageNames={provider_output_truncated:'output was truncated',contract_validation_failed:'handoff failed contract validation',handoff_arguments_invalid:'handoff arguments were invalid',transport_failed:'transport failed',reviewer_abstained:'abstained'};result.summary=reviewer+' reviewer '+(stageNames[category]??'ended without a complete vote')+': '+String(raw).slice(0,2048);if(invalidHandoff){result.attempts=[...(attempts.length>0?attempts.slice(0,-1):[]),{attempt:Math.max(1,attempts.length+1),category:'contract_validation_failed',termination_reason:lastAttempt?.termination_reason??'unknown',output_tokens:lastAttempt?.output_tokens??null,output_token_limit:lastAttempt?.output_token_limit??null,tool_argument_parse:lastAttempt?.tool_argument_parse??'unknown',contract_stage:'rejected',redacted_reason:'coverage attestation or reviewer identity mismatch'}]}else if(attempts.length===0){result.attempts=[{attempt:1,category,termination_reason:'unknown',output_tokens:null,output_token_limit:null,tool_argument_parse:'unknown',contract_stage:'unknown',redacted_reason:String(raw).slice(0,1000)}]}process.stdout.write(JSON.stringify(result))});
           - glm
         stdin_field: "$inputs"
         timeout_ms: 10000
@@ -752,8 +909,9 @@ spec:
       allowed_builtin_tools: [Read, Grep, Glob, LS]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository, review-evidence] }
+      correction_input_ports: [reviewer_state]
       inputs: { context: { contract: ReviewContext } }
-      outputs: { voted: { contract: VerificationVote }, failed: {} }
+      outputs: { voted: { contract: ReviewerHandoff }, failed: {} }
 
     kimi_review:
       kind: agent
@@ -761,8 +919,9 @@ spec:
       allowed_builtin_tools: [Read, Grep, Glob, LS]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository, review-evidence] }
+      correction_input_ports: [reviewer_state]
       inputs: { context: { contract: ReviewContext } }
-      outputs: { voted: { contract: VerificationVote }, failed: {} }
+      outputs: { voted: { contract: ReviewerHandoff }, failed: {} }
 
     glm_review:
       kind: agent
@@ -770,8 +929,9 @@ spec:
       allowed_builtin_tools: [Read, Grep, Glob, LS]
       allowed_dag_tools: [handoff]
       workspace_access: { writable_paths: [], readonly_paths: [repository, review-evidence] }
+      correction_input_ports: [reviewer_state]
       inputs: { context: { contract: ReviewContext } }
-      outputs: { voted: { contract: VerificationVote }, failed: {} }
+      outputs: { voted: { contract: ReviewerHandoff }, failed: {} }
 
     decide:
       kind: command

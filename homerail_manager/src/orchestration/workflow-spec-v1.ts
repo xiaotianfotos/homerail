@@ -851,6 +851,9 @@ function canonicalNode(id: string, node: WorkflowSpecV1Node): CanonicalNode {
         : {}),
       ...(node.credentials !== undefined ? { credentials: node.credentials } : {}),
       ...(node.session_scope !== undefined ? { session_scope: node.session_scope } : {}),
+      ...(node.correction_input_ports !== undefined
+        ? { correction_input_ports: [...node.correction_input_ports].sort() }
+        : {}),
     };
     return {
       ...base,
@@ -1548,6 +1551,9 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
         : {}),
       ...(typeof node.config?.session_scope === "string"
         ? { session_scope: node.config.session_scope }
+        : {}),
+      ...(Array.isArray(node.config?.correction_input_ports)
+        ? { correction_input_ports: node.config.correction_input_ports }
         : {}),
       ...(Array.isArray(node.config?.credentials)
         ? { credentials: node.config.credentials }

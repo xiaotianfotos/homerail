@@ -80,6 +80,8 @@ export interface DagToolsState {
   /** Whether handoff has been called this turn. */
   yielded: boolean;
   handoffData: unknown | null;
+  /** Bounded handoff tool-argument parse state for attempt diagnostics. */
+  handoffArgumentParse: { status: "ok" | "invalid"; reason?: string } | null;
   /** Incoming message inbox. */
   inbox: unknown[];
   /** Waiters for receive_message (nodeId → callback). */
@@ -147,6 +149,7 @@ export function createDagToolsState(
     incomingEdges: config.incoming_edges,
     yielded: false,
     handoffData: null,
+    handoffArgumentParse: null,
     inbox: [],
     waiters: new Map(),
     wsSend,

@@ -81,6 +81,7 @@ describe("DAG tools", () => {
       });
       expect(state.handoffData).not.toHaveProperty("round_id");
       expect(state.yielded).toBe(true);
+      expect(state.handoffArgumentParse).toEqual({ status: "ok" });
     });
 
     it("stages the dispatch transport fence in the authoritative handoff", async () => {
@@ -166,6 +167,7 @@ describe("DAG tools", () => {
       expect(invalid).toMatchObject({ is_error: true });
       expect(state.yielded).toBe(false);
       expect(state.handoffData).toBeNull();
+      expect(state.handoffArgumentParse).toMatchObject({ status: "invalid" });
 
       const corrected = await handoffTool.handler({
         port: "done",

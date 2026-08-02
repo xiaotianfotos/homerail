@@ -462,6 +462,7 @@ export class ClaudeSdkAdapter implements AgentClient {
     const assistantUsageByMessageId = new Map<string, AgentUsage>();
     let finalDurationMs: number | undefined;
     let finalNumTurns: number | undefined;
+    let finalStopReason: string | null = null;
     let messageCount = 0;
     let suppressedThinkingTokenDebugCount = 0;
     let pendingThinkingTokenDebugCount = 0;
@@ -710,6 +711,9 @@ export class ClaudeSdkAdapter implements AgentClient {
           const msg = next.value;
           if (msg.type === "result") inputQueue.close();
           messageCount += 1;
+          if (typeof msg.message?.stop_reason === "string" && msg.message.stop_reason) {
+            finalStopReason = msg.message.stop_reason;
+          }
           const rawTraceMessageError = await writeRawTrace({
             record_type: "sdk_message",
             sequence: messageCount,
@@ -863,6 +867,7 @@ export class ClaudeSdkAdapter implements AgentClient {
           usage: hasUsage ? accumulatedUsage : null,
           duration_ms: finalDurationMs ?? null,
           num_turns: finalNumTurns ?? null,
+          stop_reason: finalStopReason,
           raw_trace_configured: rawTraceConfigured,
           raw_trace_records_written: rawTraceRecordsWritten,
           raw_trace_write_failures: rawTraceWriteFailures,
@@ -944,6 +949,12 @@ export class ClaudeSdkAdapter implements AgentClient {
         : undefined,
       duration_ms: finalDurationMs,
       num_turns: finalNumTurns,
+      termination: {
+        stop_reason: finalStopReason,
+        output_tokens: accumulatedUsage.output_tokens ?? null,
+        output_token_limit: null,
+        tool_argument_parse: "unknown",
+      },
     };
   }
 

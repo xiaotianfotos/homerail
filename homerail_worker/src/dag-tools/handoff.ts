@@ -60,6 +60,10 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
       }
       const unexpectedKeys = Object.keys(args).filter((key) => !["port", "content", "summary"].includes(key));
       if (unexpectedKeys.length > 0) {
+        state.handoffArgumentParse = {
+          status: "invalid",
+          reason: `unexpected top-level keys: ${unexpectedKeys.join(", ")}`,
+        };
         return {
           content: [
             {
@@ -78,6 +82,10 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
 
       // Validate port
       if (!state.availablePorts.includes(port)) {
+        state.handoffArgumentParse = {
+          status: "invalid",
+          reason: `unknown output port: ${port}`,
+        };
         return {
           content: [
             {
@@ -132,6 +140,7 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
       // cannot race the still-active prompt lifecycle.
       state.yielded = true;
       state.handoffData = payload;
+      state.handoffArgumentParse = { status: "ok" };
 
       // Build downstream info
       const edge = state.outgoingEdges.find((e) => e.from_port === port);

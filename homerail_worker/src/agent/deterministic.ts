@@ -60,6 +60,14 @@ export class DeterministicClient implements AgentClient {
       is_error: result.is_error === true,
     };
 
-    yield { type: "done" };
+    yield {
+      type: "done",
+      termination: {
+        stop_reason: "end_turn",
+        output_tokens: 0,
+        output_token_limit: null,
+        tool_argument_parse: result.is_error === true ? "invalid" : "ok",
+      },
+    };
   }
 }

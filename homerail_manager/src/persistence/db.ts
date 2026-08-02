@@ -46,6 +46,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_run_rounds",
   "dag_actor_provisioned_workers",
   "dag_actor_checkpoints",
+  "dag_review_evidence",
   "dag_actor_runtimes",
   "dag_surface_projection_controls",
   "dag_surface_projection_queue",
@@ -1704,6 +1705,87 @@ function validateDagRunSkillContextSchemaV29(db: SqliteDatabase): void {
   ).get() as { sql?: string } | undefined)?.sql ?? "");
   if (!triggerSql.includes("dag run skill contexts are append-only")) {
     throw new Error("Schema migration 29 is incomplete: skill context append-only trigger is missing or invalid");
+  }
+}
+
+function validateDagReviewEvidenceSchemaV35(db: SqliteDatabase): void {
+  const table = "dag_review_evidence";
+  if (!hasTable(db, table)) {
+    throw new Error(`Schema migration 35 is incomplete: missing table ${table}`);
+  }
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    notnull: number;
+    pk: number;
+  }>;
+  const requiredColumns = [
+    "run_id",
+    "node_id",
+    "reviewer",
+    "session_id",
+    "generation",
+    "attempt",
+    "evidence_kind",
+    "evidence_digest",
+    "evidence_json",
+    "created_at",
+  ];
+  const actual = new Set(columns.map((column) => column.name));
+  const missing = requiredColumns.filter((name) => !actual.has(name));
+  if (missing.length > 0) {
+    throw new Error(`Schema migration 35 is incomplete: ${table} is missing ${missing.join(", ")}`);
+  }
+  const primaryKey = columns
+    .filter((column) => column.pk > 0)
+    .sort((left, right) => left.pk - right.pk)
+    .map((column) => column.name);
+  if (
+    primaryKey.length !== 4
+    || primaryKey[0] !== "run_id"
+    || primaryKey[1] !== "node_id"
+    || primaryKey[2] !== "evidence_kind"
+    || primaryKey[3] !== "attempt"
+  ) {
+    throw new Error(`Schema migration 35 is incomplete: ${table} has an invalid primary key`);
+  }
+  const tableSql = normalizedSchemaSql((db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+  ).get(table) as { sql?: string } | undefined)?.sql ?? "");
+  const requiredChecks = [
+    "check(reviewer in ('qwen', 'kimi', 'glm'))",
+    "check(generation >= 1)",
+    "check(attempt between 1 and 10)",
+    "check(evidence_kind in ('attempt', 'findings', 'coverage'))",
+  ];
+  if (requiredChecks.some((check) => !tableSql.includes(check))) {
+    throw new Error(`Schema migration 35 is incomplete: ${table} validation constraints are invalid`);
+  }
+  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_update: string;
+    on_delete: string;
+  }>;
+  if (!foreignKeys.some((foreignKey) => (
+    foreignKey.table === "dag_runs"
+    && foreignKey.from === "run_id"
+    && foreignKey.to === "run_id"
+    && foreignKey.on_update.toUpperCase() === "RESTRICT"
+    && foreignKey.on_delete.toUpperCase() === "CASCADE"
+  ))) {
+    throw new Error(`Schema migration 35 is incomplete: ${table} run ownership constraint is invalid`);
+  }
+  const indexNames = (db.prepare("PRAGMA index_list(dag_review_evidence)").all() as Array<{ name: string }>)
+    .map((index) => index.name);
+  if (!indexNames.includes("idx_dag_review_evidence_run_node")) {
+    throw new Error(`Schema migration 35 is incomplete: missing index idx_dag_review_evidence_run_node`);
+  }
+  const triggerSql = normalizedSchemaSql((db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_dag_review_evidence_no_update'",
+  ).get() as { sql?: string } | undefined)?.sql ?? "");
+  if (!triggerSql.includes("dag review evidence is append-only")) {
+    throw new Error(`Schema migration 35 is incomplete: ${table} append-only trigger is missing`);
   }
 }
 
@@ -4215,6 +4297,38 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       `);
     },
     validate: validateDagRunInputSchemaV34,
+  },
+  {
+    version: 35,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS dag_review_evidence (
+          run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 256),
+          node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 256),
+          reviewer TEXT NOT NULL CHECK(reviewer IN ('qwen', 'kimi', 'glm')),
+          session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 256),
+          generation INTEGER NOT NULL CHECK(generation >= 1),
+          attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 10),
+          evidence_kind TEXT NOT NULL CHECK(evidence_kind IN ('attempt', 'findings', 'coverage')),
+          evidence_digest TEXT NOT NULL CHECK(
+            length(evidence_digest) = 64 AND evidence_digest NOT GLOB '*[^0-9a-f]*'
+          ),
+          evidence_json TEXT NOT NULL CHECK(length(evidence_json) BETWEEN 2 AND 1048576),
+          created_at INTEGER NOT NULL CHECK(created_at >= 0),
+          PRIMARY KEY(run_id, node_id, evidence_kind, attempt),
+          FOREIGN KEY(run_id) REFERENCES dag_runs(run_id)
+            ON UPDATE RESTRICT ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_dag_review_evidence_run_node
+          ON dag_review_evidence(run_id, node_id, attempt, evidence_kind);
+        CREATE TRIGGER IF NOT EXISTS trg_dag_review_evidence_no_update
+        BEFORE UPDATE ON dag_review_evidence
+        BEGIN
+          SELECT RAISE(ABORT, 'DAG review evidence is append-only');
+        END;
+      `);
+    },
+    validate: validateDagReviewEvidenceSchemaV35,
   },
 ];
 
