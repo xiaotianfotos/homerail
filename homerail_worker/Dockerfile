@@ -1,6 +1,14 @@
 # Build from repo root: docker build -t homerail-worker:latest -f homerail_worker/Dockerfile .
+# APT mirror override for regions where deb.debian.org is slow/blocked
+# (e.g. China). Override at build time: --build-arg APT_MIRROR=mirrors.aliyun.com
+ARG APT_MIRROR=mirrors.aliyun.com
 FROM node:22-slim AS secret-guard-build
+ARG APT_MIRROR
 
+RUN sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" \
+      /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" \
+      /etc/apt/sources.list 2>/dev/null || true
 RUN apt-get update \
   && apt-get install -y --no-install-recommends gcc libc6-dev \
   && rm -rf /var/lib/apt/lists/*
@@ -9,6 +17,7 @@ RUN gcc -O2 -Wall -Wextra -Werror -fPIC -shared \
   -o /homerail-codex-secret-guard.so /tmp/codex-secret-guard.c
 
 FROM node:22-slim
+ARG APT_MIRROR
 
 WORKDIR /app
 ENV PATH="/app/node_modules/.bin:${PATH}"
@@ -22,14 +31,21 @@ ENV HOMERAIL_WORKER_VERSION="${HOMERAIL_WORKER_VERSION}" \
     HOMERAIL_WORKER_SOURCE_FINGERPRINT="${HOMERAIL_WORKER_SOURCE_FINGERPRINT}" \
     HOMERAIL_WORKER_IMAGE_REVISION="${HOMERAIL_WORKER_IMAGE_REVISION}"
 
+RUN sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" \
+      /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" \
+      /etc/apt/sources.list 2>/dev/null || true
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client \
   && rm -rf /var/lib/apt/lists/*
-RUN npm install -g npm@11.6.2
+RUN npm install -g npm@11.6.2 --registry=https://registry.npmmirror.com
 COPY --from=secret-guard-build /homerail-codex-secret-guard.so /usr/local/lib/homerail-codex-secret-guard.so
 
 # Copy homerail_protocol to /homerail_protocol (parallel to /app) so that
 # file:../homerail_protocol in homerail_worker/package.json resolves correctly.
+# Use a fast npm registry mirror (override at build time: --build-arg NPM_REGISTRY)
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+RUN npm config set registry ${NPM_REGISTRY}
 COPY homerail_protocol/package.json homerail_protocol/package-lock.json* /homerail_protocol/
 COPY homerail_protocol/src /homerail_protocol/src
 COPY homerail_protocol/tsconfig.json /homerail_protocol/

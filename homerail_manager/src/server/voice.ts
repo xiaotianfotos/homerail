@@ -748,7 +748,22 @@ function _probeWebSocketVoiceEndpoint(
     socket.once("unexpected-response", (_request, response) => {
       const status = response.statusCode ?? 0;
       response.resume();
-      const ok = status >= 200 && status < 500 && status !== 404 && status !== 405;
+      // 对本地/环回地址：任何 4xx 都视为端点不存在（本地服务无认证场景，
+      // 403/401 只可能意味着「没有该端点」）。避免把 faster-whisper 等本地
+      // 服务的 /v1/realtime（实际不存在，返回 403）误判为可用，导致 UI 把
+      // 外部 realtime URL 写入 ASR setting，Manager 走 native_realtime 代理
+      // 后必然 403 断开。远程端点仍按「4xx = 可达但需认证」处理。
+      let ok = status >= 200 && status < 500 && status !== 404 && status !== 405;
+      try {
+        const parsed = new URL(candidate.url);
+        const isLoopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" ||
+          parsed.hostname === "::1" || parsed.hostname.startsWith("192.168.") ||
+          parsed.hostname.startsWith("10.") || parsed.hostname.startsWith("100.64.") ||
+          parsed.hostname.startsWith("100.66.");
+        if (isLoopback && status >= 400) ok = false;
+      } catch {
+        // URL 解析失败时保持默认判定
+      }
       finish({
         ...candidate,
         ok,

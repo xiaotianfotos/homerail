@@ -81,9 +81,12 @@ function voiceEndpoint(path: string): string {
 }
 
 function realtimeWsEndpoint(): string {
-  return voiceEndpoint('realtime')
-    .replace(/^http:/, 'ws:')
-    .replace(/^https:/, 'wss:')
+  // 本地 OpenAI 兼容 ASR（faster-whisper/SenseVoice 等）走 emulated_batch：
+  // Manager 收集完整音频后通过 HTTP /audio/transcriptions 转写，不需要外部
+  // realtime WebSocket 端点。自动生成 "ws://.../v1/realtime" 会让 Manager 误判
+  // 为 native_realtime 代理模式，把 WS 转发到一个不存在的端点 → 403 断开。
+  // 因此默认留空；确有针对本服务的 realtime 端点时才由用户手动填写。
+  return ''
 }
 
 const defaultTtsHttpUrl = computed(() => voiceEndpoint('audio/speech'))

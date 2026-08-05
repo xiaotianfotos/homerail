@@ -257,6 +257,28 @@ function commonCodexCandidates(options: Required<CodexBinaryResolveOptions>): st
       );
     }
     candidates.push("/usr/local/bin/codex", "/usr/bin/codex");
+    // Scan every regular user home under /home for common codex locations.
+    // This covers NAS / multi-user Linux hosts where HomeRail runs as root
+    // (HOME=/root) while codex was installed into a different user's home
+    // (e.g. /home/<user>/.npm-global/bin). The same glob also matches the
+    // current home, so it is safe to add unconditionally.
+    try {
+      const homeRoot = "/home";
+      const entries = options.readDirNames(homeRoot);
+      for (const entry of entries) {
+        if (entry === "." || entry === ".." || entry.startsWith(".")) continue;
+        const userHome = paths.join(homeRoot, entry);
+        addDirectory(paths.join(userHome, ".codex", "bin"));
+        addDirectory(paths.join(userHome, ".local", "bin"));
+        addDirectory(paths.join(userHome, ".npm-global", "bin"));
+        addDirectory(paths.join(userHome, ".volta", "bin"));
+        addDirectory(paths.join(userHome, ".bun", "bin"));
+        addDirectory(paths.join(userHome, ".asdf", "shims"));
+        addDirectory(paths.join(userHome, ".local", "share", "pnpm"));
+      }
+    } catch {
+      // /home may not exist or be unreadable; fall through to standard paths.
+    }
     candidates.push(
       ...versionedCodexCandidates(paths.join(home, ".nvm", "versions", "node"), ["bin"], options),
       ...versionedCodexCandidates(

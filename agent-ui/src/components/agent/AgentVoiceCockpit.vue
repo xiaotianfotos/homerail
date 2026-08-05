@@ -4845,7 +4845,7 @@ async function connectAsrRealtime(): Promise<void> {
     const timer = window.setTimeout(() => {
       socket.close()
       reject(new Error(t('voice.errors.asrTimeout')))
-    }, 5000)
+    }, 15000)
     socket.binaryType = 'arraybuffer'
     socket.onopen = () => {
       window.clearTimeout(timer)
@@ -4894,7 +4894,7 @@ function finishAsrUtterance(): Promise<string> {
   return new Promise((resolve, reject) => {
     asrFinalResolve = resolve
     asrFinalReject = reject
-    asrFinalTimer = window.setTimeout(() => rejectAsrFinal(new Error(t('voice.errors.asrTranscriptionTimeout'))), 9000)
+    asrFinalTimer = window.setTimeout(() => rejectAsrFinal(new Error(t('voice.errors.asrTranscriptionTimeout'))), 30000)
     asrSocket?.send(JSON.stringify({ type: 'finish' }))
   })
 }
