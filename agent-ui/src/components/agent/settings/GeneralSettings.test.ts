@@ -97,4 +97,26 @@ describe('GeneralSettings', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false)
     expect(document.documentElement.style.colorScheme).toBe('light')
   })
+
+  it('switches to a gallery skin without reloading', async () => {
+    const pinia = createPinia()
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp(GeneralSettings)
+    app.use(pinia)
+    app.use(i18n)
+    app.mount(root)
+
+    const uiStore = useUiStore(pinia)
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="agent-settings-appearance-skin-09"]')
+      ?.click()
+    await nextTick()
+
+    expect(uiStore.appearanceId).toBe('skin-09')
+    expect(localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe('skin-09')
+    expect(document.documentElement.dataset.hrAppearance).toBe('skin-09')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(document.documentElement.style.colorScheme).toBe('dark')
+  })
 })

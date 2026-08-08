@@ -19,11 +19,12 @@ describe('appearance registry', () => {
     applyAppearanceToDocument('cockpit')
   })
 
-  it('ships the cockpit and paper appearances and normalizes unknown ids', () => {
+  it('ships the built-in appearances and normalizes unknown ids', () => {
     expect(listAppearancePlugins().map(plugin => plugin.id)).toEqual(
-      expect.arrayContaining(['cockpit', 'paper']),
+      expect.arrayContaining(['cockpit', 'paper', 'skin-01', 'skin-02', 'skin-03', 'skin-04', 'skin-05', 'skin-06', 'skin-07', 'skin-08', 'skin-09']),
     )
     expect(getAppearancePlugin('paper').colorScheme).toBe('light')
+    expect(getAppearancePlugin('skin-09').preview.accent).toBe('#6da7ff')
     expect(normalizeAppearanceId('missing')).toBe('cockpit')
   })
 
@@ -111,6 +112,19 @@ describe('appearance registry', () => {
     expect(document.documentElement.style.getPropertyValue('--hr-bg')).toBe('')
     expect(document.documentElement.style.getPropertyValue('--hr-text-1')).toBe('')
     unsubscribe()
+  })
+
+  it('applies a gallery skin tokens and atmospheric document state', () => {
+    applyAppearanceToDocument('skin-09')
+
+    expect(document.documentElement.dataset.hrAppearance).toBe('skin-09')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(document.documentElement.style.colorScheme).toBe('dark')
+    expect(document.documentElement.style.getPropertyValue('--hr-accent')).toBe('#6da7ff')
+    expect(document.documentElement.style.getPropertyValue('--hr-speaking')).toBe('#9cbbf6')
+
+    applyAppearanceToDocument('cockpit')
+    expect(document.documentElement.style.getPropertyValue('--hr-accent')).toBe('')
   })
 
   it('rejects token names outside the public appearance contract', () => {

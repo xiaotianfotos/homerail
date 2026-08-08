@@ -40,6 +40,42 @@
         "paper": {
           "label": "Soft Paper",
           "description": "A low-glare workspace with misty slate tones and soft surfaces."
+        },
+        "skin-01": {
+          "label": "Rose Garden",
+          "description": "A light rose theme with soft pink surfaces."
+        },
+        "skin-02": {
+          "label": "Golden Fortune",
+          "description": "A festive palette of warm gold, red, and jade."
+        },
+        "skin-03": {
+          "label": "Red Future",
+          "description": "A bright red-and-white interface with a sci-fi edge."
+        },
+        "skin-04": {
+          "label": "Paper Crane",
+          "description": "A calm ivory theme with olive and paper-like tones."
+        },
+        "skin-05": {
+          "label": "Inspiration",
+          "description": "An energetic palette of teal, coral, and yellow signals."
+        },
+        "skin-06": {
+          "label": "Violet Night",
+          "description": "A dreamy layered theme of violet, blue, and soft light."
+        },
+        "skin-07": {
+          "label": "Future Notes",
+          "description": "A neon music theme with cyan and pink-violet accents."
+        },
+        "skin-08": {
+          "label": "Black Gold Stage",
+          "description": "An immersive dark theme with warm gold highlights."
+        },
+        "skin-09": {
+          "label": "Astronaut",
+          "description": "An exploration theme of deep space blue and cool starlight."
         }
       }
     },
