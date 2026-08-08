@@ -140,6 +140,12 @@ interface UiServiceState {
   port: number;
   protocol?: "http" | "https";
   mode?: "dev" | "static";
+  /**
+   * Absolute directory served by a packaged/static UI child. AppImage
+   * extraction paths change between desktop launches, so a live child whose
+   * recorded root differs from the current runtime must be replaced.
+   */
+  staticUiDir?: string;
   managerUrl?: string;
   publicUrl?: string;
   /**
@@ -783,11 +789,15 @@ async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Pr
   const httpPublicUrl = explicitPublicUrl ?? configuredUiHttpPublicUrl(cfg, host, httpPort);
   const managerPort = String(configuredManagerPort(managerUrl ? { ...cfg, manager: { ...cfg.manager, url: managerUrl } } : cfg));
   const textModeEnabled = resolveTextModeEnabled(opts.enableTextMode);
-  const serveStatic = shouldServeStaticAgentUi(path.join(resolveRepoRoot(), "agent-ui"));
+  const agentUiDir = path.join(resolveRepoRoot(), "agent-ui");
+  const serveStatic = shouldServeStaticAgentUi(agentUiDir);
+  const staticUiDir = serveStatic ? path.join(agentUiDir, "dist") : undefined;
   restartUiIfTextModeChanged("ui-https", textModeEnabled);
   restartUiIfTextModeChanged("ui", textModeEnabled);
   restartUiIfServingModeChanged("ui-https", serveStatic);
   restartUiIfServingModeChanged("ui", serveStatic);
+  restartUiIfStaticRootChanged("ui-https", staticUiDir);
+  restartUiIfStaticRootChanged("ui", staticUiDir);
   restartUiIfPublicOriginChanged("ui-https", explicitPublicUrl);
   restartUiIfPublicOriginChanged("ui", explicitPublicUrl);
   const existing = getUiStatus(host, httpsPort, httpsPublicUrl, httpPort, httpPublicUrl);
@@ -996,6 +1006,7 @@ function startUiProcess(opts: StartUiProcessOpts): number {
     port: opts.port,
     protocol: opts.protocol,
     mode: serveStatic ? "static" : "dev",
+    staticUiDir: serveStatic ? path.join(agentUiDir, "dist") : undefined,
     managerUrl: opts.managerUrl,
     publicUrl: opts.publicUrl,
     explicitPublicUrl: opts.explicitPublicUrl,
@@ -1081,6 +1092,35 @@ function restartUiIfServingModeChanged(name: "ui" | "ui-https", serveStatic: boo
   if (pid === undefined || !pidIsRunning(pid)) return;
   const desiredMode = serveStatic ? "static" : "dev";
   if (state?.mode !== desiredMode && (state?.mode !== undefined || serveStatic)) {
+    stopService(name);
+  }
+}
+
+/**
+ * A detached packaged UI may outlive the AppImage process that mounted or
+ * extracted its files. The PID then remains alive while every static request
+ * returns 404 because its old resource root has disappeared. Restart it when
+ * the current package resolves to a different root, when that root vanished,
+ * or when upgrading legacy state that did not record the root at all.
+ */
+function restartUiIfStaticRootChanged(
+  name: "ui" | "ui-https",
+  requestedStaticUiDir: string | undefined,
+): void {
+  if (!requestedStaticUiDir) return;
+  const state = readUiState(name);
+  const pid = readPid(name) ?? state?.pid;
+  if (pid === undefined || !pidIsRunning(pid) || state?.mode !== "static") return;
+  const runningStaticUiDir = state.staticUiDir;
+  const runningIndex = runningStaticUiDir
+    ? path.join(runningStaticUiDir, "index.html")
+    : undefined;
+  if (
+    !runningStaticUiDir ||
+    path.resolve(runningStaticUiDir) !== path.resolve(requestedStaticUiDir) ||
+    !runningIndex ||
+    !fs.existsSync(runningIndex)
+  ) {
     stopService(name);
   }
 }
@@ -1371,6 +1411,9 @@ function readUiState(name: "ui" | "ui-https" = "ui"): UiServiceState | undefined
         port: parsed.port,
         protocol: parsed.protocol === "https" ? "https" : "http",
         mode: parsed.mode === "static" ? "static" : parsed.mode === "dev" ? "dev" : undefined,
+        staticUiDir: typeof parsed.staticUiDir === "string" && parsed.staticUiDir
+          ? parsed.staticUiDir
+          : undefined,
         managerUrl: typeof parsed.managerUrl === "string" ? parsed.managerUrl : DEFAULT_MANAGER_URL,
         publicUrl: typeof parsed.publicUrl === "string" ? parsed.publicUrl : undefined,
         explicitPublicUrl: typeof parsed.explicitPublicUrl === "string" && parsed.explicitPublicUrl

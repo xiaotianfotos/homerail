@@ -241,8 +241,13 @@ function handleProjectNameInput(event: Event): void {
 </script>
 
 <template>
-  <div v-if="open" class="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--hr-overlay)] px-6 backdrop-blur-sm">
-    <section class="flex h-[min(720px,82vh)] w-[min(980px,92vw)] overflow-hidden rounded-[24px] border border-[var(--hr-border-strong)] bg-[var(--hr-panel)] text-[var(--hr-text-1)]" :style="{ boxShadow: 'var(--hr-shadow-floating)' }">
+  <Teleport to="body">
+    <div
+      v-if="open"
+      data-testid="voice-directory-modal-overlay"
+      class="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--hr-overlay)] px-6 backdrop-blur-sm"
+    >
+      <section class="flex h-[min(720px,82vh)] w-[min(980px,92vw)] overflow-hidden rounded-[24px] border border-[var(--hr-border-strong)] bg-[var(--hr-panel)] text-[var(--hr-text-1)]" :style="{ boxShadow: 'var(--hr-shadow-floating)' }">
       <aside class="flex w-64 shrink-0 flex-col border-r border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
         <div class="mb-4 flex items-center justify-between">
           <div>
@@ -429,6 +434,7 @@ function handleProjectNameInput(event: Event): void {
           </aside>
         </main>
       </div>
-    </section>
-  </div>
+      </section>
+    </div>
+  </Teleport>
 </template>

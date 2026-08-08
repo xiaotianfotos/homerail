@@ -1096,6 +1096,39 @@ describe("runtime UI Origin propagation through hr ui start", () => {
       headers: { Origin: httpsSelfOrigin, "Sec-Fetch-Site": "same-origin" },
     })).status).toBe(200);
   }, 120_000);
+
+  it("restarts packaged UI processes whose recorded static root is stale", async () => {
+    const harness = await createRuntimeHarness();
+    const initial = await runUiStart(harness, []);
+    expect(initial.errors).toEqual([]);
+    const initialPids = runtimePids(harness.home);
+
+    // Reproduce an AppImage relaunch: the detached children are alive, but
+    // their state points to the previous extraction directory.
+    for (const name of ["ui-https", "ui"] as const) {
+      const statePath = path.join(harness.home, "pids", `${name}.json`);
+      const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as Record<string, unknown>;
+      state.staticUiDir = path.join(harness.home, "missing-old-appimage", "agent-ui", "dist");
+      fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    }
+
+    const restarted = await runUiStart(harness, []);
+    expect(restarted.errors).toEqual([]);
+    const restartedPids = runtimePids(harness.home);
+    expect(restartedPids.https).not.toBe(initialPids.https);
+    expect(restartedPids.http).not.toBe(initialPids.http);
+    await waitForRuntimePidExit(initialPids.https);
+    await waitForRuntimePidExit(initialPids.http);
+    expect(runtimeStateFile(harness.home, "ui-https")?.staticUiDir)
+      .toBe(path.join(harness.repoRoot, "agent-ui", "dist"));
+    expect(runtimeStateFile(harness.home, "ui")?.staticUiDir)
+      .toBe(path.join(harness.repoRoot, "agent-ui", "dist"));
+
+    // A subsequent start from the same package keeps healthy listeners.
+    const unchanged = await runUiStart(harness, []);
+    expect(unchanged.errors).toEqual([]);
+    expect(runtimePids(harness.home)).toEqual(restartedPids);
+  }, 120_000);
 });
 
 interface RuntimeHarness {
@@ -1273,11 +1306,12 @@ function runtimePidFile(home: string, name: "ui" | "ui-https"): number | undefin
 function runtimeStateFile(
   home: string,
   name: "ui" | "ui-https",
-): { pid?: number; explicitPublicUrl?: string } | undefined {
+): { pid?: number; explicitPublicUrl?: string; staticUiDir?: string } | undefined {
   try {
     return JSON.parse(fs.readFileSync(path.join(home, "pids", `${name}.json`), "utf-8")) as {
       pid?: number;
       explicitPublicUrl?: string;
+      staticUiDir?: string;
     };
   } catch {
     return undefined;

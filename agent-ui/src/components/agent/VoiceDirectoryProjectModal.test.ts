@@ -83,15 +83,19 @@ describe('VoiceDirectoryProjectModal directory roots', () => {
         limit: 300,
       })
     })
-    expect(root.querySelector('[data-testid="voice-directory-existing-projects"]')?.textContent)
+    const overlay = document.body.querySelector<HTMLElement>('[data-testid="voice-directory-modal-overlay"]')
+    expect(overlay).not.toBeNull()
+    expect(overlay?.parentElement).toBe(document.body)
+    expect(root.contains(overlay)).toBe(false)
+    expect(overlay?.querySelector('[data-testid="voice-directory-existing-projects"]')?.textContent)
       .toContain('已有项目目录')
-    expect(root.querySelector('[data-testid="voice-directory-project-root"]')?.textContent)
+    expect(overlay?.querySelector('[data-testid="voice-directory-project-root"]')?.textContent)
       .toContain('真实项目')
-    expect(root.textContent).not.toContain('Macintosh HD')
-    expect(root.textContent).not.toContain('HomeRail Home')
-    expect(root.textContent).not.toContain('Default workspace')
+    expect(overlay?.textContent).not.toContain('Macintosh HD')
+    expect(overlay?.textContent).not.toContain('HomeRail Home')
+    expect(overlay?.textContent).not.toContain('Default workspace')
 
-    root.querySelector<HTMLButtonElement>('[data-testid="voice-directory-project-root"]')!.click()
+    overlay?.querySelector<HTMLButtonElement>('[data-testid="voice-directory-project-root"]')!.click()
     await vi.waitFor(() => {
       expect(apiMocks.browseProjectDirectories).toHaveBeenLastCalledWith({
         path: '/work/existing',
