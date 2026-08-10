@@ -23,7 +23,7 @@
     "use": "使用",
     "stepReady": "{step}已就緒",
     "nextAvailable": "可以進入下一步",
-    "liveVoiceManaged": "由 Codex Live Voice 接管",
+    "liveVoiceManaged": "由 Live Voice 接管",
     "liveVoiceManagedHint": "即時辨識、語音合成與伺服器端 VAD 由 Live Voice 工作階段提供。"
   },
   "environmentCheck": {

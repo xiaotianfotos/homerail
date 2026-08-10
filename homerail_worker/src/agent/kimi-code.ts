@@ -309,6 +309,18 @@ function requiresAlwaysThinking(model: string): boolean {
   return normalized === "kimi-k2.7-code" || normalized.startsWith("kimi-for-coding");
 }
 
+function providerTypeForContext(
+  context: AgentRunContext,
+  fallback: string,
+): string {
+  const configured = process.env.KIMI_MODEL_PROVIDER_TYPE?.trim();
+  if (configured) return configured;
+  // Google AI Studio exposes an OpenAI Chat Completions compatibility layer.
+  // Kimi Code must use its generic OpenAI protocol adapter for Gemini rather
+  // than Moonshot-specific request/response extensions.
+  return context.provider?.trim().toLowerCase() === "gemini" ? "openai" : fallback;
+}
+
 /** Parsed line from kimi CLI stream-json output. */
 interface StreamJsonLine {
   type?: string;
@@ -942,7 +954,7 @@ export class KimiCodeAdapter implements AgentClient {
     const apiKey = context.apiKey || process.env.KIMI_MODEL_API_KEY || "";
     const model = context.model || this.defaultModel;
     const baseUrl = context.baseUrl || process.env.KIMI_MODEL_BASE_URL || "";
-    const providerType = process.env.KIMI_MODEL_PROVIDER_TYPE || this.defaultProviderType;
+    const providerType = providerTypeForContext(context, this.defaultProviderType);
 
     if (apiKey) env.KIMI_MODEL_API_KEY = apiKey;
     if (model) env.KIMI_MODEL_NAME = model;
@@ -957,7 +969,7 @@ export class KimiCodeAdapter implements AgentClient {
     const model = context.model || this.defaultModel;
     const baseUrl = context.baseUrl || process.env.KIMI_MODEL_BASE_URL || "";
     const providerId = context.provider || process.env.KIMI_MODEL_PROVIDER_ID || "kimi";
-    const providerType = process.env.KIMI_MODEL_PROVIDER_TYPE || this.defaultProviderType;
+    const providerType = providerTypeForContext(context, this.defaultProviderType);
     const maxContextSize = Number.parseInt(process.env.KIMI_MODEL_MAX_CONTEXT_SIZE ?? "128000", 10);
     const safeMaxContextSize = Number.isFinite(maxContextSize) && maxContextSize > 0
       ? maxContextSize

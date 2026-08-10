@@ -235,6 +235,46 @@ describe("/api/manager-agent/readiness", () => {
     ]);
   });
 
+  it("reports Gemini Live as the effective Manager voice backend", () => {
+    const workerEntry = path.join(tmpHome, "worker-entry.js");
+    fs.writeFileSync(workerEntry, "console.log('worker entry')\n", "utf-8");
+    process.env.HOMERAIL_MANAGER_AGENT_HOST_ENTRY = workerEntry;
+    process.env.HOMERAIL_MANAGER_AGENT_SHELL = process.platform === "win32" ? process.execPath : "/bin/sh";
+    const setting = createSetting({
+      provider_id: "gemini",
+      endpoint_id: "gemini_ai_studio",
+      model_name: "gemini-3.6-flash",
+      api_key: "google-ai-studio-test-key",
+      is_active: true,
+      is_default: true,
+    });
+
+    const readiness = managerAgentReadiness({
+      ...DEFAULT_MANAGER_AGENT_CONFIG,
+      harness: "kimi_code",
+      llm_setting_id: setting.id,
+      provider_name: setting.provider_id,
+      model_name: setting.model_name,
+      live_voice_enabled: true,
+    });
+
+    expect(readiness).toMatchObject({
+      ready: true,
+      live_voice_backend: "gemini",
+      live_voice_supported: true,
+      live_voice_effective: true,
+      checks: {
+        gemini_live: {
+          supported: true,
+          transport: "websocket_pcm",
+          model: "gemini-3.1-flash-live-preview",
+          input_sample_rate: 16000,
+          output_sample_rate: 24000,
+        },
+      },
+    });
+  });
+
   it("reports missing host prerequisites without requiring a Docker node", async () => {
     process.env.HOMERAIL_REPO_ROOT = tmpHome;
     server = createServer(0, undefined, undefined, false);

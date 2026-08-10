@@ -45,6 +45,7 @@ import {
   type CodexLiveVoiceEvent,
   type CodexLiveVoiceState
 } from '@/agent/codex-live-voice-client'
+import { GeminiLiveVoiceClient } from '@/agent/gemini-live-voice-client'
 import GenerativeUiCanonicalSurface from '@/components/generative-ui/GenerativeUiCanonicalSurface.vue'
 import GenerativeUiShadowPreview from '@/components/generative-ui/GenerativeUiShadowPreview.vue'
 import DagTaskCanvas from '@/components/generative-ui/DagTaskCanvas.vue'
@@ -104,7 +105,11 @@ import {
   type VoiceKeyboardButtonBinding
 } from '@/utils/voice-hid-control'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
-import { formatRuntimeModelSettingLabel, isKimiProviderId } from '@/lib/model-runtime'
+import {
+  formatRuntimeModelSettingLabel,
+  isKimiCodeBuiltinProviderId,
+  isKimiProviderId,
+} from '@/lib/model-runtime'
 import { createProtocolLabels } from '@/lib/protocol-labels'
 import {
   cleanVoiceTranscript,
@@ -397,7 +402,7 @@ function selectGenerativeUiNode(payload: { node_id: string }): void {
 }
 
 let mediaStream: MediaStream | null = null
-let codexLiveVoiceClient: CodexLiveVoiceClient | null = null
+let codexLiveVoiceClient: CodexLiveVoiceClient | GeminiLiveVoiceClient | null = null
 // Session identity of the currently active Live Voice client. Async workspace
 // events are only applied when they belong to this session, so a reconnect
 // (or a stale event from a previous client) cannot yank the canvas to a
@@ -547,8 +552,13 @@ const voiceAgentHarness = computed<VoiceAgentConfig['harness']>(
   () => voiceAgentConfig.value?.harness || 'claude_agent_sdk'
 )
 const codexHarnessActive = computed(() => voiceAgentHarness.value === 'codex_appserver')
+const geminiLiveBackendActive = computed(
+  () => onboardingStatus.value.liveVoiceBackend === 'gemini'
+)
 const codexLiveVoiceSupported = computed(
-  () => codexHarnessActive.value && onboardingStatus.value.liveVoiceSupported
+  () =>
+    onboardingStatus.value.liveVoiceSupported &&
+    (codexHarnessActive.value || geminiLiveBackendActive.value)
 )
 const codexLiveVoiceEnabled = computed(
   () => voiceAgentConfig.value?.live_voice_enabled === true
@@ -566,7 +576,6 @@ const selectedCodexLiveVoice = computed<CodexLiveVoiceV3Voice>(
 )
 const codexLiveVoiceEffective = computed(
   () =>
-    codexHarnessActive.value &&
     codexLiveVoiceEnabled.value &&
     onboardingStatus.value.liveVoiceEffective
 )
@@ -1284,7 +1293,7 @@ function isCustomModelSetting(setting: LLMSetting): boolean {
 }
 
 function isKimiCodeCompatibleSetting(setting: LLMSetting): boolean {
-  return isKimiProviderId(setting.provider_id) || isCustomModelSetting(setting)
+  return isKimiCodeBuiltinProviderId(setting.provider_id) || isCustomModelSetting(setting)
 }
 
 function toggleModelMenu(): void {
@@ -3979,7 +3988,26 @@ async function startCodexLiveVoice(): Promise<void> {
   liveTranscript.value = ''
   spokenText.value = ''
 
-  const client = new CodexLiveVoiceClient({
+  const client = geminiLiveBackendActive.value
+    ? new GeminiLiveVoiceClient({
+        sessionId,
+        projectId: store.managerProjectId || workspace.value?.project_id || null,
+        selectedNodeId: selectedGenerativeUiNodeId.value || null,
+        getUserMedia: async () => {
+          const stream = await createVoiceMediaStream()
+          if (codexLiveVoiceClient === client) startCodexLiveVoiceMeter(stream)
+          return stream
+        },
+        onState: (state) => {
+          if (codexLiveVoiceClient !== client) return
+          applyCodexLiveVoiceState(state)
+        },
+        onEvent: (event) => {
+          if (codexLiveVoiceClient !== client) return
+          handleCodexLiveVoiceEvent(event)
+        },
+      })
+    : new CodexLiveVoiceClient({
     sessionId,
     projectId: store.managerProjectId || workspace.value?.project_id || null,
     selectedNodeId: selectedGenerativeUiNodeId.value || null,
@@ -4002,7 +4030,7 @@ async function startCodexLiveVoice(): Promise<void> {
       if (codexLiveVoiceClient !== client) return
       handleCodexLiveVoiceEvent(event)
     },
-  })
+      })
   codexLiveVoiceClient = client
   // Stamp the session identity before `await client.start()` so workspace
   // events arriving during startup are already session-validated. The catch
@@ -5616,7 +5644,7 @@ function summarizeTask(value: string): string {
               </div>
             </div>
             <label
-              v-if="codexLiveVoiceSupported"
+              v-if="codexHarnessActive && codexLiveVoiceSupported"
               class="voice-model-menu__row"
               data-testid="voice-model-live-voice-row"
             >
@@ -5642,14 +5670,16 @@ function summarizeTask(value: string): string {
               </select>
             </label>
             <div
-              v-else-if="codexHarnessActive && codexLiveVoiceEnabled"
+              v-else-if="(codexHarnessActive || geminiLiveBackendActive) && codexLiveVoiceEnabled"
               class="rounded-lg border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] px-3 py-2 text-xs text-[var(--hr-warning)]"
               data-testid="voice-model-live-unavailable"
             >
               {{
-                t('voice.model.liveVoiceUnavailable', {
-                  version: onboardingStatus.liveVoiceMinimumVersion || '0.145.0'
-                })
+                geminiLiveBackendActive
+                  ? t('voice.model.geminiLiveUnavailable')
+                  : t('voice.model.liveVoiceUnavailable', {
+                      version: onboardingStatus.liveVoiceMinimumVersion || '0.145.0'
+                    })
               }}
             </div>
 

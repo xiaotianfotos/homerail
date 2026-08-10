@@ -62,9 +62,13 @@ const deleteConfirmId = ref<string | null>(null)
 const activeSettings = computed(() => props.llmSettings.filter(s => s.is_active))
 const inactiveSettings = computed(() => props.llmSettings.filter(s => !s.is_active))
 const currentManagerUsesCodex = computed(() => props.managerConfig?.harness === 'codex_appserver')
+const currentManagerUsesGemini = computed(
+  () => props.managerReadiness?.live_voice_backend === 'gemini'
+)
 const liveVoiceCapability = computed(() => props.managerReadiness?.checks.codex?.live_voice)
 const liveVoiceSupported = computed(
-  () => currentManagerUsesCodex.value && liveVoiceCapability.value?.supported === true
+  () => props.managerReadiness?.live_voice_supported
+    ?? (currentManagerUsesCodex.value && liveVoiceCapability.value?.supported === true)
 )
 const liveVoiceEnabled = computed(() => props.managerConfig?.live_voice_enabled === true)
 const liveVoiceVoices = computed<CodexLiveVoiceV3Voice[]>(() => {
@@ -475,6 +479,7 @@ function capabilityList(
           </div>
         </div>
         <label
+          v-if="currentManagerUsesCodex"
           class="mt-3 grid gap-2 border-t border-[var(--hr-accent-border)] pt-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center"
           data-testid="agent-settings-live-voice-voice-row"
         >
@@ -500,14 +505,16 @@ function capabilityList(
         </label>
       </div>
       <div
-        v-else-if="currentManagerUsesCodex && liveVoiceEnabled"
+        v-else-if="(currentManagerUsesCodex || currentManagerUsesGemini) && liveVoiceEnabled"
         data-testid="agent-settings-live-voice-unavailable"
         class="mt-4 rounded-lg border border-[var(--hr-warning-border)] bg-[var(--hr-warning-soft)] p-3 text-xs text-[var(--hr-warning)]"
       >
         {{
-          t('settings.models.liveVoiceUnavailable', {
-            version: liveVoiceCapability?.minimum_version || '0.145.0'
-          })
+          currentManagerUsesGemini
+            ? t('settings.models.geminiLiveUnavailable')
+            : t('settings.models.liveVoiceUnavailable', {
+                version: liveVoiceCapability?.minimum_version || '0.145.0'
+              })
         }}
       </div>
     </div>

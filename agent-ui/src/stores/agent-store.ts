@@ -6,6 +6,7 @@ import { mapManagerSessionMessages } from './agent/message-mapper'
 import { clearAgentSession, loadAgentSession, saveAgentSession } from './agent/persistence'
 import type { AgentChatMessage, AgentInspectorTab, ManagerSessionItem } from './agent/types'
 import type { LLMSetting } from '@/api/services/llm-settings-api'
+import { isKimiCodeCompatibleModelSetting, type ManagerAgentHarness } from 'homerail-protocol'
 import {
   deleteManagerSession,
   getManagerAgentConfig,
@@ -26,6 +27,23 @@ function saveOnboardingDismissed(value: boolean): void {
 
 function isDedicatedManagerAgentSetting(setting: LLMSetting): boolean {
   return Boolean(setting.supports_llm && !setting.supports_asr && !setting.supports_tts)
+}
+
+function managerHarnessForSetting(
+  setting: LLMSetting,
+): Extract<ManagerAgentHarness, 'codex_appserver' | 'claude_agent_sdk' | 'kimi_code'> {
+  if (setting.supports_codex_responses === true) return 'codex_appserver'
+  if (setting.anthropic_base_url || setting.protocol === 'anthropic_compatible') {
+    return 'claude_agent_sdk'
+  }
+  return isKimiCodeCompatibleModelSetting({
+    providerId: setting.provider_id,
+    providerSource: setting.provider_source,
+    planType: setting.plan_type,
+    protocol: setting.protocol,
+    endpointId: setting.endpoint_id,
+    endpointName: setting.endpoint_name,
+  }) ? 'kimi_code' : 'claude_agent_sdk'
 }
 
 export const useAgentStore = defineStore('agent', () => {
@@ -184,6 +202,7 @@ export const useAgentStore = defineStore('agent', () => {
 
   function saveManagerRuntimeSetting(setting: LLMSetting): void {
     void updateManagerAgentConfig({
+      harness: managerHarnessForSetting(setting),
       llm_setting_id: setting.id,
       provider_name: setting.provider_id,
       model_name: setting.model_name,

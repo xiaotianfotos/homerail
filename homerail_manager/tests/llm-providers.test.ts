@@ -91,6 +91,54 @@ describe("custom LLM providers", () => {
     });
   });
 
+  it("catalogs Google AI Studio and creates a Gemini model setting", () => {
+    const gemini = listProviders().find((provider) => provider.id === "gemini");
+    expect(gemini).toMatchObject({
+      name: "Google Gemini",
+      default_model: "gemini-3.6-flash",
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+      chat_completions_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    });
+    expect(gemini?.endpoints).toContainEqual(expect.objectContaining({
+      id: "gemini_ai_studio",
+      name: "Google AI Studio API",
+      protocol: "openai_compatible",
+      auth_type: "bearer",
+      default_model: "gemini-3.6-flash",
+    }));
+    expect(gemini?.endpoints?.[0]?.models.map((model) => model.id)).toEqual(
+      expect.arrayContaining([
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+      ]),
+    );
+    expect(gemini?.endpoints?.[0]?.models).toHaveLength(5);
+
+    const setting = createSetting({
+      provider_id: "gemini",
+      endpoint_id: "gemini_ai_studio",
+      model_name: "gemini-3.6-flash",
+      api_key: "google-ai-studio-test-key",
+      is_active: true,
+      is_default: true,
+    });
+    expect(setting).toMatchObject({
+      provider_id: "gemini",
+      endpoint_id: "gemini_ai_studio",
+      model_name: "gemini-3.6-flash",
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+      chat_completions_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+      preset_source: "builtin",
+      preset_status: "current",
+      supports_audio_input: true,
+      supports_image_input: true,
+      supports_video_input: true,
+    });
+  });
+
   it("catalogs the released Qwen3.8-Max Token Plan model instead of its preview", () => {
     const aliyun = listProviders().find((provider) => provider.id === "aliyun");
     const tokenPlan = aliyun?.endpoints?.find((endpoint) => endpoint.id === "aliyun_dashscope_cn_token_plan");

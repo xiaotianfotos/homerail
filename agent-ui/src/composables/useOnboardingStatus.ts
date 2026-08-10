@@ -33,6 +33,7 @@ export interface OnboardingStatus {
   managerAgentHarness?: string
   managerAgentRuntimePlacement?: 'host' | 'host_shell' | 'container' | null
   managerAgentBlockers: Array<{ code: string; message: string; detail?: string }>
+  liveVoiceBackend?: 'codex' | 'gemini' | null
   liveVoiceSupported: boolean
   liveVoiceMinimumVersion?: string
   liveVoiceVoices?: CodexLiveVoiceV3Voice[]
@@ -103,7 +104,8 @@ export function useOnboardingStatus(): {
       const codex = managerReadiness.checks.codex
       const codexAvailable = Boolean(codex?.available && codex.logged_in)
       const managerAgentReady = managerReadiness.ready
-      const liveVoiceSupported = codex?.live_voice?.supported === true
+      const liveVoiceSupported = managerReadiness.live_voice_supported
+        ?? codex?.live_voice?.supported === true
       const liveVoiceEffective = managerReadiness.live_voice_effective
 
       // 调试开关：VITE_HOMERAIL_FORCE_ONBOARDING=1 时强制触发新手引导
@@ -115,6 +117,7 @@ export function useOnboardingStatus(): {
         managerAgentHarness: managerReadiness.harness,
         managerAgentRuntimePlacement: managerReadiness.runtime_placement,
         managerAgentBlockers: managerReadiness.blockers,
+        liveVoiceBackend: managerReadiness.live_voice_backend,
         liveVoiceSupported,
         liveVoiceMinimumVersion: codex?.live_voice?.minimum_version,
         liveVoiceVoices: codex?.live_voice?.voices,

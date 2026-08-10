@@ -29,6 +29,7 @@ import {
   CODEX_LIVE_VOICE_V3_VOICES,
   isCodexLiveVoiceV3Voice,
 } from "../domain/codex-live-voice.js";
+import { resolveLiveVoiceBackend } from "../domain/live-voice.js";
 
 interface BaseResponse {
   success: boolean;
@@ -330,16 +331,32 @@ export async function validateAndSaveManagerAgentConfig(
     ));
   }
   if (patch.live_voice_enabled === true) {
-    if (next.harness !== "codex_appserver") {
-      throw validationError(new Error("Live Voice requires the Codex app-server Manager runtime."));
+    const liveBackend = resolveLiveVoiceBackend(next);
+    if (!liveBackend) {
+      throw validationError(new Error("The selected Manager provider does not support Live Voice."));
     }
-    const capability = await (options.loadCodexLiveVoiceCapability
-      ? options.loadCodexLiveVoiceCapability()
-      : inspectCodexInstallation().live_voice);
-    if (!capability.supported) {
-      throw validationError(new Error(
-        `Codex Live Voice requires Codex ${capability.minimum_version} or newer with ${capability.feature}.`,
-      ));
+    if (liveBackend === "codex") {
+      const capability = await (options.loadCodexLiveVoiceCapability
+        ? options.loadCodexLiveVoiceCapability()
+        : inspectCodexInstallation().live_voice);
+      if (!capability.supported) {
+        throw validationError(new Error(
+          `Codex Live Voice requires Codex ${capability.minimum_version} or newer with ${capability.feature}.`,
+        ));
+      }
+    } else {
+      const runtime = resolveManagerAgentConfig(
+        undefined,
+        next.provider_name ?? undefined,
+        next.model_name ?? undefined,
+        next.llm_setting_id ?? undefined,
+        next.harness,
+        next.reasoning_effort,
+        next.service_tier,
+      );
+      if (!runtime.api_key?.trim()) {
+        throw validationError(new Error("Google AI Studio API key is required for Gemini Live."));
+      }
     }
   }
   // Validate the operational override before the persistence boundary. An

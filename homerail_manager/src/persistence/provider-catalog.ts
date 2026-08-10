@@ -73,6 +73,8 @@ export const DOUBAO_SPEECH_ENDPOINT_ID = "volcengine_openspeech_api";
 export const KIMI_PROVIDER_ID = "kimi";
 export const KIMI_CN_PROVIDER_ID = "kimi_cn";
 export const KIMI_CODING_PLAN_ENDPOINT_ID = "kimi_coding_plan";
+export const GEMINI_PROVIDER_ID = "gemini";
+export const GEMINI_AI_STUDIO_ENDPOINT_ID = "gemini_ai_studio";
 
 export function isKimiProviderId(providerId?: string): boolean {
   return providerId === KIMI_PROVIDER_ID || providerId === KIMI_CN_PROVIDER_ID;
@@ -268,6 +270,57 @@ function endpointBaseUrls(endpoint: ProviderEndpointPreset): string[] {
 }
 
 export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
+  {
+    id: GEMINI_PROVIDER_ID,
+    name: "Google Gemini",
+    status: "active",
+    default_model: "gemini-3.6-flash",
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    chat_completions_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    docs_url: "https://ai.google.dev/gemini-api/docs/openai",
+    endpoints: [
+      endpoint({
+        id: GEMINI_AI_STUDIO_ENDPOINT_ID,
+        provider_id: GEMINI_PROVIDER_ID,
+        name: "Google AI Studio API",
+        plan_type: "api_billing",
+        protocol: "openai_compatible",
+        base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+        chat_completions_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+        auth_type: "bearer",
+        key_hint: "Google AI Studio API Key",
+        default_model: "gemini-3.6-flash",
+        docs_url: "https://ai.google.dev/gemini-api/docs/openai",
+        models: [
+          model(
+            "gemini-3.6-flash",
+            { supports_audio_input: true, supports_image_input: true, supports_video_input: true },
+            { recommended: true },
+          ),
+          model("gemini-3.5-flash", {
+            supports_audio_input: true,
+            supports_image_input: true,
+            supports_video_input: true,
+          }),
+          model("gemini-3.5-flash-lite", {
+            supports_audio_input: true,
+            supports_image_input: true,
+            supports_video_input: true,
+          }),
+          model("gemini-2.5-pro", {
+            supports_audio_input: true,
+            supports_image_input: true,
+            supports_video_input: true,
+          }),
+          model("gemini-2.5-flash", {
+            supports_audio_input: true,
+            supports_image_input: true,
+            supports_video_input: true,
+          }),
+        ],
+      }),
+    ],
+  },
   {
     id: KIMI_CN_PROVIDER_ID,
     name: "Kimi / Moonshot CN",

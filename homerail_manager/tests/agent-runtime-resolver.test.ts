@@ -226,6 +226,35 @@ describe("agent runtime resolver", () => {
     expect(dag.runtime_placement).toBe("container");
   });
 
+  it("runs Google AI Studio through the generic Chat Completions Manager harness", () => {
+    const setting = createSetting({
+      provider_id: "gemini",
+      endpoint_id: "gemini_ai_studio",
+      model_name: "gemini-3.6-flash",
+      api_key: "google-ai-studio-test-key",
+      is_active: true,
+      is_default: true,
+    });
+
+    const resolved = resolveAgentRuntimeConfig({
+      surface: "manager_agent",
+      settingId: setting.id,
+      harness: "kimi_code",
+    });
+
+    expect(resolved).toMatchObject({
+      provider_name: "gemini",
+      provider_display_name: "Google Gemini",
+      model: "gemini-3.6-flash",
+      api_key: "google-ai-studio-test-key",
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+      protocol: "openai_compatible",
+      agent_type: "kimi_code",
+      runtime_placement: "host_shell",
+      llm_setting_id: setting.id,
+    });
+  });
+
   it("uses the active default DB setting for DAG runtime when YAML does not name a provider", () => {
     const setting = createSetting({
       provider_id: "kimi",

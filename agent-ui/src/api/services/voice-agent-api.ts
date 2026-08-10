@@ -334,6 +334,8 @@ export interface ManagerAgentReadiness {
   provider_name: string | null
   model_name: string | null
   live_voice_enabled: boolean
+  live_voice_backend?: 'codex' | 'gemini' | null
+  live_voice_supported?: boolean
   live_voice_effective: boolean
   blockers: Array<{ code: string; message: string; detail?: string }>
   checks: {
@@ -352,6 +354,15 @@ export interface ManagerAgentReadiness {
         stage?: string
         reason?: 'missing' | 'unusable' | 'unparseable' | 'too_old' | 'feature_missing'
       }
+    }
+    gemini_live?: {
+      supported: boolean
+      transport: 'websocket_pcm'
+      model: string
+      voice: string
+      input_sample_rate: number
+      output_sample_rate: number
+      reason?: 'api_key_missing'
     }
     docker_node?: {
       required: boolean

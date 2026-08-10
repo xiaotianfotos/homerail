@@ -1,4 +1,5 @@
 const KIMI_PROVIDER_IDS = new Set(['kimi_cn', 'kimi'])
+const KIMI_CODE_BUILTIN_PROVIDER_IDS = new Set([...KIMI_PROVIDER_IDS, 'gemini'])
 
 export interface RuntimeModelLabelSetting {
   provider_id?: string | null
@@ -10,6 +11,10 @@ export interface RuntimeModelLabelSetting {
 
 export function isKimiProviderId(providerId?: string | null): boolean {
   return Boolean(providerId && KIMI_PROVIDER_IDS.has(providerId))
+}
+
+export function isKimiCodeBuiltinProviderId(providerId?: string | null): boolean {
+  return Boolean(providerId && KIMI_CODE_BUILTIN_PROVIDER_IDS.has(providerId))
 }
 
 export function formatRuntimeModelSettingLabel(

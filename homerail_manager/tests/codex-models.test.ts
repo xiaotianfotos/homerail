@@ -794,7 +794,46 @@ describe("Codex model catalog", () => {
     expect(response.status).toBe(400);
     expect(body).toMatchObject({
       success: false,
-      error: "Live Voice requires the Codex app-server Manager runtime.",
+      error: "The selected Manager provider does not support Live Voice.",
+    });
+  });
+
+  it("enables Gemini Live for a Google AI Studio Manager setting", async () => {
+    const setting = createSetting({
+      provider_id: "gemini",
+      endpoint_id: "gemini_ai_studio",
+      model_name: "gemini-3.6-flash",
+      api_key: "google-ai-studio-test-key",
+      is_active: true,
+      is_default: true,
+    });
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "kimi_code",
+        llm_setting_id: setting.id,
+        provider_name: setting.provider_id,
+        model_name: setting.model_name,
+        live_voice_enabled: true,
+      }),
+    });
+    const body = await response.json() as Record<string, unknown>;
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      success: true,
+      data: {
+        harness: "kimi_code",
+        provider_name: "gemini",
+        live_voice_enabled: true,
+      },
     });
   });
 });

@@ -35,6 +35,7 @@
     "liveVoiceOn": "On",
     "liveVoiceOff": "Off",
     "liveVoiceUnavailable": "Paused. Requires Codex {version} or newer with realtime_conversation.",
+    "geminiLiveUnavailable": "Google Live is paused. Check the Google AI Studio API key and Gemini Manager configuration.",
     "liveVoiceSaveFailed": "Failed to save Live Voice setting",
     "reasoningDescriptions": {
       "minimal": "Fastest; suited to simple organization.",

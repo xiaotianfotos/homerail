@@ -3,6 +3,8 @@ import type * as http from "node:http";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { HostShellManagerAgentOptions } from "./host-shell-manager-agent.js";
 import type { ManagerAgentConfigRoutesOptions } from "./manager-agent-config.js";
+import { readManagerAgentConfig } from "../persistence/manager-agent-config.js";
+import { resolveLiveVoiceBackend } from "../domain/live-voice.js";
 import {
   createCodexLiveVoiceBinding,
   type CodexLiveVoiceBinding,
@@ -11,6 +13,10 @@ import {
   CodexLiveVoiceRuntime,
   type CodexLiveVoiceRuntimeEvent,
 } from "./codex-live-voice-runtime.js";
+import {
+  GeminiLiveVoiceRuntime,
+  type GeminiLiveVoiceRuntimeEvent,
+} from "./gemini-live-voice-runtime.js";
 import {
   isLoopbackHost,
   type PluginHttpTrustPolicy,
@@ -32,7 +38,7 @@ interface TicketRecord {
 
 interface ActiveLiveVoiceSession {
   socket: WebSocket;
-  runtime: CodexLiveVoiceRuntime;
+  runtime: CodexLiveVoiceRuntime | GeminiLiveVoiceRuntime;
   abortController: AbortController;
 }
 
@@ -178,9 +184,16 @@ function rawDataByteLength(raw: RawData): number {
   return raw.byteLength;
 }
 
+function rawDataBuffer(raw: RawData): Buffer {
+  if (Buffer.isBuffer(raw)) return raw;
+  if (Array.isArray(raw)) return Buffer.concat(raw);
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw);
+  throw new Error("Unsupported WebSocket binary payload");
+}
+
 function workspaceForEvent(
   binding: CodexLiveVoiceBinding,
-  event: CodexLiveVoiceRuntimeEvent,
+  event: CodexLiveVoiceRuntimeEvent | GeminiLiveVoiceRuntimeEvent,
 ): Record<string, unknown> | undefined {
   switch (event.type) {
     case "transcript.done":
@@ -198,7 +211,9 @@ function workspaceForEvent(
   }
 }
 
-function publicEvent(event: CodexLiveVoiceRuntimeEvent): Record<string, unknown> {
+function publicEvent(
+  event: CodexLiveVoiceRuntimeEvent | GeminiLiveVoiceRuntimeEvent,
+): Record<string, unknown> {
   // SDP is forwarded but never logged. Other events contain only public
   // transcript/progress metadata and intentionally exclude tool inputs/results.
   return { ...event };
@@ -240,7 +255,7 @@ export function setupCodexLiveVoiceWebSocket(
     const sessionId = safeSessionId(match?.[1] ?? "");
     let authenticated = false;
     let binding: CodexLiveVoiceBinding | undefined;
-    let runtime: CodexLiveVoiceRuntime | undefined;
+    let runtime: CodexLiveVoiceRuntime | GeminiLiveVoiceRuntime | undefined;
     const toolAbortController = new AbortController();
     let handling = Promise.resolve();
     const authTimer = setTimeout(() => {
@@ -259,8 +274,25 @@ export function setupCodexLiveVoiceWebSocket(
 
     socket.on("message", (raw, isBinary) => {
       handling = handling.then(async () => {
-        if (isBinary || rawDataByteLength(raw) > MAX_MESSAGE_BYTES) {
+        if (rawDataByteLength(raw) > MAX_MESSAGE_BYTES) {
           socket.close(4400, "Invalid Live Voice message");
+          return;
+        }
+        if (isBinary) {
+          if (!authenticated) {
+            socket.close(4401, "Live Voice authentication failed");
+            return;
+          }
+          if (
+            !runtime
+            || !(runtime instanceof GeminiLiveVoiceRuntime)
+            || !binding
+            || binding.backend !== "gemini"
+          ) {
+            sendSessionError(socket, "Binary PCM input requires an active Gemini Live session", true);
+            return;
+          }
+          runtime.appendAudio(rawDataBuffer(raw));
           return;
         }
         let message: Record<string, unknown>;
@@ -283,7 +315,11 @@ export function setupCodexLiveVoiceWebSocket(
           }
           authenticated = true;
           clearTimeout(authTimer);
-          send(socket, { type: "ready", session_id: sessionId });
+          send(socket, {
+            type: "ready",
+            session_id: sessionId,
+            backend: resolveLiveVoiceBackend(readManagerAgentConfig()),
+          });
           return;
         }
 
@@ -297,10 +333,6 @@ export function setupCodexLiveVoiceWebSocket(
             return;
           }
           const sdp = typeof message.sdp === "string" ? message.sdp : "";
-          if (!sdp || Buffer.byteLength(sdp, "utf8") > MAX_SDP_BYTES) {
-            sendSessionError(socket, "Invalid WebRTC SDP offer");
-            return;
-          }
           const projectId = typeof message.project_id === "string" ? message.project_id : null;
           const selectedNodeId = typeof message.selected_node_id === "string"
             ? message.selected_node_id.trim()
@@ -341,44 +373,71 @@ export function setupCodexLiveVoiceWebSocket(
               abortSignal: toolAbortController.signal,
             });
             if (
+              binding.backend === "codex"
+              && (!sdp || Buffer.byteLength(sdp, "utf8") > MAX_SDP_BYTES)
+            ) {
+              throw new Error("Invalid WebRTC SDP offer");
+            }
+            if (
               pendingSessions.get(sessionId) !== socket
               || socket.readyState !== WebSocket.OPEN
             ) {
               throw new Error("Live Voice connection closed while the session was starting");
             }
-            runtime = new CodexLiveVoiceRuntime({
-              sessionId,
-              cwd: binding.cwd,
-              model: binding.model,
-              voice: binding.voice,
-              provider: binding.provider,
-              serviceTier: binding.service_tier,
-              reasoningEffort: binding.reasoning_effort,
-              systemPrompt: binding.system_prompt,
-              tools: binding.tools,
-              skillRoots: binding.skill_roots,
-              initialItems: binding.initial_items,
-              env: binding.environment,
-              onToolStateChanged: () => {
-                const workspace = binding!.flush_tool_state();
-                send(socket, { type: "workspace", workspace });
-              },
-              isToolSchemaCurrent: () => binding!.is_tool_schema_current(),
-              onEvent: (event) => {
-                const workspace = workspaceForEvent(binding!, event);
-                send(socket, {
-                  ...publicEvent(event),
-                  ...(workspace ? { workspace } : {}),
+            const onToolStateChanged = () => {
+              const workspace = binding!.flush_tool_state();
+              send(socket, { type: "workspace", workspace });
+            };
+            const onEvent = (
+              event: CodexLiveVoiceRuntimeEvent | GeminiLiveVoiceRuntimeEvent,
+            ) => {
+              const workspace = workspaceForEvent(binding!, event);
+              send(socket, {
+                ...publicEvent(event),
+                ...(workspace ? { workspace } : {}),
+              });
+            };
+            runtime = binding.backend === "gemini"
+              ? new GeminiLiveVoiceRuntime({
+                  sessionId,
+                  apiKey: binding.api_key ?? "",
+                  model: binding.model,
+                  voice: binding.voice,
+                  systemPrompt: binding.system_prompt,
+                  tools: binding.tools,
+                  initialItems: binding.initial_items,
+                  onToolStateChanged,
+                  isToolSchemaCurrent: () => binding!.is_tool_schema_current(),
+                  onAudio: (pcm) => {
+                    if (socket.readyState === WebSocket.OPEN) socket.send(pcm, { binary: true });
+                  },
+                  onEvent,
+                })
+              : new CodexLiveVoiceRuntime({
+                  sessionId,
+                  cwd: binding.cwd,
+                  model: binding.model,
+                  voice: binding.voice,
+                  provider: binding.provider,
+                  serviceTier: binding.service_tier,
+                  reasoningEffort: binding.reasoning_effort,
+                  systemPrompt: binding.system_prompt,
+                  tools: binding.tools,
+                  skillRoots: binding.skill_roots,
+                  initialItems: binding.initial_items,
+                  env: binding.environment,
+                  onToolStateChanged,
+                  isToolSchemaCurrent: () => binding!.is_tool_schema_current(),
+                  onEvent,
                 });
-              },
-            });
             activeSessions.set(sessionId, {
               socket,
               runtime,
               abortController: toolAbortController,
             });
             pendingSessions.delete(sessionId);
-            await runtime.start(sdp);
+            if (runtime instanceof GeminiLiveVoiceRuntime) await runtime.start();
+            else await runtime.start(sdp);
           } catch (error) {
             if (pendingSessions.get(sessionId) === socket) pendingSessions.delete(sessionId);
             if (activeSessions.get(sessionId)?.socket === socket) activeSessions.delete(sessionId);
@@ -408,8 +467,10 @@ export function setupCodexLiveVoiceWebSocket(
         }
 
         if (type === "mute") {
+          if (message.muted === true && runtime instanceof GeminiLiveVoiceRuntime) {
+            runtime.endAudio();
+          }
           // The browser owns muting by toggling its local MediaStream track.
-          // Acknowledge pre-mute during negotiation; no server audio state changes.
           send(socket, { type: "session.muted", muted: message.muted === true });
           return;
         }

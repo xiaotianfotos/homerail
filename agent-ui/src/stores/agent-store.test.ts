@@ -94,9 +94,44 @@ describe('agent runtime selection', () => {
     expect(store.managerProviderName).toBe('provider-b')
     expect(store.managerModelName).toBe('model-from-settings')
     expect(agentApi.updateManagerAgentConfig).toHaveBeenCalledWith({
+      harness: 'claude_agent_sdk',
       llm_setting_id: 'account-default',
       provider_name: 'provider-b',
       model_name: 'model-from-settings',
+    })
+  })
+
+  it('switches the Manager harness together with a Gemini setting', async () => {
+    llmApi.listLLMSettings.mockResolvedValue({
+      data: {
+        settings: [{
+          id: 'gemini-setting',
+          provider_id: 'gemini',
+          provider_name: 'Google Gemini',
+          provider_source: 'builtin',
+          endpoint_id: 'gemini_ai_studio',
+          protocol: 'openai_compatible',
+          plan_type: 'api_billing',
+          model_name: 'gemini-3.6-flash',
+          supports_llm: true,
+          supports_asr: false,
+          supports_tts: false,
+          is_active: true,
+          is_default: true,
+        }],
+      },
+    })
+    agentApi.getManagerAgentConfig.mockRejectedValue(new Error('not configured'))
+    agentApi.updateManagerAgentConfig.mockResolvedValue({ success: true })
+
+    const store = useAgentStore()
+    await store.loadManagerRuntimeOptions()
+
+    expect(agentApi.updateManagerAgentConfig).toHaveBeenCalledWith({
+      harness: 'kimi_code',
+      llm_setting_id: 'gemini-setting',
+      provider_name: 'gemini',
+      model_name: 'gemini-3.6-flash',
     })
   })
 })

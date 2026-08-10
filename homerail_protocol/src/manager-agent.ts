@@ -82,7 +82,10 @@ export interface KimiCodeModelSettingDescriptor {
   endpointName?: unknown;
 }
 
-const KIMI_CODE_PROVIDER_IDS = new Set(["kimi", "kimi_cn"]);
+// Kimi Code is HomeRail's harness for OpenAI Chat Completions providers. Keep
+// this allowlist explicit for built-in providers whose compatibility is
+// covered by integration tests; custom providers retain their existing opt-in.
+const KIMI_CODE_PROVIDER_IDS = new Set(["kimi", "kimi_cn", "gemini"]);
 
 /** Keep Kimi Code setting compatibility consistent across runtime and setup checks. */
 export function isKimiCodeCompatibleModelSetting(

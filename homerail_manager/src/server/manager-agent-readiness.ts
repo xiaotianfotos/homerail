@@ -24,6 +24,14 @@ import {
   ensurePreferredManagerAgentConfig,
   type ManagerAgentConfigRoutesOptions,
 } from "./manager-agent-config.js";
+import {
+  configuredGeminiLiveModel,
+  configuredGeminiLiveVoice,
+  GEMINI_LIVE_INPUT_SAMPLE_RATE,
+  GEMINI_LIVE_OUTPUT_SAMPLE_RATE,
+  resolveLiveVoiceBackend,
+  type LiveVoiceBackend,
+} from "../domain/live-voice.js";
 
 interface ReadinessBlocker {
   code: string;
@@ -50,11 +58,22 @@ export interface ManagerAgentReadiness {
   provider_name: string | null;
   model_name: string | null;
   live_voice_enabled: boolean;
+  live_voice_backend: LiveVoiceBackend | null;
+  live_voice_supported: boolean;
   live_voice_effective: boolean;
   blockers: ReadinessBlocker[];
   checks: {
     config: boolean;
     codex?: CodexCheck;
+    gemini_live?: {
+      supported: boolean;
+      transport: "websocket_pcm";
+      model: string;
+      voice: string;
+      input_sample_rate: number;
+      output_sample_rate: number;
+      reason?: "api_key_missing";
+    };
     docker_workspace?: {
       required: boolean;
       host_path: string;
@@ -226,6 +245,8 @@ export function managerAgentReadiness(
     provider_name: runtimeConfig?.provider_name ?? config.provider_name,
     model_name: runtimeConfig?.model ?? config.model_name,
     live_voice_enabled: config.live_voice_enabled,
+    live_voice_backend: resolveLiveVoiceBackend(config),
+    live_voice_supported: false,
     live_voice_effective: false,
     blockers,
     checks: {
@@ -247,10 +268,10 @@ export function managerAgentReadiness(
     const codex = codexStatus();
     const providerBackedCodex = Boolean(config.llm_setting_id || config.provider_name);
     readiness.checks.codex = codex;
-    readiness.live_voice_effective = config.live_voice_enabled
-      && config.harness === "codex_appserver"
-      && !providerBackedCodex
+    readiness.live_voice_supported = readiness.live_voice_backend === "codex"
       && codex.live_voice.supported;
+    readiness.live_voice_effective = config.live_voice_enabled
+      && readiness.live_voice_supported;
     if (config.live_voice_enabled && providerBackedCodex) {
       blockers.push({
         code: "codex_provider_live_voice_unsupported",
@@ -277,6 +298,26 @@ export function managerAgentReadiness(
       shell_path: hostShell.shell_path,
       worker_entry: hostShell.worker_entry,
     };
+    if (readiness.live_voice_backend === "gemini") {
+      const hasApiKey = Boolean(runtimeConfig.api_key?.trim());
+      readiness.checks.gemini_live = {
+        supported: hasApiKey,
+        transport: "websocket_pcm",
+        model: configuredGeminiLiveModel(),
+        voice: configuredGeminiLiveVoice(),
+        input_sample_rate: GEMINI_LIVE_INPUT_SAMPLE_RATE,
+        output_sample_rate: GEMINI_LIVE_OUTPUT_SAMPLE_RATE,
+        ...(!hasApiKey ? { reason: "api_key_missing" as const } : {}),
+      };
+      readiness.live_voice_supported = hasApiKey;
+      readiness.live_voice_effective = config.live_voice_enabled && hasApiKey;
+      if (config.live_voice_enabled && !hasApiKey) {
+        blockers.push({
+          code: "gemini_live_api_key_missing",
+          message: "Google AI Studio API key is required for Gemini Live",
+        });
+      }
+    }
     if (!hostShell.available) {
       blockers.push({
         code: "host_shell_unavailable",

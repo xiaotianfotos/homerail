@@ -101,6 +101,12 @@ import {
 } from "../plugins/context-assembler.js";
 import { getPluginToolTurnAuthority } from "../plugins/action-bus.js";
 import { inspectCodexInstallation } from "./codex-live-voice-capability.js";
+import {
+  configuredGeminiLiveModel,
+  configuredGeminiLiveVoice,
+  resolveLiveVoiceBackend,
+  type LiveVoiceBackend,
+} from "../domain/live-voice.js";
 
 interface BaseResponse {
   success: boolean;
@@ -1848,11 +1854,13 @@ async function processTurn(
 }
 
 export interface CodexLiveVoiceBinding {
+  backend: LiveVoiceBackend;
   session_id: string;
   project_id?: string | null;
   cwd: string;
   model: string;
   voice: string;
+  api_key?: string;
   provider?: string;
   service_tier?: string | null;
   reasoning_effort?: string;
@@ -1912,11 +1920,7 @@ function clearLiveVoiceSurface(state: HostCodexManagerToolState): void {
   state.voiceSurface.pluginProjections = [];
 }
 
-/**
- * Build the trusted HomeRail side of one browser-owned Codex Live Voice call.
- * The returned callbacks are the only place the realtime runtime can mutate a
- * VoiceWorkspace; GPT Live itself never receives Manager credentials or Tools.
- */
+/** Build the trusted HomeRail side of one browser-owned Live Voice call. */
 export async function createCodexLiveVoiceBinding(input: {
   sessionId: string;
   projectId?: string | null;
@@ -1930,17 +1934,18 @@ export async function createCodexLiveVoiceBinding(input: {
   const storedConfigDigest = crypto.createHash("sha256")
     .update(JSON.stringify(storedConfig))
     .digest("hex");
-  if (storedConfig.harness !== "codex_appserver") {
-    throw new Error("Live Voice requires the Codex app-server Manager runtime");
-  }
+  const backend = resolveLiveVoiceBackend(storedConfig);
+  if (!backend) throw new Error("The current Manager provider does not support Live Voice");
   if (!storedConfig.live_voice_enabled) {
     throw new Error("Live Voice is not enabled for the current Manager Agent");
   }
-  const installation = inspectCodexInstallation();
-  if (!installation.live_voice.supported) {
-    throw new Error(
-      `Codex Live Voice requires Codex ${installation.live_voice.minimum_version} or newer`,
-    );
+  if (backend === "codex") {
+    const installation = inspectCodexInstallation();
+    if (!installation.live_voice.supported) {
+      throw new Error(
+        `Codex Live Voice requires Codex ${installation.live_voice.minimum_version} or newer`,
+      );
+    }
   }
 
   const workspace = liveVoiceWorkspace(input.sessionId, input.projectId);
@@ -1953,6 +1958,10 @@ export async function createCodexLiveVoiceBinding(input: {
     storedConfig.reasoning_effort,
     storedConfig.service_tier,
   );
+  if (backend === "gemini" && !agentConfig.api_key?.trim()) {
+    throw new Error("Google AI Studio API key is required for Gemini Live");
+  }
+  const managerLabel = backend === "gemini" ? "Gemini Manager" : "Codex Manager";
   const voiceUiRules = ensureWorkspaceVoiceUiRules(workspace);
   const canvasContext = liveVoiceCanvasContext(workspace, input.selectedNodeId);
   const dagContext = workspaceDagContext(workspace);
@@ -2115,11 +2124,13 @@ export async function createCodexLiveVoiceBinding(input: {
   };
 
   return {
+    backend,
     session_id: workspace.session_id,
     project_id: workspace.project_id,
     cwd,
-    model: agentConfig.model || "codex",
-    voice: storedConfig.live_voice_voice,
+    model: backend === "gemini" ? configuredGeminiLiveModel() : agentConfig.model || "codex",
+    voice: backend === "gemini" ? configuredGeminiLiveVoice() : storedConfig.live_voice_voice,
+    api_key: backend === "gemini" ? agentConfig.api_key : undefined,
     provider: agentConfig.provider_name || undefined,
     service_tier: agentConfig.service_tier,
     reasoning_effort: agentConfig.reasoning_effort,
@@ -2137,6 +2148,9 @@ export async function createCodexLiveVoiceBinding(input: {
       HOMERAIL_CLI_ENTRYPOINT: path.join(repoRoot(), "homerail_cli", "dist", "cli.js"),
       HOMERAIL_MANAGER_URL: restUrl.replace(/\/api\/?$/, ""),
       ...(agentConfig.api_key ? { OPENAI_API_KEY: agentConfig.api_key } : {}),
+      ...(backend === "gemini" && agentConfig.api_key
+        ? { GEMINI_API_KEY: agentConfig.api_key }
+        : {}),
       ...(agentConfig.base_url ? { OPENAI_BASE_URL: agentConfig.base_url } : {}),
     },
     workspace: () => currentWorkspace() as unknown as Record<string, unknown>,
@@ -2145,7 +2159,7 @@ export async function createCodexLiveVoiceBinding(input: {
       const next = currentWorkspace();
       next.progress_brief = {
         status: "running",
-        short_text: "Codex Manager 正在处理",
+        short_text: `${managerLabel} 正在处理`,
         updated_at: now(),
       };
       return saveCurrent(next);
@@ -2170,14 +2184,14 @@ export async function createCodexLiveVoiceBinding(input: {
       const next = currentWorkspace();
       next.progress_brief = {
         status: status === "failed" ? "failed" : "done",
-        short_text: status === "failed" ? "Codex Manager 执行失败" : "Codex Manager 已完成",
+        short_text: status === "failed" ? `${managerLabel} 执行失败` : `${managerLabel} 已完成`,
         updated_at: now(),
       };
       return saveCurrent(next);
     },
     record_error: (message: string) => {
       const next = currentWorkspace();
-      appendDebugEvent(next, "codex_live_voice_error", shortText(message, 500), "error");
+      appendDebugEvent(next, `${backend}_live_voice_error`, shortText(message, 500), "error");
       next.progress_brief = {
         status: "failed",
         short_text: "Live Voice 连接失败",

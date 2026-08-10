@@ -316,6 +316,21 @@ describe("KimiCodeAdapter", () => {
       expect(config).not.toContain("default_thinking");
       expect(config).not.toContain("always_thinking");
     });
+
+    it("uses Kimi Code's generic OpenAI adapter for Google AI Studio", () => {
+      const config = adapter.buildKimiConfig({
+        ...ctx,
+        provider: "gemini",
+        model: "gemini-3.6-flash",
+        apiKey: "google-ai-studio-test-key",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      });
+
+      expect(config).toContain('[providers."gemini"]');
+      expect(config).toContain('type = "openai"');
+      expect(config).toContain('default_model = "gemini-3.6-flash"');
+      expect(config).toContain('base_url = "https://generativelanguage.googleapis.com/v1beta/openai"');
+    });
   });
 
   describe("checkReadiness", () => {

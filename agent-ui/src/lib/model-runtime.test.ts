@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { formatRuntimeModelSettingLabel, isKimiProviderId } from './model-runtime'
+import {
+  formatRuntimeModelSettingLabel,
+  isKimiCodeBuiltinProviderId,
+  isKimiProviderId,
+} from './model-runtime'
 
 describe('model runtime provider helpers', () => {
   it('recognizes both CN and international Kimi providers', () => {
     expect(isKimiProviderId('kimi_cn')).toBe(true)
     expect(isKimiProviderId('kimi')).toBe(true)
     expect(isKimiProviderId('glm')).toBe(false)
+  })
+
+  it('routes Gemini through the built-in Chat Completions harness', () => {
+    expect(isKimiCodeBuiltinProviderId('gemini')).toBe(true)
+    expect(isKimiCodeBuiltinProviderId('kimi')).toBe(true)
+    expect(isKimiCodeBuiltinProviderId('deepseek')).toBe(false)
   })
 
   it('adds plan labels only when a provider has multiple billing plans', () => {

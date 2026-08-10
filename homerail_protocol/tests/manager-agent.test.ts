@@ -139,8 +139,12 @@ describe("Manager Agent DAG context", () => {
 });
 
 describe("Manager Agent harness contract", () => {
-  it("accepts official Kimi providers and explicitly custom model settings", () => {
+  it("accepts supported Chat Completions providers and explicitly custom model settings", () => {
     expect(isKimiCodeCompatibleModelSetting({ providerId: "kimi_cn" })).toBe(true);
+    expect(isKimiCodeCompatibleModelSetting({
+      providerId: "gemini",
+      providerSource: "builtin",
+    })).toBe(true);
     expect(isKimiCodeCompatibleModelSetting({
       providerId: "qwen36-local",
       providerSource: "custom",

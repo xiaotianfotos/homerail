@@ -35,6 +35,7 @@
     "liveVoiceOn": "已打开",
     "liveVoiceOff": "已关闭",
     "liveVoiceUnavailable": "已暂停。需要 Codex {version} 或更新版本，并支持 realtime_conversation。",
+    "geminiLiveUnavailable": "Google Live 已暂停。请检查 Google AI Studio API Key 和 Gemini Manager 配置。",
     "liveVoiceSaveFailed": "Live Voice 配置保存失败",
     "reasoningDescriptions": {
       "minimal": "最快，适合简单整理。",
