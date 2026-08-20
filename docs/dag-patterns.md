@@ -157,8 +157,11 @@ allowlists for backend-provided shell/file tools and HomeRail DAG tools.
 Omitting either field preserves that tool set's default; `[]` disables it.
 Agent nodes with outputs must retain `handoff`. Contract-correction turns always
 override both declarations to expose only `handoff` and no built-ins. The
-`claude-sdk` adapter enforces the built-in allowlist; backends that cannot
-enforce it reject the node instead of silently widening access.
+`claude-sdk` adapter enforces the full built-in allowlist. `deepseek_harness`
+enforces the read-only subset (`Read`, `Grep`, `Glob`, `LS`) through bounded
+HomeRail MCP handlers confined by `workspace_access`; it rejects shell or
+mutation tools. Other backends that cannot enforce an asserted allowlist reject
+the node instead of silently widening access.
 
 Manager-to-Node and Manager-to-Worker WebSocket upgrades are authenticated
 before registration. Connections without configured credentials are restricted

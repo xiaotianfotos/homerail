@@ -5871,6 +5871,7 @@ function _withDispatchCredentials(agentConfig: DAGAgentConfig): DispatchCredenti
           protocol: resolved.protocol,
           anthropic_auth_mode: resolved.anthropic_auth_mode,
           reasoning_effort: resolved.reasoning_effort,
+          reasoning_effort_map: resolved.reasoning_effort_map,
           service_tier: resolved.service_tier,
         },
       },

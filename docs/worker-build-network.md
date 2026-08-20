@@ -2,16 +2,17 @@
 
 HomeRail builds exactly one canonical Worker image from
 `homerail_worker/Dockerfile`. By default the build uses the Debian
-repositories shipped with the base image and npm's default registry; no
-package-source build arguments are added. Operators whose networks cannot
+repositories shipped with the base image, npm's default registry, and the
+pinned DeepSeek Harness repository on GitHub. Operators whose networks cannot
 reach those public endpoints can opt in to validated public mirrors through
-three environment variables:
+four environment variables:
 
 | Variable | Effect |
 | --- | --- |
 | `HOMERAIL_WORKER_BUILD_APT_MIRROR` | Replaces the Debian main repository URL in non-security deb822 stanzas. |
 | `HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR` | Replaces the Debian security repository URL in security deb822 stanzas. |
-| `HOMERAIL_WORKER_BUILD_NPM_REGISTRY` | Maps to the Docker `NPM_CONFIG_REGISTRY` build argument observed by every npm operation during the image build. It is build-only and is never persisted as a runtime environment variable. |
+| `HOMERAIL_WORKER_BUILD_NPM_REGISTRY` | Maps to the Docker `NPM_CONFIG_REGISTRY` build argument observed by every npm/pnpm operation and to `COREPACK_NPM_REGISTRY` while Corepack resolves pnpm. It is build-only and is never persisted as a runtime environment variable. |
+| `HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE` | Maps to the Docker `HOMERAIL_DSH_FORK_REPOSITORY` build argument used to fetch the immutable DSH fork commit, allowing an internal read-only Git mirror instead of GitHub. |
 
 The two APT overrides are independent: each one rewrites only its matching
 deb822 stanzas, and either can be used alone.
@@ -71,6 +72,7 @@ summary with modes, never URLs:
 - `apt_main`: `default` or `custom`
 - `apt_security`: `default` or `custom`
 - `npm`: `default` or `custom`
+- `dsh_git`: `default` or `custom`
 - `proxy`: `environment` or `docker-managed`
 
 No source or proxy URL appears in status, task artifacts, or HomeRail-authored

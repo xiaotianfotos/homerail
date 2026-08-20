@@ -362,6 +362,33 @@ function _voiceAdapter(value: unknown): ProviderInput["voice_adapter"] {
     : undefined;
 }
 
+function _reasoningEffortMap(value: unknown): Record<string, string | null> | false | undefined {
+  if (value === false) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value);
+  if (entries.length === 0) return undefined;
+  const normalized: Record<string, string | null> = {};
+  for (const [rawSelector, rawWireValue] of entries) {
+    const selector = rawSelector.trim();
+    if (!selector || (rawWireValue !== null && (typeof rawWireValue !== "string" || !rawWireValue.trim()))) {
+      return undefined;
+    }
+    normalized[selector] = typeof rawWireValue === "string" ? rawWireValue.trim() : null;
+  }
+  return normalized;
+}
+
+function _reasoningEffortMapField(
+  body: Record<string, unknown>,
+): Record<string, string | null> | false | undefined {
+  if (!Object.prototype.hasOwnProperty.call(body, "reasoning_effort_map")) return undefined;
+  const parsed = _reasoningEffortMap(body.reasoning_effort_map);
+  if (parsed === undefined) {
+    throw new Error("reasoning_effort_map must be false or a non-empty selector-to-wire-value object");
+  }
+  return parsed;
+}
+
 function _providerBody(body: Record<string, unknown>, idOverride?: string): ProviderInput {
   return {
     id: idOverride ?? _requiredString(body, "id") ?? "",
@@ -429,6 +456,8 @@ function _settingCreateBody(b: Record<string, unknown>) {
     supports_audio_input: typeof b.supports_audio_input === "boolean" ? b.supports_audio_input : undefined,
     supports_image_input: typeof b.supports_image_input === "boolean" ? b.supports_image_input : undefined,
     supports_video_input: typeof b.supports_video_input === "boolean" ? b.supports_video_input : undefined,
+    reasoning_effort_map: _reasoningEffortMapField(b),
+    default_reasoning_effort: _requiredString(b, "default_reasoning_effort"),
   };
 }
 
@@ -793,6 +822,12 @@ export function llmSettingsRoutesHandler(
         if (typeof b.supports_audio_input === "boolean") patch.supports_audio_input = b.supports_audio_input;
         if (typeof b.supports_image_input === "boolean") patch.supports_image_input = b.supports_image_input;
         if (typeof b.supports_video_input === "boolean") patch.supports_video_input = b.supports_video_input;
+        if (Object.prototype.hasOwnProperty.call(b, "reasoning_effort_map")) {
+          patch.reasoning_effort_map = _reasoningEffortMapField(b);
+        }
+        if (typeof b.default_reasoning_effort === "string") {
+          patch.default_reasoning_effort = b.default_reasoning_effort.trim();
+        }
 
         try {
           const updated = updateSetting(id, patch);

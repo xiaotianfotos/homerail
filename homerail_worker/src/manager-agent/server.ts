@@ -66,6 +66,7 @@ import {
 
 interface ManagerAgentConfig {
   provider_name?: string;
+  protocol?: string;
   model?: string;
   model_name?: string;
   api_key?: string;
@@ -74,6 +75,7 @@ interface ManagerAgentConfig {
   agent_type?: string;
   project_workspace?: string;
   reasoning_effort?: string;
+  reasoning_effort_map?: Record<string, string | null> | false;
   service_tier?: string | null;
 }
 
@@ -1882,9 +1884,13 @@ async function handleChat(
     ].filter(Boolean).join("\n\n"),
     systemPromptMode: "append",
     provider: config.provider_name,
+    protocol: config.protocol,
     model,
     apiKey: String(config.api_key || ""),
     baseUrl: String(config.base_url || ""),
+    reasoningEffort: config.reasoning_effort,
+    reasoningEffortMap: config.reasoning_effort_map,
+    serviceTier: config.service_tier,
     anthropicAuthMode: config.anthropic_auth_mode,
     workspace: projectWorkspace(),
     claudePermissionMode: "dontAsk",

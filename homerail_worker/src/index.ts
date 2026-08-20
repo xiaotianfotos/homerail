@@ -176,6 +176,12 @@ client.on("task", async (msg) => {
   const reasoningEffort = typeof llmConfig.reasoning_effort === "string"
     ? llmConfig.reasoning_effort
     : undefined;
+  const reasoningEffortMap = llmConfig.reasoning_effort_map === false
+    ? false
+    : llmConfig.reasoning_effort_map && typeof llmConfig.reasoning_effort_map === "object"
+      && !Array.isArray(llmConfig.reasoning_effort_map)
+    ? llmConfig.reasoning_effort_map as Record<string, string | null>
+    : undefined;
   const serviceTier = typeof llmConfig.service_tier === "string"
     ? llmConfig.service_tier
     : llmConfig.service_tier === null ? null : undefined;
@@ -211,6 +217,7 @@ client.on("task", async (msg) => {
         agent_type: agentType,
         model,
         reasoning_effort: reasoningEffort,
+        reasoning_effort_map: reasoningEffortMap,
         service_tier: serviceTier,
         outgoing_edges: ((envelope.outgoingEdges ?? []) as Array<Record<string, unknown>>).map((e) => ({
           from_port: String(e.from_port ?? ""),

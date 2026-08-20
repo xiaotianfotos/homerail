@@ -9,6 +9,7 @@ import {
   PR_REVIEW_MODEL_AGENTS,
   configurePrReviewRuntimeProfile,
   prReviewRuntimeProfileYaml,
+  resolvePrReviewProfileId,
   selectRuntimeSetting,
 } from "./configure-pr-review-runtime-profile.mjs";
 
@@ -77,6 +78,100 @@ test("binds the three review votes to three distinct models", () => {
   );
 });
 
+test("binds three independent DSH reviewers to one OpenAI-compatible Qwen setting", () => {
+  const qwenLocal = {
+    id: "setting-qwen38-local",
+    display_name: "Qwen3.8 27B Local · DSH",
+    model_name: "qwen3.8",
+    protocol: "openai_compatible",
+    base_url: "http://192.168.100.10:5000/v1",
+    chat_completions_base_url: "http://192.168.100.10:5000/v1",
+    reasoning_effort_map: { medium: "medium", xhigh: "xhigh" },
+    is_active: true,
+    supports_llm: true,
+  };
+  assert.equal(
+    selectRuntimeSetting([qwenLocal], qwenLocal.display_name, "primary", "deepseek_harness"),
+    qwenLocal,
+  );
+  const yaml = prReviewRuntimeProfileYaml({
+    profileId: "pr-review-qwen38-dsh",
+    primary: qwenLocal,
+    arbiter: qwenLocal,
+    third: qwenLocal,
+    agentType: "deepseek_harness",
+  });
+  assert.match(yaml, /description: Three independent DeepSeek Harness reviewer processes/);
+  assert.equal((yaml.match(/llm_setting_id: "setting-qwen38-local"/g) ?? []).length, 4);
+  assert.equal((yaml.match(/agent_type: deepseek_harness/g) ?? []).length, 4);
+  assert.doesNotMatch(yaml, /reasoning_effort:/);
+  assert.match(
+    prReviewRuntimeProfileYaml({
+      profileId: "pr-review-qwen38-dsh-xhigh",
+      primary: qwenLocal,
+      arbiter: qwenLocal,
+      third: qwenLocal,
+      agentType: "deepseek_harness",
+      reasoningEffort: "xhigh",
+    }),
+    /reasoning_effort: "xhigh"/,
+  );
+
+  const yamlSensitiveEffort = "medium: fast # operator choice\nretained";
+  const yamlSensitiveSetting = {
+    ...qwenLocal,
+    reasoning_effort_map: { [yamlSensitiveEffort]: "balanced" },
+  };
+  const yamlWithSensitiveEffort = prReviewRuntimeProfileYaml({
+    profileId: "pr-review-qwen38-dsh-sensitive-effort",
+    primary: yamlSensitiveSetting,
+    arbiter: yamlSensitiveSetting,
+    third: yamlSensitiveSetting,
+    agentType: "deepseek_harness",
+    reasoningEffort: yamlSensitiveEffort,
+  });
+  assert.equal(
+    (yamlWithSensitiveEffort.match(/reasoning_effort: "medium: fast # operator choice\\nretained"/g) ?? []).length,
+    4,
+  );
+  assert.throws(
+    () => prReviewRuntimeProfileYaml({
+      profileId: "pr-review-qwen38-dsh-invalid",
+      primary: qwenLocal,
+      arbiter: qwenLocal,
+      third: qwenLocal,
+      agentType: "deepseek_harness",
+      reasoningEffort: "ultra",
+    }),
+    /does not declare reasoning effort: ultra/,
+  );
+  assert.throws(
+    () => prReviewRuntimeProfileYaml({
+      profileId: "pr-review-qwen38-dsh-inherited-selector",
+      primary: qwenLocal,
+      arbiter: qwenLocal,
+      third: qwenLocal,
+      agentType: "deepseek_harness",
+      reasoningEffort: "toString",
+    }),
+    /does not declare reasoning effort: toString/,
+  );
+  assert.throws(
+    () => selectRuntimeSetting([{ ...qwenLocal, protocol: "anthropic_compatible" }], qwenLocal.id, "primary", "deepseek_harness"),
+    /not OpenAI-compatible/,
+  );
+});
+
+test("keeps omitted DSH profile ids isolated from the mixed-model profile", () => {
+  assert.equal(resolvePrReviewProfileId(undefined, "claude-sdk"), "pr-review-mixed");
+  assert.equal(resolvePrReviewProfileId(undefined, "deepseek_harness"), "pr-review-dsh");
+  assert.equal(resolvePrReviewProfileId("pr-review-qwen38-dsh", "deepseek_harness"), "pr-review-qwen38-dsh");
+  assert.throws(
+    () => resolvePrReviewProfileId("pr-review-mixed", "deepseek_harness"),
+    /must not overwrite the pr-review-mixed profile/,
+  );
+});
+
 test("authenticates profile sync with the isolated DAG mutation token", async () => {
   const previousToken = process.env.HOMERAIL_DAG_MUTATION_TOKEN;
   const previousAdminToken = process.env.HOMERAIL_MANAGER_ADMIN_TOKEN;
@@ -131,6 +226,19 @@ test("formal PR Review submits to the durable stable Manager", () => {
   assert.match(runner, /--profile "\$PROFILE_ID"/);
   assert.match(workflow, /run-pr-review-stable-runner\.sh/);
   assert.match(workflow, /homerail-pr-review/);
+  assert.match(
+    workflow,
+    /HOMERAIL_PR_REVIEW_PROFILE_ID: \$\{\{ inputs\.profile_id \|\| \(inputs\.agent_type == 'deepseek_harness' && 'pr-review-dsh' \|\| 'pr-review-mixed'\) \}\}/,
+  );
+  assert.doesNotMatch(workflow, /inputs\.profile_id \|\| 'pr-review-mixed'/);
+  assert.match(
+    workflow,
+    /HOMERAIL_PR_REVIEW_AGENT_TYPE: \$\{\{ inputs\.agent_type \|\| 'claude-sdk' \}\}/,
+  );
+  assert.match(
+    workflow,
+    /HOMERAIL_PR_REVIEW_REASONING_EFFORT: \$\{\{ inputs\.reasoning_effort \}\}/,
+  );
   assert.doesNotMatch(workflow, /install:all|build:packages|run-pr-review-live-runner/);
   assert.doesNotMatch(workflow, /vars\.HOMERAIL_PR_REVIEW_(?:HOME_TEMPLATE|PRIMARY_MODEL|ARBITER_MODEL|THIRD_MODEL)/);
 });

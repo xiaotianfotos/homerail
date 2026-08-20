@@ -222,6 +222,8 @@ describe("Worker deb822 source override helper", () => {
       "https://mirror.example.com/deb%ian",
       "https://mirror.example.com/deb|ian",
       "https://mirror.example.com/deb^ian",
+      "https://mirror.example.com/deb$(touch)/ian",
+      "https://mirror.example.com/deb(ian)",
       "https://mirror.example.com/deb[ian",
       "https://mirror.example.com/deb]ian",
       "https://ex\u00e4mple.example.com/debian",
@@ -674,7 +676,7 @@ describe("Worker Dockerfile source wiring", () => {
 
   it("wires the APT override helper into every stage before apt-get update", () => {
     const stages = dockerfileStages();
-    expect(stages.length).toBe(2);
+    expect(stages.length).toBeGreaterThanOrEqual(2);
     for (const stage of stages) {
       const body = stage.lines.join("\n");
       expect(body).toMatch(/^ARG HOMERAIL_WORKER_BUILD_APT_MIRROR$/m);
@@ -697,23 +699,60 @@ describe("Worker Dockerfile source wiring", () => {
     expect(dockerfile).not.toMatch(/ARG HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR=/);
   });
 
-  it("declares NPM_CONFIG_REGISTRY before every npm build operation in the final stage", () => {
+  it("declares NPM_CONFIG_REGISTRY before every npm build operation", () => {
     const stages = dockerfileStages();
-    const finalStage = stages[stages.length - 1];
-    const argIndex = finalStage.lines.findIndex((line) => line === "ARG NPM_CONFIG_REGISTRY");
-    expect(argIndex).toBeGreaterThanOrEqual(0);
-    const npmRuns = npmInstructions(finalStage.lines);
-    expect(npmRuns.length).toBeGreaterThan(0);
-    for (const instruction of npmRuns) {
-      expect(instruction.lineIndex).toBeGreaterThan(argIndex);
+    const npmStages = stages.filter((stage) => npmInstructions(stage.lines).length > 0);
+    expect(npmStages.length).toBeGreaterThan(0);
+    for (const stage of npmStages) {
+      const argIndex = stage.lines.findIndex((line) => line === "ARG NPM_CONFIG_REGISTRY");
+      expect(argIndex).toBeGreaterThanOrEqual(0);
+      for (const instruction of npmInstructions(stage.lines)) {
+        expect(instruction.lineIndex).toBeGreaterThan(argIndex);
+      }
     }
-    expect(dockerfile.match(/^ARG NPM_CONFIG_REGISTRY$/gm)).toHaveLength(1);
+    expect(dockerfile.match(/^ARG NPM_CONFIG_REGISTRY$/gm)).toHaveLength(npmStages.length);
   });
 
   it("keeps the npm registry override build-only", () => {
     expect(dockerfile).not.toMatch(/ARG NPM_CONFIG_REGISTRY=/);
     expect(dockerfile).not.toMatch(/ENV[^\n]*NPM_CONFIG_REGISTRY/);
     expect(dockerfile).not.toMatch(/ENV[^\n]*HOMERAIL_WORKER_BUILD_APT/);
+  });
+
+  it("repairs skipped optional agent platform payloads before verifying the CLIs", () => {
+    const finalStage = dockerfileStages().at(-1);
+    expect(finalStage).toBeDefined();
+    const runs = runInstructions(finalStage?.lines ?? []);
+    const installIndex = runs.findIndex((instruction) => instruction.text.includes("npm ci --ignore-scripts"));
+    const repairIndex = runs.findIndex((instruction) => instruction.text.includes("codex_platform="));
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(repairIndex).toBeGreaterThan(installIndex);
+
+    const repair = runs[repairIndex]?.text ?? "";
+    expect(repair).toContain("amd64) codex_arch=x64");
+    expect(repair).toContain("arm64) codex_arch=arm64");
+    expect(repair).toContain("node_modules/@anthropic-ai/claude-agent-sdk/package.json");
+    expect(repair).toContain("@anthropic-ai/claude-agent-sdk-linux-${codex_arch}");
+    expect(repair).toContain("node_modules/@openai/codex/package.json");
+    expect(repair).toContain("npm install --no-save --package-lock=false --ignore-scripts");
+    expect(repair).toContain("@npm:@openai/codex@${codex_version}-linux-${codex_arch}");
+    expect(repair).toContain("node_modules/${claude_platform}/claude");
+    expect(repair).toContain("codex --version");
+  });
+
+  it("allows the pinned DSH fork and Corepack bootstrap to use validated mirrors", () => {
+    expect(dockerfile).toContain(
+      "ARG HOMERAIL_DSH_FORK_REPOSITORY=https://github.com/xiaotianfotos/deepseek-harness.git",
+    );
+    expect(dockerfile).toContain('git remote add origin "${HOMERAIL_DSH_FORK_REPOSITORY}"');
+    const dshStage = dockerfileStages().find((stage) => stage.header.includes(" AS dsh-runtime-build"));
+    expect(dshStage).toBeDefined();
+    const corepackRuns = runInstructions(dshStage?.lines ?? [])
+      .filter((instruction) => instruction.text.includes("corepack pnpm"));
+    expect(corepackRuns.length).toBeGreaterThan(0);
+    for (const instruction of corepackRuns) {
+      expect(instruction.text).toContain('export COREPACK_NPM_REGISTRY="$NPM_CONFIG_REGISTRY"');
+    }
   });
 });
 

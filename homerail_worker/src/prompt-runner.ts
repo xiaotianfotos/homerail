@@ -25,6 +25,7 @@ import {
   type ReviewFailureCategory,
 } from "homerail-protocol";
 import { createAgentClient } from "./agent/factory.js";
+import { supportsDeepSeekHarnessReadTools } from "./agent/deepseek-harness-read-tools.js";
 import type {
   AgentEvent,
   AgentRunContext,
@@ -136,6 +137,11 @@ function assertAgentRuntimeProtocol(agentBackend: string | undefined, protocol: 
       "Codex app-server requires a Responses-compatible endpoint; Chat Completions and Anthropic protocols are not valid Codex wire transports.",
     );
   }
+  if (backend === "deepseek_harness" && protocol !== "openai_compatible") {
+    throw new Error(
+      "DeepSeek Harness requires an OpenAI-compatible Chat Completions endpoint.",
+    );
+  }
 }
 
 function assertBuiltinToolPolicySupported(
@@ -164,6 +170,18 @@ function assertBuiltinToolPolicySupported(
   }
   if (allowedTools === undefined) return;
   if (backend === "claude-sdk" || backend === "deterministic") return;
+  if (backend === "deepseek_harness") {
+    if (!Array.isArray(allowedTools) || !allowedTools.every((tool) => typeof tool === "string")) {
+      throw new Error("DeepSeek Harness allowed_builtin_tools must be an array");
+    }
+    if (!supportsDeepSeekHarnessReadTools(allowedTools)) {
+      throw new Error("DeepSeek Harness only enforces the read-only built-in tools Read, Grep, Glob, and LS");
+    }
+    if (allowedTools.length > 0 && (!workspaceAccess || typeof workspaceAccess !== "object" || Array.isArray(workspaceAccess))) {
+      throw new Error("DeepSeek Harness read-only built-in tools require workspace_access");
+    }
+    return;
+  }
   throw new Error(
     `allowed_builtin_tools is not enforced by agent backend '${backend ?? "unknown"}'`,
   );
@@ -561,6 +579,7 @@ export async function runPrompt(
       apiKey: job.llmApiKey ?? process.env.LLM_API_KEY ?? "",
       baseUrl: resolveAgentBaseUrl(job, agentBackend),
       reasoningEffort: job.dagConfig.reasoning_effort,
+      reasoningEffortMap: job.dagConfig.reasoning_effort_map,
       codexSandbox: job.dagConfig.codex_sandbox,
       serviceTier: job.dagConfig.service_tier,
       anthropicAuthMode: job.llmAnthropicAuthMode,

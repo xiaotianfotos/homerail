@@ -8,6 +8,7 @@
 #   HOMERAIL_WORKER_BUILD_APT_MIRROR           optional Debian main repository URL
 #   HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR  optional Debian security repository URL
 #   HOMERAIL_WORKER_BUILD_NPM_REGISTRY         optional npm registry URL
+#   HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE       optional DeepSeek Harness Git mirror URL
 #
 # Unset or whitespace-only values leave the corresponding source unchanged.
 # Normalization and validation are delegated to the Worker WHATWG URL helper
@@ -77,22 +78,29 @@ homerail_worker_build_network_normalize_source() {
 #   --build-arg HOMERAIL_WORKER_BUILD_APT_MIRROR=<url>
 #   --build-arg HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR=<url>
 #   --build-arg NPM_CONFIG_REGISTRY=<url>
+#   --build-arg HOMERAIL_DSH_FORK_REPOSITORY=<url>
 # plus one value-less --build-arg NAME entry for every recognized proxy variable
 # containing a non-whitespace character. Returns 1 before any Docker invocation
 # when a value is invalid.
 homerail_worker_build_network_args() {
   HOMERAIL_WORKER_BUILD_NETWORK_ARGS=()
   local name normalized proxy_name
-  for name in HOMERAIL_WORKER_BUILD_APT_MIRROR HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR HOMERAIL_WORKER_BUILD_NPM_REGISTRY; do
+  for name in HOMERAIL_WORKER_BUILD_APT_MIRROR HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR HOMERAIL_WORKER_BUILD_NPM_REGISTRY HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE; do
     if ! normalized="$(homerail_worker_build_network_normalize_source "$name")"; then
       return 1
     fi
     if [ -n "$normalized" ]; then
-      if [ "$name" = "HOMERAIL_WORKER_BUILD_NPM_REGISTRY" ]; then
-        HOMERAIL_WORKER_BUILD_NETWORK_ARGS+=("--build-arg" "NPM_CONFIG_REGISTRY=$normalized")
-      else
-        HOMERAIL_WORKER_BUILD_NETWORK_ARGS+=("--build-arg" "$name=$normalized")
-      fi
+      case "$name" in
+        HOMERAIL_WORKER_BUILD_NPM_REGISTRY)
+          HOMERAIL_WORKER_BUILD_NETWORK_ARGS+=("--build-arg" "NPM_CONFIG_REGISTRY=$normalized")
+          ;;
+        HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE)
+          HOMERAIL_WORKER_BUILD_NETWORK_ARGS+=("--build-arg" "HOMERAIL_DSH_FORK_REPOSITORY=$normalized")
+          ;;
+        *)
+          HOMERAIL_WORKER_BUILD_NETWORK_ARGS+=("--build-arg" "$name=$normalized")
+          ;;
+      esac
     fi
   done
   for proxy_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do

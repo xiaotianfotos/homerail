@@ -14,6 +14,7 @@ describe("resolveWorkerBuildNetwork", () => {
     expect(config.aptMirror).toBeUndefined();
     expect(config.aptSecurityMirror).toBeUndefined();
     expect(config.npmRegistry).toBeUndefined();
+    expect(config.dshGitRemote).toBeUndefined();
     expect(config.proxyVariableNames).toEqual([]);
     expect(workerBuildNetworkDockerArgs(config)).toEqual([]);
     expect(workerBuildNetworkSummary(config)).toEqual(DEFAULT_WORKER_BUILD_NETWORK_SUMMARY);
@@ -24,6 +25,7 @@ describe("resolveWorkerBuildNetwork", () => {
       HOMERAIL_WORKER_BUILD_APT_MIRROR: "   ",
       HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: "\t",
       HOMERAIL_WORKER_BUILD_NPM_REGISTRY: " \r\n ",
+      HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "  ",
     });
     expect(workerBuildNetworkDockerArgs(config)).toEqual([]);
     expect(workerBuildNetworkSummary(config)).toEqual(DEFAULT_WORKER_BUILD_NETWORK_SUMMARY);
@@ -34,16 +36,19 @@ describe("resolveWorkerBuildNetwork", () => {
       HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://mirrors.example.com/debian",
       HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: "https://mirrors.example.com/debian-security",
       HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://registry.example.com",
+      HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.example.com/deepseek-harness.git",
     });
     expect(workerBuildNetworkDockerArgs(config)).toEqual([
       "--build-arg", "HOMERAIL_WORKER_BUILD_APT_MIRROR=https://mirrors.example.com/debian",
       "--build-arg", "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR=https://mirrors.example.com/debian-security",
       "--build-arg", "NPM_CONFIG_REGISTRY=https://registry.example.com",
+      "--build-arg", "HOMERAIL_DSH_FORK_REPOSITORY=https://git.example.com/deepseek-harness.git",
     ]);
     expect(workerBuildNetworkSummary(config)).toEqual({
       apt_main: "custom",
       apt_security: "custom",
       npm: "custom",
+      dsh_git: "custom",
       proxy: "docker-managed",
     });
   });
@@ -121,6 +126,7 @@ describe("resolveWorkerBuildNetwork", () => {
         "HOMERAIL_WORKER_BUILD_APT_MIRROR",
         "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR",
         "HOMERAIL_WORKER_BUILD_NPM_REGISTRY",
+        "HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE",
       ]) {
         let caught: unknown;
         try {
@@ -156,6 +162,8 @@ describe("resolveWorkerBuildNetwork", () => {
     "https://mirrors.example.com/deb%ian",
     "https://mirrors.example.com/deb|ian",
     "https://mirrors.example.com/deb^ian",
+    "https://mirrors.example.com/deb$(touch)/ian",
+    "https://mirrors.example.com/deb(ian)",
     "https://mirrors.example.com/deb[ian",
     "https://mirrors.example.com/deb]ian",
   ];
@@ -166,6 +174,7 @@ describe("resolveWorkerBuildNetwork", () => {
         "HOMERAIL_WORKER_BUILD_APT_MIRROR",
         "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR",
         "HOMERAIL_WORKER_BUILD_NPM_REGISTRY",
+        "HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE",
       ]) {
         let caught: unknown;
         try {
@@ -233,6 +242,7 @@ describe("normalizeWorkerBuildNetworkSummary", () => {
       apt_main: "custom",
       apt_security: "default",
       npm: "custom",
+      dsh_git: "custom",
       proxy: "environment",
     };
     expect(normalizeWorkerBuildNetworkSummary(summary)).toEqual(summary);
@@ -246,6 +256,7 @@ describe("normalizeWorkerBuildNetworkSummary", () => {
       apt_main: "weird",
       apt_security: ["custom"],
       npm: 1,
+      dsh_git: ["custom"],
       proxy: "none",
     })).toEqual(DEFAULT_WORKER_BUILD_NETWORK_SUMMARY);
     expect(normalizeWorkerBuildNetworkSummary({
@@ -255,6 +266,7 @@ describe("normalizeWorkerBuildNetworkSummary", () => {
       apt_main: "custom",
       apt_security: "default",
       npm: "default",
+      dsh_git: "default",
       proxy: "environment",
     });
   });

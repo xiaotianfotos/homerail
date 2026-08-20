@@ -9,6 +9,7 @@ import { DeterministicClient } from "./deterministic.js";
 import { ClaudeSdkAdapter } from "./claude-sdk.js";
 import { KimiCodeAdapter } from "./kimi-code.js";
 import { CodexAppServerAdapter } from "./codex-appserver.js";
+import { DeepSeekHarnessAdapter } from "./deepseek-harness.js";
 import { ManagerAgentSmokeClient } from "./manager-agent-smoke.js";
 import {
   DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
@@ -19,6 +20,7 @@ import {
 const PRODUCTION_REGISTRY: Record<ManagerAgentRuntimeAgentType, () => AgentClient> = {
   "claude-sdk": () => new ClaudeSdkAdapter(),
   codex_appserver: () => new CodexAppServerAdapter(),
+  deepseek_harness: () => new DeepSeekHarnessAdapter(),
   kimi_code: () => new KimiCodeAdapter(),
 };
 

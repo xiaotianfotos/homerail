@@ -1100,6 +1100,8 @@ describe("custom LLM providers", () => {
       endpoint_id: "aliyun_dashscope_cn_token_plan",
       model_name: "qwen3.8-max",
       api_key: "sk-sp-code-authoritative",
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
       is_active: true,
       is_default: true,
     });
@@ -1128,6 +1130,10 @@ describe("custom LLM providers", () => {
     expect(storedData).not.toHaveProperty("base_url");
     expect(storedData).not.toHaveProperty("protocol");
     expect(storedData).not.toHaveProperty("auth_type");
+    expect(storedData).toMatchObject({
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
+    });
 
     expect(getSetting(setting.id)).toMatchObject({
       endpoint_id: "aliyun_dashscope_cn_token_plan",
@@ -1139,6 +1145,8 @@ describe("custom LLM providers", () => {
       auth_type: "bearer",
       supports_llm: true,
       supports_image_input: false,
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
     });
   });
 
@@ -1186,6 +1194,39 @@ describe("custom LLM providers", () => {
       preset_source: "custom",
       preset_status: "custom",
       base_url: "https://override.example/v1",
+    });
+  });
+
+  it("persists model-owned DSH reasoning capabilities without a global effort list", () => {
+    upsertProvider({
+      id: "reasoning-gateway",
+      name: "Reasoning gateway",
+      default_model: "gateway-model",
+      base_url: "https://reasoning.example/v1",
+      chat_completions_base_url: "https://reasoning.example/v1",
+    });
+    const setting = createSetting({
+      provider_id: "reasoning-gateway",
+      endpoint_id: "reasoning-gateway_custom",
+      model_name: "gateway-model",
+      api_key: "private-key",
+      protocol: "openai_compatible",
+      base_url: "https://reasoning.example/v1",
+      chat_completions_base_url: "https://reasoning.example/v1",
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
+    });
+
+    expect(getSetting(setting.id)).toMatchObject({
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
+    });
+    expect(() => updateSetting(setting.id, {
+      reasoning_effort_map: { off: null, high: "deep" },
+    })).toThrow(/default_reasoning_effort 'medium' is not declared/);
+    expect(updateSetting(setting.id, { reasoning_effort_map: false })).toMatchObject({
+      reasoning_effort_map: false,
+      default_reasoning_effort: undefined,
     });
   });
 

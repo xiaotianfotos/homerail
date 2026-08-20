@@ -1,10 +1,12 @@
 export const WORKER_BUILD_APT_MIRROR_ENV_KEY = "HOMERAIL_WORKER_BUILD_APT_MIRROR";
 export const WORKER_BUILD_APT_SECURITY_MIRROR_ENV_KEY = "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR";
 export const WORKER_BUILD_NPM_REGISTRY_ENV_KEY = "HOMERAIL_WORKER_BUILD_NPM_REGISTRY";
+export const WORKER_BUILD_DSH_GIT_REMOTE_ENV_KEY = "HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE";
 
 export const WORKER_BUILD_APT_MIRROR_BUILD_ARG = "HOMERAIL_WORKER_BUILD_APT_MIRROR";
 export const WORKER_BUILD_APT_SECURITY_MIRROR_BUILD_ARG = "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR";
 export const WORKER_BUILD_NPM_REGISTRY_BUILD_ARG = "NPM_CONFIG_REGISTRY";
+export const WORKER_BUILD_DSH_GIT_REMOTE_BUILD_ARG = "HOMERAIL_DSH_FORK_REPOSITORY";
 
 // Uppercase and lowercase spellings are recognized; values are never read
 // beyond an emptiness check and stay solely in the Docker child environment.
@@ -24,6 +26,7 @@ export interface WorkerBuildNetworkSummary {
   apt_main: WorkerBuildNetworkSourceMode;
   apt_security: WorkerBuildNetworkSourceMode;
   npm: WorkerBuildNetworkSourceMode;
+  dsh_git: WorkerBuildNetworkSourceMode;
   proxy: WorkerBuildNetworkProxyMode;
 }
 
@@ -31,6 +34,7 @@ export interface WorkerBuildNetworkConfig {
   aptMirror?: string;
   aptSecurityMirror?: string;
   npmRegistry?: string;
+  dshGitRemote?: string;
   proxyVariableNames: string[];
 }
 
@@ -38,6 +42,7 @@ export const DEFAULT_WORKER_BUILD_NETWORK_SUMMARY: WorkerBuildNetworkSummary = {
   apt_main: "default",
   apt_security: "default",
   npm: "default",
+  dsh_git: "default",
   proxy: "docker-managed",
 };
 
@@ -53,7 +58,7 @@ export class WorkerBuildNetworkError extends Error {
 }
 
 const NON_PRINTABLE_OR_NON_ASCII_SOURCE_CHARACTERS = /[^\u0021-\u007e]/;
-const URL_REWRITE_SOURCE_CHARACTERS = /["%<>`^{}|\\]/;
+const URL_REWRITE_SOURCE_CHARACTERS = /["$()%<>`^{}|\\]/;
 const URL_PATH_BRACKETS = /[\[\]]/;
 const URL_AUTHORITY_USERINFO = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i;
 
@@ -77,7 +82,7 @@ function resolveSourceUrl(envKey: string, raw: string | undefined): string | und
   if (URL_REWRITE_SOURCE_CHARACTERS.test(trimmed)) {
     throw new WorkerBuildNetworkError(
       envKey,
-      "value must not contain characters that require URL encoding.",
+      "value must not contain unsupported URL characters.",
     );
   }
   // Check raw authority text as WHATWG parsing drops an empty userinfo marker
@@ -133,6 +138,10 @@ export function resolveWorkerBuildNetwork(
       env[WORKER_BUILD_APT_SECURITY_MIRROR_ENV_KEY],
     ),
     npmRegistry: resolveSourceUrl(WORKER_BUILD_NPM_REGISTRY_ENV_KEY, env[WORKER_BUILD_NPM_REGISTRY_ENV_KEY]),
+    dshGitRemote: resolveSourceUrl(
+      WORKER_BUILD_DSH_GIT_REMOTE_ENV_KEY,
+      env[WORKER_BUILD_DSH_GIT_REMOTE_ENV_KEY],
+    ),
     proxyVariableNames: resolveProxyVariableNames(env),
   };
 }
@@ -148,6 +157,9 @@ export function workerBuildNetworkDockerArgs(config: WorkerBuildNetworkConfig): 
   if (config.npmRegistry) {
     args.push("--build-arg", `${WORKER_BUILD_NPM_REGISTRY_BUILD_ARG}=${config.npmRegistry}`);
   }
+  if (config.dshGitRemote) {
+    args.push("--build-arg", `${WORKER_BUILD_DSH_GIT_REMOTE_BUILD_ARG}=${config.dshGitRemote}`);
+  }
   // Value-less entries let Docker resolve the value from the child
   // environment; HomeRail never places proxy values in argv.
   for (const name of config.proxyVariableNames) {
@@ -161,6 +173,7 @@ export function workerBuildNetworkSummary(config: WorkerBuildNetworkConfig): Wor
     apt_main: config.aptMirror ? "custom" : "default",
     apt_security: config.aptSecurityMirror ? "custom" : "default",
     npm: config.npmRegistry ? "custom" : "default",
+    dsh_git: config.dshGitRemote ? "custom" : "default",
     proxy: config.proxyVariableNames.length > 0 ? "environment" : "docker-managed",
   };
 }
@@ -174,6 +187,7 @@ export function normalizeWorkerBuildNetworkSummary(
     apt_main: record.apt_main === "custom" ? "custom" : "default",
     apt_security: record.apt_security === "custom" ? "custom" : "default",
     npm: record.npm === "custom" ? "custom" : "default",
+    dsh_git: record.dsh_git === "custom" ? "custom" : "default",
     proxy: record.proxy === "environment" ? "environment" : "docker-managed",
   };
 }

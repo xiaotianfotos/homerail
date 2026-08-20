@@ -747,6 +747,38 @@ describe("prompt runner", () => {
     }));
   });
 
+  it("limits DeepSeek Harness built-ins to HomeRail-managed read-only tools", async () => {
+    for (const dagConfig of [
+      makeConfigWith({
+        agent_type: "deepseek_harness",
+        allowed_builtin_tools: ["Write"],
+        workspace_access: { writable_paths: ["repository"], readonly_paths: [] },
+      }),
+      makeConfigWith({
+        agent_type: "deepseek_harness",
+        allowed_builtin_tools: ["Read"],
+      }),
+    ]) {
+      const sent: string[] = [];
+      await runPrompt({
+        task: "reject unsupported DSH filesystem policy",
+        sender: "test",
+        runId: "run-dsh-builtin-policy",
+        llmProtocol: "openai_compatible",
+        dagConfig,
+      }, {
+        wsSend: (data) => sent.push(data),
+        agentBackend: "deepseek_harness",
+      });
+      expect(sent.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+        type: "node_error",
+        data: expect.objectContaining({
+          message: expect.stringMatching(/read-only built-in tools|require workspace_access/),
+        }),
+      }));
+    }
+  });
+
   it("allows explicit backend-native tools only for sandboxed Codex DAG turns", async () => {
     let called = false;
     const mockAgent: AgentClient = {
@@ -927,6 +959,30 @@ describe("prompt runner", () => {
       }),
     }));
     expect(parsed.map((msg) => msg.type)).toContain("SESSION_END");
+  });
+
+  it("fails DeepSeek Harness before execution for a non-OpenAI protocol", async () => {
+    const sent: string[] = [];
+    await runPrompt(
+      {
+        task: "test",
+        sender: "test",
+        runId: "run-dsh-protocol-invalid",
+        llmProtocol: "anthropic_compatible",
+        dagConfig: makeConfigWith({ agent_type: "deepseek_harness" }),
+      },
+      {
+        wsSend: (data) => sent.push(data),
+        agentBackend: "dsh",
+      },
+    );
+
+    expect(sent.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+      type: "node_error",
+      data: expect.objectContaining({
+        message: expect.stringContaining("OpenAI-compatible Chat Completions endpoint"),
+      }),
+    }));
   });
 
   it("streams agent debug events without sending them as content", async () => {

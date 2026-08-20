@@ -295,6 +295,7 @@ exec "${process.execPath}" "$@"
     HOMERAIL_WORKER_BUILD_APT_MIRROR: "",
     HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: "",
     HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "",
+    HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "",
     HTTP_PROXY: "",
     HTTPS_PROXY: "",
     NO_PROXY: "",
@@ -333,11 +334,13 @@ exec "${process.execPath}" "$@"
   const custom = runRunner({
     HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://deb.live.example/debian/",
     HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://npm.live.example",
+    HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.live.example/deepseek-harness.git",
   });
   assert.equal(custom.status, 3, custom.stderr);
   const customArgs = fs.readFileSync(capturePath, "utf8");
   assert.match(customArgs, /--build-arg\nHOMERAIL_WORKER_BUILD_APT_MIRROR=https:\/\/deb\.live\.example\/debian\n/);
   assert.match(customArgs, /--build-arg\nNPM_CONFIG_REGISTRY=https:\/\/npm\.live\.example\n/);
+  assert.match(customArgs, /--build-arg\nHOMERAIL_DSH_FORK_REPOSITORY=https:\/\/git\.live\.example\/deepseek-harness\.git\n/);
   assert.doesNotMatch(customArgs, /HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR/);
 
   const proxy = runRunner({
@@ -366,12 +369,14 @@ exec "${process.execPath}" "$@"
     "HOMERAIL_WORKER_BUILD_APT_MIRROR",
     "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR",
     "HOMERAIL_WORKER_BUILD_NPM_REGISTRY",
+    "HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE",
   ]) {
     assert.ok(capturedArgv.includes(expected), `delegation must name ${expected} only`);
   }
   for (const prohibited of [
     "https://deb.live.example/debian/",
     "https://npm.live.example",
+    "https://git.live.example/deepseek-harness.git",
     "http://proxy.live.example:3128",
     "http://user:pass@deb.live.example",
   ]) {

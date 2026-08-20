@@ -928,8 +928,10 @@ export class KimiCodeAdapter implements AgentClient {
    * Must NOT expose KIMI_MODEL_API_KEY in any debug output.
    */
   buildKimiEnv(context: AgentRunContext, kimiHome: string): Record<string, string | undefined> {
-    const env = sanitizedAgentChildEnv();
-    Object.assign(env, context.environmentVariables ?? {});
+    const env = sanitizedAgentChildEnv({
+      ...process.env,
+      ...context.environmentVariables,
+    });
 
     // Isolated KIMI_CODE_HOME
     env.KIMI_CODE_HOME = kimiHome;

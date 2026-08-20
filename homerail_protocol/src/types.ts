@@ -608,6 +608,8 @@ export interface DagNodeConfig {
   agent_type: string;
   model: string;
   reasoning_effort?: string;
+  /** Model-declared reasoning selectors mapped to provider wire values. */
+  reasoning_effort_map?: Record<string, string | null> | false;
   service_tier?: string | null;
   /** Codex command sandbox selected by the trusted WorkflowSpec runtime policy. */
   codex_sandbox?: "read-only" | "workspace-write" | "danger-full-access";

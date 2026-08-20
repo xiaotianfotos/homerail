@@ -1,0 +1,48 @@
+# HomeRail-owned, unattended DeepSeek Harness composition.
+# stdout is reserved for the SDK JSON-RPC transport.
+
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers: !!js JSON.parse(process.env.HOMERAIL_DSH_PROVIDERS_JSON || '{}')
+
+- id: homerail-tools
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: homerail
+    transport: stdio
+    command: !!js process.execPath
+    args:
+      - !!js process.env.HOMERAIL_DSH_MCP_SCRIPT
+    cwd: !!js process.env.DSH_CWD
+    env:
+      HOMERAIL_MCP_BRIDGE_URL: !!js process.env.HOMERAIL_MCP_BRIDGE_URL
+      HOMERAIL_MCP_BRIDGE_TOKEN: !!js process.env.HOMERAIL_MCP_BRIDGE_TOKEN
+    failOnStartupError: true
+    reconnect:
+      enabled: false
+
+- id: agent-spine
+  name: '@deepseek-ai/dsh-agent-spine-demo'
+  config:
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    persona: !!js process.env.DSH_SYSTEM_PROMPT
+    workspaceContext: false
+    skills:
+      enabled: false
+    toolBash: false
+    toolJobs: false
+
+- id: sessions
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js process.env.DSH_SESSION_ROOT
+    compression: none
+
+# The fork's protocol handshake waits for Loader settlement, so MCP discovery
+# is complete before the caller can send the first turn.
+- id: sdk-jsonrpc-server
+  name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
+  config:
+    maxTokensAsSuccess: true

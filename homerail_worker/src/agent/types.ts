@@ -114,8 +114,10 @@ export interface AgentRunContext {
   model: string;
   apiKey: string;
   baseUrl: string;
-  /** Codex Responses reasoning effort selected by the runtime profile. */
+  /** Provider-owned reasoning selector chosen by the runtime profile. */
   reasoningEffort?: string;
+  /** Selectable reasoning ids mapped to the configured provider's wire values. */
+  reasoningEffortMap?: Record<string, string | null> | false;
   /** Explicit command sandbox selected by the trusted DAG runtime policy. */
   codexSandbox?: "read-only" | "workspace-write" | "danger-full-access";
   /** Optional provider service tier; null means provider default. */

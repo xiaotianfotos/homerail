@@ -23,6 +23,26 @@ on:
         description: Optional immutable head commit SHA
         type: string
         required: false
+      profile_id:
+        description: Optional private runtime profile id for this review
+        type: string
+        required: false
+      model:
+        description: Optional single Manager LLM setting selector for all three independent reviewers
+        type: string
+        required: false
+      reasoning_effort:
+        description: Optional model-owned reasoning selector for all three independent reviewers
+        type: string
+        required: false
+      agent_type:
+        description: Harness used by all three independent reviewers
+        type: choice
+        options:
+          - claude-sdk
+          - deepseek_harness
+        default: claude-sdk
+        required: false
 
 permissions:
   contents: read
@@ -147,6 +167,12 @@ jobs:
         id: review
         env:
           HOMERAIL_PR_REVIEW_INPUT: ${{ steps.input.outputs.json }}
+          # Keep DSH isolated even while the stable adapter is still running
+          # a release that predates agent-type-specific profile derivation.
+          HOMERAIL_PR_REVIEW_PROFILE_ID: ${{ inputs.profile_id || (inputs.agent_type == 'deepseek_harness' && 'pr-review-dsh' || 'pr-review-mixed') }}
+          HOMERAIL_PR_REVIEW_MODEL: ${{ inputs.model }}
+          HOMERAIL_PR_REVIEW_AGENT_TYPE: ${{ inputs.agent_type || 'claude-sdk' }}
+          HOMERAIL_PR_REVIEW_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
         run: bash "${{ steps.adapter.outputs.path }}"
 
       - name: Publish Check summary

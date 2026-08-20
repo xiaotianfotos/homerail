@@ -392,6 +392,7 @@ test("production deployment preserves database compatibility across success and 
         HOMERAIL_WORKER_BUILD_APT_MIRROR: "",
         HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: "",
         HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "",
+        HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "",
         HTTP_PROXY: "",
         HTTPS_PROXY: "",
         NO_PROXY: "",
@@ -480,6 +481,7 @@ test("production deployment preserves database compatibility across success and 
     assert.match(dockerBuildArgs, new RegExp(`HOMERAIL_WORKER_IMAGE_REVISION=${revision}`));
     assert.doesNotMatch(dockerBuildArgs, /HOMERAIL_WORKER_BUILD_APT/);
     assert.doesNotMatch(dockerBuildArgs, /NPM_CONFIG_REGISTRY/);
+    assert.doesNotMatch(dockerBuildArgs, /HOMERAIL_DSH_FORK_REPOSITORY/);
     assert.doesNotMatch(dockerBuildArgs, /(?:HTTP|HTTPS|NO)_PROXY/i);
     const unit = fs.readFileSync(passed.unitPath, "utf8");
     assert.match(unit, /StartLimitIntervalSec=0/);
@@ -498,6 +500,7 @@ test("production deployment preserves database compatibility across success and 
       HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://deb.fn.example/debian/",
       HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: "https://deb.fn.example/debian-security",
       HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://npm.fn.example",
+      HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.fn.example/deepseek-harness.git",
     },
   });
   try {
@@ -506,6 +509,7 @@ test("production deployment preserves database compatibility across success and 
     assert.match(customBuildArgs, /--build-arg\nHOMERAIL_WORKER_BUILD_APT_MIRROR=https:\/\/deb\.fn\.example\/debian\n/);
     assert.match(customBuildArgs, /--build-arg\nHOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR=https:\/\/deb\.fn\.example\/debian-security\n/);
     assert.match(customBuildArgs, /--build-arg\nNPM_CONFIG_REGISTRY=https:\/\/npm\.fn\.example\n/);
+    assert.match(customBuildArgs, /--build-arg\nHOMERAIL_DSH_FORK_REPOSITORY=https:\/\/git\.fn\.example\/deepseek-harness\.git\n/);
     assert.match(customBuildArgs, new RegExp(`HOMERAIL_WORKER_SOURCE_FINGERPRINT=${workerFingerprint}`));
   } finally {
     fs.rmSync(customSources.tempRoot, { recursive: true, force: true });
@@ -586,6 +590,7 @@ test("worker build network contract is shared by production and live entry point
     "HOMERAIL_WORKER_BUILD_APT_MIRROR",
     "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR",
     "HOMERAIL_WORKER_BUILD_NPM_REGISTRY",
+    "HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE",
   ]) {
     assert.ok(helper.includes(name), `helper must consume ${name}`);
   }
@@ -594,6 +599,7 @@ test("worker build network contract is shared by production and live entry point
     "helper must forward every recognized proxy variable name in a fixed order",
   );
   assert.match(helper, /NPM_CONFIG_REGISTRY=/);
+  assert.match(helper, /HOMERAIL_DSH_FORK_REPOSITORY=/);
 });
 
 test("worker build network helper validates sources and forwards proxy names only", { skip: process.platform === "win32" }, () => {
@@ -630,6 +636,7 @@ test("worker build network helper validates sources and forwards proxy names onl
     HOMERAIL_WORKER_BUILD_APT_MIRROR: "HTTPS://DEB.example.com:8443/debian/",
     HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: "  https://deb.example.com/debian-security  ",
     HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://npm.example.com/",
+    HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.example.com/deepseek-harness.git/",
     HTTP_PROXY: "http://proxy.example:3128",
     no_proxy: "localhost",
     HTTPS_PROXY: "",
@@ -642,6 +649,8 @@ test("worker build network helper validates sources and forwards proxy names onl
     "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR=https://deb.example.com/debian-security",
     "--build-arg",
     "NPM_CONFIG_REGISTRY=https://npm.example.com",
+    "--build-arg",
+    "HOMERAIL_DSH_FORK_REPOSITORY=https://git.example.com/deepseek-harness.git",
     "--build-arg",
     "HTTP_PROXY",
     "--build-arg",
@@ -668,6 +677,7 @@ exec "${process.execPath}" "$@"
       ARGV_LOG: argvLog,
       HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://deb.example.com/debian/",
       HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://npm.example.com/",
+      HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.example.com/deepseek-harness.git/",
       HTTPS_PROXY: "http://proxy.example:3128",
     });
     assert.equal(shimmed.status, 0, shimmed.stderr);
@@ -676,6 +686,8 @@ exec "${process.execPath}" "$@"
       "HOMERAIL_WORKER_BUILD_APT_MIRROR=https://deb.example.com/debian",
       "--build-arg",
       "NPM_CONFIG_REGISTRY=https://npm.example.com",
+      "--build-arg",
+      "HOMERAIL_DSH_FORK_REPOSITORY=https://git.example.com/deepseek-harness.git",
       "--build-arg",
       "HTTPS_PROXY",
     ]);
@@ -686,12 +698,14 @@ exec "${process.execPath}" "$@"
       "HOMERAIL_WORKER_BUILD_APT_MIRROR",
       "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR",
       "HOMERAIL_WORKER_BUILD_NPM_REGISTRY",
+      "HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE",
     ]) {
       assert.ok(capturedArgv.includes(expected), `delegation must name ${expected} only`);
     }
     for (const prohibited of [
       "https://deb.example.com/debian/",
       "https://npm.example.com/",
+      "https://git.example.com/deepseek-harness.git/",
       "http://proxy.example:3128",
     ]) {
       assert.ok(!capturedArgv.includes(prohibited), "source and proxy values must never reach argv");
@@ -718,6 +732,12 @@ exec "${process.execPath}" "$@"
     HOMERAIL_WORKER_BUILD_NPM_REGISTRY: [
       "ftp://npm.example.com",
       "https://npm.example.com/<script>",
+    ],
+    HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: [
+      "ssh://git.example.com/deepseek-harness.git",
+      "https://user:secret@git.example.com/deepseek-harness.git",
+      "https://git.example.com/deepseek-harness$(touch).git",
+      "https://git.example.com/deepseek-harness(test).git",
     ],
   };
   for (const [name, values] of Object.entries(invalidValues)) {

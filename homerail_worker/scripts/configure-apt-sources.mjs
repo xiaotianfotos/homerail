@@ -54,8 +54,8 @@ export function validateMirrorUrl(rawValue, key) {
   // Fail closed on characters the WHATWG URL parser would percent-encode or
   // rewrite (a backslash becomes a path separator in special schemes), so the
   // normalized output never silently differs from the operator's input.
-  if (/["%<>`^{}|\\]/.test(rawValue)) {
-    throw new Error(`${key} must not contain characters that require URL encoding.`);
+  if (/["$()%<>`^{}|\\]/.test(rawValue)) {
+    throw new Error(`${key} must not contain unsupported URL characters.`);
   }
   // WHATWG parsing silently drops an empty userinfo marker, so inspect the
   // raw authority before parsing while still allowing `@` in the URL path.

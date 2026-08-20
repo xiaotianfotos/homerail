@@ -33,6 +33,7 @@ const SOURCE_INPUTS = [
   "homerail_worker/package.json",
   "homerail_worker/package-lock.json",
   "homerail_worker/tsconfig.json",
+  "homerail_worker/dsh",
   "homerail_worker/src",
   "homerail_protocol/package.json",
   "homerail_protocol/package-lock.json",
@@ -855,7 +856,8 @@ export class DagEnvironmentController {
         ...initialBuild.logs,
         `Worker build network: apt_main=${networkSummary.apt_main}`
           + ` apt_security=${networkSummary.apt_security}`
-          + ` npm=${networkSummary.npm} proxy=${networkSummary.proxy}`,
+          + ` npm=${networkSummary.npm} dsh_git=${networkSummary.dsh_git}`
+          + ` proxy=${networkSummary.proxy}`,
         "Checking Docker before build…",
       ],
     };

@@ -68,6 +68,7 @@ function fingerprintFixture(): string {
       },
     }),
     "homerail_worker/tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+    "homerail_worker/dsh/homerail.cordis.yml": "name: homerail-dsh-test\n",
     "homerail_worker/src/index.ts": "export const worker = true;\n",
     "homerail_protocol/package.json": JSON.stringify({
       name: "homerail-protocol",
@@ -257,6 +258,17 @@ it("changes the Worker source fingerprint when build-relevant content changes", 
   fs.appendFileSync(
     path.join(repoRoot, "homerail_worker", "src", "index.ts"),
     "export const changed = true;\n",
+  );
+
+  expect(dagWorkerSourceFingerprint(repoRoot)).not.toBe(original);
+});
+
+it("changes the Worker source fingerprint when the DSH composition changes", () => {
+  const repoRoot = fingerprintFixture();
+  const original = dagWorkerSourceFingerprint(repoRoot);
+  fs.appendFileSync(
+    path.join(repoRoot, "homerail_worker", "dsh", "homerail.cordis.yml"),
+    "changed: true\n",
   );
 
   expect(dagWorkerSourceFingerprint(repoRoot)).not.toBe(original);
@@ -1066,6 +1078,7 @@ it("forwards validated build-network sources and proxy names to the Docker build
     env: {
       HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://mirrors.example.com/debian/",
       HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://registry.example.com",
+      HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.example.com/deepseek-harness.git",
       HTTPS_PROXY: "http://proxy.internal:3128",
       http_proxy: "",
     },
@@ -1079,6 +1092,7 @@ it("forwards validated build-network sources and proxy names to the Docker build
   expect(args).toEqual(expect.arrayContaining([
     "--build-arg", "HOMERAIL_WORKER_BUILD_APT_MIRROR=https://mirrors.example.com/debian",
     "--build-arg", "NPM_CONFIG_REGISTRY=https://registry.example.com",
+    "--build-arg", "HOMERAIL_DSH_FORK_REPOSITORY=https://git.example.com/deepseek-harness.git",
     "--build-arg", "HTTPS_PROXY",
   ]));
   // The trailing-slash variant must normalize to the same argument value.
@@ -1102,17 +1116,20 @@ it("forwards validated build-network sources and proxy names to the Docker build
     apt_main: "custom",
     apt_security: "default",
     npm: "custom",
+    dsh_git: "custom",
     proxy: "environment",
   });
   const logs = status.build?.logs.join("\n") ?? "";
-  expect(logs).toContain("Worker build network: apt_main=custom apt_security=default npm=custom proxy=environment");
+  expect(logs).toContain("Worker build network: apt_main=custom apt_security=default npm=custom dsh_git=custom proxy=environment");
   expect(logs).not.toContain("mirrors.example.com");
   expect(logs).not.toContain("registry.example.com");
+  expect(logs).not.toContain("git.example.com");
   expect(logs).not.toContain("proxy.internal");
   const persisted = fs.readFileSync(persistedPath, "utf8");
   expect(persisted).toContain("\"build_network\"");
   expect(persisted).not.toContain("mirrors.example.com");
   expect(persisted).not.toContain("registry.example.com");
+  expect(persisted).not.toContain("git.example.com");
   expect(persisted).not.toContain("proxy.internal");
 });
 
@@ -1138,6 +1155,7 @@ it("keeps default build arguments and docker-managed proxy mode without configur
     "HOMERAIL_WORKER_BUILD_APT_MIRROR",
     "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR",
     "NPM_CONFIG_REGISTRY",
+    "HOMERAIL_DSH_FORK_REPOSITORY",
     "HTTP_PROXY",
     "http_proxy",
     "HTTPS_PROXY",
@@ -1158,10 +1176,11 @@ it("keeps default build arguments and docker-managed proxy mode without configur
     apt_main: "default",
     apt_security: "default",
     npm: "default",
+    dsh_git: "default",
     proxy: "docker-managed",
   });
   expect(status.build?.logs.join("\n")).toContain(
-    "Worker build network: apt_main=default apt_security=default npm=default proxy=docker-managed",
+    "Worker build network: apt_main=default apt_security=default npm=default dsh_git=default proxy=docker-managed",
   );
 });
 
@@ -1254,6 +1273,7 @@ it("normalizes persisted worker_image status that predates build_network", () =>
     apt_main: "default",
     apt_security: "default",
     npm: "custom",
+    dsh_git: "default",
     proxy: "docker-managed",
   });
 });
@@ -1271,6 +1291,7 @@ it("normalizes malformed persisted build_network values safely", () => {
     apt_main: "weird",
     apt_security: ["custom"],
     npm: 1,
+    dsh_git: ["custom"],
     proxy: "none",
   };
   fs.writeFileSync(persistedPath, JSON.stringify(snapshot), "utf8");
@@ -1285,6 +1306,7 @@ it("normalizes malformed persisted build_network values safely", () => {
     apt_main: "default",
     apt_security: "default",
     npm: "default",
+    dsh_git: "default",
     proxy: "docker-managed",
   });
 });

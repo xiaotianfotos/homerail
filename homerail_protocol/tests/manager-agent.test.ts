@@ -164,6 +164,7 @@ describe("Manager Agent harness contract", () => {
     expect(DEFAULT_MANAGER_AGENT_HARNESS).toBe("claude_agent_sdk");
     expect(isManagerAgentHarness("claude_agent_sdk")).toBe(true);
     expect(isManagerAgentHarness("codex_appserver")).toBe(true);
+    expect(isManagerAgentHarness("deepseek_harness")).toBe(true);
     expect(isManagerAgentHarness("kimi_code")).toBe(true);
     expect(isManagerAgentHarness("claude-sdk")).toBe(false);
     expect(isManagerAgentHarness("direct-llm")).toBe(false);
@@ -176,6 +177,9 @@ describe("Manager Agent harness contract", () => {
     expect(normalizeManagerAgentHarness("claude-agent-sdk")).toBe("claude_agent_sdk");
     expect(normalizeManagerAgentHarness("codex")).toBe("codex_appserver");
     expect(normalizeManagerAgentHarness("codex-appserver")).toBe("codex_appserver");
+    expect(normalizeManagerAgentHarness("dsh")).toBe("deepseek_harness");
+    expect(normalizeManagerAgentHarness("deepseek")).toBe("deepseek_harness");
+    expect(normalizeManagerAgentHarness("deepseek-harness")).toBe("deepseek_harness");
     expect(normalizeManagerAgentHarness("kimi")).toBe("kimi_code");
     expect(normalizeManagerAgentHarness("kimi-code")).toBe("kimi_code");
     expect(normalizeManagerAgentHarness("unknown")).toBeUndefined();
@@ -184,17 +188,20 @@ describe("Manager Agent harness contract", () => {
   it("declares the only Manager Agent runtime placement boundary", () => {
     expect(Object.values(ManagerAgentRuntimePlacement)).toEqual(["host", "host_shell", "container"]);
     expect(managerAgentRuntimePlacementForHarness("codex_appserver")).toBe("host");
+    expect(managerAgentRuntimePlacementForHarness("deepseek_harness")).toBe("host_shell");
     expect(managerAgentRuntimePlacementForHarness("kimi_code")).toBe("host_shell");
     expect(managerAgentRuntimePlacementForHarness("claude_agent_sdk")).toBe("host_shell");
   });
 
   it("maps public harness ids to runtime agent types", () => {
     expect(managerAgentRuntimeAgentTypeForHarness("codex_appserver")).toBe("codex_appserver");
+    expect(managerAgentRuntimeAgentTypeForHarness("deepseek_harness")).toBe("deepseek_harness");
     expect(managerAgentRuntimeAgentTypeForHarness("kimi_code")).toBe("kimi_code");
     expect(managerAgentRuntimeAgentTypeForHarness("claude_agent_sdk")).toBe("claude-sdk");
     expect(MANAGER_AGENT_PRODUCTION_RUNTIME_AGENT_TYPES).toEqual([
       "codex_appserver",
       "kimi_code",
+      "deepseek_harness",
       "claude-sdk",
     ]);
     expect(managerAgentHarnessDefinition("codex_appserver")).toMatchObject({
@@ -206,6 +213,8 @@ describe("Manager Agent harness contract", () => {
 
   it("normalizes runtime agent_type aliases while preserving unknown custom backends", () => {
     expect(normalizeManagerAgentRuntimeAgentType("claude-agent-sdk")).toBe("claude-sdk");
+    expect(normalizeManagerAgentRuntimeAgentType("dsh")).toBe("deepseek_harness");
+    expect(normalizeManagerAgentRuntimeAgentType("deepseek-harness")).toBe("deepseek_harness");
     expect(normalizeManagerAgentRuntimeAgentType("kimi-code")).toBe("kimi_code");
     expect(normalizeManagerAgentRuntimeAgentType("codex")).toBe("codex_appserver");
     expect(normalizeManagerAgentRuntimeAgentType("fixture-kimi-code")).toBe("fixture-kimi-code");

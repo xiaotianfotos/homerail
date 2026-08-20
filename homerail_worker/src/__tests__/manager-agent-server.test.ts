@@ -429,6 +429,20 @@ class NoToolAgent implements AgentClient {
   }
 }
 
+class ContextCaptureAgent implements AgentClient {
+  context?: AgentRunContext;
+
+  async *run(
+    _prompt: string,
+    _tools: DagToolDefinition[],
+    context: AgentRunContext,
+  ): AsyncIterable<AgentEvent> {
+    this.context = context;
+    yield { type: "text", text: "context captured" };
+    yield { type: "done" };
+  }
+}
+
 class NoTextAgent implements AgentClient {
   async *run(): AsyncIterable<AgentEvent> {
     yield { type: "done" };
@@ -763,6 +777,52 @@ describe("manager-agent server", () => {
     } finally {
       await close(server);
       await close(managerApi);
+    }
+  });
+
+  it("forwards provider-owned DSH runtime fields into AgentRunContext", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    const agent = new ContextCaptureAgent();
+    registerAgentBackend("manager-agent-context-capture-test", () => agent);
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "capture",
+          agent_config: {
+            agent_type: "manager-agent-context-capture-test",
+            provider_name: "glm",
+            protocol: "openai_compatible",
+            model: "glm-5.3",
+            api_key: "secret",
+            base_url: "https://glm.example/v1",
+            reasoning_effort: "deep",
+            reasoning_effort_map: { off: null, deep: "deep" },
+            service_tier: "priority",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(agent.context).toMatchObject({
+        provider: "glm",
+        protocol: "openai_compatible",
+        model: "glm-5.3",
+        reasoningEffort: "deep",
+        reasoningEffortMap: { off: null, deep: "deep" },
+        serviceTier: "priority",
+      });
+    } finally {
+      await close(server);
     }
   });
 

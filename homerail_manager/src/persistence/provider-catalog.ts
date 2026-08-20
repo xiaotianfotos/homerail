@@ -12,7 +12,17 @@ export interface ModelCapabilities {
   supports_video_input?: boolean;
 }
 
-export interface ProviderModelPreset extends ModelCapabilities {
+/** Model-owned reasoning selectors mapped to their provider wire values. */
+export type ReasoningEffortMap = Record<string, string | null>;
+
+export interface ModelReasoningCapabilities {
+  /** False declares no selectable reasoning; omission leaves support unknown. */
+  reasoning_effort_map?: ReasoningEffortMap | false;
+  /** Optional selector used when a caller does not choose one. */
+  default_reasoning_effort?: string;
+}
+
+export interface ProviderModelPreset extends ModelCapabilities, ModelReasoningCapabilities {
   id: string;
   name?: string;
   display_name?: string;

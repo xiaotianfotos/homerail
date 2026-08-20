@@ -63,9 +63,11 @@ describe("Worker runtime version identity", () => {
   it("keeps Worker build source overrides optional, build-only Docker arguments", () => {
     const dockerfile = readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8")
       .replace(/\r\n/g, "\n");
-    expect(dockerfile.match(/^ARG HOMERAIL_WORKER_BUILD_APT_MIRROR$/gm)).toHaveLength(2);
-    expect(dockerfile.match(/^ARG HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR$/gm)).toHaveLength(2);
-    expect(dockerfile.match(/^ARG NPM_CONFIG_REGISTRY$/gm)).toHaveLength(1);
+    expect(dockerfile.match(/^ARG HOMERAIL_WORKER_BUILD_APT_MIRROR$/gm)).toHaveLength(3);
+    expect(dockerfile.match(/^ARG HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR$/gm)).toHaveLength(3);
+    expect(dockerfile.match(/^ARG NPM_CONFIG_REGISTRY$/gm)).toHaveLength(2);
+    expect(dockerfile.match(/^ARG HOMERAIL_DSH_FORK_REPOSITORY=https:\/\/github\.com\/xiaotianfotos\/deepseek-harness\.git$/gm))
+      .toHaveLength(1);
     expect(dockerfile).not.toMatch(/ARG HOMERAIL_WORKER_BUILD_APT_MIRROR=/);
     expect(dockerfile).not.toMatch(/ARG HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR=/);
     expect(dockerfile).not.toMatch(/ARG NPM_CONFIG_REGISTRY=/);

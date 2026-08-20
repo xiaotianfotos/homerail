@@ -378,6 +378,53 @@ describe("Codex model catalog", () => {
     });
   });
 
+  it.each([null, ""])(
+    "treats an explicit %j Codex reasoning effort as absent",
+    async (reasoningEffort) => {
+      const catalog: CodexModelCatalog = {
+        binary: "/opt/homebrew/bin/codex",
+        models: [{
+          id: "gpt-5.6-sol",
+          model: "gpt-5.6-sol",
+          display_name: "GPT-5.6-Sol",
+          description: "",
+          is_default: true,
+          default_reasoning_effort: "low",
+          supported_reasoning_efforts: ["low", "high"],
+          service_tiers: [],
+        }],
+      };
+      server = http.createServer((req, res) => {
+        managerAgentConfigRoutesHandler(req, res, { loadCodexModels: async () => catalog });
+      });
+      await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      const configured = await fetch(`${baseUrl}/api/manager-agent/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          harness: "codex_appserver",
+          model_name: "gpt-5.6-sol",
+          reasoning_effort: "high",
+        }),
+      });
+      expect(configured.status).toBe(200);
+
+      const response = await fetch(`${baseUrl}/api/manager-agent/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reasoning_effort: reasoningEffort }),
+      });
+      const body = await response.json() as { data?: { reasoning_effort?: string } };
+
+      expect(response.status).toBe(200);
+      expect(body.data?.reasoning_effort).toBe("high");
+    },
+  );
+
   it("rejects an unknown provider setting instead of replacing an active subscription Codex model", async () => {
     const catalog: CodexModelCatalog = {
       binary: "/opt/homebrew/bin/codex",

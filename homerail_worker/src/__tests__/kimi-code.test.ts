@@ -243,7 +243,10 @@ describe("KimiCodeAdapter", () => {
           apiKey: "my-api-key",
           baseUrl: "https://api.moonshot.cn/v1",
           model: "kimi-latest",
-          environmentVariables: { SERVICE_TEST_TOKEN: "turn-scoped-value" },
+          environmentVariables: {
+            SERVICE_TEST_TOKEN: "turn-scoped-value",
+            HOMERAIL_WORKER_TOKEN: "reserved-turn-value",
+          },
         },
         "/tmp/kimi-home-123",
       );
@@ -255,6 +258,7 @@ describe("KimiCodeAdapter", () => {
       expect(env.KIMI_MODEL_NAME).toBe("kimi-latest");
       expect(env.KIMI_MODEL_BASE_URL).toBe("https://api.moonshot.cn/v1");
       expect(env.SERVICE_TEST_TOKEN).toBe("turn-scoped-value");
+      expect(env.HOMERAIL_WORKER_TOKEN).toBeUndefined();
     });
 
     it("does not leak secrets in the returned env object debug output", () => {

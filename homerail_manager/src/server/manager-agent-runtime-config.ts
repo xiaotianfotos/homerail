@@ -8,6 +8,7 @@ import {
   type ManagerAgentReasoningEffort,
   type ManagerAgentServiceTier,
 } from "homerail-protocol";
+import type { ReasoningEffortMap } from "../persistence/llm-settings.js";
 
 export type ManagerAgentHostRuntimePlacement = "host" | "host_shell";
 
@@ -24,6 +25,7 @@ export interface ManagerAgentRuntimeConfig {
   project_id?: string;
   project_workspace?: string;
   reasoning_effort?: ManagerAgentReasoningEffort;
+  reasoning_effort_map?: ReasoningEffortMap | false;
   service_tier: ManagerAgentServiceTier;
 }
 
@@ -73,7 +75,8 @@ export function resolveManagerAgentConfig(
     runtime_placement: resolved.runtime_placement,
     project_id: projectId,
     project_workspace: resolveProjectWorkspace(projectId),
-    reasoning_effort: resolved.reasoning_effort ?? effort ?? "low",
+    reasoning_effort: resolved.reasoning_effort ?? effort,
+    reasoning_effort_map: resolved.reasoning_effort_map,
     service_tier: resolved.service_tier ?? normalizedServiceTier,
   };
 }

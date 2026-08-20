@@ -45,11 +45,13 @@ metadata.
    security, compatibility, tests, and user-visible behavior, then casts one
    `approve` or `request_changes` vote. The trusted checkout is
    mounted read-only. Reviewers that need repository evidence receive only the
-   SDK's read-only `Read`, `Grep`, `Glob`, and `LS` tools, so they can inspect
+   read-only `Read`, `Grep`, `Glob`, and `LS` tools, so they can inspect
    complete files, trace callers, and search tests without granting untrusted PR
-   content a shell or write primitive. A Worker pre-tool hook resolves real paths
-   and denies omitted paths, traversal, absolute paths outside the declared
-   workspace roots, and symlink escapes before a read/search tool executes.
+   content a shell or write primitive. The selected backend either applies a
+   Worker pre-tool hook or uses the HomeRail-managed DSH MCP implementations;
+   both resolve real paths and deny omitted paths, traversal, absolute paths
+   outside the declared workspace roots, and symlink escapes before a
+   read/search tool executes.
    The supplied patch is an index rather than the sole evidence source, and
    prompts require every diff chunk to be read while keeping follow-up
    inspection proportional. Model-specific output contracts reject a mislabeled
@@ -74,7 +76,8 @@ metadata.
 
 - `pr-review.json`
 - `pr-review.md`
-- three normalized reviews and votes from distinct models
+- three normalized independent reviews and votes (model settings are selected
+  by the private Runtime Profile)
 - deterministic approval-threshold and finding-veto payload
 - Manager audit summary and per-node metrics
 - HomeRail run id and replayable event history
@@ -111,6 +114,12 @@ created by the trusted maintainer. This avoids running untrusted fork content on
 the `.112` runner. Maintainers can use `workflow_dispatch` for an explicit
 review after evaluating that boundary.
 
+Manual dispatch may also select one Manager LLM setting and
+`deepseek_harness` for all three reviewer slots. This creates three independent
+DSH processes and votes while intentionally sharing the same model setting; it
+uses the separate `pr-review-dsh` profile by default and cannot overwrite the
+normal mixed-model profile.
+
 PR Review jobs require a dedicated self-hosted runner with the
 `homerail-pr-review` label. Live catalog validation continues to use the
 `homerail-live` label and may start a current-commit transient runtime because it
@@ -131,8 +140,10 @@ Runner repository configuration:
 - `HOMERAIL_PR_REVIEW_ARBITER_MODEL`: a distinct active setting selected from
   the same database and drives the second review;
 - `HOMERAIL_PR_REVIEW_THIRD_MODEL`: a third distinct active setting that drives
-  the final review vote. All three settings must expose Anthropic-compatible
-  endpoints because these DAG workers use the Claude Agent SDK harness.
+  the final review vote. The normal mixed profile requires all three settings
+  to expose Anthropic-compatible endpoints because it uses the Claude Agent SDK
+  harness. An explicit DSH dispatch instead requires one OpenAI-compatible
+  Chat Completions setting.
 
 The production profile binds `qwen_reviewer` to the released `qwen3.8-max`
 Aliyun Token Plan setting, `kimi_reviewer` to K3, and `glm_reviewer` to

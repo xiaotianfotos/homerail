@@ -13,6 +13,7 @@ import { resolveWorkerAgentBackend } from "../agent/backend-selection.js";
 import { ClaudeSdkAdapter } from "../agent/claude-sdk.js";
 import { KimiCodeAdapter } from "../agent/kimi-code.js";
 import { CodexAppServerAdapter } from "../agent/codex-appserver.js";
+import { DeepSeekHarnessAdapter } from "../agent/deepseek-harness.js";
 import { DeterministicClient } from "../agent/deterministic.js";
 import { ManagerAgentSmokeClient } from "../agent/manager-agent-smoke.js";
 import type { AgentClient, AgentEvent, DagToolDefinition } from "../agent/types.js";
@@ -70,6 +71,12 @@ describe("agent factory", () => {
   it("creates kimi_code backend", () => {
     const client = createAgentClient("kimi_code");
     expect(client).toBeInstanceOf(KimiCodeAdapter);
+  });
+
+  it("creates DeepSeek Harness backend from public aliases", () => {
+    expect(createAgentClient("deepseek_harness")).toBeInstanceOf(DeepSeekHarnessAdapter);
+    expect(createAgentClient("deepseek-harness")).toBeInstanceOf(DeepSeekHarnessAdapter);
+    expect(createAgentClient("dsh")).toBeInstanceOf(DeepSeekHarnessAdapter);
   });
 
   it("creates Kimi Code backend from public aliases", () => {

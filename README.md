@@ -383,9 +383,12 @@ foundation here is the first step; see [ROADMAP.md](ROADMAP.md) for the plan.
 For the voice Manager Agent, **Codex (`codex_appserver`) is the recommended
 harness today**: it is the only path that auto-synthesizes the `commentary`
 speech channel from the model's native reasoning stream, so the user hears
-progress while work happens. Other harnesses (`claude-sdk`, `kimi-code`) are
-silent during execution — this is a provider capability gap, not something
-HomeRail can close.
+progress while work happens. `claude-sdk` and `kimi-code` are silent during
+execution — this is a provider capability gap, not something HomeRail can
+close. An experimental `deepseek_harness` backend now runs the owner-maintained
+[DSH fork](docs/architecture/deepseek-harness-integration.md) out of process and
+maps its reasoning stream into HomeRail thinking events; it is not yet the
+recommended Manager Agent runtime.
 
 ## License
 
