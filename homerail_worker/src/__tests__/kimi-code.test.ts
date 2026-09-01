@@ -745,7 +745,7 @@ if (process.argv.includes("acp")) {
       }
     });
 
-    it("uses prompt-mode tool markers for Manager Agent tools only when explicitly enabled", async () => {
+    it("reconciles K3 Manager completion with the authoritative nested run ID", async () => {
       const tempDir = mkdtempSync(join(tmpdir(), "homerail-kimi-manager-tool-bridge-"));
       const kimiBin = join(tempDir, "kimi");
       const promptPath = join(tempDir, "prompt.txt");
@@ -777,7 +777,7 @@ if (process.argv.includes("--prompt")) {
   const finishMarker = JSON.stringify({
     name: "finish",
     input: {
-      text: "The run id will be assigned later."
+      text: "任务已经启动，运行 ID：fabricated-kimi-run。"
     }
   });
   console.log(JSON.stringify({
@@ -817,7 +817,12 @@ process.exit(2);
           },
           handler: async (args) => {
             calls.push(args);
-            return { content: [{ type: "text", text: JSON.stringify({ run_id: "run-kimi-manager" }) }] };
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({ success: true, data: { runId: "run-kimi-manager" } }),
+              }],
+            };
           },
         };
         const finishTool: DagToolDefinition = {
@@ -859,7 +864,7 @@ process.exit(2);
             ...ctx,
             systemPrompt: "You are the HomeRail Manager Agent. Never invent run IDs.",
             provider: "kimi",
-            model: "kimi-k2.7-code",
+            model: "k3",
             baseUrl: "https://api.kimi.com/coding/v1",
             skillProjection: { mode: "explicit", definitions: [] },
           },
@@ -881,6 +886,8 @@ process.exit(2);
         expect(prompt).toContain("Attempt the matching entry instead of speculating about availability");
         expect(prompt).toContain("name only the visible action that did not complete and offer to retry");
         expect(prompt).toContain("always add one concise user-facing summary in the user's language");
+        expect(prompt).toContain("exactly one finish marker whose text is non-empty and user-facing");
+        expect(prompt).toContain("Do not put any guessed, placeholder, or fabricated run ID");
         expect(prompt).toContain('"name":"upsert_generated_view"');
         expect(prompt).toContain('"component":"Text"');
         expect(prompt).toContain("<homerail_tool_call>");
@@ -900,18 +907,27 @@ process.exit(2);
         }));
         expect(events).toContainEqual(expect.objectContaining({
           type: "tool_result",
-          content: JSON.stringify({ run_id: "run-kimi-manager" }),
+          content: JSON.stringify({ success: true, data: { runId: "run-kimi-manager" } }),
         }));
         expect(events).toContainEqual(expect.objectContaining({
           type: "debug",
-          message: "prompt_mode_finish_ignored_after_create_and_run",
+          message: "prompt_mode_finish_reconciled_with_authoritative_run_id",
+          data: { run_id: "run-kimi-manager" },
         }));
-        expect(events).toContainEqual({ type: "text", text: "已启动。" });
+        expect(events).toContainEqual(expect.objectContaining({
+          type: "tool_use",
+          name: "finish",
+          input: { text: "任务已经启动，运行 ID：run-kimi-manager。" },
+        }));
+        expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
         expect(events).not.toContainEqual(expect.objectContaining({ text: expect.stringContaining("内部前言") }));
+        expect(JSON.stringify(events)).not.toContain("fabricated-kimi-run");
         expect(calls).toEqual([{
           yamlPath: "assets/orchestrations/public-two-node.yaml.template",
           profile: "offline-deterministic",
           prompt: "smoke",
+        }, {
+          finish: { text: "任务已经启动，运行 ID：run-kimi-manager。" },
         }]);
       } finally {
         if (previousCapturePromptPath === undefined) delete process.env.CAPTURE_PROMPT_PATH;
@@ -925,6 +941,265 @@ process.exit(2);
         rmSync(tempDir, { recursive: true, force: true });
       }
     });
+
+    it("finishes a K3 Manager run at most once and preserves failure-path summaries", async () => {
+      const cases = [
+        {
+          id: "top-level-duplicate",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-top-level" }),
+          finishFails: false,
+          markerOrder: ["create", "finish", "finish"],
+          finishText: "Commit 0123456789abcdef0123456789abcdef01234567 completed.",
+          visibleText: "Top-level run created.",
+        },
+        {
+          id: "duplicate-create-before-finish",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-duplicate-before" }),
+          finishFails: false,
+          markerOrder: ["create", "create", "finish"],
+          finishText: "Duplicate create was ignored.",
+          visibleText: "Duplicate create marker ignored.",
+        },
+        {
+          id: "duplicate-create-after-finish",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-duplicate-after" }),
+          finishFails: false,
+          markerOrder: ["create", "finish", "create"],
+          finishText: "Create after finish was ignored.",
+          visibleText: "Create after finish marker ignored.",
+        },
+        {
+          id: "failed-create",
+          model: "k3",
+          createFails: true,
+          createContent: "create rejected",
+          finishFails: false,
+          markerOrder: ["create", "finish"],
+          finishText: "Original finish summary.",
+          visibleText: "Creation failed; retry is available.",
+        },
+        {
+          id: "missing-finish",
+          model: "k3-256k",
+          createFails: false,
+          createContent: JSON.stringify({ runId: "run-missing-finish" }),
+          finishFails: false,
+          markerOrder: ["create"],
+          finishText: "Original finish summary.",
+          visibleText: "The run started without a finish marker.",
+        },
+        {
+          id: "failed-finish",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ data: { run_id: "run-failed-finish" } }),
+          finishFails: true,
+          markerOrder: ["create", "finish"],
+          finishText: "Original finish summary.",
+          visibleText: "Finishing failed; retry is available.",
+        },
+        {
+          id: "missing-run-id",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ success: true, data: { accepted: true } }),
+          finishFails: false,
+          markerOrder: ["create", "finish"],
+          finishText: "Original finish summary.",
+          visibleText: "The run response did not contain an ID.",
+        },
+        {
+          id: "legacy-non-k3",
+          model: "kimi-k2.7-code",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-legacy" }),
+          finishFails: false,
+          markerOrder: ["create", "finish"],
+          finishText: "Original finish summary.",
+          visibleText: "Legacy visible summary.",
+        },
+      ] as const;
+
+      const previousMarkerOrder = process.env.KIMI_TEST_MARKER_ORDER;
+      const previousFinishText = process.env.KIMI_TEST_FINISH_TEXT;
+      const previousVisibleText = process.env.KIMI_TEST_VISIBLE_TEXT;
+      const previousPromptToolBridge = process.env.HOMERAIL_KIMI_PROMPT_TOOL_BRIDGE;
+      try {
+        for (const testCase of cases) {
+          const tempDir = mkdtempSync(join(tmpdir(), `homerail-kimi-${testCase.id}-`));
+          const kimiBin = join(tempDir, "kimi");
+          writeFileSync(kimiBin, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("kimi-code fixture 0.0.0");
+  process.exit(0);
+}
+if (process.argv.includes("acp")) {
+  console.error("prompt bridge fixture must not use ACP");
+  process.exit(9);
+}
+if (process.argv.includes("--prompt")) {
+  const createMarker = JSON.stringify({
+    name: "create_and_run",
+    input: { yamlPath: "assets/orchestrations/public-two-node.yaml.template" }
+  });
+  const finishMarker = JSON.stringify({
+    name: "finish",
+    input: { text: process.env.KIMI_TEST_FINISH_TEXT }
+  });
+  const markerOrder = (process.env.KIMI_TEST_MARKER_ORDER || "")
+    .split(",")
+    .filter(Boolean);
+  const markers = markerOrder.map((marker) => {
+    const payload = marker === "create" ? createMarker : finishMarker;
+    return "<homerail_tool_call>" + payload + "</homerail_tool_call>";
+  }).join("");
+  console.log(JSON.stringify({
+    role: "assistant",
+    content: markers + "\\n" + process.env.KIMI_TEST_VISIBLE_TEXT
+  }));
+  process.exit(0);
+}
+process.exit(2);
+`, "utf-8");
+          chmodSync(kimiBin, 0o755);
+          process.env.KIMI_TEST_MARKER_ORDER = testCase.markerOrder.join(",");
+          process.env.KIMI_TEST_FINISH_TEXT = testCase.finishText;
+          process.env.KIMI_TEST_VISIBLE_TEXT = testCase.visibleText;
+          process.env.HOMERAIL_KIMI_PROMPT_TOOL_BRIDGE = "1";
+
+          try {
+            const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+            const createAndRunTool: DagToolDefinition = {
+              name: "create_and_run",
+              description: "Create and run a DAG",
+              input_schema: {
+                type: "object",
+                properties: { yamlPath: { type: "string" } },
+                required: ["yamlPath"],
+                additionalProperties: false,
+              },
+              handler: async (input) => {
+                calls.push({ name: "create_and_run", input });
+                return testCase.createFails
+                  ? { content: [{ type: "text" as const, text: testCase.createContent }], is_error: true }
+                  : { content: [{ type: "text" as const, text: testCase.createContent }] };
+              },
+            };
+            const finishTool: DagToolDefinition = {
+              name: "finish",
+              description: "Finish the turn",
+              input_schema: {
+                type: "object",
+                properties: { text: { type: "string" } },
+                required: ["text"],
+                additionalProperties: false,
+              },
+              handler: async (input) => {
+                calls.push({ name: "finish", input });
+                return testCase.finishFails
+                  ? { content: [{ type: "text" as const, text: "finish rejected" }], is_error: true }
+                  : { content: [{ type: "text" as const, text: "finished" }] };
+              },
+            };
+            const events: AgentEvent[] = [];
+            const scenarioAdapter = new KimiCodeAdapter(kimiBin);
+            for await (const event of scenarioAdapter.run(
+              "Run the isolated Manager scenario.",
+              [createAndRunTool, finishTool],
+              {
+                ...ctx,
+                model: testCase.model,
+                provider: "kimi",
+                baseUrl: "https://api.kimi.com/coding/v1",
+              },
+            )) {
+              events.push(event);
+            }
+
+            if (testCase.id === "top-level-duplicate") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "Commit 0123456789abcdef0123456789abcdef01234567 completed.\nRun ID: run-top-level.",
+              });
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_duplicate_finish_ignored",
+              }));
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "duplicate-create-before-finish") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "Duplicate create was ignored.\nRun ID: run-duplicate-before.",
+              });
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_duplicate_create_and_run_ignored",
+                data: { run_id: "run-duplicate-before" },
+              }));
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "duplicate-create-after-finish") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "Create after finish was ignored.\nRun ID: run-duplicate-after.",
+              });
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_duplicate_create_and_run_ignored",
+                data: { run_id: "run-duplicate-after" },
+              }));
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "failed-create") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run"]);
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_finish_skipped_without_authoritative_run_id",
+              }));
+              expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
+            } else if (testCase.id === "missing-finish") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run"]);
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "tool_use", name: "finish" }));
+              expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
+            } else if (testCase.id === "failed-finish") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "Original finish summary.\nRun ID: run-failed-finish.",
+              });
+              expect(events).toContainEqual(expect.objectContaining({
+                type: "tool_result",
+                content: "finish rejected",
+                is_error: true,
+              }));
+              expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
+            } else if (testCase.id === "missing-run-id") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run"]);
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_authoritative_run_id_missing",
+              }));
+              expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
+            } else {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run"]);
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_finish_ignored_after_create_and_run",
+              }));
+              expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
+            }
+          } finally {
+            rmSync(tempDir, { recursive: true, force: true });
+          }
+        }
+      } finally {
+        if (previousMarkerOrder === undefined) delete process.env.KIMI_TEST_MARKER_ORDER;
+        else process.env.KIMI_TEST_MARKER_ORDER = previousMarkerOrder;
+        if (previousFinishText === undefined) delete process.env.KIMI_TEST_FINISH_TEXT;
+        else process.env.KIMI_TEST_FINISH_TEXT = previousFinishText;
+        if (previousVisibleText === undefined) delete process.env.KIMI_TEST_VISIBLE_TEXT;
+        else process.env.KIMI_TEST_VISIBLE_TEXT = previousVisibleText;
+        if (previousPromptToolBridge === undefined) delete process.env.HOMERAIL_KIMI_PROMPT_TOOL_BRIDGE;
+        else process.env.HOMERAIL_KIMI_PROMPT_TOOL_BRIDGE = previousPromptToolBridge;
+      }
+    }, 20_000);
 
     it("registers Manager Agent tools through a local MCP bridge for ACP sessions", async () => {
       const tempDir = mkdtempSync(join(tmpdir(), "homerail-kimi-acp-mcp-"));
@@ -1092,7 +1367,7 @@ rl.on("line", async (line) => {
           ...ctx,
           systemPrompt: "You are the HomeRail Manager Agent. Use registered tools directly.",
           provider: "kimi",
-          model: "kimi-k2.7-code",
+          model: "k3",
           baseUrl: "https://api.kimi.com/coding/v1",
           skillProjection: { mode: "explicit", definitions: [] },
         })) {
@@ -1147,6 +1422,9 @@ rl.on("line", async (line) => {
           type: "debug",
           message: "acp_session_created",
           data: expect.objectContaining({ mcp_server_count: 1, mcp_tool_count: 2 }),
+        }));
+        expect(events).not.toContainEqual(expect.objectContaining({
+          message: "prompt_mode_tool_bridge_selected",
         }));
       } finally {
         if (previousCapturePath === undefined) delete process.env.CAPTURE_PATH;
