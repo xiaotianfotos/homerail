@@ -64,11 +64,44 @@ describe("custom LLM providers", () => {
       base_url: "https://api.moonshot.cn/v1",
       default_model: "kimi-k2.7-code",
     }));
-    expect(kimiCn?.endpoints).toContainEqual(expect.objectContaining({
+    const codingPlan = kimiCn?.endpoints.find((endpoint) => endpoint.id === "kimi_coding_plan");
+    expect(codingPlan).toMatchObject({
       id: "kimi_coding_plan",
       base_url: "https://api.kimi.com/coding/v1",
       default_model: "kimi-for-coding",
-    }));
+    });
+    expect(codingPlan?.models.map((candidate) => candidate.id)).toHaveLength(4);
+    expect(codingPlan?.models.map((candidate) => candidate.id)).toEqual(expect.arrayContaining([
+      "kimi-for-coding",
+      "kimi-for-coding-highspeed",
+      "k3",
+      "k3-256k",
+    ]));
+    expect(codingPlan?.models.find((candidate) => candidate.id === "kimi-for-coding")).toMatchObject({
+      recommended: true,
+    });
+    expect(codingPlan?.models.find((candidate) => candidate.id === "k3")).toMatchObject({
+      display_name: "Kimi K3",
+      supports_image_input: true,
+      supports_video_input: true,
+      reasoning_effort_map: {
+        low: "low",
+        high: "high",
+        max: "max",
+      },
+      default_reasoning_effort: "high",
+    });
+    expect(codingPlan?.models.find((candidate) => candidate.id === "k3-256k")).toMatchObject({
+      display_name: "Kimi K3 256K",
+      supports_image_input: true,
+      supports_video_input: false,
+      reasoning_effort_map: {
+        low: "low",
+        high: "high",
+        max: "max",
+      },
+      default_reasoning_effort: "high",
+    });
     expect(kimiInternational).toMatchObject({
       name: "Kimi / Moonshot",
       base_url: "https://api.moonshot.ai/v1",
@@ -89,6 +122,28 @@ describe("custom LLM providers", () => {
       model_name: "kimi-for-coding",
       base_url: "https://api.kimi.com/coding/v1",
     });
+
+    for (const modelName of ["k3", "k3-256k"]) {
+      const k3Setting = createSetting({
+        provider_id: "kimi_cn",
+        endpoint_id: "kimi_coding_plan",
+        model_name: modelName,
+        api_key: `pk-${modelName}-fixture`,
+        is_active: true,
+        is_default: false,
+      });
+      expect(k3Setting).toMatchObject({
+        provider_id: "kimi_cn",
+        endpoint_id: "kimi_coding_plan",
+        model_name: modelName,
+        reasoning_effort_map: {
+          low: "low",
+          high: "high",
+          max: "max",
+        },
+        default_reasoning_effort: "high",
+      });
+    }
   });
 
   it("catalogs the released Qwen3.8-Max Token Plan model instead of its preview", () => {

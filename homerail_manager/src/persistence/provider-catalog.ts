@@ -320,6 +320,29 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
         models: [
           model("kimi-for-coding", {}, { recommended: true }),
           model("kimi-for-coding-highspeed"),
+          model("k3", {
+            supports_image_input: true,
+            supports_video_input: true,
+          }, {
+            display_name: "Kimi K3",
+            reasoning_effort_map: {
+              low: "low",
+              high: "high",
+              max: "max",
+            },
+            default_reasoning_effort: "high",
+          }),
+          model("k3-256k", {
+            supports_image_input: true,
+          }, {
+            display_name: "Kimi K3 256K",
+            reasoning_effort_map: {
+              low: "low",
+              high: "high",
+              max: "max",
+            },
+            default_reasoning_effort: "high",
+          }),
         ],
       }),
     ],
