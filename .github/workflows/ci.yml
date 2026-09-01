@@ -199,6 +199,8 @@ jobs:
         run: npm --prefix homerail_node test -- src/providers/__tests__/docker-cli-provider.integration.test.ts
 
       - name: Build Worker image
+        env:
+          DOCKER_BUILDKIT: "1"
         run: docker build -t homerail-worker:ci -f homerail_worker/Dockerfile .
 
       - name: Exercise packaged DeepSeek Harness runtime

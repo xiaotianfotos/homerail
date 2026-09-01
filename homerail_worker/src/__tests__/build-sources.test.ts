@@ -21,6 +21,8 @@ const workerRoot = fileURLToPath(new URL("../..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const dockerfile = readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8")
   .replace(/\r\n/g, "\n");
+const ciWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "ci.yml"), "utf8")
+  .replace(/\r\n/g, "\n");
 
 interface BuildSourcesHelperModule {
   DEFAULT_DEB822_SOURCES_PATH: string;
@@ -657,8 +659,14 @@ describe("Worker build source environment-name CLI mode", () => {
 });
 
 describe("Worker Dockerfile source wiring", () => {
-  it("opts into a cache-mount-capable Dockerfile frontend", () => {
-    expect(dockerfile.startsWith("# syntax=docker/dockerfile:1.7\n")).toBe(true);
+  it("uses Docker's built-in frontend instead of fetching a pinned frontend image", () => {
+    expect(dockerfile).not.toMatch(/^# syntax=/m);
+  });
+
+  it("enables BuildKit for the direct CI Worker build", () => {
+    expect(ciWorkflow).toMatch(
+      /- name: Build Worker image\n\s+env:\n\s+DOCKER_BUILDKIT: "1"\n\s+run: docker build/,
+    );
   });
 
   it("keeps exactly one canonical Worker Dockerfile", () => {
@@ -748,6 +756,16 @@ describe("Worker Dockerfile source wiring", () => {
 
     expect(dockerfile.match(/\bnpm ci\b/g)?.length ?? 0).toBeGreaterThan(0);
     expect(dockerfile.match(/--package-lock=false\b/g)).toHaveLength(2);
+  });
+
+  it("keeps npm command metadata out of committed image layers", () => {
+    const npmRuns = dockerfileStages().flatMap((stage) => npmInstructions(stage.lines));
+    expect(npmRuns.length).toBeGreaterThan(0);
+    for (const instruction of npmRuns) {
+      expect(instruction.text).toContain(
+        "--mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked",
+      );
+    }
   });
 
   it("repairs skipped optional agent platform payloads before verifying the CLIs", () => {

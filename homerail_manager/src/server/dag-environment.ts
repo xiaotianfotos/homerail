@@ -915,7 +915,11 @@ export class DagEnvironmentController {
     try {
       child = this.spawnImpl("docker", args, {
         cwd: this.repoRoot,
-        env: { ...this.env, HOMERAIL_HOME: getHomerailHome() },
+        env: {
+          ...this.env,
+          DOCKER_BUILDKIT: "1",
+          HOMERAIL_HOME: getHomerailHome(),
+        },
         windowsHide: true,
       });
     } catch (error) {

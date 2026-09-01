@@ -39,8 +39,15 @@ helper resolves it from its own repository-relative location.
 
 ## BuildKit dependency caches
 
-The canonical Worker Dockerfile uses Dockerfile frontend 1.7 cache mounts for
-package-manager download caches. All npm installs share the stable
+The canonical Worker Dockerfile uses BuildKit cache mounts for package-manager
+download caches. Supported build entry points explicitly set
+`DOCKER_BUILDKIT=1`: the Manager process, the shared production/live shell
+helper, and the Docker smoke build in CI. The Dockerfile intentionally does not
+pin a `# syntax` frontend image, so builds use the Docker engine's bundled
+frontend without an extra Docker Hub frontend fetch. The supported Docker
+engine must therefore include BuildKit cache-mount support.
+
+All npm installs share the stable
 `homerail-worker-npm-node22-v1` cache at `/root/.npm`. The pinned DSH build
 also uses separate Corepack and pnpm caches at `/root/.cache/node/corepack`
 and `/root/.local/share/pnpm/store`. Cache mounts use `sharing=locked`, so

@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 # Build from repo root: docker build -t homerail-worker:latest -f homerail_worker/Dockerfile .
 FROM node:22-slim AS secret-guard-build
 
@@ -92,7 +90,8 @@ COPY homerail_protocol/src /homerail_protocol/src
 COPY homerail_protocol/tsconfig.json /homerail_protocol/
 RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
   cd /homerail_protocol && npm ci --prefer-offline --no-audit --no-fund
-RUN cd /homerail_protocol && npm run build
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  cd /homerail_protocol && npm run build
 
 # Copy homerail_worker
 COPY homerail_worker/package.json homerail_worker/package-lock.json* ./
@@ -156,7 +155,8 @@ COPY homerail_worker/dsh ./dsh
 COPY --from=dsh-runtime-build \
   /src/deepseek-harness/python/sdk-runtime/src/deepseek_harness_runtime/runtime/node \
   /opt/deepseek-harness-runtime
-RUN npm run build
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  npm run build
 
 # Workspace checkouts can be created with owner-only source modes. Normalize
 # only the copied metadata/config files the unprivileged runtime reads; npm and

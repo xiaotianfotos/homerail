@@ -611,6 +611,7 @@ test("worker build network contract is shared by production and live entry point
   );
   assert.match(helper, /NPM_CONFIG_REGISTRY=/);
   assert.match(helper, /HOMERAIL_DSH_FORK_REPOSITORY=/);
+  assert.match(helper, /DOCKER_BUILDKIT=1\s+export DOCKER_BUILDKIT/);
 });
 
 test("worker build network helper validates sources and forwards proxy names only", { skip: process.platform === "win32" }, () => {

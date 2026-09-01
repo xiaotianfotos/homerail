@@ -1105,6 +1105,7 @@ it("forwards validated build-network sources and proxy names to the Docker build
   expect(args[proxyIndex + 1]).not.toContain("proxy.internal");
   expect(args.join("\u0000")).not.toContain("proxy.internal");
   expect(options.env.HTTPS_PROXY).toBe("http://proxy.internal:3128");
+  expect(options.env.DOCKER_BUILDKIT).toBe("1");
 
   markBuilt();
   stdout.write("step one\n");
