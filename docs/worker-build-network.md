@@ -37,6 +37,31 @@ source value never appears in argv, captured commands, failures, or logs.
 `${NODE_BIN:-node}` selects the Node binary used for that delegation; the
 helper resolves it from its own repository-relative location.
 
+## BuildKit dependency caches
+
+The canonical Worker Dockerfile uses Dockerfile frontend 1.7 cache mounts for
+package-manager download caches. All npm installs share the stable
+`homerail-worker-npm-node22-v1` cache at `/root/.npm`. The pinned DSH build
+also uses separate Corepack and pnpm caches at `/root/.cache/node/corepack`
+and `/root/.local/share/pnpm/store`. Cache mounts use `sharing=locked`, so
+concurrent builds cannot mutate the same package-manager cache at the same
+time.
+
+These are BuildKit-managed build caches, not image contents: cache data is
+excluded from committed layers and is never bind-mounted into a running
+Worker. A cold builder still fetches missing packages from the selected
+source; later builds can reuse verified package-manager cache content even
+when an earlier image layer was invalidated by source changes elsewhere in
+the repository.
+
+Lockfile behavior is unchanged. npm package trees continue to use `npm ci`,
+and the DSH tree continues to use `pnpm install --frozen-lockfile`. npm
+installs add `--prefer-offline --no-audit --no-fund`, while pnpm adds
+`--prefer-offline`; these options reduce metadata traffic but do not enable
+offline mode or permit stale/missing dependencies. HomeRail does not add a
+Python package manager or configure uv/PyPI sources as part of the Worker
+build.
+
 ## Validation contract
 
 - Unset or whitespace-only values leave the corresponding source unchanged.
