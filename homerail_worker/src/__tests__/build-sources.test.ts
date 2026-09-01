@@ -21,6 +21,8 @@ const workerRoot = fileURLToPath(new URL("../..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const dockerfile = readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8")
   .replace(/\r\n/g, "\n");
+const ciWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "ci.yml"), "utf8")
+  .replace(/\r\n/g, "\n");
 
 interface BuildSourcesHelperModule {
   DEFAULT_DEB822_SOURCES_PATH: string;
@@ -657,6 +659,16 @@ describe("Worker build source environment-name CLI mode", () => {
 });
 
 describe("Worker Dockerfile source wiring", () => {
+  it("uses Docker's built-in frontend instead of fetching a pinned frontend image", () => {
+    expect(dockerfile).not.toMatch(/^# syntax=/m);
+  });
+
+  it("enables BuildKit for the direct CI Worker build", () => {
+    expect(ciWorkflow).toMatch(
+      /- name: Build Worker image\n\s+env:\n\s+DOCKER_BUILDKIT: "1"\n\s+run: docker build/,
+    );
+  });
+
   it("keeps exactly one canonical Worker Dockerfile", () => {
     const dockerfiles: string[] = [];
     const visit = (dir: string): void => {
@@ -719,6 +731,43 @@ describe("Worker Dockerfile source wiring", () => {
     expect(dockerfile).not.toMatch(/ENV[^\n]*HOMERAIL_WORKER_BUILD_APT/);
   });
 
+  it("keeps the canonical image source-neutral and free of Python source configuration", () => {
+    for (const vendor of ["npmmirror", "tuna", "ustc"]) {
+      expect(dockerfile.toLowerCase()).not.toContain(vendor);
+    }
+    expect(dockerfile).not.toMatch(/\b(?:UV|PIP)_(?:DEFAULT_)?INDEX_URL\b/);
+    expect(dockerfile).not.toMatch(/(?:^|[\s;&|])uv(?:[\s;&|]|$)/m);
+  });
+
+  it("mounts one stable npm cache for every npm install without weakening lockfiles", () => {
+    const installs = dockerfileStages()
+      .flatMap((stage) => npmInstructions(stage.lines))
+      .filter((instruction) => /\bnpm (?:ci|install)\b/.test(instruction.text));
+    expect(installs.length).toBeGreaterThan(0);
+
+    const cacheMount = "--mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked";
+    for (const instruction of installs) {
+      const commandCount = instruction.text.match(/\bnpm (?:ci|install)\b/g)?.length ?? 0;
+      expect(instruction.text).toContain(cacheMount);
+      expect(instruction.text.match(/--prefer-offline\b/g)).toHaveLength(commandCount);
+      expect(instruction.text.match(/--no-audit\b/g)).toHaveLength(commandCount);
+      expect(instruction.text.match(/--no-fund\b/g)).toHaveLength(commandCount);
+    }
+
+    expect(dockerfile.match(/\bnpm ci\b/g)?.length ?? 0).toBeGreaterThan(0);
+    expect(dockerfile.match(/--package-lock=false\b/g)).toHaveLength(2);
+  });
+
+  it("keeps npm command metadata out of committed image layers", () => {
+    const npmRuns = dockerfileStages().flatMap((stage) => npmInstructions(stage.lines));
+    expect(npmRuns.length).toBeGreaterThan(0);
+    for (const instruction of npmRuns) {
+      expect(instruction.text).toContain(
+        "--mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked",
+      );
+    }
+  });
+
   it("repairs skipped optional agent platform payloads before verifying the CLIs", () => {
     const finalStage = dockerfileStages().at(-1);
     expect(finalStage).toBeDefined();
@@ -752,6 +801,13 @@ describe("Worker Dockerfile source wiring", () => {
     expect(corepackRuns.length).toBeGreaterThan(0);
     for (const instruction of corepackRuns) {
       expect(instruction.text).toContain('export COREPACK_NPM_REGISTRY="$NPM_CONFIG_REGISTRY"');
+      expect(instruction.text).toContain(
+        "--mount=type=cache,id=homerail-worker-corepack-v1,target=/root/.cache/node/corepack,sharing=locked",
+      );
+      expect(instruction.text).toContain(
+        "--mount=type=cache,id=homerail-worker-pnpm-node22-v1,target=/root/.local/share/pnpm/store,sharing=locked",
+      );
+      expect(instruction.text).toContain("corepack pnpm install --frozen-lockfile --prefer-offline");
     }
   });
 });

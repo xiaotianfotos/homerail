@@ -31,7 +31,9 @@ RUN node /opt/homerail/scripts/configure-apt-sources.mjs
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
-RUN npm install --global corepack@0.34.0 && corepack enable
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  npm install --global corepack@0.34.0 --prefer-offline --no-audit --no-fund \
+  && corepack enable
 RUN git init /src/deepseek-harness \
   && cd /src/deepseek-harness \
   && git remote add origin "${HOMERAIL_DSH_FORK_REPOSITORY}" \
@@ -39,8 +41,10 @@ RUN git init /src/deepseek-harness \
   && git checkout --detach FETCH_HEAD \
   && test "$(git rev-parse HEAD)" = "${HOMERAIL_DSH_FORK_COMMIT}"
 WORKDIR /src/deepseek-harness
-RUN if [ -n "${NPM_CONFIG_REGISTRY:-}" ]; then export COREPACK_NPM_REGISTRY="$NPM_CONFIG_REGISTRY"; fi \
-  && corepack pnpm install --frozen-lockfile \
+RUN --mount=type=cache,id=homerail-worker-corepack-v1,target=/root/.cache/node/corepack,sharing=locked \
+    --mount=type=cache,id=homerail-worker-pnpm-node22-v1,target=/root/.local/share/pnpm/store,sharing=locked \
+  if [ -n "${NPM_CONFIG_REGISTRY:-}" ]; then export COREPACK_NPM_REGISTRY="$NPM_CONFIG_REGISTRY"; fi \
+  && corepack pnpm install --frozen-lockfile --prefer-offline \
   && corepack pnpm run build:lib:host \
   && corepack pnpm exec tsx scripts/build-exe-for-python-sdk.ts --skip-build --node-only
 
@@ -75,7 +79,8 @@ ENV HOMERAIL_DSH_RUNTIME_COMMAND="/usr/local/bin/node" \
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client \
   && rm -rf /var/lib/apt/lists/*
-RUN npm install -g npm@11.6.2
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  npm install -g npm@11.6.2 --prefer-offline --no-audit --no-fund
 COPY --from=secret-guard-build /homerail-codex-secret-guard.so /usr/local/lib/homerail-codex-secret-guard.so
 
 # Copy homerail_protocol to /homerail_protocol (parallel to /app) so that
@@ -83,19 +88,23 @@ COPY --from=secret-guard-build /homerail-codex-secret-guard.so /usr/local/lib/ho
 COPY homerail_protocol/package.json homerail_protocol/package-lock.json* /homerail_protocol/
 COPY homerail_protocol/src /homerail_protocol/src
 COPY homerail_protocol/tsconfig.json /homerail_protocol/
-RUN cd /homerail_protocol && npm ci
-RUN cd /homerail_protocol && npm run build
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  cd /homerail_protocol && npm ci --prefer-offline --no-audit --no-fund
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  cd /homerail_protocol && npm run build
 
 # Copy homerail_worker
 COPY homerail_worker/package.json homerail_worker/package-lock.json* ./
 # --ignore-scripts skips postinstall since homerail_protocol is already built above
-RUN npm ci --ignore-scripts
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
 RUN command -v kimi
 # npm treats the Claude SDK and Codex native platform payloads as optional, so
 # a transient fetch failure can leave a successful install with unusable agent
 # backends. Repair only the current Linux architecture at the exact pinned
 # versions, without changing the image-owned package lock, then verify them.
-RUN codex_arch="$(dpkg --print-architecture)" \
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  codex_arch="$(dpkg --print-architecture)" \
   && case "$codex_arch" in \
     amd64) codex_arch=x64 ;; \
     arm64) codex_arch=arm64 ;; \
@@ -104,13 +113,13 @@ RUN codex_arch="$(dpkg --print-architecture)" \
   && claude_version="$(node -p 'require("./node_modules/@anthropic-ai/claude-agent-sdk/package.json").version')" \
   && claude_platform="@anthropic-ai/claude-agent-sdk-linux-${codex_arch}" \
   && if [ ! -d "node_modules/${claude_platform}" ]; then \
-    npm install --no-save --package-lock=false --ignore-scripts \
+    npm install --no-save --package-lock=false --ignore-scripts --prefer-offline --no-audit --no-fund \
       "${claude_platform}@${claude_version}"; \
   fi \
   && codex_version="$(node -p 'require("./node_modules/@openai/codex/package.json").version')" \
   && codex_platform="@openai/codex-linux-${codex_arch}" \
   && if [ ! -d "node_modules/${codex_platform}" ]; then \
-    npm install --no-save --package-lock=false --ignore-scripts \
+    npm install --no-save --package-lock=false --ignore-scripts --prefer-offline --no-audit --no-fund \
       "${codex_platform}@npm:@openai/codex@${codex_version}-linux-${codex_arch}"; \
   fi \
   && test -x "node_modules/${claude_platform}/claude" \
@@ -125,15 +134,20 @@ RUN mkdir -p /opt/homerail-dependency-cache \
   && ln -s /homerail_protocol /opt/homerail-dependency-cache/homerail_protocol \
   && ln -s /app /opt/homerail-dependency-cache/homerail_worker
 COPY homerail_plugin_sdk/package.json homerail_plugin_sdk/package-lock.json* /opt/homerail-dependency-cache/homerail_plugin_sdk/
-RUN cd /opt/homerail-dependency-cache/homerail_plugin_sdk && npm ci
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  cd /opt/homerail-dependency-cache/homerail_plugin_sdk && npm ci --prefer-offline --no-audit --no-fund
 COPY homerail_manager/package.json homerail_manager/package-lock.json* /opt/homerail-dependency-cache/homerail_manager/
-RUN cd /opt/homerail-dependency-cache/homerail_manager && npm ci
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  cd /opt/homerail-dependency-cache/homerail_manager && npm ci --prefer-offline --no-audit --no-fund
 COPY homerail_node/package.json homerail_node/package-lock.json* /opt/homerail-dependency-cache/homerail_node/
-RUN cd /opt/homerail-dependency-cache/homerail_node && npm ci
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  cd /opt/homerail-dependency-cache/homerail_node && npm ci --prefer-offline --no-audit --no-fund
 COPY homerail_cli/package.json homerail_cli/package-lock.json* /opt/homerail-dependency-cache/homerail_cli/
-RUN cd /opt/homerail-dependency-cache/homerail_cli && npm ci
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  cd /opt/homerail-dependency-cache/homerail_cli && npm ci --prefer-offline --no-audit --no-fund
 COPY agent-ui/package.json agent-ui/package-lock.json* /opt/homerail-dependency-cache/agent-ui/
-RUN cd /opt/homerail-dependency-cache/agent-ui && npm ci --ignore-scripts
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  cd /opt/homerail-dependency-cache/agent-ui && npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
 
 COPY homerail_worker/tsconfig.json ./
 COPY homerail_worker/src ./src
@@ -141,7 +155,8 @@ COPY homerail_worker/dsh ./dsh
 COPY --from=dsh-runtime-build \
   /src/deepseek-harness/python/sdk-runtime/src/deepseek_harness_runtime/runtime/node \
   /opt/deepseek-harness-runtime
-RUN npm run build
+RUN --mount=type=cache,id=homerail-worker-npm-node22-v1,target=/root/.npm,sharing=locked \
+  npm run build
 
 # Workspace checkouts can be created with owner-only source modes. Normalize
 # only the copied metadata/config files the unprivileged runtime reads; npm and

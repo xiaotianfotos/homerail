@@ -27,7 +27,9 @@
 # The helper populates the global HOMERAIL_WORKER_BUILD_NETWORK_ARGS argv
 # array. This avoids Bash 4.3 namerefs so the contract also works with the
 # Bash 3.2 runtime shipped by macOS. It never evaluates or executes validated
-# input. Callers must use `set -euo pipefail`.
+# input. It also forces Docker's built-in BuildKit frontend so the canonical
+# Dockerfile cache mounts are interpreted without fetching a separately pinned
+# frontend image. Callers must use `set -euo pipefail`.
 
 # homerail_worker_build_network_helper_path
 #
@@ -83,6 +85,8 @@ homerail_worker_build_network_normalize_source() {
 # containing a non-whitespace character. Returns 1 before any Docker invocation
 # when a value is invalid.
 homerail_worker_build_network_args() {
+  DOCKER_BUILDKIT=1
+  export DOCKER_BUILDKIT
   HOMERAIL_WORKER_BUILD_NETWORK_ARGS=()
   local name normalized proxy_name
   for name in HOMERAIL_WORKER_BUILD_APT_MIRROR HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR HOMERAIL_WORKER_BUILD_NPM_REGISTRY HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE; do
