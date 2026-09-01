@@ -105,8 +105,14 @@ Debian sources and npm registry. Standard proxy variables are forwarded to
 Docker by name only; their values never enter deployment argv or logs. See
 [Worker build network sources](worker-build-network.md).
 
-The workflow also has a maintainer-only manual dispatch for immediate recovery
-or an explicitly selected revision. Scheduled and default manual deployments
-resolve `main` at job start. The release switch never changes
+The production workflow reads those three public source overrides from GitHub
+Actions repository variables and maps them explicitly into the deploy job.
+This keeps the self-hosted runner independent of whether its systemd process
+has reloaded a machine-local environment file. Other Worker build entry points
+may continue to receive the same variables from their process environment.
+
+The workflow has a maintainer-only manual dispatch for immediate recovery or
+an explicitly selected revision. A manual deployment without a revision
+resolves `main` at job start. The release switch never changes
 `HOMERAIL_PRODUCTION_HOME`; database, settings, sessions, certificates, and
 external Skills continue to live in the persistent Home across deployments.

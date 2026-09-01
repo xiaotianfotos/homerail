@@ -18,6 +18,18 @@ test("deploys an owner-dispatched revision on the isolated deploy runner", () =>
   assert.doesNotMatch(workflow, /cron:/);
   assert.doesNotMatch(workflow, /workflow_run:/);
   assert.match(workflow, /runs-on: \[self-hosted, Linux, X64, homerail-deploy\]/);
+  assert.match(
+    workflow,
+    /HOMERAIL_WORKER_BUILD_APT_MIRROR: \$\{\{ vars\.HOMERAIL_WORKER_BUILD_APT_MIRROR \}\}/,
+  );
+  assert.match(
+    workflow,
+    /HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: \$\{\{ vars\.HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR \}\}/,
+  );
+  assert.match(
+    workflow,
+    /HOMERAIL_WORKER_BUILD_NPM_REGISTRY: \$\{\{ vars\.HOMERAIL_WORKER_BUILD_NPM_REGISTRY \}\}/,
+  );
   assert.match(workflow, /ref: \$\{\{ inputs\.revision \|\| 'main' \}\}/);
   assert.match(workflow, /revision="\$\(git rev-parse HEAD\)"/);
   assert.match(workflow, /persist-credentials: false/);
