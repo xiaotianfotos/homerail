@@ -1,9 +1,6 @@
 name: Deploy Production
 
 on:
-  schedule:
-    # GitHub cron is UTC. 19:30 UTC is 03:30 Asia/Shanghai.
-    - cron: "30 19 * * *"
   workflow_dispatch:
     inputs:
       revision:
@@ -21,9 +18,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy persistent HomeRail service
-    if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && github.actor == 'xiaotianfotos')
+    if: github.event_name == 'workflow_dispatch' && github.actor == 'xiaotianfotos'
     runs-on: [self-hosted, Linux, X64, homerail-deploy]
     timeout-minutes: 45
     steps:

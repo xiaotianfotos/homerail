@@ -1,11 +1,10 @@
 # Persistent production deployment
 
 `.github/workflows/deploy-production.yml` deploys the latest `main` revision
-once per day at 03:30 Asia/Shanghai (19:30 UTC), and also supports an
-owner-only manual dispatch for an immediate deployment. Merging a pull request
-does not start a second deployment workflow. It runs on a dedicated self-hosted
-runner labeled `homerail-deploy`; the live DAG, PR Review, and Auto Fix labels
-must stay on separate runners.
+only through an owner-initiated manual dispatch. Merging a pull request does
+not start a deployment workflow. It runs on a dedicated self-hosted runner
+labeled `homerail-deploy`; the live DAG, PR Review, and Auto Fix labels must
+stay on separate runners.
 
 Each deployment runner keeps its machine-specific paths and public address in
 `~/.config/homerail/production.env` with mode `0600`. The tracked workflow does
