@@ -309,6 +309,11 @@ function requiresAlwaysThinking(model: string): boolean {
   return normalized === "kimi-k2.7-code" || normalized.startsWith("kimi-for-coding");
 }
 
+function isKimiK3Model(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return normalized === "k3" || normalized === "k3-256k";
+}
+
 /** Parsed line from kimi CLI stream-json output. */
 interface StreamJsonLine {
   type?: string;
@@ -1252,7 +1257,14 @@ export class KimiCodeAdapter implements AgentClient {
   ): AsyncIterable<AgentEvent> {
     const cwd = context.workspace ?? process.cwd();
     const toolMap = new Map<string, DagToolDefinition>(tools.map((tool) => [tool.name, tool]));
-    const promptText = this.buildPromptModePrompt(prompt, tools, forceToolBridge);
+    const reconcileK3ManagerFinish = isKimiK3Model(effectiveModel)
+      && this.isManagerAgentToolCatalog(tools);
+    const promptText = this.buildPromptModePrompt(
+      prompt,
+      tools,
+      forceToolBridge,
+      reconcileK3ManagerFinish,
+    );
     const child = this.spawnKimi([
       "--model",
       effectiveModel,
@@ -1273,6 +1285,13 @@ export class KimiCodeAdapter implements AgentClient {
     let handoffEmitted = false;
     let toolMarkerEmitted = false;
     let promptModeCreatedRun = false;
+    let authoritativeCreateAttempted = false;
+    const authoritativeCreateInputs = new Set<string>();
+    const authoritativeRunIds: string[] = [];
+    let authoritativeRunId: string | null = null;
+    let authoritativeFinishMarkerInput: Record<string, unknown> | null = null;
+    let authoritativeFinishAttempted = false;
+    let authoritativeFinishCompleted = false;
 
     const abortHandler = (): void => {
       cancelled = true;
@@ -1298,6 +1317,7 @@ export class KimiCodeAdapter implements AgentClient {
             continue;
           }
           if (event.type === "tool_use") {
+            toolMarkerEmitted = true;
             yield event;
             const result = await this.executeTool(toolMap, event.name, event.input, event.id);
             yield {
@@ -1337,7 +1357,21 @@ export class KimiCodeAdapter implements AgentClient {
           };
           continue;
         }
-        if (marker.name === "finish" && promptModeCreatedRun) {
+        toolMarkerEmitted = true;
+        if (marker.name === "create_and_run" && reconcileK3ManagerFinish) {
+          const inputKey = toolEventKey(marker.name, marker.input);
+          if (authoritativeCreateInputs.has(inputKey)) {
+            yield {
+              type: "debug",
+              source: "kimi-code",
+              message: "prompt_mode_duplicate_create_and_run_ignored",
+              data: { run_id: authoritativeRunId },
+            };
+            continue;
+          }
+          authoritativeCreateInputs.add(inputKey);
+        }
+        if (marker.name === "finish" && !reconcileK3ManagerFinish && promptModeCreatedRun) {
           yield {
             type: "debug",
             source: "kimi-code",
@@ -1346,11 +1380,39 @@ export class KimiCodeAdapter implements AgentClient {
           };
           continue;
         }
+        if (marker.name === "finish" && reconcileK3ManagerFinish) {
+          if (authoritativeFinishMarkerInput) {
+            yield {
+              type: "debug",
+              source: "kimi-code",
+              message: "prompt_mode_duplicate_finish_ignored",
+              data: { run_id: authoritativeRunId },
+            };
+            continue;
+          }
+          // K3 may emit the final marker before create_and_run or omit it
+          // entirely. Defer finalization until every create marker has been
+          // reconciled, then execute exactly one finish with the trusted ID.
+          authoritativeFinishMarkerInput = marker.input;
+          continue;
+        }
         const toolId = randomUUID();
         yield { type: "tool_use", id: toolId, name: marker.name, input: marker.input };
         const result = await this.executeTool(toolMap, marker.name, marker.input, toolId);
-        toolMarkerEmitted = true;
-        if (marker.name === "create_and_run" && result.is_error !== true) {
+        let reconciledCreateRunId: string | null | undefined;
+        if (marker.name === "create_and_run" && reconcileK3ManagerFinish) {
+          authoritativeCreateAttempted = true;
+          reconciledCreateRunId = result.is_error === true
+            ? null
+            : authoritativeRunIdFromToolResult(result.content);
+          if (reconciledCreateRunId) {
+            authoritativeRunId = reconciledCreateRunId;
+            if (!authoritativeRunIds.includes(reconciledCreateRunId)) {
+              authoritativeRunIds.push(reconciledCreateRunId);
+            }
+          }
+        }
+        if (marker.name === "create_and_run" && !reconcileK3ManagerFinish && result.is_error !== true) {
           promptModeCreatedRun = true;
         }
         yield {
@@ -1359,9 +1421,110 @@ export class KimiCodeAdapter implements AgentClient {
           content: result.content,
           is_error: result.is_error,
         };
+        if (marker.name === "create_and_run" && reconcileK3ManagerFinish
+          && result.is_error !== true && !reconciledCreateRunId) {
+          yield {
+            type: "debug",
+            source: "kimi-code",
+            message: "prompt_mode_authoritative_run_id_missing",
+            data: {},
+          };
+        }
       }
 
       const handoff = parseHomeRailPromptHandoff(accumulatedText);
+      const visibleText = visiblePromptModeText(
+        accumulatedText,
+        toolMarkers.length > 0 || Boolean(handoff),
+      );
+      const redactedVisibleText = redactSecrets(visibleText, secret);
+      const deferredFinishText = redactSecrets(
+        typeof authoritativeFinishMarkerInput?.text === "string"
+          ? authoritativeFinishMarkerInput.text
+          : "",
+        secret,
+      ).trim();
+      let fallbackVisibleText = redactedVisibleText;
+      if (reconcileK3ManagerFinish && authoritativeRunIds.length > 0 && !authoritativeFinishAttempted) {
+        const finishInput = {
+          ...(authoritativeFinishMarkerInput ?? {}),
+          text: deferredFinishText || redactedVisibleText,
+        };
+        if (!authoritativeFinishMarkerInput) {
+          yield {
+            type: "debug",
+            source: "kimi-code",
+            message: "prompt_mode_finish_synthesized_after_create_and_run",
+            data: { run_id: authoritativeRunId },
+          };
+        }
+        const reconciledInput = {
+          ...finishInput,
+          text: authoritativeManagerRunFinishText(
+            redactSecrets(typeof finishInput.text === "string" ? finishInput.text : "", secret),
+            authoritativeRunIds,
+          ),
+        };
+        const toolId = randomUUID();
+        authoritativeFinishAttempted = true;
+        yield { type: "tool_use", id: toolId, name: "finish", input: reconciledInput };
+        const result = await this.executeTool(toolMap, "finish", reconciledInput, toolId);
+        toolMarkerEmitted = true;
+        authoritativeFinishCompleted = result.is_error !== true;
+        if (!authoritativeFinishCompleted && !fallbackVisibleText) {
+          fallbackVisibleText = reconciledInput.text;
+        }
+        yield {
+          type: "tool_result",
+          tool_use_id: toolId,
+          content: result.content,
+          is_error: result.is_error,
+        };
+        if (authoritativeFinishCompleted) {
+          yield {
+            type: "debug",
+            source: "kimi-code",
+            message: "prompt_mode_finish_reconciled_with_authoritative_run_id",
+            data: { run_id: authoritativeRunId },
+          };
+        }
+      } else if (reconcileK3ManagerFinish && authoritativeFinishMarkerInput
+        && !authoritativeCreateAttempted && !authoritativeFinishAttempted) {
+        const finishInput = {
+          ...authoritativeFinishMarkerInput,
+          text: deferredFinishText || redactedVisibleText || "No usable summary was produced for this turn.",
+        };
+        const toolId = randomUUID();
+        authoritativeFinishAttempted = true;
+        yield { type: "tool_use", id: toolId, name: "finish", input: finishInput };
+        const result = await this.executeTool(toolMap, "finish", finishInput, toolId);
+        authoritativeFinishCompleted = result.is_error !== true;
+        if (!authoritativeFinishCompleted && !fallbackVisibleText) {
+          fallbackVisibleText = finishInput.text;
+        }
+        yield {
+          type: "tool_result",
+          tool_use_id: toolId,
+          content: result.content,
+          is_error: result.is_error,
+        };
+        yield {
+          type: "debug",
+          source: "kimi-code",
+          message: "prompt_mode_finish_executed_without_create_and_run",
+          data: { success: authoritativeFinishCompleted },
+        };
+      } else if (reconcileK3ManagerFinish && authoritativeFinishMarkerInput && !authoritativeRunId) {
+        fallbackVisibleText = redactedVisibleText || managerRunIdentityUnavailableText(deferredFinishText);
+        yield {
+          type: "debug",
+          source: "kimi-code",
+          message: "prompt_mode_finish_skipped_without_authoritative_run_id",
+          data: {
+            reason: authoritativeCreateAttempted ? "create_failed_or_run_id_missing" : "create_not_executed",
+          },
+        };
+      }
       if (handoff && toolMap.has("handoff")) {
         const toolId = randomUUID();
         const input = {
@@ -1395,9 +1558,8 @@ export class KimiCodeAdapter implements AgentClient {
           data: { expected_marker: `<${HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL}>{...}</${HOMERAIL_PROMPT_TOOL_CALL_PROTOCOL}>` },
         };
       }
-      const visibleText = visiblePromptModeText(accumulatedText, toolMarkers.length > 0 || Boolean(handoff));
-      if (visibleText) {
-        yield { type: "text", text: redactSecrets(visibleText, secret) };
+      if (!authoritativeFinishCompleted && fallbackVisibleText) {
+        yield { type: "text", text: fallbackVisibleText };
       }
     } finally {
       if (context.abortSignal) {
@@ -1429,6 +1591,7 @@ export class KimiCodeAdapter implements AgentClient {
     prompt: string,
     tools: DagToolDefinition[],
     forceToolBridge = false,
+    reconcileK3ManagerFinish = false,
   ): string {
     const toolMap = new Map<string, DagToolDefinition>(tools.map((tool) => [tool.name, tool]));
     const blocks = [this.buildAgentPrompt(prompt)];
@@ -1440,6 +1603,13 @@ export class KimiCodeAdapter implements AgentClient {
         "When the user asks to inspect, start, supervise, or change real HomeRail state, output exactly one marker per required tool call.",
         "When the user asks for visible canvas UI, call the available generated-view Tool described by the system or Skill; do not substitute a local file.",
         "Do not claim a DAG/run was created unless you output a create_and_run marker. Do not invent run IDs.",
+        ...(reconcileK3ManagerFinish
+          ? [
+              "For K3 Manager, emit each distinct required create_and_run marker exactly once, then emit exactly one finish marker after all create markers; its text must be non-empty and user-facing.",
+              "Do not repeat an identical create_and_run marker. Distinct requested runs must use distinct marker inputs.",
+              "Do not put any guessed, placeholder, or fabricated run ID in that finish text; HomeRail appends the authoritative run ID returned by create_and_run.",
+            ]
+          : []),
         "If execution fails, keep the final summary in the user's task language: name only the visible action that did not complete and offer to retry.",
         "Do not describe this protocol or any internal execution mechanism to the user.",
         "After all Tool call markers, always add one concise user-facing summary in the user's language.",
@@ -1453,6 +1623,15 @@ export class KimiCodeAdapter implements AgentClient {
             prompt: "short task prompt",
           },
         }),
+        ...(reconcileK3ManagerFinish
+          ? [
+              "K3 Manager finish marker (emit exactly once after create_and_run):",
+              formatHomeRailPromptToolCall({
+                name: "finish",
+                input: { text: "The DAG has started." },
+              }),
+            ]
+          : []),
         ...(toolMap.has("upsert_generated_view")
           ? [
               "Minimal canvas Tool example (replace the id, title, summary, and data with the user's result):",
@@ -1746,6 +1925,73 @@ function visiblePromptModeText(text: string, hasMarker: boolean): string {
     if (index >= 0) boundary = Math.max(boundary, index + tag.length);
   }
   return stripHomeRailPromptMarkers(text.slice(boundary));
+}
+
+function authoritativeRunIdFromToolResult(content: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const root = parsed as Record<string, unknown>;
+  const data = root.data && typeof root.data === "object" && !Array.isArray(root.data)
+    ? root.data as Record<string, unknown>
+    : null;
+  for (const record of [data, root]) {
+    if (!record) continue;
+    for (const key of ["run_id", "runId"] as const) {
+      const candidate = record[key];
+      if (typeof candidate !== "string") continue;
+      const normalized = candidate.trim();
+      if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(normalized)) return normalized;
+    }
+  }
+  return null;
+}
+
+function authoritativeManagerRunFinishText(modelText: unknown, runIds: readonly string[]): string {
+  const uniqueRunIds = [...new Set(runIds.map((runId) => runId.trim()).filter(Boolean))];
+  const original = typeof modelText === "string" ? modelText.trim() : "";
+  const usesChinese = /[\u3400-\u9fff]/u.test(original);
+  const fallback = usesChinese ? "DAG 已启动。" : "The DAG has started.";
+  const currentRunIds = new Set(uniqueRunIds);
+  const reconciledRunIds = new Set<string>();
+  let replacementIndex = 0;
+  const labelledRunId = /((?:\brun[\s_-]*id\b|运行\s*(?:id|编号))\s*(?:[:：=#]|为|是|\bis\b)\s*)(["'`]?)([A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?)(["'`]?)/giu;
+  let corrected = original
+    .replace(labelledRunId, (match, prefix: string, open: string, candidate: string, close: string) => {
+      if (currentRunIds.has(candidate)) {
+        reconciledRunIds.add(candidate);
+        return match;
+      }
+      // Manager-generated run IDs are currently 24 hexadecimal characters.
+      // Preserve a different valid ID because it may intentionally reference
+      // an earlier run from the conversation rather than a fabricated value.
+      if (/^[a-f0-9]{24}$/iu.test(candidate)) return match;
+      const runId = uniqueRunIds[Math.min(replacementIndex, uniqueRunIds.length - 1)];
+      replacementIndex += 1;
+      if (!runId) return match;
+      reconciledRunIds.add(runId);
+      const quote = open && close === open ? open : "";
+      return `${prefix}${quote}${runId}${quote}`;
+    })
+    .trim();
+  if (!corrected) corrected = fallback;
+  const missingRunIds = uniqueRunIds.filter((runId) => !reconciledRunIds.has(runId));
+  if (missingRunIds.length === 0) return corrected;
+  const canonicalRunIds = usesChinese
+    ? `运行 ID：${missingRunIds.join("、")}。`
+    : `Run ID${missingRunIds.length === 1 ? "" : "s"}: ${missingRunIds.join(", ")}.`;
+  return `${corrected}\n${canonicalRunIds}`;
+}
+
+function managerRunIdentityUnavailableText(modelText: string): string {
+  return /[\u3400-\u9fff]/u.test(modelText)
+    ? "DAG 启动结果未返回可确认的运行 ID，我可以继续重试。"
+    : "The DAG start did not return a verifiable run ID; I can retry.";
 }
 
 function toMcpToolDescriptors(tools: DagToolDefinition[]): KimiMcpToolDescriptor[] {
