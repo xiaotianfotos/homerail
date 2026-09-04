@@ -11,7 +11,7 @@ interface MockProvider {
 }
 
 const servers: Server[] = [];
-const runtimeConfigured = Boolean(process.env.HOMERAIL_DSH_RUNTIME_COMMAND?.trim());
+const runtimeConfigured = Boolean(process.env.HOMERAIL_DSH_RUNTIME_BIN?.trim());
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve, reject) => {
@@ -150,6 +150,10 @@ describe.skipIf(!runtimeConfigured)("DeepSeek Harness packaged runtime", () => {
       "/v1/chat/completions",
       "/v1/chat/completions",
     ]);
+    const exposedToolNames = (provider.requests[0]?.body.tools as Array<{
+      function?: { name?: string };
+    }> | undefined)?.map((tool) => tool.function?.name);
+    expect(exposedToolNames).toEqual(["mcp__homerail__handoff"]);
     expect(JSON.stringify(provider.requests[0]?.body)).toContain("mcp__homerail__handoff");
     expect(JSON.stringify(provider.requests[1]?.body)).toContain("accepted");
 

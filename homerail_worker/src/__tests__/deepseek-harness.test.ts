@@ -69,8 +69,7 @@ describe("DeepSeekHarnessAdapter", () => {
     vi.stubEnv("HOMERAIL_WORKER_TOKEN", "manager-secret");
     vi.stubEnv("HOMERAIL_DSH_CORDIS_CONFIG", customConfig);
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
     const events = await collect(adapter, context({
       environmentVariables: {
@@ -108,11 +107,26 @@ describe("DeepSeekHarnessAdapter", () => {
     const recorded = JSON.parse(readFileSync(recordFile, "utf8").trim()) as Record<string, unknown>;
     expect(recorded.managerToken).toBeUndefined();
     expect(recorded.baseUrl).toBe("https://example.invalid/v1");
-    expect(recorded.cordisConfig).toBe(customConfig);
+    expect(recorded.cordisConfig).toBeUndefined();
+    expect(recorded.dshHome).toEqual(expect.stringMatching(/homerail-dsh-/));
+    expect(recorded.argv).toEqual([
+      "--profile",
+      "sdk-minimal",
+      "--patch",
+      customConfig,
+    ]);
     expect(recorded.reasoningEffort).toBeUndefined();
     expect(recorded.reasoningEfforts).toBeUndefined();
     expect(recorded.apiKeyPresent).toBe(true);
     expect(recorded.params).toMatchObject({ maxTokens: 32_768 });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "debug",
+      data: expect.objectContaining({
+        runtime_bin: fakeRuntime,
+        runtime_profile: "sdk-minimal",
+        runtime_patch: customConfig,
+      }),
+    }));
   });
 
   it("runs the generated MCP proxy through the authenticated loopback tool bridge", async () => {
@@ -129,8 +143,7 @@ describe("DeepSeekHarnessAdapter", () => {
       },
     };
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
     const events = await collect(adapter, context({
       environmentVariables: {
@@ -214,8 +227,7 @@ describe("DeepSeekHarnessAdapter", () => {
     const root = tempRoot();
     const recordFile = join(root, "runtime.jsonl");
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
     await collect(adapter, context({
       reasoningEffort: "medium",
@@ -230,8 +242,7 @@ describe("DeepSeekHarnessAdapter", () => {
 
   it("rejects a reasoning selector the selected model did not declare", async () => {
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
 
     const events = await collect(adapter, context({
@@ -249,8 +260,7 @@ describe("DeepSeekHarnessAdapter", () => {
     const root = tempRoot();
     const recordFile = join(root, "runtime.jsonl");
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
       maxTokens: 16_384,
     });
     await collect(adapter, context({
@@ -264,8 +274,7 @@ describe("DeepSeekHarnessAdapter", () => {
   it("routes queued live steering through the fork session/steer method", async () => {
     const controller = new AgentTurnController({ capabilities: { liveSteer: true } });
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
     const eventsPromise = collect(adapter, context({
       turnController: controller,
@@ -287,8 +296,7 @@ describe("DeepSeekHarnessAdapter", () => {
     mkdirSync(join(workspace, "repository"));
     writeFileSync(join(workspace, "repository", "README.md"), "fixture\n");
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
     const events = await collect(adapter, context({
       workspace,
@@ -313,8 +321,7 @@ describe("DeepSeekHarnessAdapter", () => {
     const workspace = tempRoot();
     mkdirSync(join(workspace, "repository"));
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
     const events = await collect(adapter, context({
       workspace,
@@ -331,8 +338,7 @@ describe("DeepSeekHarnessAdapter", () => {
 
   it("surfaces structured DSH turn failures as actionable agent errors", async () => {
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
     const events = await collect(adapter, context({
       environmentVariables: { DSH_FAKE_TURN_ERROR: "provider connection refused" },
@@ -350,8 +356,7 @@ describe("DeepSeekHarnessAdapter", () => {
     const readyFile = join(root, "ready");
     const controller = new AgentTurnController({ capabilities: { liveSteer: true } });
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
     const eventsPromise = collect(adapter, context({
       turnController: controller,
@@ -380,8 +385,7 @@ describe("DeepSeekHarnessAdapter", () => {
     const readyFile = join(root, "ready");
     const abortController = new AbortController();
     const adapter = new DeepSeekHarnessAdapter({
-      runtimeCommand: process.execPath,
-      runtimeArgs: [fakeRuntime],
+      runtimeBin: fakeRuntime,
     });
     const originalClose = DeepSeekHarness.prototype.close;
     const closeSpy = vi.spyOn(DeepSeekHarness.prototype, "close")

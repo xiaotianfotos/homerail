@@ -180,6 +180,8 @@ lines.on("line", async (line) => {
       appendFileSync(process.env.DSH_FAKE_RECORD_FILE, `${JSON.stringify({
         params: request.params,
         cordisConfig: process.env.DSH_CORDIS_CONFIG,
+        dshHome: process.env.DSH_HOME,
+        argv: process.argv.slice(2),
         baseUrl: providerProfile?.baseURL,
         reasoningEffort: providerProfile?.reasoning,
         reasoningEfforts: providerProfile?.models?.[0]?.reasoningEfforts,

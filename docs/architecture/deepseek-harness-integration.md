@@ -1,16 +1,15 @@
 # DeepSeek Harness integration (WIP)
 
 Status: experimental Draft integration, validated against fork commit
-`f4fd5f005636cdcbf9d95f70f04d05afa8c0db54` on 2026-08-23. That commit
-merges official `dsh-v0.1.1-rc.2` (`b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`)
-into the HomeRail integration branch.
+`f0fd50751713ab7e1b7cb1f13310a70c106d81b1` on 2026-09-05. That commit is
+based on official `dsh-v0.1.2-rc.1` (`a66e4702047846cdaa10c66c9d3df3951f5ea70d`).
 
 HomeRail uses the owner-maintained
 [`xiaotianfotos/deepseek-harness`](https://github.com/xiaotianfotos/deepseek-harness)
-fork. The integration branch is `agent/homerail-sdk-control` and tracks the
-official repository through explicit merge commits. The fork carries the HomeRail
-composition, SDK steering and cancellation requests, and an initialization
-contract compatible with the official runtime-readiness barrier, which prevents
+fork. The integration branch is `codex/homerail-sdk-v0.1.2`. The fork carries
+SDK steering and cancellation requests plus a Node-only deploy mode; the
+HomeRail composition is maintained in this repository as a patch over the
+official `sdk-minimal` profile. The upstream runtime-readiness barrier prevents
 a first prompt from racing asynchronous MCP discovery.
 
 ## Runtime boundary
@@ -67,15 +66,16 @@ registry entries and code paths.
 
 The standard Worker image builds the pinned fork in an isolated Docker stage,
 materializes its symlink-free Node deploy closure, and copies only that closure
-into `/opt/deepseek-harness-runtime`. It also sets the runtime command,
-arguments, and HomeRail Cordis config in the image, so ordinary DAG containers
+into `/opt/deepseek-harness-runtime`. It also sets the runtime module and
+HomeRail Cordis patch in the image. The SDK launches that module with
+`--profile sdk-minimal --patch <HomeRail patch>`, so ordinary DAG containers
 need no DSH-specific host setup. Changing the fork revision is an intentional
 Dockerfile change and therefore changes the Worker source fingerprint.
 
 For host-shell Manager Agent development, build the same pinned fork checkout:
 
 ```bash
-git clone --depth 1 --branch agent/homerail-sdk-control \
+git clone --depth 1 --branch codex/homerail-sdk-v0.1.2 \
   https://github.com/xiaotianfotos/deepseek-harness.git
 cd deepseek-harness
 corepack pnpm install --frozen-lockfile
@@ -83,12 +83,11 @@ corepack pnpm run build:lib:host
 corepack pnpm exec tsx scripts/build-exe-for-python-sdk.ts --skip-build --node-only
 ```
 
-Point the Worker at the fork's generic runtime and HomeRail composition. Values
-must be absolute paths; runtime arguments are a JSON string array.
+Point the Worker at the fork's `dsh` runtime module and HomeRail patch. Values
+must be absolute paths.
 
 ```bash
-export HOMERAIL_DSH_RUNTIME_COMMAND=/usr/bin/node
-export HOMERAIL_DSH_RUNTIME_ARGS='["/absolute/path/deepseek-harness/python/sdk-runtime/src/deepseek_harness_runtime/runtime/node/node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/packaged-bin.js"]'
+export HOMERAIL_DSH_RUNTIME_BIN=/absolute/path/deepseek-harness/python/sdk-runtime/src/deepseek_harness_runtime/runtime/node/node_modules/@deepseek-ai/dsh/lib/bin.js
 export HOMERAIL_DSH_CORDIS_CONFIG=/absolute/path/homerail/homerail_worker/dsh/homerail.cordis.yml
 ```
 
@@ -96,8 +95,8 @@ Select `deepseek_harness` (aliases `dsh`, `deepseek`, and `deepseek-harness`
 are accepted) and an active HomeRail model setting whose protocol is
 `openai_compatible`. Both Manager Agent host-shell placement and DAG container
 placement resolve through the same runtime contract. A missing fork runtime,
-invalid runtime-argument JSON, or non-OpenAI-compatible endpoint fails instead
-of falling back to another harness.
+invalid patch, or non-OpenAI-compatible endpoint fails instead of falling back
+to another harness.
 
 ## Control protocol
 
