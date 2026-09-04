@@ -55,6 +55,7 @@ export interface DagToolsOptions {
     Extract<DagCredentialProjection, { mode: "manager_broker" }>
   >;
   credentialBrokerCaller?: CredentialBrokerCaller;
+  abortSignal?: AbortSignal;
 }
 
 /** Mutable state shared across all DAG tools for a single prompt run. */
@@ -188,6 +189,7 @@ export function createDagTools(state: DagToolsState, options: DagToolsOptions = 
       state,
       options.credentialBrokerBindings,
       options.credentialBrokerCaller,
+      options.abortSignal,
     ));
   }
   if (options.surfacePatchEmitter) {

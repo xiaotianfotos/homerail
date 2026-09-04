@@ -7,14 +7,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseWorkflowSource } from "../src/orchestration/workflow-spec-v1.js";
 import type { DAGDispatcher, DispatchEnvelope } from "../src/orchestration/dag-dispatcher.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
-import { closeDb } from "../src/persistence/db.js";
+import { closeDb, getDb } from "../src/persistence/db.js";
 import { createCredential } from "../src/persistence/credentials.js";
+import { getDagActorByNode } from "../src/persistence/dag-actors.js";
+import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
 import {
   resolveDagRunInputBindings,
   stageDagRunInputArtifact,
 } from "../src/persistence/run-input-artifacts.js";
 import {
   _clearActiveRuns,
+  cancelActiveRun,
   createActiveRun,
   getActiveRun,
   getCurrentNodeSession,
@@ -103,6 +106,11 @@ describe("bounded GitHub Draft PR credential broker", () => {
   let workflowDispatches: Array<Record<string, unknown>>;
   let jobLogs: Map<number, string>;
   let jobLogRequests: number[];
+  let brokerRequestSequence: number;
+  let refUpdateStarted: (() => void) | undefined;
+  let refUpdateGate: Promise<void> | undefined;
+  let refUpdateFailureStatus: number | undefined;
+  let refUpdateTransportError: boolean;
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   class RecordingDispatcher implements DAGDispatcher {
@@ -210,6 +218,11 @@ describe("bounded GitHub Draft PR credential broker", () => {
     workflowDispatches = [];
     jobLogs = new Map();
     jobLogRequests = [];
+    brokerRequestSequence = 0;
+    refUpdateStarted = undefined;
+    refUpdateGate = undefined;
+    refUpdateFailureStatus = undefined;
+    refUpdateTransportError = false;
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input));
       const method = String(init?.method ?? "GET").toUpperCase();
@@ -287,6 +300,12 @@ describe("bounded GitHub Draft PR credential broker", () => {
       if (method === "POST" && url.pathname === "/repos/acme/widget/git/trees") return json({ sha: createdTreeSha }, 201);
       if (method === "POST" && url.pathname === "/repos/acme/widget/git/commits") return json({ sha: NEXT_HEAD }, 201);
       if (method === "PATCH" && url.pathname === "/repos/acme/widget/git/refs/heads/autofix/issue-172") {
+        refUpdateStarted?.();
+        if (refUpdateGate) await refUpdateGate;
+        if (refUpdateTransportError) throw new TypeError("GitHub connection reset");
+        if (refUpdateFailureStatus !== undefined) {
+          return json({ message: "ref update failed" }, refUpdateFailureStatus);
+        }
         remoteHead = NEXT_HEAD;
         return json({ object: { sha: NEXT_HEAD } });
       }
@@ -326,11 +345,38 @@ describe("bounded GitHub Draft PR credential broker", () => {
     runId = "github-broker-run",
     sessionId = `session-${nodeId}`,
   ) {
+    const run = getActiveRun(runId);
+    if (!run) throw new Error(`unknown broker test run ${runId}`);
+    if (run.dagRun.nodeStates.get(nodeId) !== "RUNNING") {
+      // These provider-contract tests call individual nodes directly instead
+      // of dispatching the whole graph. Give each call a real active Actor
+      // turn so the production transport fence remains fully enforced.
+      run.dagRun.nodeStates.set(nodeId, "READY");
+      if (!markNodeDispatched(runId, nodeId)) {
+        throw new Error(`could not start broker test node ${runId}/${nodeId}`);
+      }
+    }
+    const actor = getDagActorByNode(runId, nodeId);
+    const session = getCurrentNodeSession(runId, nodeId);
+    if (!actor || !session) throw new Error(`missing broker test Actor fence ${runId}/${nodeId}`);
+    const lease = acquireDagActorLease({
+      run_id: runId,
+      actor_id: actor.actor_id,
+      target_type: "worker",
+      target_id: "worker-one",
+    });
+    const requestId = `${nodeId}-${action}-${++brokerRequestSequence}`;
     return executeCredentialBrokerCall("worker-one", {
-      request_id: `${nodeId}-${action}`,
+      request_id: requestId,
+      idempotency_key: requestId,
+      transport_kind: "worker_actor",
       run_id: runId,
       node_id: nodeId,
-      session_id: sessionId,
+      session_id: session.sessionId,
+      round_id: run.currentRound.round_id,
+      actor_id: actor.actor_id,
+      generation: actor.generation,
+      lease_generation: lease.lease_generation,
       credential_ref: "github-autofix",
       broker: "github_pr",
       action,
@@ -1180,18 +1226,114 @@ spec:
     expect(fetchSpy.mock.calls.find(([, init]) => init?.method === "PATCH")?.[1]?.body)
       .toContain('"force":false');
 
+    handoffActiveRun("github-broker-run", "aggregate", "done", {});
     _clearActiveRuns();
     closeDb();
     expect(recoverAllActiveRuns().recovered).toContain("github-broker-run");
     const recovered = await call("reviewer", "pull_request_snapshot");
     expect(recovered).toMatchObject({ ok: true, result: { head_sha: NEXT_HEAD } });
 
+    createBoundRun("github-stale-after-recovery", ["src"], NEXT_HEAD);
     const stale = await call("aggregate", "commit_files", {
       expected_head_sha: INITIAL_HEAD,
       message: "stale write",
       files: [{ path: "src/fix.ts", content_base64: Buffer.from("stale\n").toString("base64") }],
-    });
+    }, "github-stale-after-recovery");
     expect(stale).toMatchObject({ ok: false, error: expect.stringContaining("expected head is stale") });
+  });
+
+  it("releases the semantic target after a ref update returns an error and read-back confirms absence", async () => {
+    refUpdateFailureStatus = 500;
+    const failed = await call("aggregate", "commit_files", {
+      expected_head_sha: INITIAL_HEAD,
+      message: "fix: first ref update attempt",
+      files: [{ path: "src/fix.ts", content_base64: Buffer.from("first\n").toString("base64") }],
+    });
+
+    expect(failed).toMatchObject({
+      ok: false,
+      outcome: "reconciled",
+      reconciliation: "absent",
+      error: expect.stringContaining("GitHub API request failed (500)"),
+    });
+    expect(remoteHead).toBe(INITIAL_HEAD);
+    expect(getDb().prepare(`
+      SELECT state, resolution, provider_state_json
+      FROM credential_broker_mutation_attempts
+      WHERE request_id = ?
+    `).get(failed.request_id)).toMatchObject({
+      state: "reconciled",
+      resolution: "absent",
+      provider_state_json: expect.stringContaining('"phase":"ref_update_failed"'),
+    });
+
+    refUpdateFailureStatus = undefined;
+    const retried = await call("aggregate", "commit_files", {
+      expected_head_sha: INITIAL_HEAD,
+      message: "fix: retry ref update",
+      files: [{ path: "src/fix.ts", content_base64: Buffer.from("retry\n").toString("base64") }],
+    });
+    expect(retried).toMatchObject({ ok: true, outcome: "completed" });
+    expect(remoteHead).toBe(NEXT_HEAD);
+  });
+
+  it("keeps a response-less ref update transport failure indeterminate", async () => {
+    refUpdateTransportError = true;
+    const uncertain = await call("aggregate", "commit_files", {
+      expected_head_sha: INITIAL_HEAD,
+      message: "fix: uncertain ref update",
+      files: [{ path: "src/fix.ts", content_base64: Buffer.from("uncertain\n").toString("base64") }],
+    });
+
+    expect(uncertain).toMatchObject({
+      ok: false,
+      outcome: "indeterminate",
+      error: expect.stringContaining("connection reset"),
+    });
+    expect(remoteHead).toBe(INITIAL_HEAD);
+    expect(getDb().prepare(`
+      SELECT state, resolution, provider_state_json
+      FROM credential_broker_mutation_attempts
+      WHERE request_id = ?
+    `).get(uncertain.request_id)).toMatchObject({
+      state: "indeterminate",
+      resolution: null,
+      provider_state_json: expect.stringContaining('"phase":"ref_update_dispatched"'),
+    });
+  });
+
+  it("reconciles a ref update that completes after the Actor run is cancelled", async () => {
+    let releaseRefUpdate!: () => void;
+    const enteredRefUpdate = new Promise<void>((resolve) => { refUpdateStarted = resolve; });
+    refUpdateGate = new Promise<void>((resolve) => { releaseRefUpdate = resolve; });
+    const pending = call("aggregate", "commit_files", {
+      expected_head_sha: INITIAL_HEAD,
+      message: "fix: cancellation race",
+      files: [{
+        path: "src/fix.ts",
+        content_base64: Buffer.from("export const raced = true;\n").toString("base64"),
+      }],
+    });
+
+    await enteredRefUpdate;
+    cancelActiveRun("github-broker-run");
+    releaseRefUpdate();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      outcome: "reconciled",
+      reconciliation: "completed",
+    });
+    expect(remoteHead).toBe(NEXT_HEAD);
+    expect(getDb().prepare(`
+      SELECT state, resolution, result_json
+      FROM credential_broker_mutation_attempts
+      WHERE run_id = ? AND broker = 'github_pr' AND action = 'commit_files'
+    `).get("github-broker-run")).toMatchObject({
+      state: "reconciled",
+      resolution: "completed",
+      result_json: expect.stringContaining(NEXT_HEAD),
+    });
   });
 
   it("rejects a no-op tree instead of advancing the PR with an empty commit", async () => {
