@@ -358,6 +358,7 @@ export interface ResumeWaitingRunResult {
 
 export interface DAGRunLimits {
   max_nodes: number;
+  max_parallelism: number;
   max_dispatches: number;
   max_handoffs: number;
   max_corrections_per_node: number;
@@ -400,6 +401,7 @@ const store = new Map<string, ActiveRun>();
 
 const DEFAULT_LIMITS: DAGRunLimits = {
   max_nodes: 1000,
+  max_parallelism: 32,
   max_dispatches: 30,
   max_handoffs: 50,
   max_corrections_per_node: 2,
@@ -432,6 +434,7 @@ function _resolveLimits(raw: unknown): DAGRunLimits {
     : undefined;
   return {
     max_nodes: _limitValue(value, "max_nodes", DEFAULT_LIMITS.max_nodes),
+    max_parallelism: Math.max(1, _limitValue(value, "max_parallelism", DEFAULT_LIMITS.max_parallelism)),
     max_dispatches: _limitValue(value, "max_dispatches", DEFAULT_LIMITS.max_dispatches),
     max_handoffs: _limitValue(value, "max_handoffs", DEFAULT_LIMITS.max_handoffs),
     max_corrections_per_node: _limitValue(value, "max_corrections_per_node", DEFAULT_LIMITS.max_corrections_per_node),
@@ -1329,7 +1332,7 @@ export function restoreActiveRun(
     createdAt: metadata.createdAt,
     status: metadata.status,
     currentRound,
-    limits: metadata.limits ?? { ...DEFAULT_LIMITS },
+    limits: _resolveLimits(metadata.limits),
     counters: _restoreCounters(metadata.counters),
     nodeIndex: _buildNodeIndex(nodes),
     nodeSessions: new Map(),
@@ -6370,6 +6373,34 @@ function _markRoundCommandsDelivered(run: ActiveRun, nodeId: string): void {
   for (const command of commands) markDagActorCommandDelivered(command.command_id);
 }
 
+/**
+ * Return the logical Actor dispatches that currently occupy workflow-level
+ * parallelism. Gateway execution has its own lifecycle and fan-out has an
+ * independent node-local bound, so neither is folded into this Actor limit.
+ * A READY node being provisioned reserves capacity before its asynchronous
+ * Worker send transitions it to RUNNING.
+ */
+function _activeDispatchNodeIds(run: ActiveRun): Set<string> {
+  const active = new Set<string>();
+  for (const node of run.dagRun.graph.nodes) {
+    if (_isGatewayNode(node)) continue;
+    const state = run.dagRun.nodeStates.get(node.node_id);
+    if (state === "RUNNING") {
+      active.add(node.node_id);
+      continue;
+    }
+    if (state === "READY" && findDispatchTarget(run.runId, node.node_id)?.state === "provisioning") {
+      active.add(node.node_id);
+    }
+  }
+  return active;
+}
+
+function _hasDispatchCapacity(run: ActiveRun, nodeId: string): boolean {
+  const active = _activeDispatchNodeIds(run);
+  return active.has(nodeId) || active.size < run.limits.max_parallelism;
+}
+
 export function dispatchReadyNodes(
   runId: string,
   dispatcher: DAGDispatcher,
@@ -6404,6 +6435,8 @@ export function dispatchReadyNodes(
       if (run.status !== "active") break;
       continue;
     }
+
+    if (!_hasDispatchCapacity(run, nodeId)) continue;
 
     _prepareNodeSessionForDispatch(run, node);
 
@@ -6499,6 +6532,7 @@ export function markNodeDispatched(
   if (getNodeState(run.dagRun, nodeId) !== "READY") return false;
   const node = run.dagRun.graph.nodes.find((n) => n.node_id === nodeId);
   if (!node) return false;
+  if (_isGatewayNode(node) || !_hasDispatchCapacity(run, nodeId)) return false;
 
   const before = _snapshotNodeStates(run);
   _prepareNodeSessionForDispatch(run, node);
@@ -6518,6 +6552,8 @@ export function recordProvisionedNodeDispatchAttempt(
 ): boolean {
   const run = store.get(runId);
   if (!run || run.status !== "active" || getNodeState(run.dagRun, nodeId) !== "READY") return false;
+  const node = run.dagRun.graph.nodes.find((candidate) => candidate.node_id === nodeId);
+  if (!node || _isGatewayNode(node) || !_hasDispatchCapacity(run, nodeId)) return false;
   if (run.counters.dispatches >= run.limits.max_dispatches) {
     abortActiveRun(runId, `max_dispatches (${run.limits.max_dispatches}) exceeded`, nodeId);
     return false;

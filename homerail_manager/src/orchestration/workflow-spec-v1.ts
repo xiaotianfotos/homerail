@@ -1750,6 +1750,7 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
       workspace: canonical.workspace,
       limits: {
         max_nodes: canonical.policies.max_nodes,
+        max_parallelism: canonical.policies.max_parallelism,
         max_dispatches: canonical.policies.max_dispatches,
         max_handoffs: canonical.policies.max_handoffs,
         max_corrections_per_node: canonical.policies.max_corrections_per_node,
