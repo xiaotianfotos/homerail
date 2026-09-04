@@ -995,6 +995,16 @@ process.exit(2);
           visibleText: "The run started without a finish marker.",
         },
         {
+          id: "empty-finish-text",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-empty-finish" }),
+          finishFails: false,
+          markerOrder: ["create", "finish"],
+          finishText: "",
+          visibleText: "The run started from the trailing summary.",
+        },
+        {
           id: "synthesized-secret-redaction",
           model: "k3",
           createFails: false,
@@ -1264,6 +1274,12 @@ process.exit(2);
                 message: "prompt_mode_finish_synthesized_after_create_and_run",
                 data: { run_id: "run-missing-finish" },
               }));
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "empty-finish-text") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "The run started from the trailing summary.\nRun ID: run-empty-finish.",
+              });
               expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
             } else if (testCase.id === "synthesized-secret-redaction") {
               expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);

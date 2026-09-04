@@ -1446,7 +1446,10 @@ export class KimiCodeAdapter implements AgentClient {
       ).trim();
       let fallbackVisibleText = redactedVisibleText;
       if (reconcileK3ManagerFinish && authoritativeRunIds.length > 0 && !authoritativeFinishAttempted) {
-        const finishInput = authoritativeFinishMarkerInput ?? { text: visibleText };
+        const finishInput = {
+          ...(authoritativeFinishMarkerInput ?? {}),
+          text: deferredFinishText || redactedVisibleText,
+        };
         if (!authoritativeFinishMarkerInput) {
           yield {
             type: "debug",
