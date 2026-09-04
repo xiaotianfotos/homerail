@@ -995,6 +995,26 @@ process.exit(2);
           visibleText: "The run started without a finish marker.",
         },
         {
+          id: "finish-before-create",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ data: { runId: "run-out-of-order" } }),
+          finishFails: false,
+          markerOrder: ["finish", "create"],
+          finishText: "任务已经启动，运行 ID：placeholder-run。",
+          visibleText: "Out-of-order markers were reconciled.",
+        },
+        {
+          id: "run-id-prefix",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-1" }),
+          finishFails: false,
+          markerOrder: ["create", "finish"],
+          finishText: "Tracking provisional token run-10.",
+          visibleText: "Authoritative run ID was appended.",
+        },
+        {
           id: "failed-finish",
           model: "k3",
           createFails: false,
@@ -1158,9 +1178,31 @@ process.exit(2);
               }));
               expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
             } else if (testCase.id === "missing-finish") {
-              expect(calls.map((call) => call.name)).toEqual(["create_and_run"]);
-              expect(events).not.toContainEqual(expect.objectContaining({ type: "tool_use", name: "finish" }));
-              expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "The run started without a finish marker.\nRun ID: run-missing-finish.",
+              });
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_finish_synthesized_after_create_and_run",
+                data: { run_id: "run-missing-finish" },
+              }));
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "finish-before-create") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "任务已经启动，运行 ID：run-out-of-order。",
+              });
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_finish_reconciled_with_authoritative_run_id",
+                data: { run_id: "run-out-of-order" },
+              }));
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "run-id-prefix") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "Tracking provisional token run-10.\nRun ID: run-1.",
+              });
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
             } else if (testCase.id === "failed-finish") {
               expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
               expect(calls[1].input).toEqual({
