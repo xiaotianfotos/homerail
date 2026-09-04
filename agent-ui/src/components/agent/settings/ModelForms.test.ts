@@ -219,7 +219,7 @@ describe('model purpose forms', () => {
     let submitted: ModelFormPayload | undefined
     const providerWithAnotherModel: Provider = {
       ...provider,
-      endpoints: provider.endpoints.map(endpoint => ({
+      endpoints: provider.endpoints!.map(endpoint => ({
         ...endpoint,
         models: [
           ...endpoint.models,
@@ -301,7 +301,7 @@ describe('model purpose forms', () => {
         id: 'kimi_cn',
         name: 'Kimi / Moonshot CN',
         endpoints: [{
-          ...provider.endpoints[0],
+          ...provider.endpoints![0],
           id: 'kimi_coding_plan',
           provider_id: 'kimi_cn',
           name: 'Kimi Coding Plan',
