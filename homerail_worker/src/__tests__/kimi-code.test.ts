@@ -886,7 +886,7 @@ process.exit(2);
         expect(prompt).toContain("Attempt the matching entry instead of speculating about availability");
         expect(prompt).toContain("name only the visible action that did not complete and offer to retry");
         expect(prompt).toContain("always add one concise user-facing summary in the user's language");
-        expect(prompt).toContain("exactly one finish marker whose text is non-empty and user-facing");
+        expect(prompt).toContain("exactly one finish marker after all create markers");
         expect(prompt).toContain("Do not put any guessed, placeholder, or fabricated run ID");
         expect(prompt).toContain('"name":"upsert_generated_view"');
         expect(prompt).toContain('"component":"Text"');
@@ -982,7 +982,7 @@ process.exit(2);
           finishFails: false,
           markerOrder: ["create", "finish"],
           finishText: "Original finish summary.",
-          visibleText: "Creation failed; retry is available.",
+          visibleText: "",
         },
         {
           id: "missing-finish",
@@ -993,6 +993,26 @@ process.exit(2);
           markerOrder: ["create"],
           finishText: "Original finish summary.",
           visibleText: "The run started without a finish marker.",
+        },
+        {
+          id: "synthesized-secret-redaction",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-redacted" }),
+          finishFails: false,
+          markerOrder: ["create"],
+          finishText: "unused",
+          visibleText: "Started with test-secret-key.",
+        },
+        {
+          id: "finish-only",
+          model: "k3",
+          createFails: false,
+          createContent: "unused",
+          finishFails: false,
+          markerOrder: ["finish"],
+          finishText: "No DAG was needed; the request is clearly blocked.",
+          visibleText: "",
         },
         {
           id: "finish-before-create",
@@ -1015,6 +1035,46 @@ process.exit(2);
           visibleText: "Authoritative run ID was appended.",
         },
         {
+          id: "task-id-label",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-task-label" }),
+          finishFails: false,
+          markerOrder: ["create", "finish"],
+          finishText: "Task ID: task-42 is ready.",
+          visibleText: "Task label was preserved.",
+        },
+        {
+          id: "english-run-id-is",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-english-is" }),
+          finishFails: false,
+          markerOrder: ["create", "finish"],
+          finishText: "The Run ID is placeholder-run.",
+          visibleText: "English label was reconciled.",
+        },
+        {
+          id: "historical-run-id",
+          model: "k3",
+          createFails: false,
+          createContent: JSON.stringify({ run_id: "run-current" }),
+          finishFails: false,
+          markerOrder: ["create", "finish"],
+          finishText: "Previous Run ID: 0123456789abcdef01234567 completed.",
+          visibleText: "Historical identity was preserved.",
+        },
+        {
+          id: "distinct-creates",
+          model: "k3",
+          createFails: false,
+          createContent: "unused",
+          finishFails: false,
+          markerOrder: ["create", "finish", "create-distinct", "finish"],
+          finishText: "Started both requested runs.",
+          visibleText: "Both runs were started.",
+        },
+        {
           id: "failed-finish",
           model: "k3",
           createFails: false,
@@ -1022,7 +1082,7 @@ process.exit(2);
           finishFails: true,
           markerOrder: ["create", "finish"],
           finishText: "Original finish summary.",
-          visibleText: "Finishing failed; retry is available.",
+          visibleText: "",
         },
         {
           id: "missing-run-id",
@@ -1032,7 +1092,7 @@ process.exit(2);
           finishFails: false,
           markerOrder: ["create", "finish"],
           finishText: "Original finish summary.",
-          visibleText: "The run response did not contain an ID.",
+          visibleText: "",
         },
         {
           id: "legacy-non-k3",
@@ -1068,6 +1128,10 @@ if (process.argv.includes("--prompt")) {
     name: "create_and_run",
     input: { yamlPath: "assets/orchestrations/public-two-node.yaml.template" }
   });
+  const distinctCreateMarker = JSON.stringify({
+    name: "create_and_run",
+    input: { yamlPath: "assets/orchestrations/public-second-two-node.yaml.template" }
+  });
   const finishMarker = JSON.stringify({
     name: "finish",
     input: { text: process.env.KIMI_TEST_FINISH_TEXT }
@@ -1076,7 +1140,11 @@ if (process.argv.includes("--prompt")) {
     .split(",")
     .filter(Boolean);
   const markers = markerOrder.map((marker) => {
-    const payload = marker === "create" ? createMarker : finishMarker;
+    const payload = marker === "create"
+      ? createMarker
+      : marker === "create-distinct"
+        ? distinctCreateMarker
+        : finishMarker;
     return "<homerail_tool_call>" + payload + "</homerail_tool_call>";
   }).join("");
   console.log(JSON.stringify({
@@ -1106,9 +1174,16 @@ process.exit(2);
               },
               handler: async (input) => {
                 calls.push({ name: "create_and_run", input });
+                const createContent = testCase.id === "distinct-creates"
+                  ? JSON.stringify({
+                      run_id: input.yamlPath === "assets/orchestrations/public-second-two-node.yaml.template"
+                        ? "run-second"
+                        : "run-first",
+                    })
+                  : testCase.createContent;
                 return testCase.createFails
-                  ? { content: [{ type: "text" as const, text: testCase.createContent }], is_error: true }
-                  : { content: [{ type: "text" as const, text: testCase.createContent }] };
+                  ? { content: [{ type: "text" as const, text: createContent }], is_error: true }
+                  : { content: [{ type: "text" as const, text: createContent }] };
               },
             };
             const finishTool: DagToolDefinition = {
@@ -1176,7 +1251,10 @@ process.exit(2);
               expect(events).toContainEqual(expect.objectContaining({
                 message: "prompt_mode_finish_skipped_without_authoritative_run_id",
               }));
-              expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
+              expect(events).toContainEqual({
+                type: "text",
+                text: "The DAG start did not return a verifiable run ID; I can retry.",
+              });
             } else if (testCase.id === "missing-finish") {
               expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
               expect(calls[1].input).toEqual({
@@ -1185,6 +1263,24 @@ process.exit(2);
               expect(events).toContainEqual(expect.objectContaining({
                 message: "prompt_mode_finish_synthesized_after_create_and_run",
                 data: { run_id: "run-missing-finish" },
+              }));
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "synthesized-secret-redaction") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "Started with ***.\nRun ID: run-redacted.",
+              });
+              expect(JSON.stringify(events)).not.toContain("test-secret-key");
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "finish-only") {
+              expect(calls.map((call) => call.name)).toEqual(["finish"]);
+              expect(calls[0].input).toEqual({ text: testCase.finishText });
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_finish_executed_without_create_and_run",
+                data: { success: true },
+              }));
+              expect(events).not.toContainEqual(expect.objectContaining({
+                message: "prompt_mode_tool_marker_missing",
               }));
               expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
             } else if (testCase.id === "finish-before-create") {
@@ -1203,6 +1299,41 @@ process.exit(2);
                 text: "Tracking provisional token run-10.\nRun ID: run-1.",
               });
               expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "task-id-label") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "Task ID: task-42 is ready.\nRun ID: run-task-label.",
+              });
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "english-run-id-is") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({ text: "The Run ID is run-english-is." });
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "historical-run-id") {
+              expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
+              expect(calls[1].input).toEqual({
+                text: "Previous Run ID: 0123456789abcdef01234567 completed.\nRun ID: run-current.",
+              });
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
+            } else if (testCase.id === "distinct-creates") {
+              expect(calls.map((call) => call.name)).toEqual([
+                "create_and_run",
+                "create_and_run",
+                "finish",
+              ]);
+              expect(calls[0].input).toEqual({
+                yamlPath: "assets/orchestrations/public-two-node.yaml.template",
+              });
+              expect(calls[1].input).toEqual({
+                yamlPath: "assets/orchestrations/public-second-two-node.yaml.template",
+              });
+              expect(calls[2].input).toEqual({
+                text: "Started both requested runs.\nRun IDs: run-first, run-second.",
+              });
+              expect(events).toContainEqual(expect.objectContaining({
+                message: "prompt_mode_duplicate_finish_ignored",
+              }));
+              expect(events).not.toContainEqual(expect.objectContaining({ type: "text" }));
             } else if (testCase.id === "failed-finish") {
               expect(calls.map((call) => call.name)).toEqual(["create_and_run", "finish"]);
               expect(calls[1].input).toEqual({
@@ -1213,13 +1344,19 @@ process.exit(2);
                 content: "finish rejected",
                 is_error: true,
               }));
-              expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
+              expect(events).toContainEqual({
+                type: "text",
+                text: "Original finish summary.\nRun ID: run-failed-finish.",
+              });
             } else if (testCase.id === "missing-run-id") {
               expect(calls.map((call) => call.name)).toEqual(["create_and_run"]);
               expect(events).toContainEqual(expect.objectContaining({
                 message: "prompt_mode_authoritative_run_id_missing",
               }));
-              expect(events).toContainEqual({ type: "text", text: testCase.visibleText });
+              expect(events).toContainEqual({
+                type: "text",
+                text: "The DAG start did not return a verifiable run ID; I can retry.",
+              });
             } else {
               expect(calls.map((call) => call.name)).toEqual(["create_and_run"]);
               expect(events).toContainEqual(expect.objectContaining({
