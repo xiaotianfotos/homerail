@@ -311,6 +311,13 @@ async function githubToken(context: CredentialBrokerContext): Promise<string> {
   return body.token;
 }
 
+class GithubApiResponseError extends Error {
+  constructor(readonly status: number) {
+    super(`GitHub API request failed (${status})`);
+    this.name = "GithubApiResponseError";
+  }
+}
+
 async function githubApi<T>(token: string, pathname: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`https://api.github.com${pathname}`, {
     ...init,
@@ -326,7 +333,7 @@ async function githubApi<T>(token: string, pathname: string, init: RequestInit =
       ? AbortSignal.any([init.signal, AbortSignal.timeout(20_000)])
       : AbortSignal.timeout(20_000),
   });
-  if (!response.ok) throw new Error(`GitHub API request failed (${response.status})`);
+  if (!response.ok) throw new GithubApiResponseError(response.status);
   if (response.status === 204) return undefined as T;
   return await response.json() as T;
 }
@@ -1617,7 +1624,18 @@ async function commitFiles(
     const pull = await githubApi<PullResponse>(token, `${repository}/pulls/${binding.pull_number}`);
     const observedHead = pullHead(pull, binding);
     if (observedHead !== nextHead) {
-      if (observedHead === state.current_head_sha) setActiveRunBrokerState(runId, "github_pr", state);
+      if (observedHead === state.current_head_sha) {
+        // An HTTP error response proves the PATCH request has finished. Once a
+        // subsequent read still observes the previous head, the atomic ref
+        // update is known not to have landed and the semantic target is safe
+        // to release. A transport error has no such acknowledgement: the
+        // server may still finish an accepted request, so retain the
+        // ref_update_dispatched checkpoint and fail closed as indeterminate.
+        if (error instanceof GithubApiResponseError) {
+          lifecycle.checkpoint({ phase: "ref_update_failed" });
+        }
+        setActiveRunBrokerState(runId, "github_pr", state);
+      }
       throw error;
     }
   }
@@ -1725,6 +1743,9 @@ export async function githubReconcileMutation(
       resolution: "indeterminate",
       error: "GitHub ref update was dispatched but the bound head has not confirmed it",
     };
+  }
+  if (phase === "ref_update_failed") {
+    return { resolution: "absent", error: "GitHub ref update failed and did not change the bound head" };
   }
   return { resolution: "absent", error: "GitHub ref update was not dispatched" };
 }

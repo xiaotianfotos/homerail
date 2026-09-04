@@ -109,6 +109,8 @@ describe("bounded GitHub Draft PR credential broker", () => {
   let brokerRequestSequence: number;
   let refUpdateStarted: (() => void) | undefined;
   let refUpdateGate: Promise<void> | undefined;
+  let refUpdateFailureStatus: number | undefined;
+  let refUpdateTransportError: boolean;
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   class RecordingDispatcher implements DAGDispatcher {
@@ -219,6 +221,8 @@ describe("bounded GitHub Draft PR credential broker", () => {
     brokerRequestSequence = 0;
     refUpdateStarted = undefined;
     refUpdateGate = undefined;
+    refUpdateFailureStatus = undefined;
+    refUpdateTransportError = false;
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input));
       const method = String(init?.method ?? "GET").toUpperCase();
@@ -298,6 +302,10 @@ describe("bounded GitHub Draft PR credential broker", () => {
       if (method === "PATCH" && url.pathname === "/repos/acme/widget/git/refs/heads/autofix/issue-172") {
         refUpdateStarted?.();
         if (refUpdateGate) await refUpdateGate;
+        if (refUpdateTransportError) throw new TypeError("GitHub connection reset");
+        if (refUpdateFailureStatus !== undefined) {
+          return json({ message: "ref update failed" }, refUpdateFailureStatus);
+        }
         remoteHead = NEXT_HEAD;
         return json({ object: { sha: NEXT_HEAD } });
       }
@@ -1232,6 +1240,66 @@ spec:
       files: [{ path: "src/fix.ts", content_base64: Buffer.from("stale\n").toString("base64") }],
     }, "github-stale-after-recovery");
     expect(stale).toMatchObject({ ok: false, error: expect.stringContaining("expected head is stale") });
+  });
+
+  it("releases the semantic target after a ref update returns an error and read-back confirms absence", async () => {
+    refUpdateFailureStatus = 500;
+    const failed = await call("aggregate", "commit_files", {
+      expected_head_sha: INITIAL_HEAD,
+      message: "fix: first ref update attempt",
+      files: [{ path: "src/fix.ts", content_base64: Buffer.from("first\n").toString("base64") }],
+    });
+
+    expect(failed).toMatchObject({
+      ok: false,
+      outcome: "reconciled",
+      reconciliation: "absent",
+      error: expect.stringContaining("GitHub API request failed (500)"),
+    });
+    expect(remoteHead).toBe(INITIAL_HEAD);
+    expect(getDb().prepare(`
+      SELECT state, resolution, provider_state_json
+      FROM credential_broker_mutation_attempts
+      WHERE request_id = ?
+    `).get(failed.request_id)).toMatchObject({
+      state: "reconciled",
+      resolution: "absent",
+      provider_state_json: expect.stringContaining('"phase":"ref_update_failed"'),
+    });
+
+    refUpdateFailureStatus = undefined;
+    const retried = await call("aggregate", "commit_files", {
+      expected_head_sha: INITIAL_HEAD,
+      message: "fix: retry ref update",
+      files: [{ path: "src/fix.ts", content_base64: Buffer.from("retry\n").toString("base64") }],
+    });
+    expect(retried).toMatchObject({ ok: true, outcome: "completed" });
+    expect(remoteHead).toBe(NEXT_HEAD);
+  });
+
+  it("keeps a response-less ref update transport failure indeterminate", async () => {
+    refUpdateTransportError = true;
+    const uncertain = await call("aggregate", "commit_files", {
+      expected_head_sha: INITIAL_HEAD,
+      message: "fix: uncertain ref update",
+      files: [{ path: "src/fix.ts", content_base64: Buffer.from("uncertain\n").toString("base64") }],
+    });
+
+    expect(uncertain).toMatchObject({
+      ok: false,
+      outcome: "indeterminate",
+      error: expect.stringContaining("connection reset"),
+    });
+    expect(remoteHead).toBe(INITIAL_HEAD);
+    expect(getDb().prepare(`
+      SELECT state, resolution, provider_state_json
+      FROM credential_broker_mutation_attempts
+      WHERE request_id = ?
+    `).get(uncertain.request_id)).toMatchObject({
+      state: "indeterminate",
+      resolution: null,
+      provider_state_json: expect.stringContaining('"phase":"ref_update_dispatched"'),
+    });
   });
 
   it("reconciles a ref update that completes after the Actor run is cancelled", async () => {

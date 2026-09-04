@@ -1164,12 +1164,21 @@ function _applyRecoveredCredentialBrokerGateways(run: ActiveRun): string[] {
     });
     if (!attempt) continue;
     const config = node.gateway_config;
-    handoffActiveRun(
-      run.runId,
-      node.node_id,
-      config?.result_port || "result",
-      attempt.result,
-    );
+    try {
+      handoffActiveRun(
+        run.runId,
+        node.node_id,
+        config?.result_port || "result",
+        attempt.result,
+      );
+    } catch (error) {
+      failActiveRun(
+        run.runId,
+        node.node_id,
+        `broker gateway recovery handoff failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      break;
+    }
     recovered.push(node.node_id);
     emit("dag:gateway_executed", {
       runId: run.runId,
@@ -1403,6 +1412,10 @@ export function recoverAllActiveRuns(): ColdRecoverySummary {
       }
     } catch (err) {
       // A single corrupt run must not block recovery of the rest.
+      // restoreActiveRun installs the reconstructed run before it applies
+      // recovery projections. Never leave that partially restored value
+      // dispatchable when a later recovery step throws.
+      store.delete(runId);
       console.error(
         `[homerail_manager] cold recovery skipped run ${runId}: ${err instanceof Error ? err.message : String(err)}`,
       );
