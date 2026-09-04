@@ -525,24 +525,40 @@ async function executeDeclaredCredentialBrokerCall(
       semantic_target: semanticTarget,
       source_id: sourceId,
     });
-    if (prepared.status === "blocked") {
-      const blocker = await reconcilePersistedCredentialBrokerMutation(prepared.attempt);
-      if (blocker.state === "reconciled" && blocker.resolution !== "completed") {
+    while (prepared.status === "blocked") {
+      const blockedAttempt = prepared.attempt;
+      if (inFlightCalls.has(blockedAttempt.request_id)) {
+        return resultForFailure(
+          request,
+          "indeterminate",
+          `Credential broker semantic target is owned by unresolved request ${blockedAttempt.request_id}`,
+          requestDigest,
+        );
+      }
+      const blocker = await reconcilePersistedCredentialBrokerMutation(blockedAttempt);
+      const safeToRetry = blocker.state === "failed_pre_dispatch"
+        || blocker.state === "cancelled"
+        || (blocker.state === "reconciled" && blocker.resolution !== "completed");
+      if (safeToRetry) {
         prepared = prepareCredentialBrokerMutation({
           request,
           request_digest: requestDigest,
           semantic_target: semanticTarget,
           source_id: sourceId,
         });
-      } else {
-        return resultForFailure(
-          request,
-          blocker.state === "reconciled" ? "reconciled" : "indeterminate",
-          `Credential broker semantic target is owned by unresolved request ${blocker.request_id}`,
-          requestDigest,
-          blocker.state === "reconciled" ? blocker.resolution : undefined,
-        );
+        continue;
       }
+      const completed = blocker.state === "completed"
+        || (blocker.state === "reconciled" && blocker.resolution === "completed");
+      return resultForFailure(
+        request,
+        completed ? "reconciled" : "indeterminate",
+        completed
+          ? `Credential broker semantic target was already completed by request ${blocker.request_id}`
+          : `Credential broker semantic target is owned by unresolved request ${blocker.request_id}`,
+        requestDigest,
+        completed ? "completed" : undefined,
+      );
     }
     mutationAttempt = prepared.attempt;
     if (prepared.status === "duplicate") {
