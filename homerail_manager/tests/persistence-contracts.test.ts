@@ -184,7 +184,7 @@ describe("SQLite persistence contracts", () => {
   it("installs indexes for status filtering and updated-time run ordering", () => {
     const db = getDb();
     expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 36 });
+      .toEqual({ version: 37 });
     expect(db.prepare("PRAGMA index_info(idx_dag_runs_updated)").all())
       .toEqual([
         expect.objectContaining({ seqno: 0, name: "updated_at" }),
@@ -235,7 +235,7 @@ describe("SQLite persistence contracts", () => {
       },
     });
     expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 36 });
+      .toEqual({ version: 37 });
     expect(db.prepare("PRAGMA index_list(dag_review_evidence)").all()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "idx_dag_review_evidence_logical_fence_dedup", unique: 1 }),
@@ -319,7 +319,7 @@ describe("SQLite persistence contracts", () => {
     closeDb();
     const migrated = getDb();
     expect(migrated.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 36 });
+      .toEqual({ version: 37 });
     const indexes = migrated.prepare("PRAGMA index_list(dag_review_evidence)").all() as Array<{
       name: string;
       unique: number;

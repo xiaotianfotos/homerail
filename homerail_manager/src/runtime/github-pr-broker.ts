@@ -13,6 +13,8 @@ import {
   setActiveRunBrokerState,
 } from "./active-runs.js";
 import type { CredentialBrokerContext } from "./credential-broker.js";
+import type { CredentialBrokerMutationAttempt } from "../persistence/credential-broker-mutations.js";
+import type { CredentialBrokerReconciliation } from "./credential-broker.js";
 import { spawnManagerGitSync } from "./manager-git.js";
 import { runWorkspacePath } from "./workspace-retention.js";
 
@@ -299,12 +301,21 @@ async function githubToken(context: CredentialBrokerContext): Promise<string> {
       "user-agent": "HomeRail-Autofix-Broker",
       "x-github-api-version": "2022-11-28",
     },
-    signal: AbortSignal.timeout(15_000),
+    signal: context.signal
+      ? AbortSignal.any([context.signal, AbortSignal.timeout(15_000)])
+      : AbortSignal.timeout(15_000),
   });
   if (!response.ok) throw new Error(`GitHub App installation authentication failed (${response.status})`);
   const body = jsonRecord(await response.json(), "GitHub App token response");
   if (typeof body.token !== "string" || !body.token) throw new Error("GitHub App installation token is missing");
   return body.token;
+}
+
+class GithubApiResponseError extends Error {
+  constructor(readonly status: number) {
+    super(`GitHub API request failed (${status})`);
+    this.name = "GithubApiResponseError";
+  }
 }
 
 async function githubApi<T>(token: string, pathname: string, init: RequestInit = {}): Promise<T> {
@@ -318,9 +329,11 @@ async function githubApi<T>(token: string, pathname: string, init: RequestInit =
       "x-github-api-version": "2022-11-28",
       ...(init.headers ?? {}),
     },
-    signal: init.signal ?? AbortSignal.timeout(20_000),
+    signal: init.signal
+      ? AbortSignal.any([init.signal, AbortSignal.timeout(20_000)])
+      : AbortSignal.timeout(20_000),
   });
-  if (!response.ok) throw new Error(`GitHub API request failed (${response.status})`);
+  if (!response.ok) throw new GithubApiResponseError(response.status);
   if (response.status === 204) return undefined as T;
   return await response.json() as T;
 }
@@ -662,7 +675,11 @@ async function boundPull(context: CredentialBrokerContext): Promise<{
   if (!runId) throw new Error("github_pr broker requires a run transport identity");
   const binding = parsePullRequestContext(runId);
   const token = await githubToken(context);
-  const pull = await githubApi<PullResponse>(token, `${repoPath(binding)}/pulls/${binding.pull_number}`);
+  const pull = await githubApi<PullResponse>(
+    token,
+    `${repoPath(binding)}/pulls/${binding.pull_number}`,
+    { signal: context.signal },
+  );
   const state = reconcileState(runId, binding, pullHead(pull, binding));
   return { token, binding, pull, state };
 }
@@ -1538,15 +1555,23 @@ function workspaceCommitInput(
 }
 
 async function commitFiles(
+  context: CredentialBrokerContext,
   runId: string,
   token: string,
   binding: GithubPullRequestContext,
   state: GithubPullRequestState,
   request: { expectedHead: string; message: string; files: GithubCommitFile[] },
 ): Promise<{ previousHead: string; nextHead: string }> {
+  const lifecycle = context.mutation;
+  if (!lifecycle) throw new Error("GitHub mutation requires a durable broker lifecycle");
+  lifecycle.assert_authority();
   if (request.expectedHead !== state.current_head_sha) throw new Error("commit_files expected head is stale");
   const repository = repoPath(binding);
-  const commit = await githubApi<{ tree?: { sha?: string } }>(token, `${repository}/git/commits/${state.current_head_sha}`);
+  const commit = await githubApi<{ tree?: { sha?: string } }>(
+    token,
+    `${repository}/git/commits/${state.current_head_sha}`,
+    { signal: context.signal },
+  );
   const baseTree = String(commit.tree?.sha ?? "").toLowerCase();
   if (!SHA.test(baseTree)) throw new Error("GitHub base tree SHA is invalid");
   const treeEntries = [];
@@ -1558,6 +1583,7 @@ async function commitFiles(
     const blob = await githubApi<{ sha?: string }>(token, `${repository}/git/blobs`, {
       method: "POST",
       body: JSON.stringify({ content: file.bytes.toString("base64"), encoding: "base64" }),
+      signal: context.signal,
     });
     const blobSha = String(blob.sha ?? "").toLowerCase();
     if (!SHA.test(blobSha)) throw new Error("GitHub blob SHA is invalid");
@@ -1566,6 +1592,7 @@ async function commitFiles(
   const tree = await githubApi<{ sha?: string }>(token, `${repository}/git/trees`, {
     method: "POST",
     body: JSON.stringify({ base_tree: baseTree, tree: treeEntries }),
+    signal: context.signal,
   });
   const treeSha = String(tree.sha ?? "").toLowerCase();
   if (!SHA.test(treeSha)) throw new Error("GitHub tree SHA is invalid");
@@ -1573,24 +1600,46 @@ async function commitFiles(
   const nextCommit = await githubApi<{ sha?: string }>(token, `${repository}/git/commits`, {
     method: "POST",
     body: JSON.stringify({ message: request.message, tree: treeSha, parents: [state.current_head_sha] }),
+    signal: context.signal,
   });
   const nextHead = String(nextCommit.sha ?? "").toLowerCase();
   if (!SHA.test(nextHead)) throw new Error("GitHub commit SHA is invalid");
+  lifecycle.checkpoint({
+    phase: "commit_created",
+    previous_head_sha: state.current_head_sha,
+    next_head_sha: nextHead,
+  });
+  lifecycle.assert_authority();
   setActiveRunBrokerState(runId, "github_pr", { ...state, pending_head_sha: nextHead } satisfies GithubPullRequestState);
   const refPath = binding.head_ref.split("/").map(encodeURIComponent).join("/");
+  lifecycle.checkpoint({ phase: "ref_update_dispatched" });
   try {
     await githubApi(token, `${repository}/git/refs/heads/${refPath}`, {
       method: "PATCH",
       body: JSON.stringify({ sha: nextHead, force: false }),
+      signal: context.signal,
     });
   } catch (error) {
+    if (context.signal?.aborted) throw error;
     const pull = await githubApi<PullResponse>(token, `${repository}/pulls/${binding.pull_number}`);
     const observedHead = pullHead(pull, binding);
     if (observedHead !== nextHead) {
-      if (observedHead === state.current_head_sha) setActiveRunBrokerState(runId, "github_pr", state);
+      if (observedHead === state.current_head_sha) {
+        // An HTTP error response proves the PATCH request has finished. Once a
+        // subsequent read still observes the previous head, the atomic ref
+        // update is known not to have landed and the semantic target is safe
+        // to release. A transport error has no such acknowledgement: the
+        // server may still finish an accepted request, so retain the
+        // ref_update_dispatched checkpoint and fail closed as indeterminate.
+        if (error instanceof GithubApiResponseError) {
+          lifecycle.checkpoint({ phase: "ref_update_failed" });
+        }
+        setActiveRunBrokerState(runId, "github_pr", state);
+      }
       throw error;
     }
   }
+  lifecycle.checkpoint({ phase: "ref_updated" });
   setActiveRunBrokerState(runId, "github_pr", {
     version: 1,
     identity: state.identity,
@@ -1604,13 +1653,17 @@ export async function githubCommitFiles(context: CredentialBrokerContext): Promi
   if (!runId) throw new Error("github_pr broker requires a run transport identity");
   const { token, binding, state } = await boundPull(context);
   const request = commitFilesInput(context.input, binding);
-  const committed = await commitFiles(runId, token, binding, state, request);
-  return {
+  const resultBase = {
     repository: `${binding.owner}/${binding.repo}`,
     pull_number: binding.pull_number,
+    committed_files: request.files.map((file) => file.path),
+  };
+  context.mutation?.checkpoint({ result_base: resultBase });
+  const committed = await commitFiles(context, runId, token, binding, state, request);
+  return {
+    ...resultBase,
     previous_head_sha: committed.previousHead,
     head_sha: committed.nextHead,
-    committed_files: request.files.map((file) => file.path),
   };
 }
 
@@ -1619,14 +1672,80 @@ export async function githubCommitWorkspace(context: CredentialBrokerContext): P
   if (!runId) throw new Error("github_pr broker requires a run transport identity");
   const { token, binding, state } = await boundPull(context);
   const request = workspaceCommitInput(context, binding);
-  const committed = await commitFiles(runId, token, binding, state, request);
-  return {
+  const resultBase = {
     repository: `${binding.owner}/${binding.repo}`,
     pull_number: binding.pull_number,
-    previous_head_sha: committed.previousHead,
-    head_sha: committed.nextHead,
     workspace_path: request.workspacePath,
     manifest_sha256: request.manifestSha256,
     committed_files: request.files.map((file) => file.path),
   };
+  context.mutation?.checkpoint({ result_base: resultBase });
+  const committed = await commitFiles(context, runId, token, binding, state, request);
+  return {
+    ...resultBase,
+    previous_head_sha: committed.previousHead,
+    head_sha: committed.nextHead,
+  };
+}
+
+export function githubMutationSemanticTarget(context: CredentialBrokerContext): string {
+  const runId = context.transport?.run_id;
+  if (!runId) throw new Error("github_pr mutation requires a run transport identity");
+  const binding = parsePullRequestContext(runId);
+  const expectedHead = String(context.input.expected_head_sha ?? "").toLowerCase();
+  if (!SHA.test(expectedHead)) throw new Error("GitHub mutation expected_head_sha is invalid");
+  return `${stateIdentity(binding)}@${expectedHead}`;
+}
+
+export async function githubReconcileMutation(
+  context: CredentialBrokerContext,
+  attempt: CredentialBrokerMutationAttempt,
+): Promise<CredentialBrokerReconciliation> {
+  const runId = context.transport?.run_id;
+  if (!runId) return { resolution: "failed", error: "GitHub reconciliation has no run identity" };
+  const binding = parsePullRequestContext(runId);
+  const token = await githubToken(context);
+  const pull = await githubApi<PullResponse>(
+    token,
+    `${repoPath(binding)}/pulls/${binding.pull_number}`,
+    { signal: context.signal },
+  );
+  const remoteHead = pullHead(pull, binding);
+  const providerState = attempt.provider_state ?? {};
+  const phase = typeof providerState.phase === "string" ? providerState.phase : "prepared";
+  const previousHead = typeof providerState.previous_head_sha === "string"
+    ? providerState.previous_head_sha.toLowerCase()
+    : String(context.input.expected_head_sha ?? "").toLowerCase();
+  const nextHead = typeof providerState.next_head_sha === "string"
+    ? providerState.next_head_sha.toLowerCase()
+    : undefined;
+  if (!SHA.test(previousHead)) return { resolution: "failed", error: "GitHub reconciliation previous head is invalid" };
+  if (nextHead && !SHA.test(nextHead)) return { resolution: "failed", error: "GitHub reconciliation next head is invalid" };
+  if (nextHead && remoteHead === nextHead) {
+    const resultBase = providerState.result_base;
+    if (!resultBase || typeof resultBase !== "object" || Array.isArray(resultBase)) {
+      return { resolution: "failed", error: "GitHub reconciliation result context is missing" };
+    }
+    return {
+      resolution: "completed",
+      result: {
+        ...(resultBase as Record<string, unknown>),
+        previous_head_sha: previousHead,
+        head_sha: nextHead,
+      },
+    };
+  }
+  if (remoteHead !== previousHead) {
+    return { resolution: "failed", error: "Draft PR head changed outside the unresolved broker mutation" };
+  }
+  if (phase === "ref_update_dispatched") {
+    return {
+      resolution: "indeterminate",
+      error: "GitHub ref update was dispatched but the bound head has not confirmed it",
+    };
+  }
+  if (phase === "ref_update_failed") {
+    return { resolution: "absent", error: "GitHub ref update failed and did not change the bound head" };
+  }
+  return { resolution: "absent", error: "GitHub ref update was not dispatched" };
 }

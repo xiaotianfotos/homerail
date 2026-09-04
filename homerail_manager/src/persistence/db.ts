@@ -2101,6 +2101,44 @@ function validateDagReviewEvidenceSchemaV36(db: SqliteDatabase): void {
   }
 }
 
+function validateCredentialBrokerMutationSchemaV37(db: SqliteDatabase): void {
+  for (const table of ["credential_broker_mutation_attempts", "credential_broker_mutation_events"]) {
+    if (!hasTable(db, table)) throw new Error(`Schema migration 37 is incomplete: missing table ${table}`);
+  }
+  for (const column of [
+    "request_id", "idempotency_key", "request_digest", "semantic_target",
+    "source_type", "source_id", "run_id", "node_id", "session_id", "round_id",
+    "actor_id", "generation", "lease_generation", "command_id", "gateway_attempt",
+    "credential_ref", "broker", "action", "state", "request_json",
+    "provider_state_json", "result_json", "error_message", "resolution",
+    "created_at", "updated_at",
+  ]) {
+    if (!hasColumn(db, "credential_broker_mutation_attempts", column)) {
+      throw new Error(`Schema migration 37 is incomplete: mutation attempts is missing column ${column}`);
+    }
+  }
+  const indexes = new Map((db.prepare(
+    "PRAGMA index_list(credential_broker_mutation_attempts)",
+  ).all() as Array<{ name: string; unique: number; partial: number }>).map((entry) => [entry.name, entry]));
+  const idempotency = indexes.get("idx_credential_broker_mutation_idempotency");
+  if (!idempotency || idempotency.unique !== 1) {
+    throw new Error("Schema migration 37 is incomplete: mutation idempotency index is missing");
+  }
+  const unresolved = indexes.get("idx_credential_broker_mutation_unresolved_target");
+  if (!unresolved || unresolved.unique !== 1 || unresolved.partial !== 1) {
+    throw new Error("Schema migration 37 is incomplete: unresolved semantic target index is invalid");
+  }
+  for (const trigger of [
+    "trg_credential_broker_mutation_identity_immutable",
+    "trg_credential_broker_mutation_events_no_update",
+    "trg_credential_broker_mutation_events_no_delete",
+  ]) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(trigger)) {
+      throw new Error(`Schema migration 37 is incomplete: missing trigger ${trigger}`);
+    }
+  }
+}
+
 function validateGenerativeUiSchemaV3(db: SqliteDatabase): void {
   const requiredColumns: Record<string, readonly string[]> = {
     generative_ui_documents: [
@@ -4380,6 +4418,99 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         );
     `),
     validate: validateDagReviewEvidenceSchemaV36,
+  },
+  {
+    version: 37,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS credential_broker_mutation_attempts (
+        request_id TEXT PRIMARY KEY CHECK(length(request_id) BETWEEN 1 AND 256),
+        idempotency_key TEXT NOT NULL CHECK(length(idempotency_key) BETWEEN 1 AND 256),
+        request_digest TEXT NOT NULL CHECK(
+          length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        semantic_target TEXT NOT NULL CHECK(length(semantic_target) BETWEEN 1 AND 1024),
+        source_type TEXT NOT NULL CHECK(source_type IN ('worker_actor', 'manager_gateway')),
+        source_id TEXT NOT NULL CHECK(length(source_id) BETWEEN 1 AND 256),
+        run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 256),
+        node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 256),
+        session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 256),
+        round_id TEXT NOT NULL CHECK(length(round_id) BETWEEN 1 AND 256),
+        actor_id TEXT CHECK(actor_id IS NULL OR length(actor_id) BETWEEN 1 AND 256),
+        generation INTEGER CHECK(generation IS NULL OR generation >= 1),
+        lease_generation INTEGER CHECK(lease_generation IS NULL OR lease_generation >= 1),
+        command_id TEXT CHECK(command_id IS NULL OR length(command_id) BETWEEN 1 AND 256),
+        gateway_attempt INTEGER CHECK(gateway_attempt IS NULL OR gateway_attempt >= 1),
+        credential_ref TEXT NOT NULL CHECK(length(credential_ref) BETWEEN 1 AND 256),
+        broker TEXT NOT NULL CHECK(length(broker) BETWEEN 1 AND 128),
+        action TEXT NOT NULL CHECK(length(action) BETWEEN 1 AND 128),
+        state TEXT NOT NULL CHECK(state IN (
+          'prepared', 'dispatched', 'completed', 'failed_pre_dispatch', 'cancelled',
+          'cancel_requested', 'indeterminate', 'reconciled'
+        )),
+        request_json TEXT NOT NULL CHECK(length(request_json) BETWEEN 2 AND 2200000),
+        provider_state_json TEXT CHECK(provider_state_json IS NULL OR length(provider_state_json) BETWEEN 2 AND 131072),
+        result_json TEXT CHECK(result_json IS NULL OR length(result_json) BETWEEN 1 AND 262144),
+        error_message TEXT CHECK(error_message IS NULL OR length(error_message) BETWEEN 1 AND 1000),
+        resolution TEXT CHECK(resolution IS NULL OR resolution IN ('completed', 'absent', 'failed')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK(
+          (source_type = 'worker_actor' AND actor_id IS NOT NULL AND generation IS NOT NULL
+            AND lease_generation IS NOT NULL AND gateway_attempt IS NULL)
+          OR
+          (source_type = 'manager_gateway' AND actor_id IS NULL AND generation IS NULL
+            AND lease_generation IS NULL AND command_id IS NULL AND gateway_attempt IS NOT NULL)
+        ),
+        CHECK((state = 'reconciled' AND resolution IS NOT NULL) OR (state != 'reconciled' AND resolution IS NULL))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_broker_mutation_idempotency
+        ON credential_broker_mutation_attempts(credential_ref, broker, action, idempotency_key);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_broker_mutation_unresolved_target
+        ON credential_broker_mutation_attempts(credential_ref, broker, semantic_target)
+        WHERE state IN ('prepared', 'dispatched', 'cancel_requested', 'indeterminate');
+      CREATE INDEX IF NOT EXISTS idx_credential_broker_mutation_run
+        ON credential_broker_mutation_attempts(run_id, node_id, created_at, request_id);
+      CREATE INDEX IF NOT EXISTS idx_credential_broker_mutation_state
+        ON credential_broker_mutation_attempts(state, updated_at, request_id);
+      CREATE TRIGGER IF NOT EXISTS trg_credential_broker_mutation_identity_immutable
+      BEFORE UPDATE OF request_id, idempotency_key, request_digest, semantic_target,
+        source_type, source_id, run_id, node_id, session_id, round_id, actor_id,
+        generation, lease_generation, command_id, gateway_attempt, credential_ref,
+        broker, action, request_json
+      ON credential_broker_mutation_attempts
+      BEGIN
+        SELECT RAISE(ABORT, 'Credential broker mutation identity is immutable');
+      END;
+
+      CREATE TABLE IF NOT EXISTS credential_broker_mutation_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id TEXT NOT NULL,
+        request_digest TEXT NOT NULL CHECK(
+          length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        state TEXT NOT NULL CHECK(state IN (
+          'prepared', 'dispatched', 'completed', 'failed_pre_dispatch', 'cancelled',
+          'cancel_requested', 'indeterminate', 'reconciled'
+        )),
+        detail_json TEXT NOT NULL CHECK(length(detail_json) BETWEEN 2 AND 32768),
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(request_id) REFERENCES credential_broker_mutation_attempts(request_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX IF NOT EXISTS idx_credential_broker_mutation_events_request
+        ON credential_broker_mutation_events(request_id, sequence);
+      CREATE TRIGGER IF NOT EXISTS trg_credential_broker_mutation_events_no_update
+      BEFORE UPDATE ON credential_broker_mutation_events
+      BEGIN
+        SELECT RAISE(ABORT, 'Credential broker mutation events are append-only');
+      END;
+      CREATE TRIGGER IF NOT EXISTS trg_credential_broker_mutation_events_no_delete
+      BEFORE DELETE ON credential_broker_mutation_events
+      BEGIN
+        SELECT RAISE(ABORT, 'Credential broker mutation events are append-only');
+      END;
+    `),
+    validate: validateCredentialBrokerMutationSchemaV37,
   },
 ];
 
