@@ -240,6 +240,8 @@ export interface ProviderModelPreset {
   description?: string
   recommended?: boolean
   resource_id?: string
+  reasoning_effort_map?: Record<string, string | null> | false
+  default_reasoning_effort?: string
   supports_llm?: boolean
   supports_asr?: boolean
   supports_tts?: boolean

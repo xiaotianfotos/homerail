@@ -219,7 +219,7 @@ describe('model purpose forms', () => {
     let submitted: ModelFormPayload | undefined
     const providerWithAnotherModel: Provider = {
       ...provider,
-      endpoints: provider.endpoints.map(endpoint => ({
+      endpoints: provider.endpoints!.map(endpoint => ({
         ...endpoint,
         models: [
           ...endpoint.models,
@@ -285,6 +285,115 @@ describe('model purpose forms', () => {
         expect.objectContaining({ apiKey: expect.anything() })
       )
       expect(root.textContent).toContain('k3')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lists both K3 catalog variants once when provider probing returns the same model ids', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(probeModels).mockResolvedValueOnce({
+        models: ['k3', 'k3-256k', 'k3-experimental']
+      })
+      const k3Provider: Provider = {
+        ...provider,
+        id: 'kimi_cn',
+        name: 'Kimi / Moonshot CN',
+        endpoints: [{
+          ...provider.endpoints![0],
+          id: 'kimi_coding_plan',
+          provider_id: 'kimi_cn',
+          name: 'Kimi Coding Plan',
+          plan_type: 'coding_plan',
+          base_url: 'https://api.kimi.com/coding/v1',
+          default_model: 'kimi-for-coding',
+          models: [
+            { id: 'kimi-for-coding', display_name: 'Kimi K2.7 Code', supports_llm: true },
+            {
+              id: 'k3',
+              display_name: 'Kimi K3',
+              supports_llm: true,
+              supports_image_input: true,
+              supports_video_input: true,
+              reasoning_effort_map: { low: 'low', high: 'high', max: 'max' },
+              default_reasoning_effort: 'high'
+            },
+            {
+              id: 'k3-256k',
+              display_name: 'Kimi K3 256K',
+              supports_llm: true,
+              supports_image_input: true,
+              supports_video_input: false,
+              reasoning_effort_map: { low: 'low', high: 'high', max: 'max' },
+              default_reasoning_effort: 'high'
+            }
+          ]
+        }]
+      }
+      const k3Setting: LLMSetting = {
+        ...setting,
+        provider_id: k3Provider.id,
+        provider_name: k3Provider.name,
+        endpoint_id: 'kimi_coding_plan',
+        endpoint_name: 'Kimi Coding Plan',
+        plan_type: 'coding_plan',
+        model_name: 'kimi-for-coding',
+        display_name: 'Kimi K2.7 Code'
+      }
+      let submitted: ModelFormPayload | undefined
+      const root = await mount(ModelForm, {
+        providers: [k3Provider],
+        settings: [k3Setting],
+        purpose: 'llm',
+        onSubmit: (payload: ModelFormPayload) => {
+          submitted = payload
+        }
+      })
+
+      const credential = Array.from(root.querySelectorAll('button')).find(button =>
+        button.textContent?.includes('Coding Plan')
+      )!
+      credential.click()
+      await nextTick()
+      await vi.advanceTimersByTimeAsync(600)
+      await nextTick()
+
+      expect(probeModels).toHaveBeenCalledWith({ settingId: k3Setting.id })
+      const modelButton = (label: string) => Array.from(root.querySelectorAll('button')).filter(
+        button => button.querySelector('.block.truncate')?.textContent?.trim() === label
+      )
+      expect(modelButton('Kimi K3')).toHaveLength(1)
+      expect(modelButton('Kimi K3 256K')).toHaveLength(1)
+      expect(modelButton('k3-experimental')).toHaveLength(1)
+
+      modelButton('Kimi K3')[0].click()
+      await nextTick()
+      modelButton('Kimi K3 256K')[0].click()
+      await nextTick()
+      const submit = Array.from(root.querySelectorAll('button')).find(
+        button => button.textContent?.trim() === '添加'
+      )!
+      submit.click()
+      await nextTick()
+
+      expect(submitted?.models).toEqual(['k3', 'k3-256k'])
+      expect(submitted?.modelConfigs).toEqual([
+        expect.objectContaining({
+          modelName: 'k3',
+          capabilities: expect.objectContaining({
+            supports_image_input: true,
+            supports_video_input: true
+          })
+        }),
+        expect.objectContaining({
+          modelName: 'k3-256k',
+          capabilities: expect.objectContaining({
+            supports_image_input: true,
+            supports_video_input: false
+          })
+        })
+      ])
     } finally {
       vi.useRealTimers()
     }
