@@ -37,9 +37,11 @@ import { handleDagActorLiveCommandStatus } from "../runtime/dag-actor-live-comma
 import { ingestDagActorSurfacePatchStream } from "../runtime/dag-actor-surface-patch-stream.js";
 import { ingestDagActorSurfaceMediaStream } from "../runtime/dag-actor-surface-media-stream.js";
 import type {
+  DagCredentialBrokerCancelRequest,
   DagCredentialBrokerCallRequest,
   DagCredentialBrokerCallResult,
 } from "homerail-protocol";
+import { dagCredentialBrokerCallIdentity } from "homerail-protocol";
 
 const WS_URL_PATTERN = /^\/ws\/projects\/([^\/]+)\/workers\/([^\/]+)$/;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
@@ -165,12 +167,13 @@ function isCurrentDagTransport(
   messageType: string,
   data: Record<string, unknown>,
   explicitSessionId?: string,
+  renewExpiredLease = true,
 ): boolean {
   const payload = transportPayload(data);
   const assessment = assessDagTransportFence(payload, {
     targetType: "worker",
     targetId: workerId,
-  });
+  }, { renewExpiredLease });
   if (assessment.status === "current") return true;
 
   const runId = assessment.status === "malformed_payload" ? streamRunId(data) : assessment.runId;
@@ -218,6 +221,10 @@ export interface WorkerWebSocketOptions {
     workerId: string,
     request: DagCredentialBrokerCallRequest,
   ) => Promise<DagCredentialBrokerCallResult>;
+  onCredentialBrokerCancel?: (
+    workerId: string,
+    request: DagCredentialBrokerCancelRequest,
+  ) => boolean;
   /** Fired once, after the first worker successfully registers. Used by the
    * cold-recovery boot path to re-dispatch READY nodes of recovered runs now
    * that a dispatch target exists. */
@@ -745,16 +752,21 @@ export function setupWorkerWebSocket(
             "credential_broker_call",
             { ...msg.data },
             msg.data.session_id,
+            false,
           )) {
             result = {
               request_id: msg.data.request_id,
+              identity: dagCredentialBrokerCallIdentity(msg.data),
               ok: false,
+              outcome: "failed_pre_dispatch",
               error: "Credential broker call has stale or invalid transport identity",
             };
           } else if (!options.onCredentialBrokerCall) {
             result = {
               request_id: msg.data.request_id,
+              identity: dagCredentialBrokerCallIdentity(msg.data),
               ok: false,
+              outcome: "failed_pre_dispatch",
               error: "Credential broker handler unavailable",
             };
           } else {
@@ -763,7 +775,9 @@ export function setupWorkerWebSocket(
             } catch {
               result = {
                 request_id: msg.data.request_id,
+                identity: dagCredentialBrokerCallIdentity(msg.data),
                 ok: false,
+                outcome: "failed",
                 error: "Credential broker call failed without exposing provider details",
               };
             }
@@ -771,6 +785,11 @@ export function setupWorkerWebSocket(
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "credential_broker_result", data: result }));
           }
+          return;
+        }
+
+        if (msg.type === "credential_broker_cancel") {
+          options.onCredentialBrokerCancel?.(worker_id, msg.data);
           return;
         }
 

@@ -10,12 +10,14 @@ import type { DagToolsState } from "./index.js";
 export type CredentialBrokerBinding = Extract<DagCredentialProjection, { mode: "manager_broker" }>;
 export type CredentialBrokerCaller = (
   request: DagCredentialBrokerCallRequest,
+  signal?: AbortSignal,
 ) => Promise<DagCredentialBrokerCallResult>;
 
 export function createCredentialBrokerCallTool(
   state: DagToolsState,
   bindings: readonly CredentialBrokerBinding[],
   call: CredentialBrokerCaller,
+  abortSignal?: AbortSignal,
 ): DagToolDefinition {
   const credentialRefs = Array.from(new Set(bindings.map((binding) => binding.credential_ref))).sort();
   const actions = Array.from(new Set(bindings.flatMap((binding) => binding.allowed_actions))).sort();
@@ -90,21 +92,30 @@ export function createCredentialBrokerCallTool(
           is_error: true,
         };
       }
+      if (!state.roundId || !state.actorId || state.generation === undefined || state.leaseGeneration === undefined) {
+        return {
+          content: [{ type: "text", text: "Credential broker requires the complete Actor round/generation/lease fence." }],
+          is_error: true,
+        };
+      }
+      const requestId = randomUUID();
       const result = await call({
-        request_id: randomUUID(),
+        request_id: requestId,
+        idempotency_key: requestId,
+        transport_kind: "worker_actor",
         run_id: state.runId,
         node_id: state.nodeId,
         session_id: state.sessionId,
-        ...(state.roundId ? { round_id: state.roundId } : {}),
-        ...(state.actorId ? { actor_id: state.actorId } : {}),
-        ...(state.generation !== undefined ? { generation: state.generation } : {}),
-        ...(state.leaseGeneration !== undefined ? { lease_generation: state.leaseGeneration } : {}),
+        round_id: state.roundId,
+        actor_id: state.actorId,
+        generation: state.generation,
+        lease_generation: state.leaseGeneration,
         ...(state.commandId ? { command_id: state.commandId } : {}),
         credential_ref: credentialRef,
         broker: binding.broker,
         action,
         input: input as Record<string, unknown> | undefined ?? {},
-      });
+      }, abortSignal);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: result.error ?? "Credential broker call failed" }],

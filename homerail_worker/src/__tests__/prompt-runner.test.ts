@@ -11,6 +11,7 @@ import type { PromptJob } from "../prompt-runner.js";
 import {
   HOMERAIL_A2UI_CATALOG_ID,
   HOMERAIL_A2UI_VERSION,
+  dagCredentialBrokerCallIdentity,
   type DagNodeConfig,
 } from "homerail-protocol";
 import { registerAgentBackend } from "../agent/factory.js";
@@ -388,7 +389,13 @@ describe("prompt runner", () => {
       {
         wsSend: () => {},
         agentBackend: "test-correction-broker",
-        credentialBrokerCall: async (request) => ({ request_id: request.request_id, ok: true, result: {} }),
+        credentialBrokerCall: async (request) => ({
+          request_id: request.request_id,
+          identity: dagCredentialBrokerCallIdentity(request),
+          ok: true,
+          outcome: "completed",
+          result: {},
+        }),
       },
     );
 
