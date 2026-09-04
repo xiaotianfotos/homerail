@@ -24,6 +24,7 @@ import {
   type DagWorkspaceAccess,
   type DagCredentialProjection,
   type DagCredentialBrokerCallRequest,
+  type DagCredentialBrokerCallIdentity,
   type DagCredentialBrokerCallResult,
 } from "homerail-protocol";
 import { startManagerAgentServer } from "./manager-agent/server.js";
@@ -110,11 +111,12 @@ const pendingCredentialBrokerCalls = new CredentialBrokerRequestRegistry();
 
 function callCredentialBroker(
   request: DagCredentialBrokerCallRequest,
+  signal?: AbortSignal,
 ): Promise<DagCredentialBrokerCallResult> {
   return pendingCredentialBrokerCalls.call(request, (payload) => {
     if (!client.isConnected) throw new Error("Manager connection is unavailable");
     client.send(payload);
-  });
+  }, signal);
 }
 
 function stringField(data: Record<string, unknown>, ...keys: string[]): string {
@@ -454,12 +456,25 @@ client.on("dag_actor_command", (msg) => {
 
 client.on("credential_broker_result", (msg) => {
   const data = (msg.data ?? msg) as Partial<DagCredentialBrokerCallResult>;
-  if (typeof data.request_id !== "string" || typeof data.ok !== "boolean") return;
+  if (
+    typeof data.request_id !== "string"
+    || typeof data.identity !== "object"
+    || data.identity === null
+    || Array.isArray(data.identity)
+    || typeof data.ok !== "boolean"
+    || !["completed", "failed", "failed_pre_dispatch", "cancelled", "indeterminate", "reconciled"].includes(
+      String(data.outcome ?? ""),
+    )
+  ) return;
   pendingCredentialBrokerCalls.settle({
     request_id: data.request_id,
+    identity: data.identity as DagCredentialBrokerCallIdentity,
     ok: data.ok,
+    outcome: data.outcome!,
+    ...(typeof data.request_digest === "string" ? { request_digest: data.request_digest } : {}),
     ...(data.result !== undefined ? { result: data.result } : {}),
     ...(typeof data.error === "string" ? { error: data.error } : {}),
+    ...(data.reconciliation ? { reconciliation: data.reconciliation } : {}),
   });
 });
 
@@ -476,6 +491,7 @@ client.on("inject", (msg) => {
     activePrompt.identity.nodeId === nodeId
   ) {
     const interruptedPrompt = activePrompt;
+    interruptedPrompt.abortController.abort(new Error("manager inject interrupt"));
     void interruptedPrompt.controller.interrupt("manager inject interrupt").then((result) => {
       client.send(
         JSON.stringify({
@@ -514,6 +530,7 @@ async function shutdown() {
   console.log("[homerail_worker] shutting down...");
   const prompt = activePrompt;
   if (prompt) {
+    prompt.abortController.abort(new Error("Worker shutting down"));
     await prompt.controller.close({
       outcome: "failed",
       reason: "Worker shutting down",
