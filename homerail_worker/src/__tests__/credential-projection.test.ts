@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import { describe, expect, it } from "vitest";
+import { dagCredentialBrokerCallIdentity } from "homerail-protocol";
 import {
   containsCredentialValue,
   materializeCredentialProjections,
@@ -87,6 +88,10 @@ describe("turn-scoped credential projection", () => {
       incoming_edges: [],
       graph_nodes: ["worker"],
       session_id: "session-1",
+      round_id: "round-1",
+      actor_id: "actor-1",
+      generation: 1,
+      lease_generation: 1,
     }, "run-1", () => {});
     const calls: unknown[] = [];
     const tool = createCredentialBrokerCallTool(state, [{
@@ -97,7 +102,13 @@ describe("turn-scoped credential projection", () => {
       allowed_actions: ["bot_info"],
     }], async (request) => {
       calls.push(request);
-      return { request_id: request.request_id, ok: true, result: { bot_name: "Codex" } };
+      return {
+        request_id: request.request_id,
+        identity: dagCredentialBrokerCallIdentity(request),
+        ok: true,
+        outcome: "completed",
+        result: { bot_name: "Codex" },
+      };
     });
 
     const accepted = await tool.handler({ credential_ref: "lark-bot", action: "bot_info", input: {} });
