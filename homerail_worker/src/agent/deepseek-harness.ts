@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DeepSeekHarness,
+  type DeepSeekHarnessOptions,
   type HarnessNotification,
 } from "@deepseek-ai/dsh-sdk-client";
 import { sanitizedAgentChildEnv } from "./child-env.js";
@@ -31,16 +32,15 @@ import type { AgentTurnDriverBindingResult } from "./turn-controller.js";
 import { createDeepSeekHarnessReadTools } from "./deepseek-harness-read-tools.js";
 import { WORKER_RUNTIME_VERSION } from "../runtime-version.js";
 
-const DEFAULT_DSH_RUNTIME_COMMAND = "dsh-jsonrpc-agent-pkg";
+const DEFAULT_DSH_RUNTIME_BIN = "/opt/deepseek-harness-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js";
 const DEFAULT_DSH_MAX_TOKENS = 32_768;
 const DEFAULT_DSH_CONTEXT_WINDOW = 200_000;
-const DSH_FORK_COMMIT = "f4fd5f005636cdcbf9d95f70f04d05afa8c0db54";
+const DSH_FORK_COMMIT = "f0fd50751713ab7e1b7cb1f13310a70c106d81b1";
 const MCP_TOOL_PREFIX = "mcp__homerail__";
 const DEFAULT_SYSTEM_PROMPT = "You are a HomeRail DAG worker. Complete the assigned task and call the provided handoff tool exactly once.";
 
 interface DeepSeekHarnessAdapterOptions {
-  runtimeCommand?: string;
-  runtimeArgs?: string[];
+  runtimeBin?: string;
   cordisConfigPath?: string;
   maxTokens?: number;
 }
@@ -100,15 +100,6 @@ class AsyncQueue<T> implements AsyncIterable<T> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function parseRuntimeArgs(value: string | undefined): string[] {
-  if (!value?.trim()) return [];
-  const parsed: unknown = JSON.parse(value);
-  if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === "string")) {
-    throw new Error("HOMERAIL_DSH_RUNTIME_ARGS must be a JSON array of strings");
-  }
-  return parsed;
 }
 
 function parseMaxTokens(value: number | string | undefined): number {
@@ -354,17 +345,16 @@ function isIdleStatus(notification: HarnessNotification, sessionId: string): boo
 }
 
 export class DeepSeekHarnessAdapter implements AgentClient {
-  private readonly runtimeCommand: string;
-  private readonly runtimeArgs: string[];
+  private readonly runtimeBin: string;
   private readonly cordisConfigPath: string;
   private readonly maxTokens: number;
 
   constructor(options: DeepSeekHarnessAdapterOptions = {}) {
-    this.runtimeCommand = options.runtimeCommand
-      ?? process.env.HOMERAIL_DSH_RUNTIME_COMMAND?.trim()
-      ?? DEFAULT_DSH_RUNTIME_COMMAND;
-    this.runtimeArgs = options.runtimeArgs
-      ?? parseRuntimeArgs(process.env.HOMERAIL_DSH_RUNTIME_ARGS);
+    this.runtimeBin = resolve(
+      options.runtimeBin
+        ?? process.env.HOMERAIL_DSH_RUNTIME_BIN?.trim()
+        ?? DEFAULT_DSH_RUNTIME_BIN,
+    );
     this.cordisConfigPath = resolve(
       options.cordisConfigPath
         ?? process.env.HOMERAIL_DSH_CORDIS_CONFIG?.trim()
@@ -416,7 +406,6 @@ export class DeepSeekHarnessAdapter implements AgentClient {
           ...process.env,
           ...context.environmentVariables,
         }),
-        DSH_CORDIS_CONFIG: this.cordisConfigPath,
         DSH_CWD: context.workspace ?? process.cwd(),
         DSH_SESSION_ROOT: join(runtimeRoot, "sessions"),
         DSH_SYSTEM_PROMPT: projectedSystemPrompt(context),
@@ -427,15 +416,16 @@ export class DeepSeekHarnessAdapter implements AgentClient {
         HOMERAIL_MCP_BRIDGE_TOKEN: bridge.token,
       };
       harness = new DeepSeekHarness({
-        launch: {
-          command: this.runtimeCommand,
-          args: this.runtimeArgs,
-          cwd: context.workspace ?? process.cwd(),
-          env: childEnv,
-        },
+        dshBin: this.runtimeBin,
+        profile: "sdk-minimal",
+        patches: [this.cordisConfigPath],
+        dshHome: runtimeRoot,
+        processCwd: context.workspace ?? process.cwd(),
+        env: childEnv,
         cwd: context.workspace,
         provider: providerProfile.provider,
         model: context.model,
+        reasoningEffort: providerProfile.reasoningEffort as DeepSeekHarnessOptions["reasoningEffort"],
         maxTokens: this.maxTokens,
       });
 
@@ -445,8 +435,9 @@ export class DeepSeekHarnessAdapter implements AgentClient {
         message: "runtime_prepared",
         data: {
           fork_commit: DSH_FORK_COMMIT,
-          runtime_command: this.runtimeCommand,
-          runtime_args_count: this.runtimeArgs.length,
+          runtime_bin: this.runtimeBin,
+          runtime_profile: "sdk-minimal",
+          runtime_patch: this.cordisConfigPath,
           session_id: sessionId,
           tool_count: bridgeTools.length,
           builtin_tools: builtinTools.map((tool) => tool.name),

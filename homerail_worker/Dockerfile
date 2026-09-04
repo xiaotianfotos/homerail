@@ -25,7 +25,7 @@ ARG HOMERAIL_WORKER_BUILD_APT_MIRROR
 ARG HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR
 ARG NPM_CONFIG_REGISTRY
 ARG HOMERAIL_DSH_FORK_REPOSITORY=https://github.com/xiaotianfotos/deepseek-harness.git
-ARG HOMERAIL_DSH_FORK_COMMIT=f4fd5f005636cdcbf9d95f70f04d05afa8c0db54
+ARG HOMERAIL_DSH_FORK_COMMIT=f0fd50751713ab7e1b7cb1f13310a70c106d81b1
 COPY homerail_worker/scripts/configure-apt-sources.mjs /opt/homerail/scripts/configure-apt-sources.mjs
 RUN node /opt/homerail/scripts/configure-apt-sources.mjs
 RUN apt-get update \
@@ -72,8 +72,7 @@ ENV HOMERAIL_WORKER_VERSION="${HOMERAIL_WORKER_VERSION}" \
     HOMERAIL_WORKER_PROTOCOL_VERSION="${HOMERAIL_WORKER_PROTOCOL_VERSION}" \
     HOMERAIL_WORKER_SOURCE_FINGERPRINT="${HOMERAIL_WORKER_SOURCE_FINGERPRINT}" \
     HOMERAIL_WORKER_IMAGE_REVISION="${HOMERAIL_WORKER_IMAGE_REVISION}"
-ENV HOMERAIL_DSH_RUNTIME_COMMAND="/usr/local/bin/node" \
-    HOMERAIL_DSH_RUNTIME_ARGS="[\"/opt/deepseek-harness-runtime/node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/packaged-bin.js\"]" \
+ENV HOMERAIL_DSH_RUNTIME_BIN="/opt/deepseek-harness-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js" \
     HOMERAIL_DSH_CORDIS_CONFIG="/app/dsh/homerail.cordis.yml"
 
 RUN apt-get update \
