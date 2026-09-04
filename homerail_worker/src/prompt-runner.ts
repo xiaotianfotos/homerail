@@ -102,6 +102,7 @@ export interface PromptRunnerDeps {
   surfaceMediaDownloader?: SurfaceMediaDownloader;
   credentialBrokerCall?: (
     request: DagCredentialBrokerCallRequest,
+    signal?: AbortSignal,
   ) => Promise<DagCredentialBrokerCallResult>;
 }
 
@@ -353,6 +354,7 @@ export async function runPrompt(
     trustedInputs: job.trustedInputs,
     credentialBrokerBindings: job.credentialBrokerBindings,
     credentialBrokerCaller: deps.credentialBrokerCall,
+    abortSignal: deps.abortSignal,
     ...(surfacePatchAllowed
       ? {
           surfacePatchEmitter: ({ surface_id, patch }) => sendStream({

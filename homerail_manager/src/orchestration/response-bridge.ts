@@ -29,6 +29,14 @@ export interface DagTransportFenceSource {
   targetId: string;
 }
 
+export interface DagTransportFenceAssessmentOptions {
+  /**
+   * Ordinary streaming traffic may renew the current physical lease. Broker
+   * authority checks must pass false: an expired mutation lease fails closed.
+   */
+  renewExpiredLease?: boolean;
+}
+
 export type ResponseBridgeResult =
   | { status: "handoff_applied"; runId: string; nodeId: string; port: string }
   | {
@@ -88,6 +96,7 @@ function ignored(
 export function assessDagTransportFence(
   payload: unknown,
   source: DagTransportFenceSource,
+  options: DagTransportFenceAssessmentOptions = {},
 ): TransportFenceAssessment {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return { status: "malformed_payload", reason: "payload is not an object" };
@@ -127,7 +136,13 @@ export function assessDagTransportFence(
     target_id: source.targetId,
   };
   let lease = assessDagActorLease(leaseInput);
-  if (!lease.current && lease.reason === "expired" && run.status === "active" && lease.lease) {
+  if (
+    options.renewExpiredLease !== false
+    && !lease.current
+    && lease.reason === "expired"
+    && run.status === "active"
+    && lease.lease
+  ) {
     try {
       acquireDagActorLease({
         run_id: runId,

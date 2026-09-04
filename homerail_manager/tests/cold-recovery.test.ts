@@ -2,15 +2,22 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { DagCredentialBrokerCallRequest } from "homerail-protocol";
 
 import type {
   DAGDispatcher,
   DispatchEnvelope,
   DispatchResult,
 } from "../src/orchestration/dag-dispatcher.js";
+import { parseWorkflowSource } from "../src/orchestration/workflow-spec-v1.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import {
+  completeCredentialBrokerMutation,
+  dispatchCredentialBrokerMutation,
+  prepareCredentialBrokerMutation,
+} from "../src/persistence/credential-broker-mutations.js";
 import { getDagSessionIndex, listDagSessionIndex, upsertDagSessionIndex } from "../src/persistence/dag-session-index.js";
 import {
   _clearAllPersistence,
@@ -255,6 +262,94 @@ describe("manager cold recovery", () => {
       source: "https://x.com/i/status/2074169173178212621",
       parameters: { workflow_id: "cold-recovery" },
     });
+  });
+
+  it("fails a recovered broker gateway whose completed result violates its output contract", () => {
+    const runId = "run-recovered-broker-contract";
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: recovered-broker-contract, name: Recovered broker contract }
+spec:
+  contracts:
+    Task: { type: object }
+    Text: { type: string }
+  agents:
+    worker: { system: Produce one candidate. }
+  nodes:
+    prepare:
+      kind: agent
+      agent: worker
+      inputs: { task: { contract: Task } }
+      outputs: { candidate: {} }
+    validate:
+      kind: broker
+      inputs: { candidate: {} }
+      outputs: { result: { contract: Text }, error: {} }
+      config:
+        input: candidate
+        credential_ref: recovery-credential
+        purpose: validate one candidate
+        broker: recovery_broker
+        action: validate
+        result_port: result
+        error_port: error
+    done: { kind: terminal, outcome: success, inputs: { result: { contract: Text } } }
+    failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+  edges:
+    - { from: $run.input, to: prepare.task }
+    - { from: prepare.candidate, to: validate.candidate }
+    - { from: validate.result, to: done.result }
+    - { from: validate.error, to: failed.result, condition: on_failure }
+`);
+    createActiveRun(runId, parsed);
+    const active = getActiveRun(runId)!;
+    active.dagRun.nodeStates.set("prepare", "COMPLETED");
+    active.dagRun.nodeStates.set("validate", "RUNNING");
+    active.dagRun.handoffedNodes.add("prepare");
+    const session = upsertDagSessionIndex({
+      run_id: runId,
+      node_id: "validate",
+      project_key: "recovery-project",
+      session_id: "recovery-gateway-session",
+      attempt: 1,
+      status: "running",
+    });
+    writeRunMetadata(runId, serializeRunMetadata(active));
+    const request: DagCredentialBrokerCallRequest = {
+      request_id: "recovered-gateway-request",
+      idempotency_key: "recovered-gateway-request",
+      transport_kind: "manager_gateway",
+      run_id: runId,
+      node_id: "validate",
+      session_id: session.session_id,
+      round_id: active.currentRound.round_id,
+      gateway_attempt: session.attempt,
+      credential_ref: "recovery-credential",
+      broker: "recovery_broker",
+      action: "validate",
+      input: {},
+    };
+    prepareCredentialBrokerMutation({
+      request,
+      request_digest: "a".repeat(64),
+      semantic_target: "resource:recovered-gateway",
+      source_id: "manager:validate",
+    });
+    dispatchCredentialBrokerMutation(request.request_id);
+    completeCredentialBrokerMutation(request.request_id, { invalid: "not text" });
+
+    _clearActiveRuns();
+    const summary = recoverAllActiveRuns();
+
+    expect(summary.skipped).not.toContain(runId);
+    expect(summary.failed.map((failure) => failure.runId)).toContain(runId);
+    const recovered = getActiveRun(runId);
+    expect(recovered).toBeDefined();
+    expect(recovered?.dagRun.nodeStates.get("validate")).toBe("FAILED");
+    expect(recovered?.status).not.toBe("active");
+    expect(loadRunMetadata(runId)?.status).not.toBe("active");
+    expect(getDagSessionIndex(runId, "validate")?.status).toBe("failed");
   });
 
   it("replays handoff history so a downstream node receives upstream output in its mailbox", () => {

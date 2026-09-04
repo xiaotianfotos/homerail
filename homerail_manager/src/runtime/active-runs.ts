@@ -92,6 +92,7 @@ import {
 import type { RunWorkspaceRetention } from "../persistence/types.js";
 import { getDagActivitySequenceCursor } from "../persistence/dag-activity-journal.js";
 import { getDagActorSurfaceView } from "../persistence/dag-actor-surface-patches.js";
+import { findCompletedManagerGatewayMutation } from "../persistence/credential-broker-mutations.js";
 import { getDb } from "../persistence/db.js";
 import { getCredential, materializeCredential } from "../persistence/credentials.js";
 import {
@@ -1148,6 +1149,48 @@ function _applyOrphanedNodeDemotion(run: ActiveRun): string[] {
   return demotedFromRunning;
 }
 
+function _applyRecoveredCredentialBrokerGateways(run: ActiveRun): string[] {
+  const recovered: string[] = [];
+  for (const node of run.dagRun.graph.nodes) {
+    if (run.dagRun.nodeStates.get(node.node_id) !== "RUNNING" || node.node_type !== "broker_gateway") continue;
+    const session = run.nodeSessions.get(node.node_id);
+    if (!session) continue;
+    const attempt = findCompletedManagerGatewayMutation({
+      run_id: run.runId,
+      node_id: node.node_id,
+      session_id: session.sessionId,
+      round_id: run.currentRound.round_id,
+      gateway_attempt: session.attempt,
+    });
+    if (!attempt) continue;
+    const config = node.gateway_config;
+    try {
+      handoffActiveRun(
+        run.runId,
+        node.node_id,
+        config?.result_port || "result",
+        attempt.result,
+      );
+    } catch (error) {
+      failActiveRun(
+        run.runId,
+        node.node_id,
+        `broker gateway recovery handoff failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      break;
+    }
+    recovered.push(node.node_id);
+    emit("dag:gateway_executed", {
+      runId: run.runId,
+      nodeId: node.node_id,
+      gatewayType: node.node_type,
+      phase: "completed",
+      port: config?.result_port || "result",
+    });
+  }
+  return recovered;
+}
+
 function _loopSourceHasLiveFeedbackPath(
   run: ActiveRun,
   nodeId: string,
@@ -1302,6 +1345,7 @@ export function restoreActiveRun(
 
   store.set(metadata.runId, run);
 
+  if (run.status === "active") _applyRecoveredCredentialBrokerGateways(run);
   const demotedFromRunning = run.status === "active" ? _applyOrphanedNodeDemotion(run) : [];
   const settledPendingNodes = run.status === "active"
     ? Array.from(reconcileSettledPendingNodes(run.dagRun)).sort()
@@ -1368,6 +1412,10 @@ export function recoverAllActiveRuns(): ColdRecoverySummary {
       }
     } catch (err) {
       // A single corrupt run must not block recovery of the rest.
+      // restoreActiveRun installs the reconstructed run before it applies
+      // recovery projections. Never leave that partially restored value
+      // dispatchable when a later recovery step throws.
+      store.delete(runId);
       console.error(
         `[homerail_manager] cold recovery skipped run ${runId}: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -4293,17 +4341,24 @@ function _startBrokerGateway(
     throw new Error("broker gateway configuration is incomplete");
   }
   const input = _brokerGatewayInput(run, node);
+  const nodeSession = _prepareNodeSessionForDispatch(run, node);
+  startNode(run.dagRun, node.node_id);
+  _markNodeSessionStatus(run, node.node_id, "running");
+  const requestId = randomUUID();
   const request: DagCredentialBrokerCallRequest = {
-    request_id: randomUUID(),
+    request_id: requestId,
+    idempotency_key: requestId,
+    transport_kind: "manager_gateway",
     run_id: run.runId,
     node_id: node.node_id,
-    session_id: `manager-broker-${node.node_id}-${randomUUID()}`,
+    session_id: nodeSession.sessionId,
+    round_id: run.currentRound.round_id,
+    gateway_attempt: nodeSession.attempt,
     credential_ref: config.credential_ref,
     broker: config.broker,
     action: config.action,
     input,
   };
-  startNode(run.dagRun, node.node_id);
   inFlightBrokerGateways.add(key);
   writeRunMetadata(run.runId, serializeRunMetadata(run));
   emit("dag:gateway_executed", {
