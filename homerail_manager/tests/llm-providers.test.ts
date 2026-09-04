@@ -50,7 +50,7 @@ describe("custom LLM providers", () => {
     server = createServer(0, undefined, undefined, false);
   });
 
-  it("separates Kimi CN and international credentials and migrates the legacy Coding Plan", () => {
+  it("separates Kimi CN and international credentials and migrates the legacy Coding Plan", async () => {
     const providers = listProviders();
     const kimiCn = providers.find((provider) => provider.id === "kimi_cn");
     const kimiInternational = providers.find((provider) => provider.id === "kimi");
@@ -102,6 +102,46 @@ describe("custom LLM providers", () => {
       },
       default_reasoning_effort: "high",
     });
+
+    const port = await listen(server);
+    const catalogResponse = await fetch(`http://127.0.0.1:${port}/api/llm/providers`);
+    const catalogBody = await catalogResponse.json() as {
+      data: {
+        providers: Array<{
+          id: string;
+          endpoints?: Array<{
+            id: string;
+            models: Array<{
+              id: string;
+              reasoning_effort_map?: Record<string, string | null> | false;
+              default_reasoning_effort?: string;
+              supports_image_input?: boolean;
+              supports_video_input?: boolean;
+            }>;
+          }>;
+        }>;
+      };
+    };
+    expect(catalogResponse.status).toBe(200);
+    const apiCodingPlan = catalogBody.data.providers
+      .find((provider) => provider.id === "kimi_cn")
+      ?.endpoints?.find((endpoint) => endpoint.id === "kimi_coding_plan");
+    expect(apiCodingPlan?.models.filter((candidate) => candidate.id === "k3")).toEqual([
+      expect.objectContaining({
+        reasoning_effort_map: { low: "low", high: "high", max: "max" },
+        default_reasoning_effort: "high",
+        supports_image_input: true,
+        supports_video_input: true,
+      }),
+    ]);
+    expect(apiCodingPlan?.models.filter((candidate) => candidate.id === "k3-256k")).toEqual([
+      expect.objectContaining({
+        reasoning_effort_map: { low: "low", high: "high", max: "max" },
+        default_reasoning_effort: "high",
+        supports_image_input: true,
+        supports_video_input: false,
+      }),
+    ]);
     expect(kimiInternational).toMatchObject({
       name: "Kimi / Moonshot",
       base_url: "https://api.moonshot.ai/v1",
