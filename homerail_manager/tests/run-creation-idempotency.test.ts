@@ -1,4 +1,6 @@
 import * as fs from "node:fs";
+import * as http from "node:http";
+import { createServer } from "../src/server/http.js";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -416,4 +418,31 @@ describe("Run creation idempotency", () => {
     // Status reflects actual recovery outcome (not falsely reported as active)
     expect(result.status).not.toBe("active");
   });
+  // Judger-owned HTTP acceptance. These assertions are outside the coder's write scope.
+  it("HTTP creation pins revisions and replays terminal receipts without Worker resources", async () => {
+    const { orchestrator } = setup();
+    const first = orchestrator.createRun({ runId:"reference",workflowId:"idem-test",profile:"deterministic",prompt:"hello" });
+    const server: http.Server = createServer(0, undefined, new CapturingDispatcher(), false, {autoDetectCodex:false});
+    await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+    const address=server.address();if(!address||typeof address!=="object")throw new Error("no address");
+    const url=`http://127.0.0.1:${address.port}`;
+    const post=async(route:string,body:unknown)=>{
+      const response=await fetch(url+route,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+      return {status:response.status,body:await response.json() as {data?:{status?:string;dispatched?:number;reason?:string;code?:string}}};
+    };
+    try {
+      const request={runId:"http-pinned",workflow_id:"idem-test",profile:"deterministic",prompt:"hello",workflow_revision:first.workflowRevision,canonical_hash:first.canonicalHash};
+      expect((await post("/api/runs",request)).status).toBe(201);
+      expect((await post("/api/runs",{...request,workflow_revision:99}))).toMatchObject({status:409,body:{data:{reason:"request_mismatch",code:"RUN_CREATION_CONFLICT"}}});
+      expect((await post("/api/runs",{...request,runId:"invalid-version",workflow_revision:0})).status).toBe(400);
+      cancelActiveRun("http-pinned");
+      // No dag-resources.json in this test home: a fresh invocation would be unavailable.
+      const replay=await post("/api/runs/create-and-run",request);
+      expect(replay).toMatchObject({status:201,body:{data:{status:"cancelled",dispatched:0}}});
+      expect((await post("/api/runs/create-and-run",{...request,prompt:"different"}))).toMatchObject({status:409,body:{data:{reason:"request_mismatch"}}});
+    } finally {
+      server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));
+    }
+  });
+
 });
