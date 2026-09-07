@@ -51,6 +51,49 @@ async function collect(
 }
 
 describe("DeepSeekHarnessAdapter", () => {
+  it("exposes the configured output limit before handoff can end consumption", async () => {
+    const adapter = new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime, maxTokens: 16_384 });
+    const events = await collect(adapter, context());
+    const firstTool = events.findIndex((event) => event.type === "tool_use");
+    expect(firstTool).toBeGreaterThanOrEqual(0);
+    expect(events.slice(0, firstTool)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "usage", output_token_limit: 16_384 }),
+    ]));
+    expect(events.at(-1)).toMatchObject({ type: "done", output_token_limit: 16_384 });
+  });
+
+  it("exposes the default output limit as an empty-usage snapshot before handoff", async () => {
+    const adapter = new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime });
+    const events = await collect(adapter, context());
+    const firstTool = events.findIndex((event) => event.type === "tool_use");
+    expect(firstTool).toBeGreaterThanOrEqual(0);
+    expect(events.slice(0, firstTool)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "usage", usage: {}, output_token_limit: 32_768 }),
+    ]));
+    expect(events.at(-1)).toMatchObject({ type: "done", output_token_limit: 32_768 });
+  });
+
+  it("retains the configured output limit in early usage and completion when a turn fails", async () => {
+    const adapter = new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime, maxTokens: 16_384 });
+    const events = await collect(adapter, context({
+      environmentVariables: { DSH_FAKE_TURN_ERROR: "provider connection refused" },
+    }));
+    const firstTool = events.findIndex((event) => event.type === "tool_use");
+    expect(firstTool).toBeGreaterThanOrEqual(0);
+    expect(events.slice(0, firstTool)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "usage", usage: {}, output_token_limit: 16_384 }),
+    ]));
+    expect(events).toContainEqual({
+      type: "error",
+      message: "DeepSeek Harness turn failed [UPSTREAM_REJECTED] (HTTP 502): provider connection refused",
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      finish_reason: "error",
+      output_token_limit: 16_384,
+    });
+  });
+
   it("pins the compatible fork revision and uses the capability-aware pi-ai adapter", () => {
     const dockerfile = readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8");
     const composition = readFileSync(new URL("../../dsh/homerail.cordis.yml", import.meta.url), "utf8");
