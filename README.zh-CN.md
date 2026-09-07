@@ -98,6 +98,24 @@ hr start --ui
 
 默认端口为：Manager `http://localhost:19191`、Agent UI `https://localhost:19192`、HTTP 回退 `http://localhost:19193`。Manager 默认绑定 `127.0.0.1`；除非你有意让它对 localhost 之外的地址开放，否则无需改动——需要开放时使用 `hr start --host 0.0.0.0`。
 
+Android WebView 的 Live Voice 访问默认关闭。在可信局域网使用时，在 Manager
+进程环境中设置 `HOMERAIL_ANDROID_LIVE_VOICE_ENABLED=1`，再启动或重启 Manager：
+
+```bash
+export HOMERAIL_ANDROID_LIVE_VOICE_ENABLED=1
+hr start --host 0.0.0.0 --ui
+```
+
+仅值 `1` 启用此例外，只对精确来源 `https://appassets.androidplatform.net`
+放行 Live Voice ticket POST/预检和需要 ticket 的 Live Voice WebSocket。
+插件安装、配置修改等其他写接口仍使用原有来源规则，不会将 appassets 自动加入全局
+`HOMERAIL_MANAGER_ADMIN_ORIGINS` 白名单。删除变量或设为 `0` 后重启即可撤销例外；
+若曾在全局白名单中显式加入 appassets，还需移除该条目才能恢复默认拒绝。
+
+appassets 是 Android WebViewAssetLoader 的共享域名，不能证明请求来自 HomeRail。
+开启后，能访问 Manager 并使用该来源的客户端可以申请语音票据并调用语音智能体；
+短期票据不等于设备认证。只应在可信网络显式启用，不要用于未经保护的公网 Manager。
+
 ## 跑一个 DAG
 
 显式加载一个模板来运行：

@@ -48,6 +48,7 @@ import {
 } from "../runtime/active-runs.js";
 import { recoverDagActorLiveCommands } from "../runtime/dag-actor-live-command-runtime.js";
 import {
+  HOMERAIL_ANDROID_LIVE_VOICE_ENABLED,
   HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
   createPluginHttpTrustPolicy,
   pluginHttpTrustHandler,
@@ -242,6 +243,7 @@ export function createServer(
     publicUrl: process.env.HOMERAIL_MANAGER_PUBLIC_URL,
     adminToken: process.env.HOMERAIL_MANAGER_ADMIN_TOKEN,
     allowedOrigins: process.env.HOMERAIL_MANAGER_ADMIN_ORIGINS,
+    androidLiveVoiceEnabled: process.env[HOMERAIL_ANDROID_LIVE_VOICE_ENABLED] === "1",
     unsafeAllowUnauthenticatedPublic:
       process.env[HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH] === "1",
     turnAuthorizer: (credential, method, pathname) => (

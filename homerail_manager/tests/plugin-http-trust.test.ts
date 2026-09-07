@@ -7,6 +7,8 @@ import { closeDb } from "../src/persistence/db.js";
 import { createServer } from "../src/server/http.js";
 import { _requestManagerForTest } from "../src/server/host-codex-manager-agent.js";
 import {
+  HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+  HOMERAIL_ANDROID_LIVE_VOICE_ENABLED,
   HOMERAIL_MANAGER_ADMIN_ORIGINS,
   HOMERAIL_MANAGER_ADMIN_TOKEN,
   HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH,
@@ -45,6 +47,7 @@ describe("Manager HTTP mutation trust gate", () => {
     delete process.env.HOMERAIL_MANAGER_PUBLIC_URL;
     delete process.env[HOMERAIL_MANAGER_ADMIN_TOKEN];
     delete process.env[HOMERAIL_MANAGER_ADMIN_ORIGINS];
+    delete process.env[HOMERAIL_ANDROID_LIVE_VOICE_ENABLED];
     delete process.env[HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH];
   });
 
@@ -294,6 +297,111 @@ describe("Manager HTTP mutation trust gate", () => {
     });
     expect(untrusted.status).toBe(403);
     expect(untrusted.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it.each([undefined, "0", "true"])("rejects Android ticket requests without explicit opt-in (%s)", async (enabled) => {
+    process.env.HOMERAIL_MANAGER_HOST = "0.0.0.0";
+    if (enabled !== undefined) process.env[HOMERAIL_ANDROID_LIVE_VOICE_ENABLED] = enabled;
+    await start();
+    for (const method of ["OPTIONS", "POST"]) {
+      const response = await fetch(`${baseUrl}/api/voice-agent/sessions/android-device/live-ticket`, {
+        method,
+        headers: {
+          Origin: HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+          "Access-Control-Request-Method": "POST",
+        },
+      });
+      expect(response.status).toBe(403);
+      expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    }
+  });
+
+  it("allows opted-in Android Live Voice tickets without widening the Manager mutation allowlist", async () => {
+    process.env.HOMERAIL_MANAGER_HOST = "0.0.0.0";
+    process.env[HOMERAIL_ANDROID_LIVE_VOICE_ENABLED] = "1";
+    process.env[HOMERAIL_MANAGER_ADMIN_ORIGINS] = TRUSTED_ORIGIN;
+    await start();
+    const ticketPath = "/api/voice-agent/sessions/android-device/live-ticket";
+
+    const preflight = await fetch(`${baseUrl}${ticketPath}`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin"))
+      .toBe(HOMERAIL_ANDROID_APPASSETS_ORIGIN);
+    expect(preflight.headers.get("access-control-allow-origin")).not.toBe("*");
+    expect(preflight.headers.get("vary")).toContain("Origin");
+
+    const ticket = await fetch(`${baseUrl}${ticketPath}`, {
+      method: "POST",
+      headers: {
+        Origin: HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    expect(ticket.status).toBe(200);
+    expect(ticket.headers.get("access-control-allow-origin"))
+      .toBe(HOMERAIL_ANDROID_APPASSETS_ORIGIN);
+
+    for (const [method, pathname] of [
+      ["POST", "/api/plugins/install"],
+      ["PUT", "/api/manager-agent/config"],
+      ["DELETE", ticketPath],
+      ["POST", `${ticketPath}/extra`],
+      ["POST", "/api/voice-agent/sessions/android-device/other/live-ticket"],
+    ]) {
+      for (const requestMethod of ["OPTIONS", method]) {
+        const unrelatedMutation = await fetch(`${baseUrl}${pathname}`, {
+          method: requestMethod,
+          headers: {
+            Origin: HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+            "Access-Control-Request-Method": method,
+          },
+        });
+        expect(unrelatedMutation.status, `${requestMethod} ${pathname}`).toBe(403);
+        expect(unrelatedMutation.headers.get("access-control-allow-origin")).toBeNull();
+      }
+    }
+
+    const configuredOrigin = await fetch(`${baseUrl}/api/plugins/install`, {
+      method: "POST",
+      headers: { Origin: TRUSTED_ORIGIN },
+    });
+    expect(configuredOrigin.status).toBe(415);
+    expect(configuredOrigin.headers.get("access-control-allow-origin")).toBe(TRUSTED_ORIGIN);
+
+    const unrelatedOrigin = await fetch(`${baseUrl}${ticketPath}`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://evil.example",
+        "Access-Control-Request-Method": "POST",
+      },
+    });
+    expect(unrelatedOrigin.status).toBe(403);
+    expect(unrelatedOrigin.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it.each([
+    "http://appassets.androidplatform.net",
+    "https://appassets.androidplatform.net.evil.example",
+    "https://appassets.androidplatform.net:444",
+    "https://appassets.androidplatform.net/",
+    "null",
+  ])("rejects a non-exact Android Origin after opt-in: %s", async (origin) => {
+    process.env[HOMERAIL_ANDROID_LIVE_VOICE_ENABLED] = "1";
+    await start();
+    const response = await fetch(`${baseUrl}/api/voice-agent/sessions/android-device/live-ticket`, {
+      method: "OPTIONS",
+      headers: { Origin: origin, "Access-Control-Request-Method": "POST" },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("keeps read APIs public and rejects wildcard or non-origin allowlist entries", async () => {

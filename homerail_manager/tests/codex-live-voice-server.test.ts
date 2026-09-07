@@ -6,7 +6,10 @@ import {
   codexLiveVoiceTicketRoutesHandler,
   setupCodexLiveVoiceWebSocket,
 } from "../src/server/codex-live-voice-server.js";
-import { createPluginHttpTrustPolicy } from "../src/server/plugin-http-trust.js";
+import {
+  HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+  createPluginHttpTrustPolicy,
+} from "../src/server/plugin-http-trust.js";
 
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -40,10 +43,14 @@ async function issueTicket(port: number, sessionId: string): Promise<Response> {
   );
 }
 
-async function openTrustedSocket(port: number, sessionId: string): Promise<WebSocket> {
+async function openTrustedSocket(
+  port: number,
+  sessionId: string,
+  origin = "http://allowed.test",
+): Promise<WebSocket> {
   const socket = new WebSocket(
     `ws://127.0.0.1:${port}/api/voice-agent/sessions/${sessionId}/live`,
-    { origin: "http://allowed.test" },
+    { origin },
   );
   await new Promise<void>((resolve, reject) => {
     socket.once("open", resolve);
@@ -52,7 +59,7 @@ async function openTrustedSocket(port: number, sessionId: string): Promise<WebSo
   return socket;
 }
 
-function ticketServer(authTimeoutMs?: number): http.Server {
+function ticketServer(authTimeoutMs?: number, androidLiveVoiceEnabled = false): http.Server {
   const server = http.createServer((req, res) => {
     if (!codexLiveVoiceTicketRoutesHandler(req, res)) {
       res.writeHead(404);
@@ -61,8 +68,9 @@ function ticketServer(authTimeoutMs?: number): http.Server {
   });
   setupCodexLiveVoiceWebSocket(server, {
     trustPolicy: createPluginHttpTrustPolicy({
-      bindHost: "127.0.0.1",
+      bindHost: "0.0.0.0",
       allowedOrigins: "http://allowed.test",
+      androidLiveVoiceEnabled,
     }),
     authTimeoutMs,
   });
@@ -98,6 +106,49 @@ describe("Codex Live Voice ticket and Origin boundary", () => {
     sockets.push(reused);
     const closed = new Promise<number>(resolve => reused.once("close", code => resolve(code)));
     reused.send(JSON.stringify({ type: "authenticate", ticket: body.data.ticket }));
+    await expect(closed).resolves.toBe(4401);
+  });
+
+  it("accepts the opted-in Android appassets Origin for the ticket-authenticated Live Voice socket", async () => {
+    server = ticketServer(undefined, true);
+    const port = await listen(server);
+    const response = await issueTicket(port, "android-live-voice");
+    const body = await response.json() as { data: { ticket: string } };
+
+    const socket = await openTrustedSocket(
+      port,
+      "android-live-voice",
+      HOMERAIL_ANDROID_APPASSETS_ORIGIN,
+    );
+    sockets.push(socket);
+    const readyPromise = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "authenticate", ticket: body.data.ticket }));
+
+    await expect(readyPromise).resolves.toMatchObject({ type: "ready" });
+  });
+
+  it.each([
+    [false, HOMERAIL_ANDROID_APPASSETS_ORIGIN],
+    [true, "http://appassets.androidplatform.net"],
+    [true, "https://appassets.androidplatform.net.evil.example"],
+    [true, "https://appassets.androidplatform.net:444"],
+    [true, "https://appassets.androidplatform.net/"],
+    [true, "null"],
+  ] as const)("rejects Live Voice upgrade with opt-in %s and Origin %s", async (enabled, origin) => {
+    server = ticketServer(undefined, enabled);
+    const port = await listen(server);
+    // Even a caller that can obtain a ticket cannot skip the Origin boundary.
+    expect((await issueTicket(port, "android-rejected")).status).toBe(200);
+    await expect(openTrustedSocket(port, "android-rejected", origin)).rejects.toThrow();
+  });
+
+  it("still requires a valid ticket after opting in to Android Live Voice", async () => {
+    server = ticketServer(undefined, true);
+    const port = await listen(server);
+    const socket = await openTrustedSocket(port, "android-invalid-ticket", HOMERAIL_ANDROID_APPASSETS_ORIGIN);
+    sockets.push(socket);
+    const closed = new Promise<number>(resolve => socket.once("close", resolve));
+    socket.send(JSON.stringify({ type: "authenticate", ticket: "invalid-ticket" }));
     await expect(closed).resolves.toBe(4401);
   });
 
