@@ -24,7 +24,7 @@ export function command(bin, args, options = {}) {
   return result.stdout;
 }
 export function safePath(name) {
-  if (typeof name !== 'string' || !/^[A-Za-z0-9_-][A-Za-z0-9_./-]*$/.test(name) || name.split('/').some(x => !x || x === '..' || x === '.' || x === '.git')) throw new Error('invalid repository path');
+  if (typeof name !== 'string' || !/^[A-Za-z0-9_.-][A-Za-z0-9_./-]*$/.test(name) || name.split('/').some(x => !x || x === '..' || x === '.' || x === '.git')) throw new Error('invalid repository path');
   return name;
 }
 export function validatePlan(plan) {
@@ -63,7 +63,7 @@ export class Repository {
       if (!allowed.includes(file.path) || names.has(file.path) || typeof file.content !== 'string') throw new Error('candidate outside scope or duplicate');
       names.add(file.path); bytes += Buffer.byteLength(file.content);
     }
-    if (bytes > 65536) throw new Error('candidate exceeds 64 KiB');
+    if (bytes > 10 * 1024 * 1024) throw new Error('candidate exceeds 10 MiB');
     const index = path.resolve(this.root, this.git(['rev-parse', '--git-path', `judged-index-${crypto.randomUUID()}`]));
     const env = { ...process.env, GIT_INDEX_FILE: index };
     try {

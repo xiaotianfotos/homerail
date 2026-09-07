@@ -61,7 +61,8 @@ export class JudgedLoop {
       this.assertHead(r.base);
       const edits=result.value.edits;
       if(!Array.isArray(edits)||!edits.length||edits.length>20)throw new Error('invalid edits');
-      const current=new Map(this.repo.manifest(r.base_tree).map(f=>[f.path,f.content]));const output=new Map();
+      const current=new Map(this.repo.entries(r.base_tree).filter(f=>r.plan.allowed_paths.includes(f.path)).map(f=>[f.path,this.repo.bytes(f.sha).toString('utf8')]));const output=new Map();
+      if(Buffer.byteLength(JSON.stringify(result.value))>96000)throw new Error('proposal exceeds 96 KiB');
       for(const e of edits){
         safePath(e.path);if(!r.plan.allowed_paths.includes(e.path)||typeof e.old!=='string'||typeof e.new!=='string')throw new Error('edit outside Judger scope');
         const source=output.has(e.path)?output.get(e.path):current.get(e.path);
