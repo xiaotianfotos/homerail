@@ -534,7 +534,20 @@ export function mutationRoutesHandler(
         try {
           const runInputs = _runInputFields(b);
           const versionFields = _runVersionFields(b);
+          const request = {
+            yamlPath,
+            workflowId,
+            profile,
+            runId,
+            prompt,
+            llmSettingId,
+            ...versionFields,
+            ...runInputs,
+          };
           const existing = runId ? loadRunMetadata(runId) : undefined;
+          if (existing) {
+            changeOrchestrator.createRun(request);
+          }
           if (!existing || existing.status === "active") {
             const unavailable = dagResourcesUnavailableForRun();
             if (unavailable) {
@@ -545,16 +558,7 @@ export function mutationRoutesHandler(
               return;
             }
           }
-          const result = changeOrchestrator.createAndRun({
-            yamlPath,
-            workflowId,
-            profile,
-            runId,
-            prompt,
-            llmSettingId,
-            ...versionFields,
-            ...runInputs,
-          });
+          const result = changeOrchestrator.createAndRun(request);
           _created(res, "Run created and invoked", result);
         } catch (err) {
           _runCreationError(res, err);

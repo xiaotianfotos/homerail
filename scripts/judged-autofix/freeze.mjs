@@ -39,6 +39,8 @@ export function freezeEngine(taskRoot) {
 
   assertClean(repo);
 
+  if (fs.lstatSync(taskRoot).isSymbolicLink()) throw new Error('taskRoot is a symlink');
+  { const _ep = path.join(taskRoot, 'engines'); try { if (fs.lstatSync(_ep).isSymbolicLink()) throw new Error('engines parent is a symlink'); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
   const stateFile = path.join(taskRoot, 'state.json');
   if (fs.existsSync(stateFile)) {
     const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));

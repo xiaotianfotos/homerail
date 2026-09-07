@@ -70,6 +70,7 @@ function validate(r, spec) {
 }
 
 export function processIdentity(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
     const raw = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
     const idx = raw.lastIndexOf(') ');

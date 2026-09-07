@@ -116,12 +116,17 @@ export class JudgedLoop {
       let receipt;while(true){receipt=ensureTestJob(intent.directory,intent.spec);if(receipt)break;await delay(100);}
       receipt={...receipt,job_directory:intent.directory};
       const attempt=r.receipts.length+1;
+      if(receipt.status==='infrastructure_failed'&&receipt.surviving_child){
+        this.state.blocked_test=receipt.surviving_child;this.state.phase='judging';
+        r.receipts.push(receipt);atomic(path.join(this.directory(),`receipt-${attempt}.json`),receipt);delete r.test_intent;this.save('test_blocked',{surviving_child:receipt.surviving_child});return;
+      }
       r.receipts.push(receipt);atomic(path.join(this.directory(),`receipt-${attempt}.json`),receipt);delete r.test_intent;this.save('test_recorded');
-      if(receipt.status==='infrastructure_failed'&&receipt.surviving_child){this.state.blocked_test=receipt.surviving_child;this.state.phase='judging';this.save('test_blocked',{surviving_child:receipt.surviving_child});return;}
     }
     this.state.phase='judging';this.save('awaiting_judger');
   }
   assertEvidence(){
+    if(this.state.blocked_test)throw new Error('blocked test process must be recovered before evidence assertion');
+    if(this.round.test_intent)throw new Error('pending test intent blocks evidence assertion');
     const r=this.round;this.assertHead(r.candidate_commit);
     if(this.repo.git(['status','--porcelain']))throw new Error('candidate is dirty');
     const runnerDigest=digest(fs.readFileSync(new URL('./test-job.mjs',import.meta.url)));
@@ -144,13 +149,41 @@ export class JudgedLoop {
   publish(bodyFile){
     if(this.state.phase!=='accepted')throw new Error('Judger acceptance required');
     this.assertEvidence();
+    const r=this.round;
     const branch=this.repo.git(['branch','--show-current']);if(!branch.startsWith('codex/'))throw new Error('publication requires an isolated codex branch');
-    this.state.publication??={head:r.candidate_commit,branch,body_digest:digest(fs.readFileSync(bodyFile))};this.save('publication_intent');
-    this.repo.git(['push','-u','origin',branch]);
+    const bodyBuf=fs.readFileSync(bodyFile);
+    const base=this.config.base_branch??'main';
+    const repo=this.config.github_repo;
+    const title=this.config.pr_title;
+    const intent={head:r.candidate_commit,branch,repo,base,title,body_digest:digest(bodyBuf)};
+    if(this.state.publication){
+      const p=this.state.publication;
+      if(p.head!==intent.head||p.branch!==intent.branch||p.repo!==intent.repo||p.base!==intent.base||p.title!==intent.title||p.body_digest!==intent.body_digest)
+        throw new Error('publication intent mismatch: current parameters differ from persisted intent');
+    } else {
+      this.state.publication=intent;this.save('publication_intent');
+    }
+    this.repo.git(['push','origin',`${r.candidate_commit}:refs/heads/${branch}`]);
     const gh=args=>{const x=spawnSync('gh',args,{encoding:'utf8',cwd:this.config.repo});if(x.status!==0)throw new Error(x.stderr);return x.stdout;};
-    const prs=JSON.parse(gh(['pr','list','--repo',this.config.github_repo,'--head',branch,'--state','open','--json','url']));
-    const url=prs[0]?.url??gh(['pr','create','--repo',this.config.github_repo,'--head',branch,'--base',this.config.base_branch??'main','--title',this.config.pr_title,'--body-file',bodyFile]).trim();
-    this.state.publication.url=url;this.save('published');return url;
+    const jsonFields='url,state,headRefOid,baseRefName,headRefName,headRepository,headRepositoryOwner,title,body';
+    const prs=JSON.parse(gh(['pr','list','--repo',repo,'--head',branch,'--state','all','--json',jsonFields]));
+    let pr;
+    if(prs.length===1){pr=prs[0];}
+    else if(prs.length===0){
+      gh(['pr','create','--repo',repo,'--head',branch,'--base',base,'--title',title,'--body-file',bodyFile]);
+      const after=JSON.parse(gh(['pr','list','--repo',repo,'--head',branch,'--state','all','--json',jsonFields]));
+      if(after.length!==1)throw new Error('expected one PR after create, got '+after.length);
+      pr=after[0];
+    } else throw new Error('multiple PRs found for branch '+branch);
+    if(pr.state!=='OPEN')throw new Error('existing PR is not OPEN');
+    if(pr.headRefOid!==intent.head)throw new Error('PR headRefOid mismatch with intent');
+    if(pr.headRefName!==intent.branch)throw new Error('PR headRefName mismatch');
+    if(pr.baseRefName!==intent.base)throw new Error('PR baseRefName mismatch');
+    const repoJoin=`${pr.headRepositoryOwner?.login}/${pr.headRepository?.name}`.toLowerCase();
+    if(repoJoin!==repo.toLowerCase())throw new Error('PR headRepository mismatch with config repo');
+    if(pr.title!==intent.title)throw new Error('PR title mismatch');
+    if(digest(Buffer.from(pr.body))!==intent.body_digest)throw new Error('PR body digest mismatch');
+    this.state.publication.url=pr.url;this.save('published');return pr.url;
   }
   recoverTests(){
     if(!this.state.blocked_test)throw new Error('no blocked test to recover');

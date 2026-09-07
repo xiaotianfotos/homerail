@@ -28,6 +28,8 @@ catch (e) { fail(`engine.json parse error: ${e.message}`); }
 
 // Validate engine directory is not a symlink and is inside real taskRoot/engines
 const enginesBase = path.join(root, 'engines');
+try { if (fs.lstatSync(root).isSymbolicLink()) fail('taskRoot is a symlink'); } catch (e) { fail('taskRoot not accessible'); }
+try { if (fs.lstatSync(enginesBase).isSymbolicLink()) fail('engines parent is a symlink'); } catch (e) { fail('engines base not accessible'); }
 const resolvedDir = path.resolve(manifest.directory);
 let dirStat;
 try { dirStat = fs.lstatSync(resolvedDir); } catch { fail('engine directory not found'); }
