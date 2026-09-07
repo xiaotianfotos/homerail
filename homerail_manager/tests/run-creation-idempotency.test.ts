@@ -435,6 +435,8 @@ describe("Run creation idempotency", () => {
       expect((await post("/api/runs",request)).status).toBe(201);
       expect((await post("/api/runs",{...request,workflow_revision:99}))).toMatchObject({status:409,body:{data:{reason:"request_mismatch",code:"RUN_CREATION_CONFLICT"}}});
       expect((await post("/api/runs",{...request,runId:"invalid-version",workflow_revision:0})).status).toBe(400);
+      expect((await post("/api/runs/create-and-run",request)).status).toBe(503);
+      expect((await post("/api/runs/create-and-run",{...request,prompt:"active mismatch"}))).toMatchObject({status:409,body:{data:{code:"RUN_CREATION_CONFLICT",reason:"request_mismatch"}}});
       cancelActiveRun("http-pinned");
       // No dag-resources.json in this test home: a fresh invocation would be unavailable.
       const replay=await post("/api/runs/create-and-run",request);

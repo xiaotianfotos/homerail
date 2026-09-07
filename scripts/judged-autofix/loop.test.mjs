@@ -148,3 +148,37 @@ test('freezer rejects task paths inside the candidate including dot prefixes and
  assert.throws(()=>freezeEngine(inside),/outside/i);
  const alias=path.join(f.root,'alias');fs.symlinkSync(inside,alias,'dir');assert.throws(()=>freezeEngine(alias),/outside/i);
 });
+test('publication reconciles a lost create acknowledgement and refuses changed intent or wrong head',async t=>{
+ const f=loopFixture(t);f.loop.config.github_repo='owner/repo';f.loop.config.base_branch='main';f.loop.config.pr_title='Reviewed repair';f.loop.state.config_digest=identity(f.loop.config);f.loop.save('config');
+ spawnSync('git',['-C',f.repo,'switch','-c','codex/oracle'],{encoding:'utf8'});
+ await f.loop.test();const r=f.loop.round;const judge=path.join(f.root,'approve.json');fs.writeFileSync(judge,JSON.stringify({round:1,plan_digest:'plan',verdict:'accept',reason:'reviewed',tree:r.candidate_tree}));f.loop.judge(judge);
+ const body=path.join(f.root,'body.md');fs.writeFileSync(body,'Verified repair\n');
+ const bin=path.join(f.root,'bin');fs.mkdirSync(bin);const storage=path.join(f.root,'remote.json');const calls=path.join(f.root,'calls.jsonl');
+ const row={url:'https://github.com/owner/repo/pull/1',state:'OPEN',headRefName:'codex/oracle',headRefOid:r.candidate_commit,baseRefName:'main',headRepository:{name:'repo'},headRepositoryOwner:{login:'owner'},title:f.loop.config.pr_title,body:'Verified repair\n'};
+ fs.writeFileSync(path.join(bin,'gh'),`#!${process.execPath}\nconst fs=require('fs'),args=process.argv.slice(2),store=${JSON.stringify(storage)},calls=${JSON.stringify(calls)};fs.appendFileSync(calls,JSON.stringify(args)+'\\n');if(args[1]==='list'){console.log(fs.existsSync(store)?'['+fs.readFileSync(store,'utf8')+']':'[]');}else if(args[1]==='create'){fs.writeFileSync(store,JSON.stringify(${JSON.stringify(row)}));console.error('simulated lost acknowledgement');process.exit(1);}else{throw Error('unexpected gh operation')}`,{mode:0o755});
+ const git=f.loop.repo.git.bind(f.loop.repo);let pushes=0;f.loop.repo.git=(args,options)=>{if(args[0]==='push'){pushes++;assert.ok(args.some(a=>a.includes(r.candidate_commit)),'push exact accepted SHA');return '';}return git(args,options);};
+ const old=process.env.PATH;process.env.PATH=bin+path.delimiter+old;
+ try{
+  assert.throws(()=>f.loop.publish(body),/lost acknowledgement/);assert.ok(f.loop.state.publication);
+  fs.writeFileSync(body,'changed');assert.throws(()=>f.loop.publish(body),/intent|body|changed/i);assert.equal(pushes,1);
+  fs.writeFileSync(body,'Verified repair\n');fs.writeFileSync(storage,JSON.stringify({...row,headRefOid:'wrong'}));assert.throws(()=>f.loop.publish(body),/head|mismatch|receipt/i);
+  fs.writeFileSync(storage,JSON.stringify(row));assert.equal(f.loop.publish(body),row.url);
+  const operations=fs.readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(operations.filter(a=>a[1]==='create').length,1);
+ }finally{process.env.PATH=old;}
+});
+test('candidate application recovers staged changes and a lost HEAD-update acknowledgement',t=>{
+ const f=loopFixture(t);const git=args=>{const p=spawnSync('git',['-C',f.repo,...args],{encoding:'utf8'});assert.equal(p.status,0,p.stderr);return p.stdout.trim();};
+ const base=git(['rev-parse','HEAD']),baseTree=git(['rev-parse','HEAD^{tree}']);fs.writeFileSync(path.join(f.repo,'source.txt'),'candidate\n');git(['add','source.txt']);const tree=git(['write-tree']);const commit=git(['commit-tree',tree,'-p',base,'-m','candidate']);
+ f.loop.round.base=base;f.loop.round.base_tree=baseTree;f.loop.round.candidate_tree=tree;f.loop.round.candidate_commit=commit;f.loop.state.phase='apply';f.loop.save('candidate_intent');const durable=fs.readFileSync(path.join(f.root,'state.json'));
+ f.loop.apply();assert.equal(git(['rev-parse','HEAD']),commit);assert.equal(f.loop.state.phase,'test');
+ fs.writeFileSync(path.join(f.root,'state.json'),durable);const restored=new JudgedLoop(f.root);restored.apply();assert.equal(git(['rev-list','--count','HEAD']),'2');assert.equal(git(['status','--porcelain']),'');
+});
+test('a second CLI controller cannot enter while the task lock is held',async t=>{
+ const f=loopFixture(t);const lock=path.join(f.root,'lock');
+ const holder=spawn('flock',[lock,process.execPath,'-e',`require('fs').writeFileSync(${JSON.stringify(path.join(f.root,'locked'))},'1');setInterval(()=>{},1000)`],{detached:true,stdio:'ignore'});
+ t.after(()=>{try{process.kill(-holder.pid,'SIGKILL');}catch{}});
+ for(let i=0;i<100&&!fs.existsSync(path.join(f.root,'locked'));i++)await delay(20);
+ assert.ok(fs.existsSync(path.join(f.root,'locked')));const before=fs.readFileSync(path.join(f.root,'state.json'),'utf8');
+ const result=spawnSync(process.execPath,[fileURLToPath(new URL('./loop.mjs',import.meta.url)),f.root,'status'],{encoding:'utf8',env:{...process.env,HR_JUDGED_LOCKED:''}});
+ assert.notEqual(result.status,0);assert.equal(fs.readFileSync(path.join(f.root,'state.json'),'utf8'),before);
+});
