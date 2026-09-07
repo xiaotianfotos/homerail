@@ -81,6 +81,7 @@ export interface PersistedRunMetadata {
   inputArtifacts?: DagRunInputBinding[];
   brokerState?: Record<string, unknown>;
   initialPrompt?: string;
+  creationRequestDigest?: string;
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; allowed_surface_views?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;
