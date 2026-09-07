@@ -28,7 +28,8 @@ import {
   type InterveneDagActorResult,
   type ResumeWaitingRunRequest,
 } from "../runtime/active-runs.js";
-import { loadRunMetadata, type DagApprovalRecord } from "../persistence/dag-runtime-primitives.js";
+import type { DagApprovalRecord } from "../persistence/dag-runtime-primitives.js";
+import { loadRunMetadata } from "../persistence/store.js";
 import type { DagRunInputBindingRequest } from "homerail-protocol";
 import { resolveDagRunInputBindings } from "../persistence/run-input-artifacts.js";
 import type { InjectResult, CancelAllResult, CheckpointResumeRequest } from "../runtime/active-runs.js";
