@@ -23,6 +23,7 @@ import {
   decideActiveRunApproval,
   injectActiveRun,
   interveneActiveRunActor,
+  restoreActiveRun,
   resumeWaitingActiveRun,
   type InterveneDagActorRequest,
   type InterveneDagActorResult,
@@ -407,7 +408,29 @@ export class ChangeOrchestrator {
 
   createAndRun(request: CreateAndRunRequest): CreateAndRunResponse {
     const createResult = this.createRun(request);
-    const dispatched = createResult.status === "active"
+    // Cold-start lazy restore: if createRun replayed an active status from
+    // persisted metadata but the run is not in this process's memory, restore
+    // it via the supported recovery primitive before attempting to invoke.
+    let effectiveStatus = createResult.status;
+    if (effectiveStatus === "active" && !this.graphExecutor.getRun(createResult.runId)) {
+      const metadata = loadRunMetadata(createResult.runId);
+      if (!metadata) {
+        throw new Error(`Run metadata missing for active run ${createResult.runId}`);
+      }
+      const restoreResult = restoreActiveRun(metadata);
+      if (restoreResult.status === "skipped" && !this.graphExecutor.getRun(createResult.runId)) {
+        throw new Error(
+          `Cannot resume run ${createResult.runId}: restore skipped (${restoreResult.reason})`,
+        );
+      }
+      if (restoreResult.status === "restored") {
+        const actualStatus = restoreResult.run.status;
+        if (actualStatus !== "active") {
+          effectiveStatus = actualStatus as typeof effectiveStatus;
+        }
+      }
+    }
+    const dispatched = effectiveStatus === "active"
       ? this.invokeRun(createResult.runId).dispatched
       : 0;
     return {
@@ -420,7 +443,7 @@ export class ChangeOrchestrator {
       compilerVersion: createResult.compilerVersion,
       sourceApiVersion: createResult.sourceApiVersion,
       nodeCount: createResult.nodeCount,
-      status: createResult.status,
+      status: effectiveStatus,
       createdAt: createResult.createdAt,
       dispatched,
     };

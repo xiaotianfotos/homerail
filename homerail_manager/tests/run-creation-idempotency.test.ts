@@ -22,7 +22,7 @@ import {
   creationRequestDigest,
   RunCreationConflictError,
 } from "../src/orchestration/run-creation-identity.js";
-import type { DagRunInputBindingRequest } from "homerail-protocol";
+
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -251,7 +251,7 @@ describe("Run creation idempotency", () => {
       { label: "expectedCanonicalHash", mutate: (r) => ({ ...r, expectedCanonicalHash: "deadbeef" }) },
       { label: "expectedProfileUpdatedAt", mutate: (r) => ({ ...r, expectedProfileUpdatedAt: "2099-01-01T00:00:00Z" }) },
       { label: "inputScope", mutate: (r) => ({ ...r, inputScope: "other-scope" }) },
-      { label: "inputArtifacts", mutate: (r) => ({ ...r, inputArtifacts: [{ node: "execute", port: "task" }] as DagRunInputBindingRequest[] }) },
+      { label: "inputArtifacts", mutate: (r) => ({ ...r, inputArtifacts: [{ artifact_id: "artifact-a", logical_name: "input-a", mount_path: "input/a.txt" }] }) },
     ];
 
     for (const { label, mutate } of mutations) {
@@ -286,7 +286,7 @@ describe("Run creation idempotency", () => {
     const meta = loadRunMetadata("dup-7");
     expect(meta).toBeDefined();
     const legacyMeta = { ...meta! };
-    delete (legacyMeta as Record<string, unknown>).creationRequestDigest;
+    delete legacyMeta.creationRequestDigest;
     writeRunMetadata("dup-7", legacyMeta);
 
     // Verify digest is gone
@@ -357,16 +357,26 @@ describe("Run creation idempotency", () => {
     expect(creationRequestDigest(withRunIdB)).toBe(creationRequestDigest(without));
 
     // Canonicalizes object key order in inputArtifacts
-    const artifactsA = [{ node: "n1", port: "p1" }] as DagRunInputBindingRequest[];
+    const artifactsA = [
+      { artifact_id: "artifact-a", logical_name: "input-a", mount_path: "input/a.txt" },
+    ];
     // Same semantic content, different key insertion order
-    const artifactsB = [{ port: "p1", node: "n1" }] as unknown as DagRunInputBindingRequest[];
+    const artifactsB = [
+      { mount_path: "input/a.txt", artifact_id: "artifact-a", logical_name: "input-a" },
+    ];
     const reqA = { ...base, inputArtifacts: artifactsA };
     const reqB = { ...base, inputArtifacts: artifactsB };
     expect(creationRequestDigest(reqA)).toBe(creationRequestDigest(reqB));
 
     // Preserves array order: different order -> different digest
-    const orderedA = [{ node: "a", port: "1" }, { node: "b", port: "2" }] as DagRunInputBindingRequest[];
-    const orderedB = [{ node: "b", port: "2" }, { node: "a", port: "1" }] as DagRunInputBindingRequest[];
+    const orderedA = [
+      { artifact_id: "artifact-a", logical_name: "input-a", mount_path: "input/a.txt" },
+      { artifact_id: "artifact-b", logical_name: "input-b", mount_path: "input/b.txt" },
+    ];
+    const orderedB = [
+      { artifact_id: "artifact-b", logical_name: "input-b", mount_path: "input/b.txt" },
+      { artifact_id: "artifact-a", logical_name: "input-a", mount_path: "input/a.txt" },
+    ];
     const reqOrdA = { ...base, inputArtifacts: orderedA };
     const reqOrdB = { ...base, inputArtifacts: orderedB };
     expect(creationRequestDigest(reqOrdA)).not.toBe(creationRequestDigest(reqOrdB));
@@ -377,5 +387,33 @@ describe("Run creation idempotency", () => {
 
     const reqProfileDiff = { ...base, profile: "other" };
     expect(creationRequestDigest(base)).not.toBe(creationRequestDigest(reqProfileDiff));
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 10: cold-restored already-RUNNING orphan does not cause a new dispatch.
+  // -------------------------------------------------------------------------
+  it("test 10: cold-restored running orphan does not redispatch", () => {
+    const { orchestrator, dispatcher } = setup();
+    const req = { runId: "dup-10", workflowId: "idem-test", prompt: "hello", profile: "deterministic" };
+
+    // Create and invoke: first node gets dispatched and enters running state
+    const created = orchestrator.createAndRun(req);
+    expect(created.dispatched).toBe(1);
+    expect(dispatcher.dispatched).toHaveLength(1);
+
+    // Simulate cold start: clear memory and close/reopen DB
+    _clearActiveRuns();
+    closeDb();
+
+    // New process calls createAndRun with the same request
+    const dispatcher2 = new CapturingDispatcher();
+    const orchestrator2 = new ChangeOrchestrator(new GraphExecutor(dispatcher2));
+    const result = orchestrator2.createAndRun(req);
+
+    // The orphaned running node is demoted; no new dispatch should occur
+    expect(dispatcher2.dispatched).toHaveLength(0);
+
+    // Status reflects actual recovery outcome (not falsely reported as active)
+    expect(result.status).not.toBe("active");
   });
 });
