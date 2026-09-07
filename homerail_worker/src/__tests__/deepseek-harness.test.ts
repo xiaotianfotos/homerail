@@ -51,6 +51,17 @@ async function collect(
 }
 
 describe("DeepSeekHarnessAdapter", () => {
+  it("exposes the configured output limit before handoff can end consumption", async () => {
+    const adapter = new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime, maxTokens: 16_384 });
+    const events = await collect(adapter, context());
+    const firstTool = events.findIndex((event) => event.type === "tool_use");
+    expect(firstTool).toBeGreaterThanOrEqual(0);
+    expect(events.slice(0, firstTool)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "usage", output_token_limit: 16_384 }),
+    ]));
+    expect(events.at(-1)).toMatchObject({ type: "done", output_token_limit: 16_384 });
+  });
+
   it("pins the compatible fork revision and uses the capability-aware pi-ai adapter", () => {
     const dockerfile = readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8");
     const composition = readFileSync(new URL("../../dsh/homerail.cordis.yml", import.meta.url), "utf8");
