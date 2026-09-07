@@ -391,15 +391,6 @@ for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
   sleep 2
 done
 
-if [ "$healthy" = "1" ]; then
-  smoke_output=""
-  if ! smoke_output="$(verify_production_dag_smoke "$PRODUCTION_ROOT" "$HOMERAIL_HOME" "$MANAGER_URL" 2>&1)"; then
-    echo "Production Docker Worker DAG smoke failed for $REVISION." >&2
-    printf '%s\n' "$smoke_output" >&2
-    healthy=0
-  fi
-fi
-
 if [ "$healthy" != "1" ]; then
   echo "Production health check failed for $REVISION; rolling back." >&2
   systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true

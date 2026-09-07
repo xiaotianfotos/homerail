@@ -41,32 +41,3 @@ initialize_production_tokens() {
   HOMERAIL_DAG_MUTATION_TOKEN="$(load_or_create_production_token "$node_bin" "$secret_dir/dag-mutation.token" "DAG mutation")" || return 1
   export HOMERAIL_NODE_TOKEN HOMERAIL_WORKER_TOKEN HOMERAIL_DAG_MUTATION_TOKEN
 }
-
-verify_production_dag_smoke() {
-  local production_root="$1"
-  local homerail_home="$2"
-  local manager_url="$3"
-  local token_file="$homerail_home/manager/secrets/dag-mutation.token"
-  if [ ! -f "$token_file" ]; then
-    echo "Production DAG mutation token is missing after service startup." >&2
-    return 1
-  fi
-  local token
-  token="$(tr -d '[:space:]' < "$token_file")"
-  if [ -z "$token" ]; then
-    echo "Production DAG mutation token is empty after service startup." >&2
-    return 1
-  fi
-  HOMERAIL_REPO_ROOT="$production_root/current" \
-    HOMERAIL_DAG_MUTATION_TOKEN="$token" \
-    "$production_root/current/runtime/node" \
-    "$production_root/current/homerail_cli/dist/cli.js" \
-    --base-url "$manager_url" \
-    --request-timeout 180000 \
-    --json \
-    smoke dag \
-    --template "assets/orchestrations/public-two-node.yaml.template" \
-    --profile offline-deterministic \
-    --timeout 120 \
-    --interval 1
-}

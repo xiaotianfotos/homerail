@@ -91,13 +91,9 @@ test("production deployment is atomic, health checked, and rollback capable", ()
   assert.match(deploy, /loopback and wildcard binds are not supported/);
   assert.match(deploy, /MANAGER_HOST" != "\$DOCKER_BRIDGE_GATEWAY/);
   assert.match(deploy, /Production Manager may bind only to the Docker bridge gateway/);
-  assert.match(deploy, /verify_production_dag_smoke/);
-  assert.match(deploy, /Production Docker Worker DAG smoke failed/);
-  assert.match(runtime, /smoke dag/);
-  assert.match(runtime, /public-two-node\.yaml\.template/);
-  assert.match(runtime, /offline-deterministic/);
-  assert.match(runtime, /manager\/secrets\/dag-mutation\.token/);
-  assert.match(runtime, /Production DAG mutation token is missing after service startup/);
+  assert.doesNotMatch(deploy, /verify_production_dag_smoke|smoke dag/);
+  assert.doesNotMatch(runtime, /verify_production_dag_smoke|smoke dag/);
+  assert.match(runtime, /initialize_production_tokens/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_MANAGER_PORT=\$MANAGER_PORT/);
   assert.match(deploy, /HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS:-0/);
   assert.match(deploy, /Environment=HOMERAIL_ALLOW_INSECURE_REMOTE_WS=\$ALLOW_INSECURE_REMOTE_WS/);
@@ -209,66 +205,13 @@ test("production tokens are distinct, persistent, private, and fail closed", { s
   }
 });
 
-test("production DAG smoke helper enforces token presence and command success", { skip: process.platform === "win32" }, () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-production-smoke-"));
-  const productionRoot = path.join(tempRoot, "production");
-  const home = path.join(tempRoot, "home");
-  const current = path.join(productionRoot, "current");
-  const capture = path.join(tempRoot, "capture.json");
-  const helper = path.join(repoRoot, "scripts", "lib", "production-runtime.sh");
-  const fakeNode = path.join(current, "runtime", "node");
-  const fakeCli = path.join(current, "homerail_cli", "dist", "cli.js");
-  const invoke = (extraEnv = {}) => spawnSync("bash", [
-    "-c",
-    'source "$1"; verify_production_dag_smoke "$2" "$3" "$4"',
-    "production-smoke-test",
-    helper,
-    productionRoot,
-    home,
-    "http://127.0.0.1:39191",
-  ], { encoding: "utf8", env: { ...process.env, CAPTURE_PATH: capture, ...extraEnv } });
-
-  try {
-    fs.mkdirSync(path.dirname(fakeNode), { recursive: true });
-    fs.mkdirSync(path.dirname(fakeCli), { recursive: true });
-    fs.mkdirSync(path.join(current, "assets", "orchestrations"), { recursive: true });
-    fs.writeFileSync(fakeCli, "// fake cli\n");
-    fs.writeFileSync(path.join(current, "assets", "orchestrations", "public-two-node.yaml.template"), "schema_version: 1\n");
-    fs.writeFileSync(fakeNode, `#!/usr/bin/env bash\nprintf '{"token":"%s","repoRoot":"%s","args":"%s"}\\n' "$HOMERAIL_DAG_MUTATION_TOKEN" "$HOMERAIL_REPO_ROOT" "$*" > "$CAPTURE_PATH"\nexit "${'${FAKE_SMOKE_EXIT:-0}'}"\n`);
-    fs.chmodSync(fakeNode, 0o755);
-
-    const missing = invoke();
-    assert.notEqual(missing.status, 0);
-    assert.match(missing.stderr, /token is missing/);
-
-    const secretDir = path.join(home, "manager", "secrets");
-    fs.mkdirSync(secretDir, { recursive: true });
-    fs.writeFileSync(path.join(secretDir, "dag-mutation.token"), "test-dag-token\n", { mode: 0o600 });
-    const failed = invoke({ FAKE_SMOKE_EXIT: "7" });
-    assert.equal(failed.status, 7);
-
-    const passed = invoke();
-    assert.equal(passed.status, 0, passed.stderr);
-    const observed = JSON.parse(fs.readFileSync(capture, "utf8"));
-    assert.equal(observed.token, "test-dag-token");
-    assert.equal(observed.repoRoot, current);
-    assert.match(observed.args, /--base-url http:\/\/127\.0\.0\.1:39191/);
-    assert.match(observed.args, /smoke dag/);
-    assert.match(observed.args, /--template assets\/orchestrations\/public-two-node\.yaml\.template/);
-    assert.doesNotMatch(observed.args, /--template \/.*public-two-node\.yaml\.template/);
-    assert.match(observed.args, /offline-deterministic/);
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-  }
-});
-
 test("production deployment preserves database compatibility across success and rollback", { skip: process.platform === "win32" }, () => {
   const deployScript = path.join(repoRoot, "scripts", "deploy-production.sh");
   const revision = "a".repeat(40);
   const previousRevision = "b".repeat(40);
   const workerFingerprint = "c".repeat(16);
 
-  const runDeployment = (smokeExit, {
+  const runDeployment = (healthExit, {
     previousDatabaseCompatible = true,
     failUnitMove = false,
     extraEnv = {},
@@ -345,13 +288,7 @@ test("production deployment preserves database compatibility across success and 
       `export function dagWorkerSourceFingerprint() { return "${workerFingerprint}"; }\n`,
     );
     write("homerail_node/dist/cli.js", "// node\n");
-    write(
-      "homerail_cli/dist/cli.js",
-      'require("node:fs").appendFileSync(require("node:path").join(process.env.HOMERAIL_PRODUCTION_HOME, "manager", "homerail.db"), "rollout-write\\n");\n'
-        + 'require("node:fs").appendFileSync(require("node:path").join(process.env.HOMERAIL_PRODUCTION_HOME, "manager", "homerail.db-wal"), "rollout-wal-write\\n");\n'
-        + 'require("node:fs").writeFileSync(require("node:path").join(process.env.HOMERAIL_PRODUCTION_HOME, "manager", "homerail.db-shm"), "rollout-shm\\n");\n'
-        + "process.exit(Number(process.env.FAKE_SMOKE_EXIT || 0));\n",
-    );
+    write("homerail_cli/dist/cli.js", 'throw new Error("Deployment must not start DAG validation");\n');
     write("homerail_protocol/package.json", '{"type":"module"}\n');
     write("homerail_protocol/dist/index.js", 'export const WORKER_CONTRACT_VERSION = "1";\n');
     write("homerail_worker/package.json", '{"version":"0.1.0"}\n');
@@ -374,9 +311,24 @@ test("production deployment preserves database compatibility across success and 
     fakeCommand("loginctl", "#!/usr/bin/env bash\nprintf 'yes\\n'\n");
     fakeCommand("mv", `#!/usr/bin/env bash\nif [ "${'${FAIL_UNIT_MOVE:-0}'}" = 1 ] && [[ "${'${1:-}'}" == *.service.tmp ]]; then exit 19; fi\nif [ "${'${1:-}'}" = -Tf ]; then source_path="$2"; destination="$3"; /bin/rm -f "$destination"; exec /bin/mv -f "$source_path" "$destination"; fi\nexec /bin/mv "$@"\n`);
     fakeCommand("stat", `#!/usr/bin/env bash\ncase "${'${2:-}'}" in '%u') id -u ;; '%a') printf '755\\n' ;; *) exit 1 ;; esac\n`);
-    fakeCommand("systemctl", "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$CAPTURE_SYSTEMCTL\"\nexit 0\n");
+    fakeCommand("systemctl", `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CAPTURE_SYSTEMCTL"
+# Simulate a write during the initial rollout, before the health check.
+if [ "$2" = restart ] && [ ! -e "$CAPTURE_SYSTEMCTL.rollout-written" ] && [ "$(cat "$HOMERAIL_PRODUCTION_ROOT/current/REVISION")" = "$HOMERAIL_DEPLOY_REVISION" ]; then
+  touch "$CAPTURE_SYSTEMCTL.rollout-written"
+  printf 'rollout-write\n' >> "$HOMERAIL_PRODUCTION_HOME/manager/homerail.db"
+  printf 'rollout-wal-write\n' >> "$HOMERAIL_PRODUCTION_HOME/manager/homerail.db-wal"
+  printf 'rollout-shm\n' > "$HOMERAIL_PRODUCTION_HOME/manager/homerail.db-shm"
+fi
+exit 0
+`);
     fakeCommand("journalctl", "#!/usr/bin/env bash\nexit 0\n");
-    fakeCommand("curl", `#!/usr/bin/env bash\nurl="${'${!#}'}"\ncase "$url" in */runtime/status) printf '{"connected_nodes":1}\\n' ;; esac\nexit 0\n`);
+    fakeCommand("curl", `#!/usr/bin/env bash
+if [ "$FAKE_HEALTH_EXIT" != 0 ]; then exit "$FAKE_HEALTH_EXIT"; fi
+url="${'${!#}'}"
+case "$url" in */runtime/status) printf '{"connected_nodes":1}\n' ;; esac
+exit 0
+`);
     fakeCommand("rsync", `#!/usr/bin/env bash\nprevious=""\nfor arg in "$@"; do source_path="$previous"; destination="$arg"; previous="$arg"; done\nmkdir -p "$destination"\ncp -a "${'${source_path%/}'}/." "$destination/"\n`);
 
     const result = spawnSync("bash", [deployScript], {
@@ -394,7 +346,7 @@ test("production deployment preserves database compatibility across success and 
         HOMERAIL_PRODUCTION_ALLOW_INSECURE_REMOTE_WS: "1",
         HOMERAIL_PRODUCTION_HEALTH_ATTEMPTS: "1",
         HOMERAIL_CODEX_BIN: path.join(fakeBin, "codex"),
-        FAKE_SMOKE_EXIT: String(smokeExit),
+        FAKE_HEALTH_EXIT: String(healthExit),
         FAIL_UNIT_MOVE: failUnitMove ? "1" : "0",
         CAPTURE_DOCKER_BUILD_ARGS: dockerBuildArgsPath,
         CAPTURE_DOCKER_REMOVALS: dockerRemovalsPath,
@@ -431,7 +383,7 @@ test("production deployment preserves database compatibility across success and 
   const failed = runDeployment(7);
   try {
     assert.notEqual(failed.result.status, 0);
-    assert.match(failed.result.stderr, /DAG smoke failed/);
+    assert.match(failed.result.stderr, /Production health check failed/);
     assert.match(failed.result.stderr, /rolling back/);
     assert.equal(fs.readlinkSync(path.join(failed.productionRoot, "current")), "releases/previous");
     assert.equal(fs.readFileSync(failed.unitPath, "utf8"), "previous-unit\n");
