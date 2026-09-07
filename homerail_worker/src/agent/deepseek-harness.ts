@@ -453,6 +453,17 @@ export class DeepSeekHarnessAdapter implements AgentClient {
         },
       };
 
+      // Expose the effective configured output cap before any tool/handoff can
+      // terminate iteration. prompt-runner stops consuming adapter events the
+      // moment a handoff yields, so a done-only signal cannot populate early
+      // handoff diagnostics. This is a metadata-only snapshot: no invented token
+      // counts and no duplicated cumulative totals.
+      yield {
+        type: "usage",
+        usage: {},
+        output_token_limit: this.maxTokens,
+      };
+
       await harness.start();
       const bindController = (): void => {
         if (!context.turnController || controllerBinding) return;
@@ -514,11 +525,17 @@ export class DeepSeekHarnessAdapter implements AgentClient {
         usage: aggregateUsage,
         duration_ms: Date.now() - startedAt,
         finish_reason: latestFinishReason,
+        output_token_limit: this.maxTokens,
       };
     } catch (error) {
       const message = redactSecret(error instanceof Error ? error.message : String(error), context.apiKey);
       yield { type: "error", message: `DeepSeek Harness failed: ${message}` };
-      yield { type: "done", usage: aggregateUsage, duration_ms: Date.now() - startedAt };
+      yield {
+        type: "done",
+        usage: aggregateUsage,
+        duration_ms: Date.now() - startedAt,
+        output_token_limit: this.maxTokens,
+      };
     } finally {
       if (context.abortSignal && abortHandler) {
         context.abortSignal.removeEventListener("abort", abortHandler);
