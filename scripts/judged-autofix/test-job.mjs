@@ -23,61 +23,105 @@ export function ensureTestJob(directory, spec) {
     return r;
   }
 
-  if (fs.existsSync(sp)) {
-    const s = JSON.parse(fs.readFileSync(sp, 'utf8'));
-    if (alive(s.worker_pid)) return null;
-    const childAlive = s.child_pid != null && alive(s.child_pid);
-    const r = {
-      name: spec.name, commit: spec.commit, tree: spec.tree,
-      spec_digest: identity(spec.check), job_digest: identity(spec),
-      runner_digest: digest(fs.readFileSync(MODULE)), argv: spec.check.argv,
-      started_at: s.started_at, finished_at: new Date().toISOString(),
-      exit_code: null, signal: null, status: 'infrastructure_failed',
-      error: childAlive ? `interrupted: surviving child pid ${s.child_pid}` : 'interrupted worker'
-    };
-    atomic(rp, r);
-    return r;
-  }
-
+  // Stale marker or fresh: always delegate to locked executor (never write receipt outside lock)
   const c = spawn('flock', ['-n', path.join(directory, 'job.lock'),
     process.execPath, MODULE, '--execute', directory], { detached: true, stdio: 'ignore' });
+  c.on('error', () => {});
   c.unref();
   return null;
 }
 
 function validate(r, spec) {
+  if (r.job_digest !== identity(spec))
+    throw new Error('job_digest mismatch');
+  if (r.name !== spec.name)
+    throw new Error('name mismatch');
   if (r.commit !== spec.commit || r.tree !== spec.tree)
     throw new Error('identity mismatch');
   if (r.spec_digest !== identity(spec.check))
     throw new Error('spec_digest mismatch');
-  if (r.log_path && fs.existsSync(r.log_path) && digest(fs.readFileSync(r.log_path)) !== r.log_digest)
-    throw new Error('log_digest mismatch');
-  if (digest(fs.readFileSync(MODULE)) !== r.runner_digest)
+  if (r.runner_digest !== digest(fs.readFileSync(MODULE)))
     throw new Error('runner_digest mismatch');
+  if (JSON.stringify(r.argv) !== JSON.stringify(spec.check.argv))
+    throw new Error('argv mismatch');
+  if (r.log_path) {
+    try {
+      const st = fs.statSync(r.log_path);
+      if (!st.isFile()) throw new Error('log_path not a regular file');
+    } catch (e) {
+      if (e.code === 'ENOENT') throw new Error('log_path missing: ENOENT ' + r.log_path);
+      throw e;
+    }
+    if (digest(fs.readFileSync(r.log_path)) !== r.log_digest)
+      throw new Error('log_digest mismatch');
+  }
+  if (r.status === 'passed') {
+    if (r.exit_code !== 0) throw new Error('passed receipt requires exit_code 0');
+    if (r.signal != null) throw new Error('passed receipt must have no signal');
+    if (!r.log_path) throw new Error('passed receipt requires log_path');
+  }
 }
 
-function alive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
+function workerIdentity(pid) {
+  try {
+    const raw = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const idx = raw.lastIndexOf(') ');
+    if (idx < 0) return null;
+    const fields = raw.slice(idx + 2).split(' ');
+    return fields[19] || null;
+  } catch { return null; }
+}
 
-if (process.argv[2] === '--execute') execute(process.argv[3]);
+function alive(pid, start) {
+  try { process.kill(pid, 0); } catch { return false; }
+  if (start == null) return false;
+  const current = workerIdentity(pid);
+  if (current === null) return false;
+  return String(current) === String(start);
+}
+
+// Direct-entry guard: import never executes
+if (process.argv[2] === '--execute' && process.argv[1] && path.resolve(process.argv[1]) === MODULE) {
+  try { execute(process.argv[3]); }
+  catch (e) {
+    try {
+      const dir = process.argv[3];
+      const spec = JSON.parse(fs.readFileSync(path.join(dir, 'job.json'), 'utf8'));
+      atomic(path.join(dir, 'receipt.json'), infraReceipt(spec, new Date().toISOString(), null, `CLI error: ${e.message}`));
+    } catch {}
+  }
+}
 
 function execute(dir) {
   const rp = path.join(dir, 'receipt.json');
-  if (fs.existsSync(rp)) return;
+  if (fs.existsSync(rp)) return; // double-check inside lock
   const sp = path.join(dir, 'started.json');
   const spec = JSON.parse(fs.readFileSync(path.join(dir, 'job.json'), 'utf8'));
 
   if (fs.existsSync(sp)) {
     const s = JSON.parse(fs.readFileSync(sp, 'utf8'));
-    atomic(rp, infraReceipt(spec, s.started_at, null, 'interrupted worker: recovered'));
+    if (alive(s.worker_pid, s.worker_start)) return; // worker still running
+    // Stale: recover inside lock
+    const childAlive = s.child_pid != null && process.kill(s.child_pid, 0) === true;
+    const error = childAlive
+      ? `interrupted: surviving child pid ${s.child_pid}`
+      : 'interrupted worker: recovered';
+    atomic(rp, infraReceipt(spec, s.started_at, null, error));
     return;
   }
 
   const startedAt = new Date().toISOString();
-  atomic(sp, { worker_pid: process.pid, started_at: startedAt });
+  const myStart = workerIdentity(process.pid);
+  atomic(sp, { worker_pid: process.pid, worker_start: myStart, started_at: startedAt });
 
-  if (git(spec, 'rev-parse', 'HEAD').trim() !== spec.commit ||
-      git(spec, 'rev-parse', 'HEAD^{tree}').trim() !== spec.tree) {
-    atomic(rp, infraReceipt(spec, startedAt, null, 'source drift: pre-test git state mismatch'));
+  // Pre-test source check
+  let preClean;
+  try { preClean = sourceClean(spec); } catch (e) {
+    atomic(rp, infraReceipt(spec, startedAt, null, `pre-test git error: ${e.message}`));
+    return;
+  }
+  if (!preClean) {
+    atomic(rp, infraReceipt(spec, startedAt, null, 'source drift: pre-test dirty or HEAD/tree mismatch'));
     return;
   }
 
@@ -87,14 +131,15 @@ function execute(dir) {
   const env = {
     PATH: process.env.PATH || '/usr/bin:/bin', HOME: spec.home,
     TMPDIR: process.env.TMPDIR || '/tmp', CI: '1',
-    VITEST_MAX_WORKERS: process.env.VITEST_MAX_WORKERS || '1'
+    VITEST_MAX_WORKERS: process.env.VITEST_MAX_WORKERS || '4'
   };
+  const timeoutMs = spec.check.timeout_ms ?? 600000;
+  const cwd = path.resolve(spec.repo, spec.check.cwd ?? '.');
 
   let child;
   try {
     child = spawn(spec.check.argv[0], spec.check.argv.slice(1), {
-      cwd: path.resolve(spec.repo, spec.check.cwd), env,
-      detached: true, stdio: ['ignore', fd, fd]
+      cwd, env, detached: true, stdio: ['ignore', fd, fd]
     });
   } catch (e) {
     fs.fsyncSync(fd); fs.closeSync(fd);
@@ -102,13 +147,13 @@ function execute(dir) {
     return;
   }
 
-  atomic(sp, { worker_pid: process.pid, started_at: startedAt, child_pid: child.pid });
+  atomic(sp, { worker_pid: process.pid, worker_start: myStart, started_at: startedAt, child_pid: child.pid });
 
   let timedOut = false, done = false;
   const timer = setTimeout(() => {
     timedOut = true;
     try { process.kill(-child.pid, 'SIGKILL'); } catch {}
-  }, spec.check.timeout_ms);
+  }, timeoutMs);
 
   child.on('error', e => {
     if (done) return; done = true; clearTimeout(timer);
@@ -120,8 +165,17 @@ function execute(dir) {
   child.on('close', (code, signal) => {
     if (done) return; done = true; clearTimeout(timer);
     fs.fsyncSync(fd); fs.closeSync(fd);
-    const clean = sourceClean(spec);
-    const status = timedOut || !clean ? 'infrastructure_failed' : code === 0 ? 'passed' : 'failed';
+    // Kill remaining process group members to prevent leaks
+    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+    let postClean;
+    try { postClean = sourceClean(spec); } catch (e) {
+      atomic(rp, infraReceipt(spec, startedAt, log, `post-test git error: ${e.message}`));
+      return;
+    }
+    const status = timedOut ? 'infrastructure_failed'
+      : signal != null ? 'infrastructure_failed'
+      : !postClean ? 'infrastructure_failed'
+      : code === 0 ? 'passed' : 'failed';
     const buf = fs.readFileSync(log);
     atomic(rp, {
       name: spec.name, commit: spec.commit, tree: spec.tree,
@@ -130,18 +184,23 @@ function execute(dir) {
       started_at: startedAt, finished_at: new Date().toISOString(),
       log_path: log, log_digest: digest(buf), tail: buf.slice(-2000).toString(),
       exit_code: code, signal, status,
-      error: timedOut ? 'timeout' : !clean ? 'source drift' : undefined
+      error: timedOut ? 'timeout' : signal != null ? `killed by signal ${signal}` : !postClean ? 'source drift' : undefined
     });
   });
 }
 
 function git(spec, ...args) {
   const r = spawnSync('git', ['-C', spec.repo, ...args], { encoding: 'utf8' });
+  if (r.error) throw new Error(`git ${args.join(' ')}: ${r.error.message}`);
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')} exited ${r.status}: ${(r.stderr || '').trim()}`);
   return r.stdout || '';
 }
 
 function sourceClean(spec) {
-  return git(spec, 'status', '--porcelain').trim() === '';
+  if (git(spec, 'status', '--porcelain').trim() !== '') return false;
+  if (git(spec, 'rev-parse', 'HEAD').trim() !== spec.commit) return false;
+  if (git(spec, 'rev-parse', 'HEAD^{tree}').trim() !== spec.tree) return false;
+  return true;
 }
 
 function infraReceipt(spec, startedAt, logPath, error) {
