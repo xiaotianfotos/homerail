@@ -3,8 +3,8 @@
 `.github/workflows/deploy-production.yml` deploys the latest `main` revision
 only through an owner-initiated manual dispatch. Merging a pull request does
 not start a deployment workflow. It runs on a dedicated self-hosted runner
-labeled `homerail-deploy`; the live DAG, PR Review, and Auto Fix labels must
-stay on separate runners.
+labeled `homerail-deploy`; PR Review and Auto Fix use separate runners.
+The live DAG validation runner is retired.
 
 Each deployment runner keeps its machine-specific paths and public address in
 `~/.config/homerail/production.env` with mode `0600`. The tracked workflow does
@@ -64,8 +64,7 @@ This Manager is also the single durable automation control plane. PR Review and
 Auto Fix use separate Actions runner processes so they can execute concurrently,
 but both submit to this service and retain their DAG history in its database.
 They do not start alternate Managers, allocate dynamic Manager ports, or clone
-the production Home. Live DAG compatibility CI remains the only workflow that
-may start a transient current-commit runtime.
+the production Home. Live DAG compatibility validation is retired.
 
 The production Manager enables only the fixed `node` executable for
 deterministic DAG command nodes. Built-in PR Review and Auto Fix use that
@@ -87,8 +86,8 @@ into a new release directory, and atomically switches `current`. The systemd
 user service owns Manager, Node, and the static Agent UI as one cgroup and
 restarts after a process or health failure. Deployment waits for both Manager
 and HTTPS UI health through its LAN address, requires a connected Docker Node,
-and runs the deterministic public two-node DAG through a provisioned Docker
-Worker before accepting the release. Deployment rejects loopback-only Manager
+and accepts the release after these checks without starting a validation DAG.
+Deployment rejects loopback-only Manager
 binds, loopback-only UI binds, and loopback public addresses.
 A failed health check switches `current` back to the prior release and restarts it. The
 dedicated Manager port prevents desktop/E2E runtimes from being mistaken for
