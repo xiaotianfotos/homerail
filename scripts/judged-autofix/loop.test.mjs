@@ -92,3 +92,29 @@ test('dirty candidate is rejected before any test command executes',async t=>{
  const f=fixture(t,"require('fs').writeFileSync('source.txt','original\\n');require('fs').writeFileSync(process.env.HOME+'/executed','bad')");
  fs.writeFileSync(path.join(f.repo,'source.txt'),'dirty');assert.equal((await finished(f.dir,f.spec)).status,'infrastructure_failed');assert.ok(!fs.existsSync(path.join(f.spec.home,'executed')));
 });
+import {JudgedLoop} from './loop.mjs';
+function loopFixture(t,code="console.log('trusted')"){
+ const f=fixture(t,code);const root=path.join(f.root,'task');fs.mkdirSync(root);
+ const config={id:'test',repo:f.repo,checks:{oracle:f.spec.check},publish_checks:['oracle']};
+ fs.writeFileSync(path.join(root,'config.json'),JSON.stringify(config));const loop=new JudgedLoop(root);
+ loop.state.phase='test';loop.state.rounds=[{index:1,plan:{checks:['oracle']},plan_digest:'plan',candidate_commit:f.spec.commit,candidate_tree:f.spec.tree}];loop.save('fixture');return {...f,root,loop};
+}
+test('loop records durable receipts and refuses acceptance after evidence tampering',async t=>{
+ const f=loopFixture(t);await f.loop.test();const r=f.loop.round;
+ assert.equal(f.loop.state.phase,'judging');assert.equal(r.receipts[0].status,'passed');assert.ok(r.receipts[0].runner_digest);
+ const judgment=path.join(f.root,'judgment.json');fs.writeFileSync(judgment,JSON.stringify({round:1,plan_digest:'plan',verdict:'accept',reason:'reviewed',tree:r.candidate_tree}));
+ fs.appendFileSync(r.receipts[0].log_path,'tampered');assert.throws(()=>f.loop.judge(judgment),/evidence|log|receipt/i);
+});
+test('controller restarts after a saved test intent adopt the same trusted job',async t=>{
+ const f=loopFixture(t,"require('fs').appendFileSync(process.env.HOME+'/count','x');setTimeout(()=>{},650)");
+ const entry=new URL('./loop.mjs',import.meta.url).href;
+ const child=spawn(process.execPath,['--input-type=module','-e',`import {JudgedLoop} from ${JSON.stringify(entry)};await new JudgedLoop(${JSON.stringify(f.root)}).test();`],{stdio:'ignore'});
+ for(let i=0;i<100&&!fs.existsSync(path.join(f.root,'test-home','count'));i++)await delay(30);
+ assert.ok(fs.existsSync(path.join(f.root,'test-home','count')));child.kill('SIGKILL');
+ const restored=new JudgedLoop(f.root);await restored.test();assert.equal(restored.round.receipts.length,1);assert.equal(restored.round.receipts[0].status,'passed');
+ assert.equal(fs.readFileSync(path.join(f.root,'test-home','count'),'utf8'),'x');
+});
+test('missing flock produces a durable infrastructure failure instead of hanging',async t=>{
+ const f=fixture(t,"console.log('never')");const old=process.env.PATH;
+ try{process.env.PATH='/nonexistent-judged-test-bin';const r=await finished(f.dir,f.spec);assert.equal(r.status,'infrastructure_failed');assert.match(r.error,/spawn|flock|ENOENT/i);}finally{process.env.PATH=old;}
+});
