@@ -23,10 +23,17 @@ export function ensureTestJob(directory, spec) {
     return r;
   }
 
-  // Stale marker or fresh: always delegate to locked executor (never write receipt outside lock)
+  // Live worker: don't spawn another, return null (poller will retry)
+  if (fs.existsSync(sp)) {
+    const s = JSON.parse(fs.readFileSync(sp, 'utf8'));
+    if (alive(s.worker_pid, s.worker_start)) return null;
+  }
+  // Stale marker or fresh: delegate to locked executor (never write receipt outside lock)
   const c = spawn('flock', ['-n', path.join(directory, 'job.lock'),
     process.execPath, MODULE, '--execute', directory], { detached: true, stdio: 'ignore' });
-  c.on('error', () => {});
+  c.on('error', (e) => {
+    try { atomic(rp, infraReceipt(spec, new Date().toISOString(), null, `spawn error: ${e.message}`)); } catch {}
+  });
   c.unref();
   return null;
 }
@@ -102,7 +109,8 @@ function execute(dir) {
     const s = JSON.parse(fs.readFileSync(sp, 'utf8'));
     if (alive(s.worker_pid, s.worker_start)) return; // worker still running
     // Stale: recover inside lock
-    const childAlive = s.child_pid != null && process.kill(s.child_pid, 0) === true;
+    let childAlive = false;
+    if (s.child_pid != null) { try { process.kill(s.child_pid, 0); childAlive = true; } catch {} }
     const error = childAlive
       ? `interrupted: surviving child pid ${s.child_pid}`
       : 'interrupted worker: recovered';

@@ -6,8 +6,10 @@ import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {atomic,identity,digest,Repository,safePath} from './evidence.mjs';
 import {api,prepareModel,reconcileSubmission,collectModel} from './model.mjs';
+import {ensureTestJob} from './test-job.mjs';
 const read = file => JSON.parse(fs.readFileSync(file,'utf8'));
 const now = () => new Date().toISOString();
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export class JudgedLoop {
   constructor(root) {
     this.root=path.resolve(root);this.config=read(path.join(this.root,'config.json'));
@@ -90,39 +92,55 @@ export class JudgedLoop {
     }else if(head!==r.candidate_commit)throw new Error('HEAD drift during candidate recovery');
     this.state.phase='test';this.save('candidate_saved');
   }
-  test(names=this.round.plan.checks){
+  async test(names=this.round.plan.checks){
     const r=this.round;if(!['test','judging','accepted'].includes(this.state.phase))throw new Error('candidate unavailable for testing');
     this.assertHead(r.candidate_commit);if(this.repo.git(['status','--porcelain']))throw new Error('candidate is dirty');
     r.receipts??=[];
+    const runnerDigest=digest(fs.readFileSync(new URL('./test-job.mjs',import.meta.url)));
     for(const name of names){
       const check=this.config.checks[name];if(!check)throw new Error('unknown check');
-      const spec=identity(check);const prior=r.receipts.find(t=>t.name===name&&t.tree===r.candidate_tree&&t.spec_digest===spec&&t.status==='passed');
-      if(prior){if(digest(fs.readFileSync(prior.log_path))!==prior.log_digest)throw new Error('test evidence changed');continue;}
-      const attempt=r.receipts.length+1,log=path.join(this.directory(),`test-${attempt}-${name}.log`);
-      const started=now();r.test_intent={name,tree:r.candidate_tree,spec_digest:spec,started_at:started};this.save('test_intent');
-      const fd=fs.openSync(log,'w',0o600);
-      const env={PATH:process.env.PATH,HOME:path.join(this.root,'test-home'),TMPDIR:process.env.TMPDIR??'/tmp',CI:'1',VITEST_MAX_WORKERS:'4'};fs.mkdirSync(env.HOME,{recursive:true});
-      let result;try{result=spawnSync(check.argv[0],check.argv.slice(1),{cwd:path.resolve(this.config.repo,check.cwd??'.'),env,stdio:['ignore',fd,fd],timeout:check.timeout_ms??600000,killSignal:'SIGKILL'});}finally{fs.closeSync(fd);}
-      const bytes=fs.readFileSync(log);const receipt={name,tree:r.candidate_tree,commit:r.candidate_commit,spec_digest:spec,argv:check.argv,started_at:started,finished_at:now(),status:result.error||result.signal?'infrastructure_failed':result.status===0?'passed':'failed',exit_code:result.status,signal:result.signal,error:result.error?.message,log_path:log,log_digest:digest(bytes),tail:bytes.toString('utf8').slice(-6000)};
+      const spec={name,repo:this.config.repo,commit:r.candidate_commit,tree:r.candidate_tree,check,home:path.join(this.root,'test-home')};
+      const prior=r.receipts.find(t=>t.name===name&&t.commit===r.candidate_commit&&t.tree===r.candidate_tree&&t.spec_digest===identity(check)&&t.runner_digest===runnerDigest&&t.status==='passed'&&t.exit_code===0&&!t.signal&&fs.existsSync(t.log_path)&&digest(fs.readFileSync(t.log_path))===t.log_digest);
+      if(prior)continue;
+      let intent=r.test_intent;
+      if(intent&&intent.name===name){
+        if(identity(intent.spec)!==identity(spec))throw new Error('test intent spec mismatch');
+      } else {
+        const attempt=r.receipts.length+1;
+        intent={name,directory:path.join(this.directory(),`test-job-${attempt}-${name}`),spec};
+        r.test_intent=intent;this.save('test_intent');
+      }
+      let receipt;while(true){receipt=ensureTestJob(intent.directory,intent.spec);if(receipt)break;await delay(100);}
+      receipt={...receipt,job_directory:intent.directory};
+      const attempt=r.receipts.length+1;
       r.receipts.push(receipt);atomic(path.join(this.directory(),`receipt-${attempt}.json`),receipt);delete r.test_intent;this.save('test_recorded');
+      if(receipt.status==='infrastructure_failed'&&receipt.error?.includes('surviving child'))throw new Error(`infrastructure_failed: ${receipt.error}`);
     }
     this.state.phase='judging';this.save('awaiting_judger');
+  }
+  assertEvidence(){
+    const r=this.round;this.assertHead(r.candidate_commit);
+    if(this.repo.git(['status','--porcelain']))throw new Error('candidate is dirty');
+    const runnerDigest=digest(fs.readFileSync(new URL('./test-job.mjs',import.meta.url)));
+    for(const name of[...r.plan.checks,...this.config.publish_checks]){
+      const check=this.config.checks[name];
+      if(!r.receipts?.some(t=>t.name===name&&t.tree===r.candidate_tree&&t.commit===r.candidate_commit&&t.spec_digest===identity(check)&&t.runner_digest===runnerDigest&&t.status==='passed'&&t.exit_code===0&&!t.signal&&fs.existsSync(t.log_path)&&digest(fs.readFileSync(t.log_path))===t.log_digest))
+        throw new Error(`missing trusted passing receipt or evidence mismatch for ${name}`);
+    }
   }
   judge(file){
     if(this.state.phase!=='judging')throw new Error('not awaiting judgment');const j=read(file),r=this.round;
     if(!['accept','revise'].includes(j.verdict)||!j.reason||j.round!==r.index||j.plan_digest!==r.plan_digest)throw new Error('invalid Judger decision');
     if(j.verdict==='accept'){
       if(!r.candidate_commit||j.tree!==r.candidate_tree)throw new Error('Judger must bind the exact candidate');
-      this.assertHead(r.candidate_commit);
-      for(const n of [...r.plan.checks,...this.config.publish_checks])if(!r.receipts?.some(t=>t.name===n&&t.status==='passed'&&t.tree===r.candidate_tree))throw new Error(`missing trusted passing check: ${n}`);
+      this.assertEvidence();
       this.state.phase='accepted';
     }
     r.judgment={...j,at:now()};atomic(path.join(this.directory(),'judgment.json'),r.judgment);this.save('judger_decision');
   }
   publish(bodyFile){
-    if(this.state.phase!=='accepted')throw new Error('Judger acceptance required');const r=this.round;this.assertHead(r.candidate_commit);
-    if(this.repo.git(['status','--porcelain']))throw new Error('dirty candidate');
-    for(const t of r.receipts)if(digest(fs.readFileSync(t.log_path))!==t.log_digest)throw new Error('test log changed');
+    if(this.state.phase!=='accepted')throw new Error('Judger acceptance required');
+    this.assertEvidence();
     const branch=this.repo.git(['branch','--show-current']);if(!branch.startsWith('codex/'))throw new Error('publication requires an isolated codex branch');
     this.state.publication??={head:r.candidate_commit,branch,body_digest:digest(fs.readFileSync(bodyFile))};this.save('publication_intent');
     this.repo.git(['push','-u','origin',branch]);
@@ -136,7 +154,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   const [root,op,...args]=process.argv.slice(2);if(!root||!op)throw new Error('Usage: loop.mjs <task-directory> plan|step|apply|test|judge|publish|status [file/check]');
   if(!process.env.HR_JUDGED_LOCKED){const r=spawnSync('flock',['-n',path.join(root,'lock'),process.execPath,fileURLToPath(import.meta.url),root,op,...args],{env:{...process.env,HR_JUDGED_LOCKED:'1'},stdio:'inherit'});process.exit(r.status??1);}
   const loop=new JudgedLoop(root);
-  try{if(op==='plan')loop.plan(args[0]);else if(op==='step')await loop.step();else if(op==='apply')loop.apply();else if(op==='test')loop.test(args.length?args:undefined);else if(op==='judge')loop.judge(args[0]);else if(op==='publish')loop.publish(args[0]);else if(op!=='status')throw new Error('unknown operation');}
+  try{if(op==='plan')loop.plan(args[0]);else if(op==='step')await loop.step();else if(op==='apply')loop.apply();else if(op==='test')await loop.test(args.length?args:undefined);else if(op==='judge')loop.judge(args[0]);else if(op==='publish')loop.publish(args[0]);else if(op!=='status')throw new Error('unknown operation');}
   catch(e){loop.save('controller_error',{message:e.message});console.error(e.message);process.exitCode=1;}
   console.log(JSON.stringify({phase:loop.state.phase,round:loop.round?.index,run_id:loop.round?.run_id,failure:loop.round?.failure,checks:loop.round?.receipts?.map(x=>({name:x.name,status:x.status})),publication:loop.state.publication}));
 }
