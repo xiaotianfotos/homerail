@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import type { Command } from "commander";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -8,10 +8,13 @@ import { createProgram } from "../src/index.js";
 import { readLineFromStdin, redactSecret } from "../src/commands/llm-settings.js";
 import {
   agentUiDevServerCommand,
+  explicitPublicUrlChanged,
   isMissingModelCredential,
   mergeManagerAdminOrigins,
+  resolveExplicitUiPublicOrigin,
   shouldAbortStartForModelConfig,
   shouldServeStaticAgentUi,
+  staticUiServerEnv,
 } from "../src/commands/runtime.js";
 import { createLaunchAgentPlist, installRuntimeService, uninstallRuntimeService } from "../src/local-service-lifecycle.js";
 
@@ -36,6 +39,7 @@ let previousManagerUrl: string | undefined;
 let previousPublicHost: string | undefined;
 let previousAssetDir: string | undefined;
 let previousUiServeStatic: string | undefined;
+let previousUiPublicUrl: string | undefined;
 
 function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) delete process.env[key];
@@ -53,6 +57,7 @@ beforeEach(() => {
   previousPublicHost = process.env.HOMERAIL_PUBLIC_HOST;
   previousAssetDir = process.env.HOMERAIL_ASSET_DIR;
   previousUiServeStatic = process.env.HOMERAIL_UI_SERVE_STATIC;
+  previousUiPublicUrl = process.env.HOMERAIL_UI_PUBLIC_URL;
   process.env.HOMERAIL_HOME = tempHome;
   delete process.env.HOMERAIL_CONFIG_PATH;
   delete process.env.HOMERAIL_SECRETS_PATH;
@@ -60,6 +65,7 @@ beforeEach(() => {
   delete process.env.HOMERAIL_PUBLIC_HOST;
   delete process.env.HOMERAIL_ASSET_DIR;
   delete process.env.HOMERAIL_UI_SERVE_STATIC;
+  delete process.env.HOMERAIL_UI_PUBLIC_URL;
 });
 
 describe("credential command", () => {
@@ -95,6 +101,7 @@ afterEach(() => {
   restoreEnv("HOMERAIL_PUBLIC_HOST", previousPublicHost);
   restoreEnv("HOMERAIL_ASSET_DIR", previousAssetDir);
   restoreEnv("HOMERAIL_UI_SERVE_STATIC", previousUiServeStatic);
+  restoreEnv("HOMERAIL_UI_PUBLIC_URL", previousUiPublicUrl);
   rmSync(tempHome, { recursive: true, force: true });
 });
 
@@ -1973,6 +1980,7 @@ describe("runtime command", () => {
     await program.parseAsync(["node", "homerail", "--json", "runtime", "status"]);
 
     const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+    expect(parsed.runtimeRoot).toBe(resolve(process.cwd(), ".."));
     expect(parsed.managerBindHost).toBe("127.0.0.1");
     expect(parsed.managerAccessUrl).toBe("http://localhost:19191");
     expect(parsed.uiBindHost).toBe("127.0.0.1");
@@ -1996,6 +2004,7 @@ describe("runtime command", () => {
       port: 19191,
       accessUrl: "http://localhost:19191",
       publicUrl: "https://homerail.example.test",
+      runtimeRoot: "/opt/homerail/runtime-a",
       startedAt: Date.now(),
     }));
     mockFetch({ success: true, data: { connected_nodes: 0, connected_workers: 0 } });
@@ -2011,6 +2020,7 @@ describe("runtime command", () => {
     expect(parsed.managerUrl).toBe("http://localhost:19191");
     expect(parsed.managerAccessUrl).toBe("https://homerail.example.test");
     expect(parsed.managerPublicUrl).toBe("https://homerail.example.test");
+    expect(parsed.managerRuntimeRoot).toBe("/opt/homerail/runtime-a");
   });
 
   it("aborts start when stored model config cannot be applied", () => {
@@ -2081,10 +2091,110 @@ describe("runtime command", () => {
   it("derives exact UI proxy Origins while preserving explicit trusted Origins", () => {
     expect(mergeManagerAdminOrigins(
       "https://admin.example.test",
-      ["https://ui.example.test/app", "http://localhost:19193"],
+      ["https://ui.example.test", "http://localhost:19193"],
     )).toBe("http://localhost:19193,https://admin.example.test,https://ui.example.test");
     expect(() => mergeManagerAdminOrigins("https://bad.example.test/path", []))
       .toThrow(/without paths/);
+  });
+
+  it("applies one canonical exact Origin rule to Manager allowlist entries and UI public URLs", () => {
+    expect(mergeManagerAdminOrigins(undefined, ["https://UI.Example.test:443", "http://localhost:80"]))
+      .toBe("http://localhost,https://ui.example.test");
+    expect(mergeManagerAdminOrigins("https://Admin.Example.test:443", []))
+      .toBe("https://admin.example.test");
+    for (const invalid of [
+      "https://ui.example.test/app",
+      "https://*.example.test",
+      "https://user:pass@ui.example.test",
+      "ftp://ui.example.test",
+      "not-a-url",
+    ]) {
+      expect(() => mergeManagerAdminOrigins(undefined, [invalid]), invalid)
+        .toThrow(/exact http\(s\) Origin/);
+      expect(() => mergeManagerAdminOrigins(invalid, []), invalid)
+        .toThrow(/exact http\(s\) Origins without paths/);
+    }
+  });
+
+  it("propagates only an explicit UI public URL into the static UI server environment", () => {
+    const base = {
+      homerailHome: tempHome,
+      staticUiDir: join(tempHome, "agent-ui", "dist"),
+      host: "127.0.0.1",
+      port: 19192,
+      protocol: "https" as const,
+      managerHttp: "http://localhost:19191",
+    };
+
+    expect(staticUiServerEnv({ ...base, explicitPublicUrl: "https://external.example" }))
+      .toMatchObject({
+        HOMERAIL_HOME: tempHome,
+        HOMERAIL_STATIC_UI_DIR: base.staticUiDir,
+        HOMERAIL_UI_HOST: "127.0.0.1",
+        HOMERAIL_UI_PORT: "19192",
+        HOMERAIL_MANAGER_HTTP: "http://localhost:19191",
+        HOMERAIL_MANAGER_WS: "ws://localhost:19191",
+        HOMERAIL_UI_HTTPS: "1",
+        HOMERAIL_UI_PUBLIC_URL: "https://external.example",
+      });
+    expect(staticUiServerEnv(base)).not.toHaveProperty("HOMERAIL_UI_PUBLIC_URL");
+    expect(staticUiServerEnv({ ...base, protocol: "http" as const }))
+      .not.toHaveProperty("HOMERAIL_UI_HTTPS");
+    // The HTTP fallback listener receives the same explicit external Origin,
+    // unchanged by the listener transport, for TLS-terminating proxies.
+    expect(staticUiServerEnv({ ...base, protocol: "http" as const, explicitPublicUrl: "https://external.example" }))
+      .toMatchObject({
+        HOMERAIL_UI_PORT: "19192",
+        HOMERAIL_UI_PUBLIC_URL: "https://external.example",
+      });
+  });
+
+  it("resolves one normalized explicit UI Origin across flag, environment, and stored config sources", () => {
+    const storedConfig = { ui: { publicUrl: "https://Stored.Example.test:443/" } };
+
+    // Stored config alone resolves to the canonical exact Origin.
+    expect(resolveExplicitUiPublicOrigin(storedConfig)).toBe("https://stored.example.test");
+
+    // HOMERAIL_UI_PUBLIC_URL takes precedence over stored config.
+    process.env.HOMERAIL_UI_PUBLIC_URL = " https://Env.Example.test/ ";
+    expect(resolveExplicitUiPublicOrigin(storedConfig)).toBe("https://env.example.test");
+
+    // The CLI flag takes precedence over both, with default ports omitted.
+    expect(resolveExplicitUiPublicOrigin(storedConfig, "https://Flag.Example.test:443/"))
+      .toBe("https://flag.example.test");
+    expect(resolveExplicitUiPublicOrigin(storedConfig, "https://flag.example.test:8443"))
+      .toBe("https://flag.example.test:8443");
+
+    // No source configured means no explicit Origin on either listener.
+    delete process.env.HOMERAIL_UI_PUBLIC_URL;
+    expect(resolveExplicitUiPublicOrigin({})).toBeUndefined();
+  });
+
+  it("rejects ambiguous explicit UI Origins from every configuration source", () => {
+    for (const invalid of [
+      "https://ui.example.test/app",
+      "https://*.example.test",
+      "https://user:pass@ui.example.test",
+      "ftp://ui.example.test",
+      "not-a-url",
+    ]) {
+      expect(() => resolveExplicitUiPublicOrigin({}, invalid), invalid)
+        .toThrow(/exact http\(s\) Origin/);
+      process.env.HOMERAIL_UI_PUBLIC_URL = invalid;
+      expect(() => resolveExplicitUiPublicOrigin({}), invalid)
+        .toThrow(/exact http\(s\) Origin/);
+      expect(() => resolveExplicitUiPublicOrigin({ ui: { publicUrl: invalid } }), invalid)
+        .toThrow(/exact http\(s\) Origin/);
+      delete process.env.HOMERAIL_UI_PUBLIC_URL;
+    }
+  });
+
+  it("treats adding, changing, and removing the explicit Origin as a restart; unchanged as stable", () => {
+    expect(explicitPublicUrlChanged(undefined, "https://a.example.test")).toBe(true);
+    expect(explicitPublicUrlChanged("https://a.example.test", "https://b.example.test")).toBe(true);
+    expect(explicitPublicUrlChanged("https://a.example.test", undefined)).toBe(true);
+    expect(explicitPublicUrlChanged("https://a.example.test", "https://a.example.test")).toBe(false);
+    expect(explicitPublicUrlChanged(undefined, undefined)).toBe(false);
   });
 
   it("launches the Agent UI dev server directly through Node", () => {

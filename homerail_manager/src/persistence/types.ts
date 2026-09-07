@@ -8,7 +8,7 @@ import type {
 } from "../orchestration/graph.js";
 import type { DAGRunCounters, DAGRunLimits } from "../runtime/active-runs.js";
 import type { DagRunStatus } from "./status.js";
-import type { DagNodeUsageScope } from "homerail-protocol";
+import type { DagNodeUsageScope, DagRunInputBinding } from "homerail-protocol";
 
 export interface PersistedGraphNode {
   node_id: string;
@@ -78,6 +78,8 @@ export interface PersistedRunMetadata {
   contracts?: Record<string, unknown>;
   artifacts?: DAGArtifactDeclaration[];
   runInputTargets?: Array<{ node: string; port: string; contract?: string }>;
+  inputArtifacts?: DagRunInputBinding[];
+  brokerState?: Record<string, unknown>;
   initialPrompt?: string;
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; allowed_surface_views?: string[]; extra?: Record<string, unknown> }>;

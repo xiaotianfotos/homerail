@@ -12,6 +12,10 @@ export function controlPlaneTokenPath(): string {
   return path.join(secretDirectory(), "control-plane.token");
 }
 
+export function browserToolsTokenPath(): string {
+  return path.join(secretDirectory(), "browser-tools.token");
+}
+
 function enforcePrivateMode(filePath: string, mode: number): void {
   try {
     fs.chmodSync(filePath, mode);
@@ -20,25 +24,38 @@ function enforcePrivateMode(filePath: string, mode: number): void {
   }
 }
 
-export function readOrCreateControlPlaneToken(
-  generate: () => string = () => crypto.randomBytes(32).toString("base64url"),
+function readOrCreatePrivateToken(
+  filePath: string,
+  label: string,
+  generate: () => string,
 ): string {
   const dir = secretDirectory();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   enforcePrivateMode(dir, 0o700);
-  const filePath = controlPlaneTokenPath();
   if (fs.existsSync(filePath)) {
     const existing = fs.readFileSync(filePath, "utf8").trim();
-    if (!existing) throw new Error(`Invalid empty control-plane token at ${filePath}`);
+    if (!existing) throw new Error(`Invalid empty ${label} token at ${filePath}`);
     enforcePrivateMode(filePath, 0o600);
     return existing;
   }
 
   const token = generate().trim();
-  if (!token) throw new Error("Generated control-plane token must not be empty");
+  if (!token) throw new Error(`Generated ${label} token must not be empty`);
   const tmpPath = `${filePath}.${process.pid}.tmp`;
   fs.writeFileSync(tmpPath, `${token}\n`, { encoding: "utf8", mode: 0o600 });
   fs.renameSync(tmpPath, filePath);
   enforcePrivateMode(filePath, 0o600);
   return token;
+}
+
+export function readOrCreateControlPlaneToken(
+  generate: () => string = () => crypto.randomBytes(32).toString("base64url"),
+): string {
+  return readOrCreatePrivateToken(controlPlaneTokenPath(), "control-plane", generate);
+}
+
+export function readOrCreateBrowserToolsToken(
+  generate: () => string = () => crypto.randomBytes(32).toString("base64url"),
+): string {
+  return readOrCreatePrivateToken(browserToolsTokenPath(), "browser-tools", generate);
 }

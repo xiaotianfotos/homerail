@@ -2,15 +2,22 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { DagCredentialBrokerCallRequest } from "homerail-protocol";
 
 import type {
   DAGDispatcher,
   DispatchEnvelope,
   DispatchResult,
 } from "../src/orchestration/dag-dispatcher.js";
+import { parseWorkflowSource } from "../src/orchestration/workflow-spec-v1.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { _clearListeners, subscribe } from "../src/events/bus.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import {
+  completeCredentialBrokerMutation,
+  dispatchCredentialBrokerMutation,
+  prepareCredentialBrokerMutation,
+} from "../src/persistence/credential-broker-mutations.js";
 import { getDagSessionIndex, listDagSessionIndex, upsertDagSessionIndex } from "../src/persistence/dag-session-index.js";
 import {
   _clearAllPersistence,
@@ -116,6 +123,97 @@ nodes:
 `);
 }
 
+function dormantWhileDag() {
+  return parseDAGYaml(`
+name: cold-recovery-dormant-while
+workflow_id: cold-recovery-dormant-while
+workspace:
+  project_id: project-a
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  gate:
+    type: while_gateway
+    gateway_config:
+      field: status
+      operator: eq
+      value: approved
+      max_iterations: 2
+      continue_port: improve
+      done_port: reached
+      exhausted_port: stopped
+    outputs:
+      improve:
+        to: worker.in:task
+      reached:
+        to: success.in:result
+      stopped:
+        to: exhausted.in:result
+  worker:
+    agent: worker
+    after: [gate]
+    outputs:
+      measured:
+        to: gate.in:state
+        retry_policy: { max_retries: 2 }
+  success:
+    agent: worker
+    after: [gate]
+    outputs: { done: { to: "" } }
+  exhausted:
+    agent: worker
+    after: [gate]
+    outputs: { done: { to: "" } }
+`);
+}
+
+function recoverableWhileDag() {
+  return parseDAGYaml(`
+name: cold-recovery-recoverable-while
+workflow_id: cold-recovery-recoverable-while
+workspace:
+  project_id: project-a
+agents:
+  worker:
+    agent_type: deterministic
+nodes:
+  gate:
+    type: while_gateway
+    gateway_config:
+      field: status
+      operator: eq
+      value: approved
+      max_iterations: 2
+      continue_port: improve
+      done_port: reached
+      exhausted_port: stopped
+    outputs:
+      improve: { to: worker.in:task }
+      reached: { to: success.in:result }
+      stopped: { to: exhausted.in:result }
+  worker:
+    agent: worker
+    after: [gate]
+    outputs:
+      measured: { to: gate.in:state, retry_policy: { max_retries: 2 } }
+      error: { to: recovery.in:error }
+  recovery:
+    agent: worker
+    after: [gate, worker]
+    outputs:
+      measured: { to: gate.in:state, retry_policy: { max_retries: 2 } }
+  success:
+    agent: worker
+    after: [gate]
+    outputs: { done: { to: "" } }
+  exhausted:
+    agent: worker
+    after: [gate]
+    outputs: { done: { to: "" } }
+`);
+}
+
 describe("manager cold recovery", () => {
   let tmpHome: string;
   let oldHome: string | undefined;
@@ -166,6 +264,94 @@ describe("manager cold recovery", () => {
     });
   });
 
+  it("fails a recovered broker gateway whose completed result violates its output contract", () => {
+    const runId = "run-recovered-broker-contract";
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: recovered-broker-contract, name: Recovered broker contract }
+spec:
+  contracts:
+    Task: { type: object }
+    Text: { type: string }
+  agents:
+    worker: { system: Produce one candidate. }
+  nodes:
+    prepare:
+      kind: agent
+      agent: worker
+      inputs: { task: { contract: Task } }
+      outputs: { candidate: {} }
+    validate:
+      kind: broker
+      inputs: { candidate: {} }
+      outputs: { result: { contract: Text }, error: {} }
+      config:
+        input: candidate
+        credential_ref: recovery-credential
+        purpose: validate one candidate
+        broker: recovery_broker
+        action: validate
+        result_port: result
+        error_port: error
+    done: { kind: terminal, outcome: success, inputs: { result: { contract: Text } } }
+    failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+  edges:
+    - { from: $run.input, to: prepare.task }
+    - { from: prepare.candidate, to: validate.candidate }
+    - { from: validate.result, to: done.result }
+    - { from: validate.error, to: failed.result, condition: on_failure }
+`);
+    createActiveRun(runId, parsed);
+    const active = getActiveRun(runId)!;
+    active.dagRun.nodeStates.set("prepare", "COMPLETED");
+    active.dagRun.nodeStates.set("validate", "RUNNING");
+    active.dagRun.handoffedNodes.add("prepare");
+    const session = upsertDagSessionIndex({
+      run_id: runId,
+      node_id: "validate",
+      project_key: "recovery-project",
+      session_id: "recovery-gateway-session",
+      attempt: 1,
+      status: "running",
+    });
+    writeRunMetadata(runId, serializeRunMetadata(active));
+    const request: DagCredentialBrokerCallRequest = {
+      request_id: "recovered-gateway-request",
+      idempotency_key: "recovered-gateway-request",
+      transport_kind: "manager_gateway",
+      run_id: runId,
+      node_id: "validate",
+      session_id: session.session_id,
+      round_id: active.currentRound.round_id,
+      gateway_attempt: session.attempt,
+      credential_ref: "recovery-credential",
+      broker: "recovery_broker",
+      action: "validate",
+      input: {},
+    };
+    prepareCredentialBrokerMutation({
+      request,
+      request_digest: "a".repeat(64),
+      semantic_target: "resource:recovered-gateway",
+      source_id: "manager:validate",
+    });
+    dispatchCredentialBrokerMutation(request.request_id);
+    completeCredentialBrokerMutation(request.request_id, { invalid: "not text" });
+
+    _clearActiveRuns();
+    const summary = recoverAllActiveRuns();
+
+    expect(summary.skipped).not.toContain(runId);
+    expect(summary.failed.map((failure) => failure.runId)).toContain(runId);
+    const recovered = getActiveRun(runId);
+    expect(recovered).toBeDefined();
+    expect(recovered?.dagRun.nodeStates.get("validate")).toBe("FAILED");
+    expect(recovered?.status).not.toBe("active");
+    expect(loadRunMetadata(runId)?.status).not.toBe("active");
+    expect(getDagSessionIndex(runId, "validate")?.status).toBe("failed");
+  });
+
   it("replays handoff history so a downstream node receives upstream output in its mailbox", () => {
     createActiveRun("run-chain", chainedDag());
     // Dispatch coder, then hand off to review (which seeds review's mailbox).
@@ -210,6 +396,76 @@ describe("manager cold recovery", () => {
     expect(run.dagRun.nodeStates.get("work")).toBe("FAILED");
     expect(getDagSessionIndex("run-running", "work")?.status).toBe("failed");
     expect(events.some((e) => e.nodeId === "work")).toBe(true);
+  });
+
+  it("preserves a dormant RUNNING while source that is waiting for feedback", () => {
+    createActiveRun("run-dormant-while", dormantWhileDag());
+    const dispatcher = new CaptureDispatcher();
+    expect(dispatchReadyNodes("run-dormant-while", dispatcher)).toBe(1);
+    expect(getActiveRun("run-dormant-while")?.dagRun.nodeStates.get("gate")).toBe("RUNNING");
+    expect(getActiveRun("run-dormant-while")?.dagRun.nodeStates.get("worker")).toBe("READY");
+
+    _clearActiveRuns();
+    const summary = recoverAllActiveRuns();
+
+    expect(summary.recovered).toContain("run-dormant-while");
+    expect(summary.failed).toEqual([]);
+    expect(getActiveRun("run-dormant-while")?.dagRun.nodeStates.get("gate")).toBe("RUNNING");
+    expect(getActiveRun("run-dormant-while")?.dagRun.nodeStates.get("worker")).toBe("READY");
+
+    expect(dispatchReadyNodes("run-dormant-while", dispatcher)).toBe(1);
+    handoffActiveRun("run-dormant-while", "worker", "measured", { status: "approved" });
+    expect(dispatchReadyNodes("run-dormant-while", dispatcher)).toBe(1);
+    expect(getActiveRun("run-dormant-while")?.dagRun.nodeStates.get("gate")).toBe("COMPLETED");
+    expect(getActiveRun("run-dormant-while")?.dagRun.nodeStates.get("success")).toBe("READY");
+  });
+
+  it("fails a dormant RUNNING while source when its in-flight feedback worker is lost", () => {
+    createActiveRun("run-orphaned-while-worker", dormantWhileDag());
+    const dispatcher = new CaptureDispatcher();
+    expect(dispatchReadyNodes("run-orphaned-while-worker", dispatcher)).toBe(1);
+    expect(dispatchReadyNodes("run-orphaned-while-worker", dispatcher)).toBe(1);
+    expect(getActiveRun("run-orphaned-while-worker")?.dagRun.nodeStates.get("gate")).toBe("RUNNING");
+    expect(getActiveRun("run-orphaned-while-worker")?.dagRun.nodeStates.get("worker")).toBe("RUNNING");
+
+    _clearActiveRuns();
+    const summary = recoverAllActiveRuns();
+
+    const run = getActiveRun("run-orphaned-while-worker")!;
+    expect(summary.failed).toEqual([expect.objectContaining({
+      runId: "run-orphaned-while-worker",
+      demotedNodes: expect.arrayContaining(["gate", "worker"]),
+    })]);
+    expect(run.status).toBe("failed");
+    expect(run.dagRun.nodeStates.get("gate")).toBe("FAILED");
+    expect(run.dagRun.nodeStates.get("worker")).toBe("FAILED");
+    expect(run.dagRun.nodeStates.get("success")).toBe("SKIPPED");
+    expect(run.dagRun.nodeStates.get("exhausted")).toBe("SKIPPED");
+    expect(loadRunMetadata("run-orphaned-while-worker")?.status).toBe("failed");
+  });
+
+  it("preserves a dormant while source when orphan failure wakes a live recovery path", () => {
+    createActiveRun("run-recoverable-while-worker", recoverableWhileDag());
+    const dispatcher = new CaptureDispatcher();
+    expect(dispatchReadyNodes("run-recoverable-while-worker", dispatcher)).toBe(1);
+    expect(dispatchReadyNodes("run-recoverable-while-worker", dispatcher)).toBe(1);
+
+    _clearActiveRuns();
+    const summary = recoverAllActiveRuns();
+
+    const run = getActiveRun("run-recoverable-while-worker")!;
+    expect(summary.recovered).toContain("run-recoverable-while-worker");
+    expect(summary.failed).toEqual([]);
+    expect(run.status).toBe("active");
+    expect(run.dagRun.nodeStates.get("gate")).toBe("RUNNING");
+    expect(run.dagRun.nodeStates.get("worker")).toBe("FAILED");
+    expect(run.dagRun.nodeStates.get("recovery")).toBe("READY");
+
+    expect(dispatchReadyNodes("run-recoverable-while-worker", dispatcher)).toBe(1);
+    handoffActiveRun("run-recoverable-while-worker", "recovery", "measured", { status: "approved" });
+    expect(dispatchReadyNodes("run-recoverable-while-worker", dispatcher)).toBe(1);
+    expect(run.dagRun.nodeStates.get("gate")).toBe("COMPLETED");
+    expect(run.dagRun.nodeStates.get("success")).toBe("READY");
   });
 
   it("fails recovery when orphan demotion leaves only blocked pending nodes", () => {

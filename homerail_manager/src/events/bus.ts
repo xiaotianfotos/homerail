@@ -7,8 +7,10 @@ export type DAGEventType =
   | "dag:node_state_changed"
   | "dag:node_chat_updated"
   | "dag:node_correction_requested"
+  | "dag:review_evidence_projection_truncated"
   | "dag:node_auto_handoff"
   | "dag:node_dispatch_retry"
+  | "dag:node_session_reset"
   | "dag:checkpoint_resume"
   | "dag:stale_session_ignored"
   | "dag:stale_lease_ignored"
@@ -69,6 +71,7 @@ export type DAGEventType =
   | "dag:approval_decided"
   | "dag:approval_expired"
   | "dag:fanout_started"
+  | "dag:fanout_git_commit_created"
   | "dag:fanout_completed"
   | "dag:trigger_skipped"
   | "dag:trigger_dispatched"
@@ -84,8 +87,10 @@ export const DAG_EVENT_TYPES: DAGEventType[] = [
   "dag:status_update",
   "dag:node_state_changed",
   "dag:node_correction_requested",
+  "dag:review_evidence_projection_truncated",
   "dag:node_auto_handoff",
   "dag:node_dispatch_retry",
+  "dag:node_session_reset",
   "dag:checkpoint_resume",
   "dag:stale_session_ignored",
   "dag:stale_lease_ignored",
@@ -146,6 +151,7 @@ export const DAG_EVENT_TYPES: DAGEventType[] = [
   "dag:approval_decided",
   "dag:approval_expired",
   "dag:fanout_started",
+  "dag:fanout_git_commit_created",
   "dag:fanout_completed",
   "dag:trigger_skipped",
   "dag:trigger_dispatched",
@@ -267,6 +273,12 @@ export interface GatewayExecutedPayload {
   nodeId: string;
   gatewayType: "loop_gateway" | "condition_gateway" | string;
   port: string;
+  /**
+   * Structured gateway result (aggregation, command envelope, route input).
+   * 前向能力：前端目前只用事件做节流刷新触发，随后走 REST 拿权威数据，
+   * 不直接消费该字段；保留它以便未来免一次 REST 直接渲染。
+   */
+  result?: unknown;
 }
 
 export interface ManagerCommandReceivedPayload {

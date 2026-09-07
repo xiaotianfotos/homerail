@@ -7,7 +7,12 @@ import { defineConfig } from 'vite'
 import viteCompression from 'vite-plugin-compression2'
 import {
   authorizeAdminProxyRequest,
+  hardenBrowserRendererProxyHeaders,
+  isAllowedGeneralUiWebSocketProxyPath,
   isProtectedApiMutation,
+  trustedBrowserRendererTicketProxyFetchSite,
+  trustedBrowserRendererWebSocketProxyFetchSite,
+  trustedWebSocketProxyFetchSite,
 } from './src/admin-proxy-trust'
 
 // Dev server gzip compression plugin
@@ -113,6 +118,26 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path,
+        configure(proxy) {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            const fetchSite = trustedBrowserRendererTicketProxyFetchSite(req.method, req.url, {
+              protocol: 'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http',
+              host: req.headers.host,
+              origin: req.headers.origin,
+              secFetchSite: req.headers['sec-fetch-site'],
+            })
+            if (fetchSite) hardenBrowserRendererProxyHeaders(proxyReq, fetchSite)
+          })
+          proxy.on('proxyReqWs', (proxyReq, req) => {
+            const fetchSite = trustedWebSocketProxyFetchSite({
+              protocol: 'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http',
+              host: req.headers.host,
+              origin: req.headers.origin,
+              secFetchSite: req.headers['sec-fetch-site'],
+            })
+            if (fetchSite) proxyReq.setHeader('sec-fetch-site', fetchSite)
+          })
+        },
       },
       '/artifacts': {
         target: managerHttpTarget,
@@ -120,11 +145,46 @@ export default defineConfig({
         secure: false,
         rewrite: (path) => path
       },
+      '/ws/browser-tools/renderer': {
+        target: managerWsTarget,
+        ws: true,
+        changeOrigin: true,
+        secure: false,
+        configure(proxy) {
+          proxy.on('proxyReqWs', (proxyReq, req, socket) => {
+            const fetchSite = trustedBrowserRendererWebSocketProxyFetchSite(req.url, {
+              protocol: 'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http',
+              host: req.headers.host,
+              origin: req.headers.origin,
+              secFetchSite: req.headers['sec-fetch-site'],
+            })
+            if (!fetchSite) {
+              if (socket.writable) {
+                socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+              }
+              socket.destroy()
+              proxyReq.destroy()
+              return
+            }
+            hardenBrowserRendererProxyHeaders(proxyReq, fetchSite)
+          })
+        },
+      },
       '/ws': {
         target: managerWsTarget,
         ws: true,
         changeOrigin: true,
-        secure: false
+        secure: false,
+        configure(proxy) {
+          proxy.on('proxyReqWs', (proxyReq, req, socket) => {
+            if (isAllowedGeneralUiWebSocketProxyPath(req.url)) return
+            if (socket.writable) {
+              socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+            }
+            socket.destroy()
+            proxyReq.destroy()
+          })
+        },
       }
     }
   }

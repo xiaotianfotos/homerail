@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   HOMERAIL_MANAGER_TURN_HEADER,
+  HOMERAIL_UI_TOOL_NAMES,
   managerAgentTurnScopeFromPayload,
   managerAgentCommonToolCatalog,
   managerAgentPluginToolCallName,
@@ -177,7 +178,7 @@ function visualManagerSkill(): ManagerAgentPromptSkill {
 describe.each<ManagerAgentResponseMode>(["chat", "voice"])(
   "Manager Agent %s tool catalog parity",
   (responseMode) => {
-    it("keeps Host Codex and Worker definitions equal to the protocol catalog", () => {
+    it("keeps Host Codex and Worker definitions equal to the route-scoped protocol catalog", () => {
       const { hostTools, workerTools } = createHarnessTools(responseMode);
       const protocolTools = managerAgentCommonToolCatalog(responseMode);
 
@@ -185,7 +186,11 @@ describe.each<ManagerAgentResponseMode>(["chat", "voice"])(
       expectUniqueNames(workerTools);
       expectUniqueNames(protocolTools);
 
-      const expected = catalogProjection(protocolTools);
+      // Browser UI tools are capability-routed per turn and are deliberately
+      // absent when this parity harness has no pinned renderer/Desktop route.
+      const expected = catalogProjection(protocolTools.filter(
+        (tool) => !(HOMERAIL_UI_TOOL_NAMES as readonly string[]).includes(tool.name),
+      ));
       expect(catalogProjection(hostTools)).toEqual(expected);
       expect(catalogProjection(workerTools)).toEqual(expected);
       expect(catalogProjection(hostTools)).toEqual(catalogProjection(workerTools));

@@ -2,10 +2,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { DagCredentialBrokerCallRequest } from "homerail-protocol";
 
 import { dispatchEnvelopeAuditView } from "../src/orchestration/ws-dispatch-adapter.js";
 import { parseWorkflowSource } from "../src/orchestration/workflow-spec-v1.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { acquireDagActorLease } from "../src/persistence/dag-actor-leases.js";
+import { getCredentialBrokerMutationAttempt } from "../src/persistence/credential-broker-mutations.js";
 import { expectCurrentSchemaMigrationVersion } from "./schema-migration-helpers.js";
 import {
   createCredential,
@@ -20,11 +23,17 @@ import {
 import {
   _clearActiveRuns,
   buildCurrentDispatchEnvelope,
+  cancelActiveRun,
   createActiveRun,
+  getCurrentNodeSession,
+  markNodeDispatched,
 } from "../src/runtime/active-runs.js";
 import {
+  cancelCredentialBrokerCall,
   executeCredentialBrokerCall,
+  executeManagerCredentialBrokerCall,
   invokeCredentialBroker,
+  recoverCredentialBrokerMutations,
   registerCredentialBroker,
 } from "../src/runtime/credential-broker.js";
 import { parseIncomingMessage } from "../src/worker/types.js";
@@ -53,6 +62,41 @@ ${credentials.replace(/^/gm, "        ")}
     - { from: $run.input, to: work.task }
     - { from: work.done, to: done.result }
 `;
+}
+
+function startWorkerBrokerFence(
+  runId: string,
+  nodeId = "work",
+  workerId = "worker-1",
+): Pick<
+  DagCredentialBrokerCallRequest,
+  "transport_kind" | "run_id" | "node_id" | "session_id" | "round_id"
+  | "actor_id" | "generation" | "lease_generation" | "command_id"
+> {
+  const built = buildCurrentDispatchEnvelope(runId, nodeId);
+  if (!built.ok || !built.envelope.sessionId || !built.envelope.activity) {
+    throw new Error(`could not build broker test fence for ${runId}/${nodeId}`);
+  }
+  const lease = acquireDagActorLease({
+    run_id: runId,
+    actor_id: built.envelope.activity.actorId,
+    target_type: "worker",
+    target_id: workerId,
+  });
+  if (!markNodeDispatched(runId, nodeId)) throw new Error("could not start broker test node");
+  return {
+    transport_kind: "worker_actor",
+    run_id: runId,
+    node_id: nodeId,
+    session_id: built.envelope.sessionId,
+    round_id: built.envelope.activity.roundId,
+    actor_id: built.envelope.activity.actorId,
+    generation: built.envelope.activity.generation,
+    lease_generation: lease.lease_generation,
+    ...(built.envelope.activity.commandId
+      ? { command_id: built.envelope.activity.commandId }
+      : {}),
+  };
 }
 
 describe("generic credential store", () => {
@@ -115,7 +159,7 @@ describe("generic credential store", () => {
       "deleted",
     ]);
     expect(JSON.stringify(listCredentialAuditEvents("demo-api"))).not.toContain(secret);
-    expectCurrentSchemaMigrationVersion(undefined, 31);
+    expectCurrentSchemaMigrationVersion(undefined, 37);
   });
 
   it("does not reinterpret legacy encrypted_credentials rows as execution credentials", () => {
@@ -216,20 +260,21 @@ describe("generic credential store", () => {
     ].join("\n")));
     parsed.meta.agents!.worker.agent_type = "deterministic";
     createActiveRun("credential-broker-run", parsed);
+    const fence = startWorkerBrokerFence("credential-broker-run");
 
     const result = await executeCredentialBrokerCall("worker-1", {
       request_id: "request-1",
-      run_id: "credential-broker-run",
-      node_id: "work",
-      session_id: "credential-broker-run",
+      idempotency_key: "request-1",
+      ...fence,
       credential_ref: "broker-api",
       broker: "test_broker",
       action: "inspect",
       input: { question: "status" },
     });
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       request_id: "request-1",
       ok: true,
+      outcome: "completed",
       result: {
         credential_id: "broker-api",
         authorized: true,
@@ -240,9 +285,8 @@ describe("generic credential store", () => {
 
     const denied = await executeCredentialBrokerCall("worker-1", {
       request_id: "request-2",
-      run_id: "credential-broker-run",
-      node_id: "work",
-      session_id: "credential-broker-run",
+      idempotency_key: "request-2",
+      ...fence,
       credential_ref: "broker-api",
       broker: "test_broker",
       action: "delete",
@@ -251,9 +295,8 @@ describe("generic credential store", () => {
     expect(denied).toMatchObject({ ok: false, error: expect.stringContaining("not permitted") });
     const providerError = await executeCredentialBrokerCall("worker-1", {
       request_id: "request-3",
-      run_id: "credential-broker-run",
-      node_id: "work",
-      session_id: "credential-broker-run",
+      idempotency_key: "request-3",
+      ...fence,
       credential_ref: "broker-api",
       broker: "test_broker",
       action: "inspect",
@@ -264,6 +307,8 @@ describe("generic credential store", () => {
       error: "Credential broker call failed without exposing provider details",
     });
     expect(JSON.stringify(providerError)).not.toContain("broker-secret-value-123");
+    expect(getDb().prepare("SELECT COUNT(*) AS count FROM credential_broker_mutation_attempts").get())
+      .toEqual({ count: 0 });
     expect(listCredentialAuditEvents("broker-api")).toEqual(expect.arrayContaining([
       expect.objectContaining({
         event_type: "materialized",
@@ -271,6 +316,516 @@ describe("generic credential store", () => {
       }),
       expect.objectContaining({ event_type: "denied", result: "failed" }),
     ]));
+  });
+
+  it("records a late mutation as reconciled instead of reporting stale success", async () => {
+    createCredential({
+      id: "mutation-api",
+      credential_type: "api_key",
+      name: "Mutation API",
+      secret: { value: "mutation-secret" },
+    }, { actor: "test" });
+    let release!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let mutations = 0;
+    registerCredentialBroker("mutation_race", "write", async () => {
+      started();
+      await gate;
+      mutations += 1;
+      return { revision: mutations };
+    }, {
+      effect: "mutation",
+      semanticTarget: () => "resource:one",
+      reconcile: async () => ({ resolution: "indeterminate" }),
+    });
+    const parsed = parseWorkflowSource(workflow([
+      "- credential_ref: mutation-api",
+      "  purpose: mutate through Manager",
+      "  inject:",
+      "    mode: manager_broker",
+      "    broker: mutation_race",
+      "    allowed_actions: [write]",
+    ].join("\n")));
+    parsed.meta.agents!.worker.agent_type = "deterministic";
+    createActiveRun("credential-mutation-race", parsed);
+    const fence = startWorkerBrokerFence("credential-mutation-race");
+    const pending = executeCredentialBrokerCall("worker-1", {
+      request_id: "mutation-race-request",
+      idempotency_key: "mutation-race-request",
+      ...fence,
+      credential_ref: "mutation-api",
+      broker: "mutation_race",
+      action: "write",
+      input: {},
+    });
+
+    await entered;
+    cancelActiveRun("credential-mutation-race");
+    release();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      outcome: "reconciled",
+      reconciliation: "completed",
+    });
+    expect(mutations).toBe(1);
+    expect(getCredentialBrokerMutationAttempt("mutation-race-request")).toMatchObject({
+      state: "reconciled",
+      resolution: "completed",
+      result: { revision: 1 },
+    });
+  });
+
+  it("does not reconcile a conflicting mutation that is still executing in this process", async () => {
+    createCredential({
+      id: "active-blocker-api",
+      credential_type: "api_key",
+      name: "Active Blocker API",
+      secret: { value: "active-blocker-secret" },
+    }, { actor: "test" });
+    let releaseMutation!: () => void;
+    let firstStarted!: () => void;
+    let duplicateStarted!: () => void;
+    const mutationGate = new Promise<void>((resolve) => { releaseMutation = resolve; });
+    const firstEntered = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const duplicateEntered = new Promise<void>((resolve) => { duplicateStarted = resolve; });
+    let mutations = 0;
+    let reconciliations = 0;
+    registerCredentialBroker("active_blocker_mutation", "write", async () => {
+      mutations += 1;
+      if (mutations === 1) firstStarted();
+      else duplicateStarted();
+      await mutationGate;
+      return { revision: mutations };
+    }, {
+      effect: "mutation",
+      semanticTarget: () => "resource:active-blocker",
+      reconcile: async () => {
+        reconciliations += 1;
+        return { resolution: "absent" };
+      },
+    });
+    const parsed = parseWorkflowSource(workflow([
+      "- credential_ref: active-blocker-api",
+      "  purpose: protect an active mutation",
+      "  inject:",
+      "    mode: manager_broker",
+      "    broker: active_blocker_mutation",
+      "    allowed_actions: [write]",
+    ].join("\n")));
+    parsed.meta.agents!.worker.agent_type = "deterministic";
+    createActiveRun("credential-active-blocker", parsed);
+    const fence = startWorkerBrokerFence("credential-active-blocker");
+    const request = (id: string): DagCredentialBrokerCallRequest => ({
+      request_id: id,
+      idempotency_key: id,
+      ...fence,
+      credential_ref: "active-blocker-api",
+      broker: "active_blocker_mutation",
+      action: "write",
+      input: {},
+    });
+
+    const active = executeCredentialBrokerCall("worker-1", request("active-blocker-request"));
+    await firstEntered;
+    const conflicting = executeCredentialBrokerCall("worker-1", request("conflicting-request"));
+    try {
+      const observation = await Promise.race([
+        conflicting.then((result) => ({ kind: "blocked" as const, result })),
+        duplicateEntered.then(() => ({ kind: "duplicate-dispatch" as const })),
+      ]);
+      expect(observation.kind).toBe("blocked");
+      if (observation.kind !== "blocked") return;
+      expect(observation.result).toMatchObject({
+        request_id: "conflicting-request",
+        ok: false,
+        outcome: "indeterminate",
+        error: expect.stringContaining("active-blocker-request"),
+      });
+      expect(mutations).toBe(1);
+      expect(reconciliations).toBe(0);
+      expect(getCredentialBrokerMutationAttempt("active-blocker-request")).toMatchObject({ state: "dispatched" });
+      expect(getCredentialBrokerMutationAttempt("conflicting-request")).toBeUndefined();
+    } finally {
+      releaseMutation();
+      await Promise.allSettled([active, conflicting]);
+    }
+
+    await expect(active).resolves.toMatchObject({ ok: true, outcome: "completed" });
+    expect(getCredentialBrokerMutationAttempt("active-blocker-request")).toMatchObject({ state: "completed" });
+  });
+
+  it("rechecks a semantic blocker after concurrent reconciliation", async () => {
+    createCredential({
+      id: "recheck-blocker-api",
+      credential_type: "api_key",
+      name: "Recheck Blocker API",
+      secret: { value: "recheck-blocker-secret" },
+    }, { actor: "test" });
+    let raceReconciliation = false;
+    let racingRootReconciliations = 0;
+    let releaseReconciliation!: () => void;
+    let bothReconciliationsStarted!: () => void;
+    let releaseWinner!: () => void;
+    let winnerStarted!: () => void;
+    let winnerId = "";
+    const reconciliationGate = new Promise<void>((resolve) => { releaseReconciliation = resolve; });
+    const bothReconciliationsEntered = new Promise<void>((resolve) => { bothReconciliationsStarted = resolve; });
+    const winnerGate = new Promise<void>((resolve) => { releaseWinner = resolve; });
+    const winnerEntered = new Promise<void>((resolve) => { winnerStarted = resolve; });
+    const reconciledRequestIds: string[] = [];
+    registerCredentialBroker("recheck_blocker_mutation", "write", async ({ transport }) => {
+      const requestId = transport?.request_id ?? "";
+      if (requestId === "stale-root-request") throw new Error("provider response lost");
+      winnerId = requestId;
+      winnerStarted();
+      await winnerGate;
+      return { winner: requestId };
+    }, {
+      effect: "mutation",
+      semanticTarget: () => "resource:recheck-blocker",
+      reconcile: async (_context, attempt) => {
+        reconciledRequestIds.push(attempt.request_id);
+        if (!raceReconciliation) return { resolution: "indeterminate" };
+        if (attempt.request_id !== "stale-root-request") return { resolution: "indeterminate" };
+        racingRootReconciliations += 1;
+        if (racingRootReconciliations === 2) bothReconciliationsStarted();
+        await reconciliationGate;
+        return { resolution: "absent" };
+      },
+    });
+    const parsed = parseWorkflowSource(workflow([
+      "- credential_ref: recheck-blocker-api",
+      "  purpose: recheck a concurrently reconciled mutation",
+      "  inject:",
+      "    mode: manager_broker",
+      "    broker: recheck_blocker_mutation",
+      "    allowed_actions: [write]",
+    ].join("\n")));
+    parsed.meta.agents!.worker.agent_type = "deterministic";
+    createActiveRun("credential-recheck-blocker", parsed);
+    const fence = startWorkerBrokerFence("credential-recheck-blocker");
+    const request = (id: string): DagCredentialBrokerCallRequest => ({
+      request_id: id,
+      idempotency_key: id,
+      ...fence,
+      credential_ref: "recheck-blocker-api",
+      broker: "recheck_blocker_mutation",
+      action: "write",
+      input: {},
+    });
+
+    await expect(executeCredentialBrokerCall("worker-1", request("stale-root-request")))
+      .resolves.toMatchObject({ ok: false, outcome: "indeterminate" });
+    raceReconciliation = true;
+    const first = executeCredentialBrokerCall("worker-1", request("first-contender-request"));
+    const second = executeCredentialBrokerCall("worker-1", request("second-contender-request"));
+    await bothReconciliationsEntered;
+    releaseReconciliation();
+    await winnerEntered;
+    try {
+      const blocked = await Promise.race([first, second]);
+      expect(blocked).toMatchObject({
+        ok: false,
+        outcome: "indeterminate",
+        error: expect.stringContaining(winnerId),
+      });
+      expect(blocked.request_id).not.toBe(winnerId);
+      expect(reconciledRequestIds.every((requestId) => requestId === "stale-root-request")).toBe(true);
+      expect(getCredentialBrokerMutationAttempt(winnerId)).toMatchObject({ state: "dispatched" });
+      const blockedId = winnerId === "first-contender-request"
+        ? "second-contender-request"
+        : "first-contender-request";
+      expect(getCredentialBrokerMutationAttempt(blockedId)).toBeUndefined();
+    } finally {
+      releaseWinner();
+      await Promise.allSettled([first, second]);
+    }
+
+    const results = await Promise.all([first, second]);
+    expect(results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ request_id: winnerId, ok: true, outcome: "completed" }),
+      expect.objectContaining({ ok: false, outcome: "indeterminate" }),
+    ]));
+    expect(getCredentialBrokerMutationAttempt(winnerId)).toMatchObject({ state: "completed" });
+  });
+
+  it("accepts cancellation only for the exact in-flight Actor fence", async () => {
+    createCredential({
+      id: "cancel-api",
+      credential_type: "api_key",
+      name: "Cancel API",
+      secret: { value: "cancel-secret" },
+    }, { actor: "test" });
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    registerCredentialBroker("cancel_mutation", "write", async ({ signal }) => {
+      started();
+      await new Promise<never>((_resolve, reject) => {
+        signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+      });
+    }, {
+      effect: "mutation",
+      semanticTarget: () => "resource:cancel",
+      reconcile: async () => ({ resolution: "absent" }),
+    });
+    const parsed = parseWorkflowSource(workflow([
+      "- credential_ref: cancel-api",
+      "  purpose: cancel an in-flight mutation",
+      "  inject:",
+      "    mode: manager_broker",
+      "    broker: cancel_mutation",
+      "    allowed_actions: [write]",
+    ].join("\n")));
+    parsed.meta.agents!.worker.agent_type = "deterministic";
+    createActiveRun("credential-cancel-fence", parsed);
+    const fence = startWorkerBrokerFence("credential-cancel-fence");
+    if (fence.transport_kind !== "worker_actor") throw new Error("expected Worker fence");
+    const request: DagCredentialBrokerCallRequest = {
+      request_id: "cancel-request",
+      idempotency_key: "cancel-request",
+      ...fence,
+      credential_ref: "cancel-api",
+      broker: "cancel_mutation",
+      action: "write",
+      input: {},
+    };
+    const pending = executeCredentialBrokerCall("worker-1", request);
+    await entered;
+
+    expect(cancelCredentialBrokerCall("worker-1", {
+      request_id: request.request_id,
+      idempotency_key: request.idempotency_key,
+      transport_kind: "worker_actor",
+      run_id: request.run_id,
+      node_id: request.node_id,
+      session_id: request.session_id,
+      round_id: request.round_id,
+      actor_id: request.actor_id,
+      generation: request.generation + 1,
+      lease_generation: request.lease_generation,
+    })).toBe(false);
+    expect(cancelCredentialBrokerCall("worker-1", {
+      request_id: request.request_id,
+      idempotency_key: request.idempotency_key,
+      transport_kind: "worker_actor",
+      run_id: request.run_id,
+      node_id: request.node_id,
+      session_id: request.session_id,
+      round_id: request.round_id,
+      actor_id: request.actor_id,
+      generation: request.generation,
+      lease_generation: request.lease_generation,
+    })).toBe(true);
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      outcome: "reconciled",
+      reconciliation: "absent",
+    });
+    expect(getCredentialBrokerMutationAttempt("cancel-request")).toMatchObject({
+      state: "reconciled",
+      resolution: "absent",
+    });
+  });
+
+  it("applies the same late-mutation reconciliation to Manager-originated calls", async () => {
+    createCredential({
+      id: "manager-mutation-api",
+      credential_type: "api_key",
+      name: "Manager Mutation API",
+      secret: { value: "manager-mutation-secret" },
+    }, { actor: "test" });
+    let release!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    registerCredentialBroker("manager_mutation", "write", async () => {
+      started();
+      await gate;
+      return { revision: 7 };
+    }, {
+      effect: "mutation",
+      semanticTarget: () => "resource:manager",
+      reconcile: async () => ({ resolution: "indeterminate" }),
+    });
+    const parsed = parseWorkflowSource(workflow([
+      "- credential_ref: manager-mutation-api",
+      "  purpose: Manager-owned mutation",
+      "  inject:",
+      "    mode: manager_broker",
+      "    broker: manager_mutation",
+      "    allowed_actions: [write]",
+    ].join("\n")));
+    parsed.meta.agents!.worker.agent_type = "deterministic";
+    createActiveRun("credential-manager-race", parsed);
+    const workerFence = startWorkerBrokerFence("credential-manager-race");
+    const session = getCurrentNodeSession("credential-manager-race", "work");
+    if (!session) throw new Error("missing Manager broker test session");
+    const pending = executeManagerCredentialBrokerCall({
+      request_id: "manager-race-request",
+      idempotency_key: "manager-race-request",
+      transport_kind: "manager_gateway",
+      run_id: "credential-manager-race",
+      node_id: "work",
+      session_id: workerFence.session_id,
+      round_id: workerFence.round_id,
+      gateway_attempt: session.attempt,
+      credential_ref: "manager-mutation-api",
+      broker: "manager_mutation",
+      action: "write",
+      input: {},
+    });
+
+    await entered;
+    cancelActiveRun("credential-manager-race");
+    release();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      outcome: "reconciled",
+      reconciliation: "completed",
+    });
+    expect(getCredentialBrokerMutationAttempt("manager-race-request")).toMatchObject({
+      source_type: "manager_gateway",
+      gateway_attempt: session.attempt,
+      state: "reconciled",
+      resolution: "completed",
+    });
+  });
+
+  it("deduplicates a completed mutation by its durable request identity", async () => {
+    createCredential({
+      id: "idempotent-api",
+      credential_type: "api_key",
+      name: "Idempotent API",
+      secret: { value: "idempotent-secret" },
+    }, { actor: "test" });
+    let mutations = 0;
+    registerCredentialBroker("idempotent_mutation", "write", async () => ({ revision: ++mutations }), {
+      effect: "mutation",
+      semanticTarget: () => "resource:idempotent",
+      reconcile: async () => ({ resolution: "indeterminate" }),
+    });
+    const parsed = parseWorkflowSource(workflow([
+      "- credential_ref: idempotent-api",
+      "  purpose: mutate exactly once",
+      "  inject:",
+      "    mode: manager_broker",
+      "    broker: idempotent_mutation",
+      "    allowed_actions: [write]",
+    ].join("\n")));
+    parsed.meta.agents!.worker.agent_type = "deterministic";
+    createActiveRun("credential-idempotency", parsed);
+    const request: DagCredentialBrokerCallRequest = {
+      request_id: "idempotent-request",
+      idempotency_key: "idempotent-request",
+      ...startWorkerBrokerFence("credential-idempotency"),
+      credential_ref: "idempotent-api",
+      broker: "idempotent_mutation",
+      action: "write",
+      input: {},
+    };
+
+    await expect(executeCredentialBrokerCall("worker-1", {
+      ...request,
+      request_id: "stale-lease-request",
+      idempotency_key: "stale-lease-request",
+      lease_generation: request.lease_generation + 1,
+    })).resolves.toMatchObject({ ok: false, outcome: "failed_pre_dispatch" });
+    expect(mutations).toBe(0);
+    expect(getCredentialBrokerMutationAttempt("stale-lease-request")).toBeUndefined();
+
+    const first = await executeCredentialBrokerCall("worker-1", request);
+    const duplicate = await executeCredentialBrokerCall("worker-1", request);
+
+    expect(first).toMatchObject({ ok: true, outcome: "completed", result: { revision: 1 } });
+    expect(duplicate).toMatchObject({ ok: true, outcome: "completed", result: { revision: 1 } });
+    expect(mutations).toBe(1);
+    expect(getDb().prepare(`
+      SELECT state FROM credential_broker_mutation_events
+      WHERE request_id = ? ORDER BY sequence
+    `).all("idempotent-request")).toEqual([
+      { state: "prepared" },
+      { state: "dispatched" },
+      { state: "completed" },
+    ]);
+    expect(() => getDb().prepare(`
+      UPDATE credential_broker_mutation_attempts SET semantic_target = 'tampered'
+      WHERE request_id = 'idempotent-request'
+    `).run()).toThrow(/identity is immutable/);
+    expect(() => getDb().prepare(`
+      DELETE FROM credential_broker_mutation_events WHERE request_id = 'idempotent-request'
+    `).run()).toThrow(/append-only/);
+
+    getDb().prepare("DELETE FROM schema_migrations WHERE version = 37").run();
+    closeDb();
+    expectCurrentSchemaMigrationVersion(undefined, 37);
+    expect(getCredentialBrokerMutationAttempt("idempotent-request")).toMatchObject({
+      state: "completed",
+      result: { revision: 1 },
+    });
+  });
+
+  it("blocks conflicting mutations until recovery reconciles the uncertain attempt", async () => {
+    createCredential({
+      id: "recover-api",
+      credential_type: "api_key",
+      name: "Recover API",
+      secret: { value: "recover-secret" },
+    }, { actor: "test" });
+    let calls = 0;
+    let observed = false;
+    registerCredentialBroker("recover_mutation", "write", async () => {
+      calls += 1;
+      throw new Error("provider response lost");
+    }, {
+      effect: "mutation",
+      semanticTarget: () => "resource:shared",
+      reconcile: async () => observed
+        ? { resolution: "completed", result: { revision: 42 } }
+        : { resolution: "indeterminate" },
+    });
+    const parsed = parseWorkflowSource(workflow([
+      "- credential_ref: recover-api",
+      "  purpose: mutate with recovery",
+      "  inject:",
+      "    mode: manager_broker",
+      "    broker: recover_mutation",
+      "    allowed_actions: [write]",
+    ].join("\n")));
+    parsed.meta.agents!.worker.agent_type = "deterministic";
+    createActiveRun("credential-recovery", parsed);
+    const fence = startWorkerBrokerFence("credential-recovery");
+    const makeRequest = (id: string): DagCredentialBrokerCallRequest => ({
+      request_id: id,
+      idempotency_key: id,
+      ...fence,
+      credential_ref: "recover-api",
+      broker: "recover_mutation",
+      action: "write",
+      input: {},
+    });
+
+    await expect(executeCredentialBrokerCall("worker-1", makeRequest("uncertain-request")))
+      .resolves.toMatchObject({ ok: false, outcome: "indeterminate" });
+    await expect(executeCredentialBrokerCall("worker-1", makeRequest("blocked-request")))
+      .resolves.toMatchObject({ ok: false, outcome: "indeterminate" });
+    expect(calls).toBe(1);
+
+    observed = true;
+    await expect(recoverCredentialBrokerMutations()).resolves.toMatchObject({
+      reconciled: ["uncertain-request"],
+      unresolved: [],
+      failed: [],
+    });
+    expect(getCredentialBrokerMutationAttempt("uncertain-request")).toMatchObject({
+      state: "reconciled",
+      resolution: "completed",
+      result: { revision: 42 },
+    });
   });
 
   it("rejects broker results that reflect a secret", async () => {
@@ -315,9 +870,15 @@ describe("generic credential store", () => {
       type: "credential_broker_call",
       data: {
         request_id: "request-transport",
+        idempotency_key: "request-transport",
+        transport_kind: "worker_actor",
         run_id: "run-transport",
         node_id: "node-transport",
         session_id: "session-transport",
+        round_id: "round-transport",
+        actor_id: "actor-transport",
+        generation: 1,
+        lease_generation: 1,
         credential_ref: "credential-transport",
         broker: "test_broker",
         action: "inspect",
@@ -331,14 +892,38 @@ describe("generic credential store", () => {
       type: "credential_broker_call",
       data: {
         request_id: "request-transport",
+        idempotency_key: "request-transport",
+        transport_kind: "worker_actor",
         run_id: "run-transport",
         node_id: "node-transport",
         session_id: "session-transport",
+        round_id: "round-transport",
+        actor_id: "actor-transport",
+        generation: 1,
+        lease_generation: 1,
         credential_ref: "credential-transport",
         broker: "test_broker",
         action: "inspect",
         input: "not-an-object",
       },
     })).toBeNull();
+    expect(parseIncomingMessage({
+      type: "credential_broker_cancel",
+      data: {
+        request_id: "request-transport",
+        idempotency_key: "request-transport",
+        transport_kind: "worker_actor",
+        run_id: "run-transport",
+        node_id: "node-transport",
+        session_id: "session-transport",
+        round_id: "round-transport",
+        actor_id: "actor-transport",
+        generation: 1,
+        lease_generation: 1,
+      },
+    })).toMatchObject({
+      type: "credential_broker_cancel",
+      data: { request_id: "request-transport", lease_generation: 1 },
+    });
   });
 });

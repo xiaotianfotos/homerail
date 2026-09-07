@@ -1,9 +1,6 @@
 name: Deploy Production
 
 on:
-  schedule:
-    # GitHub cron is UTC. 19:30 UTC is 03:30 Asia/Shanghai.
-    - cron: "30 19 * * *"
   workflow_dispatch:
     inputs:
       revision:
@@ -21,11 +18,13 @@ concurrency:
 jobs:
   deploy:
     name: Deploy persistent HomeRail service
-    if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && github.actor == 'xiaotianfotos')
+    if: github.event_name == 'workflow_dispatch' && github.actor == 'xiaotianfotos'
     runs-on: [self-hosted, Linux, X64, homerail-deploy]
     timeout-minutes: 45
+    env:
+      HOMERAIL_WORKER_BUILD_APT_MIRROR: ${{ vars.HOMERAIL_WORKER_BUILD_APT_MIRROR }}
+      HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: ${{ vars.HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR }}
+      HOMERAIL_WORKER_BUILD_NPM_REGISTRY: ${{ vars.HOMERAIL_WORKER_BUILD_NPM_REGISTRY }}
     steps:
       - name: Check out the validated revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

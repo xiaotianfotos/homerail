@@ -150,6 +150,9 @@ export function agentTurnControllerOptionsForBackend(
   if (normalized === "claude-sdk") {
     return { capabilities: { liveSteer: true } };
   }
+  if (normalized === "deepseek_harness" || normalized === "deepseek-harness" || normalized === "dsh") {
+    return { capabilities: { liveSteer: true } };
+  }
   if (normalized === "kimi_code" || normalized === "kimi-code" || normalized === "kimi") {
     const configuredTransport = env.HOMERAIL_KIMI_AGENT_TRANSPORT?.trim().toLowerCase();
     const explicitlySdk = configuredTransport === "sdk"

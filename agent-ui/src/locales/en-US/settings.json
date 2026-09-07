@@ -8,9 +8,11 @@
     "git": "Git",
     "providers": "Providers & Models",
     "voice": "Voice",
+    "experimental": "Experimental",
     "device": "WireGuard",
     "skills": "Skills",
     "plugins": "Plugins",
+    "toolProviders": "MCP & Tools",
     "mcp": "MCP Servers",
     "memory": "Memory"
   },
@@ -20,8 +22,10 @@
     "git": "Manage Git server tokens. Projects and repositories are linked when adding a directory.",
     "providers": "Manage providers, model capabilities, and locally encrypted model settings.",
     "voice": "Configure voice output and button controls.",
+    "experimental": "Manage interface capabilities that are still being refined.",
     "skills": "Inspect capabilities detected from the static Skills directory.",
     "plugins": "Inspect resolved plugin capabilities and enable or disable optional scenes.",
+    "toolProviders": "Inspect built-in MCP and function-tool providers and their live bindings.",
     "default": "Configure local capabilities used by HomeRail Agent UI."
   },
   "general": {
@@ -57,11 +61,11 @@
       "channels": {
         "stable": {
           "label": "Stable",
-          "description": "Receive final releases only. Alpha and Beta releases stay hidden."
+          "description": "Receive final releases only. Beta prereleases stay hidden."
         },
         "early-access": {
           "label": "Early Access",
-          "description": "Follow the current Alpha train, then Beta and Stable without opting in again."
+          "description": "Follow the Beta channel and automatically receive future Beta and Stable releases."
         }
       },
       "currentVersion": "Installed version: {version}",
@@ -79,6 +83,53 @@
         "error": "Update check failed"
       }
     }
+  },
+  "experimental": {
+    "title": "Experimental features",
+    "description": "These features are still being validated and may change as feedback comes in.",
+    "badge": "Experimental",
+    "browserTools": {
+      "title": "Let AI operate the HomeRail interface",
+      "description": "Allow Manager and Live Voice to open or close trusted HomeRail surfaces with named actions—for example, open a DAG run directly without replaying clicks. Disabled by default; turning it off revokes access immediately.",
+      "state": {
+        "disabled": "Off. No page tools are registered or connected.",
+        "restart-required": "Enabled. Restart HomeRail Desktop once to activate the Chromium WebMCP runtime.",
+        "starting": "Connecting the secure renderer bridge…",
+        "direct": "Direct bridge connected. Manager and Live Voice can operate this exact page.",
+        "direct-native": "Direct bridge and native WebMCP are both active on this page.",
+        "native-only": "Native WebMCP is active, but the direct Manager bridge is unavailable.",
+        "connected": "Connected. Trusted HomeRail interface actions are available to AI.",
+        "unavailable": "No Browser Tools transport is available for this page.",
+        "error": "Browser Tools could not start",
+        "native-starting": "Native Chromium WebMCP: discovering the six trusted page tools…",
+        "native-connected": "Native Chromium WebMCP: connected with the complete six-tool catalog.",
+        "native-unavailable": "Native Chromium WebMCP is unavailable; the direct bridge can still operate this page.",
+        "native-error": "Native Chromium WebMCP failed; the direct bridge is kept separate."
+      }
+    },
+    "liveVoiceImmersive": {
+      "title": "Live Voice immersive interface",
+      "description": "After Codex Live Voice connects, automatically collapse the top bar, sidebars, and composer so only generative UI and the bottom input waveform remain. Restore the full interface when the connection ends."
+    }
+  },
+  "toolProviders": {
+    "title": "MCP & Tool Providers",
+    "description": "A read-only view generated from HomeRail's real built-in tool declarations and current runtime presence. External MCP server editing remains hidden until execution is genuinely wired.",
+    "configuration": {
+      "builtIn": "Built in",
+      "experimental": "Experimental"
+    },
+    "runtime": {
+      "available": "Available",
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "unavailable": "Unavailable"
+    },
+    "toolCount": "{count} tools",
+    "nativeTools": "Native function tools",
+    "readOnly": "Read-only configuration",
+    "showTools": "Show declared tools",
+    "error": "Could not load the provider catalog: {message}"
   },
   "environment": {
     "statusTitle": "DAG runtime environment",

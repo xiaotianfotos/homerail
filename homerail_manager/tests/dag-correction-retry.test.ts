@@ -8,6 +8,7 @@ import { parseWorkflowSource } from "../src/orchestration/workflow-spec-v1.js";
 import { parseDAGYaml } from "../src/orchestration/yaml-loader.js";
 import { _clearListeners } from "../src/events/bus.js";
 import { closeDb } from "../src/persistence/db.js";
+import { createCredential } from "../src/persistence/credentials.js";
 import { _clearAllPersistence } from "../src/persistence/store.js";
 import {
   _clearActiveRuns,
@@ -17,6 +18,7 @@ import {
   failActiveRun,
   getActiveRun,
   handoffActiveRun,
+  recordActiveRunBrokerActionSuccess,
   requestNodeCorrection,
 } from "../src/runtime/active-runs.js";
 
@@ -183,6 +185,10 @@ spec:
       "run-correction-schema",
       "start",
       "invalid ActorReport",
+      {
+        port: "report",
+        content: { actor: "systems_guide", status: "ready", synopsis: "wrong alias" },
+      },
     ).status).toBe("scheduled");
     expect(dispatchReadyNodes("run-correction-schema", dispatcher)).toBe(1);
 
@@ -193,7 +199,77 @@ spec:
     expect(prompt).toContain('"maxLength":320');
     expect(prompt).toContain("Preferred success ports: report.");
     expect(prompt).toContain("Failure ports: failed.");
+    expect(prompt).toContain("Previous rejected handoff");
+    expect(prompt).toContain('"synopsis":"wrong alias"');
+    expect(prompt).toContain("repair this value instead of reconstructing it from memory");
     expect(prompt).toContain("never use it merely to report this correction error");
+  });
+
+  it("includes the exact workspace evidence contract when report repair is required", () => {
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: correction-evidence, name: Correction Evidence }
+spec:
+  contracts:
+    Candidate:
+      type: object
+      required: [report]
+      properties:
+        report:
+          type: object
+          required: [path, sha256]
+          properties:
+            path: { type: string }
+            sha256: { type: string }
+    Report:
+      type: object
+      additionalProperties: false
+      required: [version, status]
+      properties:
+        version: { type: integer, const: 1 }
+        status: { type: string, const: passed }
+  agents:
+    worker: { system: Return a candidate. }
+  nodes:
+    start:
+      kind: agent
+      agent: worker
+      workspace_access: { writable_paths: [repo], readonly_paths: [] }
+      outputs:
+        candidate:
+          contract: Candidate
+          required_workspace_files:
+            - path_field: report.path
+              sha256_field: report.sha256
+              contract: Report
+    terminal:
+      kind: terminal
+      outcome: success
+      inputs:
+        result: { contract: Candidate }
+  edges:
+    - { from: start.candidate, to: terminal.result }
+  policies:
+    max_corrections_per_node: 1
+`);
+    parsed.meta.agents!.worker!.agent_type = "deterministic";
+    createActiveRun("run-correction-evidence", parsed);
+    const dispatcher = new FlakyDispatcher({ status: "dispatched", targetType: "fake", targetId: "first" });
+
+    expect(dispatchReadyNodes("run-correction-evidence", dispatcher)).toBe(1);
+    expect(requestNodeCorrection(
+      "run-correction-evidence",
+      "start",
+      "DAG_HANDOFF_WORKSPACE_FILE_REQUIREMENT start.candidate: report is invalid",
+    ).status).toBe("scheduled");
+    expect(dispatchReadyNodes("run-correction-evidence", dispatcher)).toBe(1);
+
+    const prompt = String(dispatcher.calls[1].inputs.correction?.[0]);
+    expect(prompt).toContain("Exact workspace evidence requirements by port");
+    expect(prompt).toContain('"contract":"Report"');
+    expect(prompt).toContain('"version":{"const":1,"type":"integer"}');
+    expect(prompt).toContain("repair only the declared evidence JSON file under .homerail");
   });
 
   it("restores success descendants skipped by the failed attempt", () => {
@@ -275,6 +351,91 @@ spec:
     )).not.toThrow();
     expect(getActiveRun("run-auto-handoff-contract")?.status).toBe("failed");
     expect(getActiveRun("run-auto-handoff-contract")?.dagRun.nodeStates.get("start")).toBe("FAILED");
+    expect(getActiveRun("run-auto-handoff-contract")?.counters.abort_reason).toBeUndefined();
+  });
+
+  it("uses a canonical broker result instead of failing after handoff correction exhaustion", () => {
+    createCredential({
+      id: "github-autofix",
+      credential_type: "api_key",
+      name: "Autofix broker token",
+      secret: { value: "fake-token" },
+    }, { actor: "test" });
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: canonical-broker-handoff, name: Canonical Broker Handoff }
+spec:
+  contracts:
+    Decision:
+      type: object
+      additionalProperties: false
+      required: [verdict]
+      properties:
+        verdict: { type: string, const: approve }
+  agents:
+    reviewer: { system: Review. }
+  nodes:
+    review:
+      kind: agent
+      agent: reviewer
+      allowed_dag_tools: [handoff, credential_broker_call]
+      credentials:
+        - credential_ref: github-autofix
+          purpose: assess review
+          inject:
+            mode: manager_broker
+            broker: github_pr
+            allowed_actions: [assess_review]
+      outputs:
+        reviewed:
+          contract: Decision
+          required_broker_actions:
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: verdict, content_field: verdict }
+    terminal:
+      kind: terminal
+      outcome: success
+      inputs:
+        result: { contract: Decision }
+  edges:
+    - { from: review.reviewed, to: terminal.result }
+  policies:
+    max_corrections_per_node: 0
+`);
+    parsed.meta.agents!.reviewer!.agent_type = "deterministic";
+    createActiveRun("run-canonical-broker-handoff", parsed);
+    const dispatcher = new FlakyDispatcher({ status: "dispatched", targetType: "fake", targetId: "reviewer" });
+    expect(dispatchReadyNodes("run-canonical-broker-handoff", dispatcher)).toBe(1);
+    const sessionId = dispatcher.calls[0]?.sessionId;
+    if (!sessionId) throw new Error("reviewer session was not created");
+    recordActiveRunBrokerActionSuccess({
+      run_id: "run-canonical-broker-handoff",
+      node_id: "review",
+      session_id: sessionId,
+      credential_ref: "github-autofix",
+      broker: "github_pr",
+      action: "assess_review",
+      result: {
+        verdict: "approve",
+        review_decision: { verdict: "approve" },
+      },
+    });
+
+    expect(requestNodeCorrection(
+      "run-canonical-broker-handoff",
+      "review",
+      "DAG_HANDOFF_CONTRACT_VIOLATION review.reviewed",
+    ).status).toBe("exhausted");
+    const run = autoHandoffAfterCorrectionExhausted(
+      "run-canonical-broker-handoff",
+      "review",
+      "DAG_HANDOFF_CONTRACT_VIOLATION review.reviewed",
+    );
+    expect(run?.status).toBe("completed");
+    expect(run?.dagRun.nodeStates.get("review")).toBe("COMPLETED");
   });
 
   it("settles pending descendants when a contracted auto-handoff failure leaves no runnable work", () => {

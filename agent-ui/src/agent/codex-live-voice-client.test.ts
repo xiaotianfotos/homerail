@@ -5,6 +5,7 @@ import {
   type CodexLiveVoiceEvent,
   type CodexLiveVoiceState,
 } from './codex-live-voice-client'
+import { setDesktopBrowserToolsTransportAvailable } from '@/browser-tools/browser-renderer-bridge'
 
 class FakeSocket extends EventTarget {
   readyState = WebSocket.CONNECTING
@@ -185,11 +186,13 @@ function fakeAudio(): HTMLAudioElement {
 }
 
 afterEach(() => {
+  setDesktopBrowserToolsTransportAvailable(false)
   vi.useRealTimers()
 })
 
 describe('CodexLiveVoiceClient', () => {
   it('negotiates WebRTC, creates oai-events before the offer, and keeps text on the Live session', async () => {
+    setDesktopBrowserToolsTransportAvailable(true)
     const socket = new FakeSocket()
     const peer = new FakePeer()
     const { stream, track } = fakeMedia()
@@ -215,6 +218,7 @@ describe('CodexLiveVoiceClient', () => {
       type: 'start',
       sdp: 'offer-sdp',
       project_id: 'project-1',
+      browser_tools_transport: 'desktop',
     }))
     expect(states).toContain('listening')
 
@@ -736,5 +740,45 @@ describe('CodexLiveVoiceClient', () => {
       recoverable: false,
     })
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('forwards events/state to callbacks with no client identity, so callers must bind them (issue #168)', async () => {
+    // The client invokes onEvent(message) and onState(state) with a single
+    // argument — no client reference, no sessionId. This pins the contract that
+    // makes the caller-side binding guard in AgentVoiceCockpit.startCodexLiveVoice
+    // (codexLiveVoiceClient !== client) necessary: a stale/old client's callbacks
+    // would otherwise keep firing into shared handlers. If this forwarding shape
+    // ever gains a client-identity argument, the cockpit guard can be tightened.
+    const socket = new FakeSocket()
+    const peer = new FakePeer()
+    const { stream } = fakeMedia()
+    const events: CodexLiveVoiceEvent[] = []
+    const states: CodexLiveVoiceState[] = []
+    const client = new CodexLiveVoiceClient({
+      sessionId: 'voice-callback-contract',
+      ticketProvider: async () => ({ ticket: 'single-use-ticket' }),
+      webSocketFactory: () => {
+        queueMicrotask(() => socket.open())
+        return socket as unknown as WebSocket
+      },
+      peerConnectionFactory: () => peer as unknown as RTCPeerConnection,
+      getUserMedia: async () => stream,
+      audioFactory: fakeAudio,
+      onEvent: event => events.push(event),
+      onState: state => states.push(state),
+    })
+    await client.start()
+
+    // Drive a transcript + a workspace event through the client.
+    socket.message({ type: 'transcript.delta', delta: 'hi', role: 'assistant' })
+    socket.message({ type: 'workspace', workspace: { session_id: 'voice-callback-contract' } })
+
+    // The forwarded event is exactly the message, with no extra identity arg.
+    expect(events.some(e => e.type === 'transcript.delta')).toBe(true)
+    expect(events.some(e => e.type === 'workspace')).toBe(true)
+    // onState is also forwarded with a single argument (no client identity).
+    expect(states.length).toBeGreaterThan(0)
+
+    await client.stop()
   })
 })

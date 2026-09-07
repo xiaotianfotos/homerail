@@ -13,6 +13,15 @@ declare global {
 
   type DesktopUpdateChannel = 'stable' | 'early-access'
 
+  interface DesktopBrowserToolsStatus {
+    supported: boolean
+    enabled: boolean
+    runtimeEnabled: boolean
+    restartRequired: boolean
+    state: 'disabled' | 'restart-required' | 'starting' | 'connected' | 'unavailable' | 'error'
+    error?: string
+  }
+
   interface DesktopUpdateStatus {
     supported: boolean
     state: DesktopUpdateState
@@ -49,6 +58,9 @@ declare global {
     setUpdateChannel?: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateStatus>
     installUpdate?: () => Promise<DesktopUpdateStatus>
     onUpdateStatus?: (handler: (status: DesktopUpdateStatus) => void) => () => void
+    browserToolsStatus?: () => Promise<DesktopBrowserToolsStatus>
+    setBrowserToolsEnabled?: (enabled: boolean) => Promise<DesktopBrowserToolsStatus>
+    onBrowserToolsStatus?: (handler: (status: DesktopBrowserToolsStatus) => void) => () => void
   }
 
   interface Window {

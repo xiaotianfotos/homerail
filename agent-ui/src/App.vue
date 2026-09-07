@@ -10,7 +10,11 @@
       class="h-screen w-full font-sans overflow-hidden"
       :style="{ background: 'var(--hr-bg)', color: 'var(--hr-text-1)' }"
     >
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <KeepAlive include="AgentRootView">
+          <component :is="Component" />
+        </KeepAlive>
+      </router-view>
       <Toast />
     </div>
   </NConfigProvider>

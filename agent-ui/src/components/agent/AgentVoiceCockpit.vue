@@ -1,7 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onDeactivated,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
+import { useUiStore } from '@/stores/ui-store'
 import {
   closeVoiceSession,
   createVoiceSession,
@@ -38,6 +48,11 @@ import {
   VoiceSessionTransitionGuard,
 } from '@/agent/voice-session-restore'
 import {
+  shouldReplaceVoiceWorkspaceForProject,
+  voiceProjectSelectionChanged,
+} from '@/agent/voice-project-selection'
+import { VoiceCurrentSessionWriter } from '@/agent/voice-current-session-writer'
+import {
   CodexLiveVoiceClient,
   codexLiveVoiceOwnsAudio,
   type CodexLiveVoiceEvent,
@@ -59,6 +74,17 @@ import {
   resolveCodexServiceTierForModel,
   resolveCodexServiceTierOptions
 } from '@/components/agent/codex-model-selection'
+import {
+  ASR_CONNECTION_TIMEOUT_MS,
+  AsrTranscriptionDeadlineController
+} from '@/components/agent/asr-transcription-deadline'
+import {
+  AsrProtocolError,
+  AsrSocketGenerationFence,
+  AsrTranscriptionAttemptRegistry,
+  beginAsrRealtimeUtterance,
+  recoverAsrRealtimeSession
+} from '@/components/agent/asr-realtime-lifecycle'
 import { voiceWs } from '@/api/clients/events-ws'
 import { useOnboardingStatus } from '@/composables/useOnboardingStatus'
 import {
@@ -154,6 +180,7 @@ import {
 } from 'lucide-vue-next'
 
 const store = useAgentStore()
+const uiStore = useUiStore()
 const { t, te } = useI18n()
 const { planLabel } = createProtocolLabels(t)
 // 新手引导配置状态检测（作为独立状态入口，不阻断模型选择）
@@ -166,10 +193,16 @@ const generativeUiShadowPreviewRequested =
 const props = withDefaults(
   defineProps<{
     voiceOnly?: boolean
+    suspended?: boolean
   }>(),
   {
-    voiceOnly: false
+    voiceOnly: false,
+    suspended: false
   }
+)
+const keepAliveDeactivated = ref(false)
+const interactionSuspended = computed(
+  () => props.suspended || keepAliveDeactivated.value,
 )
 const VOICE_LEFT_PANE_KEY = 'omni.voiceCockpit.leftPaneOpen'
 const VOICE_DETAILS_PANE_KEY = 'omni.voiceCockpit.detailsOpen'
@@ -284,6 +317,11 @@ const voiceInputAssist = ref(loadBooleanSetting(VOICE_INPUT_ASSIST_KEY, false))
 const VOICE_OUTPUT_ENABLED_KEY = 'homerail.voice.output-enabled'
 const voiceOutputEnabled = ref(loadBooleanSetting(VOICE_OUTPUT_ENABLED_KEY, true))
 const composerRef = ref<HTMLTextAreaElement | null>(null)
+const IMMERSIVE_RETURN_IDLE_MS = 3200
+const IMMERSIVE_EXIT_REVEAL_MS = 1600
+const immersiveMode = ref(false)
+const immersiveSuspended = ref(false)
+const immersiveExitVisible = ref(false)
 const fullscreenPromptVisible = ref(false)
 const fullscreenPromptDismissed = ref(false)
 const cockpitRoot = ref<HTMLElement | null>(null)
@@ -362,12 +400,28 @@ function completeVoiceSessionTransition(generation: number): void {
   if (voiceSessionTransitions.isCurrent(generation)) sessionTransitioning.value = false
 }
 
+// Serialized, generation-gated writer for the current-session server pointer.
+// Prevents rapid A→B session switches from leaving the server pointer stuck on
+// the stale A request (issue #168). See voice-current-session-writer.ts.
+const currentSessionWriter = new VoiceCurrentSessionWriter(
+  voiceSessionTransitions,
+  (sessionId) => setCurrentVoiceSession(sessionId),
+)
+function submitCurrentSessionWrite(sessionId: string | null, generation: number | undefined): void {
+  currentSessionWriter.submit(sessionId, generation)
+}
+
 function selectGenerativeUiNode(payload: { node_id: string }): void {
   selectedGenerativeUiNodeId.value = payload.node_id
 }
 
 let mediaStream: MediaStream | null = null
 let codexLiveVoiceClient: CodexLiveVoiceClient | null = null
+// Session identity of the currently active Live Voice client. Async workspace
+// events are only applied when they belong to this session, so a reconnect
+// (or a stale event from a previous client) cannot yank the canvas to a
+// different/empty owner. See issue #168 acceptance criterion #3.
+let codexLiveVoiceSessionId: string | null = null
 let codexLiveVoiceMeterAudioContext: AudioContext | null = null
 let codexLiveVoiceMeterAnalyser: AnalyserNode | null = null
 let codexLiveVoiceMeterSource: MediaStreamAudioSourceNode | null = null
@@ -390,19 +444,21 @@ let voiceAbort: AbortController | null = null
 // 避免旧 turn 的 handleVoiceStreamEvent 回调往不相关的 workspace 写数据。
 let voiceTurnAbort: AbortController | null = null
 let voiceSessionToken = 0
+let voiceProjectReconcileGeneration = 0
 let voiceHidDevice: any | null = null
 let voiceHidPressed = false
 let voiceGamepadFrame = 0
 let voiceGamepadPressedButtons = new Set<number>()
 let voiceGamepadAxisLocks = new Set<VoiceGamepadDirection>()
 let voiceGamepadNoticeTimer = 0
+let immersiveExitTimer = 0
+let immersiveReturnTimer = 0
 let nativeGamepadAnalogAt = 0
 let asrSocket: WebSocket | null = null
 let asrTranscriptRaw = ''
-let asrFinalResolve: ((text: string) => void) | null = null
-let asrFinalReject: ((error: Error) => void) | null = null
-let asrFinalTimer = 0
-let asrClosing = false
+const asrDeadlineController = new AsrTranscriptionDeadlineController()
+const asrSocketGeneration = new AsrSocketGenerationFence()
+const asrTranscriptionAttempts = new AsrTranscriptionAttemptRegistry()
 let lastSubmittedVoiceTranscriptKey = ''
 let lastSubmittedVoiceTranscriptAt = 0
 let managerStatusTimer = 0
@@ -528,19 +584,29 @@ const selectedCodexLiveVoice = computed<CodexLiveVoiceV3Voice>(
     onboardingStatus.value.liveVoiceDefaultVoice ||
     'cove'
 )
-const codexLiveVoiceEffective = computed(
-  () =>
-    codexHarnessActive.value &&
-    codexLiveVoiceEnabled.value &&
-    onboardingStatus.value.liveVoiceEffective
-)
 const codexLiveVoiceSessionActive = computed(
   () => codexLiveVoiceOwnsAudio(codexLiveVoiceState.value)
+)
+const codexLiveVoiceEffective = computed(
+  () =>
+    codexLiveVoiceSessionActive.value ||
+    (
+      codexHarnessActive.value &&
+      codexLiveVoiceEnabled.value &&
+      onboardingStatus.value.liveVoiceEffective
+    )
 )
 const codexLiveVoiceConnecting = computed(
   () =>
     codexLiveVoiceState.value === 'connecting' ||
     codexLiveVoiceState.value === 'reconnecting'
+)
+const liveVoiceImmersiveActive = computed(
+  () =>
+    !interactionSuspended.value &&
+    uiStore.liveVoiceImmersiveEnabled &&
+    codexLiveVoiceSessionActive.value &&
+    !codexLiveVoiceConnecting.value
 )
 const codexLiveVoiceHumanInputActive = computed(
   () =>
@@ -1101,7 +1167,8 @@ const voiceCockpitClasses = computed(() => [
     'voice-cockpit--mobile': isMobileDevice.value,
     'voice-cockpit--phone-portrait': isPhonePortrait.value,
     'voice-cockpit--phone-landscape': isCompactPhoneLandscape.value,
-    'voice-cockpit--tv-compact': isTvCompactViewport.value
+    'voice-cockpit--tv-compact': isTvCompactViewport.value,
+    'voice-cockpit--immersive': immersiveMode.value
   }
 ])
 const artifactPreviewModalStyle = computed(() => {
@@ -1190,9 +1257,12 @@ const captionKind = computed(() => {
   return 'state'
 })
 const voiceMainGridStyle = computed(() => ({
-  gridTemplateColumns: isPhonePortrait.value
-    ? 'minmax(0, 1fr)'
-    : `${sidebarColumnWidth()} minmax(0, 1fr) ${detailsColumnWidth()}`
+  gridTemplateColumns:
+    isPhonePortrait.value
+      ? 'minmax(0, 1fr)'
+      : immersiveMode.value
+        ? '0 minmax(0, 1fr) 0'
+        : `${sidebarColumnWidth()} minmax(0, 1fr) ${detailsColumnWidth()}`
 }))
 const voiceShellStyle = computed(() => {
   if (!isCompactPhoneLandscape.value) return {}
@@ -1282,6 +1352,9 @@ onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
   document.addEventListener('pointerdown', closeModelMenuOnOutside)
   window.addEventListener('keydown', handleVoiceKeyboardButton, true)
+  window.addEventListener('keydown', handleImmersiveKeyboard, true)
+  window.addEventListener('pointerdown', handleImmersiveTouchPointerDown, { passive: true })
+  window.addEventListener('pointermove', handleImmersivePointerMove, { passive: true })
   window.addEventListener('keydown', closeModelMenuOnEscape)
   window.addEventListener('gamepadconnected', handleVoiceGamepadConnected)
   window.addEventListener('gamepaddisconnected', handleVoiceGamepadDisconnected)
@@ -1309,6 +1382,14 @@ onMounted(() => {
   setupVoiceStatusSubscription()
 })
 
+onActivated(() => {
+  keepAliveDeactivated.value = false
+})
+
+onDeactivated(() => {
+  keepAliveDeactivated.value = true
+})
+
 watch(
   () => store.onboardingOpen,
   (open, previous) => {
@@ -1319,14 +1400,30 @@ watch(
 watch(
   () => store.managerProjectId,
   () => {
-    if (codexLiveVoiceClient) void stopCodexLiveVoice()
-    void loadVoiceSessionShortcuts()
+    void reconcileVoiceProjectSelection()
   }
 )
 
-watch(codexLiveVoiceEffective, effective => {
-  if (!effective && codexLiveVoiceClient) void stopCodexLiveVoice()
-})
+watch(
+  interactionSuspended,
+  (suspended) => {
+    if (!suspended) return
+    modelMenuOpen.value = false
+    voiceHidPressed = false
+    voiceGamepadPressedButtons = new Set()
+    voiceGamepadPressedButtonIds.value = new Set()
+    voiceGamepadAxisLocks = new Set()
+  },
+)
+
+watch(
+  liveVoiceImmersiveActive,
+  (active, previous) => {
+    if (active && !previous) activateLiveVoiceImmersiveMode()
+    else if (!active && previous) exitImmersiveMode()
+  },
+  { immediate: true }
+)
 
 watch(detailsOpen, value => saveBooleanSetting(VOICE_DETAILS_PANE_KEY, value))
 watch(voiceSidebarOpen, value => {
@@ -1392,6 +1489,8 @@ onUnmounted(() => {
   // /ws/events is shared with the DAG runtime store; component teardown only
   // removes this cockpit's subscriptions and must not close the singleton.
   if (widgetHighlightTimer) window.clearTimeout(widgetHighlightTimer)
+  if (immersiveExitTimer) window.clearTimeout(immersiveExitTimer)
+  if (immersiveReturnTimer) window.clearTimeout(immersiveReturnTimer)
   window.removeEventListener('resize', updateViewportSize)
   window.removeEventListener('orientationchange', updateViewportSize)
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
@@ -1399,6 +1498,9 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   document.removeEventListener('pointerdown', closeModelMenuOnOutside)
   window.removeEventListener('keydown', handleVoiceKeyboardButton, true)
+  window.removeEventListener('keydown', handleImmersiveKeyboard, true)
+  window.removeEventListener('pointerdown', handleImmersiveTouchPointerDown)
+  window.removeEventListener('pointermove', handleImmersivePointerMove)
   window.removeEventListener('keydown', closeModelMenuOnEscape)
   window.removeEventListener('gamepadconnected', handleVoiceGamepadConnected)
   window.removeEventListener('gamepaddisconnected', handleVoiceGamepadDisconnected)
@@ -1440,20 +1542,32 @@ function uninstallCodexVoiceTextBridge(): void {
 
 async function startSession(): Promise<void> {
   const previousWorkspace = workspace.value
+  const requestedProjectId = store.managerProjectId || null
   const generation = beginVoiceSessionTransition()
   loading.value = true
   error.value = ''
   try {
-    const restored = await restoreLatestSession()
+    const restored = await restoreLatestSession(requestedProjectId)
     if (!voiceSessionTransitions.isCurrent(generation)) return
+    if (voiceProjectSelectionChanged(requestedProjectId, store.managerProjectId)) {
+      void startSession()
+      return
+    }
     if (restored) {
       workspace.value = restored
+      if (!requestedProjectId && restored.project_id) {
+        store.setManagerProjectId(restored.project_id)
+      }
     } else {
-      const res = await createVoiceSession(store.managerProjectId)
+      const res = await createVoiceSession(requestedProjectId)
       if (!voiceSessionTransitions.isCurrent(generation)) return
+      if (voiceProjectSelectionChanged(requestedProjectId, store.managerProjectId)) {
+        void startSession()
+        return
+      }
       workspace.value = res.data
-      // 新建的会话成为当前会话，更新服务端指针。
-      void setCurrentVoiceSession(workspace.value?.session_id ?? null)
+      // 新建的会话成为当前会话，更新服务端指针（串行化，避免乱序写）。
+      submitCurrentSessionWrite(workspace.value?.session_id ?? null, generation)
     }
     rememberSpokenAssistantMessages(workspace.value)
     optimisticConversationItems.value = []
@@ -1497,7 +1611,7 @@ async function createFreshVoiceSession(): Promise<void> {
       resetSubmittedTranscriptClear()
       statusFocusApplied = false
       completeVoiceSessionTransition(generation)
-      void setCurrentVoiceSession(reusableSessionId)
+      submitCurrentSessionWrite(reusableSessionId, generation)
       await loadVoiceSessionShortcuts()
       void voiceSidebarRef.value?.refresh()
       void nextTick(() => voiceSidebarRef.value?.ensureGamepadFocus())
@@ -1514,7 +1628,7 @@ async function createFreshVoiceSession(): Promise<void> {
     resetSubmittedTranscriptClear()
     statusFocusApplied = false
     completeVoiceSessionTransition(generation)
-    void setCurrentVoiceSession(workspace.value?.session_id ?? null)
+    submitCurrentSessionWrite(workspace.value?.session_id ?? null, generation)
     await loadVoiceSessionShortcuts()
     void voiceSidebarRef.value?.refresh()
     void nextTick(() => voiceSidebarRef.value?.ensureGamepadFocus())
@@ -1567,8 +1681,25 @@ function isUnusedVoiceSessionItem(item: VoiceSessionItem): boolean {
   )
 }
 
-async function handleVoiceProjectSelected(_projectId: string): Promise<void> {
+async function reconcileVoiceProjectSelection(): Promise<void> {
+  const generation = ++voiceProjectReconcileGeneration
+  // Coalesce rapid project writes and allow initial restoration to publish its
+  // matching workspace before deciding whether this is a user transition.
+  await nextTick()
+  if (generation !== voiceProjectReconcileGeneration) return
+
+  if (!shouldReplaceVoiceWorkspaceForProject(workspace.value, store.managerProjectId)) {
+    await loadVoiceSessionShortcuts()
+    return
+  }
+
+  cancelLocalSpeech('project_switch')
   if (codexLiveVoiceClient) await stopCodexLiveVoice()
+  if (generation !== voiceProjectReconcileGeneration) return
+  if (listening.value) stopVoiceCapture()
+  voiceTurnAbort?.abort()
+  voiceTurnAbort = null
+  loading.value = false
   liveTranscript.value = ''
   lastUserTranscript.value = ''
   resetSubmittedTranscriptClear()
@@ -1580,7 +1711,9 @@ async function handleVoiceProjectSelected(_projectId: string): Promise<void> {
 
 async function handleVoiceSessionSelected(sessionId: string): Promise<void> {
   if (workspace.value?.session_id === sessionId) {
-    void setCurrentVoiceSession(sessionId)
+    // 已选中即当前：快速路径，无 generation token，串行化但不做 generation 复检
+    // （此分支与完整切换流程互斥，不会与 A→B 竞态并发）。
+    submitCurrentSessionWrite(sessionId, undefined)
     return
   }
   const previousWorkspace = workspace.value
@@ -1607,8 +1740,8 @@ async function handleVoiceSessionSelected(sessionId: string): Promise<void> {
     const runId = workspace.value?.manager_run_id
     if (runId) store.setRunId(runId)
     completeVoiceSessionTransition(generation)
-    // 更新服务端当前 session 指针，让其他设备刷新后看到同一个 session。
-    void setCurrentVoiceSession(sessionId)
+    // 更新服务端当前 session 指针（串行化 + generation 复检，避免 A→B 乱序写）。
+    submitCurrentSessionWrite(sessionId, generation)
   } catch (err: any) {
     if (voiceSessionTransitions.isCurrent(generation)) {
       workspace.value = previousWorkspace
@@ -1653,12 +1786,10 @@ async function stopAgentLoop(): Promise<void> {
   }
 }
 
-async function restoreLatestSession(): Promise<VoiceWorkspace | null> {
-  const projectId = store.managerProjectId || null
+async function restoreLatestSession(projectId: string | null): Promise<VoiceWorkspace | null> {
   const acceptWorkspace = (restored: VoiceWorkspace): VoiceWorkspace | null => {
     const decision = resolveVoiceSessionProjectRestore(projectId, restored.project_id)
     if (!decision.accepted) return null
-    if (!projectId && decision.projectId) store.setManagerProjectId(decision.projectId)
     return restored
   }
   try {
@@ -1675,7 +1806,7 @@ async function restoreLatestSession(): Promise<VoiceWorkspace | null> {
     // 指针端点不可用时 fallback 到最近会话。
   }
   try {
-    const listRes = await listVoiceSessions(store.managerProjectId, 1)
+    const listRes = await listVoiceSessions(projectId, 1)
     const sessionId = listRes.data?.sessions?.[0]?.session_id
     if (!sessionId) return null
     const res = await getVoiceSession(sessionId)
@@ -1687,10 +1818,13 @@ async function restoreLatestSession(): Promise<VoiceWorkspace | null> {
 }
 
 async function loadVoiceSessionShortcuts(): Promise<void> {
+  const projectId = store.managerProjectId || null
   try {
-    const res = await listVoiceSessions(store.managerProjectId, 10)
+    const res = await listVoiceSessions(projectId, 10)
+    if (voiceProjectSelectionChanged(projectId, store.managerProjectId)) return
     voiceSessionShortcuts.value = res.data?.sessions ?? []
   } catch {
+    if (voiceProjectSelectionChanged(projectId, store.managerProjectId)) return
     voiceSessionShortcuts.value = []
   }
 }
@@ -2226,6 +2360,8 @@ function voiceGridItemStyle(
     return { gridRow: '1 / span 3', gridColumn: '1 / span 3' }
   if (isXiaohongshuWidget(widget) && !isPhonePortrait.value && !isCompactPhoneLandscape.value)
     return { gridRow: '1 / span 2', gridColumn: 'auto / span 1' }
+  if (isDagExplorerWidget(widget) && !isPhonePortrait.value && !isCompactPhoneLandscape.value)
+    return { gridRow: '1 / span 2', gridColumn: 'auto / span 2' }
   if (widget.type === 'topic_outline' && !isPhonePortrait.value && !isCompactPhoneLandscape.value)
     return { gridRow: '1 / span 2', gridColumn: 'auto / span 2' }
   if (
@@ -2541,6 +2677,9 @@ function isAgentDagSignalWidget(widget: VoiceWidget): boolean {
     widget.id === 'manager-progress'
   )
     return false
+  // dag_explorer 是自带节点结果渲染的 2x2 面板，必须作为完整 widget 渲染，
+  // 不能被压缩进执行卡的 signal 列表
+  if (isDagExplorerWidget(widget)) return false
   const data = widget.data ?? {}
   const visual = String(data.visual || '').toLowerCase()
   const surface = String(data.surface || '').toLowerCase()
@@ -2567,6 +2706,10 @@ function isXiaohongshuWidget(widget: VoiceWidget): boolean {
     widget.type === 'xiaohongshu_note' ||
     String(widget.data?.visual || '').toLowerCase() === 'xiaohongshu_note'
   )
+}
+
+function isDagExplorerWidget(widget: VoiceWidget): boolean {
+  return widget.type === 'dag_explorer'
 }
 
 function resetSubmittedTranscriptClear(): void {
@@ -2932,6 +3075,7 @@ async function setCodexLiveVoiceEnabled(enabled: boolean): Promise<void> {
   try {
     const response = await updateVoiceAgentConfig({ live_voice_enabled: enabled })
     voiceAgentConfig.value = response.data
+    if (!enabled && codexLiveVoiceClient) await stopCodexLiveVoice()
     await refreshOnboarding()
   } catch (err: any) {
     voiceConfigError.value = err?.message || t('voice.model.liveVoiceSaveFailed')
@@ -3824,6 +3968,22 @@ function applyCodexLiveVoiceState(state: CodexLiveVoiceState): void {
 function handleCodexLiveVoiceEvent(event: CodexLiveVoiceEvent): void {
   const eventWorkspace = event.workspace
   if (eventWorkspace && typeof eventWorkspace === 'object' && !Array.isArray(eventWorkspace)) {
+    // Only apply workspace updates that belong to the active Live Voice
+    // session. A reconnect creates a new client bound to a session id; events
+    // arriving from a previous/stale client (or a transient empty
+    // manager_run_id) must not overwrite the current canvas owner.
+    //
+    // `session_id` is a required field on every persisted/sent VoiceWorkspace,
+    // so when we have an active client we require an exact match; an event
+    // without a usable session id is dropped rather than applied. See issue
+    // #168 acceptance criterion #3.
+    const eventSessionId = (eventWorkspace as { session_id?: unknown }).session_id
+    if (
+      codexLiveVoiceSessionId
+      && (typeof eventSessionId !== 'string' || !eventSessionId || eventSessionId !== codexLiveVoiceSessionId)
+    ) {
+      return
+    }
     workspace.value = eventWorkspace as VoiceWorkspace
     const latestUserText = [...workspace.value.conversation]
       .reverse()
@@ -3900,15 +4060,32 @@ async function startCodexLiveVoice(): Promise<void> {
       if (codexLiveVoiceClient === client) startCodexLiveVoiceMeter(stream)
       return stream
     },
-    onState: applyCodexLiveVoiceState,
-    onEvent: handleCodexLiveVoiceEvent,
+    // Bind both callbacks to this specific client instance: once stopCodexLiveVoice
+    // (or a newer start) replaces codexLiveVoiceClient, any in-flight callback from
+    // this client (workspace, transcript, state, error) is dropped. This closes the
+    // fail-open gap — the previous shared callbacks kept accepting events from a
+    // stale/old client whenever codexLiveVoiceSessionId was null. Mirrors the
+    // getUserMedia guard above. See issue #168 acceptance criterion #3.
+    onState: (state) => {
+      if (codexLiveVoiceClient !== client) return
+      applyCodexLiveVoiceState(state)
+    },
+    onEvent: (event) => {
+      if (codexLiveVoiceClient !== client) return
+      handleCodexLiveVoiceEvent(event)
+    },
   })
   codexLiveVoiceClient = client
+  // Stamp the session identity before `await client.start()` so workspace
+  // events arriving during startup are already session-validated. The catch
+  // block clears it on failure, so a failed start does not claim the session.
+  codexLiveVoiceSessionId = sessionId
   try {
     await client.start()
   } catch (err: any) {
     if (codexLiveVoiceClient !== client) return
     codexLiveVoiceClient = null
+    codexLiveVoiceSessionId = null
     stopCodexLiveVoiceMeter()
     applyCodexLiveVoiceState('error')
     error.value = err?.message || t('voice.liveVoice.error')
@@ -3918,6 +4095,7 @@ async function startCodexLiveVoice(): Promise<void> {
 async function stopCodexLiveVoice(notifyServer = true): Promise<void> {
   const client = codexLiveVoiceClient
   codexLiveVoiceClient = null
+  codexLiveVoiceSessionId = null
   if (client) await client.stop(notifyServer).catch(() => undefined)
   stopCodexLiveVoiceMeter()
   codexLiveVoiceMuted.value = false
@@ -4040,6 +4218,7 @@ async function setupVoiceHidControl(): Promise<void> {
 }
 
 function handleVoiceKeyboardButton(event: KeyboardEvent): void {
+  if (interactionSuspended.value) return
   const binding = voiceKeyboardBinding.value
   if (!binding) return
   const target = event.target as HTMLElement | null
@@ -4062,6 +4241,10 @@ function handleVoiceHidReport(event: any): void {
   if (!binding) return
   if (event.reportId !== binding.reportId) return
   const pressed = hidReportMatchesBinding(binding, event)
+  if (interactionSuspended.value) {
+    voiceHidPressed = pressed
+    return
+  }
   if (pressed && !voiceHidPressed) {
     voiceHidPressed = true
     toggleListening()
@@ -4179,10 +4362,12 @@ function handleVoiceGamepadButtons(gamepad: Gamepad): void {
   gamepad.buttons.forEach((button, index) => {
     if (!button.pressed) return
     nextPressed.add(index)
-    if (!voiceGamepadPressedButtons.has(index)) handleVoiceGamepadButton(index)
+    if (!interactionSuspended.value && !voiceGamepadPressedButtons.has(index)) {
+      handleVoiceGamepadButton(index)
+    }
   })
   voiceGamepadPressedButtons = nextPressed
-  voiceGamepadPressedButtonIds.value = nextPressed
+  voiceGamepadPressedButtonIds.value = interactionSuspended.value ? new Set() : nextPressed
 }
 
 function gamepadButtonActive(index: number): boolean {
@@ -4205,7 +4390,10 @@ function handleNativeVoiceGamepadButton(event: Event): void {
   }
   if (detail.repeat || voiceGamepadPressedButtons.has(detail.index)) return
   voiceGamepadPressedButtons.add(detail.index)
-  voiceGamepadPressedButtonIds.value = new Set(voiceGamepadPressedButtons)
+  voiceGamepadPressedButtonIds.value = interactionSuspended.value
+    ? new Set()
+    : new Set(voiceGamepadPressedButtons)
+  if (interactionSuspended.value) return
   handleVoiceGamepadButton(detail.index)
 }
 
@@ -4213,6 +4401,7 @@ function handleNativeVoiceGamepadAnalog(event: Event): void {
   const detail = nativeGamepadEventDetail<NativeGamepadAnalogDetail>(event)
   if (!detail) return
   markNativeGamepadConnected()
+  if (interactionSuspended.value) return
   nativeGamepadAnalogAt = performance.now()
   handleVoiceGamepadAxisDirection(detail.hatX ?? 0, 'left', 'right')
   handleVoiceGamepadAxisDirection(detail.hatY ?? 0, 'up', 'down')
@@ -4237,6 +4426,10 @@ function currentVoiceGamepadInputContext(): VoiceGamepadInputContext {
 }
 
 function handleVoiceGamepadAxes(gamepad: Gamepad): void {
+  if (interactionSuspended.value) {
+    voiceGamepadAxisLocks = new Set()
+    return
+  }
   handleVoiceGamepadAxisDirection(gamepad.axes[0] ?? 0, 'left', 'right')
   handleVoiceGamepadAxisDirection(gamepad.axes[1] ?? 0, 'up', 'down')
   if (performance.now() - nativeGamepadAnalogAt > 80) {
@@ -4302,6 +4495,7 @@ function handleVoiceGamepadButton(index: number): void {
 function handleVoiceGamepadButtonIntent(
   intent: ReturnType<typeof resolveVoiceGamepadButtonIntent>
 ): void {
+  noteLiveVoiceImmersiveInteraction()
   if (intent === 'system_preview') openSelectedWidgetPreview()
   else if (intent === 'system_cancel') handleVoiceGamepadCancel()
   else if (intent === 'voice_toggle') void toggleListening()
@@ -4321,6 +4515,7 @@ function handleVoiceGamepadButtonIntent(
 }
 
 function handleVoiceGamepadDirection(direction: VoiceGamepadDirection): void {
+  noteLiveVoiceImmersiveInteraction()
   const context = currentVoiceGamepadInputContext()
   const intent = resolveVoiceGamepadDirectionIntent(context, direction)
   if (intent === 'preview_previous') prevArtifactPreviewImage()
@@ -4344,6 +4539,10 @@ function handleVoiceGamepadCancel(): void {
   }
   if (voiceSidebarOpen.value && isPhonePortrait.value) {
     voiceSidebarOpen.value = false
+    return
+  }
+  if (immersiveMode.value) {
+    suspendLiveVoiceImmersiveMode()
     return
   }
   if (effectiveDetailsOpen.value) toggleDetails()
@@ -4549,6 +4748,7 @@ function handleNativeVoiceSamples(samples: Float32Array, sampleRate: number): vo
       liveTranscript.value = ''
       spokenText.value = ''
       asrTranscriptRaw = ''
+      if (recognitionMode.value === 'asr') beginAsrUtterance()
       liveTranscript.value = t('voice.state.listening')
     }
   }
@@ -4584,10 +4784,6 @@ function updateNativeVoiceWaveform(samples: Float32Array): void {
 }
 
 function stopVoiceCapture(): void {
-  if (codexLiveVoiceClient) {
-    void stopCodexLiveVoice()
-    return
-  }
   voiceSessionToken += 1
   voiceAbort?.abort()
   voiceAbort = null
@@ -4662,6 +4858,7 @@ function updateVoiceWaveform(now: number): void {
       liveTranscript.value = ''
       spokenText.value = ''
       asrTranscriptRaw = ''
+      if (recognitionMode.value === 'asr') beginAsrUtterance()
       liveTranscript.value = t('voice.state.listening')
     }
   } else if (speechActive && now - lastVoiceAt > voiceVadSilenceMs.value) {
@@ -4680,7 +4877,11 @@ async function finishUtterance(): Promise<void> {
     try {
       const text = (await finishAsrUtterance()).trim()
       if (token !== voiceSessionToken) return
-      if (!text) throw new Error(t('voice.errors.noTranscript'))
+      if (!text) {
+        error.value = t('voice.errors.noTranscript')
+        liveTranscript.value = ''
+        return
+      }
       liveTranscript.value = text
       voiceBusy.value = false
       await handleFinalTranscript(text)
@@ -4688,6 +4889,7 @@ async function finishUtterance(): Promise<void> {
       if (token !== voiceSessionToken) return
       error.value = err?.message || t('voice.errors.asrFailed')
       liveTranscript.value = ''
+      await recoverAsrRealtimeAfterFailure(token, err instanceof AsrProtocolError)
     } finally {
       if (token === voiceSessionToken) voiceBusy.value = false
     }
@@ -4737,16 +4939,21 @@ async function finishUtterance(): Promise<void> {
 
 async function connectAsrRealtime(): Promise<void> {
   disconnectAsrRealtime()
+  const socketGeneration = asrSocketGeneration.current()
   await new Promise<void>((resolve, reject) => {
-    asrClosing = false
     const socket = createAsrRealtimeSocket()
     const timer = window.setTimeout(() => {
       socket.close()
       reject(new Error(t('voice.errors.asrTimeout')))
-    }, 5000)
+    }, ASR_CONNECTION_TIMEOUT_MS)
     socket.binaryType = 'arraybuffer'
     socket.onopen = () => {
       window.clearTimeout(timer)
+      if (!asrSocketGeneration.isCurrent(socketGeneration)) {
+        socket.close()
+        reject(new Error(t('voice.errors.asrDisconnected')))
+        return
+      }
       asrSocket = socket
       resolve()
     }
@@ -4755,25 +4962,62 @@ async function connectAsrRealtime(): Promise<void> {
       reject(new Error(t('voice.errors.asrConnectionFailed')))
     }
     socket.onclose = () => {
+      if (!asrSocketGeneration.isCurrent(socketGeneration)) return
       const wasActiveSocket = asrSocket === socket
       if (wasActiveSocket) asrSocket = null
-      if (wasActiveSocket && !asrClosing && listening.value) {
-        rejectAsrFinal(new Error(t('voice.errors.asrDisconnected')))
-        error.value = t('voice.errors.asrDisconnected')
+      if (wasActiveSocket && listening.value) {
+        const disconnectError = new Error(t('voice.errors.asrDisconnected'))
+        asrTranscriptRaw = ''
+        asrDeadlineController.resetSession(disconnectError)
+        error.value = disconnectError.message
       }
     }
-    socket.onmessage = event => handleAsrRealtimeMessage(event.data)
+    socket.onmessage = event => {
+      if (!asrSocketGeneration.isCurrent(socketGeneration) || asrSocket !== socket) return
+      handleAsrRealtimeMessage(event.data)
+    }
   })
 }
 
 function disconnectAsrRealtime(): void {
-  asrClosing = true
-  if (asrFinalTimer) window.clearTimeout(asrFinalTimer)
-  asrFinalTimer = 0
-  asrFinalResolve = null
-  asrFinalReject = null
+  asrSocketGeneration.invalidate()
+  asrDeadlineController.resetSession(new Error(t('voice.errors.asrDisconnected')))
   if (asrSocket) asrSocket.close()
   asrSocket = null
+}
+
+async function recoverAsrRealtimeAfterFailure(
+  token: number,
+  preserveErrorAfterReconnect: boolean
+): Promise<void> {
+  await recoverAsrRealtimeSession({
+    shouldContinue: () =>
+      token === voiceSessionToken && listening.value && recognitionMode.value === 'asr',
+    connect: connectAsrRealtime,
+    disconnect: disconnectAsrRealtime,
+    clearError: () => {
+      error.value = ''
+    },
+    clearErrorAfterReconnect: !preserveErrorAfterReconnect,
+    reportError: reconnectError => {
+      error.value =
+        reconnectError instanceof Error && reconnectError.message
+          ? reconnectError.message
+          : t('voice.errors.asrConnectionFailed')
+    },
+    closeInput: closeVoiceInputAfterSubmit
+  })
+}
+
+function beginAsrUtterance(): void {
+  beginAsrRealtimeUtterance({
+    controller: asrDeadlineController,
+    socket: asrSocket,
+    openReadyState: WebSocket.OPEN,
+    onBegin: () => {
+      error.value = ''
+    }
+  })
 }
 
 function sendAsrAudio(samples: Float32Array, sampleRate: number): void {
@@ -4782,19 +5026,27 @@ function sendAsrAudio(samples: Float32Array, sampleRate: number): void {
     return
   }
   const pcm = encodePcm16(samples, sampleRate, 16000)
-  if (pcm.byteLength) asrSocket.send(pcm)
+  if (!pcm.byteLength) return
+  asrSocket.send(pcm)
+  asrDeadlineController.recordSentAudio(samples.length, sampleRate)
 }
 
 function finishAsrUtterance(): Promise<string> {
   if (!asrSocket || asrSocket.readyState !== WebSocket.OPEN) {
     throw new Error(t('voice.errors.asrNotConnected'))
   }
-  return new Promise((resolve, reject) => {
-    asrFinalResolve = resolve
-    asrFinalReject = reject
-    asrFinalTimer = window.setTimeout(() => rejectAsrFinal(new Error(t('voice.errors.asrTranscriptionTimeout'))), 9000)
-    asrSocket?.send(JSON.stringify({ type: 'finish' }))
+  const transcription = asrDeadlineController.finish({
+    timeoutMessage: t('voice.errors.asrTranscriptionTimeout')
   })
+  const promise = asrTranscriptionAttempts.track(transcription)
+  try {
+    asrSocket.send(JSON.stringify({ type: 'finish' }))
+  } catch (sendError) {
+    transcription.reject(
+      sendError instanceof Error ? sendError : new Error(t('voice.errors.asrResponse'))
+    )
+  }
+  return promise
 }
 
 function handleAsrRealtimeMessage(payload: unknown): void {
@@ -4805,9 +5057,17 @@ function handleAsrRealtimeMessage(payload: unknown): void {
   } catch {
     return
   }
+  if (event.type === 'session.ready') {
+    asrDeadlineController.handleSessionReady(event.strategy)
+    return
+  }
+  if (event.type === 'transcription.processing') {
+    asrDeadlineController.handleTranscriptionProcessing(event.strategy)
+    return
+  }
   if (event.type === 'error') {
     const message = asrTextField(event, ['error', 'message']) || t('voice.errors.asrResponse')
-    rejectAsrFinal(new Error(message))
+    rejectAsrFinal(new AsrProtocolError(message))
     error.value = message
     return
   }
@@ -4831,23 +5091,13 @@ function handleAsrRealtimeMessage(payload: unknown): void {
 }
 
 function resolveAsrFinal(text: string): void {
-  if (asrFinalTimer) window.clearTimeout(asrFinalTimer)
-  asrFinalTimer = 0
-  const resolve = asrFinalResolve
-  asrFinalResolve = null
-  asrFinalReject = null
   asrTranscriptRaw = ''
-  resolve?.(text)
+  asrTranscriptionAttempts.resolve(text)
 }
 
 function rejectAsrFinal(error: Error): void {
-  if (asrFinalTimer) window.clearTimeout(asrFinalTimer)
-  asrFinalTimer = 0
-  const reject = asrFinalReject
-  asrFinalResolve = null
-  asrFinalReject = null
   asrTranscriptRaw = ''
-  reject?.(error)
+  asrTranscriptionAttempts.reject(error)
 }
 
 function cleanAsrTranscript(text: string): string {
@@ -4973,6 +5223,100 @@ function toggleDetails(): void {
   detailsOpen.value = !detailsOpen.value
 }
 
+function activateLiveVoiceImmersiveMode(): void {
+  if (!liveVoiceImmersiveActive.value) return
+  if (immersiveReturnTimer) window.clearTimeout(immersiveReturnTimer)
+  immersiveReturnTimer = 0
+  immersiveMode.value = true
+  immersiveSuspended.value = false
+  immersiveExitVisible.value = false
+  modelMenuOpen.value = false
+  voiceGamepadFocusMode.value = 'widgets'
+}
+
+function exitImmersiveMode(): void {
+  immersiveMode.value = false
+  immersiveSuspended.value = false
+  immersiveExitVisible.value = false
+  if (immersiveExitTimer) window.clearTimeout(immersiveExitTimer)
+  if (immersiveReturnTimer) window.clearTimeout(immersiveReturnTimer)
+  immersiveExitTimer = 0
+  immersiveReturnTimer = 0
+}
+
+function scheduleImmersiveReturn(): void {
+  if (immersiveReturnTimer) window.clearTimeout(immersiveReturnTimer)
+  immersiveReturnTimer = 0
+  if (
+    immersiveMode.value ||
+    !immersiveSuspended.value ||
+    !liveVoiceImmersiveActive.value
+  ) return
+  immersiveReturnTimer = window.setTimeout(() => {
+    immersiveReturnTimer = 0
+    if (immersiveSuspended.value && liveVoiceImmersiveActive.value) {
+      activateLiveVoiceImmersiveMode()
+    }
+  }, IMMERSIVE_RETURN_IDLE_MS)
+}
+
+function suspendLiveVoiceImmersiveMode(): void {
+  if (!liveVoiceImmersiveActive.value) {
+    exitImmersiveMode()
+    return
+  }
+  immersiveMode.value = false
+  immersiveSuspended.value = true
+  immersiveExitVisible.value = false
+  if (immersiveExitTimer) window.clearTimeout(immersiveExitTimer)
+  immersiveExitTimer = 0
+  scheduleImmersiveReturn()
+}
+
+function noteLiveVoiceImmersiveInteraction(): void {
+  if (immersiveSuspended.value && liveVoiceImmersiveActive.value) {
+    scheduleImmersiveReturn()
+  }
+}
+
+function handleImmersiveTouchPointerDown(event: PointerEvent): void {
+  if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return
+  handleImmersivePointerMove()
+}
+
+function handleImmersivePointerMove(): void {
+  if (interactionSuspended.value) return
+  if (!immersiveMode.value) {
+    noteLiveVoiceImmersiveInteraction()
+    return
+  }
+  immersiveExitVisible.value = true
+  if (immersiveExitTimer) window.clearTimeout(immersiveExitTimer)
+  immersiveExitTimer = window.setTimeout(() => {
+    immersiveExitVisible.value = false
+    immersiveExitTimer = 0
+  }, IMMERSIVE_EXIT_REVEAL_MS)
+}
+
+function handleImmersiveKeyboard(event: KeyboardEvent): void {
+  if (interactionSuspended.value) return
+  if (!immersiveMode.value) {
+    noteLiveVoiceImmersiveInteraction()
+    return
+  }
+  if (event.key === 'Escape' || event.key === 'BrowserBack') {
+    if (artifactPreviewModal.value) {
+      event.preventDefault()
+      event.stopPropagation()
+      closeArtifactPreview()
+      return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    suspendLiveVoiceImmersiveMode()
+  }
+}
+
 async function scrollConversationToLatest(): Promise<void> {
   await nextTick()
   const thread = conversationThreadRef.value
@@ -5053,11 +5397,12 @@ async function scrollCardGridToWidget(widgetId?: string): Promise<void> {
 }
 
 function openSettings(): void {
+  exitImmersiveMode()
   store.settingsPageOpen = true
-  store.voiceCockpitOpen = false
 }
 
 function openRuntimeOverlay(): void {
+  exitImmersiveMode()
   store.runtimeOverlayOpen = true
 }
 
@@ -5067,6 +5412,7 @@ function openDevOnboarding(): void {
 
 function close(): void {
   if (props.voiceOnly) return
+  exitImmersiveMode()
   void endSession()
   store.voiceCockpitOpen = false
 }
@@ -5083,6 +5429,9 @@ function summarizeTask(value: string): string {
     ref="cockpitRoot"
     class="voice-cockpit fixed inset-0 z-50"
     :class="voiceCockpitClasses"
+    :aria-hidden="interactionSuspended"
+    :inert="interactionSuspended"
+    :data-suspended="interactionSuspended ? 'true' : undefined"
   >
     <div class="voice-cockpit__ambient" />
     <video
@@ -5109,16 +5458,33 @@ function summarizeTask(value: string): string {
       v-if="fullscreenPromptVisible && isMobileDevice"
       class="voice-fullscreen-gate"
       type="button"
-      @pointerup.prevent="enterMobileFullscreen"
-      @touchend.prevent="enterMobileFullscreen"
       @click="enterMobileFullscreen"
     >
       <span>{{ fullscreenGateTitle }}</span>
       <em>{{ fullscreenGateHint }}</em>
       <strong>{{ fullscreenGateAction }}</strong>
     </button>
+    <div
+      v-if="immersiveMode"
+      class="voice-immersive-exit-zone"
+      :class="{ 'voice-immersive-exit-zone--visible': immersiveExitVisible }"
+      data-testid="voice-immersive-exit-zone"
+    >
+      <button
+        class="voice-immersive-exit"
+        type="button"
+        :title="t('voice.immersive.exit')"
+        @click="suspendLiveVoiceImmersiveMode"
+      >
+        <X class="h-4 w-4" />
+      </button>
+    </div>
     <div class="voice-shell relative flex h-full min-h-0 flex-col p-4" :style="voiceShellStyle">
       <AgentModeTopBar
+        class="voice-topbar-motion"
+        :class="{ 'voice-topbar--immersive-hidden': immersiveMode }"
+        :aria-hidden="immersiveMode"
+        :inert="immersiveMode"
         active-mode="voice"
         :show-details="topbarAuxControlsVisible"
         :show-settings="topbarAuxControlsVisible"
@@ -5485,7 +5851,12 @@ function summarizeTask(value: string): string {
         <div
           v-if="!isPhonePortrait"
           class="voice-sidebar-slot min-w-0"
-          :class="{ 'voice-sidebar-slot--drawer': tvCompactSidebarDrawerOpen }"
+          :class="{
+            'voice-sidebar-slot--drawer': tvCompactSidebarDrawerOpen,
+            'voice-sidebar-slot--immersive-hidden': immersiveMode
+          }"
+          :aria-hidden="immersiveMode"
+          :inert="immersiveMode"
         >
           <VoiceSessionProjectSidebar
             v-if="effectiveSidebarOpen"
@@ -5493,7 +5864,6 @@ function summarizeTask(value: string): string {
             :active-session-id="workspace?.session_id ?? null"
             @collapse="voiceSidebarOpen = false"
             @new-session="createFreshVoiceSession"
-            @project-selected="handleVoiceProjectSelected"
             @session-selected="handleVoiceSessionSelected"
             @session-deleted="handleVoiceSessionDeleted"
           />
@@ -5962,6 +6332,9 @@ function summarizeTask(value: string): string {
               <button
                 v-if="agentActivityActive"
                 class="voice-agent-run-button voice-agent-run-button--running"
+                :class="{ 'voice-agent-run-button--immersive-hidden': immersiveMode }"
+                :aria-hidden="immersiveMode"
+                :inert="immersiveMode"
                 :title="speaking ? agentRunStateText : `${agentRunStateText}. ${t('voice.state.tapToStop')}`"
                 @click="speaking ? undefined : stopAgentLoop"
               >
@@ -6018,6 +6391,9 @@ function summarizeTask(value: string): string {
             <div
               v-if="isTvCompactViewport"
               class="voice-input-dock voice-input-dock--voice-only"
+              :class="{ 'voice-input-dock--immersive-hidden': immersiveMode }"
+              :aria-hidden="immersiveMode"
+              :inert="immersiveMode"
               data-testid="voice-input-dock"
             >
               <button
@@ -6107,6 +6483,9 @@ function summarizeTask(value: string): string {
             <form
               v-else
               class="voice-composer"
+              :class="{ 'voice-composer--immersive-hidden': immersiveMode }"
+              :aria-hidden="immersiveMode"
+              :inert="immersiveMode"
               data-testid="voice-composer"
               @submit.prevent="submitComposerDraft"
             >
@@ -6180,8 +6559,13 @@ function summarizeTask(value: string): string {
 
         <aside
           v-if="!isPhonePortrait"
-          class="min-w-0 overflow-hidden py-0 pr-6 transition-opacity duration-300"
-          :class="effectiveDetailsOpen ? 'opacity-100' : 'pointer-events-none opacity-0'"
+          class="voice-records-slot min-w-0 overflow-hidden py-0 pr-6"
+          :class="[
+            effectiveDetailsOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
+            immersiveMode ? 'voice-records-slot--immersive-hidden' : ''
+          ]"
+          :aria-hidden="immersiveMode"
+          :inert="immersiveMode"
         >
           <section class="voice-records">
             <div class="voice-records__header">
@@ -6607,12 +6991,45 @@ function summarizeTask(value: string): string {
   height: 100svh;
   height: 100dvh;
   min-height: 0;
+  transition: padding 440ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.voice-main {
+  transition:
+    grid-template-columns 440ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin-top 360ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .voice-cockpit :deep(.agent-mode-topbar) {
   position: relative;
   z-index: 140;
   overflow: visible;
+}
+
+.voice-cockpit :deep(.voice-topbar-motion) {
+  max-height: 56px;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: top center;
+  transition:
+    height 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    min-height 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    max-height 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-width 260ms ease,
+    opacity 220ms ease,
+    transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: 0ms;
+}
+
+.voice-cockpit :deep(.voice-topbar-motion.voice-topbar--immersive-hidden) {
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0;
+  overflow: hidden !important;
+  border-width: 0;
+  opacity: 0;
+  transform: translateY(-18px) scale(0.985);
+  pointer-events: none;
 }
 
 .voice-cockpit :deep(.agent-mode-topbar__left) {
@@ -6675,6 +7092,143 @@ function summarizeTask(value: string): string {
   color: var(--vc-text-1);
   font-size: 13px;
   font-weight: 700;
+}
+
+/* --------------------------------------------------------------------------
+   Immersive Voice Cockpit chrome
+   -------------------------------------------------------------------------- */
+.voice-immersive-exit-zone {
+  position: fixed;
+  top: var(--homerail-electron-titlebar-height, 0px);
+  left: 50%;
+  z-index: 220;
+  width: min(280px, 70vw);
+  height: 14px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.voice-immersive-exit-zone::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 14px;
+  content: "";
+  pointer-events: auto;
+}
+
+.voice-immersive-exit {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  width: 42px;
+  justify-content: center;
+  border: 1px solid var(--vc-border-strong);
+  border-radius: 0 0 16px 16px;
+  background: color-mix(in srgb, var(--vc-panel) 94%, transparent);
+  padding: 0;
+  color: var(--vc-text-1);
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: var(--hr-shadow-floating);
+  opacity: 0;
+  transform: translate(-50%, calc(-100% - 10px));
+  transition:
+    opacity 180ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: auto;
+  backdrop-filter: blur(20px);
+}
+
+.voice-immersive-exit-zone--visible .voice-immersive-exit,
+.voice-immersive-exit-zone:hover .voice-immersive-exit,
+.voice-immersive-exit:focus-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.voice-cockpit--immersive .voice-shell {
+  padding: 8px;
+}
+
+.voice-cockpit--immersive {
+  --voice-immersive-waveform-gutter: clamp(12px, 1.4vh, 16px);
+}
+
+.voice-cockpit--immersive .voice-main {
+  margin-top: 0;
+}
+
+.voice-cockpit--immersive .voice-stage {
+  margin: 0;
+  border-radius: 24px;
+  padding: clamp(14px, 1.8vw, 26px);
+  padding-bottom: var(--voice-immersive-waveform-gutter);
+  transition-delay: 45ms;
+}
+
+.voice-cockpit--immersive .voice-control {
+  z-index: 30;
+  min-height: 20px;
+  margin-top: var(--voice-immersive-waveform-gutter);
+  border-top-color: transparent;
+  padding-top: 0;
+  gap: 0;
+  pointer-events: none;
+  transition-delay: 90ms;
+}
+
+.voice-cockpit--immersive .voice-composer__preferences,
+.voice-cockpit--immersive .voice-caption-strip {
+  display: none;
+}
+
+.voice-cockpit--immersive .voice-control__deck {
+  justify-content: center;
+  gap: 0;
+}
+
+.voice-cockpit--immersive .codex-live-voice-meter {
+  display: block;
+  width: min(300px, 68vw);
+  height: 20px;
+  margin: 0 auto;
+  opacity: 0.14;
+  filter: grayscale(0.4);
+  mask-image: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
+}
+
+.voice-cockpit--immersive .codex-live-voice-meter--active {
+  opacity: 0.88;
+  filter: drop-shadow(0 0 6px var(--vc-accent-soft));
+  transform: scaleY(1.12);
+}
+
+.voice-cockpit--immersive .codex-live-voice-meter--muted {
+  opacity: 0.08;
+}
+
+.voice-cockpit--immersive .codex-live-voice-meter__connecting {
+  justify-content: center;
+  font-size: 0;
+}
+
+.voice-cockpit--immersive.voice-cockpit--tv-compact .voice-stage {
+  margin: 0;
+  border-radius: 24px;
+  padding: clamp(14px, 1.8vw, 26px);
+}
+
+.voice-cockpit--immersive.voice-cockpit--tv-compact .voice-control,
+.voice-cockpit--immersive.voice-cockpit--phone-portrait .voice-control {
+  min-height: 20px;
+  margin-top: var(--voice-immersive-waveform-gutter);
+  padding-top: 0;
+  gap: 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -6844,6 +7398,22 @@ function summarizeTask(value: string): string {
    -------------------------------------------------------------------------- */
 .voice-sidebar-slot {
   overflow: hidden;
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  transform-origin: left center;
+  transition:
+    opacity 260ms ease,
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 320ms ease;
+  transition-delay: 0ms;
+}
+
+.voice-sidebar-slot--immersive-hidden {
+  opacity: 0;
+  transform: translateX(-26px) scale(0.97);
+  filter: blur(3px);
+  pointer-events: none;
+  transition-delay: 55ms;
 }
 
 .voice-stage {
@@ -6854,7 +7424,11 @@ function summarizeTask(value: string): string {
   box-shadow: var(--hr-shadow-panel);
   transition:
     background 260ms ease,
-    box-shadow 360ms ease;
+    box-shadow 360ms ease,
+    margin 460ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 460ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 400ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: 0ms;
 }
 
 .voice-cockpit--listening .voice-stage {
@@ -7515,6 +8089,13 @@ function summarizeTask(value: string): string {
   min-height: 88px;
   flex-direction: column;
   gap: 10px;
+  transition:
+    min-height 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin-top 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding-top 380ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 260ms ease,
+    gap 320ms ease;
+  transition-delay: 0ms;
 }
 
 .voice-control__deck {
@@ -7530,7 +8111,14 @@ function summarizeTask(value: string): string {
   margin-left: auto;
   overflow: hidden;
   opacity: 0.34;
-  transition: opacity 180ms ease, filter 180ms ease;
+  transform-origin: bottom center;
+  transition:
+    width 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease,
+    filter 180ms ease,
+    transform 180ms ease;
 }
 
 .codex-live-voice-meter--active {
@@ -7671,9 +8259,27 @@ function summarizeTask(value: string): string {
   color: var(--vc-accent);
   font-size: 13px;
   font-weight: 700;
+  max-width: 320px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0) scale(1);
   transition:
     border-color 160ms ease,
-    background 160ms ease;
+    background 160ms ease,
+    max-width 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.voice-agent-run-button--immersive-hidden {
+  max-width: 0;
+  border-width: 0;
+  padding-right: 0;
+  padding-left: 0;
+  opacity: 0;
+  transform: translateY(8px) scale(0.92);
+  pointer-events: none;
 }
 
 .voice-agent-run-button:hover {
@@ -7800,6 +8406,24 @@ function summarizeTask(value: string): string {
   flex-direction: column;
   gap: 8px;
   width: 100%;
+  max-height: 180px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: bottom center;
+  transition:
+    max-height 380ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease,
+    transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: 0ms;
+}
+
+.voice-composer--immersive-hidden {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(18px) scale(0.97);
+  pointer-events: none;
+  transition-delay: 95ms;
 }
 
 .voice-composer__row {
@@ -7977,8 +8601,26 @@ function summarizeTask(value: string): string {
 .voice-input-dock {
   display: grid;
   width: 100%;
+  max-height: 132px;
   align-items: stretch;
   gap: 10px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: bottom center;
+  transition:
+    max-height 380ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease,
+    transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: 0ms;
+}
+
+.voice-input-dock--immersive-hidden {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(18px) scale(0.97);
+  pointer-events: none;
+  transition-delay: 95ms;
 }
 
 .voice-input-dock--voice-only {
@@ -8175,6 +8817,27 @@ function summarizeTask(value: string): string {
 /* --------------------------------------------------------------------------
    Records panel (conversation thread)
    -------------------------------------------------------------------------- */
+.voice-records-slot {
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  transform-origin: right center;
+  transition:
+    padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 260ms ease,
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 320ms ease;
+  transition-delay: 0ms;
+}
+
+.voice-records-slot--immersive-hidden {
+  padding-right: 0;
+  opacity: 0 !important;
+  transform: translateX(26px) scale(0.97);
+  filter: blur(3px);
+  pointer-events: none;
+  transition-delay: 55ms;
+}
+
 .voice-records {
   display: flex;
   height: 100%;
@@ -8807,6 +9470,23 @@ function summarizeTask(value: string): string {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .voice-shell,
+  .voice-main,
+  .voice-sidebar-slot,
+  .voice-records-slot,
+  .voice-stage,
+  .voice-control,
+  .voice-composer,
+  .voice-input-dock,
+  .voice-agent-run-button,
+  .codex-live-voice-meter,
+  .voice-cockpit :deep(.voice-topbar-motion) {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+}
+
 /* --------------------------------------------------------------------------
    Responsive — medium desktop / short viewports
    -------------------------------------------------------------------------- */
@@ -9260,6 +9940,29 @@ function summarizeTask(value: string): string {
 
 .voice-cockpit--phone-landscape .voice-main {
   margin-top: 12px;
+}
+
+/* The landscape phone shell is rendered at 0.38–0.62 scale. Reserve the
+   sidebar header for its two actions so their final on-screen hit areas stay
+   at least 44 CSS pixels instead of shrinking to roughly 17 pixels. */
+.voice-cockpit--phone-landscape :deep(.voice-left-rail__title) {
+  display: none;
+}
+
+.voice-cockpit--phone-landscape :deep(.voice-left-rail__header-actions) {
+  width: 100%;
+  gap: 16px;
+}
+
+.voice-cockpit--phone-landscape :deep(.voice-left-rail__header-button) {
+  width: auto;
+  height: 116px;
+  flex: 1 1 0;
+}
+
+.voice-cockpit--phone-landscape :deep(.voice-left-rail__header-button svg) {
+  width: 40px;
+  height: 40px;
 }
 
 .voice-cockpit--phone-landscape .voice-stage {

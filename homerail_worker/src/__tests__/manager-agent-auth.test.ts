@@ -27,6 +27,8 @@ describe("host Manager Agent REST authentication", () => {
     const source = {
       HOMERAIL_MANAGER_ADMIN_TOKEN: TOKEN,
       HOMERAIL_PLUGIN_CAPABILITY_SECRET: "capability-secret",
+      HOMERAIL_WORKER_TOKEN: "worker-control-plane-token",
+      HOMERAIL_DAG_MUTATION_TOKEN: "dag-mutation-token",
       ANTHROPIC_API_KEY: "provider-key",
       PATH: "/usr/bin",
     };
@@ -36,6 +38,8 @@ describe("host Manager Agent REST authentication", () => {
     });
     expect(source.HOMERAIL_MANAGER_ADMIN_TOKEN).toBe(TOKEN);
     expect(source.HOMERAIL_PLUGIN_CAPABILITY_SECRET).toBe("capability-secret");
+    expect(source.HOMERAIL_WORKER_TOKEN).toBe("worker-control-plane-token");
+    expect(source.HOMERAIL_DAG_MUTATION_TOKEN).toBe("dag-mutation-token");
   });
 
   it("adds only the scoped turn credential to /api mutations and redacts Manager errors", async () => {

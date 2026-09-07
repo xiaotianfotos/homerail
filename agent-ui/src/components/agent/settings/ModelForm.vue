@@ -9,7 +9,7 @@
  * 流程：选凭证类型（供应商+计费）→ 填 key → 多选模型（能力自动填）
  */
 
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { KeyRound, Loader2, Minus, Plus, Search, RefreshCw } from 'lucide-vue-next'
 import { probeModels } from '@/api/services/providers-api'
@@ -483,6 +483,11 @@ watch(
     }, 600)
   }
 )
+
+onUnmounted(() => {
+  if (probeTimer) window.clearTimeout(probeTimer)
+  probeTimer = undefined
+})
 
 function endpointDefaultCapabilities(ep?: ProviderEndpointPreset | null): ModelCapabilities {
   return {

@@ -51,6 +51,8 @@ interface LlmSettingSummary {
   endpointName?: unknown;
   base_url?: unknown;
   baseUrl?: unknown;
+  chat_completions_base_url?: unknown;
+  chatCompletionsBaseUrl?: unknown;
   anthropic_base_url?: unknown;
   anthropicBaseUrl?: unknown;
   is_active?: unknown;
@@ -142,6 +144,13 @@ function anthropicCompatibleBaseUrl(setting: LlmSettingSummary): string {
 
 function modelRuntimeBaseUrl(setting: LlmSettingSummary): string {
   return stringValue(setting.base_url ?? setting.baseUrl);
+}
+
+function deepSeekHarnessBaseUrl(setting: LlmSettingSummary): string {
+  if (stringValue(setting.protocol) !== "openai_compatible") return "";
+  return stringValue(
+    setting.chat_completions_base_url ?? setting.chatCompletionsBaseUrl ?? setting.base_url ?? setting.baseUrl,
+  );
 }
 
 function isKimiCodeCompatibleSetting(setting: LlmSettingSummary): boolean {
@@ -265,6 +274,9 @@ export function managerAgentReadiness(
   } else if (harness === "kimi_code") {
     const compatible = settings.filter((setting) => KIMI_PROVIDER_IDS.has(providerId(setting)));
     selected = compatible.find(isDefaultSetting) ?? compatible[0];
+  } else if (harness === "deepseek_harness") {
+    const compatible = settings.filter((setting) => Boolean(deepSeekHarnessBaseUrl(setting)));
+    selected = compatible.find(isDefaultSetting) ?? compatible[0];
   } else {
     const compatible = settings.filter((setting) => Boolean(anthropicCompatibleBaseUrl(setting)));
     selected = compatible.find(isDefaultSetting) ?? compatible[0];
@@ -276,6 +288,8 @@ export function managerAgentReadiness(
       ok: false,
       detail: harness === "kimi_code"
         ? "run: hr model configure or hr llm-settings add with an active Kimi setting"
+        : harness === "deepseek_harness"
+        ? "run: hr model configure or hr llm-settings add with an OpenAI-compatible endpoint"
         : "run: hr model configure or hr llm-settings add with an Anthropic-compatible endpoint",
     };
   }
@@ -295,6 +309,16 @@ export function managerAgentReadiness(
       };
     }
     return { name: "manager-agent", ok: true, detail: `${settingLabel(selected)} via kimi_code` };
+  }
+  if (harness === "deepseek_harness") {
+    if (!deepSeekHarnessBaseUrl(selected)) {
+      return {
+        name: "manager-agent",
+        ok: false,
+        detail: `${settingLabel(selected)} is not OpenAI-compatible for deepseek_harness`,
+      };
+    }
+    return { name: "manager-agent", ok: true, detail: `${settingLabel(selected)} via deepseek_harness` };
   }
   if (!anthropicCompatibleBaseUrl(selected)) {
     return {

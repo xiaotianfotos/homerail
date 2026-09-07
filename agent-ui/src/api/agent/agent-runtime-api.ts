@@ -17,6 +17,7 @@ import type {
 } from './agent.types'
 import type { ManagerAgentConfig } from '../services/voice-agent-api'
 import { asAgentRecord, getAgentDataPayload, getAgentString } from './agent.types'
+import { currentBrowserToolsTurnBinding } from '@/browser-tools/browser-renderer-bridge'
 
 interface AgentRawResponse {
   success?: boolean
@@ -74,7 +75,22 @@ function normalizeAuditResponse(raw: unknown, runId: string): AgentRunAuditData 
  * not pull the old Admin API surface into the main entry.
  */
 export async function managerChat(data: unknown, signal?: AbortSignal): Promise<AgentRawResponse> {
-  return http.post('/api/manager/chat', data, signal ? { signal } : undefined)
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Manager chat request must be an object')
+  }
+  const {
+    browser_tools_transport: _ignoredTransport,
+    browser_tools_target: _ignoredTarget,
+    ...request
+  } = data as Record<string, unknown>
+  return http.post(
+    '/api/manager/chat',
+    {
+      ...request,
+      ...currentBrowserToolsTurnBinding(),
+    },
+    signal ? { signal } : undefined,
+  )
 }
 
 export async function getManagerAgentConfig(): Promise<AgentRawResponse> {

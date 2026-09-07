@@ -135,6 +135,8 @@ beforeEach(() => {
   voiceApiMocks.updateVoiceSettings.mockResolvedValue({ success: true, data: {} })
   // 默认所有候选端点都可达（按请求原样返回 ok 结果）；
   // 需要失败场景时各用例用 mockResolvedValueOnce 覆盖。
+  // WebSocket 候选默认按"真正完成握手升级"返回：派生的 realtime URL
+  // 只有在验证通过后才允许自动持久化（issue #193）。
   voiceApiMocks.testVoiceEndpoints.mockImplementation((endpoints: Array<{ id: string; kind: string; url: string }>) =>
     Promise.resolve({
       success: true,
@@ -144,8 +146,9 @@ beforeEach(() => {
           ...endpoint,
           ok: true,
           reachable: true,
-          status_code: 405,
-          message: endpoint.kind === 'websocket' ? 'WebSocket handshake succeeded' : 'Endpoint is reachable'
+          ...(endpoint.kind === 'websocket'
+            ? { capability: 'verified', message: 'WebSocket handshake succeeded' }
+            : { status_code: 405, message: 'Endpoint is reachable' })
         }))
       }
     })
@@ -516,6 +519,100 @@ describe('OnboardingStepForm ASR endpoint detection', () => {
     }))
   })
 
+  it('persists the derived realtime URL after a verified WebSocket upgrade (legacy response shape)', async () => {
+    voiceApiMocks.testVoiceEndpoints.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ok: true,
+        results: [
+          {
+            id: 'asr_http',
+            kind: 'http',
+            url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+            ok: true,
+            reachable: true,
+            status_code: 200,
+            message: 'Endpoint is reachable'
+          },
+          {
+            id: 'asr_realtime',
+            kind: 'websocket',
+            url: 'ws://192.168.100.10:5002/v1/realtime',
+            ok: true,
+            reachable: true,
+            message: 'WebSocket handshake succeeded'
+          }
+        ]
+      }
+    })
+    const root = await mountForm({
+      capability: 'supports_asr',
+      providers: [],
+      existingSettings: []
+    })
+    await fillCustomAsr(root)
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(apiMocks.createLLMSetting).toHaveBeenCalledTimes(1))
+    expect(apiMocks.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      asr_realtime_url: 'ws://192.168.100.10:5002/v1/realtime'
+    }))
+  })
+
+  // Reporter's SenseVoice case (issue #193): batch transcription works,
+  // the derived ws://…/v1/realtime candidate answers 401/403 before any
+  // WebSocket upgrade. Legacy Manager builds reported ok=true for those
+  // responses; the derived URL must still not be persisted.
+  it.each([
+    ['401 (legacy ok=true shape)', { ok: true, reachable: true, status_code: 401, message: 'WebSocket endpoint is reachable and requires authentication or handshake parameters' }],
+    ['401 (explicit authentication_required)', { ok: false, reachable: true, status_code: 401, capability: 'authentication_required', message: 'Endpoint requires authentication' }],
+    ['403 (legacy ok=true shape)', { ok: true, reachable: true, status_code: 403, message: 'WebSocket endpoint is reachable and requires authentication or handshake parameters' }],
+    ['403 (explicit authentication_required)', { ok: false, reachable: true, status_code: 403, capability: 'authentication_required', message: 'Endpoint requires authentication' }]
+  ])('does not persist the derived realtime URL when batch works but the probe returns %s', async (_label, realtimeProbe) => {
+    voiceApiMocks.testVoiceEndpoints.mockResolvedValueOnce({
+      success: true,
+      data: {
+        ok: false,
+        results: [
+          {
+            id: 'asr_http',
+            kind: 'http',
+            url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+            ok: true,
+            reachable: true,
+            status_code: 200,
+            message: 'Endpoint is reachable'
+          },
+          {
+            id: 'asr_realtime',
+            kind: 'websocket',
+            url: 'ws://192.168.100.10:5002/v1/realtime',
+            ...realtimeProbe
+          }
+        ]
+      }
+    })
+    const root = await mountForm({
+      capability: 'supports_asr',
+      providers: [],
+      existingSettings: []
+    })
+    await fillCustomAsr(root)
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(apiMocks.createLLMSetting).toHaveBeenCalledTimes(1))
+    expect(apiMocks.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      asr_async_url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+      asr_realtime_url: ''
+    }))
+    expect(apiMocks.createLLMSetting).toHaveBeenCalledWith(expect.objectContaining({
+      asr_async_url: 'http://192.168.100.10:5002/v1/audio/transcriptions',
+      asr_realtime_url: ''
+    }))
+  })
+
   it('does not persist an ASR setting when neither endpoint is reachable', async () => {
     voiceApiMocks.testVoiceEndpoints.mockResolvedValueOnce({
       success: true,
@@ -818,6 +915,66 @@ describe('OnboardingStepForm local Manager Agent setup', () => {
       responses_base_url: '',
       anthropic_base_url: ''
     }))
+  })
+
+  it('activates Codex and uses the Responses root when Responses is preferred', async () => {
+    vi.mocked(detectMainModelRuntime).mockResolvedValueOnce({
+      available: true,
+      preferred_harness: 'codex_appserver',
+      endpoints: {
+        anthropic: {
+          available: false,
+          url: 'http://127.0.0.1:8000/v1/messages',
+          status: 404,
+          error: 'HTTP 404'
+        },
+        openai: {
+          available: false,
+          url: 'http://127.0.0.1:8000/v1/chat/completions',
+          status: 404,
+          error: 'HTTP 404'
+        },
+        responses: {
+          available: true,
+          url: 'http://127.0.0.1:8000/v1/responses',
+          base_url: 'http://127.0.0.1:8000/v1',
+          status: 200
+        }
+      }
+    })
+    const responsesSetting = {
+      ...localMainSetting,
+      protocol: 'openai_compatible' as const,
+      chat_completions_base_url: undefined,
+      anthropic_base_url: undefined
+    }
+    apiMocks.createLLMSetting.mockResolvedValueOnce({ success: true, data: responsesSetting } as any)
+    const activateSetting = vi.fn(async () => undefined)
+    const root = await mountForm({
+      capability: 'supports_llm',
+      providers: [],
+      existingSettings: [],
+      activateSetting
+    })
+    await fillLocalMainModel(root)
+
+    root.querySelector<HTMLButtonElement>('.onboarding-step-form__submit')!.click()
+
+    await vi.waitFor(() => expect(activateSetting).toHaveBeenCalledWith(responsesSetting, 'codex_appserver'))
+    expect(apiMocks.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      base_url: 'http://127.0.0.1:8000/v1',
+      chat_completions_base_url: '',
+      responses_base_url: 'http://127.0.0.1:8000/v1',
+      anthropic_base_url: ''
+    }))
+    expect(apiMocks.createLLMSetting).toHaveBeenCalledWith(expect.objectContaining({
+      base_url: 'http://127.0.0.1:8000/v1',
+      responses_base_url: 'http://127.0.0.1:8000/v1'
+    }))
+    expect(toastMocks.showToast).toHaveBeenCalledWith(
+      '主模型检测通过，已使用 Codex (Responses API) 配置',
+      'success'
+    )
   })
 
   it('does not persist or report success when neither endpoint can run the model', async () => {

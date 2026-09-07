@@ -185,7 +185,6 @@ spec:
     max_parallelism: 3
     max_dispatches: 120
     max_handoffs: 120
-    max_tool_calls_per_node: 60
     max_corrections_per_node: 3
 `;
 

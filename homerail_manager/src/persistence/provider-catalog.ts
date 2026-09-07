@@ -12,7 +12,17 @@ export interface ModelCapabilities {
   supports_video_input?: boolean;
 }
 
-export interface ProviderModelPreset extends ModelCapabilities {
+/** Model-owned reasoning selectors mapped to their provider wire values. */
+export type ReasoningEffortMap = Record<string, string | null>;
+
+export interface ModelReasoningCapabilities {
+  /** False declares no selectable reasoning; omission leaves support unknown. */
+  reasoning_effort_map?: ReasoningEffortMap | false;
+  /** Optional selector used when a caller does not choose one. */
+  default_reasoning_effort?: string;
+}
+
+export interface ProviderModelPreset extends ModelCapabilities, ModelReasoningCapabilities {
   id: string;
   name?: string;
   display_name?: string;
@@ -196,6 +206,17 @@ export function canonicalModelNameForEndpoint(
 ): string {
   const canonicalProviderId = canonicalProviderIdForEndpoint(providerId, endpointId, undefined, modelName);
   if (
+    canonicalProviderId === "deepseek" &&
+    (endpointId === undefined || endpointId === "deepseek_api") &&
+    (modelName === "deepseek-chat" || modelName === "deepseek-reasoner")
+  ) {
+    // DeepSeek retired both legacy aliases on 2026-07-24. They previously
+    // selected the non-thinking/thinking modes of V4 Flash, respectively.
+    // Reconcile persisted built-in settings to the supported model slug;
+    // reasoning mode remains a harness/runtime concern.
+    return "deepseek-v4-flash";
+  }
+  if (
     canonicalProviderId === KIMI_CN_PROVIDER_ID &&
     endpointId === KIMI_CODING_PLAN_ENDPOINT_ID &&
     modelName === "kimi-k2.7-code"
@@ -299,6 +320,29 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
         models: [
           model("kimi-for-coding", {}, { recommended: true }),
           model("kimi-for-coding-highspeed"),
+          model("k3", {
+            supports_image_input: true,
+            supports_video_input: true,
+          }, {
+            display_name: "Kimi K3",
+            reasoning_effort_map: {
+              low: "low",
+              high: "high",
+              max: "max",
+            },
+            default_reasoning_effort: "high",
+          }),
+          model("k3-256k", {
+            supports_image_input: true,
+          }, {
+            display_name: "Kimi K3 256K",
+            reasoning_effort_map: {
+              low: "low",
+              high: "high",
+              max: "max",
+            },
+            default_reasoning_effort: "high",
+          }),
         ],
       }),
     ],
@@ -431,8 +475,9 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
     id: "deepseek",
     name: "DeepSeek",
     status: "active",
-    default_model: "deepseek-chat",
+    default_model: "deepseek-v4-flash",
     base_url: "https://api.deepseek.com",
+    responses_base_url: "https://api.deepseek.com",
     docs_url: "https://api-docs.deepseek.com/",
     endpoints: [
       endpoint({
@@ -443,12 +488,16 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
         protocol: "openai_compatible",
         base_url: "https://api.deepseek.com",
         chat_completions_base_url: "https://api.deepseek.com",
+        responses_base_url: "https://api.deepseek.com",
         anthropic_base_url: "https://api.deepseek.com/anthropic",
         auth_type: "bearer",
         key_hint: "DeepSeek API Key (sk-*)",
-        default_model: "deepseek-chat",
+        default_model: "deepseek-v4-flash",
         docs_url: "https://api-docs.deepseek.com/",
-        models: [model("deepseek-chat", {}, { recommended: true }), model("deepseek-reasoner")],
+        models: [
+          model("deepseek-v4-flash", {}, { recommended: true }),
+          model("deepseek-v4-pro"),
+        ],
       }),
     ],
   },
@@ -602,7 +651,7 @@ export const DEFAULT_PROVIDER_CATALOG: CatalogProviderInfo[] = [
         docs_url: "https://platform.qianwenai.com/docs/token-plan/personal/token-plan-personal-quickstart",
         models: [
           model("qwen3.7-max", {}, { recommended: true }),
-          model("qwen3.8-max-preview", { supports_image_input: true }),
+          model("qwen3.8-max"),
           model("qwen3.7-plus", { supports_image_input: true }),
           model("qwen3.6-flash", { supports_image_input: true }),
           model("glm-5.2"),

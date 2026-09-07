@@ -161,6 +161,39 @@ export interface DAGNodeDetail {
 }
 
 // ============================================================================
+// DAG 节点结构化结果（GET /dag-status/{id}/node/{nodeId}/result）
+// 非 worker 节点（command/join/condition 等）的结果 = 其 handoff 内容，
+// result_kind 驱动前端默认渲染器，无需生成式 UI。
+// ============================================================================
+
+// 后端 _nodeResultKind 当前只产出 command/join/condition/loop/while/state/
+// fanout/worker（非 _gateway 结尾的一律归 worker）。approval/await_command/
+// agent/task 为前向兼容预留；未知 kind 一律由 FallbackResultCard 兜底。
+export type DAGNodeResultKind =
+  | 'command' | 'join' | 'condition' | 'loop' | 'while'
+  | 'state' | 'fanout' | 'approval' | 'await_command'
+  | 'worker' | 'agent' | 'task'
+
+export interface DAGNodeResultHandoff {
+  port: string
+  content: unknown
+  timestamp: string
+  round_id?: string
+}
+
+export interface DAGNodeResult {
+  node_id: string
+  node_name: string
+  node_type: string
+  result_kind: DAGNodeResultKind | string
+  status: DAGNodeStatus
+  latest: DAGNodeResultHandoff | null
+  handoffs: DAGNodeResultHandoff[]
+  /** command 节点专用：result_payload=value 时完整 envelope 从 telemetry 事件补回 */
+  telemetry?: Record<string, unknown>
+}
+
+// ============================================================================
 // WebSocket DAG 事件数据
 // ============================================================================
 

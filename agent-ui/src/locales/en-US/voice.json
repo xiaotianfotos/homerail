@@ -87,6 +87,9 @@
     "composerPlaceholder": "Send text through the active Live Voice session...",
     "textUnavailable": "Live Voice is reconnecting. Wait until it is listening before sending text."
   },
+  "immersive": {
+    "exit": "Exit immersive"
+  },
   "task": {
     "title": "Task",
     "prompt": "Describe a request to organize into a task draft.",

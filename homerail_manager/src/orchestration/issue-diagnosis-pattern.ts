@@ -1290,7 +1290,6 @@ export function createIssueDiagnosisPattern(
           max_dispatches: 80,
           max_handoffs: 64,
           max_corrections_per_node: 5,
-          max_tool_calls_per_node: 96,
         },
       },
     },

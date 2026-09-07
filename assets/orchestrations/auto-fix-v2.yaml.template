@@ -1,0 +1,1154 @@
+api_version: homerail.ai/v1
+kind: Workflow
+
+metadata:
+  id: auto-fix-v2
+  name: HomeRail Auto Fix v2
+  labels:
+    scenario: document-first-draft-pr-autofix
+    safety: manager-broker-only
+
+spec:
+  description: |
+    A document-first Auto Fix workflow. The trusted caller supplies a bounded,
+    immutable worker plan; dynamic Qwen3.8-Max workers implement its isolated
+    sub-tasks, one Qwen3.8-Max aggregator publishes a candidate through
+    the GitHub broker, and fresh-context GLM-5.2 reviewers drive at most four
+    fix rounds. Aggregation and every fix must submit a Manager-verified local
+    TestReport; the loop never dispatches GitHub CI. Convergence requires zero
+    weighted actionable defects, complete exact-head diff coverage, passing
+    local evidence, and two consecutive clean reviews of the same head.
+    Revisions are performed by newly generated Qwen3.8-Max workers. The immutable
+    task document, worker plan, and PR binding are mounted below /workspace/input.
+
+  workspace: { mode: shared }
+
+  pattern:
+    id: auto-fix-v2
+    version: 2.3.0
+    source: HomeRail document-first dynamic worker review loop
+    parameters:
+      max_plan_items: 3
+      max_parallel_implementers: 3
+      max_fix_rounds: 4
+      clean_reviews_required: 2
+      defect_weights: { critical: 16, high: 8, medium: 3, low: 1 }
+      github_mutation: manager_broker
+
+  contracts:
+    Start:
+      type: object
+
+    TaskItem:
+      type: object
+      additionalProperties: false
+      required: [id, title, description, files, acceptance]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        title: { type: string, minLength: 1, maxLength: 300 }
+        description: { type: string, minLength: 1, maxLength: 6000 }
+        files:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { type: string, minLength: 1, maxLength: 1000 }
+        acceptance:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items: { type: string, minLength: 1, maxLength: 2000 }
+
+    TaskPlan:
+      type: object
+      additionalProperties: false
+      required: [version, task_document_sha256, tasks, local_tests, shared]
+      properties:
+        version: { type: integer, const: 1 }
+        task_document_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        tasks:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, title, description, files, acceptance]
+            properties:
+              id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+              title: { type: string, minLength: 1, maxLength: 300 }
+              description: { type: string, minLength: 1, maxLength: 6000 }
+              files:
+                type: array
+                minItems: 1
+                maxItems: 50
+                items: { type: string, minLength: 1, maxLength: 1000 }
+              acceptance:
+                type: array
+                minItems: 1
+                maxItems: 30
+                items: { type: string, minLength: 1, maxLength: 2000 }
+        local_tests:
+          type: array
+          minItems: 1
+          maxItems: 12
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, command, timeout_seconds]
+            properties:
+              id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+              command: { type: string, minLength: 1, maxLength: 4000 }
+              timeout_seconds: { type: integer, minimum: 1, maximum: 1800 }
+        shared:
+          type: object
+          additionalProperties: false
+          required: [repository_path, task_document, task_plan, pr_context]
+          properties:
+            repository_path: { type: string, const: repo }
+            task_document: { type: string, const: input/task.md }
+            task_plan: { type: string, const: input/task-plan.json }
+            pr_context: { type: string, const: input/pr-context.json }
+
+    WorkerResult:
+      type: object
+      additionalProperties: false
+      required: [status, task_id, workspace_path, summary, tests]
+      properties:
+        status: { type: string, enum: [implemented, cannot_implement] }
+        task_id: { type: string, minLength: 1, maxLength: 64 }
+        commit_sha: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+        workspace_path: { type: string, minLength: 1, maxLength: 1000 }
+        summary: { type: string, minLength: 1, maxLength: 8000 }
+        tests:
+          type: array
+          maxItems: 30
+          items: { type: string, minLength: 1, maxLength: 2000 }
+
+    Candidate:
+      type: object
+      additionalProperties: false
+      required: [head_sha, manifest_sha256, summary, test_report]
+      properties:
+        head_sha: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+        manifest_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        summary: { type: string, minLength: 1, maxLength: 12000 }
+        test_report:
+          type: object
+          additionalProperties: false
+          required: [path, sha256, status]
+          properties:
+            path: { type: string, pattern: '^\.homerail/test-reports/[A-Za-z0-9._-]+\.json$' }
+            sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+            status: { type: string, const: passed }
+
+    TestReport:
+      type: object
+      additionalProperties: false
+      required: [version, phase, head_sha, status, commands, summary]
+      properties:
+        version: { type: integer, const: 1 }
+        phase: { type: string, enum: [aggregate, fix] }
+        head_sha: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+        manifest_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        status: { type: string, enum: [passed, failed] }
+        commands:
+          type: array
+          minItems: 1
+          maxItems: 12
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, command, timeout_seconds, status, exit_code, duration_ms]
+            properties:
+              id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+              command: { type: string, minLength: 1, maxLength: 4000 }
+              timeout_seconds: { type: integer, minimum: 1, maximum: 1800 }
+              status: { type: string, enum: [passed, failed, timed_out] }
+              exit_code: { oneOf: [{ type: integer, minimum: 0, maximum: 255 }, { type: 'null' }] }
+              duration_ms: { type: integer, minimum: 0, maximum: 3600000 }
+              output_tail: { type: string, maxLength: 8000 }
+        summary: { type: string, minLength: 1, maxLength: 8000 }
+
+    Finding:
+      type: object
+      additionalProperties: false
+      required: [id, severity, category, actionable, evidence, recommendation]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,127}$' }
+        severity: { type: string, enum: [critical, high, medium, low] }
+        category: { type: string, minLength: 1, maxLength: 128 }
+        actionable: { type: boolean }
+        advisory_reason: { type: string, enum: [preexisting, out_of_scope, optional_preference] }
+        path: { type: string, minLength: 1, maxLength: 1000 }
+        line: { type: integer, minimum: 1 }
+        evidence: { type: string, minLength: 1, maxLength: 4000 }
+        recommendation: { type: string, minLength: 1, maxLength: 4000 }
+      allOf:
+        - if:
+            required: [actionable]
+            properties: { actionable: { const: false } }
+          then:
+            required: [advisory_reason]
+            properties: { advisory_reason: {} }
+
+    ReviewDecision:
+      type: object
+      additionalProperties: false
+      required: [verdict, head_sha, summary, findings, feedback, fix_tasks, quality]
+      properties:
+        verdict: { type: string, enum: [clean, changes_requested] }
+        head_sha: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+        summary: { type: string, minLength: 1, maxLength: 12000 }
+        findings:
+          type: array
+          maxItems: 30
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, severity, category, actionable, evidence, recommendation]
+            properties:
+              id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,127}$' }
+              severity: { type: string, enum: [critical, high, medium, low] }
+              category: { type: string, minLength: 1, maxLength: 128 }
+              actionable: { type: boolean }
+              advisory_reason: { type: string, enum: [preexisting, out_of_scope, optional_preference] }
+              path: { type: string, minLength: 1, maxLength: 1000 }
+              line: { type: integer, minimum: 1 }
+              evidence: { type: string, minLength: 1, maxLength: 4000 }
+              recommendation: { type: string, minLength: 1, maxLength: 4000 }
+            allOf:
+              - if:
+                  required: [actionable]
+                  properties: { actionable: { const: false } }
+                then:
+                  required: [advisory_reason]
+                  properties: { advisory_reason: {} }
+        feedback:
+          type: array
+          maxItems: 30
+          items: { type: string, minLength: 1, maxLength: 4000 }
+        fix_tasks:
+          type: array
+          maxItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, feedback]
+            properties:
+              id: { type: string, minLength: 1, maxLength: 64 }
+              feedback:
+                type: array
+                minItems: 1
+                maxItems: 30
+                items: { type: string, minLength: 1, maxLength: 4000 }
+        quality:
+          type: object
+          additionalProperties: false
+          required: [status, findings_sha256, coverage_ratio, coverage_complete, test_report_sha256, defect_load, score]
+          properties:
+            status: { type: string, enum: [clean, needs_fix] }
+            findings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+            coverage_ratio: { type: number, minimum: 0, maximum: 1 }
+            coverage_complete: { type: boolean }
+            test_report_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+            defect_load: { type: integer, minimum: 0, maximum: 480 }
+            score: { type: integer, minimum: 0, maximum: 100 }
+      allOf:
+        - if:
+            required: [quality]
+            properties:
+              quality:
+                type: object
+                required: [status]
+                properties: { status: { const: clean } }
+          then:
+            properties:
+              verdict: { const: clean }
+              feedback: { type: array, maxItems: 0 }
+              fix_tasks: { type: array, maxItems: 0 }
+          else:
+            properties:
+              verdict: { const: changes_requested }
+              feedback: { type: array, minItems: 1 }
+              fix_tasks: { type: array, minItems: 1, maxItems: 1 }
+
+    FixResult:
+      type: object
+      additionalProperties: false
+      required: [status, previous_head_sha, summary, test_report]
+      properties:
+        status: { type: string, enum: [fixed, cannot_fix] }
+        previous_head_sha: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+        head_sha: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+        manifest_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        summary: { type: string, minLength: 1, maxLength: 8000 }
+        test_report:
+          type: object
+          additionalProperties: false
+          required: [path, sha256, status]
+          properties:
+            path: { type: string, pattern: '^\.homerail/test-reports/[A-Za-z0-9._-]+\.json$' }
+            sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+            status: { type: string, enum: [passed, failed] }
+      allOf:
+        - if:
+            required: [status]
+            properties: { status: { const: fixed } }
+          then:
+            required: [head_sha, manifest_sha256]
+            properties:
+              head_sha: {}
+              manifest_sha256: {}
+              test_report:
+                type: object
+                required: [status]
+                properties: { status: { const: passed } }
+
+    AutoFixV2Result:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - status
+        - repository
+        - pull_number
+        - head_sha
+        - task_document_sha256
+        - task_plan_sha256
+        - review_confirmation_count
+        - findings
+        - findings_sha256
+        - test_report_sha256
+        - quality_score
+        - review_summary
+      properties:
+        version: { type: integer, const: 1 }
+        status: { type: string, const: ready_for_ci }
+        repository: { type: string, pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' }
+        pull_number: { type: integer, minimum: 1 }
+        head_sha: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+        task_document_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        task_plan_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        review_confirmation_count: { type: integer, const: 2 }
+        findings:
+          type: array
+          maxItems: 30
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, severity, category, actionable, evidence, recommendation]
+            properties:
+              id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,127}$' }
+              severity: { type: string, enum: [critical, high, medium, low] }
+              category: { type: string, minLength: 1, maxLength: 128 }
+              actionable: { type: boolean }
+              advisory_reason: { type: string, enum: [preexisting, out_of_scope, optional_preference] }
+              path: { type: string, minLength: 1, maxLength: 1000 }
+              line: { type: integer, minimum: 1 }
+              evidence: { type: string, minLength: 1, maxLength: 4000 }
+              recommendation: { type: string, minLength: 1, maxLength: 4000 }
+            allOf:
+              - if:
+                  required: [actionable]
+                  properties: { actionable: { const: false } }
+                then:
+                  required: [advisory_reason]
+                  properties: { advisory_reason: {} }
+        findings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        test_report_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        quality_score: { type: integer, minimum: 0, maximum: 100 }
+        review_summary: { type: string, minLength: 1, maxLength: 12000 }
+
+  artifacts:
+    - name: task-plan.json
+      source: { type: handoff, node: prepare_repository, port: ready }
+      media_type: application/json
+      contract: TaskPlan
+      required: true
+      publish: always
+    - name: initial-candidate.json
+      source: { type: handoff, node: aggregate, port: candidate }
+      media_type: application/json
+      contract: Candidate
+      required: false
+      publish: always
+    - name: autofix-result.json
+      source: { type: handoff, node: finalize_ready, port: ready }
+      media_type: application/json
+      contract: AutoFixV2Result
+      required: true
+      publish: success
+
+  agents:
+    implementer:
+      description: Qwen3.8-Max isolated implementation worker
+      system: |
+        Implement only the caller-authored input.item inside
+        input.workspace_path. The immutable task plan owns worker division;
+        read the mounted task document for global acceptance criteria. Never
+        access the PR or credentials. input.workspace_path is a real Git
+        worktree even though .git is a file. Git metadata is Manager-owned and
+        read-only: do not run git add, commit, checkout, reset, or another
+        metadata-changing Git command. Run focused tests, leave only intended
+        working-tree changes in that exact worktree, and hand off result with
+        the exact workspace path; Manager validates and commits the changes.
+        Never copy changes into /workspace/repo or another worker's directory.
+        If dependencies are absent, use only the repository's locked,
+        lockfile-preserving install command (for npm, use npm ci and never npm
+        install). Do not modify dependency manifests or lockfiles unless the
+        task item explicitly lists them; revert incidental changes before
+        committing.
+
+    aggregator:
+      description: Qwen3.8-Max candidate integrator
+      system: |
+        Treat the dynamic worker results as proposals. Inspect every
+        Manager-created commit read-only, then copy or apply its file changes
+        into /workspace/repo in declared task order and resolve overlap. Run
+        every caller-authored local_tests command from input/task-plan.json in
+        the changed worktree; these bounded container tests replace online CI
+        inside this DAG. Enforce each command's immutable timeout_seconds when
+        launching it; this is a test-process timeout, never a model or tool-call
+        budget. Git metadata is Manager-owned and read-only: do not run
+        git add, commit, cherry-pick, checkout, reset, or merge. Use
+        credential_broker_call with credential_ref github-autofix and action
+        pull_request_snapshot to obtain the exact current Draft PR head. Publish
+        all changed files atomically through credential_broker_call with the
+        same credential_ref and action commit_workspace, the exact writable
+        workspace_path, and expected_head_sha; never encode file contents into
+        a tool call, omit a dirty file, or make multiple commits for one
+        candidate. Never use the broker name github_pr as credential_ref, git
+        push, or a raw token. Only after commit_workspace succeeds, write
+        .homerail/test-reports/aggregate.json in the same worktree. It must be
+        TestReport JSON for the commands already run, bind the returned head_sha
+        and manifest_sha256, and set status passed only if every command passed.
+        Use exactly this shape and no additional fields:
+        {"version":1,"phase":"aggregate","head_sha":"<commit result head_sha>",
+        "manifest_sha256":"<commit result manifest_sha256>","status":"passed",
+        "commands":[{"id":"<local_tests id>","command":"<exact command>",
+        "timeout_seconds":1,"status":"passed","exit_code":0,
+        "duration_ms":0,"output_tail":"<bounded observed output>"}],
+        "summary":"<bounded test summary>"}.
+        Copy each command and timeout_seconds from input/task-plan.json, record
+        its observed exit_code and elapsed duration_ms, and include every
+        local_tests entry exactly once. Do not add fields such as tests_passed.
+        Compute its SHA-256 from the actual file bytes. Because the report is
+        written after commit_workspace, it is evidence and must not enter the
+        PR. Then hand off candidate with one content object
+        containing exactly {"head_sha":"<commit result head_sha>",
+        "manifest_sha256":"<commit result manifest_sha256>",
+        "summary":"<bounded implementation summary>","test_report":
+        {"path":".homerail/test-reports/aggregate.json",
+        "sha256":"<file sha256>","status":"passed"}}.
+        The handoff tool's optional top-level summary does not satisfy the
+        Candidate content contract.
+        Manager derives the complete dirty-file manifest from the only writable
+        worktree, binds both values to the handoff, and rejects omissions,
+        unrelated paths, a worker commit SHA, or a stale PR head. Refuse
+        unrelated or workflow-file changes. The
+        snapshot tool arguments are exactly
+        {"credential_ref":"github-autofix","action":"pull_request_snapshot","input":{}}.
+        The commit action input is exactly
+        {"expected_head_sha":"<snapshot head_sha>","message":"<single line>",
+        "workspace_path":"repo"}.
+
+    reviewer:
+      description: GLM-5.2 fresh-context reviewer
+      system: |
+        Review only the immutable task document and the current Draft PR state
+        obtained through credential_broker_call with credential_ref
+        github-autofix and actions pull_request_snapshot, read_diff, read_file,
+        and assess_review. The only repository bytes you may trust are returned
+        by read_file for the exact snapshot head; your filesystem contains only
+        immutable task inputs and deliberately has no repository checkout.
+        Read each changed file's exact PR hunk first with read_diff input
+        {"expected_head_sha":"<snapshot head_sha>",
+        "path":"<snapshot filename>"}. Continue every chunked patch from
+        offset 0 through next_offset until next_offset is null. Every changed
+        path must reach EOF; Manager rejects assess_review otherwise. Then read
+        each changed source/test
+        file needed for the decision with
+        read_file input {"expected_head_sha":"<snapshot head_sha>",
+        "path":"<snapshot filename>"}. Each response is an inline bounded
+        UTF-8 chunk. If next_offset is not null, call read_file again for the
+        same path and head with "offset":<next_offset> until next_offset is
+        null. Never try to read a provider SDK temporary tool-result path.
+        Every dispatch is a fresh provider session: do not rely on prior chat.
+        Confirm the broker snapshot head equals the exact input head_sha.
+        Never use the broker name github_pr as credential_ref.
+        Return structured findings. An actionable defect always blocks even if
+        it would be called non-blocking in prose. A non-actionable advisory must
+        use exactly one advisory_reason: preexisting, out_of_scope, or
+        optional_preference. Use the exact final ReviewDecision finding shape
+        for assess_review: {"id":"lowercase-stable-id","severity":"critical|high|medium|low",
+        "category":"<category>","actionable":true|false,
+        "advisory_reason":"preexisting|out_of_scope|optional_preference",
+        "path":"<optional changed path>","line":1,
+        "evidence":"<evidence>","recommendation":"<recommendation>"}.
+        advisory_reason is required when actionable is false. path and line are
+        optional. Do not use aliases such as file, title, body, or review_notes.
+        After forming the final findings array, call
+        assess_review with {"expected_head_sha":"<snapshot head_sha>",
+        "findings":[...]}. The broker returns a complete review_decision; pass
+        that object verbatim as the content of handoff on port reviewed. Never
+        remove an advisory after assessment or reuse its findings_sha256 with a
+        different findings array. The Manager weights
+        critical/high/medium/low as 16/8/3/1 and
+        also verifies complete diff coverage plus the exact-head TestReport.
+        quality.status clean means verdict clean with empty feedback and fix_tasks;
+        needs_fix means changes_requested with clear feedback and exactly one
+        fix_tasks item containing all actionable findings. Do not calculate or
+        alter the score yourself.
+
+    fixer:
+      description: Qwen3.8-Max dynamically generated PR fixer
+      system: |
+        You are a newly generated fixer for one review round. Work only in
+        input.workspace_path. Use credential_broker_call with credential_ref
+        github-autofix and action pull_request_snapshot to bind the latest Draft
+        PR head, apply all feedback in input.item, then run every caller-authored
+        local_tests command from input/task-plan.json in this worktree, and
+        enforce each command's immutable timeout_seconds as a test-process
+        timeout, never as a model or tool-call budget. Then
+        publish all dirty files atomically through credential_broker_call with
+        the same credential_ref and action commit_workspace,
+        input.workspace_path, and the snapshot head as expected_head_sha. Never
+        encode file contents into a tool call or omit a dirty file. Never use
+        the broker name github_pr as credential_ref, git push, or modify any
+        path below .github. Only after commit_workspace succeeds, write
+        .homerail/test-reports/fix.json in the same worktree with the TestReport
+        command results, returned head_sha and manifest_sha256, then hash the
+        actual file. Use exactly this shape and no additional fields:
+        {"version":1,"phase":"fix","head_sha":"<commit result head_sha>",
+        "manifest_sha256":"<commit result manifest_sha256>","status":"passed",
+        "commands":[{"id":"<local_tests id>","command":"<exact command>",
+        "timeout_seconds":1,"status":"passed","exit_code":0,
+        "duration_ms":0,"output_tail":"<bounded observed output>"}],
+        "summary":"<bounded test summary>"}.
+        Copy each command and timeout_seconds from input/task-plan.json, record
+        its observed exit_code and elapsed duration_ms, and include every
+        local_tests entry exactly once. Do not add fields such as tests_passed.
+        The report must not enter the PR. Hand off
+        fixed with one content object containing exactly
+        {"status":"fixed","previous_head_sha":"<snapshot head_sha>",
+        "head_sha":"<commit result head_sha>",
+        "manifest_sha256":"<commit result manifest_sha256>",
+        "summary":"<bounded fix summary>","test_report":
+        {"path":".homerail/test-reports/fix.json",
+        "sha256":"<file sha256>","status":"passed"}}.
+        If no safe change can be published within the immutable PR path
+        allowlist, leave the worktree clean, do not call commit_workspace, and
+        hand off exactly {"status":"cannot_fix",
+        "previous_head_sha":"<snapshot head_sha>",
+        "summary":"<bounded blocker summary>","test_report":
+        {"path":".homerail/test-reports/fix.json",
+        "sha256":"<file sha256>","status":"failed"}}.
+        The snapshot tool
+        arguments are exactly {"credential_ref":"github-autofix",
+        "action":"pull_request_snapshot","input":{}}.
+
+  nodes:
+    prepare_repository:
+      kind: command
+      inputs: { start: { contract: Start } }
+      outputs: { ready: { contract: TaskPlan }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - >-
+            const fs=require('fs'),cp=require('child_process'),crypto=require('crypto');
+            const ctx=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
+            const fail=m=>{throw new Error(m)};
+            if(ctx.version!==1||ctx.clone_url!==`https://github.com/${ctx.owner}/${ctx.repo}.git`)fail('clone_url does not match repository');
+            if(!ctx.base_ref||!ctx.head_ref)fail('missing branch binding');
+            const task=fs.readFileSync(process.argv[2]),plan=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+            const taskDigest=crypto.createHash('sha256').update(task).digest('hex');
+            if(taskDigest!==ctx.task_document_sha256)fail('task document digest mismatch');
+            if(plan.version!==1||plan.task_document_sha256!==taskDigest)fail('task plan identity mismatch');
+            const shared=plan&&plan.shared;
+            if(!shared||shared.repository_path!=='repo'||shared.task_document!=='input/task.md'||shared.task_plan!=='input/task-plan.json'||shared.pr_context!=='input/pr-context.json')fail('task plan shared paths mismatch');
+            if(!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(ctx.initial_head_sha||''))fail('invalid head');
+            const run=a=>{const r=cp.spawnSync('git',a,{encoding:'utf8',timeout:120000,stdio:['ignore','pipe','pipe']});if(r.status!==0)fail(String(r.stderr||r.error));return String(r.stdout).trim()};
+            if(!fs.existsSync('repo/.git'))run(['clone','--no-checkout','--',ctx.clone_url,'repo']);
+            run(['-C','repo','fetch','--no-tags','origin',ctx.initial_head_sha]);
+            run(['-C','repo','checkout','--detach',ctx.initial_head_sha]);
+            const head=run(['-C','repo','rev-parse','HEAD']).toLowerCase();
+            if(head!==ctx.initial_head_sha.toLowerCase())fail('checkout head mismatch');
+            process.stdout.write(JSON.stringify(plan));
+          - $run_input/pr_context
+          - $run_input/task_document
+          - $run_input/task_plan
+        cwd: $run_workspace
+        timeout_ms: 180000
+        parse_stdout: json
+        result_payload: value
+        success_port: ready
+        failure_port: failed
+
+    implement:
+      kind: fanout
+      inputs: { plan: { contract: TaskPlan } }
+      outputs: { implemented: {}, failed: {} }
+      config:
+        input: plan
+        item_field: tasks
+        context_field: shared
+        worker_agent: implementer
+        worker_policy:
+          session_scope: dispatch
+          builtin_tool_policy: backend_native
+          codex_sandbox: danger-full-access
+          allowed_dag_tools: [handoff]
+          workspace_access: { writable_paths: ["{{fanout_workspace}}"], readonly_paths: [input], git_metadata_read_only: true }
+        workspace_strategy: isolated_git_worktree
+        workspace_root: workers
+        repository_path: repo
+        result_git_commit:
+          commit_field: commit_sha
+          workspace_field: workspace_path
+          require_clean: true
+          commit_mode: manager
+        max_items: 3
+        max_parallelism: 3
+        completion: all
+        result_contract: WorkerResult
+        success_field: status
+        success_values: [implemented]
+        result_port: implemented
+        failed_port: failed
+
+    aggregate:
+      kind: agent
+      agent: aggregator
+      session_scope: dispatch
+      workspace_access: { writable_paths: [repo], readonly_paths: [input, workers], git_metadata_read_only: true }
+      builtin_tool_policy: backend_native
+      codex_sandbox: danger-full-access
+      allowed_dag_tools: [handoff, credential_broker_call]
+      credentials:
+        - credential_ref: github-autofix
+          purpose: integrate the candidate into the bound Draft PR
+          inject:
+            mode: manager_broker
+            broker: github_pr
+            allowed_actions: [pull_request_snapshot, commit_workspace]
+      inputs: { workers: {} }
+      outputs:
+        candidate:
+          contract: Candidate
+          required_broker_actions:
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: pull_request_snapshot
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: commit_workspace
+              result_binding: { result_field: head_sha, content_field: head_sha }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: commit_workspace
+              result_binding: { result_field: manifest_sha256, content_field: manifest_sha256 }
+          required_workspace_files:
+            - path_field: test_report.path
+              sha256_field: test_report.sha256
+              contract: TestReport
+              max_bytes: 262144
+              bindings:
+                - { file_field: head_sha, content_field: head_sha }
+                - { file_field: manifest_sha256, content_field: manifest_sha256 }
+                - { file_field: status, content_field: test_report.status }
+        failed: {}
+
+    review_initial:
+      kind: agent
+      agent: reviewer
+      session_scope: dispatch
+      workspace_access: { writable_paths: [], readonly_paths: [input] }
+      allowed_builtin_tools: [Glob, Grep, LS, Read]
+      allowed_dag_tools: [handoff, credential_broker_call]
+      credentials:
+        - credential_ref: github-autofix
+          purpose: review the bound Draft PR without mutation
+          inject:
+            mode: manager_broker
+            broker: github_pr
+            allowed_actions: [pull_request_snapshot, read_diff, read_file, assess_review]
+      inputs: { candidate: { contract: Candidate } }
+      outputs:
+        reviewed:
+          contract: ReviewDecision
+          required_broker_actions:
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: pull_request_snapshot
+              result_binding: { result_field: head_sha, content_field: head_sha }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_digest_binding: { result_field: findings_sha256, content_field: findings }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: coverage_ratio, content_field: quality.coverage_ratio }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: coverage_complete, content_field: quality.coverage_complete }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: test_report_sha256, content_field: quality.test_report_sha256 }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: defect_load, content_field: quality.defect_load }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: score, content_field: quality.score }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: status, content_field: quality.status }
+        failed: {}
+
+    initial_quality_gate:
+      kind: condition
+      inputs: { review: { contract: ReviewDecision } }
+      outputs: { clean: { contract: ReviewDecision }, fix: { contract: ReviewDecision } }
+      config:
+        field: quality.status
+        routes: { clean: clean, needs_fix: fix }
+        default: fix
+
+    confirm_initial:
+      kind: agent
+      agent: reviewer
+      session_scope: dispatch
+      workspace_access: { writable_paths: [], readonly_paths: [input] }
+      allowed_builtin_tools: [Glob, Grep, LS, Read]
+      allowed_dag_tools: [handoff, credential_broker_call]
+      credentials:
+        - credential_ref: github-autofix
+          purpose: independently confirm a clean initial review on the same Draft PR head
+          inject:
+            mode: manager_broker
+            broker: github_pr
+            allowed_actions: [pull_request_snapshot, read_diff, read_file, assess_review]
+      inputs: { prior: { contract: ReviewDecision } }
+      outputs:
+        reviewed:
+          contract: ReviewDecision
+          required_broker_actions:
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: pull_request_snapshot
+              result_binding: { result_field: head_sha, content_field: head_sha }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_digest_binding: { result_field: findings_sha256, content_field: findings }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: coverage_ratio, content_field: quality.coverage_ratio }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: coverage_complete, content_field: quality.coverage_complete }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: test_report_sha256, content_field: quality.test_report_sha256 }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: defect_load, content_field: quality.defect_load }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: score, content_field: quality.score }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: status, content_field: quality.status }
+        failed: {}
+
+    initial_confirmation_gate:
+      kind: condition
+      inputs: { review: { contract: ReviewDecision } }
+      outputs: { clean: { contract: ReviewDecision }, fix: { contract: ReviewDecision } }
+      config:
+        field: quality.status
+        routes: { clean: clean, needs_fix: fix }
+        default: fix
+
+    fix_request_join:
+      kind: join
+      inputs: { initial: {}, initial_confirmation: {} }
+      outputs: { ready: {}, missing: {} }
+      config:
+        mode: any
+        field: verdict
+        success_values: [changes_requested]
+        passed_port: ready
+        failed_port: missing
+
+    fix_round_gate:
+      kind: while
+      inputs: { state: {} }
+      outputs: { fix: {}, unexpected_clean: {}, exhausted: {} }
+      config:
+        unwrap_single_join_value: true
+        field: quality.status
+        operator: eq
+        value: clean
+        continue_port: fix
+        done_port: unexpected_clean
+        exhausted_port: exhausted
+        max_iterations: 4
+
+    fix:
+      kind: fanout
+      inputs: { review: {} }
+      outputs: { fixed: {}, failed: {} }
+      config:
+        input: review
+        item_field: input.fix_tasks
+        context_field: input
+        worker_agent: fixer
+        worker_policy:
+          session_scope: dispatch
+          builtin_tool_policy: backend_native
+          codex_sandbox: danger-full-access
+          allowed_dag_tools: [handoff, credential_broker_call]
+          workspace_access: { writable_paths: ["{{fanout_workspace}}"], readonly_paths: [input], git_metadata_read_only: true }
+          credentials:
+            - credential_ref: github-autofix
+              purpose: apply one bounded review revision to the Draft PR
+              inject:
+                mode: manager_broker
+                broker: github_pr
+                allowed_actions: [pull_request_snapshot, commit_workspace]
+        workspace_strategy: isolated_git_worktree
+        workspace_root: fixers
+        repository_path: repo
+        revision_field: head_sha
+        max_items: 1
+        max_parallelism: 1
+        completion: all
+        result_contract: FixResult
+        result_required_broker_actions:
+          - credential_ref: github-autofix
+            broker: github_pr
+            action: pull_request_snapshot
+            result_binding: { result_field: head_sha, content_field: previous_head_sha }
+          - credential_ref: github-autofix
+            broker: github_pr
+            action: commit_workspace
+            when: { field: status, equals: fixed }
+            result_binding: { result_field: head_sha, content_field: head_sha }
+          - credential_ref: github-autofix
+            broker: github_pr
+            action: commit_workspace
+            when: { field: status, equals: fixed }
+            result_binding: { result_field: manifest_sha256, content_field: manifest_sha256 }
+        result_required_workspace_files:
+          - path_field: test_report.path
+            sha256_field: test_report.sha256
+            contract: TestReport
+            max_bytes: 262144
+            bindings:
+              - { file_field: status, content_field: test_report.status }
+        success_field: status
+        success_values: [fixed]
+        result_port: fixed
+        failed_port: failed
+
+    review_revision:
+      kind: agent
+      agent: reviewer
+      depends_on: [fix_round_gate]
+      session_scope: dispatch
+      workspace_access: { writable_paths: [], readonly_paths: [input] }
+      allowed_builtin_tools: [Glob, Grep, LS, Read]
+      allowed_dag_tools: [handoff, credential_broker_call]
+      credentials:
+        - credential_ref: github-autofix
+          purpose: re-review the bound Draft PR without mutation
+          inject:
+            mode: manager_broker
+            broker: github_pr
+            allowed_actions: [pull_request_snapshot, read_diff, read_file, assess_review]
+      inputs: { fixes: {} }
+      outputs:
+        reviewed:
+          contract: ReviewDecision
+          required_broker_actions:
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: pull_request_snapshot
+              result_binding: { result_field: head_sha, content_field: head_sha }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_digest_binding: { result_field: findings_sha256, content_field: findings }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: coverage_ratio, content_field: quality.coverage_ratio }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: coverage_complete, content_field: quality.coverage_complete }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: test_report_sha256, content_field: quality.test_report_sha256 }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: defect_load, content_field: quality.defect_load }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: score, content_field: quality.score }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: status, content_field: quality.status }
+        failed: {}
+
+    revision_quality_gate:
+      kind: condition
+      inputs: { review: { contract: ReviewDecision } }
+      outputs: { clean: { contract: ReviewDecision }, fix: { contract: ReviewDecision } }
+      config:
+        field: quality.status
+        routes: { clean: clean, needs_fix: fix }
+        default: fix
+
+    confirm_revision:
+      kind: agent
+      agent: reviewer
+      depends_on: [fix_round_gate]
+      session_scope: dispatch
+      workspace_access: { writable_paths: [], readonly_paths: [input] }
+      allowed_builtin_tools: [Glob, Grep, LS, Read]
+      allowed_dag_tools: [handoff, credential_broker_call]
+      credentials:
+        - credential_ref: github-autofix
+          purpose: independently confirm a clean revised review on the same Draft PR head
+          inject:
+            mode: manager_broker
+            broker: github_pr
+            allowed_actions: [pull_request_snapshot, read_diff, read_file, assess_review]
+      inputs: { prior: { contract: ReviewDecision } }
+      outputs:
+        reviewed:
+          contract: ReviewDecision
+          required_broker_actions:
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: pull_request_snapshot
+              result_binding: { result_field: head_sha, content_field: head_sha }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_digest_binding: { result_field: findings_sha256, content_field: findings }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: coverage_ratio, content_field: quality.coverage_ratio }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: coverage_complete, content_field: quality.coverage_complete }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: test_report_sha256, content_field: quality.test_report_sha256 }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: defect_load, content_field: quality.defect_load }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: score, content_field: quality.score }
+            - credential_ref: github-autofix
+              broker: github_pr
+              action: assess_review
+              result_binding: { result_field: status, content_field: quality.status }
+        failed: {}
+
+    revision_confirmation_gate:
+      kind: condition
+      inputs: { review: { contract: ReviewDecision } }
+      outputs: { clean: { contract: ReviewDecision }, fix: { contract: ReviewDecision } }
+      config:
+        field: quality.status
+        routes: { clean: clean, needs_fix: fix }
+        default: fix
+
+    initial_confirmation_pair:
+      kind: join
+      inputs:
+        prior: { contract: ReviewDecision }
+        confirmation: { contract: ReviewDecision }
+      outputs: { ready: {}, invalid: {} }
+      config:
+        mode: all
+        field: quality.status
+        success_values: [clean]
+        passed_port: ready
+        failed_port: invalid
+
+    revision_confirmation_pair:
+      kind: join
+      inputs:
+        prior: { contract: ReviewDecision }
+        confirmation: { contract: ReviewDecision }
+      outputs: { ready: {}, invalid: {} }
+      config:
+        mode: all
+        field: quality.status
+        success_values: [clean]
+        passed_port: ready
+        failed_port: invalid
+
+    final_confirmation_pair:
+      kind: join
+      inputs: { initial: {}, revision: {} }
+      outputs: { ready: {}, invalid: {} }
+      config:
+        mode: any
+        field: passed
+        success_values: [true]
+        passed_port: ready
+        failed_port: invalid
+
+    verify_confirmation:
+      kind: command
+      inputs: { reviews: {} }
+      outputs: { ready: { contract: ReviewDecision }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - >-
+            let s='';const fail=m=>{throw new Error(m)},last=(inputs,key)=>Array.isArray(inputs[key])?inputs[key].at(-1):undefined;process.stdin.on('data',d=>s+=d).on('end',()=>{const inputs=JSON.parse(s),selected=last(inputs,'reviews'),pair=Array.isArray(selected?.values)?selected.values[0]:undefined,reviews=Array.isArray(pair?.values)?pair.values:[],prior=reviews[0],confirmation=reviews[1];if(reviews.length!==2||!prior||!confirmation||prior.verdict!=='clean'||confirmation.verdict!=='clean'||prior?.quality?.status!=='clean'||confirmation?.quality?.status!=='clean')fail('two clean reviews are required');if(prior.head_sha!==confirmation.head_sha)fail('clean reviews do not bind the same head');if(prior.quality.test_report_sha256!==confirmation.quality.test_report_sha256)fail('clean reviews do not bind the same test report');process.stdout.write(JSON.stringify(confirmation))});
+        cwd: $run_workspace
+        stdin_field: $inputs
+        timeout_ms: 30000
+        parse_stdout: json
+        result_payload: value
+        success_port: ready
+        failure_port: failed
+
+    finalize_ready:
+      kind: command
+      inputs: { decision: {} }
+      outputs: { ready: { contract: AutoFixV2Result }, failed: {} }
+      config:
+        command:
+          - node
+          - -e
+          - >-
+            const fs=require('fs'),crypto=require('crypto');let s='';const fail=m=>{throw new Error(m)};process.stdin.on('data',d=>s+=d).on('end',()=>{const inputs=JSON.parse(s),review=Array.isArray(inputs.decision)?inputs.decision.at(-1):undefined;if(!review||review.verdict!=='clean'||review?.quality?.status!=='clean')fail('final clean review is missing');const task=fs.readFileSync(process.argv[1]),planBytes=fs.readFileSync(process.argv[2]),plan=JSON.parse(planBytes),pr=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),sha=b=>crypto.createHash('sha256').update(b).digest('hex'),taskSha=sha(task),planSha=sha(planBytes);if(plan.task_document_sha256!==taskSha||pr.task_document_sha256!==taskSha)fail('final task identity mismatch');process.stdout.write(JSON.stringify({version:1,status:'ready_for_ci',repository:`${pr.owner}/${pr.repo}`,pull_number:pr.pull_number,head_sha:review.head_sha,task_document_sha256:taskSha,task_plan_sha256:planSha,review_confirmation_count:2,findings:review.findings,findings_sha256:review.quality.findings_sha256,test_report_sha256:review.quality.test_report_sha256,quality_score:review.quality.score,review_summary:review.summary}))});
+          - $run_input/task_document
+          - $run_input/task_plan
+          - $run_input/pr_context
+        cwd: $run_workspace
+        stdin_field: $inputs
+        timeout_ms: 30000
+        parse_stdout: json
+        result_payload: value
+        success_port: ready
+        failure_port: failed
+
+    ready_for_ci: { kind: terminal, outcome: success, inputs: { result: { contract: AutoFixV2Result } } }
+    preparation_failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+    aggregation_failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+    initial_review_failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+    initial_confirmation_failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+    revision_review_failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+    revision_confirmation_failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+    finalization_failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+    decision_missing:
+      kind: terminal
+      outcome: failure
+      inputs:
+        join: {}
+        unexpected_clean: {}
+        initial_confirmation: {}
+        revision_confirmation: {}
+        final_confirmation: {}
+        confirmation: {}
+    needs_human:
+      kind: terminal
+      outcome: cancelled
+      inputs:
+        exhausted: {}
+        implementation: {}
+        fix: {}
+
+  edges:
+    - { from: $run.input, to: prepare_repository.start }
+    - { from: prepare_repository.ready, to: implement.plan }
+    - { from: prepare_repository.failed, to: preparation_failed.result, condition: on_failure }
+    - { from: implement.implemented, to: aggregate.workers }
+    - { from: implement.failed, to: needs_human.implementation, condition: on_failure }
+    - { from: aggregate.candidate, to: review_initial.candidate }
+    - { from: aggregate.failed, to: aggregation_failed.result, condition: on_failure }
+    - { from: review_initial.reviewed, to: initial_quality_gate.review }
+    - { from: review_initial.failed, to: initial_review_failed.result, condition: on_failure }
+    - { from: initial_quality_gate.clean, to: confirm_initial.prior }
+    - { from: initial_quality_gate.clean, to: initial_confirmation_pair.prior }
+    - { from: initial_quality_gate.fix, to: fix_request_join.initial }
+    - { from: confirm_initial.reviewed, to: initial_confirmation_gate.review }
+    - { from: confirm_initial.failed, to: initial_confirmation_failed.result, condition: on_failure }
+    - { from: initial_confirmation_gate.clean, to: initial_confirmation_pair.confirmation }
+    - { from: initial_confirmation_gate.fix, to: fix_request_join.initial_confirmation }
+    - { from: fix_request_join.ready, to: fix_round_gate.state }
+    - { from: fix_request_join.missing, to: decision_missing.join }
+    - { from: fix_round_gate.fix, to: fix.review }
+    - { from: fix_round_gate.unexpected_clean, to: decision_missing.unexpected_clean }
+    - { from: fix_round_gate.exhausted, to: needs_human.exhausted }
+    - { from: fix.fixed, to: review_revision.fixes }
+    - { from: fix.failed, to: needs_human.fix, condition: on_failure }
+    - { from: review_revision.reviewed, to: revision_quality_gate.review }
+    - { from: review_revision.failed, to: revision_review_failed.result, condition: on_failure }
+    - { from: revision_quality_gate.clean, to: confirm_revision.prior }
+    - { from: revision_quality_gate.clean, to: revision_confirmation_pair.prior }
+    - kind: feedback
+      from: revision_quality_gate.fix
+      to: fix_round_gate.state
+      max_traversals: 4
+    - { from: confirm_revision.reviewed, to: revision_confirmation_gate.review }
+    - { from: confirm_revision.failed, to: revision_confirmation_failed.result, condition: on_failure }
+    - { from: revision_confirmation_gate.clean, to: revision_confirmation_pair.confirmation }
+    - kind: feedback
+      from: revision_confirmation_gate.fix
+      to: fix_round_gate.state
+      max_traversals: 4
+    - { from: initial_confirmation_pair.ready, to: final_confirmation_pair.initial }
+    - { from: initial_confirmation_pair.invalid, to: decision_missing.initial_confirmation }
+    - { from: revision_confirmation_pair.ready, to: final_confirmation_pair.revision }
+    - { from: revision_confirmation_pair.invalid, to: decision_missing.revision_confirmation }
+    - { from: final_confirmation_pair.ready, to: verify_confirmation.reviews }
+    - { from: final_confirmation_pair.invalid, to: decision_missing.final_confirmation }
+    - { from: verify_confirmation.ready, to: finalize_ready.decision }
+    - { from: verify_confirmation.failed, to: decision_missing.confirmation, condition: on_failure }
+    - { from: finalize_ready.ready, to: ready_for_ci.result }
+    - { from: finalize_ready.failed, to: finalization_failed.result, condition: on_failure }
+
+  policies:
+    max_nodes: 40
+    max_edges: 44
+    max_parallelism: 4
+    max_dispatches: 32
+    max_handoffs: 48
+    max_corrections_per_node: 2
+    max_edge_traversals: 4

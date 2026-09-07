@@ -109,7 +109,7 @@ export async function probeModels(
   }
 }
 
-export type DetectedMainModelHarness = 'claude_agent_sdk' | 'kimi_code'
+export type DetectedMainModelHarness = 'codex_appserver' | 'claude_agent_sdk' | 'kimi_code'
 
 export interface MainModelEndpointProbe {
   available: boolean

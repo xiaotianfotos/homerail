@@ -122,9 +122,40 @@ function _ensureMailbox(run: DAGRun, nodeId: string, port: string): unknown[] {
   return nodeBox.get(port)!;
 }
 
+function _joinHasEnoughRoutedInputs(
+  run: DAGRun,
+  nodeId: string,
+  deps: DAGEdge[],
+): boolean | undefined {
+  const node = run.graph.nodes.find((candidate) => candidate.node_id === nodeId);
+  if (node?.node_type !== "join_gateway") return undefined;
+  const routedInputs = run.inputSatisfied.get(nodeId) ?? new Set<string>();
+  const routedDependencies = new Set(deps
+    .filter((dep) => _incomingExplicitEdgesFrom(run.graph.edges, nodeId, dep.from_node).length > 0)
+    .map((dep) => dep.from_node));
+  const routed = Array.from(routedDependencies).filter((dependency) => routedInputs.has(dependency)).length;
+  const mode = node.gateway_config?.mode ?? "all";
+  if (mode === "all") {
+    const satisfiedDependencies = run.afterSatisfied.get(nodeId);
+    return routed >= routedDependencies.size
+      && deps.every((dependency) => satisfiedDependencies?.has(dependency.from_node));
+  }
+  const settled = new Set<NodeState>(["COMPLETED", "FAILED", "CANCELLED", "SKIPPED"]);
+  const allDependenciesSettled = deps.every((dependency) => settled.has(run.nodeStates.get(dependency.from_node)!));
+  // An any/n-of-m join must still execute its failed port when the available
+  // votes do not reach quorum. Waiting until every mutually exclusive source
+  // settles avoids both premature failure and a deadlock on skipped sources.
+  return allDependenciesSettled && routed > 0;
+}
+
 function _tryPromote(run: DAGRun, nodeId: string): void {
   if (run.nodeStates.get(nodeId) !== "PENDING") return;
   const deps = _incomingAfterDeps(run.graph.edges, nodeId);
+  const joinReady = _joinHasEnoughRoutedInputs(run, nodeId, deps);
+  if (joinReady !== undefined) {
+    if (joinReady) run.nodeStates.set(nodeId, "READY");
+    return;
+  }
   const satisfiedDeps = run.afterSatisfied.get(nodeId);
   const satisfied = deps.every((e) => satisfiedDeps?.has(e.from_node));
   if (!satisfied) return;

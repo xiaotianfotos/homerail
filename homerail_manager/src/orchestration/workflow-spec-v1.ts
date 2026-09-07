@@ -40,11 +40,26 @@ export interface CanonicalPort {
   name: string;
   contract?: string;
   description?: string;
+  required_broker_actions?: Array<{
+    credential_ref: string;
+    broker: string;
+    action: string;
+    when?: { field: string; equals: unknown };
+    result_binding?: { result_field: string; content_field: string };
+    result_digest_binding?: { result_field: string; content_field: string };
+  }>;
+  required_workspace_files?: Array<{
+    path_field: string;
+    sha256_field: string;
+    contract: string;
+    max_bytes?: number;
+    bindings?: Array<{ file_field: string; content_field: string }>;
+  }>;
 }
 
 export interface CanonicalNode {
   id: string;
-  kind: "agent" | "command" | "approval" | "state" | "fanout" | "await_command" | "condition" | "join" | "foreach" | "while" | "terminal";
+  kind: "agent" | "command" | "broker" | "approval" | "state" | "fanout" | "await_command" | "condition" | "join" | "foreach" | "while" | "terminal";
   description?: string;
   agent?: string;
   depends_on: string[];
@@ -74,6 +89,12 @@ export interface CanonicalWorkflowIR {
   description?: string;
   labels: Record<string, string>;
   annotations: Record<string, string>;
+  /**
+   * Explicit WorkflowSpec capabilities. Only workflows declaring
+   * "runtime_evidence" may reference the reserved ReviewEvidenceState input
+   * contract; the runtime_evidence persistence bridge is gated on this field.
+   */
+  capabilities: string[];
   workspace: { mode: "isolated" | "shared" };
   contracts: Record<string, unknown>;
   artifacts: DAGArtifactDeclaration[];
@@ -140,6 +161,9 @@ interface SourceContext {
   document: Document.Parsed;
   lineCounter: LineCounter;
 }
+
+const RUNTIME_EVIDENCE_CAPABILITY = "runtime_evidence" as const;
+const RUNTIME_EVIDENCE_CONTRACT = "ReviewEvidenceState" as const;
 
 function sourceFormat(source: string): WorkflowSourceFormat {
   return source.trimStart().startsWith("{") ? "json" : "yaml";
@@ -249,13 +273,41 @@ function splitPortReference(reference: string): { node: string; port: string } {
   return { node: reference.slice(0, index), port: reference.slice(index + 1) };
 }
 
-function portEntries(ports: Record<string, { contract?: string; description?: string }> | undefined): CanonicalPort[] {
+function portEntries(ports: Record<string, {
+  contract?: string;
+  description?: string;
+  required_broker_actions?: Array<{
+    credential_ref: string;
+    broker: string;
+    action: string;
+    when?: { field: string; equals: unknown };
+    result_binding?: { result_field: string; content_field: string };
+    result_digest_binding?: { result_field: string; content_field: string };
+  }>;
+  required_workspace_files?: Array<{
+    path_field: string;
+    sha256_field: string;
+    contract: string;
+    max_bytes?: number;
+    bindings?: Array<{ file_field: string; content_field: string }>;
+  }>;
+}> | undefined): CanonicalPort[] {
   return Object.entries(ports ?? {})
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, port]) => ({
       name,
       ...(port.contract ? { contract: port.contract } : {}),
       ...(port.description ? { description: port.description } : {}),
+      ...(port.required_broker_actions ? {
+        required_broker_actions: [...port.required_broker_actions]
+          .sort((left, right) => (
+            JSON.stringify(deepSort(left)).localeCompare(JSON.stringify(deepSort(right)))
+          )),
+      } : {}),
+      ...(port.required_workspace_files ? {
+        required_workspace_files: [...port.required_workspace_files]
+          .sort((left, right) => JSON.stringify(deepSort(left)).localeCompare(JSON.stringify(deepSort(right)))),
+      } : {}),
     }));
 }
 
@@ -284,6 +336,31 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
       ...(hint ? { hint } : {}),
     }));
   };
+  const validateWorkspacePolicyPaths = (
+    access: { writable_paths: string[]; readonly_paths?: string[] } | undefined,
+    basePath: string,
+  ): void => {
+    if (!access) return;
+    const reservedSegments = new Set([".git", ".homerail-runtime", "node_modules"]);
+    for (const [field, paths] of [
+      ["writable_paths", access.writable_paths],
+      ["readonly_paths", access.readonly_paths ?? []],
+    ] as const) {
+      paths.forEach((declared, index) => {
+        const normalized = declared.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+        const reserved = normalized.split("/").find((segment) => reservedSegments.has(segment));
+        if (!reserved) return;
+        add(
+          `${basePath}/${field}/${index}`,
+          "DAG_SEMANTIC_RESERVED_WORKSPACE_PATH",
+          `workspace policy path '${declared}' enters runtime-owned segment '${reserved}'`,
+          reserved === ".homerail-runtime"
+            ? "Remove this path: HomeRail mounts .homerail-runtime separately for trusted runtime telemetry."
+            : `Declare the project root instead; HomeRail handles '${reserved}' as protected metadata.`,
+        );
+      });
+    }
+  };
 
   const awaitCommandNodeIds = Object.entries(nodes)
     .filter(([, node]) => node.kind === "await_command")
@@ -306,6 +383,30 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
         `invalid JSON Schema contract '${contractName}': ${validation.details}`,
       );
     }
+  }
+
+  const declaredCapabilities = [...(workflow.spec.capabilities ?? [])].sort();
+  let runtimeEvidenceInputs = 0;
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    for (const [portName, port] of Object.entries(nodePorts(node, "inputs"))) {
+      if (port.contract !== RUNTIME_EVIDENCE_CONTRACT) continue;
+      runtimeEvidenceInputs += 1;
+      if (!declaredCapabilities.includes(RUNTIME_EVIDENCE_CAPABILITY)) {
+        add(
+          `/spec/nodes/${nodeId}/inputs/${portName}/contract`,
+          "DAG_SEMANTIC_RUNTIME_EVIDENCE_CAPABILITY_REQUIRED",
+          `${RUNTIME_EVIDENCE_CONTRACT} inputs require the explicit '${RUNTIME_EVIDENCE_CAPABILITY}' WorkflowSpec capability`,
+          "declare capabilities: [runtime_evidence] on this workflow before using Manager-owned review evidence",
+        );
+      }
+    }
+  }
+  if (declaredCapabilities.includes(RUNTIME_EVIDENCE_CAPABILITY) && runtimeEvidenceInputs === 0) {
+    add(
+      "/spec/capabilities",
+      "DAG_SEMANTIC_RUNTIME_EVIDENCE_UNUSED",
+      `the '${RUNTIME_EVIDENCE_CAPABILITY}' capability is declared but no node input uses the ${RUNTIME_EVIDENCE_CONTRACT} contract`,
+    );
   }
 
   const artifactNames = new Set<string>();
@@ -372,10 +473,99 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
 
   for (const [nodeId, node] of Object.entries(nodes)) {
     const nodePath = `/spec/nodes/${nodeId}`;
+    for (const [portName, port] of Object.entries(node.kind === "terminal" || node.kind === "await_command" ? {} : node.outputs ?? {})) {
+      const requirements = port.required_broker_actions ?? [];
+      const workspaceFiles = port.required_workspace_files ?? [];
+      if (requirements.length > 0 && node.kind !== "agent") {
+        add(
+          `${nodePath}/outputs/${portName}/required_broker_actions`,
+          "DAG_SEMANTIC_BROKER_REQUIREMENT_AGENT_ONLY",
+          "required broker actions are supported only on agent output ports",
+        );
+      }
+      for (let index = 0; node.kind === "agent" && index < requirements.length; index++) {
+        const requirement = requirements[index];
+        const declared = (node.credentials ?? []).some((binding) => (
+          binding.credential_ref === requirement.credential_ref
+          && binding.inject.mode === "manager_broker"
+          && binding.inject.broker === requirement.broker
+          && binding.inject.allowed_actions.includes(requirement.action)
+        ));
+        if (!declared) {
+          add(
+            `${nodePath}/outputs/${portName}/required_broker_actions/${index}`,
+            "DAG_SEMANTIC_UNDECLARED_BROKER_REQUIREMENT",
+            "required broker action must match a manager_broker credential and allowed action declared on the same node",
+          );
+        }
+      }
+      if (workspaceFiles.length > 0 && node.kind !== "agent") {
+        add(
+          `${nodePath}/outputs/${portName}/required_workspace_files`,
+          "DAG_SEMANTIC_WORKSPACE_FILE_REQUIREMENT_AGENT_ONLY",
+          "required workspace files are supported only on agent output ports",
+        );
+      }
+      if (workspaceFiles.length > 0 && node.kind === "agent" && (node.workspace_access?.writable_paths.length ?? 0) !== 1) {
+        add(
+          `${nodePath}/outputs/${portName}/required_workspace_files`,
+          "DAG_SEMANTIC_WORKSPACE_FILE_WRITE_BOUNDARY_REQUIRED",
+          "required workspace files need exactly one writable workspace path on the producing agent",
+        );
+      }
+      for (let index = 0; index < workspaceFiles.length; index++) {
+        const requirement = workspaceFiles[index];
+        if (!contracts[requirement.contract]) {
+          add(
+            `${nodePath}/outputs/${portName}/required_workspace_files/${index}/contract`,
+            "DAG_SEMANTIC_UNKNOWN_CONTRACT",
+            `unknown workspace file contract '${requirement.contract}'`,
+          );
+        }
+      }
+    }
     if (node.kind === "agent" && !agents[node.agent]) {
       add(`${nodePath}/agent`, "DAG_SEMANTIC_UNKNOWN_AGENT", `unknown agent '${node.agent}'`);
     }
     if (node.kind === "agent") {
+      validateWorkspacePolicyPaths(node.workspace_access, `${nodePath}/workspace_access`);
+      if (
+        node.workspace_access?.git_metadata_read_only === true
+        && (
+          node.workspace_access.writable_paths.length !== 1
+          || node.workspace_access.writable_paths[0] === "."
+        )
+      ) {
+        add(
+          `${nodePath}/workspace_access/git_metadata_read_only`,
+          "DAG_SEMANTIC_GIT_METADATA_WRITE_BOUNDARY_REQUIRED",
+          "read-only Git metadata requires exactly one non-root writable workspace path",
+        );
+      }
+      if (node.builtin_tool_policy !== undefined && node.allowed_builtin_tools !== undefined) {
+        add(
+          `${nodePath}/builtin_tool_policy`,
+          "DAG_SEMANTIC_BUILTIN_TOOL_POLICY_CONFLICT",
+          "builtin_tool_policy is mutually exclusive with allowed_builtin_tools",
+        );
+      }
+      if (node.builtin_tool_policy === "backend_native" && !node.workspace_access) {
+        add(
+          `${nodePath}/workspace_access`,
+          "DAG_SEMANTIC_BACKEND_NATIVE_WORKSPACE_REQUIRED",
+          "backend_native agents must declare workspace_access",
+        );
+      }
+      if (
+        node.codex_sandbox === "danger-full-access"
+        && (node.workspace_access?.writable_paths.length ?? 0) === 0
+      ) {
+        add(
+          `${nodePath}/codex_sandbox`,
+          "DAG_SEMANTIC_CODEX_SANDBOX_WRITABLE_WORKSPACE_REQUIRED",
+          "danger-full-access Codex agents must declare at least one writable workspace path",
+        );
+      }
       const advisorIds = new Set<string>();
       for (let index = 0; index < (node.advisors ?? []).length; index++) {
         const advisor = node.advisors![index];
@@ -463,6 +653,31 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
         if (!outputs[port]) add(`${nodePath}/config/${key}`, "DAG_SEMANTIC_UNKNOWN_PORT", `unknown output port '${port}'`);
       }
     }
+    if (node.kind === "broker") {
+      const inputs = nodePorts(node, "inputs");
+      if (node.config.input && !inputs[node.config.input]) {
+        add(`${nodePath}/config/input`, "DAG_SEMANTIC_UNKNOWN_PORT", `unknown input port '${node.config.input}'`);
+      }
+      if (node.config.input_field && node.config.input_map) {
+        add(
+          `${nodePath}/config`,
+          "DAG_SEMANTIC_AMBIGUOUS_BROKER_INPUT",
+          "broker input_field and input_map are mutually exclusive",
+        );
+      }
+      const outputs = nodePorts(node, "outputs");
+      for (const key of ["result_port", "error_port"] as const) {
+        const port = node.config[key];
+        if (!outputs[port]) add(`${nodePath}/config/${key}`, "DAG_SEMANTIC_UNKNOWN_PORT", `unknown output port '${port}'`);
+      }
+      if (node.config.result_port === node.config.error_port) {
+        add(
+          `${nodePath}/config/error_port`,
+          "DAG_SEMANTIC_BROKER_PORT_CONFLICT",
+          "broker result_port and error_port must differ",
+        );
+      }
+    }
     if (node.kind === "approval") {
       const outputs = nodePorts(node, "outputs");
       if (node.config.authorized_actors.includes(node.config.proposer_actor)) {
@@ -523,6 +738,134 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
       }
       if (node.config.max_parallelism > node.config.max_items) {
         add(`${nodePath}/config/max_parallelism`, "DAG_SEMANTIC_INVALID_PARALLELISM", "max_parallelism cannot exceed max_items");
+      }
+      const workerPolicy = node.config.worker_policy;
+      validateWorkspacePolicyPaths(
+        workerPolicy?.workspace_access,
+        `${nodePath}/config/worker_policy/workspace_access`,
+      );
+      const resultBrokerRequirements = node.config.result_required_broker_actions ?? [];
+      const resultWorkspaceFiles = node.config.result_required_workspace_files ?? [];
+      if (
+        (resultBrokerRequirements.length > 0 || resultWorkspaceFiles.length > 0)
+        && !node.config.result_contract
+      ) {
+        add(
+          `${nodePath}/config/result_contract`,
+          "DAG_SEMANTIC_FANOUT_RESULT_CONTRACT_REQUIRED",
+          "fanout result evidence requirements require result_contract",
+        );
+      }
+      if (
+        workerPolicy?.workspace_access?.git_metadata_read_only === true
+        && (
+          workerPolicy.workspace_access.writable_paths.length !== 1
+          || workerPolicy.workspace_access.writable_paths[0] === "."
+        )
+      ) {
+        add(
+          `${nodePath}/config/worker_policy/workspace_access/git_metadata_read_only`,
+          "DAG_SEMANTIC_GIT_METADATA_WRITE_BOUNDARY_REQUIRED",
+          "read-only Git metadata requires exactly one non-root fanout worker writable path",
+        );
+      }
+      if (workerPolicy?.builtin_tool_policy !== undefined && workerPolicy.allowed_builtin_tools !== undefined) {
+        add(
+          `${nodePath}/config/worker_policy/builtin_tool_policy`,
+          "DAG_SEMANTIC_BUILTIN_TOOL_POLICY_CONFLICT",
+          "fanout worker_policy builtin_tool_policy is mutually exclusive with allowed_builtin_tools",
+        );
+      }
+      if (workerPolicy?.builtin_tool_policy === "backend_native" && !workerPolicy.workspace_access) {
+        add(
+          `${nodePath}/config/worker_policy/workspace_access`,
+          "DAG_SEMANTIC_BACKEND_NATIVE_WORKSPACE_REQUIRED",
+          "backend_native fanout workers must declare workspace_access",
+        );
+      }
+      if (
+        workerPolicy?.codex_sandbox === "danger-full-access"
+        && (workerPolicy.workspace_access?.writable_paths.length ?? 0) === 0
+      ) {
+        add(
+          `${nodePath}/config/worker_policy/codex_sandbox`,
+          "DAG_SEMANTIC_CODEX_SANDBOX_WRITABLE_WORKSPACE_REQUIRED",
+          "danger-full-access Codex fanout workers must declare at least one writable workspace path",
+        );
+      }
+      if (workerPolicy?.allowed_dag_tools !== undefined && !workerPolicy.allowed_dag_tools.includes("handoff")) {
+        add(
+          `${nodePath}/config/worker_policy/allowed_dag_tools`,
+          "DAG_SEMANTIC_HANDOFF_TOOL_REQUIRED",
+          "fanout worker_policy must allow the handoff DAG tool",
+        );
+      }
+      if (
+        (workerPolicy?.credentials ?? []).some((binding) => binding.inject.mode === "manager_broker")
+        && !workerPolicy?.allowed_dag_tools?.includes("credential_broker_call")
+      ) {
+        add(
+          `${nodePath}/config/worker_policy/allowed_dag_tools`,
+          "DAG_SEMANTIC_CREDENTIAL_BROKER_TOOL_REQUIRED",
+          "fanout workers with manager_broker credentials must allow credential_broker_call",
+        );
+      }
+      for (let index = 0; index < resultBrokerRequirements.length; index++) {
+        const requirement = resultBrokerRequirements[index];
+        const declared = (workerPolicy?.credentials ?? []).some((binding) => (
+          binding.credential_ref === requirement.credential_ref
+          && binding.inject.mode === "manager_broker"
+          && binding.inject.broker === requirement.broker
+          && binding.inject.allowed_actions.includes(requirement.action)
+        ));
+        if (!declared) {
+          add(
+            `${nodePath}/config/result_required_broker_actions/${index}`,
+            "DAG_SEMANTIC_UNDECLARED_BROKER_REQUIREMENT",
+            "required fanout result broker action must match a manager_broker credential and allowed action declared in worker_policy",
+          );
+        }
+      }
+      if (resultWorkspaceFiles.length > 0 && (workerPolicy?.workspace_access?.writable_paths.length ?? 0) !== 1) {
+        add(
+          `${nodePath}/config/result_required_workspace_files`,
+          "DAG_SEMANTIC_WORKSPACE_FILE_WRITE_BOUNDARY_REQUIRED",
+          "required fanout result workspace files need exactly one worker writable workspace path",
+        );
+      }
+      for (let index = 0; index < resultWorkspaceFiles.length; index++) {
+        const requirement = resultWorkspaceFiles[index];
+        if (!contracts[requirement.contract]) {
+          add(
+            `${nodePath}/config/result_required_workspace_files/${index}/contract`,
+            "DAG_SEMANTIC_UNKNOWN_CONTRACT",
+            `unknown workspace file contract '${requirement.contract}'`,
+          );
+        }
+      }
+      const writablePaths = workerPolicy?.workspace_access?.writable_paths ?? [];
+      const declaresIsolatedWorkspace = writablePaths.length === 1
+        && writablePaths[0] === "{{fanout_workspace}}";
+      if (node.config.workspace_strategy === "isolated_git_worktree" && !declaresIsolatedWorkspace) {
+        add(
+          `${nodePath}/config/worker_policy/workspace_access/writable_paths`,
+          "DAG_SEMANTIC_FANOUT_WORKSPACE_REQUIRED",
+          "isolated_git_worktree fanout must declare exactly ['{{fanout_workspace}}'] as its writable path",
+        );
+      }
+      if (node.config.workspace_strategy !== "isolated_git_worktree" && writablePaths.includes("{{fanout_workspace}}")) {
+        add(
+          `${nodePath}/config/worker_policy/workspace_access/writable_paths`,
+          "DAG_SEMANTIC_FANOUT_WORKSPACE_UNAVAILABLE",
+          "{{fanout_workspace}} is only available with isolated_git_worktree fanout",
+        );
+      }
+      if (node.config.result_git_commit && node.config.workspace_strategy !== "isolated_git_worktree") {
+        add(
+          `${nodePath}/config/result_git_commit`,
+          "DAG_SEMANTIC_FANOUT_GIT_RESULT_REQUIRES_WORKTREE",
+          "result_git_commit validation requires isolated_git_worktree fanout",
+        );
       }
     }
     if (node.kind === "await_command") {
@@ -748,16 +1091,21 @@ function canonicalNode(id: string, node: WorkflowSpecV1Node): CanonicalNode {
     const config = {
       ...(node.advisors ? { advisors: node.advisors } : {}),
       ...(node.workspace_access ? { workspace_access: node.workspace_access } : {}),
+      ...(node.builtin_tool_policy !== undefined
+        ? { builtin_tool_policy: node.builtin_tool_policy }
+        : {}),
       ...(node.allowed_builtin_tools !== undefined
         ? { allowed_builtin_tools: [...node.allowed_builtin_tools].sort() }
         : {}),
       ...(node.max_builtin_tool_calls !== undefined
         ? { max_builtin_tool_calls: node.max_builtin_tool_calls }
         : {}),
+      ...(node.codex_sandbox !== undefined ? { codex_sandbox: node.codex_sandbox } : {}),
       ...(node.allowed_dag_tools !== undefined
         ? { allowed_dag_tools: [...node.allowed_dag_tools].sort() }
         : {}),
       ...(node.credentials !== undefined ? { credentials: node.credentials } : {}),
+      ...(node.session_scope !== undefined ? { session_scope: node.session_scope } : {}),
     };
     return {
       ...base,
@@ -886,6 +1234,7 @@ function compileV1(workflow: WorkflowSpecV1): CanonicalWorkflowIR {
     ...(workflow.spec.description ? { description: workflow.spec.description } : {}),
     labels: deepSort(workflow.metadata.labels ?? {}) as Record<string, string>,
     annotations: deepSort(workflow.metadata.annotations ?? {}) as Record<string, string>,
+    capabilities: [...(workflow.spec.capabilities ?? [])].sort(),
     workspace: { mode: workflow.spec.workspace?.mode ?? "isolated" },
     contracts: deepSort(workflow.spec.contracts ?? {}) as Record<string, unknown>,
     artifacts: [...(workflow.spec.artifacts ?? [])]
@@ -1028,6 +1377,7 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
     ...(parsed.meta.description ? { description: parsed.meta.description } : {}),
     labels: {},
     annotations: {},
+    capabilities: [],
     workspace: { mode: "isolated" },
     contracts: {},
     artifacts: [],
@@ -1213,6 +1563,7 @@ export function workflowSchemaResponse(): {
 function runtimeNodeType(kind: CanonicalNode["kind"]): string {
   if (kind === "await_command") return "await_command_gateway";
   if (kind === "command") return "command_gateway";
+  if (kind === "broker") return "broker_gateway";
   if (kind === "approval") return "approval_gateway";
   if (kind === "state") return "state_gateway";
   if (kind === "fanout") return "fanout_gateway";
@@ -1237,7 +1588,7 @@ function runtimeGatewayConfig(node: CanonicalNode): Record<string, unknown> | un
   if (node.kind === "join") return { type: "join", ...node.config };
   if (node.kind === "foreach") return { type: "loop", ...node.config };
   if (node.kind === "while") return { type: "while", ...node.config };
-  if (node.kind === "command" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout" || node.kind === "await_command") {
+  if (node.kind === "command" || node.kind === "broker" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout" || node.kind === "await_command") {
     return { type: node.kind, ...node.config };
   }
   return undefined;
@@ -1306,6 +1657,7 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
       to_node: terminal ? "" : edge.to.node,
       to_port: terminal ? "" : edge.to.port,
       condition: edge.condition,
+      ...(edge.kind === "feedback" ? { label: "feedback" } : {}),
       ...(edge.kind === "feedback"
         ? { retry_policy: { max_retries: edge.max_traversals ?? 1 } }
         : edge.retry.max_retries > 0
@@ -1338,6 +1690,12 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
   const graphNodes: DAGGraphNode[] = executableNodes.map((node) => {
     const inputContracts = Object.fromEntries(node.inputs.filter((port) => port.contract).map((port) => [port.name, port.contract!]));
     const outputContracts = Object.fromEntries(node.outputs.filter((port) => port.contract).map((port) => [port.name, port.contract!]));
+    const outputBrokerRequirements = Object.fromEntries(node.outputs
+      .filter((port) => port.required_broker_actions?.length)
+      .map((port) => [port.name, port.required_broker_actions!]));
+    const outputWorkspaceFileRequirements = Object.fromEntries(node.outputs
+      .filter((port) => port.required_workspace_files?.length)
+      .map((port) => [port.name, port.required_workspace_files!]));
     return {
       node_id: node.id,
       name: node.id,
@@ -1351,8 +1709,26 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
         workflow_spec_v1: {
           input_contracts: inputContracts,
           output_contracts: outputContracts,
+          output_broker_requirements: outputBrokerRequirements,
+          output_workspace_file_requirements: outputWorkspaceFileRequirements,
+          ...(canonical.capabilities.length > 0
+            ? { capabilities: canonical.capabilities }
+            : {}),
         },
         ...(node.kind === "agent" && node.config ? { agent_runtime: node.config } : {}),
+        ...(node.kind === "broker" && node.config ? {
+          agent_runtime: {
+            credentials: [{
+              credential_ref: node.config.credential_ref,
+              purpose: node.config.purpose,
+              inject: {
+                mode: "manager_broker",
+                broker: node.config.broker,
+                allowed_actions: [node.config.action],
+              },
+            }],
+          },
+        } : {}),
       },
     };
   });
@@ -1374,11 +1750,18 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
       workspace: canonical.workspace,
       limits: {
         max_nodes: canonical.policies.max_nodes,
+        max_parallelism: canonical.policies.max_parallelism,
         max_dispatches: canonical.policies.max_dispatches,
         max_handoffs: canonical.policies.max_handoffs,
         max_corrections_per_node: canonical.policies.max_corrections_per_node,
         max_edge_traversals: canonical.policies.max_edge_traversals,
         max_tool_calls_per_node: canonical.policies.max_tool_calls_per_node,
+        // Runtime enforcement gate: the runtime_evidence bridge reads this
+        // exact workflow-level capability before persisting or injecting
+        // Manager-owned review evidence (see homerail_protocol pr-review).
+        ...(canonical.capabilities.length > 0
+          ? { capabilities: canonical.capabilities }
+          : {}),
       },
       agents,
       pattern: canonical.pattern,
@@ -1398,11 +1781,31 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
   };
 }
 
-function authoringPorts(ports: CanonicalPort[]): Record<string, { contract?: string; description?: string }> | undefined {
+function authoringPorts(ports: CanonicalPort[]): Record<string, {
+  contract?: string;
+  description?: string;
+  required_broker_actions?: Array<{
+    credential_ref: string;
+    broker: string;
+    action: string;
+    when?: { field: string; equals: unknown };
+    result_binding?: { result_field: string; content_field: string };
+    result_digest_binding?: { result_field: string; content_field: string };
+  }>;
+  required_workspace_files?: Array<{
+    path_field: string;
+    sha256_field: string;
+    contract: string;
+    max_bytes?: number;
+    bindings?: Array<{ file_field: string; content_field: string }>;
+  }>;
+}> | undefined {
   if (ports.length === 0) return undefined;
   return Object.fromEntries(ports.map((port) => [port.name, {
     ...(port.contract ? { contract: port.contract } : {}),
     ...(port.description ? { description: port.description } : {}),
+    ...(port.required_broker_actions ? { required_broker_actions: port.required_broker_actions } : {}),
+    ...(port.required_workspace_files ? { required_workspace_files: port.required_workspace_files } : {}),
   }]));
 }
 
@@ -1430,14 +1833,26 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
       agent: node.agent,
       ...(Array.isArray(node.config?.advisors) ? { advisors: node.config.advisors } : {}),
       ...(node.config?.workspace_access ? { workspace_access: node.config.workspace_access } : {}),
+      ...(node.config?.builtin_tool_policy === "backend_native"
+        ? { builtin_tool_policy: node.config.builtin_tool_policy }
+        : {}),
       ...(Array.isArray(node.config?.allowed_builtin_tools)
         ? { allowed_builtin_tools: node.config.allowed_builtin_tools }
         : {}),
       ...(typeof node.config?.max_builtin_tool_calls === "number"
         ? { max_builtin_tool_calls: node.config.max_builtin_tool_calls }
         : {}),
+      ...(typeof node.config?.codex_sandbox === "string"
+        ? { codex_sandbox: node.config.codex_sandbox }
+        : {}),
       ...(Array.isArray(node.config?.allowed_dag_tools)
         ? { allowed_dag_tools: node.config.allowed_dag_tools }
+        : {}),
+      ...(typeof node.config?.session_scope === "string"
+        ? { session_scope: node.config.session_scope }
+        : {}),
+      ...(Array.isArray(node.config?.credentials)
+        ? { credentials: node.config.credentials }
         : {}),
     };
   }
@@ -1468,7 +1883,7 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
       },
     };
   }
-  if (node.kind === "command" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout" || node.kind === "await_command") {
+  if (node.kind === "command" || node.kind === "broker" || node.kind === "approval" || node.kind === "state" || node.kind === "fanout" || node.kind === "await_command") {
     return { ...base, config };
   }
   if (node.kind === "foreach") {
@@ -1510,6 +1925,7 @@ function authoringNode(node: CanonicalNode, canonical: CanonicalWorkflowIR): Rec
       ...(config.field ? { field: config.field } : {}),
       operator: configString(config, "operator", "eq"),
       ...(config.value !== undefined ? { value: config.value } : {}),
+      ...(config.unwrap_single_join_value === true ? { unwrap_single_join_value: true } : {}),
       continue_port: continuePort,
       done_port: donePort,
       exhausted_port: exhaustedPort,
@@ -1550,6 +1966,7 @@ export function canonicalWorkflowToV1Document(canonical: CanonicalWorkflowIR): R
     spec: {
       ...(canonical.description ? { description: canonical.description } : {}),
       workspace: canonical.workspace,
+      ...(canonical.capabilities.length > 0 ? { capabilities: canonical.capabilities } : {}),
       ...(Object.keys(canonical.contracts).length > 0 ? { contracts: canonical.contracts } : {}),
       ...((canonical.artifacts ?? []).length > 0 ? {
         artifacts: canonical.artifacts.map((artifact) => !("archive" in artifact) ? {

@@ -9,6 +9,7 @@ import {
   MANAGER_AGENT_SKILL_VIEW_PRESENT_TOOL_NAME,
   MANAGER_AGENT_SKILL_VIEW_RENDER_TOOL_NAME,
 } from "./manager-agent-skill-views.js";
+import { homeRailUiToolContract } from "./browser-tools.js";
 
 export const MANAGER_AGENT_WIDGET_FILE_TYPES = [
   "memo",
@@ -74,6 +75,12 @@ export interface ManagerAgentDagActorCommandInput {
 }
 
 export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
+  "ui_get_state",
+  "ui_open_surface",
+  "ui_close_surface",
+  "ui_describe_widget",
+  "ui_focus_widget",
+  "ui_set_widget_expanded",
   "list_projects",
   "list_skills",
   "read_skill",
@@ -92,6 +99,7 @@ export const MANAGER_AGENT_COMMON_TOOL_NAMES = [
   "create_change",
   "run_pr_review",
   "run_pr_closeout",
+  "stage_run_input",
   "create_and_run",
   "start_supervised_dag",
   "list_dag_actors",
@@ -817,6 +825,36 @@ const updateVoiceSurfaceSchema = {
 };
 
 export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDefinition> = {
+  ui_get_state: {
+    name: "ui_get_state",
+    description: homeRailUiToolContract("ui_get_state")!.description,
+    input_schema: homeRailUiToolContract("ui_get_state")!.input_schema,
+  },
+  ui_open_surface: {
+    name: "ui_open_surface",
+    description: homeRailUiToolContract("ui_open_surface")!.description,
+    input_schema: homeRailUiToolContract("ui_open_surface")!.input_schema,
+  },
+  ui_close_surface: {
+    name: "ui_close_surface",
+    description: homeRailUiToolContract("ui_close_surface")!.description,
+    input_schema: homeRailUiToolContract("ui_close_surface")!.input_schema,
+  },
+  ui_describe_widget: {
+    name: "ui_describe_widget",
+    description: homeRailUiToolContract("ui_describe_widget")!.description,
+    input_schema: homeRailUiToolContract("ui_describe_widget")!.input_schema,
+  },
+  ui_focus_widget: {
+    name: "ui_focus_widget",
+    description: homeRailUiToolContract("ui_focus_widget")!.description,
+    input_schema: homeRailUiToolContract("ui_focus_widget")!.input_schema,
+  },
+  ui_set_widget_expanded: {
+    name: "ui_set_widget_expanded",
+    description: homeRailUiToolContract("ui_set_widget_expanded")!.description,
+    input_schema: homeRailUiToolContract("ui_set_widget_expanded")!.input_schema,
+  },
   list_projects: {
     name: "list_projects",
     description: "List projects known by the HomeRail Manager.",
@@ -987,6 +1025,21 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
       additionalProperties: false,
     },
   },
+  stage_run_input: {
+    name: "stage_run_input",
+    description: "Stage an immutable, content-addressed local task document or structured input before starting a DAG. The returned artifact_id must be bound through create_and_run input_artifacts.",
+    input_schema: {
+      type: "object",
+      properties: {
+        scope_id: { type: "string", minLength: 1, maxLength: 128 },
+        name: { type: "string", minLength: 1, maxLength: 128 },
+        media_type: { type: "string", enum: ["text/markdown", "text/plain", "application/json"] },
+        content: { type: "string", minLength: 1, maxLength: 1048576 },
+      },
+      required: ["name", "media_type", "content"],
+      additionalProperties: false,
+    },
+  },
   create_and_run: {
     name: "create_and_run",
     description: "Create and immediately invoke a DAG run from a DB workflow_id or repo-local YAML path.",
@@ -999,6 +1052,22 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
         profile: { type: "string" },
         prompt: { type: "string" },
         runId: { type: "string" },
+        input_scope: { type: "string", minLength: 1, maxLength: 128 },
+        input_artifacts: {
+          type: "array",
+          minItems: 1,
+          maxItems: 16,
+          items: {
+            type: "object",
+            properties: {
+              artifact_id: { type: "string" },
+              logical_name: { type: "string" },
+              mount_path: { type: "string" },
+            },
+            required: ["artifact_id", "logical_name", "mount_path"],
+            additionalProperties: false,
+          },
+        },
       },
       anyOf: [
         { required: ["workflow_id"] },
@@ -1020,6 +1089,22 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
         profile: { type: "string" },
         prompt: { type: "string" },
         runId: { type: "string" },
+        input_scope: { type: "string", minLength: 1, maxLength: 128 },
+        input_artifacts: {
+          type: "array",
+          minItems: 1,
+          maxItems: 16,
+          items: {
+            type: "object",
+            properties: {
+              artifact_id: { type: "string" },
+              logical_name: { type: "string" },
+              mount_path: { type: "string" },
+            },
+            required: ["artifact_id", "logical_name", "mount_path"],
+            additionalProperties: false,
+          },
+        },
       },
       anyOf: [
         { required: ["workflow_id"] },
@@ -1359,7 +1444,7 @@ export const MANAGER_AGENT_TOOL_SPECS: Record<ManagerAgentToolName, AgentToolDef
   },
   show_dynamic_widget: {
     name: "show_dynamic_widget",
-    description: "显示 Core 兼容动态小组件，例如 html、metric_strip、timeline、dag_flow、chart 或 slide_deck。插件拥有的场景必须使用当前 turn Tool catalog 中的插件 Tool。",
+    description: "显示 Core 兼容动态小组件，例如 html、metric_strip、timeline、dag_flow、dag_explorer、chart 或 slide_deck。汇报 DAG 运行结果或节点失败时优先用 dag_explorer：data 里放 { run_id, focus_node_id? }，面板自带每种节点的默认结果渲染，比生成式 UI 更省 token。插件拥有的场景必须使用当前 turn Tool catalog 中的插件 Tool。",
     input_schema: widgetSchema,
   },
   remove_widget: {

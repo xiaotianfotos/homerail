@@ -76,8 +76,10 @@ describe("multi-Actor live report asset", () => {
       terminal_nodes: ACTORS.map((actor) => `${actor}_failed`).sort(),
     });
     expect(source).not.toMatch(/^\s*(?:provider|model|llm_setting_id|api_key|base_url):/m);
+    expect(source).not.toMatch(/\bmax_[a-z_]*tool_calls[a-z_]*:/);
 
     const canonical = result.canonical!;
+    expect(canonical.policies.max_tool_calls_per_node).toBe(0);
     for (const [index, actor] of ACTORS.entries()) {
       expect(canonical.agents[actor]).toMatchObject({
         skills: ["com.homerail.core:voice-generative-ui"],

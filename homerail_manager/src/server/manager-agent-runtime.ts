@@ -31,6 +31,8 @@ import {
   type ManagerAgentRuntimePlacement,
   type ManagerAgentOutcomeCapability,
   type ManagerAgentOutcomeContract,
+  type BrowserRendererConnectionRefV1,
+  type BrowserToolsTurnTransportV1,
   type HomerailPluginTurnContextV1,
   type ManagerAgentSkillViewTemplateV1,
 } from "homerail-protocol";
@@ -66,6 +68,8 @@ export interface RunManagerAgentTurnInput {
   project_id?: string | null;
   session_id?: string;
   voice_session_id?: string;
+  browser_tools_transport?: BrowserToolsTurnTransportV1;
+  browser_tools_target?: BrowserRendererConnectionRefV1;
   continue_chat?: boolean;
   response_mode?: ManagerAgentResponseMode;
   /** Trusted session rollout snapshot resolved by Manager, never by a Worker. */
@@ -297,6 +301,8 @@ function hostShellTurnPayload(input: RunManagerAgentTurnInput, resolved: {
     project_id: input.project_id,
     session_id: input.session_id,
     voice_session_id: input.voice_session_id,
+    browser_tools_transport: input.browser_tools_transport ?? "none",
+    browser_tools_target: input.browser_tools_target,
     continue_chat: input.continue_chat,
     response_mode: input.response_mode,
     generative_ui_mode: input.generative_ui_mode,
@@ -341,6 +347,8 @@ async function runManagerAgentTurnOnce(
         project_id: input.project_id ?? undefined,
         session_id: input.session_id,
         voice_session_id: input.voice_session_id,
+        browser_tools_transport: input.browser_tools_transport ?? "none",
+        browser_tools_target: input.browser_tools_target,
         continue_chat: input.continue_chat,
         history: input.history,
         canvas_context: input.canvas_context,
@@ -566,6 +574,8 @@ export async function* runManagerAgentTurnStream(
       project_id: input.project_id ?? undefined,
       session_id: input.session_id,
       voice_session_id: input.voice_session_id,
+      browser_tools_transport: input.browser_tools_transport ?? "none",
+      browser_tools_target: input.browser_tools_target,
       continue_chat: input.continue_chat,
       history: input.history,
       canvas_context: input.canvas_context,

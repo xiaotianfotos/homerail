@@ -87,6 +87,9 @@
     "composerPlaceholder": "透過目前 Live Voice 工作階段傳送文字…",
     "textUnavailable": "Live Voice 正在重新連線，請等待恢復聆聽後再傳送文字。"
   },
+  "immersive": {
+    "exit": "退出沉浸"
+  },
   "task": {
     "title": "任務",
     "prompt": "說出一個需要整理成任務草稿的需求。",

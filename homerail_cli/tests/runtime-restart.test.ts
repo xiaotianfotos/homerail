@@ -107,6 +107,7 @@ describe("runtime restart --manager-only", () => {
       expect(output).toHaveLength(1);
       const status = JSON.parse(output[0]) as {
         managerPid: number;
+        managerRuntimeRoot: string;
         managerPidRunning: boolean;
         nodePid: number;
         nodePidRunning: boolean;
@@ -116,6 +117,7 @@ describe("runtime restart --manager-only", () => {
       children.push({ pid: status.managerPid } as ChildProcess);
 
       expect(status.managerPid).not.toBe(oldManagerPid);
+      expect(status.managerRuntimeRoot).toBe(repoRoot);
       expect(status.managerPidRunning).toBe(true);
       expect(status.nodePid).toBe(nodePid);
       expect(status.nodePidRunning).toBe(true);

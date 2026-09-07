@@ -532,22 +532,25 @@ defineExpose({
 
 <template>
   <aside
-    class="voice-left-rail flex h-full min-h-0 w-[292px] shrink-0 flex-col border-r border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-4 py-5"
+    class="voice-left-rail flex h-full min-h-0 w-full shrink-0 flex-col border-r border-[var(--hr-border)] bg-[var(--hr-surface-1)] px-4 py-5"
   >
-    <div class="mb-4 flex items-center justify-between">
-      <div class="min-w-0">
+    <div class="voice-left-rail__header mb-4 flex items-center justify-between">
+      <div class="voice-left-rail__title min-w-0">
         <div class="truncate text-xl font-semibold text-[var(--hr-text-1)]">{{ t('voice.sidebar.workspace') }}</div>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="voice-left-rail__header-actions flex items-center gap-2">
         <button
-          class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
+          type="button"
+          class="voice-left-rail__header-button flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full border border-[var(--hr-border)] text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
           :title="t('voice.sidebar.collapse')"
           @click="emit('collapse')"
         >
           <PanelLeftClose class="h-4 w-4" />
         </button>
         <button
-          class="rounded-full border border-[var(--hr-border)] p-2 text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
+          type="button"
+          data-testid="voice-sidebar-add-directory"
+          class="voice-left-rail__header-button flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full border border-[var(--hr-border)] text-[var(--hr-text-2)] hover:bg-[var(--hr-surface-2)] hover:text-[var(--hr-text-1)]"
           :title="t('voice.sidebar.addDirectory')"
           @click="createOpen = true"
         >

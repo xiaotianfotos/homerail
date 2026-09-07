@@ -749,9 +749,11 @@ describe("round-aware terminal websocket transport", () => {
         expect(listDagActivityEvents({ run_id: runId }).events).toEqual([]);
         expect(JSON.stringify(loadSessionTranscript(sessionId))).not.toContain("sk-websocket-secret");
         expect(JSON.stringify(warn.mock.calls)).not.toContain("sk-websocket-secret");
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining(
-          "Actor surface patch identity does not match the transport stream context",
-        ));
+        await vi.waitFor(() => {
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining(
+            "Actor surface patch identity does not match the transport stream context",
+          ));
+        }, { timeout: 1_000 });
       } finally {
         warn.mockRestore();
         ws.terminate();

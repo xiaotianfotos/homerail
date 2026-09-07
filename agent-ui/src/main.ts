@@ -10,6 +10,7 @@ import App from '@/App.vue'
 import router from '@/router'
 import { i18n } from '@/plugins/i18n'
 import { applyInitialAppearance } from '@/appearance/appearance-registry'
+import { installTouchActivation } from '@/input/touch-activation'
 
 import './styles/hr-theme.css'
 import './styles/tailwind.css'
@@ -23,6 +24,11 @@ import '@vue-flow/core/dist/style.css';
 // from the same semantic token set. index.html performs an even earlier
 // pre-paint pass for the built-in appearances.
 applyInitialAppearance()
+
+const removeTouchActivation = installTouchActivation(document)
+if (import.meta.hot) {
+  import.meta.hot.dispose(removeTouchActivation)
+}
 
 const app = createApp(App)
 const pinia = createPinia()

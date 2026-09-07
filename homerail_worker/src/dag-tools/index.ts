@@ -13,6 +13,8 @@ import type {
   DagWorkerSkillVisualDataContractV1,
   DagWorkspaceAccess,
   Edge,
+  ReviewContractStage,
+  ReviewToolArgumentParseState,
 } from "homerail-protocol";
 import type { DagToolDefinition } from "../agent/types.js";
 import { createHandoffTool } from "./handoff.js";
@@ -53,6 +55,7 @@ export interface DagToolsOptions {
     Extract<DagCredentialProjection, { mode: "manager_broker" }>
   >;
   credentialBrokerCaller?: CredentialBrokerCaller;
+  abortSignal?: AbortSignal;
 }
 
 /** Mutable state shared across all DAG tools for a single prompt run. */
@@ -75,11 +78,18 @@ export interface DagToolsState {
   commandId?: string;
   graphNodes: string[];
   availablePorts: string[];
+  /** Manager-projected exact output contracts, keyed by declared port. */
+  outputContracts?: DagNodeConfig["output_contracts"];
   outgoingEdges: Edge[];
   incomingEdges: Edge[];
   /** Whether handoff has been called this turn. */
   yielded: boolean;
   handoffData: unknown | null;
+  /** Bounded provider-neutral state of the last handoff tool-argument parse. */
+  toolArgumentParseState: ReviewToolArgumentParseState;
+  toolArgumentParseError?: string;
+  /** Bounded provider-neutral contract stage reached by this turn. */
+  contractStage: ReviewContractStage;
   /** Incoming message inbox. */
   inbox: unknown[];
   /** Waiters for receive_message (nodeId → callback). */
@@ -143,10 +153,13 @@ export function createDagToolsState(
     commandId: config.command_id,
     graphNodes: config.graph_nodes,
     availablePorts: [...ports].sort(),
+    outputContracts: config.output_contracts,
     outgoingEdges: config.outgoing_edges,
     incomingEdges: config.incoming_edges,
     yielded: false,
     handoffData: null,
+    toolArgumentParseState: "unknown",
+    contractStage: "unknown",
     inbox: [],
     waiters: new Map(),
     wsSend,
@@ -176,6 +189,7 @@ export function createDagTools(state: DagToolsState, options: DagToolsOptions = 
       state,
       options.credentialBrokerBindings,
       options.credentialBrokerCaller,
+      options.abortSignal,
     ));
   }
   if (options.surfacePatchEmitter) {

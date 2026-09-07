@@ -1,13 +1,18 @@
 import {
+  findActiveCodexCompatibleSetting,
+  findActiveDeepSeekHarnessCompatibleSetting,
   findActiveClaudeSdkCompatibleSetting,
   findActiveLlmRuntimeSetting,
   findActiveSetting,
   getProvider,
   getSetting,
   isVoiceServiceSetting,
+  resolveCodexResponsesBaseUrlForSetting,
+  resolveDeepSeekHarnessBaseUrlForSetting,
   resolveClaudeSdkBaseUrlForSetting,
   resolveClaudeSdkAuthModeForSetting,
   type LLMSetting,
+  type ReasoningEffortMap,
 } from "../persistence/llm-settings.js";
 import {
   canonicalModelNameForEndpoint,
@@ -18,6 +23,9 @@ import {
   KIMI_PROVIDER_ID,
 } from "../persistence/provider-catalog.js";
 import {
+  CODEX_RESPONSES_PROTOCOL,
+  codexResponsesModelSupport,
+  resolveCodexProviderModelProfile,
   DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
   ManagerAgentRuntimePlacement,
   isDisabledDirectLlmAgentType,
@@ -38,6 +46,8 @@ export interface AgentRuntimeResolutionInput {
   settingId?: string;
   harness?: ManagerAgentHarness | string | null;
   agentType?: string | null;
+  reasoningEffort?: string | null;
+  serviceTier?: string | null;
 }
 
 export interface AgentRuntimeResolution {
@@ -52,10 +62,13 @@ export interface AgentRuntimeResolution {
   agent_type: string;
   runtime_placement: ManagerAgentRuntimePlacementValue;
   llm_setting_id?: string;
+  reasoning_effort?: string;
+  reasoning_effort_map?: ReasoningEffortMap | false;
+  service_tier?: string | null;
 }
 
 function runtimePlacementForAgentType(agentType: string, surface: AgentRuntimeSurface): ManagerAgentRuntimePlacementValue {
-  if (agentType === managerAgentHarnessDefinition("codex_appserver").agent_type) {
+  if (agentType === managerAgentHarnessDefinition("codex_appserver").agent_type && surface === "manager_agent") {
     return managerAgentHarnessDefinition("codex_appserver").runtime_placement;
   }
   return surface === "manager_agent"
@@ -116,6 +129,10 @@ function settingForInput(input: AgentRuntimeResolutionInput): LLMSetting {
     ? directlyRequestedSetting ?? (isKimiProviderId(input.providerName) ? findActiveKimiSetting(input.modelName) : undefined)
     : requested === "kimi_code"
     ? findActiveKimiSetting(input.modelName)
+    : requested === "codex_appserver"
+    ? findActiveCodexCompatibleSetting()
+    : requested === "deepseek_harness"
+    ? findActiveDeepSeekHarnessCompatibleSetting()
     : input.surface === "manager_agent" || requested === "claude-sdk"
     ? findActiveClaudeSdkCompatibleSetting()
     : input.surface === "dag"
@@ -140,7 +157,7 @@ function settingForInput(input: AgentRuntimeResolutionInput): LLMSetting {
 function agentTypeForSetting(setting: LLMSetting, input: AgentRuntimeResolutionInput): string {
   const explicit = requestedAgentType(input);
   const requested = explicit ?? DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE;
-  if (isKimiProviderId(setting.provider_id) && explicit !== managerAgentHarnessDefinition("claude_agent_sdk").agent_type) {
+  if (isKimiProviderId(setting.provider_id) && explicit === undefined) {
     return managerAgentHarnessDefinition("kimi_code").agent_type;
   }
   if (requested === "kimi_code") {
@@ -152,7 +169,11 @@ function agentTypeForSetting(setting: LLMSetting, input: AgentRuntimeResolutionI
 
 function baseUrlForSetting(setting: LLMSetting, agentType: string): string | undefined {
   if (agentType === "claude-sdk") return resolveClaudeSdkBaseUrlForSetting(setting);
+  if (agentType === "codex_appserver") return resolveCodexResponsesBaseUrlForSetting(setting);
   if (agentType === "kimi_code") return setting.base_url ?? setting.chat_completions_base_url;
+  if (agentType === "deepseek_harness") {
+    return resolveDeepSeekHarnessBaseUrlForSetting(setting);
+  }
   return setting.base_url ?? setting.chat_completions_base_url;
 }
 
@@ -161,11 +182,8 @@ export function resolveAgentRuntimeConfig(input: AgentRuntimeResolutionInput): A
   if (isDisabledDirectLlmAgentType(input.agentType) || isDisabledDirectLlmAgentType(input.harness)) {
     throw new Error("direct-llm is disabled for HomeRail runtime execution. Configure a supported harness-backed agent_type.");
   }
-  if (requested === "codex_appserver" && input.surface === "manager_agent") {
+  if (requested === "codex_appserver" && input.surface === "manager_agent" && !input.settingId && !input.providerName) {
     const definition = managerAgentHarnessDefinition("codex_appserver");
-    if (input.settingId || input.providerName) {
-      throw new Error("Codex app-server cannot use a HomeRail LLM provider or setting; select a model from the account catalog");
-    }
     const model = input.modelName?.trim();
     if (!model) {
       throw new Error("Codex app-server model is not configured; load the account model catalog before starting the Manager Agent");
@@ -180,11 +198,16 @@ export function resolveAgentRuntimeConfig(input: AgentRuntimeResolutionInput): A
       protocol: "codex_appserver",
       agent_type: definition.agent_type,
       runtime_placement: definition.runtime_placement,
+      ...(input.reasoningEffort?.trim() ? { reasoning_effort: input.reasoningEffort.trim() } : {}),
+      service_tier: input.serviceTier?.trim() || null,
     };
   }
 
   const setting = settingForInput(input);
   const agentType = agentTypeForSetting(setting, input);
+  if (agentType === "deepseek_harness" && setting.protocol !== "openai_compatible") {
+    throw new Error(`DeepSeek Harness requires an OpenAI-compatible setting, got ${setting.provider_id}/${setting.model_name} (${setting.protocol})`);
+  }
   const baseUrl = baseUrlForSetting(setting, agentType);
   const requestedModel = input.modelName
     ? canonicalModelNameForEndpoint(setting.provider_id, setting.endpoint_id, input.modelName)
@@ -194,11 +217,57 @@ export function resolveAgentRuntimeConfig(input: AgentRuntimeResolutionInput): A
     findCatalogEndpoint(setting.provider_id, setting.endpoint_id),
     model,
   );
+  const reasoningEffortMap = model === setting.model_name
+    ? setting.reasoning_effort_map
+    : catalogModel?.reasoning_effort_map;
+  const defaultReasoningEffort = model === setting.model_name
+    ? setting.default_reasoning_effort
+    : catalogModel?.default_reasoning_effort;
+  if (agentType === "codex_appserver" && codexResponsesModelSupport(setting.provider_id, model) === "unsupported") {
+    throw new Error(`Codex app-server Responses is not supported for ${setting.provider_id}/${model}`);
+  }
   if (!baseUrl) {
     if (agentType === "claude-sdk") {
       throw new Error(`Claude SDK requires an Anthropic-compatible endpoint for ${setting.provider_id}/${setting.model_name}; Chat Completions endpoints are not supported for harness execution. Configure an Anthropic base URL or use the Kimi Code harness for Kimi.`);
     }
+    if (agentType === "codex_appserver") {
+      throw new Error(`Codex app-server requires a Responses endpoint for ${setting.provider_id}/${setting.model_name}`);
+    }
     throw new Error(`No compatible base URL for ${input.surface === "manager_agent" ? "Manager Agent" : "DAG"} setting ${setting.provider_id}/${setting.model_name}`);
+  }
+  let reasoningEffort: string | undefined;
+  let serviceTier: string | null | undefined;
+  if (agentType === "codex_appserver") {
+    const modelProfile = resolveCodexProviderModelProfile(setting.provider_id, model);
+    reasoningEffort = input.reasoningEffort?.trim() || modelProfile?.default_reasoning_effort;
+    const supportedEfforts = modelProfile?.supported_reasoning_efforts;
+    if (reasoningEffort && supportedEfforts && !supportedEfforts.some((effort) => effort === reasoningEffort)) {
+      throw new Error(
+        `Codex Responses model '${setting.provider_id}/${model}' does not support reasoning effort '${reasoningEffort}'. ` +
+        `Supported values: ${supportedEfforts.join(", ")}.`,
+      );
+    }
+    serviceTier = input.serviceTier?.trim() || null;
+    const supportedTiers = modelProfile?.supported_service_tiers;
+    if (serviceTier && supportedTiers && !supportedTiers.includes(serviceTier)) {
+      throw new Error(
+        `Codex Responses model '${setting.provider_id}/${model}' does not support service tier '${serviceTier}'.`,
+      );
+    }
+  } else if (agentType === "deepseek_harness") {
+    reasoningEffort = input.reasoningEffort?.trim() || defaultReasoningEffort;
+    if (reasoningEffort && (reasoningEffortMap === undefined || reasoningEffortMap === false)) {
+      throw new Error(
+        `DeepSeek Harness model '${setting.provider_id}/${model}' does not declare selectable reasoning efforts.`,
+      );
+    }
+    if (reasoningEffort && reasoningEffortMap !== undefined && reasoningEffortMap !== false
+      && !Object.prototype.hasOwnProperty.call(reasoningEffortMap, reasoningEffort)) {
+      throw new Error(
+        `DeepSeek Harness model '${setting.provider_id}/${model}' does not support reasoning effort '${reasoningEffort}'. `
+        + `Supported values: ${Object.keys(reasoningEffortMap).join(", ")}.`,
+      );
+    }
   }
   return {
     provider_name: setting.provider_id,
@@ -209,12 +278,21 @@ export function resolveAgentRuntimeConfig(input: AgentRuntimeResolutionInput): A
       : catalogModel?.display_name ?? catalogModel?.name ?? model,
     api_key: setting.api_key,
     base_url: baseUrl,
-    protocol: agentType === "claude-sdk" ? "anthropic_compatible" : setting.protocol,
+    protocol: agentType === "claude-sdk"
+      ? "anthropic_compatible"
+      : agentType === "codex_appserver"
+      ? CODEX_RESPONSES_PROTOCOL
+      : setting.protocol,
     anthropic_auth_mode: agentType === "claude-sdk"
       ? resolveClaudeSdkAuthModeForSetting(setting)
       : undefined,
     agent_type: agentType,
     runtime_placement: runtimePlacementForAgentType(agentType, input.surface),
     llm_setting_id: setting.id,
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    ...(agentType === "deepseek_harness" && reasoningEffortMap !== undefined
+      ? { reasoning_effort_map: reasoningEffortMap }
+      : {}),
+    ...(serviceTier !== undefined ? { service_tier: serviceTier } : {}),
   };
 }

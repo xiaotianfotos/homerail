@@ -1,8 +1,14 @@
 import type { DagTransportFenceMetadata } from "homerail-protocol";
+import { extractReviewEvidence, sanitizeAttemptDiagnostic } from "homerail-protocol";
 import { getDagActorByNode, getDagActorCommand } from "../persistence/dag-actors.js";
 import { getDagActorLiveCommand } from "../persistence/dag-actor-live-commands.js";
 import { acquireDagActorLease, assessDagActorLease } from "../persistence/dag-actor-leases.js";
-import { getActiveRun, handoffActiveRun } from "../runtime/active-runs.js";
+import { recordAttemptDiagnostic } from "../persistence/dag-review-evidence.js";
+import {
+  getActiveRun,
+  handoffActiveRun,
+  isReviewEvidenceNode,
+} from "../runtime/active-runs.js";
 
 export type TransportFenceDisposition = "stale" | "duplicate" | "invalid";
 
@@ -23,6 +29,14 @@ export interface DagTransportFenceSource {
   targetId: string;
 }
 
+export interface DagTransportFenceAssessmentOptions {
+  /**
+   * Ordinary streaming traffic may renew the current physical lease. Broker
+   * authority checks must pass false: an expired mutation lease fails closed.
+   */
+  renewExpiredLease?: boolean;
+}
+
 export type ResponseBridgeResult =
   | { status: "handoff_applied"; runId: string; nodeId: string; port: string }
   | {
@@ -34,7 +48,13 @@ export type ResponseBridgeResult =
     }
   | { status: "malformed_payload"; reason: string }
   | { status: "unknown_run"; runId: string }
-  | { status: "handoff_failed"; runId: string; nodeId: string; reason: string };
+  | {
+      status: "handoff_failed";
+      runId: string;
+      nodeId: string;
+      reason: string;
+      rejectedHandoff: { port: string; content: unknown };
+    };
 
 function transportMetadataError(obj: Record<string, unknown>): string | undefined {
   for (const field of ["round_id", "actor_id", "command_id"] as const) {
@@ -76,6 +96,7 @@ function ignored(
 export function assessDagTransportFence(
   payload: unknown,
   source: DagTransportFenceSource,
+  options: DagTransportFenceAssessmentOptions = {},
 ): TransportFenceAssessment {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return { status: "malformed_payload", reason: "payload is not an object" };
@@ -115,7 +136,13 @@ export function assessDagTransportFence(
     target_id: source.targetId,
   };
   let lease = assessDagActorLease(leaseInput);
-  if (!lease.current && lease.reason === "expired" && run.status === "active" && lease.lease) {
+  if (
+    options.renewExpiredLease !== false
+    && !lease.current
+    && lease.reason === "expired"
+    && run.status === "active"
+    && lease.lease
+  ) {
     try {
       acquireDagActorLease({
         run_id: runId,
@@ -281,21 +308,61 @@ export function applyResponseHandoff(
   }
 
   let run;
+  const submission = extractReviewEvidence(obj.content);
+  const evidence = obj.attempt_diagnostics !== undefined || submission !== undefined
+    ? {
+        ...(obj.attempt_diagnostics !== undefined ? { transportDiagnostic: obj.attempt_diagnostics } : {}),
+        ...(submission ? { submission } : {}),
+      }
+    : undefined;
   try {
-    run = handoffActiveRun(obj.runId, obj.nodeId, obj.port, obj.content, {
+    const fence = {
       transport: true,
       ...(typeof obj.round_id === "string" ? { roundId: obj.round_id } : {}),
       ...(typeof obj.actor_id === "string" ? { actorId: obj.actor_id } : {}),
       ...(typeof obj.generation === "number" ? { generation: obj.generation } : {}),
       ...(typeof obj.lease_generation === "number" ? { leaseGeneration: obj.lease_generation } : {}),
       ...(typeof obj.command_id === "string" ? { commandId: obj.command_id } : {}),
-    });
+    };
+    run = evidence
+      ? handoffActiveRun(obj.runId, obj.nodeId, obj.port, obj.content, fence, evidence)
+      : handoffActiveRun(obj.runId, obj.nodeId, obj.port, obj.content, fence);
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      if (isReviewEvidenceNode(obj.runId, obj.nodeId)) {
+        const runState = getActiveRun(obj.runId);
+        const actor = getDagActorByNode(obj.runId, obj.nodeId);
+        const session = runState?.nodeSessions.get(obj.nodeId);
+        if (runState && actor && session) {
+          const attempt = (runState.counters.corrections[obj.nodeId] ?? 0) + 1;
+          recordAttemptDiagnostic({
+            identity: {
+              runId: obj.runId,
+              reviewer: actor.actor_id,
+              nodeId: obj.nodeId,
+              sessionId: session.sessionId,
+              roundId: runState.currentRound.round_id,
+              generation: actor.generation,
+              attempt,
+            },
+            diagnostic: sanitizeAttemptDiagnostic(obj.attempt_diagnostics, {
+              attempt,
+              failure_reason: reason,
+              contract_stage: "contract_validation",
+            }),
+          });
+        }
+      }
+    } catch {
+      // Evidence persistence must never mask the handoff failure.
+    }
     return {
       status: "handoff_failed",
       runId: obj.runId,
       nodeId: obj.nodeId,
-      reason: error instanceof Error ? error.message : String(error),
+      reason,
+      rejectedHandoff: { port: obj.port, content: obj.content },
     };
   }
   if (!run) {

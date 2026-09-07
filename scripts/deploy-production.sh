@@ -3,6 +3,7 @@ set -euo pipefail
 
 SOURCE_ROOT="${GITHUB_WORKSPACE:-$(cd "$(dirname "$0")/.." && pwd)}"
 source "$SOURCE_ROOT/scripts/lib/production-runtime.sh"
+source "$SOURCE_ROOT/scripts/lib/worker-build-network.sh"
 PRODUCTION_ROOT="${HOMERAIL_PRODUCTION_ROOT:-$HOME/.local/share/homerail-production}"
 HOMERAIL_HOME="${HOMERAIL_PRODUCTION_HOME:-$HOME/.local/share/homerail-production-data}"
 RESOURCE_ROOT="${HOMERAIL_PRODUCTION_RESOURCES:-$HOME/.local/share/homerail-resources}"
@@ -204,6 +205,9 @@ fi
 
 SHORT_REVISION="${REVISION:0:12}"
 WORKER_IMAGE="homerail-worker:production-$SHORT_REVISION"
+# Validate the public Worker build source contract and assemble Docker
+# arguments without evaluating input. Invalid values fail here, before Docker starts.
+homerail_worker_build_network_args
 echo "Building production Worker image $WORKER_IMAGE"
 docker build \
   --label "org.homerail.production_revision=$REVISION" \
@@ -216,6 +220,7 @@ docker build \
   --build-arg "HOMERAIL_WORKER_PROTOCOL_VERSION=$WORKER_CONTRACT_VERSION" \
   --build-arg "HOMERAIL_WORKER_VERSION=$WORKER_VERSION" \
   --build-arg "HOMERAIL_WORKER_IMAGE_REVISION=$REVISION" \
+  ${HOMERAIL_WORKER_BUILD_NETWORK_ARGS[@]+"${HOMERAIL_WORKER_BUILD_NETWORK_ARGS[@]}"} \
   -t "$WORKER_IMAGE" \
   -f "$SOURCE_ROOT/homerail_worker/Dockerfile" \
   "$SOURCE_ROOT"

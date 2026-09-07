@@ -10,6 +10,15 @@ export type RunArtifactStatus = "pending" | "uploading" | "ready" | "failed" | "
 export type RunArtifactSource = DAGArtifactDeclaration["source"] | {
   type: "actor_surface_media";
   sha256: string;
+} | {
+  type: "workspace_evidence";
+  node_id: string;
+  session_id: string;
+  port: string;
+  declared_path: string;
+  workspace_path: string;
+  contract: string;
+  sha256: string;
 };
 
 export interface RunArtifactError {
@@ -280,6 +289,86 @@ export function publishActorSurfaceMediaArtifact(input: {
     throw new Error(`Actor surface media artifact is ${current.status}`);
   }
   return writeRunArtifactBytes(input.run_id, input.artifact_name, input.bytes);
+}
+
+export function publishWorkspaceEvidenceArtifact(input: {
+  run_id: string;
+  node_id: string;
+  session_id: string;
+  port: string;
+  declared_path: string;
+  workspace_path: string;
+  contract: string;
+  sha256: string;
+  bytes: Uint8Array;
+}): RunArtifactRecord {
+  safeId(input.run_id, "runId");
+  safeId(input.node_id, "nodeId");
+  safeId(input.session_id, "sessionId");
+  safeId(input.port, "port");
+  if (!input.contract || !/^[A-Za-z][A-Za-z0-9._-]*$/.test(input.contract)) {
+    throw new Error("workspace evidence contract is invalid");
+  }
+  const actualDigest = createHash("sha256").update(input.bytes).digest("hex");
+  if (actualDigest !== input.sha256) throw new Error("workspace evidence digest does not match its bytes");
+  const source: Extract<RunArtifactSource, { type: "workspace_evidence" }> = {
+    type: "workspace_evidence",
+    node_id: input.node_id,
+    session_id: input.session_id,
+    port: input.port,
+    declared_path: input.declared_path,
+    workspace_path: input.workspace_path,
+    contract: input.contract,
+    sha256: input.sha256,
+  };
+  const identity = createHash("sha256")
+    .update(JSON.stringify(source))
+    .digest("hex");
+  const artifactName = `workspace-evidence-${identity}.json`;
+  const now = Date.now();
+  const initial: RunArtifactRecord = {
+    artifact_id: randomUUID(),
+    run_id: input.run_id,
+    name: artifactName,
+    status: "pending",
+    media_type: "application/json",
+    required: true,
+    publish: "always",
+    source,
+    created_at: now,
+    updated_at: now,
+  };
+  getDb().prepare(`
+    INSERT OR IGNORE INTO dag_artifacts(
+      run_id, name, artifact_id, status, upload_token_hash, upload_expires_at,
+      created_at, updated_at, data
+    ) VALUES (?, ?, ?, 'pending', NULL, NULL, ?, ?, ?)
+  `).run(
+    input.run_id,
+    artifactName,
+    initial.artifact_id,
+    now,
+    now,
+    encodeJson(initial),
+  );
+
+  const current = getRunArtifact(input.run_id, artifactName);
+  if (!current
+    || current.media_type !== "application/json"
+    || current.source.type !== "workspace_evidence"
+    || JSON.stringify(current.source) !== JSON.stringify(source)) {
+    throw new Error("workspace evidence artifact identity conflicts with an existing artifact");
+  }
+  if (current.status === "ready"
+    && current.sha256 === input.sha256
+    && current.size_bytes === input.bytes.byteLength
+    && fs.existsSync(path.join(artifactDir(current), "blob"))) {
+    return current;
+  }
+  if (current.status !== "pending" && current.status !== "ready") {
+    throw new Error(`workspace evidence artifact is ${current.status}`);
+  }
+  return writeRunArtifactBytes(input.run_id, artifactName, input.bytes);
 }
 
 export function markRunArtifactFailed(runId: string, name: string, error: RunArtifactError): RunArtifactRecord {

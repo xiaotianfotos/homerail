@@ -26,6 +26,7 @@ import {
   updateVoiceSettings,
   type VoiceEndpointProbeResult,
 } from '@/api/services/voice-api'
+import { decideAsrRealtimeUrlPersistence } from '@/components/agent/asr-endpoint-capability'
 import {
   BUILTIN_EDGE_TTS_MODEL,
   BUILTIN_EDGE_TTS_OPTION_ID,
@@ -505,6 +506,7 @@ async function detectCustomMainModel(): Promise<MainModelRuntimeDetection> {
 }
 
 function mainModelHarnessLabel(harness: DetectedMainModelHarness): string {
+  if (harness === 'codex_appserver') return 'Codex (Responses API)'
   return harness === 'claude_agent_sdk' ? 'Claude Agent SDK' : 'Kimi Code'
 }
 
@@ -538,11 +540,17 @@ async function detectCustomAsrEndpoints(): Promise<CustomVoiceUrls> {
       realtime: endpointProbeMessage(realtimeResult),
     }))
   }
+  // 派生的 realtime 候选只在 WebSocket 真正握手成功后才自动持久化；
+  // 401/403/404、其他预升级响应或网络失败一律按未验证处理（issue #193）。
+  const realtimePersistence = decideAsrRealtimeUrlPersistence({
+    derivedUrl: realtimeUrl,
+    probeResult: realtimeResult,
+  })
   return {
     // Empty strings deliberately clear stale guessed endpoints on an existing
     // local provider. The Manager normalizes them back to undefined.
     asr_async_url: asyncResult?.ok ? asyncUrl : '',
-    asr_realtime_url: realtimeResult?.ok ? realtimeUrl : '',
+    asr_realtime_url: realtimePersistence.url,
   }
 }
 
@@ -703,9 +711,11 @@ async function submitCustom(
   const chatCompletionsBaseUrl = detectedProtocolBaseUrl(mainModelDetection?.endpoints.openai, rawBaseUrl)
   const responsesBaseUrl = detectedProtocolBaseUrl(mainModelDetection?.endpoints.responses, rawBaseUrl)
   const baseUrl = isMainModel
-    ? (mainModelDetection?.preferred_harness === 'claude_agent_sdk'
-        ? anthropicBaseUrl
-        : chatCompletionsBaseUrl) || responsesBaseUrl || rawBaseUrl
+    ? (mainModelDetection?.preferred_harness === 'codex_appserver'
+        ? responsesBaseUrl
+        : mainModelDetection?.preferred_harness === 'claude_agent_sdk'
+          ? anthropicBaseUrl
+          : chatCompletionsBaseUrl) || responsesBaseUrl || rawBaseUrl
     : voiceApiBase(rawBaseUrl)
   // 语音服务使用 OpenAI Audio；主模型协议完全由后台实测结果决定。
   const protocol: ProviderProtocol = isMainModel && mainModelDetection?.preferred_harness === 'claude_agent_sdk'
@@ -757,7 +767,7 @@ async function submitCustom(
     protocol,
     auth_type: protocol === 'anthropic_compatible' ? 'api-key' : 'bearer',
     base_url: baseUrl,
-    // 保存每种协议实际命中的根地址；Manager Agent 双协议可用时仍固定优先 Claude。
+    // 保存每种协议实际命中的根地址；Responses 可用时 Manager Agent 优先 Codex。
     // 空串用于覆盖同一 local provider 上一次探测留下、现在已失效的协议根地址。
     chat_completions_base_url: isMainModel ? (chatCompletionsBaseUrl ?? '') : undefined,
     responses_base_url: isMainModel ? (responsesBaseUrl ?? '') : undefined,

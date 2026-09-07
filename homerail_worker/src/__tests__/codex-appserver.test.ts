@@ -4,6 +4,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import * as path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import type { AgentEvent, AgentRunContext, DagToolDefinition } from "../agent/types.js";
 import { WORKER_RUNTIME_VERSION } from "../runtime-version.js";
@@ -76,6 +79,7 @@ function setupMocksWithFs(mockProc: MockProcess) {
       on: mockProc.events.on.bind(mockProc.events),
       kill: mockProc.kill,
     }),
+    spawnSync: vi.fn(),
   }));
 }
 
@@ -177,6 +181,152 @@ describe("CodexAppServerAdapter", () => {
     expect(_codexWindowsCommandNeedsShellForTest("/usr/bin/codex.cmd", "linux")).toBe(false);
   });
 
+  it("keeps the provider key in a loopback relay and gives Codex only a dispatch-scoped key", async () => {
+    let receivedAuthorization = "";
+    let receivedPath = "";
+    const upstream = createServer((request, response) => {
+      receivedAuthorization = String(request.headers.authorization ?? "");
+      receivedPath = String(request.url ?? "");
+      request.resume();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{"ok":true}');
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+    const address = upstream.address() as AddressInfo;
+    const providerKey = "provider-key-never-given-to-codex";
+    const { _startCodexProviderRelayForTest } = await import("../agent/codex-appserver.js");
+    const relay = await _startCodexProviderRelayForTest(
+      `http://127.0.0.1:${address.port}/v1/responses`,
+      providerKey,
+    );
+    try {
+      expect(relay.apiKey).not.toBe(providerKey);
+      expect(relay.apiKey).toMatch(/^homerail-dispatch-[0-9a-f]{64}$/);
+      const denied = await fetch(`${relay.baseUrl}/responses`, { method: "POST", body: "{}" });
+      expect(denied.status).toBe(403);
+
+      const forwarded = await fetch(`${relay.baseUrl}/responses`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${relay.apiKey}`, "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(forwarded.status).toBe(200);
+      expect(await forwarded.json()).toEqual({ ok: true });
+      expect(receivedAuthorization).toBe(`Bearer ${providerKey}`);
+      expect(receivedPath).toBe("/v1/responses");
+    } finally {
+      relay.server.closeAllConnections();
+      relay.server.close();
+      upstream.closeAllConnections();
+      upstream.close();
+    }
+  });
+
+  it("spawns Responses Codex with the relay URL and scoped key instead of the provider key", async () => {
+    const mockProc = createMockProcess();
+    setupMocksWithFs(mockProc);
+    const previousGuard = process.env.HOMERAIL_CODEX_PROC_GUARD;
+    process.env.HOMERAIL_CODEX_PROC_GUARD = "/test/proc-guard.so";
+    try {
+      const childProcess = await import("node:child_process");
+      const { CodexAppServerAdapter } = await import("../agent/codex-appserver.js");
+      const adapter = new CodexAppServerAdapter();
+      const providerKey = "provider-key-must-stay-in-worker";
+      const responseContext: AgentRunContext = {
+        ...ctx,
+        provider: "test-provider",
+        protocol: "responses_compatible",
+        apiKey: providerKey,
+      };
+      const consumePromise = (async () => {
+        for await (const _event of adapter.run("hi", [], responseContext)) {
+          // Drain the adapter while the test supplies app-server responses.
+        }
+      })();
+
+      const requests = await waitForStdinRequests(mockProc, 1);
+      const spawnCall = vi.mocked(childProcess.spawn).mock.calls[0]!;
+      const spawnArgs = spawnCall[1] as string[];
+      const spawnEnv = (spawnCall[2] as { env?: Record<string, string> }).env ?? {};
+      expect(spawnArgs.join(" ")).toMatch(/base_url="http:\/\/127\.0\.0\.1:\d+\/v1"/);
+      expect(spawnEnv.HOMERAIL_CODEX_API_KEY).toMatch(/^homerail-dispatch-[0-9a-f]{64}$/);
+      expect(spawnEnv.HOMERAIL_CODEX_API_KEY).not.toBe(providerKey);
+
+      writeResponse(mockProc, requests[0].id as number, {});
+      const threadRequests = await waitForStdinRequests(mockProc, 2);
+      writeResponse(mockProc, threadRequests[1].id as number, { thread_id: "relay-thread" });
+      const turnRequests = await waitForStdinRequests(mockProc, 3);
+      writeResponse(mockProc, turnRequests[2].id as number, { turn_id: "relay-turn" });
+      writeNotification(mockProc, "turn/completed", {});
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const closeRequest = findRequest(mockProc, "thread/unsubscribe");
+      if (closeRequest) writeResponse(mockProc, closeRequest.id as number, {});
+      await consumePromise;
+    } finally {
+      if (previousGuard === undefined) delete process.env.HOMERAIL_CODEX_PROC_GUARD;
+      else process.env.HOMERAIL_CODEX_PROC_GUARD = previousGuard;
+    }
+  }, 15000);
+
+  it("preloads the configured non-dumpable guard into provider-backed Linux Codex", async () => {
+    const guard = "/usr/local/lib/homerail-codex-secret-guard.so";
+    const existsSync = vi.fn((candidate: unknown) => String(candidate) === guard);
+    vi.doMock("node:fs", async () => {
+      const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+      return { ...actual, existsSync };
+    });
+    const { _guardedCodexSpawnCommandForTest } = await import("../agent/codex-appserver.js");
+    expect(_guardedCodexSpawnCommandForTest(
+      "/app/codex",
+      ["app-server"],
+      { HOMERAIL_CODEX_API_KEY: "provider-secret" },
+      guard,
+      "linux",
+    )).toEqual({
+      bin: "/app/codex",
+      args: ["app-server"],
+      env: {
+        HOMERAIL_CODEX_API_KEY: "provider-secret",
+        LD_PRELOAD: "/usr/local/lib/homerail-codex-secret-guard.so",
+      },
+    });
+    expect(existsSync).toHaveBeenCalledTimes(1);
+    expect(existsSync).toHaveBeenCalledWith(guard);
+    expect(_guardedCodexSpawnCommandForTest(
+      "/app/codex",
+      ["app-server"],
+      {},
+      guard,
+      "linux",
+    )).toEqual({ bin: "/app/codex", args: ["app-server"], env: {} });
+  });
+
+  it("fails closed when a Linux provider secret has no configured guard", async () => {
+    const { _guardedCodexSpawnCommandForTest } = await import("../agent/codex-appserver.js");
+    expect(() => _guardedCodexSpawnCommandForTest(
+      "/app/codex",
+      ["app-server"],
+      { HOMERAIL_CODEX_API_KEY: "provider-secret" },
+      "",
+      "linux",
+    )).toThrow("Codex provider secret guard is required on Linux");
+  });
+
+  it("fails closed when a configured provider secret guard is missing", async () => {
+    vi.doMock("node:fs", async () => {
+      const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+      return { ...actual, existsSync: vi.fn().mockReturnValue(false) };
+    });
+    const { _guardedCodexSpawnCommandForTest } = await import("../agent/codex-appserver.js");
+    expect(() => _guardedCodexSpawnCommandForTest(
+      "/app/codex",
+      ["app-server"],
+      { HOMERAIL_CODEX_API_KEY: "provider-secret" },
+      "/missing/guard",
+      "linux",
+    )).toThrow("Configured Codex secret guard not found");
+  });
+
   it("emits error when codex binary not found", async () => {
     vi.doMock("node:fs", async () => {
       const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
@@ -234,6 +384,38 @@ describe("CodexAppServerAdapter", () => {
 
     const doneEvents = events.filter((e) => e.type === "done");
     expect(doneEvents).toHaveLength(1);
+  }, 15000);
+
+  it("keeps a silent turn alive with content-free reasoning heartbeats", async () => {
+    const mockProc = createMockProcess();
+    setupMocksWithFs(mockProc);
+
+    const { CodexAppServerAdapter } = await import("../agent/codex-appserver.js");
+    const adapter = new CodexAppServerAdapter(undefined, 20);
+    const events: AgentEvent[] = [];
+    const consumePromise = (async () => {
+      for await (const event of adapter.run("hi", [], ctx)) events.push(event);
+    })();
+
+    const reqs = await waitForStdinRequests(mockProc, 1);
+    writeResponse(mockProc, reqs[0].id as number, {});
+    const reqs2 = await waitForStdinRequests(mockProc, 2);
+    writeResponse(mockProc, reqs2[1].id as number, { thread_id: "t1" });
+    const reqs3 = await waitForStdinRequests(mockProc, 3);
+    writeResponse(mockProc, reqs3[2].id as number, { turn_id: "tr1" });
+
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    writeNotification(mockProc, "turn/completed", {});
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const closeReq = findRequest(mockProc, "thread/unsubscribe");
+    if (closeReq) writeResponse(mockProc, closeReq.id as number, {});
+    await consumePromise;
+
+    const heartbeats = events.filter((event) => event.type === "thinking");
+    expect(heartbeats.length).toBeGreaterThanOrEqual(2);
+    expect(heartbeats.every((event) => event.type === "thinking" && event.text === "")).toBe(true);
+    expect(events.some((event) => event.type === "error")).toBe(false);
+    expect(events.at(-1)).toEqual({ type: "done" });
   }, 15000);
 
   it("emits only native commentary-phase agent messages as commentary", async () => {
@@ -823,6 +1005,8 @@ describe("CodexAppServerAdapter", () => {
     const ctxWithPrompt: AgentRunContext = {
       ...ctx,
       systemPrompt: "You are a helpful assistant.",
+      reasoningEffort: "max",
+      serviceTier: null,
     };
 
     const consumePromise = (async () => {
@@ -834,17 +1018,24 @@ describe("CodexAppServerAdapter", () => {
     const reqs2 = await waitForStdinRequests(mockProc, 2);
     expect(reqs2[1].method).toBe("thread/start");
     expect(reqs2[1].params).toMatchObject({
-      baseInstructions: "You are a helpful assistant.",
-      cwd: "/test/workspace",
+      baseInstructions: null,
+      developerInstructions: "You are a helpful assistant.",
+      cwd: path.resolve("/test/workspace"),
       model: "gpt-4.1",
       approvalPolicy: "never",
-      sandbox: "danger-full-access",
+      sandbox: "workspace-write",
       ephemeral: true,
       dynamicTools: [],
+      serviceTier: null,
+      config: { model_reasoning_effort: "max" },
     });
 
     writeResponse(mockProc, reqs2[1].id as number, { thread_id: "t1" });
     const reqs3 = await waitForStdinRequests(mockProc, 3);
+    expect(reqs3[2].params).toMatchObject({
+      effort: "max",
+      serviceTier: null,
+    });
     writeResponse(mockProc, reqs3[2].id as number, { turn_id: "tr1" });
 
     await new Promise((r) => setTimeout(r, 30));

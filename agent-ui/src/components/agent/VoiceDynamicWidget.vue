@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import XiaohongshuNoteWidget from './widgets/XiaohongshuNoteWidget.vue'
 import TopicOutlineWidget from './widgets/TopicOutlineWidget.vue'
 import SlideDeckWidget from './widgets/SlideDeckWidget.vue'
+import DagExplorerWidget from './dag-explorer/DagExplorerWidget.vue'
 import type { VoiceWidget } from '@/api/agent'
 import { useUiStore } from '@/stores/ui-store'
 
@@ -73,6 +74,7 @@ const visual = computed(() => {
   if (props.widget.type === 'metric_strip') return 'metric_strip'
   if (props.widget.type === 'timeline') return 'timeline'
   if (props.widget.type === 'dag_flow') return 'dag_flow'
+  if (props.widget.type === 'dag_explorer') return 'dag_explorer'
   if (props.widget.type === 'chart') return 'chart'
   if (props.widget.type === 'xiaohongshu_note') return 'xiaohongshu_note'
   if (props.widget.type === 'topic_outline') return 'topic_outline'
@@ -87,6 +89,7 @@ const kicker = computed(() => {
   if (visual.value === 'html') return 'dynamic html'
   if (visual.value === 'metric_strip') return 'metrics'
   if (visual.value === 'dag_flow') return 'dag'
+  if (visual.value === 'dag_explorer') return 'dag explorer'
   if (visual.value === 'timeline') return 'timeline'
   if (visual.value === 'chart') return 'chart'
   if (visual.value === 'xiaohongshu_note') return 'xiaohongshu'
@@ -287,6 +290,11 @@ function clampNumber(value: unknown): number {
         :widget="widget"
       />
 
+      <DagExplorerWidget
+        v-else-if="visual === 'dag_explorer'"
+        :widget="widget"
+      />
+
       <template v-else>
         <p v-if="widget.body">{{ widget.body }}</p>
         <ul v-if="widget.items?.length" class="voice-dynamic-widget__list">
@@ -401,6 +409,7 @@ function clampNumber(value: unknown): number {
 
 .voice-dynamic-widget :deep(.topic-outline-widget),
 .voice-dynamic-widget :deep(.slide-deck-widget),
+.voice-dynamic-widget :deep(.dag-explorer),
 .voice-dynamic-widget :deep(.xhs-note-widget) {
   margin-top: 16px;
   min-height: 0;

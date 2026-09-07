@@ -11,6 +11,11 @@ import {
 } from "./codex-appserver-client.js";
 import { acquireCodexThreadLease } from "./codex-thread-lease.js";
 
+// Codex app-server releases before the upstream default-model fix select a V3
+// realtime model that the ChatGPT-authenticated backend no longer accepts.
+// Keep this explicit until HomeRail's minimum Codex version includes that fix.
+const CODEX_LIVE_VOICE_REALTIME_MODEL = "gpt-live-1-codex";
+
 export type CodexLiveVoiceRuntimeEvent =
   | { type: "session.started"; thread_id: string; realtime_session_id?: string; version: string }
   | { type: "session.sdp"; sdp: string }
@@ -168,6 +173,7 @@ export class CodexLiveVoiceRuntime {
       await this.client.request("thread/realtime/start", {
         threadId,
         version: "v3",
+        model: CODEX_LIVE_VOICE_REALTIME_MODEL,
         outputModality: "audio",
         transport: { type: "webrtc", sdp: offerSdp },
         includeStartupContext: true,

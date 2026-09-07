@@ -31,6 +31,7 @@ import {
   expireActiveRunApprovals,
   failActiveRun,
   getActiveRun,
+  getCurrentNodeSession,
   handoffActiveRun,
   recordAdvisorCall,
   requestNodeCorrection,
@@ -795,6 +796,7 @@ edges:
     for (const pathname of [
       "/api/runs",
       "/api/runs/create-and-run",
+      "/api/run-inputs",
       "/api/runs/emergency-stop",
       "/api/runs/run-1/invoke",
       "/api/runs/run-1/cancel",
@@ -842,6 +844,11 @@ nodes:
       item_field: items
       context_field: shared
       worker_agent: worker
+      worker_policy:
+        workspace_access: { writable_paths: [], readonly_paths: [input] }
+        allowed_builtin_tools: [Read]
+        allowed_dag_tools: [handoff]
+        session_scope: dispatch
       max_items: 5
       max_parallelism: 2
       completion: n_of_m
@@ -874,7 +881,16 @@ edges:
     });
     expect(getActiveRun("fanout-run")?.dagRun.graph.nodes.find(
       (node) => node.node_id === "fan__item_0001",
-    )?.extra?.workflow_spec_v1).toMatchObject({ output_contracts: { result: "WorkerResult" } });
+    )?.extra).toMatchObject({
+      workflow_spec_v1: { output_contracts: { result: "WorkerResult" } },
+      dynamic_fanout: { parent_node: "fan", index: 0, invocation: 1 },
+      agent_runtime: {
+        workspace_access: { writable_paths: [], readonly_paths: ["input"] },
+        allowed_builtin_tools: ["Read"],
+        allowed_dag_tools: ["handoff"],
+        session_scope: "dispatch",
+      },
+    });
     expect(() => handoffActiveRun("fanout-run", "fan__item_0001", "result", { evidence: "missing status" }))
       .toThrow("DAG_HANDOFF_CONTRACT_VIOLATION");
     expect(getActiveRun("fanout-run")?.status).toBe("active");
@@ -893,6 +909,195 @@ edges:
     });
     expect(() => handoffActiveRun("fanout-run", "fan__item_0002", "result", { status: "success", evidence: "late" }))
       .toThrow("not active");
+  });
+
+  it("fails closed when fanout evidence requirements lack a result contract at runtime", () => {
+    const parsed = parseWorkflowSource(yaml("fanout-evidence-contract-runtime", `
+contracts:
+  Items: { type: array }
+  WorkerResult: { type: object }
+  Report: { type: object }
+agents:
+  worker: { system: Process one item. }
+nodes:
+  fan:
+    kind: fanout
+    inputs: { items: { contract: Items } }
+    outputs: { passed: {}, failed: {} }
+    config:
+      input: items
+      worker_agent: worker
+      worker_policy:
+        workspace_access: { writable_paths: [work], readonly_paths: [input] }
+        allowed_dag_tools: [handoff]
+      max_items: 2
+      max_parallelism: 1
+      completion: all
+      result_contract: WorkerResult
+      result_required_workspace_files:
+        - { path_field: report.path, sha256_field: report.sha256, contract: Report }
+      result_port: passed
+      failed_port: failed
+  done: { kind: terminal, outcome: success, inputs: { result: {} } }
+  failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+edges:
+  - { from: $run.input, to: fan.items }
+  - { from: fan.passed, to: done.result }
+  - { from: fan.failed, to: failed.result, condition: on_failure }
+`));
+    const fan = parsed.graph.nodes.find((node) => node.node_id === "fan");
+    expect(fan?.gateway_config).toBeDefined();
+    delete fan!.gateway_config!.result_contract;
+
+    const dispatcher = new FakeDAGDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    executor.createRun("fanout-evidence-contract-runtime-run", parsed, JSON.stringify([]));
+    executor.tick("fanout-evidence-contract-runtime-run");
+
+    const run = getActiveRun("fanout-evidence-contract-runtime-run");
+    expect(run?.status).toBe("failed");
+    expect(run?.dagRun.nodeStates.get("fan")).toBe("FAILED");
+    expect(run?.counters.abort_reason).toContain("DAG_FANOUT_RESULT_CONTRACT_REQUIRED");
+    expect(run?.dagRun.graph.nodes.some((node) => node.node_id.startsWith("fan__item_"))).toBe(false);
+    expect(dispatcher.dispatched).toEqual([]);
+  });
+
+  it("uses unique child ids and rejects stale children when fanout is entered again", () => {
+    const parsed = parseWorkflowSource(yaml("reentered-fanout", `
+contracts:
+  State: { type: object }
+agents:
+  worker: { system: Process one item. }
+nodes:
+  cycle:
+    kind: while
+    inputs: { state: { contract: State } }
+    outputs: { continue: { contract: State }, done: { contract: State }, exhausted: { contract: State } }
+    config:
+      field: context.stop
+      operator: eq
+      value: true
+      continue_port: continue
+      done_port: done
+      exhausted_port: exhausted
+      max_iterations: 2
+  fan:
+    kind: fanout
+    inputs: { plan: { contract: State } }
+    outputs: { passed: { contract: State }, failed: { contract: State } }
+    config:
+      input: plan
+      item_field: input.context.items
+      context_field: input.context
+      worker_agent: worker
+      max_items: 2
+      max_parallelism: 1
+      completion: all
+      result_port: passed
+      failed_port: failed
+  finished: { kind: terminal, outcome: success, inputs: { result: { contract: State } } }
+  exhausted: { kind: terminal, outcome: success, inputs: { result: { contract: State } } }
+  failed: { kind: terminal, outcome: failure, inputs: { result: { contract: State } } }
+edges:
+  - { from: $run.input, to: cycle.state }
+  - { from: cycle.continue, to: fan.plan }
+  - kind: feedback
+    from: fan.passed
+    to: cycle.state
+    max_traversals: 2
+  - { from: cycle.done, to: finished.result }
+  - { from: cycle.exhausted, to: exhausted.result }
+  - { from: fan.failed, to: failed.result, condition: on_failure }
+`));
+    parsed.meta.agents!.worker.agent_type = "deterministic";
+    const dispatcher = new FakeDAGDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    executor.createRun("fanout-reentry-run", parsed, JSON.stringify({
+      context: { items: ["only"], stop: false },
+    }));
+
+    executor.tick("fanout-reentry-run");
+    expect(dispatcher.dispatched.map((entry) => entry.nodeId)).toEqual(["fan__item_0001"]);
+    handoffActiveRun("fanout-reentry-run", "fan__item_0001", "result", { status: "success" });
+    executor.tick("fanout-reentry-run");
+    expect(dispatcher.dispatched.map((entry) => entry.nodeId)).toEqual([
+      "fan__item_0001",
+      "fan__inv_0002__item_0001",
+    ]);
+    const run = getActiveRun("fanout-reentry-run");
+    expect(run?.counters.fanout_invocations.fan).toBe(2);
+    expect(run?.dagRun.graph.nodes.find((node) => node.node_id === "fan__inv_0002__item_0001")?.extra)
+      .toMatchObject({
+        dynamic_fanout: { parent_node: "fan", index: 0, invocation: 2 },
+        agent_runtime: {
+          allowed_builtin_tools: [],
+          allowed_dag_tools: ["handoff"],
+          workspace_access: { writable_paths: [], readonly_paths: ["input"] },
+        },
+      });
+  });
+
+  it("creates a fresh provider session whenever a dispatch-scoped reviewer is re-entered", () => {
+    const parsed = parseWorkflowSource(yaml("fresh-review-context", `
+contracts:
+  State:
+    type: object
+    properties: { approved: { type: boolean } }
+agents:
+  reviewer: { system: Review only the supplied candidate. }
+nodes:
+  cycle:
+    kind: while
+    inputs: { state: { contract: State } }
+    outputs: { continue: { contract: State }, done: { contract: State }, exhausted: { contract: State } }
+    config:
+      field: approved
+      operator: eq
+      value: true
+      continue_port: continue
+      done_port: done
+      exhausted_port: exhausted
+      max_iterations: 3
+  review:
+    kind: agent
+    agent: reviewer
+    session_scope: dispatch
+    inputs: { candidate: { contract: State } }
+    outputs: { reviewed: { contract: State } }
+  finished: { kind: terminal, outcome: success, inputs: { result: { contract: State } } }
+  exhausted: { kind: terminal, outcome: failure, inputs: { result: { contract: State } } }
+edges:
+  - { from: $run.input, to: cycle.state }
+  - { from: cycle.continue, to: review.candidate }
+  - kind: feedback
+    from: review.reviewed
+    to: cycle.state
+    max_traversals: 3
+  - { from: cycle.done, to: finished.result }
+  - { from: cycle.exhausted, to: exhausted.result, condition: on_failure }
+`));
+    parsed.meta.agents!.reviewer.agent_type = "deterministic";
+    const dispatcher = new FakeDAGDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    executor.createRun("fresh-review-run", parsed, JSON.stringify({ approved: false }));
+
+    executor.tick("fresh-review-run");
+    const firstSession = dispatcher.dispatched.at(-1)?.sessionId;
+    dispatcher.reset();
+    handoffActiveRun("fresh-review-run", "review", "reviewed", { approved: false });
+    expect(getCurrentNodeSession("fresh-review-run", "review")?.status).toBe("completed");
+    executor.tick("fresh-review-run");
+    expect(dispatcher.dispatched).toHaveLength(1);
+    const secondSession = dispatcher.dispatched.at(-1)?.sessionId;
+
+    expect(firstSession).toEqual(expect.any(String));
+    expect(secondSession).toEqual(expect.any(String));
+    expect(secondSession).not.toBe(firstSession);
+    expect(getCurrentNodeSession("fresh-review-run", "review")).toMatchObject({
+      sessionId: secondSession,
+      attempt: 2,
+      status: "running",
+    });
   });
 
   it("enforces max_nodes when a running DAG appends dynamic nodes", () => {

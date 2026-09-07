@@ -312,6 +312,39 @@ hr start --ui --public \
   --ui-public-url https://homerail-ui.example.com
 ```
 
+`--ui-public-url` (or `HOMERAIL_UI_PUBLIC_URL`) must be an exact `http(s)`
+Origin — no wildcard, path, query, fragment, or credentials. HomeRail rejects
+anything else at startup instead of silently trusting a truncated Origin. The
+same canonical Origin is shared with the Manager admin allowlist
+(`HOMERAIL_MANAGER_ADMIN_ORIGINS`) and with the static Agent UI proxy, which
+authorizes protected UI mutations from either the explicitly configured public
+Origin or a request-derived localhost/literal-IP Origin. Named LAN hosts such
+as `homerail.lan`, mDNS names, and custom domains must be pinned with
+`--ui-public-url`; otherwise protected mutations and the browser-renderer ticket
+fail closed with HTTP 403. This prevents an arbitrary DNS-rebinding Host from
+being promoted to the trusted Manager proxy hop. `Forwarded` and
+`X-Forwarded-*` headers are never trusted for this decision.
+
+FN Connect (fnOS) rewrites the Host it forwards to HomeRail, so the browser
+Origin no longer matches the internal Host. Configure the exact public Origin
+the proxy presents:
+
+```bash
+# Browser loads https://homerail.fn.example; FN Connect forwards the request
+# to HomeRail with an internal Host such as 127.0.0.1:19192.
+hr start --ui \
+  --ui-public-url https://homerail.fn.example
+```
+
+Generic Tailscale Serve / nginx / Caddy setups work the same way: terminate
+TLS in the proxy, forward to the local Agent UI port, and configure the public
+Origin:
+
+```bash
+hr start --ui --public \
+  --ui-public-url https://homerail.tail1234.ts.net
+```
+
 Worker containers connect back to the Manager through the URL Manager passes to
 Node. On Docker Desktop the default `host.docker.internal` mapping is usually
 enough; on Linux use Docker `host-gateway` support or set
@@ -319,6 +352,16 @@ enough; on Linux use Docker `host-gateway` support or set
 Remote Worker and Node connections require authenticated `wss://` endpoints;
 see [Control-Plane WebSocket Security](docs/control-plane-security.md) for token,
 reverse-proxy, certificate, and compatibility settings.
+
+Worker image builds default to the base image's Debian sources and the
+default npm registry. Operators in restricted networks can opt in to public
+mirrors with `HOMERAIL_WORKER_BUILD_APT_MIRROR`,
+`HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR`, and
+`HOMERAIL_WORKER_BUILD_NPM_REGISTRY`; standard `HTTP_PROXY`/`HTTPS_PROXY`/
+`NO_PROXY` variables are forwarded to Docker by name only, and their values
+are never captured by HomeRail. See
+[Worker build network sources](docs/worker-build-network.md) for the
+validation contract, security boundaries, and fnOS integration notes.
 
 Runtime helpers:
 
@@ -340,9 +383,12 @@ foundation here is the first step; see [ROADMAP.md](ROADMAP.md) for the plan.
 For the voice Manager Agent, **Codex (`codex_appserver`) is the recommended
 harness today**: it is the only path that auto-synthesizes the `commentary`
 speech channel from the model's native reasoning stream, so the user hears
-progress while work happens. Other harnesses (`claude-sdk`, `kimi-code`) are
-silent during execution — this is a provider capability gap, not something
-HomeRail can close.
+progress while work happens. `claude-sdk` and `kimi-code` are silent during
+execution — this is a provider capability gap, not something HomeRail can
+close. An experimental `deepseek_harness` backend now runs the owner-maintained
+[DSH fork](docs/architecture/deepseek-harness-integration.md) out of process and
+maps its reasoning stream into HomeRail thinking events; it is not yet the
+recommended Manager Agent runtime.
 
 ## License
 

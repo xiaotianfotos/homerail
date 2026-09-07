@@ -169,6 +169,50 @@ describe("doctor readiness helpers", () => {
     });
   });
 
+  it("accepts an OpenAI-compatible setting for DeepSeek Harness", () => {
+    const resp = settings([
+      {
+        id: "deepseek-chat",
+        provider_id: "deepseek",
+        model_name: "deepseek-chat",
+        is_active: true,
+        is_default: true,
+        supports_llm: true,
+        protocol: "openai_compatible",
+        chat_completions_base_url: "https://api.deepseek.com/v1",
+      },
+    ]);
+
+    expect(managerAgentReadiness({ harness: "dsh" }, resp)).toEqual({
+      name: "manager-agent",
+      ok: true,
+      detail: "deepseek/deepseek-chat via deepseek_harness",
+    });
+  });
+
+  it("rejects an explicitly selected non-OpenAI setting for DeepSeek Harness", () => {
+    const resp = settings([
+      {
+        id: "anthropic-only",
+        provider_id: "custom",
+        model_name: "claude-compatible",
+        is_active: true,
+        supports_llm: true,
+        protocol: "anthropic_compatible",
+        base_url: "https://example.invalid/anthropic",
+      },
+    ]);
+
+    expect(managerAgentReadiness({
+      harness: "deepseek_harness",
+      llm_setting_id: "anthropic-only",
+    }, resp)).toEqual({
+      name: "manager-agent",
+      ok: false,
+      detail: "custom/claude-compatible is not OpenAI-compatible for deepseek_harness",
+    });
+  });
+
   it("reports Docker CLI absence for Docker-backed DAG readiness", () => {
     const checks = dockerReadiness(runnerFor([
       { status: null, error: Object.assign(new Error("spawn docker ENOENT"), { code: "ENOENT" }) },

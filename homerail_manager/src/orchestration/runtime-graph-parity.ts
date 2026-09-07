@@ -30,20 +30,19 @@ export function runtimeGraphSignature(parsed: ParsedDAG): { nodes: unknown[]; ed
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
   const edges = parsed.graph.edges
-    .map((edge) => ({
-      from_node: edge.from_node,
-      from_port: edge.from_port,
-      to_node: edge.to_node,
-      to_port: edge.to_port,
-      condition: edge.condition,
-      label: edge.label,
-      max_retries: edge.retry_policy?.max_retries ?? (
-        parsed.loop_sources.includes(edge.to_node) &&
-        parsed.graph.nodes.find((node) => node.node_id === edge.from_node)?.after.includes(edge.to_node)
-          ? 3
-          : undefined
-      ),
-    }))
+    .map((edge) => {
+      const inferredFeedback = parsed.loop_sources.includes(edge.to_node) &&
+        parsed.graph.nodes.find((node) => node.node_id === edge.from_node)?.after.includes(edge.to_node);
+      return {
+        from_node: edge.from_node,
+        from_port: edge.from_port,
+        to_node: edge.to_node,
+        to_port: edge.to_port,
+        condition: edge.condition,
+        label: edge.label === "feedback" || inferredFeedback ? "feedback" : edge.label,
+        max_retries: edge.retry_policy?.max_retries ?? (inferredFeedback ? 3 : undefined),
+      };
+    })
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
   return { nodes, edges };
 }

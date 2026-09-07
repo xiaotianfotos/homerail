@@ -1,6 +1,9 @@
 import type { ExecutionProvider, ContainerConfig } from "../providers/types.js";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { createContainer, createWorkerContainer } from "../lifecycle/create.js";
 import { prepareWorkerWorkspace } from "../storage/workspace-prepare.js";
+import { materializeWorkspaceInputs } from "../storage/workspace-inputs.js";
 import type { MountPolicyOptions } from "../storage/mount-policy.js";
 import type {
   WorkspaceArtifactUploadResult,
@@ -124,13 +127,21 @@ async function dispatchOperation(
       if (resource_type === "worker") {
         const workspaceId = spec.workspace_id as string;
         if (!workspaceId) throw new Error("spec.workspace_id is required for worker create");
+        const codexNestedSandbox = spec.codex_nested_sandbox === true;
         const config: ContainerConfig = {
           image: (spec.image as string) || "homerail-worker:latest",
           env: (spec.env as Record<string, string>) || undefined,
           labels: {
             ...(spec.labels as Record<string, string> || {}),
             "homerail.resource_type": "worker",
+            "homerail.codex_nested_sandbox": String(codexNestedSandbox),
           },
+          // The outer container keeps its ordinary capability, mount, network,
+          // and cgroup boundaries. These two fixed relaxations only permit the
+          // Codex app-server to install its inner bwrap command sandbox.
+          securityOpts: codexNestedSandbox
+            ? ["seccomp=unconfined", "apparmor=unconfined"]
+            : undefined,
           extraHosts: Array.isArray(spec.extra_hosts)
             ? spec.extra_hosts.filter(
                 (value): value is string => typeof value === "string" && value.length > 0,
@@ -139,12 +150,21 @@ async function dispatchOperation(
           workdir: (spec.workdir as string) || "/workspace",
           name: (spec.name as string) || undefined,
         };
-        await prepareWorkerWorkspace(workspaceId, spec.workspace);
+        const preparedWorkspace = await prepareWorkerWorkspace(workspaceId, spec.workspace);
+        if (spec.workspace_read_only === true && preparedWorkspace.prepared) {
+          await mkdir(join(preparedWorkspace.root, ".homerail-runtime"), { recursive: true, mode: 0o700 });
+        }
+        const inputCount = materializeWorkspaceInputs(workspaceId, spec.workspace_inputs);
         const info = await createWorkerContainer({
           config,
           provider,
           workspaceId,
           workspaceReadOnly: spec.workspace_read_only === true,
+          workspaceWritableSubpath: typeof spec.workspace_writable_subpath === "string"
+            ? spec.workspace_writable_subpath
+            : undefined,
+          workspaceGitMetadataReadOnly: spec.workspace_git_metadata_read_only === true,
+          workspaceInputsReadOnly: inputCount > 0,
         });
         return info as unknown as Record<string, unknown>;
       }

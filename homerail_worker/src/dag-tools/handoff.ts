@@ -3,6 +3,7 @@
  * @version 0.1.0
  */
 
+import { isDeepStrictEqual } from "node:util";
 import type { DagToolDefinition } from "../agent/types.js";
 import type { DagToolsState } from "./index.js";
 
@@ -18,7 +19,28 @@ function normalizeHandoffContent(value: unknown): unknown {
   }
 }
 
+function commonOutputContentSchema(state: DagToolsState): Record<string, unknown> | undefined {
+  if (state.availablePorts.length === 0 || !state.outputContracts) return undefined;
+  const schemas = state.availablePorts.map((port) => state.outputContracts?.[port]?.schema);
+  const first = schemas[0];
+  if (!first || typeof first !== "object" || Array.isArray(first)) return undefined;
+  if (schemas.some((schema) => !isDeepStrictEqual(schema, first))) return undefined;
+  return first as Record<string, unknown>;
+}
+
+function missingRequiredContentFields(
+  schema: Record<string, unknown> | undefined,
+  content: unknown,
+): string[] {
+  if (!schema || !Array.isArray(schema.required)) return [];
+  const required = schema.required.filter((field): field is string => typeof field === "string");
+  if (required.length === 0) return [];
+  if (!content || typeof content !== "object" || Array.isArray(content)) return required;
+  return required.filter((field) => !Object.prototype.hasOwnProperty.call(content, field));
+}
+
 export function createHandoffTool(state: DagToolsState): DagToolDefinition {
+  const contentSchema = commonOutputContentSchema(state);
   return {
     name: "handoff",
     description:
@@ -34,20 +56,24 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
           ...(state.availablePorts.length > 0 ? { enum: state.availablePorts } : {}),
           description: "输出端口名（必须是系统提示中列出的可用端口之一）",
         },
-        content: {
+        content: contentSchema ?? {
           description:
             "完整交接内容（JSON 值，任意类型）。输出契约要求的所有字段都必须放在 content 内；" +
             "除 port、content 和可选 summary 外，不要把契约字段放在工具参数顶层。",
         },
         summary: {
           type: "string",
-          description: "给下游的一句话摘要（可选）",
+          description:
+            "仅用于交接活动日志的一句话摘要（可选）。它不会填充 content.summary；" +
+            "如果输出契约要求 summary，必须同时把它放进 content。",
         },
       },
       required: ["port", "content"],
     },
     handler: async (args: Record<string, unknown>) => {
       if (state.yielded) {
+        state.toolArgumentParseState = "invalid";
+        state.toolArgumentParseError = "handoff already yielded this turn";
         return {
           content: [
             {
@@ -60,6 +86,8 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
       }
       const unexpectedKeys = Object.keys(args).filter((key) => !["port", "content", "summary"].includes(key));
       if (unexpectedKeys.length > 0) {
+        state.toolArgumentParseState = "invalid";
+        state.toolArgumentParseError = `unexpected keys: ${unexpectedKeys.join(", ")}`;
         return {
           content: [
             {
@@ -72,12 +100,27 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
           is_error: true,
         };
       }
+      if (args.port === undefined || args.content === undefined) {
+        state.toolArgumentParseState = "missing";
+        state.toolArgumentParseError = "port and content are required";
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "无效的 handoff 参数: port 和 content 都是必填字段。",
+            },
+          ],
+          is_error: true,
+        };
+      }
       const port = String(args.port ?? "");
       const content = normalizeHandoffContent(args.content ?? "");
       const summary = String(args.summary ?? "");
 
       // Validate port
       if (!state.availablePorts.includes(port)) {
+        state.toolArgumentParseState = "invalid";
+        state.toolArgumentParseError = `invalid output port: ${port}`;
         return {
           content: [
             {
@@ -89,8 +132,28 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
         };
       }
 
+      const missingContentFields = missingRequiredContentFields(contentSchema, content);
+      if (missingContentFields.length > 0) {
+        state.toolArgumentParseState = "invalid";
+        state.contractStage = "contract_validation";
+        state.toolArgumentParseError = `content is missing required fields: ${missingContentFields.join(", ")}`;
+        return {
+          content: [{
+            type: "text" as const,
+            text:
+              `无效的 handoff content：缺少输出契约必填字段 ${missingContentFields.join(", ")}。` +
+              "请把这些字段放进 content 后重新调用；工具顶层 summary 不会替代 content.summary。",
+          }],
+          is_error: true,
+        };
+      }
+
       if (state.surfaceReportingRequired && !state.surfaceReportingComplete) {
         const fatal = state.surfaceReportingFatalError;
+        state.toolArgumentParseState = "invalid";
+        state.toolArgumentParseError = fatal
+          ? fatal.message
+          : `required surface phase ${state.surfaceExpectedPhase ?? "unknown"} incomplete`;
         return {
           content: [{
             type: "text" as const,
@@ -130,6 +193,8 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
 
       // PromptRunner owns terminal transport so Manager contract correction
       // cannot race the still-active prompt lifecycle.
+      state.toolArgumentParseState = "valid";
+      state.contractStage = "tool_arguments";
       state.yielded = true;
       state.handoffData = payload;
 

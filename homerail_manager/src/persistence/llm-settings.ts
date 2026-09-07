@@ -8,6 +8,7 @@ import {
 } from "./secret-store.js";
 import { normalizeStatus, type ProviderStatus } from "./status.js";
 import { nowIso } from "./time.js";
+import { codexResponsesModelSupport } from "homerail-protocol";
 import {
   baseUrlForProtocol,
   canonicalModelNameForEndpoint,
@@ -20,19 +21,23 @@ import {
   type LLMAuthType,
   type LLMPlanType,
   type LLMProtocol,
+  type ModelReasoningCapabilities,
   type ModelCapabilities,
   type ProviderEndpointPreset,
   type AnthropicAuthMode,
   type ProviderModelPreset,
+  type ReasoningEffortMap,
 } from "./provider-catalog.js";
 
 export type {
   LLMAuthType,
   LLMPlanType,
   LLMProtocol,
+  ModelReasoningCapabilities,
   ModelCapabilities,
   ProviderEndpointPreset,
   ProviderModelPreset,
+  ReasoningEffortMap,
 } from "./provider-catalog.js";
 
 export interface ProviderInfo extends ModelCapabilities {
@@ -71,7 +76,7 @@ export interface ProviderInput extends ModelCapabilities {
   asr_async_url?: string;
 }
 
-export interface LLMSettingInput extends ModelCapabilities {
+export interface LLMSettingInput extends ModelCapabilities, ModelReasoningCapabilities {
   provider_id: string;
   model_name: string;
   /** 该凭证可用的模型列表（多模型凭证）。若提供，model_name 取第一个作为主模型。 */
@@ -104,7 +109,7 @@ export interface LLMSettingInput extends ModelCapabilities {
   is_default?: boolean;
 }
 
-export interface LLMSetting extends Required<ModelCapabilities> {
+export interface LLMSetting extends Required<ModelCapabilities>, ModelReasoningCapabilities {
   id: string;
   provider_id: string;
   model_name: string;
@@ -203,6 +208,13 @@ function _normalizeClaudeSdkBaseUrl(value: unknown): string | undefined {
   const trimmed = raw.replace(/\/+$/, "");
   const withoutMessagesVersion = trimmed.replace(/\/v1$/i, "");
   return withoutMessagesVersion || trimmed;
+}
+
+function _normalizeResponsesBaseUrl(value: unknown): string | undefined {
+  const raw = _nonEmptyString(value);
+  if (!raw) return undefined;
+  const trimmed = raw.replace(/\/+$/, "");
+  return trimmed.replace(/\/responses$/i, "") || trimmed;
 }
 
 function _normalizePlanType(value: unknown, fallback: LLMPlanType = "custom"): LLMPlanType {
@@ -407,6 +419,31 @@ function _capability(
   if (typeof endpointValue === "boolean") return endpointValue;
   if (typeof providerValue === "boolean") return providerValue;
   return fallback;
+}
+
+function _reasoningEffortMap(value: unknown): ReasoningEffortMap | false | undefined {
+  if (value === false) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const normalized: ReasoningEffortMap = {};
+  for (const [rawSelector, rawWireValue] of Object.entries(value)) {
+    const selector = rawSelector.trim();
+    if (!selector || (rawWireValue !== null && (typeof rawWireValue !== "string" || !rawWireValue.trim()))) {
+      return undefined;
+    }
+    normalized[selector] = typeof rawWireValue === "string" ? rawWireValue.trim() : null;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function _reasoningDefault(
+  value: unknown,
+  effortMap: ReasoningEffortMap | false | undefined,
+): string | undefined {
+  const selected = typeof value === "string" && value.trim() ? value.trim() : undefined;
+  return selected && effortMap !== undefined && effortMap !== false
+      && Object.prototype.hasOwnProperty.call(effortMap, selected)
+    ? selected
+    : undefined;
 }
 
 function _normalizeProvider(raw: unknown): ProviderInfo | undefined {
@@ -884,8 +921,16 @@ function _resolveEffectiveSetting(raw: unknown): { setting?: LLMSetting; needsSe
 
   // models 向后兼容：旧 setting 无 models 字段时，从 model_name 派生 [model_name]
   const models = Array.isArray(rec.models) && rec.models.every((m) => typeof m === "string")
-    ? (rec.models as string[]).map((item) => canonicalModelNameForEndpoint(providerId, resolvedEndpointId, item))
+    ? Array.from(new Set(
+      (rec.models as string[]).map((item) => canonicalModelNameForEndpoint(providerId, resolvedEndpointId, item)),
+    ))
     : [modelName];
+  const reasoningEffortMap = _reasoningEffortMap(rec.reasoning_effort_map)
+    ?? modelPreset?.reasoning_effort_map;
+  const defaultReasoningEffort = _reasoningDefault(
+    rec.default_reasoning_effort ?? modelPreset?.default_reasoning_effort,
+    reasoningEffortMap,
+  );
 
   const setting: LLMSetting = {
     id: rec.id,
@@ -972,6 +1017,8 @@ function _resolveEffectiveSetting(raw: unknown): { setting?: LLMSetting; needsSe
       provider?.supports_video_input,
       false,
     ),
+    reasoning_effort_map: reasoningEffortMap,
+    default_reasoning_effort: defaultReasoningEffort,
     created_at: typeof rec.created_at === "string" ? rec.created_at : new Date().toISOString(),
     updated_at: typeof rec.updated_at === "string" ? rec.updated_at : new Date().toISOString(),
     preset_source: endpointResolution.source,
@@ -1095,6 +1142,8 @@ function _storedSetting(setting: LLMSetting): StoredLLMSetting {
     tts_voice: setting.tts_voice,
     tts_format: setting.tts_format,
     tts_sample_rate: setting.tts_sample_rate,
+    reasoning_effort_map: setting.reasoning_effort_map,
+    default_reasoning_effort: setting.default_reasoning_effort,
     is_active: setting.is_active,
     is_default: setting.is_default,
     created_at: setting.created_at,
@@ -1486,6 +1535,41 @@ export function findActiveClaudeSdkCompatibleSetting(): LLMSetting | undefined {
   return settings.find((s) => s.is_default) ?? settings[0];
 }
 
+export function findActiveCodexCompatibleSetting(): LLMSetting | undefined {
+  return _readSettings()
+    .filter((s) => (
+      s.is_active &&
+      s.preset_status !== "missing" &&
+      s.supports_llm &&
+      !isVoiceServiceSetting(s) &&
+      Boolean(resolveCodexResponsesBaseUrlForSetting(s))
+    ))
+    .sort((a, b) => {
+      if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
+      return b.updated_at.localeCompare(a.updated_at);
+    })[0];
+}
+
+export function resolveDeepSeekHarnessBaseUrlForSetting(setting: LLMSetting): string | undefined {
+  if (setting.protocol !== "openai_compatible") return undefined;
+  return setting.chat_completions_base_url ?? setting.base_url;
+}
+
+export function findActiveDeepSeekHarnessCompatibleSetting(): LLMSetting | undefined {
+  return _readSettings()
+    .filter((setting) => (
+      setting.is_active &&
+      setting.preset_status !== "missing" &&
+      setting.supports_llm &&
+      !isVoiceServiceSetting(setting) &&
+      Boolean(resolveDeepSeekHarnessBaseUrlForSetting(setting))
+    ))
+    .sort((left, right) => {
+      if (left.is_default !== right.is_default) return left.is_default ? -1 : 1;
+      return right.updated_at.localeCompare(left.updated_at);
+    })[0];
+}
+
 export function findActiveLlmRuntimeSetting(): LLMSetting | undefined {
   return _readSettings()
     .filter((s) => s.is_active && s.preset_status !== "missing" && s.supports_llm && !isVoiceServiceSetting(s))
@@ -1528,6 +1612,20 @@ export function resolveClaudeSdkBaseUrlForSetting(setting: LLMSetting): string |
   return undefined;
 }
 
+export function resolveCodexResponsesBaseUrlForSetting(setting: LLMSetting): string | undefined {
+  if (codexResponsesModelSupport(setting.provider_id, setting.model_name) === "unsupported") {
+    return undefined;
+  }
+  const provider = getProvider(setting.provider_id);
+  const endpoint = _endpointForSetting(setting, provider);
+  const lockedEndpoint = _isLockedCatalogEndpoint(setting.provider_id, endpoint);
+  return lockedEndpoint
+    ? _normalizeResponsesBaseUrl(endpoint?.responses_base_url)
+    : _normalizeResponsesBaseUrl(setting.responses_base_url) ??
+      _normalizeResponsesBaseUrl(endpoint?.responses_base_url) ??
+      _normalizeResponsesBaseUrl(provider?.responses_base_url);
+}
+
 export function resolveClaudeSdkAuthModeForSetting(setting: LLMSetting): AnthropicAuthMode {
   return _endpointForSetting(setting)?.anthropic_auth_mode ?? "api_key";
 }
@@ -1542,7 +1640,7 @@ function _resolveSettingMetadata(
   existing?: LLMSetting,
 ): {
   endpoint?: ProviderEndpointPreset;
-  modelCapabilities?: ModelCapabilities;
+  modelCapabilities?: ProviderModelPreset;
   endpoint_id: string;
   endpoint_name?: string;
   plan_type: LLMPlanType;
@@ -1651,6 +1749,24 @@ function _buildSetting(
   const displayName = input.display_name?.trim() || input.alias?.trim() ||
     (existing && existing.model_name === input.model_name ? existing.display_name : undefined) ||
     input.model_name;
+  const explicitReasoningEffortMap = _reasoningEffortMap(input.reasoning_effort_map);
+  if (input.reasoning_effort_map !== undefined && explicitReasoningEffortMap === undefined) {
+    throw new Error("reasoning_effort_map must be false or a non-empty selector-to-wire-value object");
+  }
+  const reasoningEffortMap = input.reasoning_effort_map !== undefined
+    ? explicitReasoningEffortMap
+    : modelPreset?.reasoning_effort_map ?? existing?.reasoning_effort_map;
+  const requestedDefaultReasoningEffort = reasoningEffortMap === false
+    ? undefined
+    : input.default_reasoning_effort?.trim()
+      || modelPreset?.default_reasoning_effort
+      || existing?.default_reasoning_effort;
+  const defaultReasoningEffort = _reasoningDefault(requestedDefaultReasoningEffort, reasoningEffortMap);
+  if (requestedDefaultReasoningEffort && !defaultReasoningEffort) {
+    throw new Error(
+      `default_reasoning_effort '${requestedDefaultReasoningEffort}' is not declared by reasoning_effort_map`,
+    );
+  }
   const builtinPreset = Boolean(
     endpoint && findCatalogProvider(input.provider_id) && _isReadonlyEndpoint(input.provider_id, endpoint.id),
   );
@@ -1697,6 +1813,8 @@ function _buildSetting(
       provider.supports_image_input ?? existing?.supports_image_input ?? false,
     supports_video_input: input.supports_video_input ?? modelPreset?.supports_video_input ?? endpoint?.supports_video_input ??
       provider.supports_video_input ?? existing?.supports_video_input ?? false,
+    reasoning_effort_map: reasoningEffortMap,
+    default_reasoning_effort: defaultReasoningEffort,
     created_at: existing?.created_at ?? now,
     updated_at: now,
     preset_source: builtinPreset ? "builtin" : "custom",

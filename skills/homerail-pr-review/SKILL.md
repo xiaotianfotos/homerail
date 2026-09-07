@@ -3,7 +3,7 @@ name: homerail-pr-review
 description: |
   Run HomeRail's built-in read-only pull request review DAG. Use when the user
   asks to review a GitHub PR, requests an evidence-backed PR audit, or wants a
-  reusable runtime/security/tests/frontend review with independent quorum.
+  reusable independent Qwen, Kimi, and GLM review with retained findings.
 ---
 
 # HomeRail PR Review
@@ -52,12 +52,10 @@ hr dag artifact <run-id> pr-review.md --output pr-review.md
 
 A useful run contains:
 
-- four `ReviewerResult` handoffs for runtime, security, tests, and frontend;
-- a deduplicated `DraftReviewReport`;
-- three independent `VerificationVote` handoffs;
-- one machine-readable verdict per final finding from both the evidence and
-  false-positive verifiers;
-- a deterministic two-of-three quorum payload;
+- three complete reviewer handoffs from Qwen, Kimi, and GLM;
+- a deduplicated report that preserves every complete reviewer finding;
+- three independent approve/request-changes/abstain votes;
+- a deterministic gate requiring two approvals and zero retained findings;
 - declared `pr-review.json` and `pr-review.md` artifacts;
 - Manager audit and metrics records for the run.
 

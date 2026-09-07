@@ -36,6 +36,7 @@ import {
   type LocalRuntimeServiceStatus,
   type RuntimeServiceControlStatus,
 } from "../local-service-lifecycle.js";
+import { normalizeExactHttpOrigin } from "../ui-admin-proxy.js";
 
 interface GlobalOpts {
   json?: boolean;
@@ -67,7 +68,9 @@ interface UiStartOpts {
 }
 
 interface RuntimeStatus {
+  runtimeRoot: string;
   managerPid?: number;
+  managerRuntimeRoot?: string;
   nodePid?: number;
   uiPid?: number;
   uiHttpsPid?: number;
@@ -139,8 +142,21 @@ interface UiServiceState {
   port: number;
   protocol?: "http" | "https";
   mode?: "dev" | "static";
+  /**
+   * Absolute directory served by a packaged/static UI child. AppImage
+   * extraction paths change between desktop launches, so a live child whose
+   * recorded root differs from the current runtime must be replaced.
+   */
+  staticUiDir?: string;
   managerUrl?: string;
   publicUrl?: string;
+  /**
+   * Canonical explicit external Origin the child was launched with
+   * (`HOMERAIL_UI_PUBLIC_URL`), or `undefined` when the child runs with
+   * strict request-derived authorization. Drives the restart decision when
+   * the requested effective Origin changes.
+   */
+  explicitPublicUrl?: string;
   textModeEnabled?: boolean;
   startedAt: number;
 }
@@ -151,6 +167,8 @@ interface ManagerServiceState {
   port: number;
   accessUrl: string;
   publicUrl?: string;
+  /** Runtime tree that supplied the detached Manager process. */
+  runtimeRoot?: string;
   startedAt: number;
 }
 
@@ -158,33 +176,32 @@ type RuntimeServiceName = "manager" | "node" | "worker" | "ui" | "ui-https";
 
 const MANAGER_ADMIN_ORIGINS_ENV = "HOMERAIL_MANAGER_ADMIN_ORIGINS";
 
-/** Merge operator-provided exact Origins with the two UI proxy origins. */
+/**
+ * Merge operator-provided exact Origins with the two UI proxy origins.
+ * Both inputs are validated with the same canonical exact HTTP(S) Origin rule
+ * the static UI mutation proxy applies, so the Manager allowlist and the UI
+ * proxy never diverge on what counts as an exact Origin.
+ */
 export function mergeManagerAdminOrigins(
   configured: string | undefined,
   uiUrls: readonly string[],
 ): string {
   const origins = new Set<string>();
   for (const value of (configured ?? "").split(",").map((entry) => entry.trim()).filter(Boolean)) {
-    let parsed: URL;
-    try { parsed = new URL(value); } catch { throw new Error(`${MANAGER_ADMIN_ORIGINS_ENV} contains an invalid Origin`); }
-    if (
-      (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-      || parsed.username
-      || parsed.password
-      || parsed.pathname !== "/"
-      || parsed.search
-      || parsed.hash
-      || parsed.origin !== value
-    ) throw new Error(`${MANAGER_ADMIN_ORIGINS_ENV} must contain exact http(s) Origins without paths`);
-    origins.add(value);
+    const normalized = normalizeExactHttpOrigin(value);
+    if (!normalized) {
+      throw new Error(`${MANAGER_ADMIN_ORIGINS_ENV} must contain exact http(s) Origins without paths`);
+    }
+    origins.add(normalized);
   }
   for (const value of uiUrls) {
-    let parsed: URL;
-    try { parsed = new URL(value); } catch { throw new Error(`Agent UI public URL is invalid: ${value}`); }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error(`Agent UI public URL must use http(s): ${value}`);
+    const normalized = normalizeExactHttpOrigin(value);
+    if (!normalized) {
+      throw new Error(
+        `Agent UI public URL must be an exact http(s) Origin without wildcard, path, query, fragment, or credentials: ${value}`,
+      );
     }
-    origins.add(parsed.origin);
+    origins.add(normalized);
   }
   return [...origins].sort().join(",");
 }
@@ -496,6 +513,7 @@ async function startRuntime(
       port: managerPort,
       accessUrl: client.baseUrl,
       publicUrl: managerPublicUrl,
+      runtimeRoot: resolveRepoRoot(),
       startedAt: Date.now(),
     });
     printMessage(`Started Manager pid=${pid}`);
@@ -602,7 +620,9 @@ async function getRuntimeStatus(globalOpts: GlobalOpts): Promise<RuntimeStatus> 
     managerHealthy = false;
   }
   const status: RuntimeStatus = {
+    runtimeRoot: resolveRepoRoot(),
     managerPid,
+    managerRuntimeRoot: managerState?.runtimeRoot,
     nodePid,
     uiPid: uiStatus.uiPid,
     uiHttpsPid: uiStatus.uiHttpsPid,
@@ -711,6 +731,47 @@ function startService(name: RuntimeServiceName, relativeScript: string, env: Rec
   return child.pid;
 }
 
+/**
+ * Explicit operator-configured public UI URL, mirroring the explicit sources
+ * of configuredUiPublicUrl (--public-url flag, HOMERAIL_UI_PUBLIC_URL, then
+ * ui.publicUrl). Returns undefined when the URL would be derived from the
+ * bind host/port, so callers can keep no-config behavior strictly
+ * request-derived.
+ */
+function explicitUiPublicUrl(
+  config: ReturnType<typeof loadLocalConfig>,
+  override?: string,
+): string | undefined {
+  if (override?.trim()) return override.trim().replace(/\/+$/, "");
+  if (process.env.HOMERAIL_UI_PUBLIC_URL?.trim()) return process.env.HOMERAIL_UI_PUBLIC_URL.trim().replace(/\/+$/, "");
+  if (config.ui?.publicUrl?.trim()) return config.ui.publicUrl.trim().replace(/\/+$/, "");
+  return undefined;
+}
+
+/**
+ * Resolve the operator-configured explicit public UI Origin from the CLI
+ * flag, `HOMERAIL_UI_PUBLIC_URL`, or stored `ui.publicUrl` (in that
+ * precedence order) into one canonical value shared by both static listeners.
+ * The same exact http(s) Origin rule the static UI mutation proxy applies is
+ * enforced here, so the runtime fails fast before any listener is launched
+ * with an ambiguous trust boundary. Returns `undefined` when no explicit
+ * Origin is configured so both listeners stay strictly request-derived.
+ */
+export function resolveExplicitUiPublicOrigin(
+  config: ReturnType<typeof loadLocalConfig>,
+  override?: string,
+): string | undefined {
+  const raw = explicitUiPublicUrl(config, override);
+  if (raw === undefined) return undefined;
+  const normalized = normalizeExactHttpOrigin(raw);
+  if (normalized === undefined) {
+    throw new Error(
+      `Agent UI public URL must be an exact http(s) Origin without wildcard, path, query, fragment, or credentials: ${raw}`,
+    );
+  }
+  return normalized;
+}
+
 async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Promise<UiStatus> {
   ensureHomerailHome();
   const cfg = loadLocalConfig();
@@ -723,18 +784,29 @@ async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Pr
   }
 
   ensureAgentUiRuntime();
+  // One normalized explicit external Origin drives both static listener
+  // environments, the persisted service state, and the restart decisions
+  // below, no matter whether it came from the CLI flag, the environment, or
+  // stored config.
+  const explicitPublicUrl = resolveExplicitUiPublicOrigin(cfg, opts.publicUrl);
   const managerUrl = opts.managerUrl !== undefined || globalOpts.baseUrl
     ? configuredManagerAccessUrl(cfg, opts.managerUrl || globalOpts.baseUrl)
     : undefined;
-  const httpsPublicUrl = configuredUiPublicUrl(cfg, host, httpsPort, opts.publicUrl);
-  const httpPublicUrl = configuredUiHttpPublicUrl(cfg, host, httpPort);
+  const httpsPublicUrl = explicitPublicUrl ?? configuredUiPublicUrl(cfg, host, httpsPort);
+  const httpPublicUrl = explicitPublicUrl ?? configuredUiHttpPublicUrl(cfg, host, httpPort);
   const managerPort = String(configuredManagerPort(managerUrl ? { ...cfg, manager: { ...cfg.manager, url: managerUrl } } : cfg));
   const textModeEnabled = resolveTextModeEnabled(opts.enableTextMode);
-  const serveStatic = shouldServeStaticAgentUi(path.join(resolveRepoRoot(), "agent-ui"));
+  const agentUiDir = path.join(resolveRepoRoot(), "agent-ui");
+  const serveStatic = shouldServeStaticAgentUi(agentUiDir);
+  const staticUiDir = serveStatic ? path.join(agentUiDir, "dist") : undefined;
   restartUiIfTextModeChanged("ui-https", textModeEnabled);
   restartUiIfTextModeChanged("ui", textModeEnabled);
   restartUiIfServingModeChanged("ui-https", serveStatic);
   restartUiIfServingModeChanged("ui", serveStatic);
+  restartUiIfStaticRootChanged("ui-https", staticUiDir);
+  restartUiIfStaticRootChanged("ui", staticUiDir);
+  restartUiIfPublicOriginChanged("ui-https", explicitPublicUrl);
+  restartUiIfPublicOriginChanged("ui", explicitPublicUrl);
   const existing = getUiStatus(host, httpsPort, httpsPublicUrl, httpPort, httpPublicUrl);
   let httpsError: string | undefined;
   let httpError: string | undefined;
@@ -750,6 +822,7 @@ async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Pr
         managerUrl,
         managerPort,
         publicUrl: httpsPublicUrl,
+        explicitPublicUrl,
         textModeEnabled,
         certificate,
       });
@@ -771,6 +844,7 @@ async function startUiServer(globalOpts: GlobalOpts, opts: UiStartOpts = {}): Pr
         managerUrl,
         managerPort,
         publicUrl: httpPublicUrl,
+        explicitPublicUrl,
         textModeEnabled,
       });
       await waitForHttp(uiProbeUrl(host, httpPort, "http"));
@@ -799,6 +873,16 @@ interface StartUiProcessOpts {
   managerUrl?: string;
   managerPort: string;
   publicUrl: string;
+  /**
+   * Operator-configured public UI URL (--ui-public-url /
+   * HOMERAIL_UI_PUBLIC_URL / ui.publicUrl), only when explicitly set. Derived
+   * URLs stay out of the static server so no-config behavior remains strictly
+   * request-derived. Both the HTTPS and the HTTP static listeners receive the
+   * same canonical Origin; the listener transport never rewrites it, so an
+   * HTTPS browser Origin stays HTTPS behind a TLS-terminating proxy that
+   * forwards plain HTTP to the fallback listener.
+   */
+  explicitPublicUrl?: string;
   textModeEnabled: boolean;
   certificate?: UiCertificate;
 }
@@ -812,6 +896,39 @@ export function agentUiDevServerCommand(agentUiDir: string): { command: string; 
   return {
     command: process.execPath,
     args: [path.join(agentUiDir, "node_modules", "vite", "bin", "vite.js")],
+  };
+}
+
+/**
+ * Environment for the zero-dependency static UI server. `HOMERAIL_UI_PUBLIC_URL`
+ * is only present when the operator explicitly configured a public UI URL, so
+ * the proxy's mutation authorization stays strictly request-derived otherwise.
+ */
+export function staticUiServerEnv(opts: {
+  homerailHome: string;
+  staticUiDir: string;
+  host: string;
+  port: number;
+  protocol: "http" | "https";
+  managerHttp: string;
+  explicitPublicUrl?: string;
+  certificate?: UiCertificate;
+}): Record<string, string> {
+  return {
+    HOMERAIL_HOME: opts.homerailHome,
+    HOMERAIL_STATIC_UI_DIR: opts.staticUiDir,
+    HOMERAIL_UI_HOST: opts.host,
+    HOMERAIL_UI_PORT: String(opts.port),
+    HOMERAIL_MANAGER_HTTP: opts.managerHttp,
+    HOMERAIL_MANAGER_WS: opts.managerHttp.replace(/^http/, "ws"),
+    ...(opts.protocol === "https"
+      ? {
+        HOMERAIL_UI_HTTPS: "1",
+        HOMERAIL_UI_HTTPS_KEY: opts.certificate?.keyPath || "",
+        HOMERAIL_UI_HTTPS_CERT: opts.certificate?.certPath || "",
+      }
+      : {}),
+    ...(opts.explicitPublicUrl ? { HOMERAIL_UI_PUBLIC_URL: opts.explicitPublicUrl } : {}),
   };
 }
 
@@ -829,25 +946,21 @@ function startUiProcess(opts: StartUiProcessOpts): number {
   let child: import("child_process").ChildProcess;
   if (serveStatic) {
     const serverScript = path.join(resolveRepoRoot(), "homerail_cli", "dist", "static-ui-server.js");
-    const managerWs = managerHttp.replace(/^http/, "ws");
     child = spawn(process.execPath, [serverScript], {
       cwd: agentUiDir,
       env: {
         ...loadLocalSecrets(),
         ...process.env,
-        HOMERAIL_HOME: getHomerailHome(),
-        HOMERAIL_STATIC_UI_DIR: path.join(agentUiDir, "dist"),
-        HOMERAIL_UI_HOST: opts.host,
-        HOMERAIL_UI_PORT: String(opts.port),
-        HOMERAIL_MANAGER_HTTP: managerHttp,
-        HOMERAIL_MANAGER_WS: managerWs,
-        ...(opts.protocol === "https"
-          ? {
-            HOMERAIL_UI_HTTPS: "1",
-            HOMERAIL_UI_HTTPS_KEY: opts.certificate?.keyPath || "",
-            HOMERAIL_UI_HTTPS_CERT: opts.certificate?.certPath || "",
-          }
-          : {}),
+        ...staticUiServerEnv({
+          homerailHome: getHomerailHome(),
+          staticUiDir: path.join(agentUiDir, "dist"),
+          host: opts.host,
+          port: opts.port,
+          protocol: opts.protocol,
+          managerHttp,
+          explicitPublicUrl: opts.explicitPublicUrl,
+          certificate: opts.certificate,
+        }),
       },
       detached: true,
       shell: false,
@@ -900,8 +1013,10 @@ function startUiProcess(opts: StartUiProcessOpts): number {
     port: opts.port,
     protocol: opts.protocol,
     mode: serveStatic ? "static" : "dev",
+    staticUiDir: serveStatic ? path.join(agentUiDir, "dist") : undefined,
     managerUrl: opts.managerUrl,
     publicUrl: opts.publicUrl,
+    explicitPublicUrl: opts.explicitPublicUrl,
     textModeEnabled: opts.textModeEnabled,
     startedAt: Date.now(),
   });
@@ -984,6 +1099,58 @@ function restartUiIfServingModeChanged(name: "ui" | "ui-https", serveStatic: boo
   if (pid === undefined || !pidIsRunning(pid)) return;
   const desiredMode = serveStatic ? "static" : "dev";
   if (state?.mode !== desiredMode && (state?.mode !== undefined || serveStatic)) {
+    stopService(name);
+  }
+}
+
+/**
+ * A detached packaged UI may outlive the AppImage process that mounted or
+ * extracted its files. The PID then remains alive while every static request
+ * returns 404 because its old resource root has disappeared. Restart it when
+ * the current package resolves to a different root, when that root vanished,
+ * or when upgrading legacy state that did not record the root at all.
+ */
+function restartUiIfStaticRootChanged(
+  name: "ui" | "ui-https",
+  requestedStaticUiDir: string | undefined,
+): void {
+  if (!requestedStaticUiDir) return;
+  const state = readUiState(name);
+  const pid = readPid(name) ?? state?.pid;
+  if (pid === undefined || !pidIsRunning(pid) || state?.mode !== "static") return;
+  const runningStaticUiDir = state.staticUiDir;
+  const runningIndex = runningStaticUiDir
+    ? path.join(runningStaticUiDir, "index.html")
+    : undefined;
+  if (
+    !runningStaticUiDir ||
+    path.resolve(runningStaticUiDir) !== path.resolve(requestedStaticUiDir) ||
+    !runningIndex ||
+    !fs.existsSync(runningIndex)
+  ) {
+    stopService(name);
+  }
+}
+
+/**
+ * Compare the explicit external Origin a running UI child was launched with
+ * against the newly requested one. Adding (`undefined -> value`), changing
+ * (`value -> different value`), and removing (`value -> undefined`) the
+ * Origin all invalidate the live child so the new authorization policy is
+ * actually applied; an unchanged effective Origin never restarts.
+ */
+export function explicitPublicUrlChanged(
+  runningExplicitPublicUrl: string | undefined,
+  requestedExplicitPublicUrl: string | undefined,
+): boolean {
+  return (runningExplicitPublicUrl ?? undefined) !== (requestedExplicitPublicUrl ?? undefined);
+}
+
+function restartUiIfPublicOriginChanged(name: "ui" | "ui-https", explicitPublicUrl: string | undefined): void {
+  const state = readUiState(name);
+  const pid = readPid(name) ?? state?.pid;
+  if (pid === undefined || !pidIsRunning(pid)) return;
+  if (explicitPublicUrlChanged(state?.explicitPublicUrl, explicitPublicUrl)) {
     stopService(name);
   }
 }
@@ -1211,6 +1378,9 @@ function readManagerState(): ManagerServiceState | undefined {
         port: parsed.port,
         accessUrl: parsed.accessUrl,
         publicUrl: typeof parsed.publicUrl === "string" ? parsed.publicUrl : undefined,
+        runtimeRoot: typeof parsed.runtimeRoot === "string" && parsed.runtimeRoot
+          ? parsed.runtimeRoot
+          : undefined,
         startedAt: typeof parsed.startedAt === "number" ? parsed.startedAt : 0,
       };
     }
@@ -1251,8 +1421,14 @@ function readUiState(name: "ui" | "ui-https" = "ui"): UiServiceState | undefined
         port: parsed.port,
         protocol: parsed.protocol === "https" ? "https" : "http",
         mode: parsed.mode === "static" ? "static" : parsed.mode === "dev" ? "dev" : undefined,
+        staticUiDir: typeof parsed.staticUiDir === "string" && parsed.staticUiDir
+          ? parsed.staticUiDir
+          : undefined,
         managerUrl: typeof parsed.managerUrl === "string" ? parsed.managerUrl : DEFAULT_MANAGER_URL,
         publicUrl: typeof parsed.publicUrl === "string" ? parsed.publicUrl : undefined,
+        explicitPublicUrl: typeof parsed.explicitPublicUrl === "string" && parsed.explicitPublicUrl
+          ? parsed.explicitPublicUrl
+          : undefined,
         textModeEnabled: parsed.textModeEnabled === true,
         startedAt: typeof parsed.startedAt === "number" ? parsed.startedAt : 0,
       };

@@ -21,14 +21,17 @@ function publication(overrides: Record<string, unknown> = {}): Record<string, un
       summary: "No actionable findings",
       actionable_count: 0,
       findings: [],
-      reviewer_results: ["runtime", "security", "tests", "frontend"].map((reviewer) => ({
+      reviewer_results: ["qwen", "kimi", "glm"].map((reviewer) => ({
         reviewer,
         status: "complete",
+        vote: "approve",
         summary: `${reviewer} review complete`,
+        reviewed_files: ["src/index.ts"],
+        unreviewed_files: [],
+        evidence_truncated: false,
         findings: [],
       })),
     },
-    markdown: "# HomeRail PR Review\n\nNo actionable findings.",
     quorum: { passed: true, successes: 3, total: 3, threshold: 2 },
     ...overrides,
   };
@@ -40,7 +43,7 @@ function validate(options: {
 } = {}) {
   return validatePrReviewCloseoutEvidence({
     metadata: options.metadata ?? { workflowId: "pr-review" },
-    handoffs: options.handoffs ?? [{ fromNode: "publish", port: "published", content: publication() }],
+    handoffs: options.handoffs ?? [{ fromNode: "decide", port: "decided", content: publication() }],
     expected,
   });
 }
@@ -55,6 +58,88 @@ describe("PR closeout evidence validation", () => {
       report_status: "pass",
       actionable_count: 0,
     });
+  });
+
+  it("accepts a two-approval pass when the third reviewer safely abstains", () => {
+    const value = publication();
+    const reviewers = (value.report as Record<string, unknown>).reviewer_results as Array<Record<string, unknown>>;
+    reviewers[2] = {
+      ...reviewers[2],
+      status: "failed",
+      vote: "abstain",
+      reviewed_files: [],
+      unreviewed_files: ["src/index.ts"],
+      evidence_truncated: true,
+    };
+    (value.report as Record<string, unknown>).confidence = "medium";
+    value.quorum = { passed: true, successes: 2, total: 3, threshold: 2 };
+    expect(validate({
+      handoffs: [{ fromNode: "decide", port: "decided", content: value }],
+    })).toMatchObject({ valid: true, passed: true, report_status: "pass" });
+  });
+
+  it("rejects findings hidden inside a failed reviewer", () => {
+    const value = publication();
+    const report = value.report as Record<string, unknown>;
+    const reviewers = report.reviewer_results as Array<Record<string, unknown>>;
+    reviewers[2] = {
+      ...reviewers[2],
+      status: "failed",
+      vote: "abstain",
+      reviewed_files: [],
+      unreviewed_files: ["src/index.ts"],
+      evidence_truncated: true,
+      findings: [{
+        category: "runtime",
+        severity: "high",
+        title: "Hidden failure",
+        file: "src/index.ts",
+        line: 1,
+        evidence: "A failed reviewer cannot publish trusted findings.",
+        recommendation: "Normalize failed evidence to an empty finding set.",
+        confidence: "high",
+      }],
+    };
+    report.confidence = "medium";
+    value.quorum = { passed: true, successes: 2, total: 3, threshold: 2 };
+
+    expect(validate({
+      handoffs: [{ fromNode: "decide", port: "decided", content: value }],
+    })).toMatchObject({ valid: false, passed: false, error: expect.stringContaining("does not preserve every reviewer finding") });
+  });
+
+  it("accepts a failed reviewer finding only when the final report retains it", () => {
+    const value = publication();
+    const report = value.report as Record<string, unknown>;
+    const reviewers = report.reviewer_results as Array<Record<string, unknown>>;
+    const retainedFinding = {
+      category: "runtime",
+      severity: "high",
+      title: "Recovered failure",
+      file: "src/index.ts",
+      line: 1,
+      evidence: "The durable evidence bridge retained a bounded finding.",
+      recommendation: "Fix the recovered defect before merging.",
+      confidence: "high",
+    };
+    reviewers[2] = {
+      ...reviewers[2],
+      status: "failed",
+      vote: "abstain",
+      reviewed_files: [],
+      unreviewed_files: ["src/index.ts"],
+      evidence_truncated: true,
+      findings: [retainedFinding],
+    };
+    report.status = "findings";
+    report.confidence = "medium";
+    report.actionable_count = 1;
+    report.findings = [retainedFinding];
+    value.quorum = { passed: false, successes: 2, total: 3, threshold: 2 };
+
+    expect(validate({
+      handoffs: [{ fromNode: "decide", port: "decided", content: value }],
+    })).toMatchObject({ valid: true, passed: false, report_status: "findings", actionable_count: 1 });
   });
 
   it("rejects an unrelated workflow even when nested content claims pass", () => {
@@ -74,10 +159,10 @@ describe("PR closeout evidence validation", () => {
     });
   });
 
-  it("requires the persisted publish.published handoff provenance", () => {
+  it("requires the persisted decide.decided handoff provenance", () => {
     expect(validate({
       handoffs: [{ fromNode: "synthesize", port: "drafted", content: publication() }],
-    })).toMatchObject({ valid: false, passed: false, error: expect.stringContaining("publish.published") });
+    })).toMatchObject({ valid: false, passed: false, error: expect.stringContaining("decide.decided") });
   });
 
   it("does not default a missing actionable_count to zero", () => {
@@ -85,7 +170,7 @@ describe("PR closeout evidence validation", () => {
     const report = value.report as Record<string, unknown>;
     delete report.actionable_count;
     expect(validate({
-      handoffs: [{ from_node: "publish", port: "published", content: JSON.stringify(value) }],
+      handoffs: [{ from_node: "decide", port: "decided", content: JSON.stringify(value) }],
     })).toMatchObject({
       recognized: true,
       valid: false,
@@ -99,13 +184,13 @@ describe("PR closeout evidence validation", () => {
     const wrongHead = publication();
     (wrongHead.report as Record<string, unknown>).head = "c".repeat(40);
     expect(validate({
-      handoffs: [{ fromNode: "publish", port: "published", content: wrongHead }],
+      handoffs: [{ fromNode: "decide", port: "decided", content: wrongHead }],
     })).toMatchObject({ valid: false, passed: false, head: "c".repeat(40), error: expect.stringContaining("base/head") });
 
     expect(validate({
       handoffs: [{
-        fromNode: "publish",
-        port: "published",
+        fromNode: "decide",
+        port: "decided",
         content: publication({ quorum: { passed: true, successes: 1, total: 3, threshold: 2 } }),
       }],
     })).toMatchObject({ valid: false, passed: false, error: expect.stringContaining("quorum") });

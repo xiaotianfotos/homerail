@@ -1,11 +1,10 @@
 # Persistent production deployment
 
 `.github/workflows/deploy-production.yml` deploys the latest `main` revision
-once per day at 03:30 Asia/Shanghai (19:30 UTC), and also supports an
-owner-only manual dispatch for an immediate deployment. Merging a pull request
-does not start a second deployment workflow. It runs on a dedicated self-hosted
-runner labeled `homerail-deploy`; the live DAG, PR Review, and Auto Fix labels
-must stay on separate runners.
+only through an owner-initiated manual dispatch. Merging a pull request does
+not start a deployment workflow. It runs on a dedicated self-hosted runner
+labeled `homerail-deploy`; the live DAG, PR Review, and Auto Fix labels must
+stay on separate runners.
 
 Each deployment runner keeps its machine-specific paths and public address in
 `~/.config/homerail/production.env` with mode `0600`. The tracked workflow does
@@ -97,8 +96,23 @@ the production Manager. The newest three releases and their Worker images are
 retained; database, model settings, sessions, certificates, and external Skills
 remain outside release directories.
 
-The workflow also has a maintainer-only manual dispatch for immediate recovery
-or an explicitly selected revision. Scheduled and default manual deployments
-resolve `main` at job start. The release switch never changes
+The revision-tagged Worker image honors the public build network contract:
+optional `HOMERAIL_WORKER_BUILD_APT_MIRROR`,
+`HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR`, and
+`HOMERAIL_WORKER_BUILD_NPM_REGISTRY` values are validated before Docker
+starts and added as build arguments, while unset values keep the default
+Debian sources and npm registry. Standard proxy variables are forwarded to
+Docker by name only; their values never enter deployment argv or logs. See
+[Worker build network sources](worker-build-network.md).
+
+The production workflow reads those three public source overrides from GitHub
+Actions repository variables and maps them explicitly into the deploy job.
+This keeps the self-hosted runner independent of whether its systemd process
+has reloaded a machine-local environment file. Other Worker build entry points
+may continue to receive the same variables from their process environment.
+
+The workflow has a maintainer-only manual dispatch for immediate recovery or
+an explicitly selected revision. A manual deployment without a revision
+resolves `main` at job start. The release switch never changes
 `HOMERAIL_PRODUCTION_HOME`; database, settings, sessions, certificates, and
 external Skills continue to live in the persistent Home across deployments.

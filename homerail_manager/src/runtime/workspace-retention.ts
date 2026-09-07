@@ -150,6 +150,25 @@ async function inspectWorkspace(target: string): Promise<WorkspaceEntry | undefi
 }
 
 async function removeWorkspace(target: string, entry: WorkspaceEntry): Promise<void> {
+  if (entry.isDirectory && !entry.isSymbolicLink) {
+    const inputRoot = path.join(target, "input");
+    const unlockInputDirectories = async (directory: string): Promise<void> => {
+      let stat;
+      try {
+        stat = await fs.lstat(directory);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+      await fs.chmod(directory, 0o700);
+      const children = await fs.readdir(directory, { withFileTypes: true });
+      await Promise.all(children
+        .filter((child) => child.isDirectory() && !child.isSymbolicLink())
+        .map((child) => unlockInputDirectories(path.join(directory, child.name))));
+    };
+    await unlockInputDirectories(inputRoot);
+  }
   await fs.rm(target, {
     recursive: entry.isDirectory && !entry.isSymbolicLink,
     force: true,

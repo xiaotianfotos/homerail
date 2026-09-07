@@ -11,6 +11,7 @@ import type { PromptJob } from "../prompt-runner.js";
 import {
   HOMERAIL_A2UI_CATALOG_ID,
   HOMERAIL_A2UI_VERSION,
+  dagCredentialBrokerCallIdentity,
   type DagNodeConfig,
 } from "homerail-protocol";
 import { registerAgentBackend } from "../agent/factory.js";
@@ -81,6 +82,43 @@ describe("prompt runner", () => {
     expect(activities.map((activity) => activity.sequence)).toEqual([1, 2]);
   });
 
+  it("renews activity for reasoning without streaming or persisting its content", async () => {
+    const mockAgent: AgentClient = {
+      run() {
+        return (async function* () {
+          yield { type: "thinking" as const, text: "private chain of thought" };
+          yield { type: "thinking" as const, text: "more private reasoning" };
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-reasoning-heartbeat", () => mockAgent);
+
+    const sent: string[] = [];
+    await runPrompt(
+      {
+        task: "reason for a long time",
+        sender: "test",
+        runId: "run-reasoning-heartbeat",
+        dagConfig: makeConfig(),
+      },
+      {
+        wsSend: (data) => sent.push(data),
+        agentBackend: "test-reasoning-heartbeat",
+      },
+    );
+
+    const serialized = sent.join("\n");
+    expect(serialized).not.toContain("private chain of thought");
+    expect(serialized).not.toContain("more private reasoning");
+    const activities = sent
+      .map((message) => JSON.parse(message))
+      .filter((message) => message.type === "stream" && message.data?.event === "dag_activity")
+      .map((message) => message.data.activity);
+    expect(activities.map((activity) => activity.type)).toEqual(["started", "progress", "failed"]);
+    expect(activities[1]?.payload).toEqual({ message: "model reasoning" });
+  });
+
   it("sends node_error with agent error when a prompt ends without handoff", async () => {
     const mockAgent: AgentClient = {
       run() {
@@ -114,6 +152,13 @@ describe("prompt runner", () => {
         nodeId: "coder",
         message: "Claude SDK result failed: error_max_turns",
         session_id: "run-node-error",
+        attempt_diagnostics: expect.objectContaining({
+          schema: "attempt-diagnostic-v1",
+          finish_reason: null,
+          tool_argument_parse_state: "unknown",
+          contract_stage: "unknown",
+          failure_category: "unknown",
+        }),
       }),
     }));
     expect(parsed.map((msg) => msg.type)).toContain("SESSION_END");
@@ -194,6 +239,67 @@ describe("prompt runner", () => {
     });
   });
 
+  it("propagates finish reason and output token limit into usage and handoff diagnostics", async () => {
+    const mockAgent: AgentClient = {
+      run(_prompt, tools) {
+        return (async function* () {
+          const handoffTool = tools.find((tool) => tool.name === "handoff")!;
+          await handoffTool.handler({ port: "done", content: "complete" });
+          yield {
+            type: "usage" as const,
+            usage: { output_tokens: 640 },
+            finish_reason: "max_tokens",
+            output_token_limit: 1024,
+          };
+          yield {
+            type: "done" as const,
+            usage: { output_tokens: 640 },
+            finish_reason: "max_tokens",
+            output_token_limit: 1024,
+          };
+        })();
+      },
+    };
+    registerAgentBackend("test-terminal-metadata", () => mockAgent);
+
+    const terminalMessages: string[] = [];
+    const streamed: string[] = [];
+    await runPrompt(
+      {
+        task: "finish metadata",
+        sender: "test",
+        runId: "run-terminal-metadata",
+        dagConfig: makeConfigWith({ session_id: "session-terminal" }),
+      },
+      {
+        wsSend: (data) => streamed.push(data),
+        onTerminalMessage: (data) => terminalMessages.push(data),
+        agentBackend: "test-terminal-metadata",
+      },
+    );
+
+    const usageEvents = streamed
+      .map((message) => JSON.parse(message))
+      .filter((message) => message.type === "stream" && message.data?.event === "usage");
+    expect(usageEvents.at(-1)?.data).toMatchObject({
+      usage: { output_tokens: 640 },
+      finish_reason: "max_tokens",
+      output_token_limit: 1024,
+    });
+    expect(terminalMessages.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+      type: "response",
+      data: expect.objectContaining({
+        attempt_diagnostics: expect.objectContaining({
+          schema: "attempt-diagnostic-v1",
+          finish_reason: "max_tokens",
+          output_tokens: 640,
+          output_token_limit: 1024,
+          failure_category: "accepted",
+        }),
+      }),
+    }));
+  });
+
   it("restricts correction turns to the handoff tool and correction system prompt", async () => {
     let observedTools: string[] = [];
     let observedContext: AgentRunContext | undefined;
@@ -233,8 +339,116 @@ describe("prompt runner", () => {
     expect(observedContext?.systemPrompt).toContain("Original reviewer instructions");
     expect(terminalMessages.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
       type: "response",
-      data: expect.objectContaining({ port: "done", content: "corrected" }),
+      data: expect.objectContaining({
+        port: "done",
+        content: "corrected",
+        attempt_diagnostics: expect.objectContaining({
+          schema: "attempt-diagnostic-v1",
+          attempt: 1,
+          finish_reason: null,
+          tool_argument_parse_state: "valid",
+          contract_stage: "tool_arguments",
+          failure_category: "accepted",
+        }),
+      }),
     }));
+  });
+
+  it("allows only declared broker verification plus handoff during correction", async () => {
+    let observedTools: string[] = [];
+    let observedContext: AgentRunContext | undefined;
+    const mockAgent: AgentClient = {
+      run(_prompt, tools, context) {
+        observedTools = tools.map((tool) => tool.name);
+        observedContext = context;
+        return (async function* () {
+          await tools.find((tool) => tool.name === "handoff")!.handler({ port: "done", content: "corrected" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-correction-broker", () => mockAgent);
+
+    await runPrompt(
+      {
+        task: "## input:context\n{}\n\n## input:correction\nVerify checks, then use the exact contract",
+        sender: "test",
+        runId: "run-correction-broker",
+        dagConfig: makeConfigWith({
+          session_id: "review-session",
+          allowed_dag_tools: ["handoff", "credential_broker_call"],
+        }),
+        credentialBrokerBindings: [{
+          credential_ref: "github-autofix",
+          purpose: "verify required checks",
+          mode: "manager_broker",
+          broker: "github_pr",
+          allowed_actions: ["required_checks"],
+        }],
+      },
+      {
+        wsSend: () => {},
+        agentBackend: "test-correction-broker",
+        credentialBrokerCall: async (request) => ({
+          request_id: request.request_id,
+          identity: dagCredentialBrokerCallIdentity(request),
+          ok: true,
+          outcome: "completed",
+          result: {},
+        }),
+      },
+    );
+
+    expect(observedTools).toEqual(["handoff", "credential_broker_call"]);
+    expect(observedContext?.handoffOnly).toBe(true);
+    expect(observedContext?.systemPrompt).toContain(
+      "declared credential broker verification calls followed by exactly one handoff",
+    );
+  });
+
+  it("permits only evidence-file repair before the corrected handoff", async () => {
+    let observedTools: string[] = [];
+    let observedContext: AgentRunContext | undefined;
+    const sent: string[] = [];
+    const mockAgent: AgentClient = {
+      run(_prompt, tools, context) {
+        observedTools = tools.map((tool) => tool.name);
+        observedContext = context;
+        return (async function* () {
+          await tools.find((tool) => tool.name === "handoff")!.handler({ port: "done", content: "corrected" });
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("test-correction-evidence", () => mockAgent);
+
+    await runPrompt(
+      {
+        task: "## input:context\n{}\n\n## input:correction\nDAG_HANDOFF_WORKSPACE_FILE_REQUIREMENT aggregate.candidate: invalid TestReport",
+        sender: "test",
+        runId: "run-correction-evidence",
+        dagConfig: makeConfigWith({
+          allowed_dag_tools: ["handoff", "credential_broker_call"],
+          workspace_access: { writable_paths: ["repo"], readonly_paths: ["input"] },
+        }),
+      },
+      {
+        wsSend: (message) => sent.push(message),
+        agentBackend: "test-correction-evidence",
+      },
+    );
+
+    expect(observedTools).toEqual(["handoff"]);
+    expect(observedContext?.handoffOnly).toBe(false);
+    expect(observedContext?.workspaceAccess).toEqual({ writable_paths: ["repo"], readonly_paths: ["input"] });
+    expect(observedContext?.systemPrompt).toContain(
+      "inspect and rewrite only the declared .homerail workspace evidence JSON",
+    );
+    expect(observedContext?.systemPrompt).toContain("Do not modify source files, rerun tests, or repeat external side effects");
+    const policySnapshot = sent.map((message) => JSON.parse(message)).find((message) => (
+      message.type === "stream" && message.data?.event === "workspace_policy_snapshot"
+    ));
+    expect(policySnapshot?.data?.writable_paths).toEqual(["repo/.homerail"]);
   });
 
   it("keeps the Claude Code preset for ordinary DAG work", async () => {
@@ -540,6 +754,97 @@ describe("prompt runner", () => {
     }));
   });
 
+  it("limits DeepSeek Harness built-ins to HomeRail-managed read-only tools", async () => {
+    for (const dagConfig of [
+      makeConfigWith({
+        agent_type: "deepseek_harness",
+        allowed_builtin_tools: ["Write"],
+        workspace_access: { writable_paths: ["repository"], readonly_paths: [] },
+      }),
+      makeConfigWith({
+        agent_type: "deepseek_harness",
+        allowed_builtin_tools: ["Read"],
+      }),
+    ]) {
+      const sent: string[] = [];
+      await runPrompt({
+        task: "reject unsupported DSH filesystem policy",
+        sender: "test",
+        runId: "run-dsh-builtin-policy",
+        llmProtocol: "openai_compatible",
+        dagConfig,
+      }, {
+        wsSend: (data) => sent.push(data),
+        agentBackend: "deepseek_harness",
+      });
+      expect(sent.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+        type: "node_error",
+        data: expect.objectContaining({
+          message: expect.stringMatching(/read-only built-in tools|require workspace_access/),
+        }),
+      }));
+    }
+  });
+
+  it("allows explicit backend-native tools only for sandboxed Codex DAG turns", async () => {
+    let called = false;
+    const mockAgent: AgentClient = {
+      run(_prompt, _tools, context) {
+        called = true;
+        expect(context.workspaceAccess).toEqual({ writable_paths: ["repo"], readonly_paths: ["input"] });
+        return (async function* () {
+          yield { type: "done" as const };
+        })();
+      },
+    };
+    registerAgentBackend("codex_appserver", () => mockAgent);
+
+    const sent: string[] = [];
+    await runPrompt({
+      task: "use the native coding surface",
+      sender: "test",
+      runId: "run-codex-native-tools",
+      llmProtocol: "responses_compatible",
+      dagConfig: makeConfigWith({
+        agent_type: "codex_appserver",
+        builtin_tool_policy: "backend_native",
+        workspace_access: { writable_paths: ["repo"], readonly_paths: ["input"] },
+      }),
+    }, {
+      wsSend: (data) => sent.push(data),
+      agentBackend: "codex_appserver",
+    });
+
+    expect(called).toBe(true);
+    expect(sent.map((message) => JSON.parse(message)).filter((message) => message.type === "node_error"))
+      .toEqual([expect.objectContaining({ data: expect.objectContaining({ message: "agent ended without DAG handoff" }) })]);
+
+    for (const invalid of [
+      makeConfigWith({ builtin_tool_policy: "backend_native" }),
+      makeConfigWith({
+        builtin_tool_policy: "backend_native",
+        allowed_builtin_tools: ["Write"],
+        workspace_access: { writable_paths: ["repo"] },
+      }),
+    ]) {
+      const rejected: string[] = [];
+      await runPrompt({
+        task: "reject",
+        sender: "test",
+        runId: "run-invalid-native-tools",
+        llmProtocol: "anthropic_compatible",
+        dagConfig: invalid,
+      }, {
+        wsSend: (data) => rejected.push(data),
+        agentBackend: "claude-sdk",
+      });
+      expect(rejected.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+        type: "node_error",
+        data: expect.objectContaining({ message: expect.stringMatching(/backend_native|mutually exclusive/) }),
+      }));
+    }
+  });
+
   it("defers node_error delivery to the worker lifecycle when requested", async () => {
     const mockAgent: AgentClient = {
       run() {
@@ -568,15 +873,19 @@ describe("prompt runner", () => {
 
     expect(sent.map((message) => JSON.parse(message).type)).toContain("SESSION_END");
     expect(sent.map((message) => JSON.parse(message).type)).not.toContain("node_error");
-    expect(terminalMessages.map((message) => JSON.parse(message))).toEqual([{
+    expect(terminalMessages.map((message) => JSON.parse(message))).toEqual([expect.objectContaining({
       type: "node_error",
-      data: {
+      data: expect.objectContaining({
         runId: "run-deferred-node-error",
         nodeId: "coder",
         message: "agent ended without DAG handoff",
         session_id: "session-deferred",
-      },
-    }]);
+        attempt_diagnostics: expect.objectContaining({
+          schema: "attempt-diagnostic-v1",
+          failure_category: "unknown",
+        }),
+      }),
+    })]);
   });
 
   it("binds node_error to the same round transport fence as handoff", async () => {
@@ -612,9 +921,9 @@ describe("prompt runner", () => {
       },
     );
 
-    expect(terminalMessages.map((message) => JSON.parse(message))).toEqual([{
+    expect(terminalMessages.map((message) => JSON.parse(message))).toEqual([expect.objectContaining({
       type: "node_error",
-      data: {
+      data: expect.objectContaining({
         runId: "run-fenced-node-error",
         nodeId: "coder",
         message: "round two failed",
@@ -624,8 +933,12 @@ describe("prompt runner", () => {
         generation: 3,
         lease_generation: 8,
         command_id: "command-2",
-      },
-    }]);
+        attempt_diagnostics: expect.objectContaining({
+          schema: "attempt-diagnostic-v1",
+          failure_category: "unknown",
+        }),
+      }),
+    })]);
   });
 
   it("fails claude-sdk before execution when the protocol is missing", async () => {
@@ -653,6 +966,30 @@ describe("prompt runner", () => {
       }),
     }));
     expect(parsed.map((msg) => msg.type)).toContain("SESSION_END");
+  });
+
+  it("fails DeepSeek Harness before execution for a non-OpenAI protocol", async () => {
+    const sent: string[] = [];
+    await runPrompt(
+      {
+        task: "test",
+        sender: "test",
+        runId: "run-dsh-protocol-invalid",
+        llmProtocol: "anthropic_compatible",
+        dagConfig: makeConfigWith({ agent_type: "deepseek_harness" }),
+      },
+      {
+        wsSend: (data) => sent.push(data),
+        agentBackend: "dsh",
+      },
+    );
+
+    expect(sent.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+      type: "node_error",
+      data: expect.objectContaining({
+        message: expect.stringContaining("OpenAI-compatible Chat Completions endpoint"),
+      }),
+    }));
   });
 
   it("streams agent debug events without sending them as content", async () => {

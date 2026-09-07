@@ -82,6 +82,7 @@ describe("CodexLiveVoiceRuntime", () => {
     expect(realtime?.params).toMatchObject({
       threadId: "thread-live-1",
       version: "v3",
+      model: "gpt-live-1-codex",
       outputModality: "audio",
       transport: { type: "webrtc", sdp: "offer-sdp" },
       includeStartupContext: true,

@@ -11,6 +11,7 @@ import {
   updateSetting,
   deleteSetting,
   maskApiKey,
+  resolveCodexResponsesBaseUrlForSetting,
   type LLMSetting,
   type LLMPlanType,
   type LLMProtocol,
@@ -103,7 +104,7 @@ function _modelProbeBaseUrlForSetting(setting: LLMSetting): string {
   return _normalizedBaseUrl(baseUrl);
 }
 
-type MainModelHarness = "claude_agent_sdk" | "kimi_code";
+type MainModelHarness = "codex_appserver" | "claude_agent_sdk" | "kimi_code";
 
 interface MainModelEndpointProbe {
   available: boolean;
@@ -218,6 +219,9 @@ async function _probeMainModelEndpoint(input: {
 
 async function _detectMainModelRuntime(input: {
   baseUrl: string;
+  anthropicBaseUrl?: string;
+  openAiBaseUrl?: string;
+  responsesBaseUrl?: string;
   apiKey: string;
   model: string;
 }): Promise<{
@@ -230,20 +234,19 @@ async function _detectMainModelRuntime(input: {
   };
 }> {
   const [anthropic, openai, responses] = await Promise.all([
-    _probeMainModelEndpoint({ ...input, endpoint: "anthropic" }),
-    _probeMainModelEndpoint({ ...input, endpoint: "openai" }),
-    _probeMainModelEndpoint({ ...input, endpoint: "responses" }),
+    _probeMainModelEndpoint({ ...input, baseUrl: input.anthropicBaseUrl ?? input.baseUrl, endpoint: "anthropic" }),
+    _probeMainModelEndpoint({ ...input, baseUrl: input.openAiBaseUrl ?? input.baseUrl, endpoint: "openai" }),
+    _probeMainModelEndpoint({ ...input, baseUrl: input.responsesBaseUrl ?? input.baseUrl, endpoint: "responses" }),
   ]);
-  // Claude Agent SDK is the product default whenever the model actually
-  // supports both protocols. Kimi Code is only the OpenAI-compatible fallback.
-  // Responses is retained as discovered endpoint metadata, but it does not
-  // select a harness: neither supported provider-backed harness executes the
-  // Responses protocol directly.
-  const preferredHarness: MainModelHarness | null = anthropic.available
-    ? "claude_agent_sdk"
-    : openai.available
-      ? "kimi_code"
-      : null;
+  // Codex is the preferred provider-backed harness when Responses is really
+  // available. Claude and Kimi remain compatibility fallbacks.
+  const preferredHarness: MainModelHarness | null = responses.available
+    ? "codex_appserver"
+    : anthropic.available
+      ? "claude_agent_sdk"
+      : openai.available
+        ? "kimi_code"
+        : null;
   return {
     available: preferredHarness !== null,
     preferred_harness: preferredHarness,
@@ -299,6 +302,7 @@ function _maskSetting(setting: LLMSetting) {
     chat_completions_base_url: chatBaseUrl,
     responses_base_url: responsesBaseUrl,
     anthropic_base_url: anthropicBaseUrl,
+    supports_codex_responses: Boolean(resolveCodexResponsesBaseUrlForSetting(setting)),
     endpoint_name: setting.endpoint_name ?? endpoint?.name,
     api_key: apiKey,
     api_key_display: apiKey,
@@ -356,6 +360,33 @@ function _voiceAdapter(value: unknown): ProviderInput["voice_adapter"] {
       value === "volcengine_openspeech" || value === "custom"
     ? value
     : undefined;
+}
+
+function _reasoningEffortMap(value: unknown): Record<string, string | null> | false | undefined {
+  if (value === false) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value);
+  if (entries.length === 0) return undefined;
+  const normalized: Record<string, string | null> = {};
+  for (const [rawSelector, rawWireValue] of entries) {
+    const selector = rawSelector.trim();
+    if (!selector || (rawWireValue !== null && (typeof rawWireValue !== "string" || !rawWireValue.trim()))) {
+      return undefined;
+    }
+    normalized[selector] = typeof rawWireValue === "string" ? rawWireValue.trim() : null;
+  }
+  return normalized;
+}
+
+function _reasoningEffortMapField(
+  body: Record<string, unknown>,
+): Record<string, string | null> | false | undefined {
+  if (!Object.prototype.hasOwnProperty.call(body, "reasoning_effort_map")) return undefined;
+  const parsed = _reasoningEffortMap(body.reasoning_effort_map);
+  if (parsed === undefined) {
+    throw new Error("reasoning_effort_map must be false or a non-empty selector-to-wire-value object");
+  }
+  return parsed;
 }
 
 function _providerBody(body: Record<string, unknown>, idOverride?: string): ProviderInput {
@@ -425,6 +456,8 @@ function _settingCreateBody(b: Record<string, unknown>) {
     supports_audio_input: typeof b.supports_audio_input === "boolean" ? b.supports_audio_input : undefined,
     supports_image_input: typeof b.supports_image_input === "boolean" ? b.supports_image_input : undefined,
     supports_video_input: typeof b.supports_video_input === "boolean" ? b.supports_video_input : undefined,
+    reasoning_effort_map: _reasoningEffortMapField(b),
+    default_reasoning_effort: _requiredString(b, "default_reasoning_effort"),
   };
 }
 
@@ -562,9 +595,29 @@ export function llmSettingsRoutesHandler(
     _readJsonBody(req)
       .then(async (body) => {
         const b = body as Record<string, unknown>;
-        const baseUrl = typeof b.base_url === "string" ? _normalizedBaseUrl(b.base_url) : "";
-        const apiKey = typeof b.api_key === "string" ? b.api_key.trim() : "";
-        const model = typeof b.model === "string" ? b.model.trim() : "";
+        const settingId = typeof b.setting_id === "string" ? b.setting_id.trim() : "";
+        const setting = settingId ? getSetting(settingId) : undefined;
+        if (settingId && !setting) {
+          _notFound(res, `LLM setting not found: ${settingId}`);
+          return;
+        }
+        const provider = setting ? getProvider(setting.provider_id) : undefined;
+        const endpoint = setting?.endpoint_id
+          ? provider?.endpoints?.find((candidate) => candidate.id === setting.endpoint_id)
+          : undefined;
+        const endpointBaseUrl = (field: "responses_base_url" | "anthropic_base_url" | "chat_completions_base_url"): string => (
+          setting
+            ? _normalizedBaseUrl(setting[field] ?? endpoint?.[field] ?? provider?.[field] ?? "")
+            : ""
+        );
+        const responsesBaseUrl = endpointBaseUrl("responses_base_url");
+        const anthropicBaseUrl = endpointBaseUrl("anthropic_base_url");
+        const openAiBaseUrl = endpointBaseUrl("chat_completions_base_url");
+        const baseUrl = setting
+          ? responsesBaseUrl || anthropicBaseUrl || openAiBaseUrl || _normalizedBaseUrl(setting.base_url ?? endpoint?.base_url ?? provider?.base_url ?? "")
+          : typeof b.base_url === "string" ? _normalizedBaseUrl(b.base_url) : "";
+        const apiKey = setting?.api_key ?? (typeof b.api_key === "string" ? b.api_key.trim() : "");
+        const model = setting?.model_name ?? (typeof b.model === "string" ? b.model.trim() : "");
         if (!baseUrl) {
           _badRequest(res, "Missing required field: base_url");
           return;
@@ -573,7 +626,18 @@ export function llmSettingsRoutesHandler(
           _badRequest(res, "Missing required field: model");
           return;
         }
-        const result = await _detectMainModelRuntime({ baseUrl, apiKey, model });
+        const result = await _detectMainModelRuntime({
+          baseUrl,
+          apiKey,
+          model,
+          ...(setting
+            ? {
+                responsesBaseUrl: responsesBaseUrl || undefined,
+                anthropicBaseUrl: anthropicBaseUrl || undefined,
+                openAiBaseUrl: openAiBaseUrl || undefined,
+              }
+            : {}),
+        });
         _ok(res, result.available ? "Main model runtime detected" : "Main model runtime unavailable", result);
       })
       .catch((err) => {
@@ -758,6 +822,12 @@ export function llmSettingsRoutesHandler(
         if (typeof b.supports_audio_input === "boolean") patch.supports_audio_input = b.supports_audio_input;
         if (typeof b.supports_image_input === "boolean") patch.supports_image_input = b.supports_image_input;
         if (typeof b.supports_video_input === "boolean") patch.supports_video_input = b.supports_video_input;
+        if (Object.prototype.hasOwnProperty.call(b, "reasoning_effort_map")) {
+          patch.reasoning_effort_map = _reasoningEffortMapField(b);
+        }
+        if (typeof b.default_reasoning_effort === "string") {
+          patch.default_reasoning_effort = b.default_reasoning_effort.trim();
+        }
 
         try {
           const updated = updateSetting(id, patch);

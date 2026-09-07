@@ -47,6 +47,8 @@ export interface LLMSetting {
   base_url?: string
   chat_completions_base_url?: string
   responses_base_url?: string
+  /** Manager-computed model + endpoint capability; do not infer this from URL presence. */
+  supports_codex_responses?: boolean
   anthropic_base_url?: string
   resource_id?: string
   voice_adapter?: string

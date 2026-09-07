@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$REPO_ROOT/scripts/lib/worker-build-network.sh"
 LIVE_TASK="${HOMERAIL_LIVE_TASK:-patterns}"
 RUNNER_BASE="${HOMERAIL_RUNNER_BASE:-$HOME/.homerail-runners}"
 HOME_ROOT="${HOMERAIL_LIVE_HOME_BASE:-$RUNNER_BASE/homerail_home}"
@@ -281,10 +282,14 @@ if [ "$LIVE_TASK" = "patterns" ] \
   export HOMERAIL_LIVE_ISSUE_REVISION
 fi
 
+# Validate the public Worker build source contract and assemble Docker
+# arguments without evaluating input. Invalid values fail here, before Docker starts.
+homerail_worker_build_network_args
 echo "Building isolated worker image $HOMERAIL_WORKER_IMAGE"
 docker build \
   --label "$LIVE_RUN_LABEL=$RUN_KEY" \
   --label "org.homerail.live_slot=$LIVE_SLOT" \
+  ${HOMERAIL_WORKER_BUILD_NETWORK_ARGS[@]+"${HOMERAIL_WORKER_BUILD_NETWORK_ARGS[@]}"} \
   -t "$HOMERAIL_WORKER_IMAGE" \
   -f "$REPO_ROOT/homerail_worker/Dockerfile" \
   "$REPO_ROOT"

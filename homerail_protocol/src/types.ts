@@ -444,6 +444,12 @@ export const AGENT_BUILTIN_TOOL_NAMES = [
 
 export type AgentBuiltinToolName = (typeof AGENT_BUILTIN_TOOL_NAMES)[number];
 
+/**
+ * Explicitly delegate shell/file tool selection to the selected harness.
+ * This is intentionally distinct from an exact Claude-style allowlist.
+ */
+export type AgentBuiltinToolPolicy = "backend_native";
+
 export const DAG_AGENT_TOOL_NAMES = [
   "handoff",
   "send_message",
@@ -601,9 +607,17 @@ export interface DagNodeConfig {
   node_id: string;
   agent_type: string;
   model: string;
+  reasoning_effort?: string;
+  /** Model-declared reasoning selectors mapped to provider wire values. */
+  reasoning_effort_map?: Record<string, string | null> | false;
+  service_tier?: string | null;
+  /** Codex command sandbox selected by the trusted WorkflowSpec runtime policy. */
+  codex_sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   outgoing_edges: Edge[];
   incoming_edges: Edge[];
   graph_nodes: string[];
+  /** Trusted exact output contracts projected by Manager for this dispatch. */
+  output_contracts?: Record<string, { contract: string; schema: unknown }>;
   session_id?: string;
   /** Dispatch routing metadata. It may be omitted only for legacy first-round work. */
   round_id?: string;
@@ -622,6 +636,8 @@ export interface DagNodeConfig {
   workspace_access?: DagWorkspaceAccess;
   /** Optional exact allowlist for backend-provided shell and file tools. */
   allowed_builtin_tools?: AgentBuiltinToolName[];
+  /** Explicit opt-in to the harness-native shell/file surface. */
+  builtin_tool_policy?: AgentBuiltinToolPolicy;
   /** Hard per-turn budget for backend-provided tools; DAG handoff tools remain available. */
   max_builtin_tool_calls?: number;
   /** Optional exact allowlist for HomeRail DAG tools. */
@@ -647,7 +663,15 @@ export interface DagAdvisorConfig {
 export interface DagWorkspaceAccess {
   writable_paths: string[];
   readonly_paths?: string[];
+  /** Overlay `.git` below the sole writable path as a read-only mount. */
+  git_metadata_read_only?: boolean;
   max_snapshot_files?: number;
+  /**
+   * Manager-owned runtime exclusions for paths concurrently mutated by sibling
+   * actors. This field is intentionally absent from the workflow schema so a
+   * workflow author cannot weaken mutation ownership checks.
+   */
+  snapshot_exclude_paths?: string[];
 }
 
 // ── Event Emitter Wire Types ─────────────────────────────────────

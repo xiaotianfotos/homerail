@@ -135,6 +135,21 @@ describe("Host Codex app-server protocol params", () => {
     expect(_buildCodexAppServerArgsForTest()).toEqual(["app-server"]);
   });
 
+  it("injects a process-local Responses provider for provider-backed Codex", () => {
+    const args = _buildCodexAppServerArgsForTest({
+      provider: "deepseek",
+      apiKey: "sk-secret",
+      baseUrl: "https://api.deepseek.com",
+      protocol: "responses_compatible",
+      model_catalog_path: "/tmp/deepseek-models.json",
+    });
+    expect(args[0]).toBe("app-server");
+    expect(args.join(" ")).toContain("model_providers.homerail_responses.wire_api=\"responses\"");
+    expect(args.join(" ")).toContain("https://api.deepseek.com");
+    expect(args.join(" ")).toContain("model_catalog_json=\"/tmp/deepseek-models.json\"");
+    expect(args.join(" ")).not.toContain("sk-secret");
+  });
+
   it("maps built-in web search activity to tool events without synthetic chat commentary", () => {
     expect(_mapCodexAppServerNotificationForTest("item/started", {
       item: {

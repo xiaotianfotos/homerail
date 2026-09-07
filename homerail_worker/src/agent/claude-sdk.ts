@@ -205,6 +205,10 @@ interface SdkMessage {
       output_tokens?: number;
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
+      output_token_limit?: number;
+      max_output_tokens?: number;
+      output_tokens_limit?: number;
+      max_tokens?: number;
     };
   };
   event?: {
@@ -229,6 +233,10 @@ interface SdkMessage {
     output_tokens?: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
+    output_token_limit?: number;
+    max_output_tokens?: number;
+    output_tokens_limit?: number;
+    max_tokens?: number;
   };
   permission_denials?: unknown[];
   is_error?: boolean;
@@ -459,6 +467,8 @@ export class ClaudeSdkAdapter implements AgentClient {
     // Declared outside try so the final `done` yield (after finally) can
     // read them even when the query loop never ran (e.g. early SDK error).
     const accumulatedUsage: AgentUsage = {};
+    let finalFinishReason: string | null = null;
+    let finalOutputTokenLimit: number | null = null;
     const assistantUsageByMessageId = new Map<string, AgentUsage>();
     let finalDurationMs: number | undefined;
     let finalNumTurns: number | undefined;
@@ -710,6 +720,23 @@ export class ClaudeSdkAdapter implements AgentClient {
           const msg = next.value;
           if (msg.type === "result") inputQueue.close();
           messageCount += 1;
+          const stopReason = msg.message?.stop_reason;
+          if (typeof stopReason === "string" && stopReason.trim()) {
+            finalFinishReason = stopReason.trim().slice(0, 128);
+          }
+          const usageLimitSource = msg.message?.usage ?? msg.usage;
+          for (const alias of [
+            "output_token_limit",
+            "max_output_tokens",
+            "output_tokens_limit",
+            "max_tokens",
+          ] as const) {
+            const candidate = usageLimitSource?.[alias];
+            if (typeof candidate === "number" && Number.isFinite(candidate) && candidate >= 0) {
+              finalOutputTokenLimit = Math.floor(candidate);
+              break;
+            }
+          }
           const rawTraceMessageError = await writeRawTrace({
             record_type: "sdk_message",
             sequence: messageCount,
@@ -785,7 +812,12 @@ export class ClaudeSdkAdapter implements AgentClient {
           // early via handoff and the outer loop breaks before we reach the
           // post-loop aggregate emission below.
           if (usageChanged) {
-            yield { type: "usage", usage: { ...accumulatedUsage } };
+            yield {
+              type: "usage",
+              usage: { ...accumulatedUsage },
+              finish_reason: finalFinishReason,
+              output_token_limit: finalOutputTokenLimit,
+            };
           }
           if (this.shouldEmitSdkMessageDebug(msg)) {
             if (pendingThinkingTokenDebugCount > 0) {
@@ -819,7 +851,12 @@ export class ClaudeSdkAdapter implements AgentClient {
         || accumulatedUsage.cache_read_input_tokens !== undefined
         || accumulatedUsage.cache_creation_input_tokens !== undefined;
       if (hasUsage) {
-        yield { type: "usage", usage: accumulatedUsage };
+        yield {
+          type: "usage",
+          usage: accumulatedUsage,
+          finish_reason: finalFinishReason,
+          output_token_limit: finalOutputTokenLimit,
+        };
       }
       if (pendingThinkingTokenDebugCount > 0) {
         yield {
@@ -841,6 +878,8 @@ export class ClaudeSdkAdapter implements AgentClient {
         message_count: messageCount,
         suppressed_thinking_token_debug_count: suppressedThinkingTokenDebugCount,
         usage: hasUsage ? accumulatedUsage : null,
+        finish_reason: finalFinishReason,
+        output_token_limit: finalOutputTokenLimit,
         duration_ms: finalDurationMs ?? null,
         num_turns: finalNumTurns ?? null,
       });
@@ -861,6 +900,8 @@ export class ClaudeSdkAdapter implements AgentClient {
           suppressed_thinking_token_debug_count: suppressedThinkingTokenDebugCount,
           stderr_tail: stderrTail.trim().slice(-2000) || null,
           usage: hasUsage ? accumulatedUsage : null,
+          finish_reason: finalFinishReason,
+          output_token_limit: finalOutputTokenLimit,
           duration_ms: finalDurationMs ?? null,
           num_turns: finalNumTurns ?? null,
           raw_trace_configured: rawTraceConfigured,
@@ -920,6 +961,8 @@ export class ClaudeSdkAdapter implements AgentClient {
           message_count: messageCount,
           suppressed_thinking_token_debug_count: suppressedThinkingTokenDebugCount,
           usage: hasUsage ? accumulatedUsage : null,
+          finish_reason: finalFinishReason,
+          output_token_limit: finalOutputTokenLimit,
           duration_ms: finalDurationMs ?? null,
           num_turns: finalNumTurns ?? null,
         });
@@ -944,6 +987,8 @@ export class ClaudeSdkAdapter implements AgentClient {
         : undefined,
       duration_ms: finalDurationMs,
       num_turns: finalNumTurns,
+      finish_reason: finalFinishReason,
+      output_token_limit: finalOutputTokenLimit,
     };
   }
 
@@ -1011,8 +1056,10 @@ export class ClaudeSdkAdapter implements AgentClient {
     const fromAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL ?? "";
     const fromLlmBaseUrl = process.env.LLM_BASE_URL ?? "";
     const baseUrl = fromContextBaseUrl || fromAnthropicBaseUrl || fromLlmBaseUrl;
-    const env = sanitizedAgentChildEnv();
-    Object.assign(env, context.environmentVariables ?? {});
+    const env = sanitizedAgentChildEnv({
+      ...process.env,
+      ...context.environmentVariables,
+    });
     if (apiKey) {
       if (context.anthropicAuthMode === "auth_token") {
         delete env.ANTHROPIC_API_KEY;

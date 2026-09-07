@@ -16,6 +16,7 @@ import {
   DAG_TRANSPORT_FENCE_CAPABILITY,
   DAG_TRANSPORT_FENCE_V1_CAPABILITY,
   type DagActorCheckpointV1,
+  type AgentBuiltinToolPolicy,
   type AgentBuiltinToolName,
   type DagAdvisorConfig,
   type DagAgentToolName,
@@ -23,6 +24,7 @@ import {
   type DagWorkspaceAccess,
   type DagCredentialProjection,
   type DagCredentialBrokerCallRequest,
+  type DagCredentialBrokerCallIdentity,
   type DagCredentialBrokerCallResult,
 } from "homerail-protocol";
 import { startManagerAgentServer } from "./manager-agent/server.js";
@@ -31,7 +33,10 @@ import {
   AgentTurnController,
   agentTurnControllerOptionsForBackend,
 } from "./agent/turn-controller.js";
-import { envelopeInputsToTaskText } from "./envelope-task.js";
+import {
+  envelopeInputsToTaskText,
+  envelopeOutputContractsToSystemPrompt,
+} from "./envelope-task.js";
 import { envelopeActivityToDagConfig } from "./envelope-activity.js";
 import {
   activePromptTransportIdentity,
@@ -45,6 +50,7 @@ import {
 } from "./worker-skill-context.js";
 import { DAG_ACTOR_SURFACE_PATCH_V1_CAPABILITY } from "./dag-tools/report-surface-state.js";
 import { resolveWorkerRuntimeIdentity } from "./runtime-version.js";
+import { CredentialBrokerRequestRegistry } from "./credential-broker-requests.js";
 
 // ── Env vars ─────────────────────────────────────────────────
 
@@ -101,26 +107,16 @@ let activePrompt:
     })
   | null = null;
 
-const pendingCredentialBrokerCalls = new Map<string, {
-  resolve: (result: DagCredentialBrokerCallResult) => void;
-  timer: ReturnType<typeof setTimeout>;
-}>();
+const pendingCredentialBrokerCalls = new CredentialBrokerRequestRegistry();
 
 function callCredentialBroker(
   request: DagCredentialBrokerCallRequest,
+  signal?: AbortSignal,
 ): Promise<DagCredentialBrokerCallResult> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pendingCredentialBrokerCalls.delete(request.request_id);
-      resolve({
-        request_id: request.request_id,
-        ok: false,
-        error: "Credential broker call timed out",
-      });
-    }, 30_000);
-    pendingCredentialBrokerCalls.set(request.request_id, { resolve, timer });
-    client.send(JSON.stringify({ type: "credential_broker_call", data: request }));
-  });
+  return pendingCredentialBrokerCalls.call(request, (payload) => {
+    if (!client.isConnected) throw new Error("Manager connection is unavailable");
+    client.send(payload);
+  }, signal);
 }
 
 function stringField(data: Record<string, unknown>, ...keys: string[]): string {
@@ -149,6 +145,7 @@ client.on("connected", () => {
 });
 
 client.on("disconnected", () => {
+  pendingCredentialBrokerCalls.close("Manager connection disconnected before credential broker completion");
   console.log("[homerail_worker] disconnected, will reconnect...");
 });
 
@@ -178,6 +175,18 @@ client.on("task", async (msg) => {
   const apiKey = typeof llmConfig.api_key === "string" ? llmConfig.api_key : undefined;
   const baseUrl = typeof llmConfig.base_url === "string" ? llmConfig.base_url : undefined;
   const protocol = typeof llmConfig.protocol === "string" ? llmConfig.protocol : undefined;
+  const reasoningEffort = typeof llmConfig.reasoning_effort === "string"
+    ? llmConfig.reasoning_effort
+    : undefined;
+  const reasoningEffortMap = llmConfig.reasoning_effort_map === false
+    ? false
+    : llmConfig.reasoning_effort_map && typeof llmConfig.reasoning_effort_map === "object"
+      && !Array.isArray(llmConfig.reasoning_effort_map)
+    ? llmConfig.reasoning_effort_map as Record<string, string | null>
+    : undefined;
+  const serviceTier = typeof llmConfig.service_tier === "string"
+    ? llmConfig.service_tier
+    : llmConfig.service_tier === null ? null : undefined;
   const anthropicAuthMode = llmConfig.anthropic_auth_mode === "auth_token"
     ? "auth_token"
     : llmConfig.anthropic_auth_mode === "api_key" ? "api_key" : undefined;
@@ -209,6 +218,9 @@ client.on("task", async (msg) => {
         node_id: nodeId,
         agent_type: agentType,
         model,
+        reasoning_effort: reasoningEffort,
+        reasoning_effort_map: reasoningEffortMap,
+        service_tier: serviceTier,
         outgoing_edges: ((envelope.outgoingEdges ?? []) as Array<Record<string, unknown>>).map((e) => ({
           from_port: String(e.from_port ?? ""),
           to_node: String(e.to_node ?? ""),
@@ -216,11 +228,17 @@ client.on("task", async (msg) => {
         })),
         incoming_edges: [],
         graph_nodes: [nodeId],
+        output_contracts: envelope.outputContracts && typeof envelope.outputContracts === "object"
+          ? envelope.outputContracts as Record<string, { contract: string; schema: unknown }>
+          : undefined,
         session_id: sessionId,
         ...envelopeActivityToDagConfig(activity),
         advisors: Array.isArray(envelope.advisors) ? envelope.advisors as DagAdvisorConfig[] : undefined,
         workspace_access: envelope.workspaceAccess && typeof envelope.workspaceAccess === "object"
           ? envelope.workspaceAccess as unknown as DagWorkspaceAccess
+          : undefined,
+        builtin_tool_policy: typeof envelope.builtinToolPolicy === "string"
+          ? envelope.builtinToolPolicy as AgentBuiltinToolPolicy
           : undefined,
         allowed_builtin_tools: Array.isArray(envelope.allowedBuiltinTools)
           ? envelope.allowedBuiltinTools as AgentBuiltinToolName[]
@@ -228,12 +246,20 @@ client.on("task", async (msg) => {
         max_builtin_tool_calls: typeof envelope.maxBuiltinToolCalls === "number"
           ? envelope.maxBuiltinToolCalls
           : undefined,
+        codex_sandbox: envelope.codexSandbox === "read-only"
+          || envelope.codexSandbox === "workspace-write"
+          || envelope.codexSandbox === "danger-full-access"
+          ? envelope.codexSandbox
+          : undefined,
         allowed_dag_tools: Array.isArray(envelope.allowedDagTools)
           ? envelope.allowedDagTools as DagAgentToolName[]
           : undefined,
       }
     : (data.dag_config ?? data.dagConfig ?? {}) as DagNodeConfig;
-  const systemPromptValue = envelope ? agentConfig.system : data.system_prompt;
+  const outputContractPrompt = envelopeOutputContractsToSystemPrompt(envelope?.outputContracts);
+  const systemPromptValue = envelope
+    ? [String(agentConfig.system ?? "").trim(), outputContractPrompt].filter(Boolean).join("\n\n")
+    : data.system_prompt;
   let preparedSkillContext;
   try {
     preparedSkillContext = prepareWorkerSkillContext({
@@ -430,16 +456,25 @@ client.on("dag_actor_command", (msg) => {
 
 client.on("credential_broker_result", (msg) => {
   const data = (msg.data ?? msg) as Partial<DagCredentialBrokerCallResult>;
-  if (typeof data.request_id !== "string" || typeof data.ok !== "boolean") return;
-  const pending = pendingCredentialBrokerCalls.get(data.request_id);
-  if (!pending) return;
-  clearTimeout(pending.timer);
-  pendingCredentialBrokerCalls.delete(data.request_id);
-  pending.resolve({
+  if (
+    typeof data.request_id !== "string"
+    || typeof data.identity !== "object"
+    || data.identity === null
+    || Array.isArray(data.identity)
+    || typeof data.ok !== "boolean"
+    || !["completed", "failed", "failed_pre_dispatch", "cancelled", "indeterminate", "reconciled"].includes(
+      String(data.outcome ?? ""),
+    )
+  ) return;
+  pendingCredentialBrokerCalls.settle({
     request_id: data.request_id,
+    identity: data.identity as DagCredentialBrokerCallIdentity,
     ok: data.ok,
+    outcome: data.outcome!,
+    ...(typeof data.request_digest === "string" ? { request_digest: data.request_digest } : {}),
     ...(data.result !== undefined ? { result: data.result } : {}),
     ...(typeof data.error === "string" ? { error: data.error } : {}),
+    ...(data.reconciliation ? { reconciliation: data.reconciliation } : {}),
   });
 });
 
@@ -456,6 +491,7 @@ client.on("inject", (msg) => {
     activePrompt.identity.nodeId === nodeId
   ) {
     const interruptedPrompt = activePrompt;
+    interruptedPrompt.abortController.abort(new Error("manager inject interrupt"));
     void interruptedPrompt.controller.interrupt("manager inject interrupt").then((result) => {
       client.send(
         JSON.stringify({
@@ -494,6 +530,7 @@ async function shutdown() {
   console.log("[homerail_worker] shutting down...");
   const prompt = activePrompt;
   if (prompt) {
+    prompt.abortController.abort(new Error("Worker shutting down"));
     await prompt.controller.close({
       outcome: "failed",
       reason: "Worker shutting down",
@@ -501,11 +538,7 @@ async function shutdown() {
     await Promise.allSettled([...prompt.commandRoutes]);
   }
   client.close();
-  for (const [requestId, pending] of pendingCredentialBrokerCalls) {
-    clearTimeout(pending.timer);
-    pending.resolve({ request_id: requestId, ok: false, error: "Worker shutting down" });
-  }
-  pendingCredentialBrokerCalls.clear();
+  pendingCredentialBrokerCalls.close();
   process.exit(0);
 }
 

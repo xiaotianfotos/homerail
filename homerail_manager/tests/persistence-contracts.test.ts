@@ -24,6 +24,7 @@ import {
   loadPersistedRunControlState,
   writeRunMetadata,
 } from "../src/persistence/store.js";
+import { recordReviewFinding } from "../src/persistence/dag-review-evidence.js";
 import { assertEpochMs, epochMsFromUnknown, nowEpochMs, nowIso } from "../src/persistence/time.js";
 
 describe("SQLite persistence contracts", () => {
@@ -183,7 +184,7 @@ describe("SQLite persistence contracts", () => {
   it("installs indexes for status filtering and updated-time run ordering", () => {
     const db = getDb();
     expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
-      .toEqual({ version: 33 });
+      .toEqual({ version: 37 });
     expect(db.prepare("PRAGMA index_info(idx_dag_runs_updated)").all())
       .toEqual([
         expect.objectContaining({ seqno: 0, name: "updated_at" }),
@@ -207,6 +208,131 @@ describe("SQLite persistence contracts", () => {
       .toEqual({ version: 33 });
     expect(migrated.prepare("PRAGMA index_info(idx_dag_runs_status_updated)").all())
       .toHaveLength(3);
+  });
+
+  it("persists bounded review evidence with strict fencing and append-only protection", () => {
+    const db = getDb();
+    ensureRunDir("run-evidence");
+    recordReviewFinding({
+      identity: {
+        runId: "run-evidence",
+        reviewer: "qwen",
+        nodeId: "qwen_review",
+        sessionId: "session-1",
+        roundId: "round-0001",
+        generation: 1,
+        attempt: 1,
+      },
+      finding: {
+        category: "security",
+        severity: "high",
+        title: "Unchecked response",
+        file: "src/app.ts",
+        line: 12,
+        evidence: "fetch('/api') is not awaited",
+        recommendation: "Await and validate",
+        confidence: "high",
+      },
+    });
+    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
+      .toEqual({ version: 37 });
+    expect(db.prepare("PRAGMA index_list(dag_review_evidence)").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "idx_dag_review_evidence_logical_fence_dedup", unique: 1 }),
+        expect.objectContaining({ name: "idx_dag_review_evidence_run_reviewer", unique: 0 }),
+        expect.objectContaining({ name: "idx_dag_review_evidence_run_node", unique: 0 }),
+      ]),
+    );
+    const reviewEvidenceIndexes = db.prepare("PRAGMA index_list(dag_review_evidence)").all() as Array<{
+      name: string;
+    }>;
+    expect(reviewEvidenceIndexes.some((index) => index.name === "idx_dag_review_evidence_fence_dedup")).toBe(false);
+    expect(() => db.exec(`
+      UPDATE dag_review_evidence SET attempt = 99
+    `)).toThrow(/append-only/);
+  });
+
+  it("deduplicates only inside the exact logical-dispatch fence", () => {
+    const db = getDb();
+    ensureRunDir("run-evidence-fence");
+    const identity = {
+      runId: "run-evidence-fence",
+      reviewer: "qwen",
+      nodeId: "qwen_review",
+      sessionId: "session-1",
+      roundId: "round-0001",
+      generation: 1,
+      attempt: 1,
+    };
+    const finding = {
+      category: "security",
+      severity: "high",
+      title: "Unchecked response",
+      file: "src/app.ts",
+      line: 12,
+      evidence: "fetch('/api') is not awaited",
+      recommendation: "Await and validate",
+      confidence: "high",
+    };
+    expect(recordReviewFinding({ identity, finding }).status).toBe("inserted");
+    // Redelivery within the same fence, even on a later attempt, deduplicates.
+    expect(recordReviewFinding({ identity: { ...identity, attempt: 2 }, finding }).status).toBe("deduplicated");
+    // The identical finding id is independently durable in a fresh generation
+    // and session because the unique index now includes the full fence.
+    expect(recordReviewFinding({ identity: { ...identity, generation: 2 }, finding }).status).toBe("inserted");
+    expect(recordReviewFinding({ identity: { ...identity, sessionId: "session-2" }, finding }).status).toBe("inserted");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM dag_review_evidence").get()).toEqual({ count: 3 });
+  });
+
+  it("reapplies the forward evidence-fence migration without losing rows", () => {
+    const db = getDb();
+    ensureRunDir("run-evidence-migrate");
+    recordReviewFinding({
+      identity: {
+        runId: "run-evidence-migrate",
+        reviewer: "qwen",
+        nodeId: "qwen_review",
+        sessionId: "session-1",
+        roundId: "round-0001",
+        generation: 1,
+        attempt: 1,
+      },
+      finding: {
+        category: "security",
+        severity: "high",
+        title: "Unchecked response",
+        file: "src/app.ts",
+        line: 12,
+        evidence: "fetch('/api') is not awaited",
+        recommendation: "Await and validate",
+        confidence: "high",
+      },
+    });
+    // Simulate a pre-36 database: restore the legacy dedup index and remove
+    // only the forward migration marker so reopening runs migration 36.
+    db.exec(`
+      DROP INDEX idx_dag_review_evidence_logical_fence_dedup;
+      CREATE UNIQUE INDEX idx_dag_review_evidence_fence_dedup
+        ON dag_review_evidence(run_id, reviewer, kind, dedup_key);
+      DELETE FROM schema_migrations WHERE version = 36;
+    `);
+    closeDb();
+    const migrated = getDb();
+    expect(migrated.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())
+      .toEqual({ version: 37 });
+    const indexes = migrated.prepare("PRAGMA index_list(dag_review_evidence)").all() as Array<{
+      name: string;
+      unique: number;
+    }>;
+    expect(indexes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "idx_dag_review_evidence_logical_fence_dedup", unique: 1 }),
+    ]));
+    expect(indexes.some((index) => index.name === "idx_dag_review_evidence_fence_dedup")).toBe(false);
+    expect(migrated.prepare("SELECT COUNT(*) AS count FROM dag_review_evidence").get()).toEqual({ count: 1 });
+    // A second reopen validates the superseded index state for migration 35.
+    closeDb();
+    const reopened = getDb();
+    expect(reopened.prepare("SELECT COUNT(*) AS count FROM dag_review_evidence").get()).toEqual({ count: 1 });
   });
 
   it("appends session transcript JSONL without changing existing entries", () => {

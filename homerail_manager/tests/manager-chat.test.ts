@@ -320,9 +320,179 @@ describe("/api/manager/chat", () => {
 
   it("keeps runtime placement as the only harness boundary", () => {
     expect(managerAgentRuntimePlacementForHarness("codex_appserver")).toBe("host");
+    expect(managerAgentRuntimePlacementForHarness("deepseek_harness")).toBe("host_shell");
     expect(managerAgentRuntimePlacementForHarness("kimi_code")).toBe("host_shell");
     expect(managerAgentRuntimePlacementForHarness("claude_agent_sdk")).toBe("host_shell");
   });
+
+  it("preserves provider-owned reasoning defaults for DeepSeek Harness Manager Agent settings", () => {
+    const setting = createSetting({
+      provider_id: "glm",
+      model_name: "glm-5.3",
+      api_key: "pk-test-manager-chat",
+      protocol: "openai_compatible",
+      base_url: "https://glm.example/v1",
+      chat_completions_base_url: "https://glm.example/v1",
+      is_active: true,
+      is_default: true,
+    });
+
+    const config = resolveManagerAgentConfig(
+      undefined,
+      undefined,
+      undefined,
+      setting.id,
+      "deepseek_harness",
+    );
+
+    expect(config).toMatchObject({
+      provider_name: "glm",
+      model: "glm-5.3",
+      protocol: "openai_compatible",
+      agent_type: "deepseek_harness",
+      runtime_placement: "host_shell",
+    });
+    expect(config.reasoning_effort).toBeUndefined();
+    expect(config.reasoning_effort_map).toBeUndefined();
+  });
+
+  it("forwards a declared DeepSeek Harness reasoning selector map", () => {
+    const setting = createSetting({
+      provider_id: "glm",
+      model_name: "glm-5.3",
+      api_key: "pk-test-manager-chat",
+      protocol: "openai_compatible",
+      base_url: "https://glm.example/v1",
+      chat_completions_base_url: "https://glm.example/v1",
+      reasoning_effort_map: { off: null, deep: "deep" },
+      default_reasoning_effort: "deep",
+      is_active: true,
+      is_default: true,
+    });
+
+    const config = resolveManagerAgentConfig(
+      undefined,
+      undefined,
+      undefined,
+      setting.id,
+      "deepseek_harness",
+    );
+
+    expect(config.reasoning_effort).toBe("deep");
+    expect(config.reasoning_effort_map).toEqual({ off: null, deep: "deep" });
+  });
+
+  it("resets a legacy Manager Agent effort when switching to a DSH setting without selectors", async () => {
+    const setting = createSetting({
+      provider_id: "glm",
+      model_name: "glm-5.3",
+      api_key: "pk-test-manager-chat",
+      protocol: "openai_compatible",
+      base_url: "https://glm.example/v1",
+      chat_completions_base_url: "https://glm.example/v1",
+      is_active: true,
+      is_default: true,
+    });
+    const port = await listen(server);
+    const response = await fetch(`http://127.0.0.1:${port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "deepseek_harness",
+        llm_setting_id: setting.id,
+      }),
+    });
+    const body = await response.json() as { data: { reasoning_effort: string } };
+
+    expect(response.status).toBe(200);
+    expect(body.data.reasoning_effort).toBe("");
+  });
+
+  it.each([null, ""])(
+    "preserves a Claude Manager Agent effort when a patch sends %j",
+    async (reasoningEffort) => {
+      upsertProvider({
+        id: "claude-compatible",
+        name: "Claude compatible",
+        default_model: "claude-compatible-model",
+        base_url: "https://claude.example/v1",
+        anthropic_base_url: "https://claude.example/v1",
+      });
+      const setting = createSetting({
+        provider_id: "claude-compatible",
+        endpoint_id: "claude-compatible_custom",
+        model_name: "claude-compatible-model",
+        api_key: "pk-test-manager-chat",
+        protocol: "anthropic_compatible",
+        base_url: "https://claude.example/v1",
+        anthropic_base_url: "https://claude.example/v1",
+        is_active: true,
+        is_default: true,
+      });
+      const port = await listen(server);
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const configured = await fetch(`${baseUrl}/api/manager-agent/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          harness: "claude_agent_sdk",
+          llm_setting_id: setting.id,
+          reasoning_effort: "high",
+        }),
+      });
+      expect(configured.status).toBe(200);
+
+      const response = await fetch(`${baseUrl}/api/manager-agent/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reasoning_effort: reasoningEffort }),
+      });
+      const body = await response.json() as { data: { reasoning_effort: string } };
+
+      expect(response.status).toBe(200);
+      expect(body.data.reasoning_effort).toBe("high");
+    },
+  );
+
+  it.each([null, ""])(
+    "clears a DSH Manager Agent effort when a patch sends %j",
+    async (reasoningEffort) => {
+      const setting = createSetting({
+        provider_id: "glm",
+        model_name: "glm-5.3",
+        api_key: "pk-test-manager-chat",
+        protocol: "openai_compatible",
+        base_url: "https://glm.example/v1",
+        chat_completions_base_url: "https://glm.example/v1",
+        reasoning_effort_map: { off: null, deep: "deep" },
+        default_reasoning_effort: "deep",
+        is_active: true,
+        is_default: true,
+      });
+      const port = await listen(server);
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const configured = await fetch(`${baseUrl}/api/manager-agent/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          harness: "deepseek_harness",
+          llm_setting_id: setting.id,
+          reasoning_effort: "deep",
+        }),
+      });
+      expect(configured.status).toBe(200);
+
+      const response = await fetch(`${baseUrl}/api/manager-agent/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reasoning_effort: reasoningEffort }),
+      });
+      const body = await response.json() as { data: { reasoning_effort: string } };
+
+      expect(response.status).toBe(200);
+      expect(body.data.reasoning_effort).toBe("");
+    },
+  );
 
   it("selects claude-sdk only with an Anthropic-compatible Manager Agent endpoint", () => {
     upsertProvider({
@@ -533,12 +703,13 @@ describe("/api/manager/chat", () => {
     expect(fs.existsSync(workspace)).toBe(true);
   });
 
-  it("does not pass HomeRail LLM setting providers into host Codex app-server", async () => {
+  it("passes Responses-capable HomeRail settings into host Codex app-server", async () => {
     upsertProvider({
       id: "qwen36",
       name: "Qwen3.6 Local",
       default_model: "qwen3.6",
       base_url: "http://127.0.0.1:5000",
+      responses_base_url: "http://127.0.0.1:5000/v1",
       anthropic_base_url: "http://127.0.0.1:5000",
     });
     const setting = createSetting({
@@ -548,17 +719,23 @@ describe("/api/manager/chat", () => {
       api_key: "pk-test-manager-chat",
       protocol: "anthropic_compatible",
       base_url: "http://127.0.0.1:5000",
+      responses_base_url: "http://127.0.0.1:5000/v1",
       anthropic_base_url: "http://127.0.0.1:5000",
       is_active: true,
       is_default: true,
     });
-    expect(() => resolveManagerAgentConfig(
+    expect(resolveManagerAgentConfig(
       undefined,
       "qwen36",
       "qwen3.6",
       setting.id,
       "codex_appserver",
-    )).toThrow("Codex app-server cannot use a HomeRail LLM provider or setting");
+    )).toMatchObject({
+      provider_name: "qwen36",
+      model: "qwen3.6",
+      protocol: "responses_compatible",
+      agent_type: "codex_appserver",
+    });
 
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -573,9 +750,9 @@ describe("/api/manager/chat", () => {
     expect(saved.status).toBe(200);
     expect(body.data).toMatchObject({
       harness: "codex_appserver",
-      llm_setting_id: null,
-      provider_name: null,
-      model_name: "gpt-5.5",
+      llm_setting_id: setting.id,
+      provider_name: "qwen36",
+      model_name: "qwen3.6",
     });
   });
 

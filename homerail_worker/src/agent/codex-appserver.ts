@@ -6,11 +6,24 @@
  * @version 0.1.0
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
+import { createServer, request as httpRequest, type Server } from "node:http";
+import { request as httpsRequest } from "node:https";
+import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
+import {
+  CODEX_RESPONSES_PROTOCOL,
+  HOMERAIL_CODEX_MODEL_PROVIDER_ID,
+  buildCodexProviderModelCatalogFromBundled,
+  codexResponsesAppServerArgs,
+  codexResponsesProviderEnvironment,
+  normalizeCodexResponsesBaseUrl,
+  resolveCodexResponsesProviderProfile,
+} from "homerail-protocol";
 import type { AgentClient, AgentEvent, AgentRunContext, DagToolDefinition } from "./types.js";
 import { sanitizedAgentChildEnv } from "./child-env.js";
 import { WORKER_RUNTIME_VERSION } from "../runtime-version.js";
@@ -19,6 +32,8 @@ const CLIENT_NAME = "homerail_codex_appserver";
 const CLIENT_TITLE = "HomeRail Codex AppServer Adapter";
 const DEFAULT_CODEX_BIN = "codex";
 const RESPONSE_TIMEOUT_MS = 60_000;
+const NOTIFICATION_HEARTBEAT_INTERVAL_MS = 30_000;
+const BUNDLED_CODEX_CATALOG_CACHE = new Map<string, string>();
 const SECRET_KEYS = [
   "apiKey", "api_key", "OPENAI_API_KEY",
   "Authorization", "auth_token", "secret",
@@ -50,6 +65,14 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface NotificationWaiter {
+  resolve: (notification: Record<string, unknown>) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+class NotificationWaitTimeoutError extends Error {}
+
 type CodexAssistantMessagePhase = "commentary" | "final_answer";
 
 interface CodexAssistantMessageState {
@@ -57,11 +80,241 @@ interface CodexAssistantMessageState {
   deltas: string[];
 }
 
+interface CodexProviderRelay {
+  apiKey: string;
+  baseUrl: string;
+  server: Server;
+}
+
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+function relayHeaders(
+  headers: Readonly<Record<string, string | string[] | undefined>>,
+): Record<string, string | string[]> {
+  const safe: Record<string, string | string[]> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (value === undefined || HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
+    safe[name] = value;
+  }
+  return safe;
+}
+
+async function startCodexProviderRelay(baseUrl: string, providerApiKey: string): Promise<CodexProviderRelay> {
+  const upstream = new URL(normalizeCodexResponsesBaseUrl(baseUrl));
+  if (!providerApiKey.trim() || !["http:", "https:"].includes(upstream.protocol)) {
+    throw new Error("Codex provider relay configuration is invalid");
+  }
+  if (upstream.username || upstream.password || upstream.search || upstream.hash) {
+    throw new Error("Codex provider relay base URL must not contain credentials, query, or fragment");
+  }
+  const basePath = upstream.pathname.replace(/\/+$/, "");
+  const responsesPath = `${basePath}/responses`.replace(/^\/{2,}/, "/");
+  const relayApiKey = `homerail-dispatch-${randomBytes(32).toString("hex")}`;
+  const server = createServer((request, response) => {
+    const reject = (status: number, message: string) => {
+      response.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
+      response.end(message);
+    };
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method !== "POST" || requestUrl.pathname !== responsesPath) {
+      reject(404, "Not found");
+      return;
+    }
+    if (request.headers.authorization !== `Bearer ${relayApiKey}`) {
+      reject(403, "Forbidden");
+      return;
+    }
+    const target = new URL(`${requestUrl.pathname}${requestUrl.search}`, upstream.origin);
+    const headers = relayHeaders(request.headers);
+    headers.host = target.host;
+    headers.authorization = `Bearer ${providerApiKey}`;
+    const send = target.protocol === "https:" ? httpsRequest : httpRequest;
+    const upstreamRequest = send(target, { method: "POST", headers }, (upstreamResponse) => {
+      response.writeHead(upstreamResponse.statusCode ?? 502, relayHeaders(upstreamResponse.headers));
+      upstreamResponse.pipe(response);
+    });
+    upstreamRequest.on("error", () => {
+      if (!response.headersSent) reject(502, "Provider relay failed");
+      else response.destroy();
+    });
+    request.on("aborted", () => upstreamRequest.destroy());
+    request.pipe(upstreamRequest);
+  });
+  server.on("clientError", (_error, socket) => socket.destroy());
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(0, "127.0.0.1");
+  });
+  const address = server.address() as AddressInfo | null;
+  if (!address) {
+    server.close();
+    throw new Error("Codex provider relay did not bind a local address");
+  }
+  return {
+    apiKey: relayApiKey,
+    baseUrl: `http://127.0.0.1:${address.port}${basePath}`,
+    server,
+  };
+}
+
+export const _startCodexProviderRelayForTest = startCodexProviderRelay;
+
+function isInsideWorkspace(workspace: string, candidate: string): boolean {
+  const relative = path.relative(workspace, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * Codex's Linux sandbox protects `<cwd>/.git` before running shell tools. A
+ * DAG workspace can be a container for one or more declared project roots,
+ * so using the container root as cwd fails when that root is mounted read-only
+ * and the actual checkout lives below it. Prefer a declared Git worktree while
+ * keeping the broader workspace as the policy/audit boundary.
+ */
+function resolveCodexWorkingDirectory(context: AgentRunContext): string {
+  const workspace = path.resolve(context.workspace ?? process.cwd());
+  if (fs.existsSync(path.join(workspace, ".git"))) return workspace;
+
+  const access = context.workspaceAccess;
+  const declaredRoots = [
+    ...(access?.writable_paths ?? []),
+    ...(access?.readonly_paths ?? []),
+  ];
+  for (const declaredRoot of declaredRoots) {
+    const candidate = path.resolve(workspace, declaredRoot);
+    if (!isInsideWorkspace(workspace, candidate)) continue;
+    if (fs.existsSync(path.join(candidate, ".git"))) return candidate;
+  }
+  return workspace;
+}
+
+function resolveCodexSandboxMode(
+  context: AgentRunContext,
+): "read-only" | "workspace-write" | "danger-full-access" {
+  const writable = !context.workspaceAccess || context.workspaceAccess.writable_paths.length > 0;
+  if (context.codexSandbox === "danger-full-access" && !writable) {
+    throw new Error("danger-full-access Codex sandbox requires a writable DAG workspace");
+  }
+  return context.codexSandbox ?? (writable ? "workspace-write" : "read-only");
+}
+
+function projectedSkillName(value: string, fallback: string): string {
+  const normalized = value
+    .normalize("NFKC")
+    .replace(/[^A-Za-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return normalized || fallback;
+}
+
+function projectedSkillInstructions(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("---\n")) return normalized.trim();
+  const end = normalized.indexOf("\n---\n", 4);
+  return end < 0 ? normalized.trim() : normalized.slice(end + 5).trim();
+}
+
+function prepareCodexSkillProjection(context: AgentRunContext, tempDir: string): { roots: string[]; skillCount: number } {
+  const projection = context.skillProjection;
+  if (!projection) return { roots: [], skillCount: 0 };
+  const skillsRoot = path.join(tempDir, "projected-skills");
+  fs.mkdirSync(skillsRoot, { recursive: true });
+  const names = new Set<string>();
+
+  for (const directory of projection.directories ?? []) {
+    const root = path.resolve(directory);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const source = path.join(root, entry.name);
+      try {
+        if (!fs.statSync(path.join(source, "SKILL.md")).isFile()) continue;
+      } catch {
+        continue;
+      }
+      const name = projectedSkillName(entry.name, `skill-${names.size + 1}`);
+      if (names.has(name)) continue;
+      const destination = path.join(skillsRoot, name);
+      try {
+        fs.symlinkSync(source, destination, process.platform === "win32" ? "junction" : "dir");
+      } catch {
+        fs.cpSync(source, destination, { recursive: true, force: false, errorOnExist: true });
+      }
+      names.add(name);
+    }
+  }
+
+  for (const definition of projection.definitions ?? []) {
+    const baseName = projectedSkillName(definition.name || definition.id, `skill-${names.size + 1}`);
+    let name = baseName;
+    let suffix = 2;
+    while (names.has(name)) name = `${baseName.slice(0, 61)}-${suffix++}`;
+    const skillDir = path.join(skillsRoot, name);
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), [
+      "---",
+      `name: ${JSON.stringify(name)}`,
+      `description: ${JSON.stringify((definition.description || `HomeRail Skill ${definition.id}`).slice(0, 1024))}`,
+      "---",
+      "",
+      projectedSkillInstructions(definition.content),
+      "",
+    ].join("\n"), { encoding: "utf8", mode: 0o600 });
+    names.add(name);
+  }
+  return { roots: [skillsRoot], skillCount: names.size };
+}
+
+export const _prepareCodexSkillProjectionForTest = prepareCodexSkillProjection;
+
+function guardedSpawnCommand(
+  bin: string,
+  args: string[],
+  env: Readonly<Record<string, string | undefined>>,
+  configuredGuard = process.env.HOMERAIL_CODEX_PROC_GUARD,
+  platform = process.platform,
+): { bin: string; args: string[]; env: Record<string, string | undefined> } {
+  const spawnEnv = { ...env };
+  if (!env.HOMERAIL_CODEX_API_KEY || platform !== "linux") return { bin, args, env: spawnEnv };
+  const guard = configuredGuard?.trim();
+  if (!guard) throw new Error("Codex provider secret guard is required on Linux");
+  const resolved = findExistingBinary(guard, platform);
+  if (!resolved) throw new Error(`Configured Codex secret guard not found: ${guard}`);
+  spawnEnv.LD_PRELOAD = resolved;
+  return { bin, args, env: spawnEnv };
+}
+
+export const _guardedCodexSpawnCommandForTest = guardedSpawnCommand;
+
 /** Spawn a process with stdin/stdout/stderr piped. */
 function spawnProcess(bin: string, args: string[], env: Record<string, string | undefined>): ChildProcess {
-  return spawn(bin, args, {
+  const command = guardedSpawnCommand(bin, args, env);
+  return spawn(command.bin, command.args, {
     stdio: ["pipe", "pipe", "pipe"],
-    env,
+    env: command.env,
     shell: windowsCommandNeedsShell(bin),
     windowsHide: true,
   });
@@ -83,8 +336,8 @@ function executableCandidates(command: string, platform = process.platform): str
     .concat(command);
 }
 
-function findExistingBinary(command: string): string | null {
-  for (const candidate of executableCandidates(command)) {
+function findExistingBinary(command: string, platform = process.platform): string | null {
+  for (const candidate of executableCandidates(command, platform)) {
     if (fs.existsSync(candidate)) return candidate;
   }
   return null;
@@ -96,13 +349,23 @@ export class CodexAppServerAdapter implements AgentClient {
   private requestId = 0;
   private pending = new Map<number, PendingRequest>();
   private notifications: Array<Record<string, unknown>> = [];
-  private notifyWaiters: Array<() => void> = [];
+  private notifyWaiters: NotificationWaiter[] = [];
+  private notificationFailure: Error | null = null;
   private codexBin: string;
+  private notificationHeartbeatIntervalMs: number;
+  private providerRelay: CodexProviderRelay | null = null;
   private tempDir: string | null = null;
   private agentMessages = new Map<string, CodexAssistantMessageState>();
 
-  constructor(codexBin?: string) {
+  constructor(
+    codexBin?: string,
+    notificationHeartbeatIntervalMs = NOTIFICATION_HEARTBEAT_INTERVAL_MS,
+  ) {
     this.codexBin = codexBin ?? process.env.CODEX_BIN_PATH ?? DEFAULT_CODEX_BIN;
+    if (!Number.isSafeInteger(notificationHeartbeatIntervalMs) || notificationHeartbeatIntervalMs < 1) {
+      throw new Error("notificationHeartbeatIntervalMs must be a positive safe integer");
+    }
+    this.notificationHeartbeatIntervalMs = notificationHeartbeatIntervalMs;
   }
 
   async *run(
@@ -111,6 +374,8 @@ export class CodexAppServerAdapter implements AgentClient {
     context: AgentRunContext,
   ): AsyncIterable<AgentEvent> {
     const maxIterations = context.maxIterations ?? 10;
+    const workingDirectory = resolveCodexWorkingDirectory(context);
+    const sandboxMode = resolveCodexSandboxMode(context);
 
     // Build tool map for handler lookup
     const toolMap = new Map<string, DagToolDefinition>();
@@ -126,19 +391,45 @@ export class CodexAppServerAdapter implements AgentClient {
     }
 
     // Spawn app-server
+    let modelCatalogPath: string | undefined;
     try {
       this.tempDir = this.createTempDir();
-      const env = this.buildEnv(context);
-      this.process = spawnProcess(this.codexBin, ["app-server"], env);
+      this.providerRelay = context.protocol === CODEX_RESPONSES_PROTOCOL && context.apiKey
+        ? await startCodexProviderRelay(context.baseUrl ?? "", context.apiKey)
+        : null;
+      modelCatalogPath = context.protocol === CODEX_RESPONSES_PROTOCOL
+        ? this.materializeProviderModelCatalog(context)
+        : undefined;
+      const env = this.buildEnv(context, this.providerRelay?.apiKey);
+      const args = context.protocol === CODEX_RESPONSES_PROTOCOL
+        ? codexResponsesAppServerArgs({
+            providerName: context.provider,
+            baseUrl: this.providerRelay?.baseUrl ?? context.baseUrl,
+            apiKey: this.providerRelay?.apiKey ?? context.apiKey,
+            modelCatalogPath,
+          })
+        : ["app-server"];
+      this.process = spawnProcess(this.codexBin, args, env);
+      this.notifications = [];
+      this.notificationFailure = null;
       this.setupReadline();
     } catch (err) {
+      this.shutdown();
       yield { type: "error", message: `Failed to start codex app-server: ${err}` };
       yield { type: "done" };
       return;
     }
 
+    let activeThreadId: string | undefined;
+    let activeTurnId: string | undefined;
     const abortHandler = context.abortSignal
-      ? () => this.sendNotification("cancel", {})
+      ? () => {
+          if (!activeThreadId || !activeTurnId) return;
+          void this.sendRequest("turn/interrupt", {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+          }).catch(() => {});
+        }
       : null;
     if (abortHandler && context.abortSignal) {
       context.abortSignal.addEventListener("abort", abortHandler, { once: true });
@@ -153,10 +444,12 @@ export class CodexAppServerAdapter implements AgentClient {
 
     this.process.on("error", (err) => {
       this.rejectAllPending(`Process error: ${err.message}`);
+      this.rejectNotificationWaiters(`Process error: ${err.message}`);
     });
 
     this.process.on("exit", (code) => {
       this.rejectAllPending(`Process exited with code ${code}`);
+      this.rejectNotificationWaiters(`Process exited with code ${code}`);
     });
 
     try {
@@ -165,7 +458,12 @@ export class CodexAppServerAdapter implements AgentClient {
         codex_bin: this.codexBin,
         model: context.model,
         workspace: context.workspace ?? process.cwd(),
+        cwd: workingDirectory,
+        sandbox_mode: sandboxMode,
         tool_count: tools.length,
+        reasoning_effort: context.reasoningEffort ?? null,
+        service_tier: context.serviceTier ?? null,
+        provider_model_catalog: Boolean(modelCatalogPath),
       });
 
       // Initialize
@@ -182,17 +480,40 @@ export class CodexAppServerAdapter implements AgentClient {
       });
       yield this.debugEvent("appserver_initialized", this.redactSecrets(initResult));
 
+      const cwd = workingDirectory;
+      const skillProjection = prepareCodexSkillProjection(context, this.tempDir!);
+      if (skillProjection.roots.length > 0) {
+        await this.sendRequest("skills/extraRoots/set", { extraRoots: skillProjection.roots });
+        const skillList = await this.sendRequest("skills/list", { cwds: [cwd], forceReload: true });
+        const entries = Array.isArray(skillList.data) ? skillList.data as Array<Record<string, unknown>> : [];
+        const discoveredSkillCount = entries.reduce((total, entry) => (
+          total + (Array.isArray(entry.skills) ? entry.skills.length : 0)
+        ), 0);
+        yield this.debugEvent("native_skills_ready", {
+          projected_skill_count: skillProjection.skillCount,
+          discovered_skill_count: discoveredSkillCount,
+        });
+      }
+
       const dynamicTools = this.buildDynamicToolSpecs(tools);
       const threadResult = await this.sendRequest("thread/start", {
-        baseInstructions: context.systemPrompt ?? null,
-        developerInstructions: null,
-        cwd: context.workspace ?? process.cwd(),
+        // Preserve Codex's native harness instructions and supplement them
+        // with the HomeRail DAG contract.
+        baseInstructions: null,
+        developerInstructions: context.systemPrompt ?? null,
+        cwd,
         model: context.model,
-        modelProvider: context.provider || null,
+        modelProvider: context.protocol === CODEX_RESPONSES_PROTOCOL
+          ? HOMERAIL_CODEX_MODEL_PROVIDER_ID
+          : context.provider || null,
         approvalPolicy: "never",
-        sandbox: "danger-full-access",
+        sandbox: sandboxMode,
         ephemeral: true,
         dynamicTools,
+        serviceTier: context.serviceTier ?? null,
+        ...(context.reasoningEffort
+          ? { config: { model_reasoning_effort: context.reasoningEffort } }
+          : {}),
       });
       const threadId =
         (threadResult.thread_id as string | undefined) ??
@@ -200,6 +521,7 @@ export class CodexAppServerAdapter implements AgentClient {
       if (!threadId) {
         throw new Error("thread/start response did not include a thread id");
       }
+      activeThreadId = threadId;
       yield this.debugEvent("thread_created", { thread_id: threadId });
 
       // Execute turns with iteration guard
@@ -213,13 +535,16 @@ export class CodexAppServerAdapter implements AgentClient {
         const turnResult = await this.sendRequest("turn/start", {
           threadId,
           input: iteration === 1 ? [{ type: "text", text: prompt, text_elements: [] }] : [],
-          cwd: context.workspace ?? process.cwd(),
+          cwd: workingDirectory,
           model: context.model,
+          ...(context.reasoningEffort ? { effort: context.reasoningEffort } : {}),
+          serviceTier: context.serviceTier ?? null,
         });
         const turnId =
           (turnResult.turn_id as string | undefined) ??
           ((turnResult.turn as Record<string, unknown> | undefined)?.id as string | undefined) ??
           "";
+        activeTurnId = turnId || undefined;
         yield this.debugEvent("turn_started", { turn_id: turnId, iteration });
 
         // Drain turn notifications
@@ -227,9 +552,26 @@ export class CodexAppServerAdapter implements AgentClient {
         while (!turnComplete) {
           let notification: Record<string, unknown>;
           try {
-            notification = await this.waitForNotification(120_000);
-          } catch {
-            yield { type: "error", message: "Timeout waiting for codex app-server notification" };
+            notification = await this.waitForNotification(this.notificationHeartbeatIntervalMs);
+          } catch (err) {
+            if (err instanceof NotificationWaitTimeoutError) {
+              if (context.abortSignal?.aborted) {
+                turnComplete = true;
+                break;
+              }
+              // A silent model may still be reasoning or waiting on its
+              // provider. Emit a content-free heartbeat so the worker keeps
+              // its Manager lease without exposing chain-of-thought. Turn
+              // lifetime remains controlled by cancellation/process exit.
+              yield { type: "thinking", text: "" };
+              continue;
+            }
+            yield {
+              type: "error",
+              message: err instanceof Error
+                ? `Codex app-server notification stream failed: ${err.message}`
+                : "Codex app-server notification stream failed",
+            };
             return;
           }
 
@@ -288,6 +630,7 @@ export class CodexAppServerAdapter implements AgentClient {
         }
 
         yield this.debugEvent("turn_completed", { turn_id: turnId, iteration });
+        activeTurnId = undefined;
       }
 
       if (iteration >= maxIterations) {
@@ -372,9 +715,14 @@ export class CodexAppServerAdapter implements AgentClient {
         return;
       }
       if ("method" in parsed) {
-        this.notifications.push(parsed as unknown as Record<string, unknown>);
-        const waiters = this.notifyWaiters.splice(0);
-        for (const w of waiters) w();
+        const notification = parsed as unknown as Record<string, unknown>;
+        const waiter = this.notifyWaiters.shift();
+        if (waiter) {
+          clearTimeout(waiter.timer);
+          waiter.resolve(notification);
+        } else {
+          this.notifications.push(notification);
+        }
       } else if ("id" in parsed && typeof parsed.id === "number") {
         // It's a response
         const pending = this.pending.get(parsed.id);
@@ -397,21 +745,28 @@ export class CodexAppServerAdapter implements AgentClient {
     if (this.notifications.length > 0) {
       return Promise.resolve(this.notifications.shift()!);
     }
+    if (this.notificationFailure) {
+      return Promise.reject(this.notificationFailure);
+    }
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         const idx = this.notifyWaiters.indexOf(waiter);
         if (idx >= 0) this.notifyWaiters.splice(idx, 1);
-        reject(new Error("Notification wait timed out"));
+        reject(new NotificationWaitTimeoutError("Notification wait timed out"));
       }, timeoutMs);
-
-      const waiter = () => {
-        clearTimeout(timer);
-        if (this.notifications.length > 0) {
-          resolve(this.notifications.shift()!);
-        }
-      };
+      const waiter: NotificationWaiter = { resolve, reject, timer };
       this.notifyWaiters.push(waiter);
     });
+  }
+
+  private rejectNotificationWaiters(reason: string): void {
+    const error = new Error(reason);
+    this.notificationFailure = error;
+    const waiters = this.notifyWaiters.splice(0);
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
   }
 
   private rejectAllPending(reason: string): void {
@@ -436,7 +791,11 @@ export class CodexAppServerAdapter implements AgentClient {
       // ignore
     }
     this.process = null;
+    this.providerRelay?.server.close();
+    this.providerRelay?.server.closeAllConnections();
+    this.providerRelay = null;
     this.rejectAllPending("Adapter shutting down");
+    this.rejectNotificationWaiters("Adapter shutting down");
     this.cleanupTempDir();
   }
 
@@ -610,17 +969,16 @@ export class CodexAppServerAdapter implements AgentClient {
       .replace(/sk-[A-Za-z0-9]{20,}/g, "[REDACTED]");
   }
 
-  private buildEnv(context: AgentRunContext): Record<string, string | undefined> {
+  private buildEnv(context: AgentRunContext, providerApiKey = context.apiKey): Record<string, string | undefined> {
     const env = sanitizedAgentChildEnv();
     Object.assign(env, context.environmentVariables ?? {});
 
-    const apiKey = context.apiKey || process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || "";
-    if (apiKey) {
-      env.OPENAI_API_KEY = apiKey;
-    }
-
-    if (context.baseUrl) {
-      env.OPENAI_BASE_URL = context.baseUrl;
+    if (context.protocol === CODEX_RESPONSES_PROTOCOL) {
+      Object.assign(env, codexResponsesProviderEnvironment({
+        providerName: context.provider,
+        baseUrl: context.baseUrl,
+        apiKey: providerApiKey,
+      }));
     }
 
     if (this.tempDir) {
@@ -630,6 +988,41 @@ export class CodexAppServerAdapter implements AgentClient {
     }
 
     return env;
+  }
+
+  private materializeProviderModelCatalog(context: AgentRunContext): string | undefined {
+    if (!this.tempDir) throw new Error("Codex temporary home is not initialized");
+    if (!resolveCodexResponsesProviderProfile(context.provider)) return undefined;
+    const env = sanitizedAgentChildEnv();
+    env.HOME = this.tempDir;
+    env.CODEX_HOME = path.join(this.tempDir, ".codex");
+    let bundledCatalog = BUNDLED_CODEX_CATALOG_CACHE.get(this.codexBin);
+    if (!bundledCatalog) {
+      const result = spawnSync(this.codexBin, ["debug", "models", "--bundled"], {
+        encoding: "utf8",
+        env,
+        shell: windowsCommandNeedsShell(this.codexBin),
+        timeout: 15_000,
+        maxBuffer: 1_000_000,
+        windowsHide: true,
+      });
+      if (result.status !== 0 || !result.stdout?.trim()) {
+        throw new Error(
+          `Unable to load bundled Codex model metadata: ${result.stderr?.trim() || result.error?.message || `exit ${result.status}`}`,
+        );
+      }
+      bundledCatalog = result.stdout;
+      BUNDLED_CODEX_CATALOG_CACHE.set(this.codexBin, bundledCatalog);
+    }
+    const catalog = buildCodexProviderModelCatalogFromBundled(
+      context.provider,
+      context.model,
+      bundledCatalog,
+    );
+    if (!catalog) return undefined;
+    const catalogPath = path.join(this.tempDir, ".codex", "provider-models.json");
+    fs.writeFileSync(catalogPath, JSON.stringify(catalog), { encoding: "utf8", mode: 0o600 });
+    return catalogPath;
   }
 
   private createTempDir(): string {
@@ -713,3 +1106,5 @@ function findExecutableOnPath(command: string): string | null {
 }
 
 export const _codexWindowsCommandNeedsShellForTest = windowsCommandNeedsShell;
+export const _resolveCodexWorkingDirectoryForTest = resolveCodexWorkingDirectory;
+export const _resolveCodexSandboxModeForTest = resolveCodexSandboxMode;

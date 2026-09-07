@@ -4,6 +4,11 @@
  */
 
 import { stableStringify } from "./codec.js";
+import {
+  validateBrowserToolsTurnBinding,
+  type BrowserRendererConnectionRefV1,
+  type BrowserToolsTurnTransportV1,
+} from "./browser-tools.js";
 
 export const MANAGER_AGENT_TURN_ENVELOPE_VERSION = 1 as const;
 export const MANAGER_AGENT_TURN_MAX_TTL_MS = 10 * 60 * 1000;
@@ -22,6 +27,10 @@ export interface ManagerAgentTurnScopeV1 {
   project_id: string | null;
   session_id: string | null;
   voice_session_id: string | null;
+  /** Explicit route kind; `none` forbids any implicit Desktop fallback. */
+  browser_tools_transport: BrowserToolsTurnTransportV1;
+  /** Exact browser renderer selected by the originating UI request. */
+  browser_tools_target: BrowserRendererConnectionRefV1 | null;
   response_mode: ManagerAgentTurnResponseModeV1;
   generative_ui_mode: ManagerAgentTurnGenerativeUiModeV1 | null;
   plugin_registry_revision: number;
@@ -75,6 +84,20 @@ function nullableString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function browserToolsBinding(payload: Record<string, unknown>): {
+  browser_tools_transport: BrowserToolsTurnTransportV1;
+  browser_tools_target: BrowserRendererConnectionRefV1 | null;
+} {
+  try {
+    return validateBrowserToolsTurnBinding(
+      payload.browser_tools_transport,
+      payload.browser_tools_target,
+    );
+  } catch {
+    return { browser_tools_transport: "none", browser_tools_target: null };
+  }
+}
+
 function canonicalIds(values: unknown[]): string[] {
   return Array.from(new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0)))
     .sort((left, right) => left.localeCompare(right));
@@ -112,12 +135,15 @@ export function managerAgentTurnScopeFromPayload(
   );
   const responseMode = payload.response_mode === "voice" ? "voice" : "chat";
   const uiMode = payload.generative_ui_mode;
+  const browserTools = browserToolsBinding(payload);
   return {
     runtime_placement: target.runtime_placement,
     worker_id: target.worker_id,
     project_id: nullableString(payload.project_id),
     session_id: nullableString(payload.session_id),
     voice_session_id: nullableString(payload.voice_session_id),
+    browser_tools_transport: browserTools.browser_tools_transport,
+    browser_tools_target: browserTools.browser_tools_target,
     response_mode: responseMode,
     generative_ui_mode: uiMode === "off" || uiMode === "shadow" || uiMode === "prefer" ? uiMode : null,
     plugin_registry_revision: Number.isSafeInteger(pluginContext?.registry_revision)
@@ -155,7 +181,7 @@ export function validateManagerAgentTurnEnvelope(
   const scope = isRecord(claims) ? claims.scope : undefined;
   if (!isRecord(scope) || !exactKeys(scope, [
     "runtime_placement", "worker_id", "project_id", "session_id", "voice_session_id",
-    "response_mode", "generative_ui_mode", "plugin_registry_revision",
+    "browser_tools_transport", "browser_tools_target", "response_mode", "generative_ui_mode", "plugin_registry_revision",
     "plugin_context_digest", "capability_ids", "manager_skill_ids", "manager_api_scopes",
   ])) errors.push({ path: "/claims/scope", message: "scope must be an exact object" });
   if (errors.length || !isRecord(claims) || !isRecord(scope)) return { valid: false, errors };

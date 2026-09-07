@@ -288,7 +288,7 @@ describe('AgentSettingsPage Android TV WireGuard settings', () => {
     app.unmount()
   })
 
-  it('exposes plugin and static Skill catalogs in user settings', async () => {
+  it('exposes experimental features, plugins, and static Skill catalogs in user settings', async () => {
     setBridge({
       isAndroidTV: () => false,
       getWireGuardConfig: () => '{}',
@@ -304,8 +304,18 @@ describe('AgentSettingsPage Android TV WireGuard settings', () => {
 
     const skillTab = root.querySelector<HTMLButtonElement>('[data-testid="agent-settings-tab-skills"]')
     const pluginTab = root.querySelector<HTMLButtonElement>('[data-testid="agent-settings-tab-plugins"]')
+    const experimentalTab = root.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-settings-tab-experimental"]'
+    )
     expect(skillTab).not.toBeNull()
     expect(pluginTab).not.toBeNull()
+    expect(experimentalTab).not.toBeNull()
+
+    experimentalTab!.click()
+    await nextTick()
+    expect(
+      root.querySelector('[data-testid="agent-settings-section-experimental"]')
+    ).not.toBeNull()
 
     skillTab!.click()
     await nextTick()

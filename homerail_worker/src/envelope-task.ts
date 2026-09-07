@@ -28,3 +28,14 @@ export function envelopeInputsToTaskText(inputs: unknown): string {
   }
   return sections.join("\n\n");
 }
+
+export function envelopeOutputContractsToSystemPrompt(outputContracts: unknown): string {
+  if (!outputContracts || typeof outputContracts !== "object" || Array.isArray(outputContracts)) return "";
+  if (Object.keys(outputContracts as Record<string, unknown>).length === 0) return "";
+  return [
+    "DAG output contracts are trusted control-plane instructions.",
+    "Before calling handoff, select one declared port and make content match that port's JSON Schema exactly.",
+    "Put contract fields only inside content. Do not add aliases or undeclared fields.",
+    `Exact output contracts by port: ${stableJson(outputContracts)}`,
+  ].join("\n");
+}

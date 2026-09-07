@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       version:
-        description: Candidate version, for example 0.1.0-alpha.1
+        description: Candidate version, for example 0.1.0-beta.1
         type: string
         required: true
 
@@ -86,8 +86,8 @@ jobs:
           node - <<'NODE'
           const fs = require("node:fs");
           const manifest = JSON.parse(fs.readFileSync("candidate/release-manifest.json", "utf8"));
-          if (manifest.channel !== "alpha") {
-            throw new Error(`only Alpha candidates may be published while Windows installers are unsigned; got ${manifest.channel}`);
+          if (manifest.channel !== "beta") {
+            throw new Error(`only Beta candidates may be published; Alpha is retired and Stable remains gated; got ${manifest.channel}`);
           }
           if (manifest.source_commit !== process.env.EXPECTED_SOURCE_SHA) {
             throw new Error(`candidate source ${manifest.source_commit} does not match workflow ${process.env.EXPECTED_SOURCE_SHA}`);
@@ -171,5 +171,5 @@ jobs:
             echo
             echo "Tag: \`$RELEASE_TAG\`"
             echo
-            echo "The release is now visible to its update channel. Test the previous Alpha upgrading to this exact release before announcing it publicly. If it fails, do not replace this tag or its assets; fix forward with the next Alpha."
+            echo "The release is now visible to its update channel. Test the previous release upgrading to this exact release before announcing it publicly. If it fails, do not replace this tag or its assets; fix forward with the next prerelease."
           } >> "$GITHUB_STEP_SUMMARY"

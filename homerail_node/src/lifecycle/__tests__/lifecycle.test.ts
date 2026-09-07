@@ -232,11 +232,18 @@ describe("lifecycle (with MockProvider)", () => {
         workspaceId: "ws-readonly",
         workspaceReadOnly: true,
       });
-      expect(provider.containers.get(info.id)!.config.mounts).toEqual([{
-        host: "/home/user/.homerail/workspace/ws-readonly",
-        container: "/workspace",
-        mode: "ro",
-      }]);
+      expect(provider.containers.get(info.id)!.config.mounts).toEqual([
+        {
+          host: "/home/user/.homerail/workspace/ws-readonly",
+          container: "/workspace",
+          mode: "ro",
+        },
+        {
+          host: "/home/user/.homerail/workspace/ws-readonly/.homerail-runtime",
+          container: "/workspace/.homerail-runtime",
+          mode: "rw",
+        },
+      ]);
     });
 
     it("supports run/node workspace IDs", async () => {

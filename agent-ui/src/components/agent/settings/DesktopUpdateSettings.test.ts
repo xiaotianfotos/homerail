@@ -69,6 +69,21 @@ describe('DesktopUpdateSettings', () => {
     expect(root?.querySelector('[data-testid="desktop-update-channel-early-access"]')?.getAttribute('aria-checked')).toBe('true')
   })
 
+  it.each(['en-US', 'zh-Hans', 'zh-Hant'] as const)(
+    'describes the release channels without the retired Alpha channel in %s',
+    (locale) => {
+      i18n.global.locale.value = locale
+
+      const stableDescription = i18n.global.t('settings.general.updates.channels.stable.description')
+      const earlyAccessDescription = i18n.global.t('settings.general.updates.channels.early-access.description')
+
+      expect(stableDescription).toContain('Beta')
+      expect(earlyAccessDescription).toContain('Beta')
+      expect(stableDescription).not.toContain('Alpha')
+      expect(earlyAccessDescription).not.toContain('Alpha')
+    },
+  )
+
   it('explains that switching a prerelease to Stable will not downgrade it', async () => {
     mount({
       updateStatus: vi.fn().mockResolvedValue(updateStatus({

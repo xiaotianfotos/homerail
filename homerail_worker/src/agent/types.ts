@@ -42,6 +42,8 @@ export interface AgentUsage {
   output_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  /** Provider-advertised output token cap; absent when the provider hides it. */
+  output_token_limit?: number;
 }
 
 /**
@@ -61,10 +63,26 @@ export type AgentEvent =
   | { type: "debug"; source: string; message: string; data?: Record<string, unknown> }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }
-  | { type: "usage"; usage: AgentUsage }
+  | {
+      type: "usage";
+      usage: AgentUsage;
+      /** Latest provider finish/stop reason seen so far; null when unknown. */
+      finish_reason?: string | null;
+      /** Latest provider output token cap seen so far; null when unknown. */
+      output_token_limit?: number | null;
+    }
   | { type: "error"; message: string }
   | { type: "turn_complete" }
-  | { type: "done"; usage?: AgentUsage; duration_ms?: number; num_turns?: number };
+  | {
+      type: "done";
+      usage?: AgentUsage;
+      duration_ms?: number;
+      num_turns?: number;
+      /** Provider finish/stop reason; null/undefined when unavailable. */
+      finish_reason?: string | null;
+      /** Provider-advertised output token cap; null/undefined when unavailable. */
+      output_token_limit?: number | null;
+    };
 
 /** Abstract agent client interface. */
 export interface AgentClient {
@@ -96,6 +114,14 @@ export interface AgentRunContext {
   model: string;
   apiKey: string;
   baseUrl: string;
+  /** Provider-owned reasoning selector chosen by the runtime profile. */
+  reasoningEffort?: string;
+  /** Selectable reasoning ids mapped to the configured provider's wire values. */
+  reasoningEffortMap?: Record<string, string | null> | false;
+  /** Explicit command sandbox selected by the trusted DAG runtime policy. */
+  codexSandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  /** Optional provider service tier; null means provider default. */
+  serviceTier?: string | null;
   /** Claude-compatible gateway credential header contract. */
   anthropicAuthMode?: "api_key" | "auth_token";
   maxIterations?: number;

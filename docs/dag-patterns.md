@@ -25,8 +25,10 @@ concrete instances reference the catalog instead of duplicating it.
 
 ### Join Gateway
 
-`join_gateway` waits for its normal `after` dependencies, collects all input
-mailboxes, and emits one aggregate payload. Configure:
+`join_gateway` waits for all normal `after` dependencies, including
+completion-only barriers, collects the routed input mailboxes, and emits one
+aggregate payload. Completion-only dependencies do not contribute values or
+count toward an `n_of_m` threshold. Configure:
 
 - `mode`: `all`, `any`, or `n_of_m`.
 - `field`: optional dotted field read from each input.
@@ -143,13 +145,23 @@ root or a protected file changed and restored before the final snapshot;
 OS-level containment remains the responsibility of the selected agent backend
 or container sandbox.
 
+Workspace policy paths cannot enter `.git`, `.homerail-runtime`, or
+`node_modules`. Declare the repository or project root instead. In particular,
+do not add `.homerail-runtime` to `writable_paths`: Node already overlays that
+directory for trusted Worker telemetry even when the model workspace is
+read-only, and the compiler reports the obsolete declaration before a run is
+created.
+
 Agent nodes may declare `allowed_builtin_tools` and `allowed_dag_tools` as exact
 allowlists for backend-provided shell/file tools and HomeRail DAG tools.
 Omitting either field preserves that tool set's default; `[]` disables it.
 Agent nodes with outputs must retain `handoff`. Contract-correction turns always
 override both declarations to expose only `handoff` and no built-ins. The
-`claude-sdk` adapter enforces the built-in allowlist; backends that cannot
-enforce it reject the node instead of silently widening access.
+`claude-sdk` adapter enforces the full built-in allowlist. `deepseek_harness`
+enforces the read-only subset (`Read`, `Grep`, `Glob`, `LS`) through bounded
+HomeRail MCP handlers confined by `workspace_access`; it rejects shell or
+mutation tools. Other backends that cannot enforce an asserted allowlist reject
+the node instead of silently widening access.
 
 Manager-to-Node and Manager-to-Worker WebSocket upgrades are authenticated
 before registration. Connections without configured credentials are restricted

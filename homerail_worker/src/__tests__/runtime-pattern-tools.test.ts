@@ -163,6 +163,160 @@ describe("runtime pattern worker tools", () => {
     }
   });
 
+  it("rejects policy roots that enter reserved metadata directories", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-reserved-"));
+    try {
+      fs.mkdirSync(path.join(root, "repo", ".git"), { recursive: true });
+      fs.writeFileSync(path.join(root, "repo", ".git", "config"), "unsafe");
+      expect(() => snapshotWorkspace(root, { writable_paths: ["repo/.git"] }))
+        .toThrow(/reserved segment \.git/);
+      expect(() => snapshotWorkspace(root, { writable_paths: ["repo/node_modules/pkg"] }))
+        .toThrow(/reserved segment node_modules/);
+      expect(() => snapshotWorkspace(root, { writable_paths: ["repo/.homerail-runtime"] }))
+        .toThrow(/reserved segment \.homerail-runtime/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not hide nested model-created Git metadata from snapshots", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-nested-git-"));
+    try {
+      fs.mkdirSync(path.join(root, "repo"));
+      const policy = { writable_paths: ["repo"], readonly_paths: [] };
+      const before = snapshotWorkspace(root, policy);
+      fs.mkdirSync(path.join(root, "repo", "nested", ".git"), { recursive: true });
+      fs.writeFileSync(path.join(root, "repo", "nested", ".git", "config"), "created");
+      const result = verifyWorkspacePolicy(before, snapshotWorkspace(root, policy), policy);
+      expect(result.changed_paths).toEqual(["repo/nested/.git/config"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores only the declared repository root Git metadata", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-root-git-"));
+    try {
+      fs.mkdirSync(path.join(root, "repo", ".git"), { recursive: true });
+      fs.writeFileSync(path.join(root, "repo", ".git", "config"), "manager-owned");
+      fs.writeFileSync(path.join(root, "repo", "code.ts"), "tracked");
+      const snapshot = snapshotWorkspace(root, {
+        writable_paths: ["repo"],
+        readonly_paths: [],
+        git_metadata_read_only: true,
+      });
+      expect(snapshot.files).toEqual({
+        "repo/code.ts": expect.any(String),
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores Git metadata directly beneath a declared writable checkout", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-writable-git-"));
+    try {
+      fs.mkdirSync(path.join(root, "repo", ".git"), { recursive: true });
+      fs.writeFileSync(path.join(root, "repo", ".git", "config"), "before");
+      const policy = { writable_paths: ["repo"], readonly_paths: [] };
+      const before = snapshotWorkspace(root, policy);
+      fs.writeFileSync(path.join(root, "repo", ".git", "config"), "after");
+      expect(verifyWorkspacePolicy(before, snapshotWorkspace(root, policy), policy).changed_paths)
+        .toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores Manager-declared concurrent paths without hiding other unauthorized mutations", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-concurrent-"));
+    try {
+      fs.mkdirSync(path.join(root, "workers", "own"), { recursive: true });
+      fs.mkdirSync(path.join(root, "workers", "sibling"), { recursive: true });
+      fs.writeFileSync(path.join(root, "workers", "own", "code.ts"), "before");
+      fs.writeFileSync(path.join(root, "workers", "sibling", "code.ts"), "before");
+      const policy = {
+        writable_paths: ["workers/own"],
+        readonly_paths: ["input"],
+        snapshot_exclude_paths: ["workers/sibling"],
+      };
+      const before = snapshotWorkspace(root, policy);
+      fs.writeFileSync(path.join(root, "workers", "own", "code.ts"), "own change");
+      fs.writeFileSync(path.join(root, "workers", "sibling", "code.ts"), "concurrent sibling change");
+      fs.writeFileSync(path.join(root, "README.md"), "unauthorized");
+
+      const result = verifyWorkspacePolicy(before, snapshotWorkspace(root, policy), policy);
+      expect(result.valid).toBe(false);
+      expect(result.changed_paths).toEqual(["README.md", "workers/own/code.ts"]);
+      expect(result.unauthorized_changes).toEqual(["README.md"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes only the exact Manager review projection and still detects sibling evidence writes", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-review-projection-"));
+    try {
+      const projection = "review-evidence/qwen/qwen_review/session/round-0001/generation-1.json";
+      fs.mkdirSync(path.join(root, "review-evidence", "qwen", "qwen_review", "session", "round-0001"), {
+        recursive: true,
+      });
+      const policy = {
+        writable_paths: [],
+        readonly_paths: ["review-evidence"],
+        snapshot_exclude_paths: [projection],
+      };
+      const before = snapshotWorkspace(root, policy);
+
+      fs.writeFileSync(path.join(root, projection), "manager projection");
+      fs.writeFileSync(path.join(root, "review-evidence", "unexpected.json"), "worker mutation");
+
+      const result = verifyWorkspacePolicy(before, snapshotWorkspace(root, policy), policy);
+      expect(result.valid).toBe(false);
+      expect(result.changed_paths).toEqual(["review-evidence/unexpected.json"]);
+      expect(result.protected_changes).toEqual(["review-evidence/unexpected.json"]);
+      expect(result.unauthorized_changes).toEqual(["review-evidence/unexpected.json"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores shared Manager Git writes during parallel fanout without hiding nested Git metadata", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-parallel-git-"));
+    try {
+      fs.mkdirSync(path.join(root, "repo", ".git", "objects"), { recursive: true });
+      fs.mkdirSync(path.join(root, "workers", "own"), { recursive: true });
+      fs.mkdirSync(path.join(root, "workers", "sibling"), { recursive: true });
+      fs.writeFileSync(path.join(root, "repo", "README.md"), "tracked\n");
+      fs.writeFileSync(path.join(root, "repo", ".git", "objects", "before"), "manager-owned\n");
+      fs.writeFileSync(path.join(root, "workers", "own", "code.ts"), "before\n");
+      fs.writeFileSync(path.join(root, "workers", "sibling", "code.ts"), "before\n");
+      const policy = {
+        writable_paths: ["workers/own"],
+        readonly_paths: ["input", "repo"],
+        snapshot_exclude_paths: ["workers/sibling"],
+      };
+      const before = snapshotWorkspace(root, policy);
+
+      fs.writeFileSync(path.join(root, "workers", "own", "code.ts"), "implemented\n");
+      fs.writeFileSync(path.join(root, "workers", "sibling", "code.ts"), "concurrent sibling\n");
+      fs.writeFileSync(path.join(root, "repo", ".git", "objects", "after"), "manager commit\n");
+      let result = verifyWorkspacePolicy(before, snapshotWorkspace(root, policy), policy);
+      expect(result.valid).toBe(true);
+      expect(result.changed_paths).toEqual(["workers/own/code.ts"]);
+
+      fs.mkdirSync(path.join(root, "workers", "own", "nested", ".git"), { recursive: true });
+      fs.writeFileSync(path.join(root, "workers", "own", "nested", ".git", "config"), "created\n");
+      result = verifyWorkspacePolicy(before, snapshotWorkspace(root, policy), policy);
+      expect(result.changed_paths).toEqual([
+        "workers/own/code.ts",
+        "workers/own/nested/.git/config",
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects workspace symlinks that escape the policy root", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-symlink-"));
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-workspace-outside-"));

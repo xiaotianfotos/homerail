@@ -190,14 +190,17 @@ function passingPrReviewPublication(): Record<string, unknown> {
       summary: "No actionable findings",
       actionable_count: 0,
       findings: [],
-      reviewer_results: ["runtime", "security", "tests", "frontend"].map((reviewer) => ({
+      reviewer_results: ["qwen", "kimi", "glm"].map((reviewer) => ({
         reviewer,
         status: "complete",
+        vote: "approve",
         summary: `${reviewer} review complete`,
+        reviewed_files: ["src/index.ts"],
+        unreviewed_files: [],
+        evidence_truncated: false,
         findings: [],
       })),
     },
-    markdown: "# HomeRail PR Review\n\nNo actionable findings.",
     quorum: { passed: true, successes: 3, total: 3, threshold: 2 },
   };
 }
@@ -250,8 +253,8 @@ function makePrCloseoutApiServer(createAndRunBodies: Record<string, unknown>[], 
     }
     if (req.method === "GET" && pathname === "/api/runs/validation-run-26/handoffs") {
       send({ success: true, data: { handoffs: [{
-        fromNode: "publish",
-        port: "published",
+        fromNode: "decide",
+        port: "decided",
         content: passingPrReviewPublication(),
       }] } });
       return;
@@ -422,6 +425,20 @@ class PrCloseoutToolAgent implements AgentClient {
 class NoToolAgent implements AgentClient {
   async *run(): AsyncIterable<AgentEvent> {
     yield { type: "text", text: "I started the DAG." };
+    yield { type: "done" };
+  }
+}
+
+class ContextCaptureAgent implements AgentClient {
+  context?: AgentRunContext;
+
+  async *run(
+    _prompt: string,
+    _tools: DagToolDefinition[],
+    context: AgentRunContext,
+  ): AsyncIterable<AgentEvent> {
+    this.context = context;
+    yield { type: "text", text: "context captured" };
     yield { type: "done" };
   }
 }
@@ -760,6 +777,52 @@ describe("manager-agent server", () => {
     } finally {
       await close(server);
       await close(managerApi);
+    }
+  });
+
+  it("forwards provider-owned DSH runtime fields into AgentRunContext", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-manager-agent-workspace-"));
+    tmpDirs.push(workspace);
+    const agent = new ContextCaptureAgent();
+    registerAgentBackend("manager-agent-context-capture-test", () => agent);
+    vi.stubEnv("PROJECT_WORKSPACE", workspace);
+
+    const server = startManagerAgentServer(0);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "capture",
+          agent_config: {
+            agent_type: "manager-agent-context-capture-test",
+            provider_name: "glm",
+            protocol: "openai_compatible",
+            model: "glm-5.3",
+            api_key: "secret",
+            base_url: "https://glm.example/v1",
+            reasoning_effort: "deep",
+            reasoning_effort_map: { off: null, deep: "deep" },
+            service_tier: "priority",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(agent.context).toMatchObject({
+        provider: "glm",
+        protocol: "openai_compatible",
+        model: "glm-5.3",
+        reasoningEffort: "deep",
+        reasoningEffortMap: { off: null, deep: "deep" },
+        serviceTier: "priority",
+      });
+    } finally {
+      await close(server);
     }
   });
 
@@ -1341,6 +1404,49 @@ describe("manager-agent server", () => {
         ]) expect(schema).not.toContain(forbidden);
       }
     }
+  });
+
+  it("routes Worker UI tools through the Manager Browser Tools broker", async () => {
+    let observed: Record<string, unknown> | null = null;
+    const managerApi = http.createServer((req, res) => {
+      const pathname = new URL(req.url || "/", "http://localhost").pathname;
+      if (req.method !== "POST" || pathname !== "/api/browser-tools/invoke") {
+        res.writeHead(404).end();
+        return;
+      }
+      let raw = "";
+      req.on("data", (chunk) => { raw += chunk; });
+      req.on("end", () => {
+        observed = JSON.parse(raw) as Record<string, unknown>;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          success: true,
+          data: { result: { ok: true, surface: "dag_status", dag_run_id: "run-ui-1" } },
+        }));
+      });
+    });
+    const managerPort = await listen(managerApi);
+    vi.stubEnv("MANAGER_REST_URL", `http://127.0.0.1:${managerPort}/api`);
+    try {
+      const tool = requireManagerTool(createManagerTools({
+        ...managerToolState(),
+        browserToolsTransport: "desktop",
+      }, "chat"), "ui_open_surface");
+      const result = await tool.handler({ surface: "dag_status", query: "review" });
+      expect(observed).toEqual({
+        name: "ui_open_surface",
+        input: { surface: "dag_status", query: "review" },
+      });
+      expect(JSON.stringify(result)).toContain("run-ui-1");
+    } finally {
+      await close(managerApi);
+    }
+  });
+
+  it("does not expose Worker UI tools without a signed browser route", () => {
+    const names = createManagerTools(managerToolState(), "chat").map((tool) => tool.name);
+    expect(names).not.toContain("ui_get_state");
+    expect(names).not.toContain("ui_open_surface");
   });
 
   it("maps Worker supervisor tools to actor-only Manager REST requests", async () => {

@@ -2,13 +2,16 @@ import { timingSafeEqual } from "node:crypto";
 
 export function isLoopbackRemoteAddress(address: string | null | undefined): boolean {
   if (!address) return false;
-  const normalized = address.trim().toLowerCase();
+  const normalized = address.trim().toLowerCase().replace(/^\[|\]$/g, "");
   if (normalized === "::1" || normalized === "localhost") return true;
-  if (normalized.startsWith("127.")) return true;
   if (normalized.startsWith("::ffff:")) {
     return isLoopbackRemoteAddress(normalized.slice("::ffff:".length));
   }
-  return normalized === "0:0:0:0:0:ffff:7f00:1";
+  if (normalized === "0:0:0:0:0:ffff:7f00:1") return true;
+  const parts = normalized.split(".");
+  return parts.length === 4
+    && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+    && Number(parts[0]) === 127;
 }
 
 function bearerToken(header: string | string[] | undefined): string | undefined {

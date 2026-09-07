@@ -6,6 +6,7 @@
 export const ManagerAgentHarness = {
   CLAUDE_AGENT_SDK: "claude_agent_sdk",
   CODEX_APPSERVER: "codex_appserver",
+  DEEPSEEK_HARNESS: "deepseek_harness",
   KIMI_CODE: "kimi_code",
 } as const;
 export type ManagerAgentHarness = (typeof ManagerAgentHarness)[keyof typeof ManagerAgentHarness];
@@ -21,7 +22,7 @@ export type ManagerAgentRuntimePlacement =
 // Canonical agent_type strings are intentionally stable because they can appear
 // in env vars and persisted runtime config. Aliases accept common spelling
 // variants, but these canonical values should not be renamed casually.
-export type ManagerAgentRuntimeAgentType = "claude-sdk" | "codex_appserver" | "kimi_code";
+export type ManagerAgentRuntimeAgentType = "claude-sdk" | "codex_appserver" | "deepseek_harness" | "kimi_code";
 
 // app-server advertises model-specific, forward-compatible effort strings via model/list.
 export type ManagerAgentReasoningEffort = string;
@@ -44,6 +45,11 @@ export const MANAGER_AGENT_HARNESSES: Record<ManagerAgentHarness, ManagerAgentHa
     agent_type: "kimi_code",
     runtime_placement: ManagerAgentRuntimePlacement.HOST_SHELL,
   },
+  [ManagerAgentHarness.DEEPSEEK_HARNESS]: {
+    harness: ManagerAgentHarness.DEEPSEEK_HARNESS,
+    agent_type: "deepseek_harness",
+    runtime_placement: ManagerAgentRuntimePlacement.HOST_SHELL,
+  },
   [ManagerAgentHarness.CLAUDE_AGENT_SDK]: {
     harness: ManagerAgentHarness.CLAUDE_AGENT_SDK,
     agent_type: "claude-sdk",
@@ -64,6 +70,10 @@ const MANAGER_AGENT_HARNESS_ALIASES: Record<string, ManagerAgentHarness> = {
   codex: ManagerAgentHarness.CODEX_APPSERVER,
   codex_appserver: ManagerAgentHarness.CODEX_APPSERVER,
   "codex-appserver": ManagerAgentHarness.CODEX_APPSERVER,
+  deepseek: ManagerAgentHarness.DEEPSEEK_HARNESS,
+  dsh: ManagerAgentHarness.DEEPSEEK_HARNESS,
+  deepseek_harness: ManagerAgentHarness.DEEPSEEK_HARNESS,
+  "deepseek-harness": ManagerAgentHarness.DEEPSEEK_HARNESS,
   kimi: ManagerAgentHarness.KIMI_CODE,
   kimi_code: ManagerAgentHarness.KIMI_CODE,
   "kimi-code": ManagerAgentHarness.KIMI_CODE,
@@ -104,6 +114,7 @@ export function isKimiCodeCompatibleModelSetting(
 export function isManagerAgentHarness(value: unknown): value is ManagerAgentHarness {
   return value === ManagerAgentHarness.CLAUDE_AGENT_SDK ||
     value === ManagerAgentHarness.CODEX_APPSERVER ||
+    value === ManagerAgentHarness.DEEPSEEK_HARNESS ||
     value === ManagerAgentHarness.KIMI_CODE;
 }
 

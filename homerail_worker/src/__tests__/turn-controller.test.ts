@@ -122,6 +122,8 @@ describe("AgentTurnController", () => {
       KIMI_AGENT_SDK_EXECUTABLE: "kimi-sdk",
     }).capabilities.liveSteer).toBe(false);
     expect(agentTurnControllerOptionsForBackend("deterministic", {}).capabilities.liveSteer).toBe(false);
+    expect(agentTurnControllerOptionsForBackend("deepseek_harness", {}).capabilities.liveSteer).toBe(true);
+    expect(agentTurnControllerOptionsForBackend("dsh", {}).capabilities.liveSteer).toBe(true);
   });
 
   it("reports synchronous and asynchronous driver failures deterministically", async () => {

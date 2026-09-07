@@ -14,6 +14,7 @@ import type {
   DAGTaskNode,
   DAGEdge,
   DAGNodeDetail,
+  DAGNodeResult,
   DAGChatMessage,
   DAGEventEntry,
   DAGExperienceIngestStatus,
@@ -21,6 +22,10 @@ import type {
 } from '../types/dag.types'
 
 type BackendTokenUsage = Partial<NonNullable<DAGTaskNode['token_usage']>> & Record<string, number | undefined>
+
+function dagStatusPath(dagRunId: string, ...segments: string[]): string {
+  return `/api/dag-status/${[dagRunId, ...segments].map(encodeURIComponent).join('/')}`
+}
 
 // ============================================================================
 // 数据转换：后端格式 → 前端 DAGExecution
@@ -156,8 +161,14 @@ function normalizeTokenUsage(tokenUsage?: BackendTokenUsage): DAGTaskNode['token
 // API Functions
 // ============================================================================
 
-export async function getDagStatus(dagRunId: string): Promise<DAGExecution | null> {
-  const res = await http.get<any>(`/api/dag-status/${dagRunId}`)
+export async function getDagStatus(
+  dagRunId: string,
+  signal?: AbortSignal,
+): Promise<DAGExecution | null> {
+  const res = await http.get<any>(
+    dagStatusPath(dagRunId),
+    signal ? { signal } : undefined,
+  )
   // http client 已解包外层 { success, data } → res 就是 API body
   if (res.success === false || !res.data) {
     return null
@@ -171,7 +182,7 @@ export async function getDagNodeDetail(
   dagRunId: string,
   nodeId: string
 ): Promise<DAGNodeDetail> {
-  const res = await http.get<DAGNodeDetail>(`/api/dag-status/${dagRunId}/node/${nodeId}`)
+  const res = await http.get<DAGNodeDetail>(dagStatusPath(dagRunId, 'node', nodeId))
   return res.data
 }
 
@@ -261,7 +272,7 @@ export async function getDagNodeChat(
   dagRunId: string,
   nodeId: string
 ): Promise<DAGChatMessage[]> {
-  const res = await http.get<any>(`/api/dag-status/${dagRunId}/node/${nodeId}/chat`)
+  const res = await http.get<any>(dagStatusPath(dagRunId, 'node', nodeId, 'chat'))
   const raw = res.data?.messages || []
   return transformChatEntries(raw)
 }
@@ -269,7 +280,7 @@ export async function getDagNodeChat(
 export async function getDagManagerChat(
   dagRunId: string
 ): Promise<DAGChatMessage[]> {
-  const res = await http.get<any>(`/api/dag-status/${dagRunId}/manager/chat`)
+  const res = await http.get<any>(dagStatusPath(dagRunId, 'manager', 'chat'))
   return res.data?.messages || []
 }
 
@@ -278,12 +289,12 @@ export async function getDagManagerChat(
 // ============================================================================
 
 export async function getDagEvents(dagRunId: string): Promise<DAGEventEntry[]> {
-  const res = await http.get<any>(`/api/dag-status/${dagRunId}/events/history`)
+  const res = await http.get<any>(dagStatusPath(dagRunId, 'events', 'history'))
   return res.data?.events || []
 }
 
 export async function getDagRunMetrics(dagRunId: string): Promise<DAGRunMetrics | null> {
-  const res = await http.get<any>(`/api/dag-status/${dagRunId}/metrics`)
+  const res = await http.get<any>(dagStatusPath(dagRunId, 'metrics'))
   if (res.success === false || !res.data) return null
   return res.data
 }
@@ -291,7 +302,7 @@ export async function getDagRunMetrics(dagRunId: string): Promise<DAGRunMetrics 
 export async function getDagExperienceIngestStatus(
   dagRunId: string
 ): Promise<DAGExperienceIngestStatus | null> {
-  const res = await http.get<any>(`/api/dag-status/${dagRunId}/experience-ingest`)
+  const res = await http.get<any>(dagStatusPath(dagRunId, 'experience-ingest'))
   if (res.success === false || !res.data) return null
   return res.data
 }
@@ -299,14 +310,24 @@ export async function getDagExperienceIngestStatus(
 export async function retryDagExperienceIngest(
   dagRunId: string
 ): Promise<DAGExperienceIngestStatus | null> {
-  const res = await http.post<any>(`/api/dag-status/${dagRunId}/experience-ingest/retry`)
+  const res = await http.post<any>(dagStatusPath(dagRunId, 'experience-ingest', 'retry'))
   if (res.success === false || !res.data) return null
   return res.data
+}
+
+export async function getDagNodeResult(
+  dagRunId: string,
+  nodeId: string
+): Promise<DAGNodeResult | null> {
+  const res = await http.get<any>(dagStatusPath(dagRunId, 'node', nodeId, 'result'))
+  if (res.success === false || !res.data) return null
+  return res.data as DAGNodeResult
 }
 
 export const dagApi = {
   getDagStatus,
   getDagNodeDetail,
+  getDagNodeResult,
   getDagNodeChat,
   getDagManagerChat,
   getDagEvents,

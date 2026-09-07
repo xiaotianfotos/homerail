@@ -73,6 +73,12 @@ function expectedMetadata(channel) {
       macos: ["latest-mac.yml", "alpha-mac.yml", "beta-mac.yml"],
     };
   }
+  if (channel === "beta") {
+    return {
+      windows: ["beta.yml", "alpha.yml"],
+      macos: ["beta-mac.yml", "alpha-mac.yml"],
+    };
+  }
   return {
     windows: [`${channel}.yml`],
     macos: [`${channel}-mac.yml`],
@@ -160,7 +166,7 @@ function validateUpdateMetadata(candidateDir, channel, version) {
         );
       }
     }
-    if (channel === "latest") {
+    if (files.length > 1) {
       const canonicalHash = sha256(files[0]);
       for (const alias of files.slice(1)) {
         if (sha256(alias) !== canonicalHash) {
@@ -277,8 +283,10 @@ function writeCandidate(args) {
   const phase = manifest.prerelease ? `${args.channel} prerelease` : "stable release";
   const windowsPolicyNote =
     args.channel === "alpha"
-      ? "- Windows: explicitly unsigned Alpha installer, verified as unsigned under the Alpha release policy."
-      : `- Windows: trusted Authenticode signing is required for this ${phase}.`;
+      ? "- Windows: explicitly unsigned Alpha installer, verified as unsigned under the current release policy."
+      : args.channel === "beta"
+        ? "- Windows: explicitly unsigned Beta prerelease installer, verified as unsigned under the current release policy."
+        : `- Windows: trusted Authenticode signing is required for this ${phase}.`;
   const prereleaseWarning =
     args.channel === "alpha"
       ? [

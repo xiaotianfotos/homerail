@@ -170,6 +170,71 @@ describe("/api/manager-agent/readiness", () => {
     ]);
   });
 
+  it("does not require a ChatGPT login for provider-backed Codex", () => {
+    process.env.HOMERAIL_CODEX_BIN = path.join(tmpHome, "missing-codex");
+    process.env.CODEX_HOME = path.join(tmpHome, "missing-codex-home");
+    upsertProvider({
+      id: "local-responses",
+      default_model: "local-coder",
+      responses_base_url: "http://127.0.0.1:8000/v1",
+    });
+    const setting = createSetting({
+      provider_id: "local-responses",
+      endpoint_id: "local-responses_custom",
+      model_name: "local-coder",
+      api_key: "local-no-key",
+      protocol: "custom",
+      responses_base_url: "http://127.0.0.1:8000/v1",
+      is_active: true,
+      is_default: true,
+    });
+
+    const readiness = managerAgentReadiness({
+      ...DEFAULT_MANAGER_AGENT_CONFIG,
+      harness: "codex_appserver",
+      llm_setting_id: setting.id,
+      provider_name: setting.provider_id,
+      model_name: setting.model_name,
+    });
+
+    expect(readiness.blockers.map((item) => item.code)).toEqual(["codex_binary_not_found"]);
+  });
+
+  it("does not report provider-backed Codex Live Voice as effective", () => {
+    process.env.HOMERAIL_CODEX_BIN = path.join(tmpHome, "missing-codex");
+    process.env.CODEX_HOME = path.join(tmpHome, "missing-codex-home");
+    upsertProvider({
+      id: "local-responses",
+      default_model: "local-coder",
+      responses_base_url: "http://127.0.0.1:8000/v1",
+    });
+    const setting = createSetting({
+      provider_id: "local-responses",
+      endpoint_id: "local-responses_custom",
+      model_name: "local-coder",
+      api_key: "local-no-key",
+      protocol: "custom",
+      responses_base_url: "http://127.0.0.1:8000/v1",
+      is_active: true,
+      is_default: true,
+    });
+
+    const readiness = managerAgentReadiness({
+      ...DEFAULT_MANAGER_AGENT_CONFIG,
+      harness: "codex_appserver",
+      llm_setting_id: setting.id,
+      provider_name: setting.provider_id,
+      model_name: setting.model_name,
+      live_voice_enabled: true,
+    });
+
+    expect(readiness.live_voice_effective).toBe(false);
+    expect(readiness.blockers.map((item) => item.code)).toEqual([
+      "codex_provider_live_voice_unsupported",
+      "codex_binary_not_found",
+    ]);
+  });
+
   it("reports missing host prerequisites without requiring a Docker node", async () => {
     process.env.HOMERAIL_REPO_ROOT = tmpHome;
     server = createServer(0, undefined, undefined, false);

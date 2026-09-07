@@ -74,6 +74,10 @@ HomeRail applies stricter snapshot rules in addition to the official A2UI JSON S
 
 If the complete A2UI surface does not fit a bounded Manager Agent canvas-context envelope, the host omits it and marks the omission. It never truncates a component graph into an invalid partial surface.
 
+## DAG Node Results Default To Built-in Renderers
+
+Generative UI is not the default path for inspecting DAG runs. Every node already exposes a structured result (`GET /api/dag-status/<run_id>/node/<node_id>/result`): non-worker gateway nodes (command, join, condition, loop, while, state, fan-out) report their handoff payload and command telemetry, and Worker nodes report tool-call, cache, and token metrics. The node detail drawer and the Voice Cockpit `dag_explorer` widget render these results with built-in per-kind renderers at zero generation cost. Reserve A2UI generation for genuinely novel, user-facing surfaces; never generate a surface just to show what a node produced.
+
 ## Migration Policy
 
 The earlier ViewSpec prototype never shipped, so the native A2UI implementation intentionally has no ViewSpec compatibility reader, converter, feature flag, or dual renderer. Development databases created by prototype revisions are not migrated in place; validation uses an isolated `HOMERAIL_HOME` and creates fresh A2UI documents.

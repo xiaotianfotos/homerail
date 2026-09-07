@@ -20,6 +20,9 @@ export interface DAGAgentConfig {
     base_url?: string;
     protocol?: string;
     anthropic_auth_mode?: "api_key" | "auth_token";
+    reasoning_effort?: string;
+    reasoning_effort_map?: Record<string, string | null> | false;
+    service_tier?: string | null;
   };
   model?: string;
   system?: string;
@@ -29,6 +32,8 @@ export interface DAGAgentConfig {
   allowed_surface_views?: string[];
   extra?: Record<string, unknown>;
 }
+
+export type DAGCodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export interface DAGOutputRoute {
   to: string | string[];
@@ -45,8 +50,8 @@ export interface DAGNodeRequirements {
 }
 
 export interface DAGGatewayConfig {
-  type?: "loop" | "condition" | "join" | "while" | "command" | "approval" | "state" | "fanout" | "await_command" | string;
-  kind?: "loop" | "condition" | "join" | "while" | "command" | "approval" | "state" | "fanout" | "await_command" | string;
+  type?: "loop" | "condition" | "join" | "while" | "command" | "broker" | "approval" | "state" | "fanout" | "await_command" | string;
+  kind?: "loop" | "condition" | "join" | "while" | "command" | "broker" | "approval" | "state" | "fanout" | "await_command" | string;
   mode?: "all" | "any" | "n_of_m" | string;
   field?: string;
   routes?: Record<string, string>;
@@ -65,6 +70,7 @@ export interface DAGGatewayConfig {
   success_values?: unknown[];
   operator?: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "truthy" | "falsy" | string;
   value?: unknown;
+  unwrap_single_join_value?: boolean;
   max_iterations?: number;
   max_items?: number;
   command?: string[];
@@ -78,6 +84,14 @@ export interface DAGGatewayConfig {
   capture_limit?: number;
   parse_stdout?: "text" | "json" | "number";
   result_payload?: "envelope" | "value";
+  credential_ref?: string;
+  purpose?: string;
+  broker?: string;
+  action?: string;
+  input_field?: string;
+  input_map?: Record<string, string>;
+  static_input?: Record<string, unknown>;
+  error_port?: string;
   approval_id?: string;
   proposal_field?: string;
   proposer_actor?: string;
@@ -104,9 +118,35 @@ export interface DAGGatewayConfig {
   item_field?: string;
   context_field?: string;
   worker_agent?: string;
+  worker_policy?: Record<string, unknown>;
+  workspace_strategy?: "shared" | "isolated_git_worktree";
+  workspace_root?: string;
+  repository_path?: string;
+  revision_field?: string;
+  result_git_commit?: {
+    commit_field: string;
+    workspace_field: string;
+    require_clean?: boolean;
+    commit_mode?: "worker" | "manager";
+  };
   max_parallelism?: number;
   completion?: "all" | "any" | "n_of_m" | string;
   result_contract?: string;
+  result_required_broker_actions?: Array<{
+    credential_ref: string;
+    broker: string;
+    action: string;
+    when?: { field: string; equals: unknown };
+    result_binding?: { result_field: string; content_field: string };
+    result_digest_binding?: { result_field: string; content_field: string };
+  }>;
+  result_required_workspace_files?: Array<{
+    path_field: string;
+    sha256_field: string;
+    contract: string;
+    max_bytes?: number;
+    bindings?: Array<{ file_field: string; content_field: string }>;
+  }>;
   success_field?: string;
   cancel_remaining?: boolean;
 }

@@ -10,7 +10,20 @@ import { isFullGitRevision } from "./pr-review.js";
 
 const REVIEW_STATUSES = new Set(["pass", "findings", "inconclusive"]);
 const REVIEW_CONFIDENCE = new Set(["high", "medium", "low"]);
-const REVIEWER_IDS = new Set(["runtime", "security", "tests", "frontend"]);
+const REVIEWER_IDS = new Set(["qwen", "kimi", "glm"]);
+const REVIEW_VOTES = new Set(["approve", "request_changes", "abstain"]);
+const FINDING_CATEGORIES = new Set(["runtime", "security", "tests", "frontend"]);
+const FINDING_SEVERITIES = new Set(["critical", "high", "medium", "low"]);
+const FINDING_FIELDS = [
+  "category",
+  "severity",
+  "title",
+  "file",
+  "line",
+  "evidence",
+  "recommendation",
+  "confidence",
+] as const;
 
 export interface PrReviewCloseoutIdentity {
   repo: string;
@@ -60,6 +73,27 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function findingKey(value: unknown): string | undefined {
+  const finding = record(value);
+  if (!finding || Object.keys(finding).some((key) => !FINDING_FIELDS.includes(key as typeof FINDING_FIELDS[number]))) {
+    return undefined;
+  }
+  if (
+    !FINDING_CATEGORIES.has(String(finding.category)) ||
+    !FINDING_SEVERITIES.has(String(finding.severity)) ||
+    !nonEmptyString(finding.title) ||
+    !nonEmptyString(finding.file) ||
+    !Number.isSafeInteger(finding.line) ||
+    Number(finding.line) < 1 ||
+    !nonEmptyString(finding.evidence) ||
+    !nonEmptyString(finding.recommendation) ||
+    !REVIEW_CONFIDENCE.has(String(finding.confidence))
+  ) {
+    return undefined;
+  }
+  return FINDING_FIELDS.map((field) => JSON.stringify(finding[field] ?? null)).join("\u0000");
+}
+
 function invalid(
   error: string,
   options: {
@@ -82,7 +116,7 @@ function invalid(
 
 function publishedHandoff(handoff: PrReviewCloseoutHandoff): boolean {
   const fromNode = handoff.fromNode ?? handoff.from_node;
-  return fromNode === "publish" && handoff.port === "published";
+  return fromNode === "decide" && handoff.port === "decided";
 }
 
 /**
@@ -99,10 +133,10 @@ export function validatePrReviewCloseoutEvidence(
   }
 
   const handoff = input.handoffs.slice().reverse().find(publishedHandoff);
-  if (!handoff) return invalid("pr-review publish.published handoff is missing");
+  if (!handoff) return invalid("pr-review decide.decided handoff is missing");
 
   const publication = record(handoff.content);
-  if (!publication) return invalid("pr-review published handoff must contain one JSON object");
+  if (!publication) return invalid("pr-review decided handoff must contain one JSON object");
   const report = record(publication.report);
   if (!report) return invalid("pr-review published handoff is missing report");
 
@@ -140,10 +174,22 @@ export function validatePrReviewCloseoutEvidence(
   if (!Array.isArray(report.findings) || report.findings.length !== actionableCount) {
     return invalid("pr-review findings must match actionable_count", partial);
   }
-  if (!Array.isArray(report.reviewer_results) || report.reviewer_results.length !== 4) {
-    return invalid("pr-review report must contain exactly four reviewer_results", partial);
+  const reportedFindingKeys = new Set<string>();
+  for (const finding of report.findings) {
+    const key = findingKey(finding);
+    if (!key) return invalid("pr-review report contains an invalid finding", partial);
+    reportedFindingKeys.add(key);
+  }
+  if (reportedFindingKeys.size !== report.findings.length) {
+    return invalid("pr-review report contains duplicate findings", partial);
+  }
+  if (!Array.isArray(report.reviewer_results) || report.reviewer_results.length !== 3) {
+    return invalid("pr-review report must contain exactly three reviewer_results", partial);
   }
   const reviewerIds = new Set<string>();
+  const reviewerFindingKeys = new Set<string>();
+  let approvals = 0;
+  let changesRequested = 0;
   for (const item of report.reviewer_results) {
     const reviewer = record(item);
     if (
@@ -151,18 +197,59 @@ export function validatePrReviewCloseoutEvidence(
       typeof reviewer.reviewer !== "string" ||
       !REVIEWER_IDS.has(reviewer.reviewer) ||
       (reviewer.status !== "complete" && reviewer.status !== "failed") ||
+      !REVIEW_VOTES.has(String(reviewer.vote)) ||
       !nonEmptyString(reviewer.summary) ||
-      !Array.isArray(reviewer.findings)
+      !Array.isArray(reviewer.reviewed_files) ||
+      reviewer.reviewed_files.some((path) => !nonEmptyString(path)) ||
+      !Array.isArray(reviewer.unreviewed_files) ||
+      reviewer.unreviewed_files.some((path) => !nonEmptyString(path)) ||
+      typeof reviewer.evidence_truncated !== "boolean" ||
+      !Array.isArray(reviewer.findings) ||
+      reviewer.findings.some((finding) => findingKey(finding) === undefined)
     ) {
       return invalid("pr-review reviewer_results contains an invalid reviewer result", partial);
     }
     reviewerIds.add(reviewer.reviewer);
+    if (reviewer.status === "complete") {
+      if (reviewer.evidence_truncated || reviewer.unreviewed_files.length > 0) {
+        return invalid("a complete pr-review reviewer must cover all evidence", partial);
+      }
+      if (reviewer.vote === "approve") {
+        if (reviewer.findings.length > 0) return invalid("a pr-review approval cannot contain findings", partial);
+        approvals += 1;
+      } else if (reviewer.vote === "request_changes") {
+        if (reviewer.findings.length === 0) return invalid("a pr-review change request must contain findings", partial);
+        changesRequested += 1;
+        for (const finding of reviewer.findings) reviewerFindingKeys.add(findingKey(finding)!);
+      } else {
+        return invalid("a complete pr-review reviewer must cast a decisive vote", partial);
+      }
+    } else {
+      if (reviewer.vote !== "abstain") {
+        return invalid("a failed pr-review reviewer must abstain", partial);
+      }
+      if (reviewer.reviewed_files.length > 0 && reviewer.unreviewed_files.length > 0) {
+        return invalid("a failed pr-review reviewer cannot claim both reviewed and unreviewed files", partial);
+      }
+      if (reviewer.evidence_truncated !== true && reviewer.unreviewed_files.length > 0) {
+        return invalid("a deliberate pr-review abstention cannot leave files unreviewed", partial);
+      }
+      for (const finding of reviewer.findings) reviewerFindingKeys.add(findingKey(finding)!);
+    }
   }
   if (reviewerIds.size !== REVIEWER_IDS.size) {
-    return invalid("pr-review reviewer_results must cover four distinct review categories", partial);
+    return invalid("pr-review reviewer_results must cover qwen, kimi, and glm", partial);
   }
-  if (!nonEmptyString(publication.markdown)) {
-    return invalid("pr-review published markdown is missing", partial);
+  if (
+    reviewerFindingKeys.size !== reportedFindingKeys.size ||
+    [...reviewerFindingKeys].some((key) => !reportedFindingKeys.has(key))
+  ) {
+    return invalid("pr-review report does not preserve every reviewer finding", partial);
+  }
+  const completeReviews = approvals + changesRequested;
+  const expectedConfidence = completeReviews === 3 ? "high" : completeReviews === 2 ? "medium" : "low";
+  if (report.confidence !== expectedConfidence) {
+    return invalid("pr-review report confidence does not match complete reviewer evidence", partial);
   }
 
   const quorum = record(publication.quorum);
@@ -175,12 +262,13 @@ export function validatePrReviewCloseoutEvidence(
     Number(successes) > 3 ||
     quorum.total !== 3 ||
     quorum.threshold !== 2 ||
-    quorum.passed !== (Number(successes) >= 2)
+    Number(successes) !== approvals ||
+    quorum.passed !== (approvals >= 2 && actionableCount === 0)
   ) {
     return invalid("pr-review published quorum is inconsistent", partial);
   }
-  if (quorum.passed === false && reportStatus !== "inconclusive") {
-    return invalid("a rejected pr-review quorum must publish an inconclusive report", partial);
+  if (quorum.passed === false && reportStatus !== "inconclusive" && reportStatus !== "findings") {
+    return invalid("a rejected pr-review gate must publish findings or an inconclusive report", partial);
   }
   if (reportStatus === "pass" && actionableCount !== 0) {
     return invalid("a passing pr-review report must have zero actionable findings", partial);
@@ -188,11 +276,11 @@ export function validatePrReviewCloseoutEvidence(
   if (reportStatus === "findings" && actionableCount === 0) {
     return invalid("a findings pr-review report must contain actionable findings", partial);
   }
-  if (
-    reportStatus === "pass" &&
-    report.reviewer_results.some((item) => record(item)?.status !== "complete")
-  ) {
-    return invalid("a passing pr-review report cannot contain a failed reviewer", partial);
+  if (reportStatus === "pass" && (approvals < 2 || changesRequested !== 0)) {
+    return invalid("a passing pr-review report requires two approvals and no change request", partial);
+  }
+  if (reportStatus === "inconclusive" && (approvals >= 2 || actionableCount !== 0)) {
+    return invalid("an inconclusive pr-review report cannot have approval quorum or findings", partial);
   }
 
   return {
@@ -247,7 +335,7 @@ export interface PrCloseoutResolverAdapter {
 }
 
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const ACCEPTED_CHECK_CONCLUSIONS = new Set(["success", "neutral"]);
+const ACCEPTED_CHECK_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -466,7 +554,7 @@ export async function resolvePrCloseout(
 
     const observedPlatforms = new Set<string>();
     for (const item of evidence) if (item.platform) observedPlatforms.add(item.platform.toLowerCase());
-    for (const check of relevantChecks) {
+    for (const check of relevantChecks.filter((item) => ACCEPTED_CHECK_CONCLUSIONS.has(String(item.conclusion ?? "")) && item.conclusion !== "skipped")) {
       const name = String(check.name ?? "").toLowerCase();
       for (const platform of platforms) if (name.includes(platform)) observedPlatforms.add(platform);
       if (name.includes("windows")) observedPlatforms.add("windows");

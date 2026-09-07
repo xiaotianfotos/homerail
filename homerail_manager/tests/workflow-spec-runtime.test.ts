@@ -226,6 +226,24 @@ describe("WorkflowSpec v1 runtime projection", () => {
     })).toThrow("DAG_RUN_INPUT_CONTRACT_VIOLATION execute.task");
   });
 
+  it("rejects artifact bindings without a non-empty scope at the orchestrator boundary", () => {
+    upsertDagWorkflowFromYaml({ yaml_text: workflowSource() });
+    syncDeterministicProfile("v1-runtime-success");
+    const orchestrator = new ChangeOrchestrator(new GraphExecutor(new FakeDAGDispatcher()));
+
+    expect(() => orchestrator.createRun({
+      workflowId: "v1-runtime-success",
+      runId: "v1-missing-input-scope",
+      prompt: "hello",
+      profile: "deterministic",
+      inputArtifacts: [{
+        artifact_id: `input-${"a".repeat(64)}`,
+        logical_name: "task_document",
+        mount_path: "input/task.md",
+      }],
+    })).toThrow("input_scope is required when input_artifacts are bound");
+  });
+
   it("cold-recovers v1 provenance, contracts, and reserved run input", () => {
     const synced = upsertDagWorkflowFromYaml({ yaml_text: workflowSource() });
     syncDeterministicProfile("v1-runtime-success");

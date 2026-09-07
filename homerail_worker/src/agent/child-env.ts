@@ -7,7 +7,8 @@ export function sanitizedAgentChildEnv(
   source: NodeJS.ProcessEnv = process.env,
 ): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...source };
-  delete env.HOMERAIL_MANAGER_ADMIN_TOKEN;
-  delete env.HOMERAIL_PLUGIN_CAPABILITY_SECRET;
+  for (const key of Object.keys(env)) {
+    if (/^HOMERAIL_.*(?:TOKEN|SECRET)$/.test(key)) delete env[key];
+  }
   return env;
 }

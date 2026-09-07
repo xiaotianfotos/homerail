@@ -1,5 +1,6 @@
-import type { DAGAgentConfig, DAGEdge } from "./graph.js";
+import type { DAGAgentConfig, DAGCodexSandboxMode, DAGEdge } from "./graph.js";
 import type {
+  AgentBuiltinToolPolicy,
   AgentBuiltinToolName,
   DagActorCheckpointV1,
   DagAdvisorConfig,
@@ -19,6 +20,8 @@ export interface DispatchEnvelope {
   skillContext?: DagWorkerSkillContextV1;
   inputs: Record<string, unknown[]>;
   outgoingEdges: DAGEdge[];
+  /** Trusted, exact JSON Schemas for contracted output ports. */
+  outputContracts?: Record<string, { contract: string; schema: unknown }>;
   checkpointResume?: {
     parentSessionId?: string;
     entryUuid?: string;
@@ -35,8 +38,11 @@ export interface DispatchEnvelope {
   requiredCapabilities?: string[];
   advisors?: DagAdvisorConfig[];
   workspaceAccess?: DagWorkspaceAccess;
+  builtinToolPolicy?: AgentBuiltinToolPolicy;
   allowedBuiltinTools?: AgentBuiltinToolName[];
   maxBuiltinToolCalls?: number;
+  /** Explicit trusted WorkflowSpec selection for Codex's command sandbox. */
+  codexSandbox?: DAGCodexSandboxMode;
   allowedDagTools?: DagAgentToolName[];
   /** Turn-scoped secrets or opaque Manager-broker references. Never persist this field. */
   credentialProjections?: DagCredentialProjection[];

@@ -20,6 +20,7 @@ import DagRuntimeNodeLegend from './DagRuntimeNodeLegend.vue'
 import DagNodeDetailDrawer from './DagNodeDetailDrawer.vue'
 import DagRunList from './DagRunList.vue'
 import { nextDagTraversalNodeId } from './dagTraversal'
+import { hasLoadedDagRunGraph } from './dagRuntimeSelection'
 import type { VoiceGamepadInputContext } from '@/components/agent/voice-gamepad-router'
 import type { VoiceGamepadButtonIntent, VoiceGamepadDirectionIntent } from '@/components/agent/voice-gamepad-router'
 
@@ -177,21 +178,40 @@ let runLoadSequence = 0
 function selectRun(runId: string): void {
   selectedRunId.value = runId
   view.value = 'dag_graph'
+  store.setRuntimeOverlayState('dag_graph', runId)
   focusedNodeId.value = null
   selectedNodeId.value = null
   const sequence = ++runLoadSequence
+  if (store.currentRunId === runId && store.dagExecution?.dag_run_id === runId && store.nodes.length > 0) {
+    initNodeFocus()
+    void nextTick().then(() => {
+      if (sequence !== runLoadSequence || selectedRunId.value !== runId) return
+      if (props.captureMode) {
+        physicsPaused.value = true
+        canvasRef.value?.fitCanvasGraph()
+        canvasRef.value?.freezeLayout()
+      }
+    })
+    return
+  }
   void loadSelectedRun(runId, sequence)
 }
 
 async function loadSelectedRun(runId: string, sequence: number): Promise<void> {
-  await store.switchToRun(runId)
+  const loaded = await store.switchToRun(runId)
   if (sequence !== runLoadSequence || selectedRunId.value !== runId) return
-  if (!store.dagExecution || store.nodes.length === 0) {
+  if (!hasLoadedDagRunGraph({
+    loaded,
+    requestedRunId: runId,
+    loadedRunId: store.dagExecution?.dag_run_id,
+    nodeCount: store.nodes.length,
+  })) {
     // A short display suffix or unknown id must not masquerade as an idle
     // 0/0 graph. Return to the real run list, where only complete ids can be
     // selected.
     selectedRunId.value = null
     view.value = 'run_list'
+    store.setRuntimeOverlayState('run_list')
     await refreshRuns()
     return
   }
@@ -308,6 +328,7 @@ function progressiveExit(): void {
   } else if (view.value === 'dag_graph') {
     view.value = 'run_list'
     selectedRunId.value = null
+    store.setRuntimeOverlayState('run_list')
     void refreshRuns()
   } else {
     emit('close')

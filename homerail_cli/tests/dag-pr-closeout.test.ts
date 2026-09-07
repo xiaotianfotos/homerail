@@ -70,8 +70,8 @@ function managerClient(): HomeRailClient {
       if (url.endsWith("/status")) return { data: { status: "completed" } };
       if (url.endsWith("/handoffs")) {
         return { data: { handoffs: [{
-          fromNode: "publish",
-          port: "published",
+          fromNode: "decide",
+          port: "decided",
           content: passingPublication(),
         }] } };
       }
@@ -92,14 +92,17 @@ function passingPublication(overrides: Record<string, unknown> = {}): Record<str
       summary: "No actionable findings",
       actionable_count: 0,
       findings: [],
-      reviewer_results: ["runtime", "security", "tests", "frontend"].map((reviewer) => ({
+      reviewer_results: ["qwen", "kimi", "glm"].map((reviewer) => ({
         reviewer,
         status: "complete",
+        vote: "approve",
         summary: `${reviewer} review complete`,
+        reviewed_files: ["src/index.ts"],
+        unreviewed_files: [],
+        evidence_truncated: false,
         findings: [],
       })),
     },
-    markdown: "# HomeRail PR Review\n\nNo actionable findings.",
     quorum: { passed: true, successes: 3, total: 3, threshold: 2 },
     ...overrides,
   };
@@ -210,8 +213,8 @@ describe("PR closeout input", () => {
         if (url.endsWith("/status")) return { data: { status: "completed" } };
         if (url.endsWith("/handoffs")) {
           return { data: { handoffs: [{
-            fromNode: "publish",
-            port: "published",
+            fromNode: "decide",
+            port: "decided",
             content: { head: "b".repeat(40), report: { status: "pass", head: "b".repeat(40) } },
           }] } };
         }
@@ -273,7 +276,7 @@ describe("PR closeout input", () => {
     }));
   });
 
-  it("blocks merge closeout on skipped checks, open dependencies, and requested changes", async () => {
+  it("treats skipped jobs as non-failures but still requires their platform evidence when applicable", async () => {
     const result = await resolvePrCloseoutInput({
       repo: "xiaotianfotos/homerail",
       pr: 26,
@@ -293,8 +296,8 @@ describe("PR closeout input", () => {
     expect(result.closeout_status).toBe("blocked");
     expect(result.blockers.map((item) => item.code)).toEqual(expect.arrayContaining([
       "dependency_open",
-      "checks_failed",
       "changes_requested",
+      "platform_evidence_missing",
       "pr_review_missing",
     ]));
   });

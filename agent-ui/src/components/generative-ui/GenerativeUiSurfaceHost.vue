@@ -171,6 +171,13 @@ function focusNode(nodeId: string): boolean {
 }
 
 let renderedRevisions = new Map<string, number>()
+// Track whether the watcher has populated `renderedRevisions` at least once.
+// On a fresh mount (or any remount, e.g. canvas owner flip / v-if toggle) the
+// closure-captured map starts empty, so every node would otherwise look
+// "changed" and auto-focus would scroll to the latest block even when its
+// revision is identical to before. We only auto-focus on a *genuine* revision
+// change after the initial population, never on the initial mount itself.
+let hasPopulatedRevisions = false
 watch(
   renderedWithLayout,
   async (entries) => {
@@ -188,6 +195,8 @@ watch(
     const previousRevisions = renderedRevisions
     const changed = entries.filter(entry => previousRevisions.get(entry.node.id) !== entry.node.revision)
     renderedRevisions = new Map(entries.map(entry => [entry.node.id, entry.node.revision]))
+    const wasInitialPopulation = !hasPopulatedRevisions
+    hasPopulatedRevisions = true
     if (!changed.length) return
     for (const entry of changed) {
       if (!previousRevisions.has(entry.node.id)) continue
@@ -200,6 +209,10 @@ watch(
           : entry.motionProfile.updateDurationMs
       void showLifecycleMotion(entry.node.id, motion, duration)
     }
+    // Skip auto-focus on the initial population so remounting the same node set
+    // (e.g. after a Live Voice reconnect) does not yank focus to the latest
+    // block. Auto-focus only fires on a real revision change thereafter.
+    if (wasInitialPopulation) return
     if (!props.autoFocusLatest || props.focusedNodeId) return
     await nextTick()
     const latest = [...changed].sort((left, right) => (

@@ -29,21 +29,39 @@ test("stable runner uses the deployed release and never starts a transient Manag
   assert.doesNotMatch(reviewWorkflow, /npm run install:all|build:packages|run-pr-review-live-runner|docker compose/);
 });
 
-test("manual CI validates the requested target revision in every non-live job", () => {
+test("PR closeout reuses the stable release and keeps GitHub review evidence readable", () => {
+  const workflow = fs.readFileSync(path.join(root, ".github/workflows/pr-closeout.yml"), "utf8");
+  const jobHeader = workflow.slice(workflow.indexOf("  closeout:"), workflow.indexOf("    steps:"));
+
+  assert.match(workflow, /pull-requests: read/);
+  assert.match(workflow, /runs-on: \[self-hosted, Linux, X64, homerail-pr-review\]/);
+  assert.match(workflow, /GH_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(workflow, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(workflow, /readlink -f "\$HOMERAIL_STABLE_ROOT\/current"/);
+  assert.match(workflow, /scripts\/lib\/stable-automation-runtime\.sh/);
+  assert.match(workflow, /initialize_stable_automation_runtime/);
+  assert.match(workflow, /stable_hr dag sync pr-closeout/);
+  assert.match(workflow, /stable_hr "\$\{args\[@\]\}"/);
+  assert.match(workflow, /artifact_dir="\$RUNNER_TEMP\/homerail-pr-closeout-/);
+  assert.match(workflow, /HOMERAIL_PR_CLOSEOUT_ARTIFACT_DIR=\$artifact_dir.*\$GITHUB_ENV/);
+  assert.doesNotMatch(jobHeader, /\$\{\{ runner\.temp \}\}/);
+  assert.doesNotMatch(workflow, /actions\/checkout|actions\/setup-node|npm (?:ci|run)|secrets\.HOMERAIL/);
+});
+
+test("manual CI validates the requested target revision in every job", () => {
   const ci = fs.readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8");
-  const nonLiveCi = ci.slice(0, ci.indexOf("  live-dag-patterns:"));
-  const checkoutCount = [...nonLiveCi.matchAll(/uses: actions\/checkout@/g)].length;
+  const checkoutCount = [...ci.matchAll(/uses: actions\/checkout@/g)].length;
   const targetRefCount = [
-    ...nonLiveCi.matchAll(
+    ...ci.matchAll(
       /ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.target_ref \|\| github\.ref \}\}/g,
     ),
   ].length;
 
-  assert.equal(checkoutCount, 4, "update this contract when adding another non-live CI checkout");
+  assert.equal(checkoutCount, 4, "update this contract when adding another CI checkout");
   assert.equal(
     targetRefCount,
     checkoutCount,
-    "every manual non-live CI checkout must honor target_ref instead of silently testing main",
+    "every manual CI checkout must honor target_ref instead of silently testing main",
   );
 });
 

@@ -12,6 +12,7 @@ import {
 } from "./generative-ui/dag-live-surface-projector.js";
 import { getDagEnvironmentController } from "./server/dag-environment.js";
 import { HOMERAIL_PLUGIN_SDK_ABI_VERSION } from "homerail-plugin-sdk";
+import { recoverCredentialBrokerMutations } from "./runtime/credential-broker.js";
 
 // Precondition: this check itself only runs when the Manager dist is current.
 // A stale Manager dist would not contain this guard at all. The check targets
@@ -36,6 +37,10 @@ const dagEnvironment = getDagEnvironmentController();
 // Cold recovery: replay persisted active runs into the in-memory store before
 // the server accepts traffic. The first-worker hook (wired in createServer)
 // re-dispatches their READY nodes once a worker reconnects.
+// Resolve durable mutation attempts before restoring RUNNING gateways. This
+// lets ActiveRun recovery consume a known completed result instead of
+// replaying an external side effect.
+const brokerRecovery = await recoverCredentialBrokerMutations();
 const recovery = recoverAllActiveRuns();
 // Intervention Inbox rows are replayed only after their logical runs and
 // Actors exist again. Applying is transactionally idempotent.
@@ -59,6 +64,9 @@ server.listen(port, host, () => {
   console.error(`homerail_manager listening on ${host}:${port}`);
   console.error(
     `cold recovery: recovered=${recovery.recovered.length} failed=${recovery.failed.length} skipped=${recovery.skipped.length}`,
+  );
+  console.error(
+    `credential broker recovery: reconciled=${brokerRecovery.reconciled.length} unresolved=${brokerRecovery.unresolved.length} failed=${brokerRecovery.failed.length}`,
   );
   for (const failure of recovery.failed) {
     console.error(

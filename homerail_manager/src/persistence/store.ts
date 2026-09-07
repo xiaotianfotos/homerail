@@ -16,7 +16,7 @@ import { DAG_EVENT_TYPES, emit, subscribe, type DAGEventPayload } from "../event
 import type { DAGRunCounters, DAGRunLimits } from "../runtime/active-runs.js";
 import { assertStatus, type DagRunStatus } from "./status.js";
 import { assertEpochMs, nowEpochMs } from "./time.js";
-import { redactTelemetry } from "homerail-protocol";
+import { redactTelemetry, type DagRunInputBinding } from "homerail-protocol";
 
 // Contract marker for regression: "dag:instruction_terminal_no_active_target"
 // is persisted through DAG_EVENT_TYPES.
@@ -31,6 +31,8 @@ export interface SerializableRun {
   contracts?: Record<string, unknown>;
   artifacts?: DAGArtifactDeclaration[];
   runInputTargets?: Array<{ node: string; port: string; contract?: string }>;
+  inputArtifacts?: DagRunInputBinding[];
+  brokerState?: Record<string, unknown>;
   initialPrompt?: string;
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; allowed_surface_views?: string[]; extra?: Record<string, unknown> }>;
@@ -266,6 +268,8 @@ export function serializeRunMetadata(run: SerializableRun): PersistedRunMetadata
     contracts: run.contracts,
     artifacts: run.artifacts,
     runInputTargets: run.runInputTargets,
+    inputArtifacts: run.inputArtifacts ? structuredClone(run.inputArtifacts) : undefined,
+    brokerState: run.brokerState ? structuredClone(run.brokerState) : undefined,
     initialPrompt: run.initialPrompt,
     nodeCount: run.nodeCount,
     agents: run.agents,

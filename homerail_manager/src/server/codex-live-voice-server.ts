@@ -15,6 +15,7 @@ import {
   isLoopbackHost,
   type PluginHttpTrustPolicy,
 } from "./plugin-http-trust.js";
+import { pinHomeRailBrowserUiTurnBinding } from "./browser-ui-tools.js";
 
 const TICKET_TTL_MS = 60_000;
 const AUTH_TIMEOUT_MS = 5_000;
@@ -32,6 +33,7 @@ interface TicketRecord {
 interface ActiveLiveVoiceSession {
   socket: WebSocket;
   runtime: CodexLiveVoiceRuntime;
+  abortController: AbortController;
 }
 
 // Process-local by design: HomeRail Manager currently owns Live Voice from one
@@ -239,6 +241,7 @@ export function setupCodexLiveVoiceWebSocket(
     let authenticated = false;
     let binding: CodexLiveVoiceBinding | undefined;
     let runtime: CodexLiveVoiceRuntime | undefined;
+    const toolAbortController = new AbortController();
     let handling = Promise.resolve();
     const authTimer = setTimeout(() => {
       if (!authenticated) socket.close(4401, "Live Voice authentication timed out");
@@ -247,6 +250,7 @@ export function setupCodexLiveVoiceWebSocket(
 
     const cleanup = async (): Promise<void> => {
       clearTimeout(authTimer);
+      toolAbortController.abort();
       if (pendingSessions.get(sessionId) === socket) pendingSessions.delete(sessionId);
       if (activeSessions.get(sessionId)?.socket === socket) activeSessions.delete(sessionId);
       await runtime?.stop();
@@ -311,6 +315,20 @@ export function setupCodexLiveVoiceWebSocket(
             sendSessionError(socket, "Invalid selected canvas node id");
             return;
           }
+          let browserTools;
+          try {
+            browserTools = pinHomeRailBrowserUiTurnBinding(
+              message.browser_tools_transport,
+              message.browser_tools_target,
+            );
+          } catch (error) {
+            sendSessionError(
+              socket,
+              error instanceof Error ? error.message : "Invalid browser tools target",
+              true,
+            );
+            return;
+          }
           pendingSessions.set(sessionId, socket);
           try {
             binding = await createCodexLiveVoiceBinding({
@@ -319,6 +337,8 @@ export function setupCodexLiveVoiceWebSocket(
               selectedNodeId,
               managerAgentOptions: options.managerAgentOptions,
               managerAgentConfigOptions: options.managerAgentConfigOptions,
+              browserTools,
+              abortSignal: toolAbortController.signal,
             });
             if (
               pendingSessions.get(sessionId) !== socket
@@ -352,7 +372,11 @@ export function setupCodexLiveVoiceWebSocket(
                 });
               },
             });
-            activeSessions.set(sessionId, { socket, runtime });
+            activeSessions.set(sessionId, {
+              socket,
+              runtime,
+              abortController: toolAbortController,
+            });
             pendingSessions.delete(sessionId);
             await runtime.start(sdp);
           } catch (error) {
@@ -414,7 +438,10 @@ export function setupCodexLiveVoiceWebSocket(
   });
 
   server.once("close", () => {
-    for (const active of activeSessions.values()) void active.runtime.stop();
+    for (const active of activeSessions.values()) {
+      active.abortController.abort();
+      void active.runtime.stop();
+    }
     pendingSessions.clear();
     activeSessions.clear();
     tickets.clear();

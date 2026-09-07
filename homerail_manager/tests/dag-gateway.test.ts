@@ -601,6 +601,116 @@ nodes:
     expect(run?.dagRun.nodeStates.get("rejected")).toBe("READY");
   });
 
+  it("keeps an all-join pending until its completion-only dependency finishes", () => {
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: join-completion-barrier, name: Join completion barrier }
+spec:
+  agents:
+    worker: { system: Return one result. }
+  nodes:
+    producer:
+      kind: agent
+      agent: worker
+      outputs: { result: {} }
+    barrier:
+      kind: agent
+      agent: worker
+      outputs: { done: {} }
+    barrier_done: { kind: terminal, outcome: success, inputs: { result: {} } }
+    merge:
+      kind: join
+      depends_on: [barrier]
+      inputs: { result: {} }
+      outputs: { ready: {}, missing: {} }
+      config:
+        mode: all
+        passed_port: ready
+        failed_port: missing
+    done: { kind: terminal, outcome: success, inputs: { result: {} } }
+    failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+  edges:
+    - { from: producer.result, to: merge.result }
+    - { from: barrier.done, to: barrier_done.result }
+    - { from: merge.ready, to: done.result }
+    - { from: merge.missing, to: failed.result, condition: on_failure }
+`);
+    createActiveRun("run-join-completion-barrier", parsed);
+
+    handoffActiveRun("run-join-completion-barrier", "producer", "result", { accepted: true });
+    expect(getActiveRun("run-join-completion-barrier")?.dagRun.nodeStates.get("merge")).toBe("PENDING");
+
+    handoffActiveRun("run-join-completion-barrier", "barrier", "done", { complete: true });
+    expect(getActiveRun("run-join-completion-barrier")?.dagRun.nodeStates.get("merge")).toBe("READY");
+  });
+
+  it("opens an any-join after one mutually exclusive branch is routed", () => {
+    const parsed = parseWorkflowSource(`
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: mutually-exclusive-any-join, name: Mutually exclusive any join }
+spec:
+  agents:
+    worker: { system: Return one result. }
+  nodes:
+    start:
+      kind: agent
+      agent: worker
+      outputs: { decision: {} }
+    choose:
+      kind: condition
+      inputs: { decision: {} }
+      outputs: { left: {}, right: {} }
+      config:
+        field: side
+        routes: { left: left, right: right }
+        default: right
+    left:
+      kind: agent
+      agent: worker
+      inputs: { task: {} }
+      outputs: { result: {} }
+    right:
+      kind: agent
+      agent: worker
+      inputs: { task: {} }
+      outputs: { result: {} }
+    merge:
+      kind: join
+      inputs: { left: {}, right: {} }
+      outputs: { ready: {}, missing: {} }
+      config:
+        mode: any
+        field: verdict
+        success_values: [approve]
+        passed_port: ready
+        failed_port: missing
+    done: { kind: terminal, outcome: success, inputs: { result: {} } }
+    failed: { kind: terminal, outcome: failure, inputs: { result: {} } }
+  edges:
+    - { from: start.decision, to: choose.decision }
+    - { from: choose.left, to: left.task }
+    - { from: choose.right, to: right.task }
+    - { from: left.result, to: merge.left }
+    - { from: right.result, to: merge.right }
+    - { from: merge.ready, to: done.result }
+    - { from: merge.missing, to: failed.result, condition: on_failure }
+`);
+    createActiveRun("run-mutually-exclusive-any-join", parsed);
+    const dispatcher = new CollectingDispatcher();
+
+    handoffActiveRun("run-mutually-exclusive-any-join", "start", "decision", { side: "left" });
+    expect(dispatchReadyNodes("run-mutually-exclusive-any-join", dispatcher)).toBe(1);
+    expect(getActiveRun("run-mutually-exclusive-any-join")?.dagRun.nodeStates.get("left")).toBe("READY");
+    expect(getActiveRun("run-mutually-exclusive-any-join")?.dagRun.nodeStates.get("right")).toBe("SKIPPED");
+    handoffActiveRun("run-mutually-exclusive-any-join", "left", "result", { verdict: "approve" });
+
+    expect(dispatchReadyNodes("run-mutually-exclusive-any-join", dispatcher)).toBe(1);
+    expect(getActiveRun("run-mutually-exclusive-any-join")?.status).toBe("completed");
+    expect(getActiveRun("run-mutually-exclusive-any-join")?.dagRun.nodeStates.get("merge")).toBe("COMPLETED");
+  });
+
   it("repeats a while gateway until its completion predicate matches", () => {
     const parsed = parseDAGYaml(whileGatewayYaml());
     createActiveRun("run-while-complete", parsed);

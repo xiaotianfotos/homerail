@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getNode, type NodeState } from "./registry.js";
 import type { LifecycleRequestMessage } from "./types.js";
+import type { DagWorkspaceInputProjection } from "homerail-protocol";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -90,6 +91,11 @@ export interface WorkerCreateOptions {
   extraHosts?: string[];
   workspace?: Record<string, unknown>;
   workspaceReadOnly?: boolean;
+  workspaceWritableSubpath?: string;
+  workspaceGitMetadataReadOnly?: boolean;
+  workspaceInputs?: DagWorkspaceInputProjection[];
+  /** Allow Codex's inner bwrap sandbox to create its namespace. */
+  codexNestedSandbox?: boolean;
   timeoutMs?: number;
 }
 
@@ -110,6 +116,10 @@ export function sendWorkerCreateRequest(
       extra_hosts: options.extraHosts,
       workspace: options.workspace,
       workspace_read_only: options.workspaceReadOnly === true,
+      workspace_writable_subpath: options.workspaceWritableSubpath,
+      workspace_git_metadata_read_only: options.workspaceGitMetadataReadOnly === true,
+      workspace_inputs: options.workspaceInputs,
+      codex_nested_sandbox: options.codexNestedSandbox === true,
     },
     { timeoutMs: options.timeoutMs },
   );

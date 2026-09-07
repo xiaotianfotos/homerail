@@ -19,9 +19,12 @@ export function isProtectedApiMutation(methodValue?: string, urlValue?: string):
 
 /**
  * Authorize a browser mutation using the origin of the request that reached the
- * UI server. This deliberately has no deployment switch or configured Origin:
- * Vite already knows the browser-facing protocol and Host for every request.
- * Manager remains the canonical trust boundary after the proxy hop.
+ * Vite development server. This deliberately has no deployment switch or
+ * configured Origin: Vite's own allowed-host boundary runs before this helper,
+ * which only verifies that the surviving browser Origin matches that Host.
+ * Production named-host pinning belongs to the static UI server and is covered
+ * by its integration tests. Manager remains the canonical trust boundary after
+ * either proxy hop.
  */
 export function authorizeAdminProxyRequest(
   request: UiMutationRequestTrust,
@@ -47,6 +50,81 @@ export function authorizeAdminProxyRequest(
     return { allowed: false, reason: 'Cross-origin UI mutation requests are forbidden' }
   }
   return { allowed: true }
+}
+
+/**
+ * Browsers do not consistently forward Sec-Fetch-Site on WebSocket upgrades.
+ * Once the UI proxy has independently verified the browser-facing Origin and
+ * Host, it can restore the same-origin marker for Manager's upgrade boundary.
+ */
+export function trustedWebSocketProxyFetchSite(
+  request: UiMutationRequestTrust,
+): 'same-origin' | undefined {
+  return authorizeAdminProxyRequest(request).allowed ? 'same-origin' : undefined
+}
+
+export function trustedBrowserRendererWebSocketProxyFetchSite(
+  urlValue: string | undefined,
+  request: UiMutationRequestTrust,
+): 'same-origin' | undefined {
+  try {
+    const url = new URL(urlValue || '/', 'http://localhost')
+    if (url.pathname !== '/ws/browser-tools/renderer' || url.search) {
+      return undefined
+    }
+  } catch {
+    return undefined
+  }
+  return trustedWebSocketProxyFetchSite(request)
+}
+
+export function trustedBrowserRendererTicketProxyFetchSite(
+  methodValue: string | undefined,
+  urlValue: string | undefined,
+  request: UiMutationRequestTrust,
+): 'same-origin' | undefined {
+  if ((methodValue || 'GET').toUpperCase() !== 'POST') return undefined
+  try {
+    const url = new URL(urlValue || '/', 'http://localhost')
+    if (url.pathname !== '/api/browser-tools/renderer-ticket' || url.search) {
+      return undefined
+    }
+  } catch {
+    return undefined
+  }
+  return trustedWebSocketProxyFetchSite(request)
+}
+
+export function isAllowedGeneralUiWebSocketProxyPath(urlValue: string | undefined): boolean {
+  try {
+    const url = new URL(urlValue || '/', 'http://localhost')
+    return !url.search && (url.pathname === '/ws' || url.pathname === '/ws/events')
+  } catch {
+    return false
+  }
+}
+
+export interface BrowserRendererProxyHeaders {
+  getHeaderNames(): string[]
+  removeHeader(name: string): void
+  setHeader(name: string, value: string): void
+}
+
+export function hardenBrowserRendererProxyHeaders(
+  headers: BrowserRendererProxyHeaders,
+  fetchSite: 'same-origin',
+): void {
+  for (const name of headers.getHeaderNames()) {
+    const normalized = name.toLowerCase()
+    if (
+      normalized === 'forwarded'
+      || normalized === 'x-real-ip'
+      || normalized.startsWith('x-forwarded-')
+    ) {
+      headers.removeHeader(name)
+    }
+  }
+  headers.setHeader('sec-fetch-site', fetchSite)
 }
 
 function singleHeader(value: string | string[] | undefined): string | undefined {

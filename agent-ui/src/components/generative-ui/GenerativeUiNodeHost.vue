@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type {
   GenerativeUiCanvasSize,
@@ -33,6 +33,12 @@ import type {
 } from '@/generative-ui/types'
 import type { GenerativeUiLifecycleMotion } from '@/generative-ui/motion-profiles'
 import type { GenerativeUiGenerationContext } from '@/generative-ui/generation-history'
+import { focusGenerativeUiNode } from '@/generative-ui/focus-navigation'
+import { setGenerativeUiExpandedBodyLock } from '@/generative-ui/expanded-body-lock'
+import {
+  homeRailUiWidgetRegistry,
+  type HomeRailUiWidgetDescriptor,
+} from '@/browser-tools/widget-registry'
 import GenerativeUiFallbackRenderer from './GenerativeUiFallbackRenderer.vue'
 import DeclarativeRenderer from './DeclarativeRenderer.vue'
 import CustomRendererSandbox from './CustomRendererSandbox.vue'
@@ -140,6 +146,7 @@ const supplementaryActions = computed(() => inlineRendererActions.value.ready
 const customRendererFailure = ref<string>()
 const expanded = ref(false)
 const collapsed = ref(false)
+const nodeElement = ref<HTMLElement | null>(null)
 const bodyElement = ref<HTMLElement | null>(null)
 const unavailable = computed(() => resolution.value.mode === 'unavailable' || Boolean(customRendererFailure.value))
 const fallbackReason = computed(() => (
@@ -154,13 +161,98 @@ const resetKey = computed(() => `${displayNode.value.id}:${displayNode.value.rev
 const actionStates = ref<Record<string, ActionUiState>>({})
 const actionPollGenerations = new Map<string, number>()
 let unmounted = false
+let widgetHostMounted = false
+let removeWidgetRegistration: (() => void) | null = null
+const expandedBodyLockOwner = Symbol('generative-ui-node-expanded')
+
+const renderState = computed<HomeRailUiWidgetDescriptor['render_state']>(() => {
+  if (unavailable.value) return 'error'
+  if (props.lifecycleMotion !== 'idle') return 'settling'
+  if (resolution.value.mode === 'custom' && !inlineRendererActions.value.ready) return 'loading'
+  return 'stable'
+})
+
+const widgetRegistrationIdentity = computed(() => {
+  if (viewingHistory.value) return null
+  if (!Number.isSafeInteger(props.documentRevision) || props.documentRevision! < 0) return null
+  return JSON.stringify([props.documentId, props.node.id])
+})
+
+function widgetVisible(): boolean {
+  const element = nodeElement.value
+  if (!element?.isConnected) return false
+  if (typeof window.getComputedStyle !== 'function') return true
+  let current: HTMLElement | null = element
+  while (current) {
+    if (current.hidden || current.getAttribute('aria-hidden')?.toLowerCase() === 'true') return false
+    const style = window.getComputedStyle(current)
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') {
+      return false
+    }
+    current = current.parentElement
+  }
+  return true
+}
+
+function describeRegisteredWidget(): HomeRailUiWidgetDescriptor {
+  if (viewingHistory.value) {
+    throw new Error('Historical widget views are not exposed as current revisions')
+  }
+  return {
+    document_id: props.documentId,
+    document_revision: props.documentRevision!,
+    widget_id: props.node.id,
+    widget_revision: props.node.revision,
+    kind: props.node.kind,
+    render_state: renderState.value,
+    status_phase: props.node.status?.phase ?? 'unknown',
+    renderer_resolution: resolutionName.value,
+    placement: props.placement.placement,
+    visible: widgetVisible(),
+    focused: document.activeElement === nodeElement.value,
+    expanded: expanded.value,
+    collapsed: collapsed.value,
+    focusable: true,
+    expandable: true,
+    action_count: availableActions.value.length,
+  }
+}
+
+function setExpandedState(value: boolean): void {
+  if (value && collapsed.value) collapsed.value = false
+  expanded.value = value
+}
+
+function syncWidgetRegistration(): void {
+  removeWidgetRegistration?.()
+  removeWidgetRegistration = null
+  if (!widgetHostMounted || !widgetRegistrationIdentity.value || !nodeElement.value) return
+  removeWidgetRegistration = homeRailUiWidgetRegistry.register({
+    document_id: props.documentId,
+    widget_id: props.node.id,
+    describe: describeRegisteredWidget,
+    focus: () => {
+      const target = nodeElement.value
+      if (!target?.isConnected) throw new Error('Widget is no longer attached')
+      focusGenerativeUiNode(target, 'auto')
+    },
+    setExpanded: setExpandedState,
+  })
+}
+
+watch(widgetRegistrationIdentity, () => syncWidgetRegistration(), { flush: 'post' })
+
+onMounted(() => {
+  widgetHostMounted = true
+  syncWidgetRegistration()
+})
 
 watch(resetKey, () => {
   customRendererFailure.value = undefined
   inlineRendererActions.value = initialInlineRendererActionState()
 })
 watch(expanded, value => {
-  document.body.classList.toggle('generative-ui-node-expanded', value)
+  setGenerativeUiExpandedBodyLock(expandedBodyLockOwner, value)
   if (!value) {
     selectedHistoryKey.value = null
     return
@@ -211,8 +303,7 @@ function selectHistory(key: string | null): void {
 }
 
 function toggleExpanded(): void {
-  if (!expanded.value && collapsed.value) collapsed.value = false
-  expanded.value = !expanded.value
+  setExpandedState(!expanded.value)
 }
 
 function toggleCollapsed(): void {
@@ -442,7 +533,10 @@ function actionStatusLabel(status: ActionDisplayStatus): string {
 
 onUnmounted(() => {
   unmounted = true
-  document.body.classList.remove('generative-ui-node-expanded')
+  widgetHostMounted = false
+  removeWidgetRegistration?.()
+  removeWidgetRegistration = null
+  setGenerativeUiExpandedBodyLock(expandedBodyLockOwner, false)
   for (const actionId of actionPollGenerations.keys()) cancelActionStatusPoll(actionId)
 })
 
@@ -484,6 +578,7 @@ function acceptInlineRendererActions(names: string[]): void {
 
 <template>
   <article
+    ref="nodeElement"
     class="generative-ui-node-host"
     :class="[
       `generative-ui-node-host--${placement.variant}`,
@@ -495,6 +590,10 @@ function acceptInlineRendererActions(names: string[]): void {
       },
     ]"
     :data-generative-ui-node="node.id"
+    :data-document-id="widgetRegistrationIdentity ? documentId : undefined"
+    :data-document-revision="widgetRegistrationIdentity ? documentRevision : undefined"
+    :data-node-revision="widgetRegistrationIdentity ? node.revision : undefined"
+    :data-render-state="widgetRegistrationIdentity ? renderState : undefined"
     :data-kind="node.kind"
     :data-renderer-resolution="resolutionName"
     :data-placement="placement.placement"

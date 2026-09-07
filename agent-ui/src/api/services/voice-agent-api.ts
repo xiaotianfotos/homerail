@@ -1,4 +1,5 @@
 import { http } from '@/api/clients/http-client'
+import { currentBrowserToolsTurnBinding } from '@/browser-tools/browser-renderer-bridge'
 import type { BaseResponse } from '@/api/types/common.types'
 import type {
   ManagerAgentHarness,
@@ -19,6 +20,7 @@ export type VoiceWidgetType =
   | 'metric_strip'
   | 'timeline'
   | 'dag_flow'
+  | 'dag_explorer'
   | 'chart'
   | 'memory_refs'
   | 'confirmation'
@@ -228,6 +230,10 @@ export interface VoiceManagerStatusResponse {
   manager_status: VoiceManagerStatus
 }
 
+function voiceSessionPath(sessionId: string, suffix = ''): string {
+  return `/api/voice-agent/sessions/${encodeURIComponent(sessionId)}${suffix}`
+}
+
 export async function createVoiceSession(projectId?: string | null): Promise<BaseResponse<VoiceWorkspace>> {
   return http.post<BaseResponse<VoiceWorkspace>>('/api/voice-agent/sessions', {
     project_id: projectId || null,
@@ -244,15 +250,15 @@ export async function listVoiceSessions(projectId?: string | null, limit = 30): 
 }
 
 export async function getVoiceSession(sessionId: string): Promise<BaseResponse<VoiceWorkspace>> {
-  return http.get<BaseResponse<VoiceWorkspace>>(`/api/voice-agent/sessions/${sessionId}`) as unknown as Promise<BaseResponse<VoiceWorkspace>>
+  return http.get<BaseResponse<VoiceWorkspace>>(voiceSessionPath(sessionId)) as unknown as Promise<BaseResponse<VoiceWorkspace>>
 }
 
 export async function refreshVoiceManagerStatus(sessionId: string): Promise<BaseResponse<VoiceManagerStatusResponse>> {
-  return http.post<BaseResponse<VoiceManagerStatusResponse>>(`/api/voice-agent/sessions/${sessionId}/manager-status`, {}) as unknown as Promise<BaseResponse<VoiceManagerStatusResponse>>
+  return http.post<BaseResponse<VoiceManagerStatusResponse>>(voiceSessionPath(sessionId, '/manager-status'), {}) as unknown as Promise<BaseResponse<VoiceManagerStatusResponse>>
 }
 
 export async function closeVoiceSession(sessionId: string): Promise<BaseResponse<{ session_id: string }>> {
-  return http.delete<BaseResponse<{ session_id: string }>>(`/api/voice-agent/sessions/${sessionId}`) as unknown as Promise<BaseResponse<{ session_id: string }>>
+  return http.delete<BaseResponse<{ session_id: string }>>(voiceSessionPath(sessionId)) as unknown as Promise<BaseResponse<{ session_id: string }>>
 }
 
 export async function getCurrentVoiceSession(): Promise<BaseResponse<{ session_id: string | null }>> {
@@ -266,7 +272,7 @@ export async function setCurrentVoiceSession(sessionId: string | null): Promise<
 }
 
 export async function stopVoiceMonitor(sessionId: string): Promise<BaseResponse<{ workspace: VoiceWorkspace }>> {
-  return http.post<BaseResponse<{ workspace: VoiceWorkspace }>>(`/api/voice-agent/sessions/${sessionId}/monitor/stop`, {}) as unknown as Promise<BaseResponse<{ workspace: VoiceWorkspace }>>
+  return http.post<BaseResponse<{ workspace: VoiceWorkspace }>>(voiceSessionPath(sessionId, '/monitor/stop'), {}) as unknown as Promise<BaseResponse<{ workspace: VoiceWorkspace }>>
 }
 
 export async function getVoiceAgentConfig(): Promise<BaseResponse<VoiceAgentConfig>> {
@@ -407,7 +413,7 @@ export async function requestCodexLiveVoiceTicket(
   sessionId: string,
 ): Promise<{ ticket: string; expires_in_ms: number }> {
   const res = await http.post<BaseResponse<{ ticket: string; expires_in_ms: number }>>(
-    `/api/voice-agent/sessions/${encodeURIComponent(sessionId)}/live-ticket`,
+    voiceSessionPath(sessionId, '/live-ticket'),
     {},
   ) as unknown as BaseResponse<{ ticket: string; expires_in_ms: number }>
   return res.data
@@ -418,7 +424,7 @@ export function codexLiveVoiceWebSocketUrl(sessionId: string): string {
   const origin = configured || (typeof window !== 'undefined' ? window.location.origin : '')
   if (!origin) throw new Error('Unable to determine the Live Voice WebSocket URL')
   const wsBase = origin.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
-  return `${wsBase}/api/voice-agent/sessions/${encodeURIComponent(sessionId)}/live`
+  return `${wsBase}${voiceSessionPath(sessionId, '/live')}`
 }
 
 export async function probeDockerWorkspaceMount(): Promise<DockerWorkspaceProbeResult> {
@@ -436,10 +442,11 @@ export async function sendVoiceTurn(
   projectId?: string | null,
   selectedNodeId?: string | null,
 ): Promise<BaseResponse<VoiceTurnResponse>> {
-  return http.post<BaseResponse<VoiceTurnResponse>>(`/api/voice-agent/sessions/${sessionId}/turn`, {
+  return http.post<BaseResponse<VoiceTurnResponse>>(voiceSessionPath(sessionId, '/turn'), {
     text,
     project_id: projectId || null,
     selected_node_id: selectedNodeId || null,
+    ...currentBrowserToolsTurnBinding(),
   }, { timeout: NO_HTTP_TIMEOUT }) as unknown as Promise<BaseResponse<VoiceTurnResponse>>
 }
 
@@ -510,13 +517,14 @@ export async function streamVoiceTurn(
 ): Promise<void> {
   let response: Response
   try {
-    response = await fetch(voiceStreamUrl(`/api/voice-agent/sessions/${encodeURIComponent(sessionId)}/turn/stream`), {
+    response = await fetch(voiceStreamUrl(voiceSessionPath(sessionId, '/turn/stream')), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text,
         project_id: projectId || null,
         selected_node_id: selectedNodeId || null,
+        ...currentBrowserToolsTurnBinding(),
       }),
       signal,
     })
@@ -536,8 +544,9 @@ export async function confirmVoiceTask(
 ): Promise<BaseResponse<VoiceConfirmResponse>> {
   void managerProviderName
   void managerModelName
-  return http.post<BaseResponse<VoiceConfirmResponse>>(`/api/voice-agent/sessions/${sessionId}/confirm`, {
+  return http.post<BaseResponse<VoiceConfirmResponse>>(voiceSessionPath(sessionId, '/confirm'), {
     confirmation_id: confirmationId || null,
+    ...currentBrowserToolsTurnBinding(),
   }, { timeout: NO_HTTP_TIMEOUT }) as unknown as Promise<BaseResponse<VoiceConfirmResponse>>
 }
 
@@ -551,11 +560,12 @@ export async function streamConfirmVoiceTask(
 ): Promise<void> {
   void managerProviderName
   void managerModelName
-  const response = await fetch(voiceStreamUrl(`/api/voice-agent/sessions/${encodeURIComponent(sessionId)}/confirm/stream`), {
+  const response = await fetch(voiceStreamUrl(voiceSessionPath(sessionId, '/confirm/stream')), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       confirmation_id: confirmationId || null,
+      ...currentBrowserToolsTurnBinding(),
     }),
     signal,
   })
@@ -569,7 +579,7 @@ export async function notifyVoiceSession(
   priority: VoicePriority = 'normal',
   spokenText?: string,
 ): Promise<BaseResponse<VoiceTurnResponse>> {
-  return http.post<BaseResponse<VoiceTurnResponse>>(`/api/voice-agent/sessions/${sessionId}/notifications`, {
+  return http.post<BaseResponse<VoiceTurnResponse>>(voiceSessionPath(sessionId, '/notifications'), {
     title,
     body,
     priority,

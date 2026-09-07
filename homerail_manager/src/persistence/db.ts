@@ -34,6 +34,8 @@ const CLEARABLE_TABLES = new Set([
   "dag_chats",
   "dag_handoffs",
   "dag_artifacts",
+  "dag_run_inputs",
+  "dag_input_artifacts",
   "dag_actor_surface_snapshots",
   "dag_actor_surface_views",
   "dag_actor_surface_patch_queue",
@@ -50,6 +52,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_surface_projections",
   "dag_actor_live_commands",
   "dag_run_skill_contexts",
+  "dag_review_evidence",
   "dag_actor_commands",
   "dag_actors",
   "dag_activity_events",
@@ -1941,6 +1944,197 @@ function validateDagRunHotPathIndexesV33(db: SqliteDatabase): void {
       || actualColumns.some((column, position) => column !== expectedColumns[position])
     ) {
       throw new Error(`Schema migration 33 is incomplete: index ${name} has invalid columns`);
+    }
+  }
+}
+
+function validateDagRunInputSchemaV34(db: SqliteDatabase): void {
+  for (const table of ["dag_input_artifacts", "dag_run_inputs"]) {
+    if (!hasTable(db, table)) {
+      throw new Error(`Schema migration 34 is incomplete: missing table ${table}`);
+    }
+  }
+  const artifactColumns = new Set(
+    (db.prepare("PRAGMA table_info(dag_input_artifacts)").all() as Array<{ name: string }>)
+      .map((entry) => entry.name),
+  );
+  for (const column of [
+    "artifact_id", "scope_id", "name", "media_type", "sha256", "size_bytes", "created_at",
+  ]) {
+    if (!artifactColumns.has(column)) {
+      throw new Error(`Schema migration 34 is incomplete: dag_input_artifacts is missing ${column}`);
+    }
+  }
+  const bindingColumns = new Set(
+    (db.prepare("PRAGMA table_info(dag_run_inputs)").all() as Array<{ name: string }>)
+      .map((entry) => entry.name),
+  );
+  for (const column of [
+    "run_id", "logical_name", "artifact_id", "mount_path", "sha256", "size_bytes",
+    "media_type", "name", "created_at",
+  ]) {
+    if (!bindingColumns.has(column)) {
+      throw new Error(`Schema migration 34 is incomplete: dag_run_inputs is missing ${column}`);
+    }
+  }
+  for (const trigger of ["trg_dag_input_artifacts_no_update", "trg_dag_run_inputs_no_update"]) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(trigger)) {
+      throw new Error(`Schema migration 34 is incomplete: missing trigger ${trigger}`);
+    }
+  }
+}
+
+function validateDagReviewEvidenceSchemaV35(db: SqliteDatabase): void {
+  if (!hasTable(db, "dag_review_evidence")) {
+    throw new Error("Schema migration 35 is incomplete: missing table dag_review_evidence");
+  }
+  for (const column of [
+    "seq",
+    "schema_version",
+    "run_id",
+    "reviewer",
+    "node_id",
+    "session_id",
+    "round_id",
+    "generation",
+    "attempt",
+    "kind",
+    "dedup_key",
+    "payload_json",
+    "created_at",
+  ]) {
+    if (!hasColumn(db, "dag_review_evidence", column)) {
+      throw new Error(`Schema migration 35 is incomplete: dag_review_evidence is missing column ${column}`);
+    }
+  }
+  const indexes = new Map((db.prepare(`PRAGMA index_list(dag_review_evidence)`).all() as Array<{
+    name: string;
+    unique: number;
+  }>).map((index) => [index.name, index]));
+  // Migration 36 supersedes the legacy run/reviewer/kind/dedup unique index
+  // with the complete logical-dispatch fence. Accept either state here so a
+  // database that already ran migration 36 remains valid on reopen.
+  const legacyFenceIndex = indexes.get("idx_dag_review_evidence_fence_dedup");
+  const logicalFenceIndex = indexes.get("idx_dag_review_evidence_logical_fence_dedup");
+  if (legacyFenceIndex) {
+    if (legacyFenceIndex.unique !== 1) {
+      throw new Error("Schema migration 35 is incomplete: index idx_dag_review_evidence_fence_dedup uniqueness mismatch");
+    }
+    const columns = (db.prepare(`PRAGMA index_info(idx_dag_review_evidence_fence_dedup)`).all() as Array<{ name: string }>)
+      .map((row) => row.name);
+    if (columns.join(",") !== "run_id,reviewer,kind,dedup_key") {
+      throw new Error("Schema migration 35 is incomplete: index idx_dag_review_evidence_fence_dedup columns mismatch");
+    }
+  } else if (!logicalFenceIndex) {
+    throw new Error("Schema migration 35 is incomplete: missing dedup fence index");
+  }
+  for (const [name, unique, expectedColumns] of [
+    ["idx_dag_review_evidence_run_reviewer", 0, ["run_id", "reviewer", "generation", "attempt", "seq"]],
+    ["idx_dag_review_evidence_run_node", 0, ["run_id", "node_id", "attempt", "seq"]],
+  ] as const) {
+    const index = indexes.get(name);
+    if (!index) {
+      throw new Error(`Schema migration 35 is incomplete: missing index ${name}`);
+    }
+    if (index.unique !== unique) {
+      throw new Error(`Schema migration 35 is incomplete: index ${name} uniqueness mismatch`);
+    }
+    const columns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{ name: string }>)
+      .map((row) => row.name);
+    if (columns.join(",") !== expectedColumns.join(",")) {
+      throw new Error(`Schema migration 35 is incomplete: index ${name} columns mismatch`);
+    }
+  }
+}
+
+function validateDagReviewEvidenceSchemaV36(db: SqliteDatabase): void {
+  if (!hasTable(db, "dag_review_evidence")) {
+    throw new Error("Schema migration 36 is incomplete: missing table dag_review_evidence");
+  }
+  for (const column of [
+    "seq",
+    "schema_version",
+    "run_id",
+    "reviewer",
+    "node_id",
+    "session_id",
+    "round_id",
+    "generation",
+    "attempt",
+    "kind",
+    "dedup_key",
+    "payload_json",
+    "created_at",
+  ]) {
+    if (!hasColumn(db, "dag_review_evidence", column)) {
+      throw new Error(`Schema migration 36 is incomplete: dag_review_evidence is missing column ${column}`);
+    }
+  }
+  const indexes = new Map((db.prepare(`PRAGMA index_list(dag_review_evidence)`).all() as Array<{
+    name: string;
+    unique: number;
+  }>).map((index) => [index.name, index]));
+  if (indexes.has("idx_dag_review_evidence_fence_dedup")) {
+    throw new Error("Schema migration 36 is incomplete: legacy dedup index idx_dag_review_evidence_fence_dedup was not superseded");
+  }
+  for (const [name, unique, expectedColumns] of [
+    ["idx_dag_review_evidence_logical_fence_dedup", 1, ["run_id", "reviewer", "node_id", "session_id", "round_id", "generation", "kind", "dedup_key"]],
+    ["idx_dag_review_evidence_run_reviewer", 0, ["run_id", "reviewer", "generation", "attempt", "seq"]],
+    ["idx_dag_review_evidence_run_node", 0, ["run_id", "node_id", "attempt", "seq"]],
+  ] as const) {
+    const index = indexes.get(name);
+    if (!index) {
+      throw new Error(`Schema migration 36 is incomplete: missing index ${name}`);
+    }
+    if (index.unique !== unique) {
+      throw new Error(`Schema migration 36 is incomplete: index ${name} uniqueness mismatch`);
+    }
+    const columns = (db.prepare(`PRAGMA index_info(${name})`).all() as Array<{ name: string }>)
+      .map((row) => row.name);
+    if (columns.join(",") !== expectedColumns.join(",")) {
+      throw new Error(`Schema migration 36 is incomplete: index ${name} columns mismatch`);
+    }
+  }
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?")
+    .get("trg_dag_review_evidence_no_update")) {
+    throw new Error("Schema migration 36 is incomplete: append-only trigger is missing");
+  }
+}
+
+function validateCredentialBrokerMutationSchemaV37(db: SqliteDatabase): void {
+  for (const table of ["credential_broker_mutation_attempts", "credential_broker_mutation_events"]) {
+    if (!hasTable(db, table)) throw new Error(`Schema migration 37 is incomplete: missing table ${table}`);
+  }
+  for (const column of [
+    "request_id", "idempotency_key", "request_digest", "semantic_target",
+    "source_type", "source_id", "run_id", "node_id", "session_id", "round_id",
+    "actor_id", "generation", "lease_generation", "command_id", "gateway_attempt",
+    "credential_ref", "broker", "action", "state", "request_json",
+    "provider_state_json", "result_json", "error_message", "resolution",
+    "created_at", "updated_at",
+  ]) {
+    if (!hasColumn(db, "credential_broker_mutation_attempts", column)) {
+      throw new Error(`Schema migration 37 is incomplete: mutation attempts is missing column ${column}`);
+    }
+  }
+  const indexes = new Map((db.prepare(
+    "PRAGMA index_list(credential_broker_mutation_attempts)",
+  ).all() as Array<{ name: string; unique: number; partial: number }>).map((entry) => [entry.name, entry]));
+  const idempotency = indexes.get("idx_credential_broker_mutation_idempotency");
+  if (!idempotency || idempotency.unique !== 1) {
+    throw new Error("Schema migration 37 is incomplete: mutation idempotency index is missing");
+  }
+  const unresolved = indexes.get("idx_credential_broker_mutation_unresolved_target");
+  if (!unresolved || unresolved.unique !== 1 || unresolved.partial !== 1) {
+    throw new Error("Schema migration 37 is incomplete: unresolved semantic target index is invalid");
+  }
+  for (const trigger of [
+    "trg_credential_broker_mutation_identity_immutable",
+    "trg_credential_broker_mutation_events_no_update",
+    "trg_credential_broker_mutation_events_no_delete",
+  ]) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(trigger)) {
+      throw new Error(`Schema migration 37 is incomplete: missing trigger ${trigger}`);
     }
   }
 }
@@ -4119,6 +4313,204 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       `);
     },
     validate: validateDagRunHotPathIndexesV33,
+  },
+  {
+    version: 34,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS dag_input_artifacts (
+          artifact_id TEXT PRIMARY KEY,
+          scope_id TEXT NOT NULL CHECK(length(scope_id) BETWEEN 1 AND 128),
+          name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 128),
+          media_type TEXT NOT NULL CHECK(media_type IN (
+            'text/markdown', 'text/plain', 'application/json'
+          )),
+          sha256 TEXT NOT NULL CHECK(
+            length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'
+          ),
+          size_bytes INTEGER NOT NULL CHECK(size_bytes BETWEEN 1 AND 1048576),
+          created_at INTEGER NOT NULL CHECK(created_at >= 0),
+          UNIQUE(scope_id, name, media_type, sha256)
+        );
+        CREATE INDEX IF NOT EXISTS idx_dag_input_artifacts_scope_created
+          ON dag_input_artifacts(scope_id, created_at, artifact_id);
+        CREATE TRIGGER IF NOT EXISTS trg_dag_input_artifacts_no_update
+        BEFORE UPDATE ON dag_input_artifacts
+        BEGIN
+          SELECT RAISE(ABORT, 'DAG input artifacts are immutable');
+        END;
+
+        CREATE TABLE IF NOT EXISTS dag_run_inputs (
+          run_id TEXT NOT NULL,
+          logical_name TEXT NOT NULL CHECK(length(logical_name) BETWEEN 1 AND 128),
+          artifact_id TEXT NOT NULL,
+          mount_path TEXT NOT NULL CHECK(length(mount_path) BETWEEN 7 AND 512),
+          sha256 TEXT NOT NULL CHECK(
+            length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'
+          ),
+          size_bytes INTEGER NOT NULL CHECK(size_bytes BETWEEN 1 AND 1048576),
+          media_type TEXT NOT NULL CHECK(media_type IN (
+            'text/markdown', 'text/plain', 'application/json'
+          )),
+          name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 128),
+          created_at INTEGER NOT NULL CHECK(created_at >= 0),
+          PRIMARY KEY(run_id, logical_name),
+          UNIQUE(run_id, mount_path),
+          FOREIGN KEY(run_id) REFERENCES dag_runs(run_id)
+            ON UPDATE RESTRICT ON DELETE CASCADE,
+          FOREIGN KEY(artifact_id) REFERENCES dag_input_artifacts(artifact_id)
+            ON UPDATE RESTRICT ON DELETE RESTRICT
+        );
+        CREATE INDEX IF NOT EXISTS idx_dag_run_inputs_artifact
+          ON dag_run_inputs(artifact_id, run_id);
+        CREATE TRIGGER IF NOT EXISTS trg_dag_run_inputs_no_update
+        BEFORE UPDATE ON dag_run_inputs
+        BEGIN
+          SELECT RAISE(ABORT, 'DAG run input bindings are immutable');
+        END;
+      `);
+    },
+    validate: validateDagRunInputSchemaV34,
+  },
+  {
+    version: 35,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS dag_review_evidence (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 256),
+          reviewer TEXT NOT NULL CHECK(length(reviewer) BETWEEN 1 AND 256),
+          node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 256),
+          session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 256),
+          round_id TEXT NOT NULL CHECK(length(round_id) BETWEEN 1 AND 256),
+          generation INTEGER NOT NULL CHECK(generation >= 1),
+          attempt INTEGER NOT NULL CHECK(attempt >= 1),
+          kind TEXT NOT NULL CHECK(kind IN ('finding', 'diagnostic', 'coverage')),
+          dedup_key TEXT NOT NULL CHECK(length(dedup_key) BETWEEN 1 AND 256),
+          payload_json TEXT NOT NULL CHECK(length(payload_json) BETWEEN 2 AND 131072),
+          created_at INTEGER NOT NULL CHECK(created_at >= 0),
+          FOREIGN KEY(run_id) REFERENCES dag_runs(run_id)
+            ON UPDATE RESTRICT ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_review_evidence_fence_dedup
+          ON dag_review_evidence(run_id, reviewer, kind, dedup_key);
+        CREATE INDEX IF NOT EXISTS idx_dag_review_evidence_run_reviewer
+          ON dag_review_evidence(run_id, reviewer, generation, attempt, seq);
+        CREATE INDEX IF NOT EXISTS idx_dag_review_evidence_run_node
+          ON dag_review_evidence(run_id, node_id, attempt, seq);
+        CREATE TRIGGER IF NOT EXISTS trg_dag_review_evidence_no_update
+        BEFORE UPDATE ON dag_review_evidence
+        BEGIN
+          SELECT RAISE(ABORT, 'DAG review evidence is append-only');
+        END;
+      `);
+    },
+    validate: validateDagReviewEvidenceSchemaV35,
+  },
+  {
+    version: 36,
+    up: (db) => db.exec(`
+      DROP INDEX IF EXISTS idx_dag_review_evidence_fence_dedup;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dag_review_evidence_logical_fence_dedup
+        ON dag_review_evidence(
+          run_id, reviewer, node_id, session_id, round_id, generation, kind, dedup_key
+        );
+    `),
+    validate: validateDagReviewEvidenceSchemaV36,
+  },
+  {
+    version: 37,
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS credential_broker_mutation_attempts (
+        request_id TEXT PRIMARY KEY CHECK(length(request_id) BETWEEN 1 AND 256),
+        idempotency_key TEXT NOT NULL CHECK(length(idempotency_key) BETWEEN 1 AND 256),
+        request_digest TEXT NOT NULL CHECK(
+          length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        semantic_target TEXT NOT NULL CHECK(length(semantic_target) BETWEEN 1 AND 1024),
+        source_type TEXT NOT NULL CHECK(source_type IN ('worker_actor', 'manager_gateway')),
+        source_id TEXT NOT NULL CHECK(length(source_id) BETWEEN 1 AND 256),
+        run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 256),
+        node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 256),
+        session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 256),
+        round_id TEXT NOT NULL CHECK(length(round_id) BETWEEN 1 AND 256),
+        actor_id TEXT CHECK(actor_id IS NULL OR length(actor_id) BETWEEN 1 AND 256),
+        generation INTEGER CHECK(generation IS NULL OR generation >= 1),
+        lease_generation INTEGER CHECK(lease_generation IS NULL OR lease_generation >= 1),
+        command_id TEXT CHECK(command_id IS NULL OR length(command_id) BETWEEN 1 AND 256),
+        gateway_attempt INTEGER CHECK(gateway_attempt IS NULL OR gateway_attempt >= 1),
+        credential_ref TEXT NOT NULL CHECK(length(credential_ref) BETWEEN 1 AND 256),
+        broker TEXT NOT NULL CHECK(length(broker) BETWEEN 1 AND 128),
+        action TEXT NOT NULL CHECK(length(action) BETWEEN 1 AND 128),
+        state TEXT NOT NULL CHECK(state IN (
+          'prepared', 'dispatched', 'completed', 'failed_pre_dispatch', 'cancelled',
+          'cancel_requested', 'indeterminate', 'reconciled'
+        )),
+        request_json TEXT NOT NULL CHECK(length(request_json) BETWEEN 2 AND 2200000),
+        provider_state_json TEXT CHECK(provider_state_json IS NULL OR length(provider_state_json) BETWEEN 2 AND 131072),
+        result_json TEXT CHECK(result_json IS NULL OR length(result_json) BETWEEN 1 AND 262144),
+        error_message TEXT CHECK(error_message IS NULL OR length(error_message) BETWEEN 1 AND 1000),
+        resolution TEXT CHECK(resolution IS NULL OR resolution IN ('completed', 'absent', 'failed')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK(
+          (source_type = 'worker_actor' AND actor_id IS NOT NULL AND generation IS NOT NULL
+            AND lease_generation IS NOT NULL AND gateway_attempt IS NULL)
+          OR
+          (source_type = 'manager_gateway' AND actor_id IS NULL AND generation IS NULL
+            AND lease_generation IS NULL AND command_id IS NULL AND gateway_attempt IS NOT NULL)
+        ),
+        CHECK((state = 'reconciled' AND resolution IS NOT NULL) OR (state != 'reconciled' AND resolution IS NULL))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_broker_mutation_idempotency
+        ON credential_broker_mutation_attempts(credential_ref, broker, action, idempotency_key);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_broker_mutation_unresolved_target
+        ON credential_broker_mutation_attempts(credential_ref, broker, semantic_target)
+        WHERE state IN ('prepared', 'dispatched', 'cancel_requested', 'indeterminate');
+      CREATE INDEX IF NOT EXISTS idx_credential_broker_mutation_run
+        ON credential_broker_mutation_attempts(run_id, node_id, created_at, request_id);
+      CREATE INDEX IF NOT EXISTS idx_credential_broker_mutation_state
+        ON credential_broker_mutation_attempts(state, updated_at, request_id);
+      CREATE TRIGGER IF NOT EXISTS trg_credential_broker_mutation_identity_immutable
+      BEFORE UPDATE OF request_id, idempotency_key, request_digest, semantic_target,
+        source_type, source_id, run_id, node_id, session_id, round_id, actor_id,
+        generation, lease_generation, command_id, gateway_attempt, credential_ref,
+        broker, action, request_json
+      ON credential_broker_mutation_attempts
+      BEGIN
+        SELECT RAISE(ABORT, 'Credential broker mutation identity is immutable');
+      END;
+
+      CREATE TABLE IF NOT EXISTS credential_broker_mutation_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id TEXT NOT NULL,
+        request_digest TEXT NOT NULL CHECK(
+          length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        state TEXT NOT NULL CHECK(state IN (
+          'prepared', 'dispatched', 'completed', 'failed_pre_dispatch', 'cancelled',
+          'cancel_requested', 'indeterminate', 'reconciled'
+        )),
+        detail_json TEXT NOT NULL CHECK(length(detail_json) BETWEEN 2 AND 32768),
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(request_id) REFERENCES credential_broker_mutation_attempts(request_id)
+          ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX IF NOT EXISTS idx_credential_broker_mutation_events_request
+        ON credential_broker_mutation_events(request_id, sequence);
+      CREATE TRIGGER IF NOT EXISTS trg_credential_broker_mutation_events_no_update
+      BEFORE UPDATE ON credential_broker_mutation_events
+      BEGIN
+        SELECT RAISE(ABORT, 'Credential broker mutation events are append-only');
+      END;
+      CREATE TRIGGER IF NOT EXISTS trg_credential_broker_mutation_events_no_delete
+      BEFORE DELETE ON credential_broker_mutation_events
+      BEGIN
+        SELECT RAISE(ABORT, 'Credential broker mutation events are append-only');
+      END;
+    `),
+    validate: validateCredentialBrokerMutationSchemaV37,
   },
 ];
 

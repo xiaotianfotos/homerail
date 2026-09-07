@@ -9,6 +9,10 @@ import {
   type VoiceEndpointProbeCandidate,
   type VoiceEndpointProbeResult
 } from '@/api/services/voice-api'
+import {
+  decideAsrRealtimeUrlPersistence,
+  isVerifiedAsrRealtimeProbe
+} from '@/components/agent/asr-endpoint-capability'
 import type { Provider } from '@/api/types/orchestration-v2.types'
 import { useToast } from '@/components/controls/useToast'
 import CapabilityToggle from './CapabilityToggle.vue'
@@ -118,9 +122,21 @@ function loadVoiceEndpoint(
   target: typeof ttsHttpUrl,
   automatic: typeof ttsHttpAutomatic
 ): void {
-  const saved = savedValue?.trim() ?? ''
-  automatic.value = !saved || saved === derivedValue
-  target.value = automatic.value ? derivedValue : saved
+  if (savedValue == null) {
+    automatic.value = true
+    target.value = derivedValue
+    return
+  }
+  const saved = savedValue.trim()
+  if (!saved) {
+    // A saved empty string is an intentional clear (issue #193): keep the
+    // field empty instead of silently restoring the derived default.
+    automatic.value = false
+    target.value = ''
+    return
+  }
+  automatic.value = saved === derivedValue
+  target.value = saved
 }
 
 type VoiceEndpointField = 'tts_http' | 'tts_streaming' | 'asr_http' | 'asr_realtime'
@@ -159,6 +175,13 @@ function restoreEndpoint(field: VoiceEndpointField): void {
   const endpoint = voiceEndpointState(field)
   endpoint.automatic.value = true
   endpoint.target.value = endpoint.derived
+}
+
+function voiceEndpointPayloadValue(field: VoiceEndpointField): string {
+  const endpoint = voiceEndpointState(field)
+  // An edited (non-automatic) field keeps exactly what the user left in
+  // it, including an intentional empty value.
+  return endpoint.automatic.value ? endpoint.derived : endpoint.target.value.trim()
 }
 
 function draftSignature(): string {
@@ -314,8 +337,23 @@ const canTestEndpoints = computed(() =>
 )
 
 const endpointTestPassed = computed(() =>
-  endpointTestResults.value.length > 0 && endpointTestResults.value.every(result => result.ok)
+  endpointTestResults.value.length > 0 && endpointTestResults.value.every(endpointProbePassed)
 )
+
+/**
+ * Shared issue #193 semantics: a WebSocket endpoint only passes when the
+ * probe completed a real upgrade (verified native realtime); HTTP
+ * endpoints keep the existing reachable semantics.
+ */
+function endpointProbePassed(result: VoiceEndpointProbeResult): boolean {
+  return result.kind === 'websocket' ? isVerifiedAsrRealtimeProbe(result) : result.ok
+}
+
+function latestAsrRealtimeProbeResult(): VoiceEndpointProbeResult | undefined {
+  // Probe results are cleared whenever any endpoint URL changes, so a
+  // stored result always belongs to the current field values.
+  return endpointTestResults.value.find(result => result.id === 'asr_realtime')
+}
 
 function endpointLabel(id: VoiceEndpointProbeResult['id']): string {
   const labels: Record<string, string> = {
@@ -328,8 +366,13 @@ function endpointLabel(id: VoiceEndpointProbeResult['id']): string {
 }
 
 function endpointResultText(result: VoiceEndpointProbeResult): string {
-  const status = !result.ok && result.status_code ? ` (${result.status_code})` : ''
-  return `${endpointLabel(result.id)}${status} ${result.ok ? '✓' : '✕'}`
+  const passed = endpointProbePassed(result)
+  const status = !passed && result.status_code ? ` (${result.status_code})` : ''
+  // For WebSocket endpoints an authentication-required or otherwise
+  // non-upgrade response is never "verified realtime support"; surface the
+  // Manager's own message so the user sees why (issue #193).
+  const detail = !passed && result.kind === 'websocket' && result.message ? ` ${result.message}` : ''
+  return `${endpointLabel(result.id)}${status} ${passed ? '✓' : '✕'}${detail}`
 }
 
 async function testEndpoints(): Promise<void> {
@@ -352,6 +395,11 @@ async function save(): Promise<void> {
   saving.value = true
   const id = providerId.value.trim()
   normalizeVoiceBaseUrl()
+  const realtimePersistence = decideAsrRealtimeUrlPersistence({
+    explicitUrl: asrRealtimeAutomatic.value ? undefined : asrRealtimeUrl.value,
+    derivedUrl: defaultAsrRealtimeUrl.value,
+    probeResult: latestAsrRealtimeProbeResult()
+  })
   const payload = {
     name: providerName.value.trim(),
     base_url: baseUrl.value.trim(),
@@ -360,18 +408,14 @@ async function save(): Promise<void> {
     anthropic_base_url: anthropicBaseUrl.value.trim() || undefined,
     voice_adapter:
       supportsAsr.value || supportsTts.value ? ('openai_audio' as const) : ('custom' as const),
-    tts_http_url: supportsTts.value
-      ? ttsHttpUrl.value.trim() || defaultTtsHttpUrl.value
-      : undefined,
-    tts_realtime_url: supportsTts.value
-      ? ttsStreamingUrl.value.trim() || defaultTtsStreamingUrl.value
-      : undefined,
-    asr_async_url: supportsAsr.value
-      ? asrHttpUrl.value.trim() || defaultAsrHttpUrl.value
-      : undefined,
-    asr_realtime_url: supportsAsr.value
-      ? asrRealtimeUrl.value.trim() || defaultAsrRealtimeUrl.value
-      : undefined,
+    tts_http_url: supportsTts.value ? voiceEndpointPayloadValue('tts_http') : undefined,
+    tts_realtime_url: supportsTts.value ? voiceEndpointPayloadValue('tts_streaming') : undefined,
+    asr_async_url: supportsAsr.value ? voiceEndpointPayloadValue('asr_http') : undefined,
+    // A derived realtime candidate is only persisted after a verified
+    // WebSocket handshake; explicit user values (including an explicit
+    // clear) always win. The automatic default is never silently restored
+    // on top of a deliberate empty value (issue #193).
+    asr_realtime_url: supportsAsr.value ? realtimePersistence.url : undefined,
     status: 'active' as const,
     supports_llm: supportsLlm.value,
     supports_asr: supportsAsr.value,

@@ -37,8 +37,13 @@ import {
   normalizeAppearanceId,
   resolveStoredAppearance,
 } from '@/appearance/appearance-registry'
+import type { HomeRailBrowserToolsRuntimeStatus } from '@/browser-tools/webmcp-adapter'
 
 export type NotificationType = 'success' | 'error' | 'warning' | 'info'
+export const LIVE_VOICE_IMMERSIVE_STORAGE_KEY =
+  'homerail.experimental.liveVoiceImmersive'
+export const WEB_BROWSER_TOOLS_ENABLED_STORAGE_KEY =
+  'homerail.experimental.browserTools.web.enabled'
 
 export interface Notification {
   id: string
@@ -73,6 +78,19 @@ export const useUiStore = defineStore('ui', () => {
   const notifications = ref<Notification[]>([])
 
   const locale = useStorage<AppLocale>(LOCALE_STORAGE_KEY, resolveInitialLocale())
+  const liveVoiceImmersiveEnabled = useStorage<boolean>(
+    LIVE_VOICE_IMMERSIVE_STORAGE_KEY,
+    false,
+  )
+  const webBrowserToolsEnabled = useStorage<boolean>(
+    WEB_BROWSER_TOOLS_ENABLED_STORAGE_KEY,
+    false,
+  )
+  const browserToolsRuntimeStatus = ref<HomeRailBrowserToolsRuntimeStatus>({
+    state: 'disabled',
+    directConnected: false,
+    nativeRegistered: false,
+  })
 
   // --------------------------------------------------------------------------
   // Getters
@@ -187,6 +205,18 @@ export const useUiStore = defineStore('ui', () => {
     applyLocaleToDocument(normalized)
   }
 
+  function setLiveVoiceImmersiveEnabled(enabled: boolean) {
+    liveVoiceImmersiveEnabled.value = enabled
+  }
+
+  function setWebBrowserToolsEnabled(enabled: boolean) {
+    webBrowserToolsEnabled.value = enabled
+  }
+
+  function setBrowserToolsRuntimeStatus(status: HomeRailBrowserToolsRuntimeStatus) {
+    browserToolsRuntimeStatus.value = { ...status }
+  }
+
   // --------------------------------------------------------------------------
   // Initialization
   // --------------------------------------------------------------------------
@@ -218,6 +248,9 @@ export const useUiStore = defineStore('ui', () => {
     loadingMessage,
     notifications,
     locale,
+    liveVoiceImmersiveEnabled,
+    webBrowserToolsEnabled,
+    browserToolsRuntimeStatus,
 
     // Getters
     isDarkMode,
@@ -239,6 +272,9 @@ export const useUiStore = defineStore('ui', () => {
     showWarning,
     showInfo,
     setLocale,
+    setLiveVoiceImmersiveEnabled,
+    setWebBrowserToolsEnabled,
+    setBrowserToolsRuntimeStatus,
     initialize
   }
 })

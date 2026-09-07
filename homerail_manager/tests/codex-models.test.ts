@@ -8,7 +8,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { listCodexModels, type CodexModelCatalog } from "../src/server/codex-models.js";
 import { MANAGER_RUNTIME_VERSION } from "../src/runtime-version.js";
 import { managerAgentConfigRoutesHandler } from "../src/server/manager-agent-config.js";
-import { clearManagerAgentConfig } from "../src/persistence/manager-agent-config.js";
+import {
+  clearManagerAgentConfig,
+  saveManagerAgentConfig,
+} from "../src/persistence/manager-agent-config.js";
+import {
+  _clearAllSettings,
+  createSetting,
+} from "../src/persistence/llm-settings.js";
 
 class FakeChildProcess extends EventEmitter {
   stdin = new PassThrough();
@@ -29,6 +36,7 @@ afterEach(async () => {
   if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
   server = undefined;
   clearManagerAgentConfig();
+  _clearAllSettings();
 });
 
 describe("Codex model catalog", () => {
@@ -187,11 +195,11 @@ describe("Codex model catalog", () => {
 
     expect(spawnOptions).toMatchObject({
       env: expect.objectContaining({
-        PATH: [
+        PATH: Array.from(new Set([
           path.dirname(command),
           path.dirname(process.execPath),
-          "/usr/bin:/bin",
-        ].join(path.delimiter),
+          ..."/usr/bin:/bin".split(path.delimiter),
+        ])).join(path.delimiter),
       }),
     });
   });
@@ -370,7 +378,54 @@ describe("Codex model catalog", () => {
     });
   });
 
-  it("does not let a stale provider-model patch replace an active Codex model", async () => {
+  it.each([null, ""])(
+    "treats an explicit %j Codex reasoning effort as absent",
+    async (reasoningEffort) => {
+      const catalog: CodexModelCatalog = {
+        binary: "/opt/homebrew/bin/codex",
+        models: [{
+          id: "gpt-5.6-sol",
+          model: "gpt-5.6-sol",
+          display_name: "GPT-5.6-Sol",
+          description: "",
+          is_default: true,
+          default_reasoning_effort: "low",
+          supported_reasoning_efforts: ["low", "high"],
+          service_tiers: [],
+        }],
+      };
+      server = http.createServer((req, res) => {
+        managerAgentConfigRoutesHandler(req, res, { loadCodexModels: async () => catalog });
+      });
+      await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      const configured = await fetch(`${baseUrl}/api/manager-agent/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          harness: "codex_appserver",
+          model_name: "gpt-5.6-sol",
+          reasoning_effort: "high",
+        }),
+      });
+      expect(configured.status).toBe(200);
+
+      const response = await fetch(`${baseUrl}/api/manager-agent/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reasoning_effort: reasoningEffort }),
+      });
+      const body = await response.json() as { data?: { reasoning_effort?: string } };
+
+      expect(response.status).toBe(200);
+      expect(body.data?.reasoning_effort).toBe("high");
+    },
+  );
+
+  it("rejects an unknown provider setting instead of replacing an active subscription Codex model", async () => {
     const catalog: CodexModelCatalog = {
       binary: "/opt/homebrew/bin/codex",
       models: [{
@@ -413,14 +468,108 @@ describe("Codex model catalog", () => {
         model_name: "kimi-k2.7-code",
       }),
     });
-    const body = await stalePatch.json() as { data: Record<string, unknown> };
+    const body = await stalePatch.json() as { error?: string };
 
-    expect(stalePatch.status).toBe(200);
+    expect(stalePatch.status).toBe(400);
+    expect(body.error).toContain("Active Manager LLM setting not found");
+  });
+
+  it("honors an explicit subscription model when switching from a provider-backed harness", async () => {
+    const setting = createSetting({
+      provider_id: "deepseek",
+      endpoint_id: "deepseek_api",
+      model_name: "deepseek-v4-flash",
+      api_key: "sk-test-deepseek",
+      is_active: true,
+      is_default: true,
+    });
+    saveManagerAgentConfig({
+      harness: "claude_agent_sdk",
+      llm_setting_id: setting.id,
+      provider_name: "deepseek",
+      model_name: "deepseek-v4-flash",
+    });
+    const catalog: CodexModelCatalog = {
+      binary: "/opt/homebrew/bin/codex",
+      models: [{
+        id: "gpt-5.6-sol",
+        model: "gpt-5.6-sol",
+        display_name: "GPT-5.6-Sol",
+        description: "",
+        is_default: true,
+        default_reasoning_effort: "high",
+        supported_reasoning_efforts: ["low", "high", "max"],
+        service_tiers: [],
+      }],
+    };
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res, { loadCodexModels: async () => catalog });
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        model_name: "gpt-5.6-sol",
+        reasoning_effort: "high",
+      }),
+    });
+    const body = await response.json() as { data?: Record<string, unknown> };
+
+    expect(response.status).toBe(200);
     expect(body.data).toMatchObject({
       harness: "codex_appserver",
       llm_setting_id: null,
       provider_name: null,
-      model_name: "gpt-5.6-terra",
+      model_name: "gpt-5.6-sol",
+      reasoning_effort: "high",
+    });
+  });
+
+  it("uses the provider profile reasoning default when switching with an explicit setting", async () => {
+    const setting = createSetting({
+      provider_id: "deepseek",
+      endpoint_id: "deepseek_api",
+      model_name: "deepseek-v4-flash",
+      api_key: "sk-test-deepseek",
+      is_active: true,
+      is_default: true,
+    });
+    saveManagerAgentConfig({
+      harness: "claude_agent_sdk",
+      llm_setting_id: setting.id,
+      provider_name: "deepseek",
+      model_name: "deepseek-v4-flash",
+      reasoning_effort: "low",
+    });
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        llm_setting_id: setting.id,
+        provider_name: "deepseek",
+        model_name: "deepseek-v4-flash",
+      }),
+    });
+    const body = await response.json() as { data?: Record<string, unknown> };
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({
+      llm_setting_id: setting.id,
+      provider_name: "deepseek",
+      model_name: "deepseek-v4-flash",
       reasoning_effort: "high",
     });
   });
@@ -514,6 +663,51 @@ describe("Codex model catalog", () => {
         harness: "codex_appserver",
         live_voice_enabled: true,
       },
+    });
+  });
+
+  it("rejects Live Voice for provider-backed Codex Responses runtimes", async () => {
+    const setting = createSetting({
+      provider_id: "deepseek",
+      endpoint_id: "deepseek_api",
+      model_name: "deepseek-v4-flash",
+      api_key: "sk-test-deepseek",
+      is_active: true,
+      is_default: true,
+    });
+    server = http.createServer((req, res) => {
+      managerAgentConfigRoutesHandler(req, res, {
+        loadCodexLiveVoiceCapability: () => ({
+          supported: true,
+          minimum_version: "0.145.0",
+          protocol: "v3",
+          transport: "webrtc",
+          feature: "realtime_conversation",
+          stage: "under development",
+        }),
+      });
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/manager-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harness: "codex_appserver",
+        llm_setting_id: setting.id,
+        provider_name: setting.provider_id,
+        model_name: setting.model_name,
+        live_voice_enabled: true,
+      }),
+    });
+    const body = await response.json() as Record<string, unknown>;
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      success: false,
+      error: "Live Voice is not supported for provider-backed Codex Responses runtimes. Disable Live Voice or use subscription Codex.",
     });
   });
 

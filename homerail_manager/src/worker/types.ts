@@ -62,6 +62,11 @@ export interface CredentialBrokerCallMessage {
   data: DagCredentialBrokerCallRequest;
 }
 
+export interface CredentialBrokerCancelMessage {
+  type: "credential_broker_cancel";
+  data: DagCredentialBrokerCancelRequest;
+}
+
 export interface DagActorLiveCommandStatusMessage {
   type: "dag_actor_command_status";
   data: DagActorLiveCommandStatusData;
@@ -110,6 +115,7 @@ export type IncomingWorkerMessage =
   | ContentMessage
   | ManagerCommandMessage
   | CredentialBrokerCallMessage
+  | CredentialBrokerCancelMessage
   | DagActorLiveCommandStatusMessage
   | NodeErrorMessage
   | SessionEndMessage
@@ -240,10 +246,16 @@ export function parseIncomingMessage(raw: unknown): IncomingWorkerMessage | null
       if (typeof obj.data !== "object" || obj.data === null || Array.isArray(obj.data)) return null;
       const data = obj.data as Record<string, unknown>;
       if (
-        typeof data.request_id !== "string"
+        data.transport_kind !== "worker_actor"
+        || typeof data.request_id !== "string"
+        || typeof data.idempotency_key !== "string"
         || typeof data.run_id !== "string"
         || typeof data.node_id !== "string"
         || typeof data.session_id !== "string"
+        || typeof data.round_id !== "string"
+        || typeof data.actor_id !== "string"
+        || typeof data.generation !== "number"
+        || typeof data.lease_generation !== "number"
         || typeof data.credential_ref !== "string"
         || typeof data.broker !== "string"
         || typeof data.action !== "string"
@@ -254,6 +266,27 @@ export function parseIncomingMessage(raw: unknown): IncomingWorkerMessage | null
       return {
         type: "credential_broker_call",
         data: data as unknown as DagCredentialBrokerCallRequest,
+      };
+    }
+    case "credential_broker_cancel": {
+      if (typeof obj.data !== "object" || obj.data === null || Array.isArray(obj.data)) return null;
+      const data = obj.data as Record<string, unknown>;
+      if (
+        data.transport_kind !== "worker_actor"
+        || typeof data.request_id !== "string"
+        || typeof data.idempotency_key !== "string"
+        || typeof data.run_id !== "string"
+        || typeof data.node_id !== "string"
+        || typeof data.session_id !== "string"
+        || typeof data.round_id !== "string"
+        || typeof data.actor_id !== "string"
+        || typeof data.generation !== "number"
+        || typeof data.lease_generation !== "number"
+        || (data.command_id !== undefined && typeof data.command_id !== "string")
+      ) return null;
+      return {
+        type: "credential_broker_cancel",
+        data: data as unknown as DagCredentialBrokerCancelRequest,
       };
     }
     case "dag_actor_command_status":
@@ -311,5 +344,6 @@ export function parseIncomingMessage(raw: unknown): IncomingWorkerMessage | null
 }
 import type {
   DagActorLiveCommandStatusData,
+  DagCredentialBrokerCancelRequest,
   DagCredentialBrokerCallRequest,
 } from "homerail-protocol";

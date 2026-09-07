@@ -38,7 +38,7 @@ export function renderPrReviewMarkdown(command, publication) {
     `- Status: **${text(report.status)}**`,
     `- Confidence: ${text(report.confidence)}`,
     `- Actionable findings: ${report.actionable_count}`,
-    `- Quorum: ${quorum.successes}/${quorum.total} approvals (threshold ${quorum.threshold}) — ${quorum.passed ? "passed" : "blocked"}`,
+    `- Quorum gate: ${quorum.successes}/${quorum.total} approvals (minimum ${quorum.threshold}) plus zero retained findings — ${quorum.passed ? "passed" : "blocked"}`,
     "",
     "## Summary",
     "",

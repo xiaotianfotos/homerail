@@ -19,13 +19,16 @@ export interface WorkspacePolicyResult {
 // Runtime-owned metadata lives in .homerail-runtime on the host-backed
 // workspace mount. It is not model output and must not trip readonly policy
 // checks when audit writers append transcripts or raw SDK traces.
-const IGNORED_DIRECTORIES = new Set([".git", ".homerail-runtime", "node_modules"]);
+const RESERVED_POLICY_SEGMENTS = new Set([".git", ".homerail-runtime", "node_modules"]);
 
 function normalizedPolicyPath(value: string): string {
   const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
-  if (!normalized || path.posix.isAbsolute(normalized) || normalized.split("/").includes("..")) {
+  const segments = normalized.split("/");
+  if (!normalized || path.posix.isAbsolute(normalized) || segments.includes("..")) {
     throw new Error(`workspace policy path must be relative and traversal-free: ${value}`);
   }
+  const reserved = segments.find((segment) => RESERVED_POLICY_SEGMENTS.has(segment));
+  if (reserved) throw new Error(`workspace policy path contains reserved segment ${reserved}: ${value}`);
   return normalized;
 }
 
@@ -42,11 +45,33 @@ function digestFiles(files: Record<string, string>): string {
 export function snapshotWorkspace(root: string, policy: DagWorkspaceAccess): WorkspaceSnapshot {
   const resolvedRoot = realpathSync(path.resolve(root));
   const maxFiles = policy.max_snapshot_files ?? 20_000;
+  const writable = policy.writable_paths.map(normalizedPolicyPath);
+  const readonly = (policy.readonly_paths ?? []).map(normalizedPolicyPath);
+  if (
+    policy.git_metadata_read_only === true
+    && (writable.length !== 1 || writable[0] === ".")
+  ) {
+    throw new Error("read-only Git metadata requires exactly one non-root writable workspace path");
+  }
+  const rootReadOnly = writable.length === 0 || (writable.length === 1 && writable[0] !== ".");
+  const gitMetadataRoots = new Set<string>();
+  if (rootReadOnly) gitMetadataRoots.add(".git");
+  if (rootReadOnly) {
+    for (const rootPath of readonly) {
+      if (!includesPath(writable, rootPath)) gitMetadataRoots.add(`${rootPath}/.git`);
+    }
+  }
+  for (const rootPath of writable) {
+    gitMetadataRoots.add(rootPath === "." ? ".git" : `${rootPath}/.git`);
+  }
+  if (policy.git_metadata_read_only === true) gitMetadataRoots.add(`${writable[0]}/.git`);
+  const excluded = (policy.snapshot_exclude_paths ?? []).map(normalizedPolicyPath);
   const files: Record<string, string> = {};
   const visit = (absolute: string, relative: string): void => {
+    if (relative && includesPath(excluded, relative)) return;
     const stat = lstatSync(absolute);
     if (stat.isDirectory()) {
-      if (relative && IGNORED_DIRECTORIES.has(path.posix.basename(relative))) return;
+      if (gitMetadataRoots.has(relative) || relative === ".homerail-runtime" || path.posix.basename(relative) === "node_modules") return;
       for (const name of readdirSync(absolute).sort()) {
         const childRelative = relative ? `${relative}/${name}` : name;
         visit(path.join(absolute, name), childRelative.replace(/\\/g, "/"));

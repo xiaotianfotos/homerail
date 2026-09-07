@@ -87,6 +87,9 @@
     "composerPlaceholder": "通过当前 Live Voice 会话发送文字…",
     "textUnavailable": "Live Voice 正在重连，请等待恢复聆听后再发送文字。"
   },
+  "immersive": {
+    "exit": "退出沉浸"
+  },
   "task": {
     "title": "任务",
     "prompt": "说出一个需要整理成任务草稿的需求。",

@@ -1,6 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, ref, type App } from 'vue'
 import type { DAGRunMetrics } from '@/api/types/dag.types'
+
+// Node 25 的全局 localStorage stub 会让 @/i18n/locales 初始化崩溃（CI 无此问题），
+// 固定 locale 解析结果以保证测试与环境无关。
+vi.mock('@/i18n/locales', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/i18n/locales')>()
+  return {
+    ...actual,
+    resolveInitialLocale: () => 'en-US',
+    applyLocaleToDocument: () => {},
+  }
+})
+
 import { i18n } from '@/plugins/i18n'
 import DagNodeDetailDrawer from './DagNodeDetailDrawer.vue'
 

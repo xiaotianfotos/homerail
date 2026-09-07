@@ -4,6 +4,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  BROWSER_TOOLS_PROTOCOL_VERSION,
+  HOMERAIL_UI_TOOL_CONTRACTS,
+  uiToolContractDigest,
+  type BrowserRendererConnectionRefV1,
+  type BrowserRendererTargetV1,
+} from "homerail-protocol";
 
 vi.mock("../src/server/edge-tts.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/server/edge-tts.js")>();
@@ -43,6 +50,7 @@ import {
 import type { CodexModelCatalog } from "../src/server/codex-models.js";
 import { applyVoiceCanonicalProjectionPatch } from "../src/generative-ui/canonical-voice-service.js";
 import { persistentGenerativeUiDocumentService } from "../src/generative-ui/shadow-service.js";
+import { getBrowserRendererToolsBroker } from "../src/server/browser-renderer-tools-websocket.js";
 
 const TEST_CODEX_MODEL_CATALOG: CodexModelCatalog = {
   binary: "codex",
@@ -58,6 +66,8 @@ const TEST_CODEX_MODEL_CATALOG: CodexModelCatalog = {
   }],
 };
 
+const voiceBrowserRendererSockets = new Set<WebSocket>();
+
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   const addr = server.address();
@@ -67,6 +77,76 @@ async function listen(server: http.Server): Promise<number> {
 
 async function close(server: http.Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+function browserRendererContracts(): Array<{ name: string; contract_digest: string }> {
+  return HOMERAIL_UI_TOOL_CONTRACTS.map((contract) => ({
+    name: contract.name,
+    contract_digest: uiToolContractDigest(contract),
+  }));
+}
+
+async function connectBrowserRenderer(
+  port: number,
+  target: BrowserRendererTargetV1,
+): Promise<{ socket: WebSocket; ref: BrowserRendererConnectionRefV1 }> {
+  const broker = getBrowserRendererToolsBroker();
+  if (!broker) throw new Error("Browser renderer broker is unavailable in the voice test server");
+  const origin = `http://127.0.0.1:${port}`;
+  const ticket = broker.issueTicket(target, origin, `direct:${origin}`).ticket;
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws/browser-tools/renderer`, {
+    headers: { Origin: origin },
+  });
+  voiceBrowserRendererSockets.add(socket);
+  socket.once("close", () => voiceBrowserRendererSockets.delete(socket));
+  await new Promise<void>((resolve, reject) => {
+    socket.once("open", resolve);
+    socket.once("error", reject);
+  });
+  const ready = new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Timed out authenticating voice test renderer")), 2_000);
+    timer.unref?.();
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (message.type !== "auth.ready") return;
+      clearTimeout(timer);
+      resolve(message);
+    });
+    socket.once("close", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`Voice test renderer closed during authentication (${code})`));
+    });
+  });
+  socket.send(JSON.stringify({
+    type: "auth.ticket",
+    version: BROWSER_TOOLS_PROTOCOL_VERSION,
+    ticket,
+    ...target,
+    contracts: browserRendererContracts(),
+  }));
+  const authenticated = await ready;
+  return {
+    socket,
+    ref: {
+      connection_id: String(authenticated.connection_id),
+      ...target,
+    },
+  };
+}
+
+async function closeBrowserRenderer(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.CLOSED) return;
+  const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+  socket.close(1000, "voice test complete");
+  await closed;
+}
+
+function parseNdjson(text: string): Record<string, unknown>[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 function installVoiceHostManagerStub(input: {
@@ -205,6 +285,8 @@ describe("voice bootstrap routes", () => {
     _setHostCodexManagerAgentStreamRunnerForTest();
     await shutdownHostShellManagerAgents();
     _forgetHostShellManagerAgentsForTest();
+    for (const socket of voiceBrowserRendererSockets) socket.terminate();
+    voiceBrowserRendererSockets.clear();
     await close(server);
     closeDb();
     if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
@@ -340,7 +422,7 @@ describe("voice bootstrap routes", () => {
     });
   });
 
-  it("does not reinterpret legacy HomeRail provider metadata as a Codex model", async () => {
+  it("preserves explicit provider-backed Codex metadata for runtime validation", async () => {
     const normalized = saveManagerAgentConfig({
       harness: "codex_appserver",
       llm_setting_id: "legacy-setting",
@@ -350,9 +432,9 @@ describe("voice bootstrap routes", () => {
 
     expect(normalized).toMatchObject({
       harness: "codex_appserver",
-      llm_setting_id: null,
-      provider_name: null,
-      model_name: null,
+      llm_setting_id: "legacy-setting",
+      provider_name: "legacy-provider",
+      model_name: "legacy-provider-model",
     });
   });
 
@@ -1753,7 +1835,7 @@ describe("voice bootstrap routes", () => {
         success: boolean;
         data: {
           ok: boolean;
-          results: Array<{ id: string; ok: boolean; reachable: boolean; status_code?: number }>;
+          results: Array<{ id: string; ok: boolean; reachable: boolean; status_code?: number; outcome?: string }>;
         };
       };
 
@@ -1762,13 +1844,324 @@ describe("voice bootstrap routes", () => {
       expect(body.data.ok).toBe(true);
       expect(body.data.results).toEqual([
         expect.objectContaining({ id: "asr_http", ok: true, reachable: true, status_code: 405 }),
-        expect.objectContaining({ id: "asr_realtime", ok: true, reachable: true }),
+        expect.objectContaining({ id: "asr_realtime", ok: true, reachable: true, outcome: "verified" }),
       ]);
       expect(httpProbeCalls).toBe(1);
     } finally {
       for (const client of websocket.clients) client.terminate();
       await closeWebSocket(websocket);
       await close(upstream);
+    }
+  });
+
+  it("retries POST-only transcription routes when HEAD returns 404", async () => {
+    let headProbeCalls = 0;
+    let postProbeCalls = 0;
+    let postProbeBody = "";
+    const upstream = http.createServer((req, res) => {
+      if (req.url === "/v1/audio/transcriptions" && req.method === "HEAD") {
+        headProbeCalls += 1;
+        res.writeHead(404).end();
+        return;
+      }
+      if (req.url === "/v1/audio/transcriptions" && req.method === "POST") {
+        postProbeCalls += 1;
+        req.setEncoding("utf8");
+        req.on("data", (chunk) => {
+          postProbeBody += chunk;
+        });
+        req.on("end", () => {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: { message: "No input file found for transcription" } }));
+        });
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    const upstreamPort = await listen(upstream);
+    const managerPort = await listen(server);
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${managerPort}/api/voice/endpoints/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoints: [{
+            id: "asr_http",
+            kind: "http",
+            url: `http://127.0.0.1:${upstreamPort}/v1/audio/transcriptions`,
+          }],
+        }),
+      });
+      const body = await response.json() as {
+        success: boolean;
+        data: {
+          ok: boolean;
+          results: Array<{ id: string; ok: boolean; reachable: boolean; status_code?: number; outcome?: string }>;
+        };
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(body.data.ok).toBe(true);
+      expect(body.data.results).toEqual([
+        expect.objectContaining({ id: "asr_http", ok: true, reachable: true, status_code: 400 }),
+      ]);
+      expect(headProbeCalls).toBe(1);
+      expect(postProbeCalls).toBe(1);
+      expect(postProbeBody).not.toContain("audio");
+    } finally {
+      await close(upstream);
+    }
+  });
+
+  it("never verifies realtime capability from pre-upgrade HTTP responses", async () => {
+    const statusByPath: Record<string, number> = {
+      "/realtime-401": 401,
+      "/realtime-403": 403,
+      "/realtime-404": 404,
+      "/realtime-405": 405,
+      "/realtime-400": 400,
+    };
+    const upstream = http.createServer((req, res) => {
+      const status = statusByPath[new URL(req.url ?? "/", "http://localhost").pathname] ?? 404;
+      res.writeHead(status).end();
+    });
+    upstream.on("upgrade", (req, socket) => {
+      const status = statusByPath[new URL(req.url ?? "/", "http://localhost").pathname] ?? 404;
+      socket.end(
+        `HTTP/1.1 ${status} ${http.STATUS_CODES[status] ?? "Error"}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+      );
+    });
+    const upstreamPort = await listen(upstream);
+    const verifiedRealtime = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    const verifiedPort = await listenWebSocket(verifiedRealtime);
+    const refusedPort = await findAvailableManagerAgentPort();
+    const managerPort = await listen(server);
+
+    try {
+      const probe = async (endpoints: Array<{ id: string; kind: "http" | "websocket"; url: string }>) => {
+        const response = await fetch(`http://127.0.0.1:${managerPort}/api/voice/endpoints/test`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoints }),
+        });
+        const body = await response.json() as {
+          success: boolean;
+          data: {
+            ok: boolean;
+            results: Array<{ id: string; ok: boolean; reachable: boolean; status_code?: number; outcome?: string }>;
+          };
+        };
+        expect(response.status).toBe(200);
+        expect(body.success).toBe(true);
+        return body.data;
+      };
+
+      const first = await probe([
+        { id: "ws_verified", kind: "websocket", url: `ws://127.0.0.1:${verifiedPort}/` },
+        { id: "ws_auth_401", kind: "websocket", url: `ws://127.0.0.1:${upstreamPort}/realtime-401` },
+        { id: "ws_auth_403", kind: "websocket", url: `ws://127.0.0.1:${upstreamPort}/realtime-403` },
+        { id: "ws_missing_404", kind: "websocket", url: `ws://127.0.0.1:${upstreamPort}/realtime-404` },
+      ]);
+      expect(first.ok).toBe(false);
+      expect(first.results).toEqual([
+        expect.objectContaining({ id: "ws_verified", ok: true, reachable: true, outcome: "verified" }),
+        expect.objectContaining({
+          id: "ws_auth_401",
+          ok: false,
+          reachable: true,
+          status_code: 401,
+          outcome: "authentication_required",
+        }),
+        expect.objectContaining({
+          id: "ws_auth_403",
+          ok: false,
+          reachable: true,
+          status_code: 403,
+          outcome: "authentication_required",
+        }),
+        expect.objectContaining({ id: "ws_missing_404", ok: false, reachable: true, status_code: 404, outcome: "not_found" }),
+      ]);
+
+      const second = await probe([
+        { id: "ws_missing_405", kind: "websocket", url: `ws://127.0.0.1:${upstreamPort}/realtime-405` },
+        { id: "ws_rejected_400", kind: "websocket", url: `ws://127.0.0.1:${upstreamPort}/realtime-400` },
+        { id: "ws_unreachable", kind: "websocket", url: `ws://127.0.0.1:${refusedPort}/v1/realtime` },
+        { id: "http_auth_401", kind: "http", url: `http://127.0.0.1:${upstreamPort}/realtime-401` },
+      ]);
+      expect(second.ok).toBe(false);
+      expect(second.results).toEqual([
+        expect.objectContaining({ id: "ws_missing_405", ok: false, reachable: true, status_code: 405, outcome: "not_found" }),
+        expect.objectContaining({ id: "ws_rejected_400", ok: false, reachable: true, status_code: 400, outcome: "rejected" }),
+        expect.objectContaining({ id: "ws_unreachable", ok: false, reachable: false, outcome: "unreachable" }),
+        expect.objectContaining({
+          id: "http_auth_401",
+          ok: true,
+          reachable: true,
+          status_code: 401,
+          outcome: "authentication_required",
+        }),
+      ]);
+    } finally {
+      for (const client of verifiedRealtime.clients) client.terminate();
+      await closeWebSocket(verifiedRealtime);
+      await close(upstream);
+    }
+  });
+
+  it("keeps the reporter's batch-only SenseVoice configuration on emulated_batch without a realtime URL", async () => {
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const seenRequests: string[] = [];
+    const upstream = http.createServer((req, res) => {
+      seenRequests.push(`${req.method} ${req.url}`);
+      if (req.method === "POST" && req.url === "/v1/audio/transcriptions") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ text: "sensevoice batch transcript" }));
+        return;
+      }
+      if (req.method === "HEAD" && req.url === "/v1/audio/transcriptions") {
+        res.writeHead(405, { Allow: "POST" });
+        res.end();
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    const upstreamPort = await listen(upstream);
+
+    try {
+      upsertProvider({
+        id: "sensevoice-local",
+        name: "SenseVoice Local",
+        default_model: "SenseVoiceSmall",
+        base_url: `http://127.0.0.1:${upstreamPort}/v1`,
+        supports_llm: false,
+        supports_asr: true,
+        supports_audio_input: true,
+      });
+      const setting = createSetting({
+        provider_id: "sensevoice-local",
+        model_name: "SenseVoiceSmall",
+        api_key: "local-no-key",
+        base_url: `http://127.0.0.1:${upstreamPort}/v1`,
+        supports_llm: false,
+        supports_asr: true,
+        supports_audio_input: true,
+      });
+      expect(setting.asr_realtime_url).toBeUndefined();
+      await fetch(`${baseUrl}/api/voice`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ asr_llm_setting_id: setting.id }),
+      });
+
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/voice/asr/realtime`);
+      const done = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("timed out waiting for ASR done")), 5_000);
+        ws.on("open", () => {
+          ws.send(Buffer.from([0, 0, 12, 0, 24, 0, 12, 0]));
+          ws.send(JSON.stringify({ type: "finish" }));
+        });
+        ws.on("message", (data) => {
+          const event = JSON.parse(data.toString()) as Record<string, unknown>;
+          if (event.type === "error") {
+            clearTimeout(timer);
+            reject(new Error(String(event.error)));
+          }
+          if (event.type === "transcription.done") {
+            clearTimeout(timer);
+            resolve(event);
+          }
+        });
+        ws.on("error", (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      }).finally(() => ws.close());
+
+      expect(done).toMatchObject({
+        type: "transcription.done",
+        strategy: "emulated_batch",
+        text: "sensevoice batch transcript",
+        transcript: "sensevoice batch transcript",
+      });
+      expect(seenRequests).toContain("POST /v1/audio/transcriptions");
+      expect(seenRequests.some((entry) => entry.includes("/v1/realtime"))).toBe(false);
+    } finally {
+      await close(upstream);
+    }
+  });
+
+  it("keeps native_realtime for an explicit external realtime URL under existing provider rules", async () => {
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    const upstreamPort = await listenWebSocket(upstream);
+    const upstreamHeaders: http.IncomingHttpHeaders[] = [];
+    const upstreamMessages: Array<Record<string, unknown>> = [];
+    upstream.on("connection", (socket, req) => {
+      upstreamHeaders.push(req.headers);
+      socket.on("message", (data) => {
+        upstreamMessages.push(JSON.parse(data.toString()) as Record<string, unknown>);
+      });
+    });
+
+    try {
+      upsertProvider({
+        id: "explicit-realtime-test",
+        name: "Explicit Realtime Test",
+        default_model: "qwen3-asr-realtime",
+        base_url: "http://voice.test/v1",
+        supports_llm: false,
+        supports_asr: true,
+        supports_audio_input: true,
+      });
+      const setting = createSetting({
+        provider_id: "explicit-realtime-test",
+        model_name: "qwen3-asr-realtime",
+        api_key: "explicit-realtime-secret",
+        base_url: "http://voice.test/v1",
+        asr_realtime_url: `ws://127.0.0.1:${upstreamPort}/v1/realtime`,
+        supports_llm: false,
+        supports_asr: true,
+        supports_audio_input: true,
+      });
+      await fetch(`${baseUrl}/api/voice`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ asr_llm_setting_id: setting.id }),
+      });
+
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/voice/asr/realtime`);
+      const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("timed out waiting for realtime ready")), 5_000);
+        ws.on("message", (data) => {
+          const event = JSON.parse(data.toString()) as Record<string, unknown>;
+          if (event.type === "error") {
+            clearTimeout(timer);
+            reject(new Error(String(event.error)));
+          }
+          if (event.type === "ready") {
+            clearTimeout(timer);
+            resolve(event);
+          }
+        });
+        ws.on("error", (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      }).finally(() => ws.close());
+
+      expect(ready).toMatchObject({ type: "ready" });
+      await vi.waitFor(() => expect(upstreamMessages).toHaveLength(2));
+      expect(upstreamHeaders).toHaveLength(1);
+      expect(upstreamHeaders[0].authorization).toBe("Bearer explicit-realtime-secret");
+      expect(upstreamMessages[0]).toMatchObject({ type: "session.update", model: "qwen3-asr-realtime" });
+      expect(upstreamMessages[1]).toMatchObject({ type: "input_audio_buffer.commit" });
+    } finally {
+      for (const client of upstream.clients) client.terminate();
+      await closeWebSocket(upstream);
     }
   });
 
@@ -2256,7 +2649,7 @@ describe("voice bootstrap routes", () => {
     }
   });
 
-  it("emulates realtime ASR over the backend WebSocket for a configured MiMo ASR setting", async () => {
+  it("accepts the initial emulated realtime ASR utterance without a start frame", async () => {
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}`;
     await fetch(`${baseUrl}/api/llm-settings`, {
@@ -3398,6 +3791,175 @@ describe("voice bootstrap routes", () => {
     expect(body.data.manager.text).not.toBe("当前 TS Manager 已记录确认；真实执行请通过 DAG 或后续 harness 接入。");
     expect(body.data.workspace.progress_brief.status).toBe("done");
     expect(body.data.workspace.debug_events).not.toContainEqual(expect.objectContaining({ code: "manager_agent_unavailable" }));
+  });
+
+  it("pins a regular confirmation to its renderer and rejects the stale target without running Manager Agent", async () => {
+    const inputs: HostCodexManagerAgentInput[] = [];
+    _setHostCodexManagerAgentRunnerForTest(async (input) => {
+      inputs.push(input);
+      return {
+        text: "renderer-bound confirmation complete",
+        spoken_text: "确认完成。",
+        session_id: input.session_id || "host-session-renderer-confirm",
+        run_id: null,
+        run_ids: [],
+        objective: { required: false, satisfied: true, tool_calls: [] },
+        tool_calls: [],
+        tool_results: [],
+        worker_id: "host-codex",
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5", reasoning_effort: "low" }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    const renderer = await connectBrowserRenderer(port, {
+      ui_session_id: "voice-ui-session-regular",
+      tab_id: "voice-tab-regular",
+      navigation_id: "voice-navigation-regular",
+    });
+    const confirmationUrl = `${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/confirm`;
+
+    const confirmed = await fetch(confirmationUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirmation_id: "submit-task",
+        browser_tools_transport: "renderer",
+        browser_tools_target: renderer.ref,
+      }),
+    });
+    const confirmedBody = await confirmed.json() as { success: boolean };
+    expect(confirmed.status).toBe(200);
+    expect(confirmedBody.success).toBe(true);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({
+      browser_tools_transport: "renderer",
+      browser_tools_target: renderer.ref,
+    });
+
+    await closeBrowserRenderer(renderer.socket);
+    await vi.waitFor(() => {
+      expect(getBrowserRendererToolsBroker()?.connection(renderer.ref.connection_id)).toBeNull();
+    });
+    await connectBrowserRenderer(port, {
+      ui_session_id: renderer.ref.ui_session_id,
+      tab_id: renderer.ref.tab_id,
+      navigation_id: "voice-navigation-regular-replacement",
+    });
+    const stale = await fetch(confirmationUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirmation_id: "submit-task",
+        browser_tools_transport: "renderer",
+        browser_tools_target: renderer.ref,
+      }),
+    });
+    const staleBody = await stale.json() as { error?: string };
+    expect(stale.status).toBe(400);
+    expect(staleBody.error).toMatch(/stale or unavailable/);
+    expect(inputs).toHaveLength(1);
+  });
+
+  it("pins a streaming confirmation to its renderer and streams an error for a stale target", async () => {
+    const inputs: HostCodexManagerAgentInput[] = [];
+    _setHostCodexManagerAgentStreamRunnerForTest(async function* (input) {
+      inputs.push(input);
+      yield {
+        type: "result",
+        result: {
+          text: "streamed renderer-bound confirmation complete",
+          spoken_text: "流式确认完成。",
+          session_id: input.session_id || "host-session-renderer-confirm-stream",
+          run_id: null,
+          run_ids: [],
+          objective: { required: false, satisfied: true, tool_calls: [] },
+          tool_calls: [],
+          tool_results: [],
+          worker_id: "host-codex",
+        },
+      };
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await fetch(`${baseUrl}/api/voice-agent/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harness: "codex_appserver", model_name: "gpt-5.5", reasoning_effort: "low" }),
+    });
+    const created = await fetch(`${baseUrl}/api/voice-agent/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const createdBody = await created.json() as { data: { session_id: string } };
+    const renderer = await connectBrowserRenderer(port, {
+      ui_session_id: "voice-ui-session-stream",
+      tab_id: "voice-tab-stream",
+      navigation_id: "voice-navigation-stream",
+    });
+    const confirmationUrl = `${baseUrl}/api/voice-agent/sessions/${createdBody.data.session_id}/confirm/stream`;
+
+    const confirmed = await fetch(confirmationUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirmation_id: "submit-task",
+        browser_tools_transport: "renderer",
+        browser_tools_target: renderer.ref,
+      }),
+    });
+    const confirmedText = await confirmed.text();
+    const confirmedEvents = parseNdjson(confirmedText);
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.headers.get("content-type")).toContain("application/x-ndjson");
+    expect(confirmedEvents).toContainEqual(expect.objectContaining({ type: "done" }));
+    expect(confirmedEvents).not.toContainEqual(expect.objectContaining({ type: "error" }));
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({
+      browser_tools_transport: "renderer",
+      browser_tools_target: renderer.ref,
+    });
+
+    await closeBrowserRenderer(renderer.socket);
+    await vi.waitFor(() => {
+      expect(getBrowserRendererToolsBroker()?.connection(renderer.ref.connection_id)).toBeNull();
+    });
+    await connectBrowserRenderer(port, {
+      ui_session_id: renderer.ref.ui_session_id,
+      tab_id: renderer.ref.tab_id,
+      navigation_id: "voice-navigation-stream-replacement",
+    });
+    const stale = await fetch(confirmationUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirmation_id: "submit-task",
+        browser_tools_transport: "renderer",
+        browser_tools_target: renderer.ref,
+      }),
+    });
+    const staleText = await stale.text();
+    const staleEvents = parseNdjson(staleText);
+    expect(stale.status).toBe(200);
+    expect(staleEvents).toContainEqual(expect.objectContaining({
+      type: "error",
+      message: expect.stringMatching(/stale or unavailable/),
+    }));
+    expect(staleEvents).not.toContainEqual(expect.objectContaining({ phase: "accepted" }));
+    expect(staleEvents).not.toContainEqual(expect.objectContaining({ type: "done" }));
+    expect(staleText).toMatch(/stale or unavailable/);
+    expect(inputs).toHaveLength(1);
   });
 
   // ── P1 回归：同 session 并发 turn 不能丢消息 ──────────────────────────

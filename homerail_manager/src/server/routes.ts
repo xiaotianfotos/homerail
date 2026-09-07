@@ -178,6 +178,56 @@ function _buildNodeDetail(metadata: PersistedRunMetadata, nodeId: string) {
   };
 }
 
+/**
+ * Result kinds mirror the runtime node_type so the UI can pick a default
+ * human-readable renderer per kind instead of inspecting free-form payloads.
+ */
+function _nodeResultKind(nodeType: string): string {
+  if (nodeType.endsWith("_gateway")) return nodeType.slice(0, -"_gateway".length);
+  return "worker";
+}
+
+function _buildNodeResult(snapshot: PersistedRunSnapshot, nodeId: string) {
+  const metadata = snapshot.metadata;
+  const node = metadata.graph?.nodes.find((n) => n.node_id === nodeId);
+  if (!node && !(nodeId in metadata.nodeStates)) return undefined;
+  const nodeType = node?.node_type || "agent";
+  const resultKind = _nodeResultKind(nodeType);
+  const handoffs = snapshot.handoffs
+    .filter((record) => record.fromNode === nodeId)
+    .map((record) => ({
+      port: record.port,
+      content: record.content ?? null,
+      timestamp: new Date(record.timestamp).toISOString(),
+      ...(record.roundId === undefined ? {} : { round_id: record.roundId }),
+    }));
+  const latest = handoffs[handoffs.length - 1] ?? null;
+  // Command nodes may hand off only the parsed value (result_payload: "value").
+  // The redacted full envelope is always available on the telemetry event.
+  // 从尾部线性扫描：不复制整个事件数组，长跑 run（上万事件）下每次请求零额外分配
+  let telemetry: Record<string, unknown> | undefined;
+  if (resultKind === "command") {
+    for (let i = snapshot.events.length - 1; i >= 0; i -= 1) {
+      const entry = snapshot.events[i];
+      if (entry.type !== "dag:deterministic_command") continue;
+      if ((entry.payload as Record<string, unknown>).nodeId !== nodeId) continue;
+      const { runId: _runId, nodeId: _nodeId, ...rest } = entry.payload as Record<string, unknown>;
+      telemetry = rest;
+      break;
+    }
+  }
+  return {
+    node_id: nodeId,
+    node_name: node?.name || nodeId,
+    node_type: nodeType,
+    result_kind: resultKind,
+    status: _nodeStatus(metadata, nodeId),
+    latest,
+    handoffs,
+    ...(telemetry === undefined ? {} : { telemetry }),
+  };
+}
+
 function _normalizeEvent(event: PersistedEvent) {
   const payload = event.payload as unknown as Record<string, unknown>;
   const rawType = event.type;
@@ -881,8 +931,25 @@ export function inspectionRoutesHandler(
       json(res, 400, { success: false, message: "Invalid encoded run ID", error: "Invalid encoded run ID" });
       return true;
     }
-    if (!runId || !loadRunMetadata(runId)) {
+    const metadata = runId ? loadRunMetadata(runId) : null;
+    if (!runId || !metadata) {
       _notFound(res, runId ? `Run not found: ${runId}` : "Invalid run ID");
+      return true;
+    }
+    const runStatus = typeof metadata.status === "string" ? metadata.status : "";
+    // Once a run reaches a terminal state other than `completed`, its live
+    // surface is no longer the active canvas owner. Return an empty surface so
+    // the frontend's `available` flag flips false and the canonical view can
+    // mount after a committed block. `completed` keeps the surface so the last
+    // DAG result stays visible.
+    if (isTerminalDagRunStatus(runStatus) && runStatus !== "completed") {
+      _ok(res, `Live surfaces released (run ${runStatus})`, {
+        run_id: runId,
+        run_status: runStatus,
+        projections: [],
+        surface_states: [],
+        document: null,
+      });
       return true;
     }
     const projections = listDagLiveSurfaceProjections(runId);
@@ -909,6 +976,7 @@ export function inspectionRoutesHandler(
     });
     _ok(res, `Live surfaces retrieved (${projections.length} actors)`, {
       run_id: runId,
+      run_status: runStatus || null,
       projections,
       surface_states: surfaceStates,
       document: document
@@ -1270,6 +1338,38 @@ export function inspectionRoutesHandler(
       messages,
       total: messages.length,
     });
+    return true;
+  }
+
+  // GET /api/dag-status/:run_id/node/:node_id/result
+  if (pathname.match(/^\/api\/dag-status\/[^/]+\/node\/[^/]+\/result$/) && req.method === "GET") {
+    const parts = pathname.split("/");
+    let runId: string;
+    let nodeId: string;
+    try {
+      // 路径正则只按 / 分段，畸形 percent-encoding（如 %ZZ）会让 decodeURIComponent
+      // 抛 URIError；统一按 404 处理而不是冒泡成 500
+      runId = decodeURIComponent(parts[3]);
+      nodeId = decodeURIComponent(parts[5]);
+    } catch {
+      _notFound(res, "Invalid run or node ID");
+      return true;
+    }
+    if (!runId || !nodeId) {
+      _notFound(res, "Invalid run or node ID");
+      return true;
+    }
+    const snapshot = loadRunSnapshot(runId);
+    if (!snapshot) {
+      _notFound(res, `Run not found: ${runId}`);
+      return true;
+    }
+    const result = _buildNodeResult(snapshot, nodeId);
+    if (!result) {
+      _notFound(res, `Node not found: ${nodeId}`);
+      return true;
+    }
+    _ok(res, `Node result retrieved (${result.handoffs.length} handoffs)`, result);
     return true;
   }
 

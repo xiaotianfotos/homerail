@@ -60,6 +60,6 @@ export class DeterministicClient implements AgentClient {
       is_error: result.is_error === true,
     };
 
-    yield { type: "done" };
+    yield { type: "done", finish_reason: "tool_use" };
   }
 }

@@ -232,10 +232,12 @@ const existingManagerAgentSettings = computed(() => existingSettings.value.filte
 
 function harnessForManagerAgentSetting(
   setting: LLMSetting,
-  detectedHarness?: Extract<ManagerAgentHarness, 'claude_agent_sdk' | 'kimi_code'>,
-): 'kimi_code' | 'claude_agent_sdk' {
+  detectedHarness?: Extract<ManagerAgentHarness, 'codex_appserver' | 'claude_agent_sdk' | 'kimi_code'>,
+): 'codex_appserver' | 'kimi_code' | 'claude_agent_sdk' {
   if (detectedHarness) return detectedHarness
-  // Persisted dual-protocol settings prefer Claude, matching runtime detection.
+  // The Manager owns provider/model capability policy; a Responses URL alone
+  // does not mean every model on that endpoint is supported by Codex.
+  if (setting.supports_codex_responses === true) return 'codex_appserver'
   if (setting.anthropic_base_url || setting.protocol === 'anthropic_compatible') {
     return 'claude_agent_sdk'
   }
@@ -251,7 +253,7 @@ function harnessForManagerAgentSetting(
 
 async function configureManagerAgentSetting(
   setting: LLMSetting,
-  detectedHarness?: Extract<ManagerAgentHarness, 'claude_agent_sdk' | 'kimi_code'>,
+  detectedHarness?: Extract<ManagerAgentHarness, 'codex_appserver' | 'claude_agent_sdk' | 'kimi_code'>,
 ): Promise<void> {
   const harness = harnessForManagerAgentSetting(setting, detectedHarness)
   await agentSettingsApi.updateVoiceAgentConfig({
@@ -264,7 +266,7 @@ async function configureManagerAgentSetting(
 
 async function activateCreatedManagerAgentSetting(
   setting: LLMSetting,
-  detectedHarness?: Extract<ManagerAgentHarness, 'claude_agent_sdk' | 'kimi_code'>,
+  detectedHarness?: Extract<ManagerAgentHarness, 'codex_appserver' | 'claude_agent_sdk' | 'kimi_code'>,
 ): Promise<void> {
   if (currentStep.value.id !== 'agent' || !isDedicatedManagerAgentSetting(setting)) return
   await configureManagerAgentSetting(setting, detectedHarness)
@@ -418,7 +420,7 @@ watch(activePane, (pane) => {
               >
                 <span>
                   <strong>{{ setting.display_name || setting.model_name }}</strong>
-                  <em>{{ harnessForManagerAgentSetting(setting) === 'kimi_code' ? 'Kimi Code' : 'Claude Code' }} · {{ setting.model_name }}</em>
+                  <em>{{ harnessForManagerAgentSetting(setting) === 'codex_appserver' ? 'Codex' : harnessForManagerAgentSetting(setting) === 'kimi_code' ? 'Kimi Code' : 'Claude Code' }} · {{ setting.model_name }}</em>
                 </span>
                 <span class="onboarding-wizard__existing-action">
                   {{ applyingExistingAgentId === setting.id ? t('onboarding.runtime.switching') : t('onboarding.runtime.use') }}

@@ -518,7 +518,7 @@ nodes:
     });
   });
 
-  it("provisions a run-scoped worker instead of reusing generic workers for isolated workspaces", async () => {
+  it("provisions an isolated run-scoped worker without sending empty workspace inputs", async () => {
     const genericSocket = makeSocket();
     const nodeSocket = makeSocket();
     const created: Array<{
@@ -527,6 +527,8 @@ nodes:
       image?: string;
       workspace?: Record<string, unknown>;
       workspaceReadOnly?: boolean;
+      workspaceInputs?: unknown[];
+      codexNestedSandbox?: boolean;
     }> = [];
     registerWorker({
       worker_id: "generic-worker",
@@ -558,6 +560,8 @@ nodes:
             image: opts.image,
             workspace: opts.workspace,
             workspaceReadOnly: opts.workspaceReadOnly,
+            workspaceInputs: opts.workspaceInputs,
+            codexNestedSandbox: opts.codexNestedSandbox,
           });
           return { status: "success", resource_data: { id: "container-1" } };
         },
@@ -587,9 +591,109 @@ nodes:
           image: "custom-worker:v2",
           workspace: { mode: "isolated" },
           workspaceReadOnly: true,
+          workspaceInputs: undefined,
+          codexNestedSandbox: false,
         },
       ]);
     });
+  });
+
+  it("mounts a sole writable path without making sibling worktrees writable", async () => {
+    const nodeSocket = makeSocket();
+    registerNode({
+      node_id: "docker-node",
+      project_id: "p1",
+      socket: nodeSocket,
+      status: "connected",
+      capabilities: ["docker-cli"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+      pending_requests: new Map(),
+    });
+    const requested: Array<{ readOnly?: boolean; subpath?: string; gitMetadataReadOnly?: boolean }> = [];
+    new WsDispatchAdapter({
+      managerBaseUrl: "http://127.0.0.1:19191",
+      provisioner: {
+        createFn: async (_nodeId, _workspaceId, opts) => {
+          requested.push({
+            readOnly: opts.workspaceReadOnly,
+            subpath: opts.workspaceWritableSubpath,
+            gitMetadataReadOnly: opts.workspaceGitMetadataReadOnly,
+          });
+          return { status: "success", resource_data: { id: "isolated-container" } };
+        },
+        startFn: async () => ({ status: "success" }),
+        runtimeStatusFn: async () => ({
+          worker_ids: ["provisioned-run-capabilities-diagnose"],
+        }),
+      },
+    }).dispatch(makeEnvelope({
+      workspaceAccess: {
+        writable_paths: ["fixers/fix/inv_0001/item_0001"],
+        readonly_paths: ["input"],
+        git_metadata_read_only: true,
+      },
+    }));
+
+    await vi.waitFor(() => {
+      expect(requested).toEqual([{
+        readOnly: true,
+        subpath: "fixers/fix/inv_0001/item_0001",
+        gitMetadataReadOnly: true,
+      }]);
+    });
+  });
+
+  it("requests the nested sandbox profile only for backend-native Codex Workers", async () => {
+    const nodeSocket = makeSocket();
+    registerNode({
+      node_id: "codex-sandbox-node",
+      project_id: "p1",
+      socket: nodeSocket,
+      status: "connected",
+      capabilities: ["docker-cli"],
+      registered_at: Date.now(),
+      last_heartbeat: Date.now(),
+      pending_requests: new Map(),
+    });
+
+    const requested: boolean[] = [];
+    const adapter = new WsDispatchAdapter({
+      managerBaseUrl: "http://127.0.0.1:19191",
+      provisioner: {
+        createFn: async (_nodeId, _workspaceId, opts) => {
+          requested.push(opts.codexNestedSandbox === true);
+          return { status: "success", resource_data: { id: `container-${requested.length}` } };
+        },
+        startFn: async () => ({ status: "success" }),
+        runtimeStatusFn: async () => ({ worker_ids: [] }),
+        registrationTimeoutMs: 1,
+      },
+    });
+
+    adapter.dispatch(makeEnvelope({
+      runId: "run-codex-native",
+      nodeId: "codex-native",
+      agentConfig: { agent_type: "codex_appserver" },
+      builtinToolPolicy: "backend_native",
+      workspaceAccess: { writable_paths: ["repository"] },
+    }));
+    adapter.dispatch(makeEnvelope({
+      runId: "run-codex-exact",
+      nodeId: "codex-exact",
+      agentConfig: { agent_type: "codex_appserver" },
+      allowedBuiltinTools: ["read_file"],
+      workspaceAccess: { writable_paths: ["repository"] },
+    }));
+    adapter.dispatch(makeEnvelope({
+      runId: "run-claude-native",
+      nodeId: "claude-native",
+      agentConfig: { agent_type: "claude-sdk" },
+      builtinToolPolicy: "backend_native",
+      workspaceAccess: { writable_paths: ["repository"] },
+    }));
+
+    await vi.waitFor(() => expect(requested).toEqual([true, false, false]));
   });
 
   it("provisions through a docker-api Node before waiting for a capability-matched Worker", async () => {

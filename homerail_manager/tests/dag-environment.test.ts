@@ -51,6 +51,8 @@ function fingerprintFixture(): string {
   tempDirs.push(repoRoot);
   const files: Record<string, string> = {
     "homerail_worker/Dockerfile": "FROM node:22\n",
+    "homerail_worker/native/codex-secret-guard.c": "int homerail_guard(void) { return 0; }\n",
+    "homerail_worker/scripts/configure-apt-sources.mjs": "export const configureAptSources = true;\n",
     "homerail_worker/package.json": JSON.stringify({
       name: "homerail-worker",
       version: "0.1.0-alpha.1",
@@ -66,6 +68,7 @@ function fingerprintFixture(): string {
       },
     }),
     "homerail_worker/tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+    "homerail_worker/dsh/homerail.cordis.yml": "name: homerail-dsh-test\n",
     "homerail_worker/src/index.ts": "export const worker = true;\n",
     "homerail_protocol/package.json": JSON.stringify({
       name: "homerail-protocol",
@@ -81,6 +84,84 @@ function fingerprintFixture(): string {
     }),
     "homerail_protocol/tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
     "homerail_protocol/src/index.ts": "export const contract = 1;\n",
+    "homerail_plugin_sdk/package.json": JSON.stringify({
+      name: "homerail-plugin-sdk",
+      version: "0.1.0-alpha.1",
+      dependencies: { "homerail-protocol": "file:../homerail_protocol" },
+    }),
+    "homerail_plugin_sdk/package-lock.json": JSON.stringify({
+      name: "homerail-plugin-sdk",
+      version: "0.1.0-alpha.1",
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "homerail-plugin-sdk", version: "0.1.0-alpha.1" },
+        "../homerail_protocol": { name: "homerail-protocol", version: "0.1.0-alpha.1" },
+      },
+    }),
+    "homerail_manager/package.json": JSON.stringify({
+      name: "homerail-manager",
+      version: "0.1.0-alpha.1",
+      dependencies: {
+        "homerail-plugin-sdk": "file:../homerail_plugin_sdk",
+        "homerail-protocol": "file:../homerail_protocol",
+      },
+    }),
+    "homerail_manager/package-lock.json": JSON.stringify({
+      name: "homerail-manager",
+      version: "0.1.0-alpha.1",
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "homerail-manager", version: "0.1.0-alpha.1" },
+        "../homerail_plugin_sdk": { name: "homerail-plugin-sdk", version: "0.1.0-alpha.1" },
+        "../homerail_protocol": { name: "homerail-protocol", version: "0.1.0-alpha.1" },
+      },
+    }),
+    "homerail_node/package.json": JSON.stringify({
+      name: "homerail-node",
+      version: "0.1.0-alpha.1",
+      dependencies: { "homerail-protocol": "file:../homerail_protocol" },
+    }),
+    "homerail_node/package-lock.json": JSON.stringify({
+      name: "homerail-node",
+      version: "0.1.0-alpha.1",
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "homerail-node", version: "0.1.0-alpha.1" },
+        "../homerail_protocol": { name: "homerail-protocol", version: "0.1.0-alpha.1" },
+      },
+    }),
+    "homerail_cli/package.json": JSON.stringify({
+      name: "homerail-cli",
+      version: "0.1.0-alpha.1",
+      dependencies: {
+        "homerail-plugin-sdk": "file:../homerail_plugin_sdk",
+        "homerail-protocol": "file:../homerail_protocol",
+      },
+    }),
+    "homerail_cli/package-lock.json": JSON.stringify({
+      name: "homerail-cli",
+      version: "0.1.0-alpha.1",
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "homerail-cli", version: "0.1.0-alpha.1" },
+        "../homerail_plugin_sdk": { name: "homerail-plugin-sdk", version: "0.1.0-alpha.1" },
+        "../homerail_protocol": { name: "homerail-protocol", version: "0.1.0-alpha.1" },
+      },
+    }),
+    "agent-ui/package.json": JSON.stringify({
+      name: "homerail-agent-ui",
+      version: "0.1.0-alpha.1",
+      dependencies: { "homerail-protocol": "file:../homerail_protocol" },
+    }),
+    "agent-ui/package-lock.json": JSON.stringify({
+      name: "homerail-agent-ui",
+      version: "0.1.0-alpha.1",
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "homerail-agent-ui", version: "0.1.0-alpha.1" },
+        "../homerail_protocol": { name: "homerail-protocol", version: "0.1.0-alpha.1" },
+      },
+    }),
   };
   for (const [relativePath, content] of Object.entries(files)) {
     const target = path.join(repoRoot, relativePath);
@@ -141,6 +222,16 @@ it("ignores release-only package metadata in the Worker source fingerprint", () 
     "homerail_worker/package-lock.json",
     "homerail_protocol/package.json",
     "homerail_protocol/package-lock.json",
+    "homerail_plugin_sdk/package.json",
+    "homerail_plugin_sdk/package-lock.json",
+    "homerail_manager/package.json",
+    "homerail_manager/package-lock.json",
+    "homerail_node/package.json",
+    "homerail_node/package-lock.json",
+    "homerail_cli/package.json",
+    "homerail_cli/package-lock.json",
+    "agent-ui/package.json",
+    "agent-ui/package-lock.json",
   ]) {
     const filePath = path.join(repoRoot, relativePath);
     const metadata = JSON.parse(fs.readFileSync(filePath, "utf8")) as {
@@ -151,6 +242,9 @@ it("ignores release-only package metadata in the Worker source fingerprint", () 
     if (metadata.packages?.[""]) metadata.packages[""].version = "0.1.0-beta.99";
     if (metadata.packages?.["../homerail_protocol"]) {
       metadata.packages["../homerail_protocol"].version = "0.1.0-beta.99";
+    }
+    if (metadata.packages?.["../homerail_plugin_sdk"]) {
+      metadata.packages["../homerail_plugin_sdk"].version = "0.1.0-beta.99";
     }
     fs.writeFileSync(filePath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
   }
@@ -169,6 +263,28 @@ it("changes the Worker source fingerprint when build-relevant content changes", 
   expect(dagWorkerSourceFingerprint(repoRoot)).not.toBe(original);
 });
 
+it("changes the Worker source fingerprint when the DSH composition changes", () => {
+  const repoRoot = fingerprintFixture();
+  const original = dagWorkerSourceFingerprint(repoRoot);
+  fs.appendFileSync(
+    path.join(repoRoot, "homerail_worker", "dsh", "homerail.cordis.yml"),
+    "changed: true\n",
+  );
+
+  expect(dagWorkerSourceFingerprint(repoRoot)).not.toBe(original);
+});
+
+it("changes the Worker source fingerprint when the native secret guard changes", () => {
+  const repoRoot = fingerprintFixture();
+  const original = dagWorkerSourceFingerprint(repoRoot);
+  fs.appendFileSync(
+    path.join(repoRoot, "homerail_worker", "native", "codex-secret-guard.c"),
+    "int homerail_guard_changed(void) { return 1; }\n",
+  );
+
+  expect(dagWorkerSourceFingerprint(repoRoot)).not.toBe(original);
+});
+
 it("changes the Worker source fingerprint when build dependencies change", () => {
   const repoRoot = fingerprintFixture();
   const original = dagWorkerSourceFingerprint(repoRoot);
@@ -177,6 +293,32 @@ it("changes the Worker source fingerprint when build dependencies change", () =>
     dependencies: Record<string, string>;
   };
   metadata.dependencies.zod = "^4.0.0";
+  fs.writeFileSync(packagePath, JSON.stringify(metadata), "utf8");
+
+  expect(dagWorkerSourceFingerprint(repoRoot)).not.toBe(original);
+});
+
+it("changes the Worker source fingerprint when projected Node dependencies change", () => {
+  const repoRoot = fingerprintFixture();
+  const original = dagWorkerSourceFingerprint(repoRoot);
+  const packagePath = path.join(repoRoot, "homerail_node", "package.json");
+  const metadata = JSON.parse(fs.readFileSync(packagePath, "utf8")) as {
+    dependencies: Record<string, string>;
+  };
+  metadata.dependencies.dockerode = "^6.0.0";
+  fs.writeFileSync(packagePath, JSON.stringify(metadata), "utf8");
+
+  expect(dagWorkerSourceFingerprint(repoRoot)).not.toBe(original);
+});
+
+it("changes the Worker source fingerprint when projected Agent UI dependencies change", () => {
+  const repoRoot = fingerprintFixture();
+  const original = dagWorkerSourceFingerprint(repoRoot);
+  const packagePath = path.join(repoRoot, "agent-ui", "package.json");
+  const metadata = JSON.parse(fs.readFileSync(packagePath, "utf8")) as {
+    dependencies: Record<string, string>;
+  };
+  metadata.dependencies.vue = "^4.0.0";
   fs.writeFileSync(packagePath, JSON.stringify(metadata), "utf8");
 
   expect(dagWorkerSourceFingerprint(repoRoot)).not.toBe(original);
@@ -886,4 +1028,286 @@ it("checks immediately and then at the configured monitoring interval", async ()
   await vi.advanceTimersByTimeAsync(1_000);
   await vi.waitFor(() => expect(versionChecks).toBe(2));
   controller.stopMonitoring();
+});
+
+function readyDockerRunner(fingerprint: string): {
+  runner: DagEnvironmentCommandRunner;
+  markBuilt: () => void;
+} {
+  let built = false;
+  const runner: DagEnvironmentCommandRunner = vi.fn(async (_command, args) => {
+    if (args[0] === "version") return dockerVersion();
+    if (args[0] === "info") return dockerInfo();
+    if (args[1] === "ls") {
+      return {
+        stdout: built
+          ? JSON.stringify({ Repository: "homerail-worker", Tag: "latest", Labels: `${HOMERAIL_WORKER_SOURCE_LABEL}=${fingerprint}` })
+          : "",
+        stderr: "",
+      };
+    }
+    if (args[1] === "inspect" && built) return imageInspection(fingerprint);
+    if (args[1] === "inspect") throw new Error("No such image");
+    throw new Error(`Unexpected Docker arguments: ${args.join(" ")}`);
+  });
+  return { runner, markBuilt: () => { built = true; } };
+}
+
+function buildChild() {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const child = Object.assign(new EventEmitter(), {
+    stdout,
+    stderr,
+    kill: vi.fn(() => true),
+  });
+  return { child, stdout };
+}
+
+it("forwards validated build-network sources and proxy names to the Docker build", async () => {
+  const fingerprint = dagWorkerSourceFingerprint(currentRepoRoot())!;
+  const { runner, markBuilt } = readyDockerRunner(fingerprint);
+  const { child, stdout } = buildChild();
+  const spawnImpl = vi.fn(() => child as never);
+  const persistedPath = statusPath();
+  const controller = new DagEnvironmentController({
+    commandRunner: runner,
+    spawnImpl,
+    repoRoot: currentRepoRoot(),
+    statusPath: persistedPath,
+    env: {
+      HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://mirrors.example.com/debian/",
+      HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://registry.example.com",
+      HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.example.com/deepseek-harness.git",
+      HTTPS_PROXY: "http://proxy.internal:3128",
+      http_proxy: "",
+    },
+  });
+
+  controller.startBuild();
+
+  await vi.waitFor(() => expect(spawnImpl).toHaveBeenCalledTimes(1));
+  const args = spawnImpl.mock.calls[0]?.[1] as string[];
+  const options = spawnImpl.mock.calls[0]?.[2] as { env: Record<string, string | undefined> };
+  expect(args).toEqual(expect.arrayContaining([
+    "--build-arg", "HOMERAIL_WORKER_BUILD_APT_MIRROR=https://mirrors.example.com/debian",
+    "--build-arg", "NPM_CONFIG_REGISTRY=https://registry.example.com",
+    "--build-arg", "HOMERAIL_DSH_FORK_REPOSITORY=https://git.example.com/deepseek-harness.git",
+    "--build-arg", "HTTPS_PROXY",
+  ]));
+  // The trailing-slash variant must normalize to the same argument value.
+  expect(args.join("\u0000")).not.toContain("debian/\u0000");
+  expect(args).not.toContain("http_proxy");
+  // Proxy arguments carry names only; values remain in the child environment.
+  const proxyIndex = args.indexOf("HTTPS_PROXY");
+  expect(proxyIndex).toBeGreaterThan(0);
+  expect(args[proxyIndex - 1]).toBe("--build-arg");
+  expect(args[proxyIndex + 1]).not.toContain("proxy.internal");
+  expect(args.join("\u0000")).not.toContain("proxy.internal");
+  expect(options.env.HTTPS_PROXY).toBe("http://proxy.internal:3128");
+  expect(options.env.DOCKER_BUILDKIT).toBe("1");
+
+  markBuilt();
+  stdout.write("step one\n");
+  child.emit("close", 0, null);
+  await vi.waitFor(() => expect(controller.getStatus().worker_image.status).toBe("ready"));
+
+  const status = controller.getStatus();
+  expect(status.worker_image.build_network).toEqual({
+    apt_main: "custom",
+    apt_security: "default",
+    npm: "custom",
+    dsh_git: "custom",
+    proxy: "environment",
+  });
+  const logs = status.build?.logs.join("\n") ?? "";
+  expect(logs).toContain("Worker build network: apt_main=custom apt_security=default npm=custom dsh_git=custom proxy=environment");
+  expect(logs).not.toContain("mirrors.example.com");
+  expect(logs).not.toContain("registry.example.com");
+  expect(logs).not.toContain("git.example.com");
+  expect(logs).not.toContain("proxy.internal");
+  const persisted = fs.readFileSync(persistedPath, "utf8");
+  expect(persisted).toContain("\"build_network\"");
+  expect(persisted).not.toContain("mirrors.example.com");
+  expect(persisted).not.toContain("registry.example.com");
+  expect(persisted).not.toContain("git.example.com");
+  expect(persisted).not.toContain("proxy.internal");
+});
+
+it("keeps default build arguments and docker-managed proxy mode without configuration", async () => {
+  const fingerprint = dagWorkerSourceFingerprint(currentRepoRoot())!;
+  const { runner, markBuilt } = readyDockerRunner(fingerprint);
+  const { child, stdout } = buildChild();
+  const spawnImpl = vi.fn(() => child as never);
+  const persistedPath = statusPath();
+  const controller = new DagEnvironmentController({
+    commandRunner: runner,
+    spawnImpl,
+    repoRoot: currentRepoRoot(),
+    statusPath: persistedPath,
+    env: {},
+  });
+
+  controller.startBuild();
+
+  await vi.waitFor(() => expect(spawnImpl).toHaveBeenCalledTimes(1));
+  const argText = (spawnImpl.mock.calls[0]?.[1] as string[]).join("\n");
+  for (const forbidden of [
+    "HOMERAIL_WORKER_BUILD_APT_MIRROR",
+    "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR",
+    "NPM_CONFIG_REGISTRY",
+    "HOMERAIL_DSH_FORK_REPOSITORY",
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+  ]) {
+    expect(argText).not.toContain(forbidden);
+  }
+
+  markBuilt();
+  stdout.write("step one\n");
+  child.emit("close", 0, null);
+  await vi.waitFor(() => expect(controller.getStatus().worker_image.status).toBe("ready"));
+
+  const status = controller.getStatus();
+  expect(status.worker_image.build_network).toEqual({
+    apt_main: "default",
+    apt_security: "default",
+    npm: "default",
+    dsh_git: "default",
+    proxy: "docker-managed",
+  });
+  expect(status.build?.logs.join("\n")).toContain(
+    "Worker build network: apt_main=default apt_security=default npm=default dsh_git=default proxy=docker-managed",
+  );
+});
+
+it("reports invalid build-network configuration before a build is requested", () => {
+  const runner: DagEnvironmentCommandRunner = vi.fn(async () => dockerVersion());
+  const spawnImpl = vi.fn();
+  const controller = new DagEnvironmentController({
+    commandRunner: runner,
+    spawnImpl: spawnImpl as never,
+    repoRoot: currentRepoRoot(),
+    statusPath: statusPath(),
+    env: {
+      HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://user:secret@mirrors.example.com/debian",
+    },
+  });
+
+  const status = controller.getStatus();
+  expect(status.build).toBeUndefined();
+  expect(status.worker_image).toMatchObject({
+    status: "error",
+    reason: "worker_build_network_invalid",
+    reason_code: "worker_build_network_invalid",
+  });
+  expect(status.worker_image.message).toContain("HOMERAIL_WORKER_BUILD_APT_MIRROR");
+  expect(status.worker_image.error).toContain("HOMERAIL_WORKER_BUILD_APT_MIRROR");
+  expect(status.worker_image.message).not.toContain("secret");
+  expect(status.worker_image.message).not.toContain("mirrors.example.com");
+  expect(status.worker_image.build_network).toBeUndefined();
+  expect(spawnImpl).not.toHaveBeenCalled();
+  expect(runner).not.toHaveBeenCalled();
+});
+
+it("fails the build before Docker starts when build-network configuration is invalid", async () => {
+  const runner: DagEnvironmentCommandRunner = vi.fn(async () => dockerVersion());
+  const spawnImpl = vi.fn();
+  const controller = new DagEnvironmentController({
+    commandRunner: runner,
+    spawnImpl: spawnImpl as never,
+    repoRoot: currentRepoRoot(),
+    statusPath: statusPath(),
+    env: {
+      HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://user:secret@mirrors.example.com/debian",
+    },
+  });
+
+  controller.startBuild();
+
+  await vi.waitFor(() => expect(controller.getStatus().build?.status).toBe("failed"));
+  const status = controller.getStatus();
+  expect(status.build?.error).toContain("HOMERAIL_WORKER_BUILD_APT_MIRROR");
+  expect(status.build?.error).not.toContain("secret");
+  expect(status.build?.error).not.toContain("mirrors.example.com");
+  expect(status.build?.logs.join("\n")).not.toContain("secret");
+  expect(status.worker_image.status).toBe("error");
+  expect(status.worker_image.reason_code).toBe("worker_build_network_invalid");
+  expect(status.worker_image.error).toContain("HOMERAIL_WORKER_BUILD_APT_MIRROR");
+  expect(status.worker_image.build_network).toBeUndefined();
+  expect(spawnImpl).not.toHaveBeenCalled();
+  expect(runner).not.toHaveBeenCalled();
+});
+
+it("normalizes persisted worker_image status that predates build_network", () => {
+  const persistedPath = statusPath();
+  const first = new DagEnvironmentController({
+    repoRoot: currentRepoRoot(),
+    statusPath: persistedPath,
+    env: {},
+  });
+  const snapshot = first.getStatus();
+  snapshot.revision = 7;
+  snapshot.build = {
+    operation_id: "older-build",
+    status: "succeeded",
+    started_at: 100,
+    finished_at: 200,
+    logs: ["complete"],
+  };
+  // Simulate a Manager version that never wrote build_network.
+  delete snapshot.worker_image.build_network;
+  fs.writeFileSync(persistedPath, JSON.stringify(snapshot), "utf8");
+
+  const recovered = new DagEnvironmentController({
+    repoRoot: currentRepoRoot(),
+    statusPath: persistedPath,
+    env: { HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://registry.example.com" },
+  }).getStatus();
+  expect(recovered.revision).toBe(7);
+  expect(recovered.build?.operation_id).toBe("older-build");
+  expect(recovered.worker_image.build_network).toEqual({
+    apt_main: "default",
+    apt_security: "default",
+    npm: "custom",
+    dsh_git: "default",
+    proxy: "docker-managed",
+  });
+});
+
+it("normalizes malformed persisted build_network values safely", () => {
+  const persistedPath = statusPath();
+  const first = new DagEnvironmentController({
+    repoRoot: currentRepoRoot(),
+    statusPath: persistedPath,
+    env: {},
+  });
+  const snapshot = first.getStatus();
+  snapshot.revision = 3;
+  (snapshot.worker_image as { build_network?: unknown }).build_network = {
+    apt_main: "weird",
+    apt_security: ["custom"],
+    npm: 1,
+    dsh_git: ["custom"],
+    proxy: "none",
+  };
+  fs.writeFileSync(persistedPath, JSON.stringify(snapshot), "utf8");
+
+  const recovered = new DagEnvironmentController({
+    repoRoot: currentRepoRoot(),
+    statusPath: persistedPath,
+    env: {},
+  }).getStatus();
+  expect(recovered.revision).toBe(3);
+  expect(recovered.worker_image.build_network).toEqual({
+    apt_main: "default",
+    apt_security: "default",
+    npm: "default",
+    dsh_git: "default",
+    proxy: "docker-managed",
+  });
 });

@@ -18,7 +18,9 @@ import { _clearNodes } from "../src/node/registry.js";
 import { setupWorkerWebSocket } from "../src/worker/websocket.js";
 import { _clearWorkers, getWorker } from "../src/worker/registry.js";
 import {
+  browserToolsTokenPath,
   controlPlaneTokenPath,
+  readOrCreateBrowserToolsToken,
   readOrCreateControlPlaneToken,
 } from "../src/persistence/control-plane-secret.js";
 import * as fs from "node:fs";
@@ -97,6 +99,9 @@ describe("control-plane websocket authentication", () => {
 
   it("allows loopback without a configured token and requires bearer auth remotely", () => {
     expect(isLoopbackRemoteAddress("::ffff:127.0.0.1")).toBe(true);
+    expect(isLoopbackRemoteAddress("127.255.255.254")).toBe(true);
+    expect(isLoopbackRemoteAddress("127.evil.example")).toBe(false);
+    expect(isLoopbackRemoteAddress("127.0.0.999")).toBe(false);
     expect(isControlPlaneUpgradeAuthorized({
       remoteAddress: "127.0.0.1",
       authorization: undefined,
@@ -202,6 +207,16 @@ describe("control-plane websocket authentication", () => {
     expect(fs.readFileSync(controlPlaneTokenPath(), "utf8").trim()).toBe("persisted-token");
     if (process.platform !== "win32") {
       expect(fs.statSync(controlPlaneTokenPath()).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("keeps Browser Tools pairing separate from worker control-plane credentials", () => {
+    expect(readOrCreateControlPlaneToken(() => "worker-token")).toBe("worker-token");
+    expect(readOrCreateBrowserToolsToken(() => "browser-token")).toBe("browser-token");
+    expect(fs.readFileSync(controlPlaneTokenPath(), "utf8").trim()).toBe("worker-token");
+    expect(fs.readFileSync(browserToolsTokenPath(), "utf8").trim()).toBe("browser-token");
+    if (process.platform !== "win32") {
+      expect(fs.statSync(browserToolsTokenPath()).mode & 0o777).toBe(0o600);
     }
   });
 

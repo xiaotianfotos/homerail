@@ -246,6 +246,23 @@ legacy installs may still contain a global `${HOMERAIL_HOME}/audit/tool-events.j
 If `scorecard` reports advisory findings, separate policy/prompt issues from
 actual DAG failure before deciding whether to rerun or patch.
 
+### Per-node results
+
+Every node has a structured result, not just Worker nodes. Non-worker nodes
+(command, join, condition, loop, while, state, fan-out gateways) execute in
+Manager control logic and produce no chat log; their result is the handoff
+payload they emitted (plus command telemetry for `command` nodes):
+
+```bash
+curl -s "$HOMERAIL_MANAGER_URL/api/dag-status/<run_id>/node/<node_id>/result"
+```
+
+The response carries `result_kind` (command/join/condition/loop/while/state/
+fanout/worker/...), the `latest` handoff, and the full `handoffs` list. Use it
+to answer "what did this gateway decide" without reading Worker chat logs. In
+the UI, the node drawer and the Voice Cockpit `dag_explorer` widget render
+these results by default — no generative UI is needed.
+
 ## Judging Whether Output Is Useful
 
 A `completed` run with a passing scorecard only proves the **pipeline** worked,

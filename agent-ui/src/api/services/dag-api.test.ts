@@ -152,6 +152,18 @@ describe('DAG API', () => {
     expect(get).toHaveBeenCalledWith('/api/dag-status/run-1/node/plan')
   })
 
+  it('encodes opaque DAG and node ids in every path segment', async () => {
+    const get = vi.spyOn(http, 'get').mockResolvedValue({
+      success: true,
+      data: { id: 'node/with slash', status: 'running' }
+    })
+
+    await getDagNodeDetail('run/with slash', 'node/with slash')
+    expect(get).toHaveBeenCalledWith(
+      '/api/dag-status/run%2Fwith%20slash/node/node%2Fwith%20slash'
+    )
+  })
+
   it('converts worker chat events and filters diagnostic entries', async () => {
     vi.spyOn(http, 'get').mockResolvedValue({
       success: true,

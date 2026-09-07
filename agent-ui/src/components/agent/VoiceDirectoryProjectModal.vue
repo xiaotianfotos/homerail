@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, ChevronLeft, CornerUpLeft, Folder, FolderOpen, GitBranch, Loader2, Server, X } from 'lucide-vue-next'
 import {
@@ -52,6 +52,11 @@ const selectedRepoFullName = ref('')
 const availableRepos = ref<GitRepositoryInfo[]>([])
 const loadingRepos = ref(false)
 const gitError = ref('')
+const teleportTarget = shallowRef<string | Element>('body')
+
+type WebkitFullscreenDocument = Document & {
+  webkitFullscreenElement?: Element | null
+}
 
 const selectedServer = computed(() => servers.value.find(item => item.id === serverId.value))
 const canCreate = computed(() => currentPath.value.trim() && projectName.value.trim() && !creating.value)
@@ -66,11 +71,34 @@ watch(() => props.open, (open) => {
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
+  document.addEventListener('fullscreenchange', syncTeleportTarget)
+  document.addEventListener('webkitfullscreenchange', syncTeleportTarget)
+  syncTeleportTarget()
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('fullscreenchange', syncTeleportTarget)
+  document.removeEventListener('webkitfullscreenchange', syncTeleportTarget)
 })
+
+function syncTeleportTarget(): void {
+  const fullscreenElement =
+    document.fullscreenElement ||
+    (document as WebkitFullscreenDocument).webkitFullscreenElement ||
+    null
+
+  // A modal teleported to <body> is outside an element-level fullscreen
+  // subtree and therefore invisible even though its Vue state is open. Keep
+  // the normal body target for document-level fullscreen, but mount inside an
+  // element-level fullscreen host such as the mobile Voice Cockpit.
+  teleportTarget.value =
+    fullscreenElement &&
+    fullscreenElement !== document.documentElement &&
+    fullscreenElement !== document.body
+      ? fullscreenElement
+      : 'body'
+}
 
 function handleKeydown(event: KeyboardEvent): void {
   if (!props.open || event.key !== 'Escape') return
@@ -241,8 +269,15 @@ function handleProjectNameInput(event: Event): void {
 </script>
 
 <template>
-  <div v-if="open" class="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--hr-overlay)] px-6 backdrop-blur-sm">
-    <section class="flex h-[min(720px,82vh)] w-[min(980px,92vw)] overflow-hidden rounded-[24px] border border-[var(--hr-border-strong)] bg-[var(--hr-panel)] text-[var(--hr-text-1)]" :style="{ boxShadow: 'var(--hr-shadow-floating)' }">
+  <Teleport :to="teleportTarget">
+    <!-- Keep the modal above cockpit menus (up to 170) while preserving the
+         immersive fullscreen exit control at 220. -->
+    <div
+      v-if="open"
+      data-testid="voice-directory-modal-overlay"
+      class="fixed inset-0 z-[180] flex items-center justify-center bg-[var(--hr-overlay)] px-6 backdrop-blur-sm"
+    >
+      <section class="flex h-[min(720px,82vh)] w-[min(980px,92vw)] overflow-hidden rounded-[24px] border border-[var(--hr-border-strong)] bg-[var(--hr-panel)] text-[var(--hr-text-1)]" :style="{ boxShadow: 'var(--hr-shadow-floating)' }">
       <aside class="flex w-64 shrink-0 flex-col border-r border-[var(--hr-border)] bg-[var(--hr-surface-1)] p-4">
         <div class="mb-4 flex items-center justify-between">
           <div>
@@ -429,6 +464,7 @@ function handleProjectNameInput(event: Event): void {
           </aside>
         </main>
       </div>
-    </section>
-  </div>
+      </section>
+    </div>
+  </Teleport>
 </template>

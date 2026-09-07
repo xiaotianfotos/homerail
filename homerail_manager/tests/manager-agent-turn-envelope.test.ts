@@ -37,6 +37,13 @@ describe("Manager Agent signed turn envelope", () => {
       message: "compose",
       project_id: "project-one",
       session_id: "session-one",
+      browser_tools_transport: "renderer",
+      browser_tools_target: {
+        connection_id: "connection-one",
+        ui_session_id: "ui-one",
+        tab_id: "tab-one",
+        navigation_id: "navigation-one",
+      },
       response_mode: "voice",
       generative_ui_mode: "prefer",
       manager_skills: [{ id: "skill-one" }],
@@ -77,6 +84,10 @@ describe("Manager Agent signed turn envelope", () => {
       HOMERAIL_MANAGER_TURN_PUBLIC_KEY_ENV,
     ].sort());
     expect(envelope.claims.key_id).toBe(environment[HOMERAIL_MANAGER_TURN_KEY_ID_ENV]);
+    expect(envelope.claims.scope).toMatchObject({
+      browser_tools_transport: "renderer",
+      browser_tools_target: payload.browser_tools_target,
+    });
     const publicKey = createPublicKey({
       key: Buffer.from(environment[HOMERAIL_MANAGER_TURN_PUBLIC_KEY_ENV]!, "base64url"),
       format: "der",
@@ -115,6 +126,11 @@ describe("Manager Agent signed turn envelope", () => {
       credential,
       method: "POST",
       pathname: "/api/skills/palquery/views/present",
+    })).toBe(true);
+    expect(authority.authorizeApiRequest({
+      credential,
+      method: "POST",
+      pathname: "/api/browser-tools/invoke",
     })).toBe(true);
     expect(authority.authorizeApiRequest({
       credential,

@@ -9,9 +9,11 @@ const agentApi = vi.hoisted(() => ({
   updateManagerAgentConfig: vi.fn(),
 }))
 const llmApi = vi.hoisted(() => ({ listLLMSettings: vi.fn() }))
+const dagApi = vi.hoisted(() => ({ getDagStatus: vi.fn() }))
 
 vi.mock('@/api/agent', () => agentApi)
 vi.mock('@/api/services/llm-settings-api', () => llmApi)
+vi.mock('@/api/services/dag-api', () => dagApi)
 
 import { useAgentStore } from './agent-store'
 
@@ -98,5 +100,32 @@ describe('agent runtime selection', () => {
       provider_name: 'provider-b',
       model_name: 'model-from-settings',
     })
+  })
+
+  it('keeps the previous graph atomically when a requested run cannot be loaded', async () => {
+    const store = useAgentStore()
+    store.setRunId('run-old')
+    store.setDagExecution({
+      dag_run_id: 'run-old',
+      status: 'running',
+      nodes: [{
+        id: 'old-node',
+        name: 'Old node',
+        status: 'running',
+        agent_id: 'reviewer',
+        agent_name: 'Reviewer',
+        dependencies: [],
+        retry_count: 0,
+        pool_count: 1,
+        iteration: 0,
+      }],
+      edges: [],
+    })
+    dagApi.getDagStatus.mockResolvedValue(null)
+
+    await expect(store.switchToRun('run-new')).resolves.toBe(false)
+    expect(store.currentRunId).toBe('run-old')
+    expect(store.dagExecution?.dag_run_id).toBe('run-old')
+    expect(store.nodes.map(node => node.id)).toEqual(['old-node'])
   })
 })

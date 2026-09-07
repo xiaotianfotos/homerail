@@ -350,7 +350,6 @@ const executorAdvisor: DAGPatternDefinition = {
         { from: "execute.done", to: "completed.result" },
         { from: "execute.failed", to: "failed.result", condition: "on_failure" },
       ],
-      policies: { max_tool_calls_per_node: "{{max_advisor_calls}}" },
     },
   },
 };

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getDefaultWorkspacePath } from "../src/config/env.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
+import { expectCurrentSchemaMigrationVersion } from "./schema-migration-helpers.js";
 import {
   injectVoiceArtifactAppearanceBridge,
   publishVoiceArtifact,
@@ -149,7 +150,7 @@ describe("voice artifact publishing", () => {
     const artifact = publishVoiceArtifact({ session_id: "session-schema", source_path: "schema.html" });
 
     const db = getDb();
-    expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 33 });
+    expectCurrentSchemaMigrationVersion(db);
     expect(() => db.prepare(`
       UPDATE voice_artifact_revisions SET title = 'changed'
       WHERE session_id = ? AND artifact_id = ? AND revision = 1

@@ -19,6 +19,7 @@ describe('OnboardingWizard environment checks', () => {
 describe('OnboardingWizard Manager Agent activation', () => {
   it('uses the detected harness and keeps Anthropic-compatible settings on Claude', () => {
     expect(wizardSource).toContain('if (detectedHarness) return detectedHarness')
+    expect(wizardSource).toContain('if (setting.supports_codex_responses === true)')
     expect(wizardSource).toContain("setting.protocol === 'anthropic_compatible'")
     expect(wizardSource).toContain("return 'claude_agent_sdk'")
   })

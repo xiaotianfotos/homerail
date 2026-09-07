@@ -8,17 +8,28 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("deploys main daily or an owner-dispatched revision on the isolated deploy runner", () => {
+test("deploys an owner-dispatched revision on the isolated deploy runner", () => {
   const workflow = fs
     .readFileSync(path.join(repoRoot, ".github", "workflows", "deploy-production.yml"), "utf8")
     .replace(/\r\n/g, "\n");
-  assert.match(workflow, /schedule:\n\s+# GitHub cron is UTC/);
-  assert.match(workflow, /cron: "30 19 \* \* \*"/);
   assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /github\.event_name == 'schedule'/);
   assert.match(workflow, /github\.event_name == 'workflow_dispatch' && github\.actor == 'xiaotianfotos'/);
+  assert.doesNotMatch(workflow, /schedule:/);
+  assert.doesNotMatch(workflow, /cron:/);
   assert.doesNotMatch(workflow, /workflow_run:/);
   assert.match(workflow, /runs-on: \[self-hosted, Linux, X64, homerail-deploy\]/);
+  assert.match(
+    workflow,
+    /HOMERAIL_WORKER_BUILD_APT_MIRROR: \$\{\{ vars\.HOMERAIL_WORKER_BUILD_APT_MIRROR \}\}/,
+  );
+  assert.match(
+    workflow,
+    /HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: \$\{\{ vars\.HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR \}\}/,
+  );
+  assert.match(
+    workflow,
+    /HOMERAIL_WORKER_BUILD_NPM_REGISTRY: \$\{\{ vars\.HOMERAIL_WORKER_BUILD_NPM_REGISTRY \}\}/,
+  );
   assert.match(workflow, /ref: \$\{\{ inputs\.revision \|\| 'main' \}\}/);
   assert.match(workflow, /revision="\$\(git rev-parse HEAD\)"/);
   assert.match(workflow, /persist-credentials: false/);
@@ -260,6 +271,7 @@ test("production deployment preserves database compatibility across success and 
   const runDeployment = (smokeExit, {
     previousDatabaseCompatible = true,
     failUnitMove = false,
+    extraEnv = {},
   } = {}) => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-production-deploy-"));
     const sourceRoot = path.join(tempRoot, "source");
@@ -348,6 +360,11 @@ test("production deployment preserves database compatibility across success and 
     write("assets/orchestrations/public-two-node.yaml.template", "schema_version: 1\n");
     write("scripts/run-production-service.sh", "#!/usr/bin/env bash\nexit 0\n", 0o755);
     write("scripts/lib/production-runtime.sh", fs.readFileSync(path.join(repoRoot, "scripts", "lib", "production-runtime.sh"), "utf8"), 0o755);
+    write("scripts/lib/worker-build-network.sh", fs.readFileSync(path.join(repoRoot, "scripts", "lib", "worker-build-network.sh"), "utf8"), 0o755);
+    // The shared helper delegates URL validation to this Worker script; the
+    // sandbox must stage it at the exact repository-relative path or builds
+    // must fail closed instead of silently keeping unknown sources.
+    write("homerail_worker/scripts/configure-apt-sources.mjs", fs.readFileSync(path.join(repoRoot, "homerail_worker/scripts/configure-apt-sources.mjs"), "utf8"), 0o755);
 
     fakeCommand("docker", `#!/usr/bin/env bash\nif [ "${'${1:-}'}" = network ] && [ "${'${2:-}'}" = inspect ] && [ "${'${3:-}'}" = bridge ]; then echo 172.17.0.1; fi\nif [ "${'${1:-}'}" = build ]; then printf '%s\\n' "$@" > "$CAPTURE_DOCKER_BUILD_ARGS"; fi\nif [ "${'${1:-}'}" = image ] && [ "${'${2:-}'}" = rm ]; then printf '%s\\n' "${'${3:-}'}" >> "$CAPTURE_DOCKER_REMOVALS"; fi\nexit 0\n`);
     fakeCommand("codex", "#!/usr/bin/env bash\nexit 0\n");
@@ -383,6 +400,17 @@ test("production deployment preserves database compatibility across success and 
         CAPTURE_DOCKER_REMOVALS: dockerRemovalsPath,
         CAPTURE_SYSTEMCTL: systemctlLogPath,
         FAKE_FIND_OUTPUT: findOutputPath,
+        HOMERAIL_WORKER_BUILD_APT_MIRROR: "",
+        HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: "",
+        HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "",
+        HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "",
+        HTTP_PROXY: "",
+        HTTPS_PROXY: "",
+        NO_PROXY: "",
+        http_proxy: "",
+        https_proxy: "",
+        no_proxy: "",
+        ...extraEnv,
       },
     });
     return {
@@ -462,6 +490,10 @@ test("production deployment preserves database compatibility across success and 
     assert.match(dockerBuildArgs, /HOMERAIL_WORKER_PROTOCOL_VERSION=1/);
     assert.match(dockerBuildArgs, /HOMERAIL_WORKER_VERSION=0\.1\.0/);
     assert.match(dockerBuildArgs, new RegExp(`HOMERAIL_WORKER_IMAGE_REVISION=${revision}`));
+    assert.doesNotMatch(dockerBuildArgs, /HOMERAIL_WORKER_BUILD_APT/);
+    assert.doesNotMatch(dockerBuildArgs, /NPM_CONFIG_REGISTRY/);
+    assert.doesNotMatch(dockerBuildArgs, /HOMERAIL_DSH_FORK_REPOSITORY/);
+    assert.doesNotMatch(dockerBuildArgs, /(?:HTTP|HTTPS|NO)_PROXY/i);
     const unit = fs.readFileSync(passed.unitPath, "utf8");
     assert.match(unit, /StartLimitIntervalSec=0/);
     assert.doesNotMatch(unit, /StartLimitBurst=/);
@@ -472,6 +504,64 @@ test("production deployment preserves database compatibility across success and 
     );
   } finally {
     fs.rmSync(passed.tempRoot, { recursive: true, force: true });
+  }
+
+  const customSources = runDeployment(0, {
+    extraEnv: {
+      HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://deb.fn.example/debian/",
+      HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: "https://deb.fn.example/debian-security",
+      HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://npm.fn.example",
+      HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.fn.example/deepseek-harness.git",
+    },
+  });
+  try {
+    assert.equal(customSources.result.status, 0, customSources.result.stderr);
+    const customBuildArgs = fs.readFileSync(customSources.dockerBuildArgsPath, "utf8");
+    assert.match(customBuildArgs, /--build-arg\nHOMERAIL_WORKER_BUILD_APT_MIRROR=https:\/\/deb\.fn\.example\/debian\n/);
+    assert.match(customBuildArgs, /--build-arg\nHOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR=https:\/\/deb\.fn\.example\/debian-security\n/);
+    assert.match(customBuildArgs, /--build-arg\nNPM_CONFIG_REGISTRY=https:\/\/npm\.fn\.example\n/);
+    assert.match(customBuildArgs, /--build-arg\nHOMERAIL_DSH_FORK_REPOSITORY=https:\/\/git\.fn\.example\/deepseek-harness\.git\n/);
+    assert.match(customBuildArgs, new RegExp(`HOMERAIL_WORKER_SOURCE_FINGERPRINT=${workerFingerprint}`));
+  } finally {
+    fs.rmSync(customSources.tempRoot, { recursive: true, force: true });
+  }
+
+  const proxyForwarding = runDeployment(0, {
+    extraEnv: {
+      HTTPS_PROXY: "http://proxy.fn.example:3128",
+      http_proxy: "http://proxy.fn.example:3128",
+      NO_PROXY: "localhost",
+      HTTP_PROXY: " \t ",
+      https_proxy: "\n ",
+      no_proxy: "   ",
+    },
+  });
+  try {
+    assert.equal(proxyForwarding.result.status, 0, proxyForwarding.result.stderr);
+    const proxyBuildArgs = fs.readFileSync(proxyForwarding.dockerBuildArgsPath, "utf8");
+    const proxyArgLines = proxyBuildArgs.split("\n");
+    const valuelessProxyArgs = [];
+    for (let index = 0; index < proxyArgLines.length - 1; index += 1) {
+      if (proxyArgLines[index] === "--build-arg" && !proxyArgLines[index + 1].includes("=")) {
+        valuelessProxyArgs.push(proxyArgLines[index + 1]);
+      }
+    }
+    assert.deepEqual(valuelessProxyArgs, ["HTTPS_PROXY", "NO_PROXY", "http_proxy"]);
+    assert.doesNotMatch(proxyBuildArgs, /proxy\.fn\.example/);
+  } finally {
+    fs.rmSync(proxyForwarding.tempRoot, { recursive: true, force: true });
+  }
+
+  const invalidSource = runDeployment(0, {
+    extraEnv: { HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "ftp://npm.fn.example" },
+  });
+  try {
+    assert.notEqual(invalidSource.result.status, 0);
+    assert.match(invalidSource.result.stderr, /HOMERAIL_WORKER_BUILD_NPM_REGISTRY/);
+    assert.doesNotMatch(invalidSource.result.stderr, /ftp:\/\/npm\.fn\.example/);
+    assert.equal(fs.existsSync(invalidSource.dockerBuildArgsPath), false);
+  } finally {
+    fs.rmSync(invalidSource.tempRoot, { recursive: true, force: true });
   }
 });
 
@@ -490,4 +580,184 @@ test("tracked deployment configuration contains no machine-local identity", () =
   assert.doesNotMatch(trackedConfiguration, /\b(?:10|192\.168|172\.(?:1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}\b/);
   assert.doesNotMatch(trackedConfiguration, /\/(?:Users|home|vol[0-9]*|mnt)\//);
   assert.doesNotMatch(trackedConfiguration, /\bssh\s+[A-Za-z0-9._-]+@/i);
+});
+
+
+test("worker build network contract is shared by production and live entry points", () => {
+  const helper = fs.readFileSync(path.join(repoRoot, "scripts", "lib", "worker-build-network.sh"), "utf8");
+  const deploy = fs.readFileSync(path.join(repoRoot, "scripts", "deploy-production.sh"), "utf8");
+  const runner = fs.readFileSync(path.join(repoRoot, "scripts", "run-dag-patterns-live-runner.sh"), "utf8");
+
+  assert.match(deploy, /source "\$SOURCE_ROOT\/scripts\/lib\/worker-build-network\.sh"/);
+  assert.match(deploy, /homerail_worker_build_network_args/);
+  assert.match(deploy, /HOMERAIL_WORKER_BUILD_NETWORK_ARGS/);
+  assert.match(runner, /source "\$REPO_ROOT\/scripts\/lib\/worker-build-network\.sh"/);
+  assert.match(runner, /homerail_worker_build_network_args/);
+  assert.match(runner, /HOMERAIL_WORKER_BUILD_NETWORK_ARGS/);
+  assert.doesNotMatch(helper, /\beval\b/);
+  assert.doesNotMatch(deploy, /\beval\b/);
+  assert.doesNotMatch(runner, /\beval\b/);
+  for (const name of [
+    "HOMERAIL_WORKER_BUILD_APT_MIRROR",
+    "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR",
+    "HOMERAIL_WORKER_BUILD_NPM_REGISTRY",
+    "HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE",
+  ]) {
+    assert.ok(helper.includes(name), `helper must consume ${name}`);
+  }
+  assert.ok(
+    helper.includes("HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy"),
+    "helper must forward every recognized proxy variable name in a fixed order",
+  );
+  assert.match(helper, /NPM_CONFIG_REGISTRY=/);
+  assert.match(helper, /HOMERAIL_DSH_FORK_REPOSITORY=/);
+  assert.match(helper, /DOCKER_BUILDKIT=1\s+export DOCKER_BUILDKIT/);
+});
+
+test("worker build network helper validates sources and forwards proxy names only", { skip: process.platform === "win32" }, () => {
+  const helperPath = path.join(repoRoot, "scripts", "lib", "worker-build-network.sh");
+  const runHelper = (extraEnv = {}) => spawnSync("bash", [
+    "-c",
+    [
+      "set -euo pipefail",
+      'source "$1"',
+      "homerail_worker_build_network_args || exit 1",
+      'if [ ${#HOMERAIL_WORKER_BUILD_NETWORK_ARGS[@]} -gt 0 ]; then printf "%s\\n" "${HOMERAIL_WORKER_BUILD_NETWORK_ARGS[@]}"; fi',
+    ].join("\n"),
+    "worker-build-network-helper-test",
+    helperPath,
+  ], { encoding: "utf8", env: { PATH: process.env.PATH, ...extraEnv } });
+
+  const baseline = runHelper();
+  assert.equal(baseline.status, 0, baseline.stderr);
+  assert.equal(baseline.stdout, "");
+
+  const whitespaceOnly = runHelper({ HOMERAIL_WORKER_BUILD_APT_MIRROR: " \t " });
+  assert.equal(whitespaceOnly.status, 0, whitespaceOnly.stderr);
+  assert.equal(whitespaceOnly.stdout, "");
+
+  const whitespaceOnlyProxy = runHelper({
+    HTTP_PROXY: " \t ",
+    https_proxy: "\n  ",
+    NO_PROXY: "   ",
+  });
+  assert.equal(whitespaceOnlyProxy.status, 0, whitespaceOnlyProxy.stderr);
+  assert.equal(whitespaceOnlyProxy.stdout, "");
+
+  const custom = runHelper({
+    HOMERAIL_WORKER_BUILD_APT_MIRROR: "HTTPS://DEB.example.com:8443/debian/",
+    HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: "  https://deb.example.com/debian-security  ",
+    HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://npm.example.com/",
+    HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.example.com/deepseek-harness.git/",
+    HTTP_PROXY: "http://proxy.example:3128",
+    no_proxy: "localhost",
+    HTTPS_PROXY: "",
+  });
+  assert.equal(custom.status, 0, custom.stderr);
+  assert.deepEqual(custom.stdout.trim().split("\n"), [
+    "--build-arg",
+    "HOMERAIL_WORKER_BUILD_APT_MIRROR=https://deb.example.com:8443/debian",
+    "--build-arg",
+    "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR=https://deb.example.com/debian-security",
+    "--build-arg",
+    "NPM_CONFIG_REGISTRY=https://npm.example.com",
+    "--build-arg",
+    "HOMERAIL_DSH_FORK_REPOSITORY=https://git.example.com/deepseek-harness.git",
+    "--build-arg",
+    "HTTP_PROXY",
+    "--build-arg",
+    "no_proxy",
+  ]);
+  assert.doesNotMatch(custom.stdout, /proxy\.example/);
+
+  // A NODE_BIN shim captures the exact argv handed to Node: only environment
+  // variable names and the helper path may cross the boundary, never values.
+  const argvCaptureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-build-network-argv-"));
+  const argvLog = path.join(argvCaptureRoot, "node-argv.txt");
+  const nodeShim = path.join(argvCaptureRoot, "node");
+  fs.writeFileSync(
+    nodeShim,
+    `#!/usr/bin/env bash
+printf '%s\\n' "$@" >> "$ARGV_LOG"
+exec "${process.execPath}" "$@"
+`,
+    { mode: 0o755 },
+  );
+  try {
+    const shimmed = runHelper({
+      NODE_BIN: nodeShim,
+      ARGV_LOG: argvLog,
+      HOMERAIL_WORKER_BUILD_APT_MIRROR: "https://deb.example.com/debian/",
+      HOMERAIL_WORKER_BUILD_NPM_REGISTRY: "https://npm.example.com/",
+      HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: "https://git.example.com/deepseek-harness.git/",
+      HTTPS_PROXY: "http://proxy.example:3128",
+    });
+    assert.equal(shimmed.status, 0, shimmed.stderr);
+    assert.deepEqual(shimmed.stdout.trim().split("\n"), [
+      "--build-arg",
+      "HOMERAIL_WORKER_BUILD_APT_MIRROR=https://deb.example.com/debian",
+      "--build-arg",
+      "NPM_CONFIG_REGISTRY=https://npm.example.com",
+      "--build-arg",
+      "HOMERAIL_DSH_FORK_REPOSITORY=https://git.example.com/deepseek-harness.git",
+      "--build-arg",
+      "HTTPS_PROXY",
+    ]);
+    const capturedArgv = fs.readFileSync(argvLog, "utf8");
+    assert.match(capturedArgv, /--print-env/);
+    assert.match(capturedArgv, /configure-apt-sources\.mjs/);
+    for (const expected of [
+      "HOMERAIL_WORKER_BUILD_APT_MIRROR",
+      "HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR",
+      "HOMERAIL_WORKER_BUILD_NPM_REGISTRY",
+      "HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE",
+    ]) {
+      assert.ok(capturedArgv.includes(expected), `delegation must name ${expected} only`);
+    }
+    for (const prohibited of [
+      "https://deb.example.com/debian/",
+      "https://npm.example.com/",
+      "https://git.example.com/deepseek-harness.git/",
+      "http://proxy.example:3128",
+    ]) {
+      assert.ok(!capturedArgv.includes(prohibited), "source and proxy values must never reach argv");
+    }
+  } finally {
+    fs.rmSync(argvCaptureRoot, { recursive: true, force: true });
+  }
+
+  const invalidValues = {
+    HOMERAIL_WORKER_BUILD_APT_MIRROR: [
+      "ftp://deb.example.com",
+      "http://user:pass@deb.example.com",
+      "http://deb.example.com/?mirror=1",
+      "http://deb.example.com/#debian",
+      "http://",
+      "http://deb.example.com/debian suite",
+      "http://deb.example.com/\u0001",
+    ],
+    HOMERAIL_WORKER_BUILD_APT_SECURITY_MIRROR: [
+      "not-a-url",
+      "https://",
+      "https://deb.example.com:port",
+    ],
+    HOMERAIL_WORKER_BUILD_NPM_REGISTRY: [
+      "ftp://npm.example.com",
+      "https://npm.example.com/<script>",
+    ],
+    HOMERAIL_WORKER_BUILD_DSH_GIT_REMOTE: [
+      "ssh://git.example.com/deepseek-harness.git",
+      "https://user:secret@git.example.com/deepseek-harness.git",
+      "https://git.example.com/deepseek-harness$(touch).git",
+      "https://git.example.com/deepseek-harness(test).git",
+    ],
+  };
+  for (const [name, values] of Object.entries(invalidValues)) {
+    for (const value of values) {
+      const failed = runHelper({ [name]: value });
+      assert.notEqual(failed.status, 0, `${name} must reject invalid value`);
+      assert.match(failed.stderr, new RegExp(name));
+      assert.ok(!failed.stderr.includes(value), "error must not echo the rejected value");
+    }
+  }
 });

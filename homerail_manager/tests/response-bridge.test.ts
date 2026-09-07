@@ -5,13 +5,17 @@ const mocks = vi.hoisted(() => ({
   getActiveRun: vi.fn(),
   getDagActorByNode: vi.fn(),
   getDagActorCommand: vi.fn(),
+  getDagActorLiveCommand: vi.fn(),
   acquireDagActorLease: vi.fn(),
   assessDagActorLease: vi.fn(),
+  recordAttemptDiagnostic: vi.fn(),
+  isReviewEvidenceNode: vi.fn(),
 }));
 
 vi.mock("../src/runtime/active-runs.js", () => ({
   handoffActiveRun: mocks.handoffActiveRun,
   getActiveRun: mocks.getActiveRun,
+  isReviewEvidenceNode: mocks.isReviewEvidenceNode,
 }));
 
 vi.mock("../src/persistence/dag-actors.js", () => ({
@@ -19,9 +23,17 @@ vi.mock("../src/persistence/dag-actors.js", () => ({
   getDagActorCommand: mocks.getDagActorCommand,
 }));
 
+vi.mock("../src/persistence/dag-actor-live-commands.js", () => ({
+  getDagActorLiveCommand: mocks.getDagActorLiveCommand,
+}));
+
 vi.mock("../src/persistence/dag-actor-leases.js", () => ({
   acquireDagActorLease: mocks.acquireDagActorLease,
   assessDagActorLease: mocks.assessDagActorLease,
+}));
+
+vi.mock("../src/persistence/dag-review-evidence.js", () => ({
+  recordAttemptDiagnostic: mocks.recordAttemptDiagnostic,
 }));
 
 import { applyResponseHandoff } from "../src/orchestration/response-bridge.js";
@@ -54,9 +66,14 @@ describe("response bridge transport fence", () => {
       target_generation: 3,
       status: "delivered",
     });
+    mocks.getDagActorLiveCommand.mockReset();
+    mocks.getDagActorLiveCommand.mockReturnValue(undefined);
     mocks.assessDagActorLease.mockReset();
     mocks.assessDagActorLease.mockReturnValue({ current: true, lease: {} });
     mocks.acquireDagActorLease.mockReset();
+    mocks.recordAttemptDiagnostic.mockReset();
+    mocks.isReviewEvidenceNode.mockReset();
+    mocks.isReviewEvidenceNode.mockReturnValue(false);
   });
 
   it("passes authoritative round metadata to handoffActiveRun", () => {
@@ -264,8 +281,173 @@ describe("response bridge transport fence", () => {
       runId: "run-2",
       nodeId: "actor-node",
       reason: "DAG_HANDOFF_CONTRACT_VIOLATION actor-node.done",
+      rejectedHandoff: { port: "done", content: { invalid: true } },
     });
     expect(mocks.handoffActiveRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes bounded transport diagnostics and content evidence to the applied handoff", () => {
+    const payload = {
+      runId: "run-2",
+      nodeId: "actor-node",
+      port: "done",
+      content: {
+        reviewer: "qwen",
+        status: "complete",
+        evidence: {
+          schema: "review-evidence-v1",
+          reviewer: "qwen",
+          findings: [{
+            category: "security",
+            severity: "high",
+            title: "Unchecked response",
+            file: "src/app.ts",
+            line: 12,
+            evidence: "fetch('/api') is not awaited",
+            recommendation: "Await and validate",
+            confidence: "high",
+          }],
+        },
+      },
+      round_id: "round-0002",
+      actor_id: "actor-1",
+      generation: 3,
+      lease_generation: 7,
+      command_id: "command-2",
+      attempt_diagnostics: {
+        finish_reason: "end_turn",
+        output_tokens: 321,
+        output_token_limit: 4096,
+        tool_argument_parse_state: "valid",
+        contract_stage: "tool_arguments",
+        failure_category: "accepted",
+      },
+    };
+
+    expect(applyResponseHandoff(payload, source)).toMatchObject({ status: "handoff_applied" });
+    expect(mocks.handoffActiveRun).toHaveBeenCalledWith(
+      "run-2",
+      "actor-node",
+      "done",
+      payload.content,
+      {
+        transport: true,
+        roundId: "round-0002",
+        actorId: "actor-1",
+        generation: 3,
+        leaseGeneration: 7,
+        commandId: "command-2",
+      },
+      expect.objectContaining({
+        transportDiagnostic: expect.objectContaining({ finish_reason: "end_turn" }),
+        submission: expect.objectContaining({
+          schema: "review-evidence-v1",
+          reviewer: "qwen",
+          findings: [expect.objectContaining({ title: "Unchecked response" })],
+        }),
+      }),
+    );
+  });
+
+  it("persists a classified contract diagnostic for review evidence nodes on handoff failure", () => {
+    mocks.isReviewEvidenceNode.mockReturnValue(true);
+    mocks.getActiveRun.mockReturnValue({
+      status: "active",
+      currentRound: { round_id: "round-0002", ordinal: 2 },
+      dagRun: { handoffedNodes: new Set<string>() },
+      nodeSessions: new Map([["actor-node", { sessionId: "session-9", attempt: 1 }]]),
+      counters: { corrections: {} },
+    });
+    mocks.handoffActiveRun.mockImplementation(() => {
+      throw new Error("DAG_HANDOFF_CONTRACT_VIOLATION actor-node.done");
+    });
+
+    const result = applyResponseHandoff({
+      runId: "run-2",
+      nodeId: "actor-node",
+      port: "done",
+      content: { incomplete: true },
+      round_id: "round-0002",
+      actor_id: "actor-1",
+      generation: 3,
+      lease_generation: 7,
+      command_id: "command-2",
+      attempt_diagnostics: {
+        finish_reason: "end_turn",
+        output_tokens: 123,
+        tool_argument_parse_state: "valid",
+        contract_stage: "tool_arguments",
+        failure_category: "accepted",
+      },
+    }, source);
+
+    expect(result).toMatchObject({
+      status: "handoff_failed",
+      reason: "DAG_HANDOFF_CONTRACT_VIOLATION actor-node.done",
+    });
+    expect(mocks.recordAttemptDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      identity: expect.objectContaining({
+        runId: "run-2",
+        reviewer: "actor-1",
+        nodeId: "actor-node",
+        sessionId: "session-9",
+        roundId: "round-0002",
+        generation: 3,
+        attempt: 1,
+      }),
+      diagnostic: expect.objectContaining({
+        finish_reason: "end_turn",
+        output_tokens: 123,
+        failure_category: "contract_validation_failed",
+        contract_stage: "contract_validation",
+      }),
+    }));
+  });
+
+  it("never persists diagnostics or touches handoff state for stale evidence payloads", () => {
+    mocks.isReviewEvidenceNode.mockReturnValue(true);
+    mocks.getActiveRun.mockReturnValue({
+      status: "active",
+      currentRound: { round_id: "round-0002", ordinal: 2 },
+      dagRun: { handoffedNodes: new Set<string>() },
+      nodeSessions: new Map([["actor-node", { sessionId: "session-9", attempt: 1 }]]),
+      counters: { corrections: {} },
+    });
+
+    expect(applyResponseHandoff({
+      runId: "run-2",
+      nodeId: "actor-node",
+      port: "done",
+      content: {
+        reviewer: "qwen",
+        status: "complete",
+        evidence: {
+          schema: "review-evidence-v1",
+          reviewer: "qwen",
+          findings: [{
+            category: "security",
+            severity: "high",
+            title: "Stale finding",
+            file: "src/app.ts",
+            line: 12,
+            evidence: "must never overwrite the current projection",
+            recommendation: "ignore stale transport payloads",
+            confidence: "high",
+          }],
+        },
+      },
+      round_id: "round-0001",
+      actor_id: "actor-1",
+      generation: 3,
+      lease_generation: 7,
+      command_id: "command-2",
+      attempt_diagnostics: {
+        finish_reason: "max_tokens",
+        output_tokens: 900,
+      },
+    }, source)).toMatchObject({ status: "handoff_ignored", disposition: "stale" });
+    expect(mocks.recordAttemptDiagnostic).not.toHaveBeenCalled();
+    expect(mocks.handoffActiveRun).not.toHaveBeenCalled();
   });
 
   it("rejects a lease that belongs to a different physical source", () => {

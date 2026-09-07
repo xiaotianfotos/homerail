@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   _clearAllSettings,
   createSetting,
+  findActiveCodexCompatibleSetting,
   findActiveClaudeSdkCompatibleSetting,
   findActiveSetting,
   getSetting,
@@ -14,6 +15,7 @@ import {
   listSettings,
   resolveClaudeSdkAuthModeForSetting,
   resolveClaudeSdkBaseUrlForSetting,
+  resolveCodexResponsesBaseUrlForSetting,
   upsertProvider,
   updateSetting,
 } from "../src/persistence/llm-settings.js";
@@ -48,7 +50,7 @@ describe("custom LLM providers", () => {
     server = createServer(0, undefined, undefined, false);
   });
 
-  it("separates Kimi CN and international credentials and migrates the legacy Coding Plan", () => {
+  it("separates Kimi CN and international credentials and migrates the legacy Coding Plan", async () => {
     const providers = listProviders();
     const kimiCn = providers.find((provider) => provider.id === "kimi_cn");
     const kimiInternational = providers.find((provider) => provider.id === "kimi");
@@ -62,11 +64,84 @@ describe("custom LLM providers", () => {
       base_url: "https://api.moonshot.cn/v1",
       default_model: "kimi-k2.7-code",
     }));
-    expect(kimiCn?.endpoints).toContainEqual(expect.objectContaining({
+    const codingPlan = kimiCn?.endpoints.find((endpoint) => endpoint.id === "kimi_coding_plan");
+    expect(codingPlan).toMatchObject({
       id: "kimi_coding_plan",
       base_url: "https://api.kimi.com/coding/v1",
       default_model: "kimi-for-coding",
-    }));
+    });
+    expect(codingPlan?.models.map((candidate) => candidate.id)).toHaveLength(4);
+    expect(codingPlan?.models.map((candidate) => candidate.id)).toEqual(expect.arrayContaining([
+      "kimi-for-coding",
+      "kimi-for-coding-highspeed",
+      "k3",
+      "k3-256k",
+    ]));
+    expect(codingPlan?.models.find((candidate) => candidate.id === "kimi-for-coding")).toMatchObject({
+      recommended: true,
+    });
+    expect(codingPlan?.models.find((candidate) => candidate.id === "k3")).toMatchObject({
+      display_name: "Kimi K3",
+      supports_image_input: true,
+      supports_video_input: true,
+      reasoning_effort_map: {
+        low: "low",
+        high: "high",
+        max: "max",
+      },
+      default_reasoning_effort: "high",
+    });
+    expect(codingPlan?.models.find((candidate) => candidate.id === "k3-256k")).toMatchObject({
+      display_name: "Kimi K3 256K",
+      supports_image_input: true,
+      supports_video_input: false,
+      reasoning_effort_map: {
+        low: "low",
+        high: "high",
+        max: "max",
+      },
+      default_reasoning_effort: "high",
+    });
+
+    const port = await listen(server);
+    const catalogResponse = await fetch(`http://127.0.0.1:${port}/api/llm/providers`);
+    const catalogBody = await catalogResponse.json() as {
+      data: {
+        providers: Array<{
+          id: string;
+          endpoints?: Array<{
+            id: string;
+            models: Array<{
+              id: string;
+              reasoning_effort_map?: Record<string, string | null> | false;
+              default_reasoning_effort?: string;
+              supports_image_input?: boolean;
+              supports_video_input?: boolean;
+            }>;
+          }>;
+        }>;
+      };
+    };
+    expect(catalogResponse.status).toBe(200);
+    const apiCodingPlan = catalogBody.data.providers
+      .find((provider) => provider.id === "kimi_cn")
+      ?.endpoints?.find((endpoint) => endpoint.id === "kimi_coding_plan");
+    expect(apiCodingPlan?.models.filter((candidate) => candidate.id === "k3")).toEqual([
+      expect.objectContaining({
+        reasoning_effort_map: { low: "low", high: "high", max: "max" },
+        default_reasoning_effort: "high",
+        supports_image_input: true,
+        supports_video_input: true,
+      }),
+    ]);
+    expect(apiCodingPlan?.models.filter((candidate) => candidate.id === "k3-256k")).toEqual([
+      expect.objectContaining({
+        reasoning_effort_map: { low: "low", high: "high", max: "max" },
+        default_reasoning_effort: "high",
+        supports_image_input: true,
+        supports_video_input: false,
+      }),
+    ]);
     expect(kimiInternational).toMatchObject({
       name: "Kimi / Moonshot",
       base_url: "https://api.moonshot.ai/v1",
@@ -87,6 +162,115 @@ describe("custom LLM providers", () => {
       model_name: "kimi-for-coding",
       base_url: "https://api.kimi.com/coding/v1",
     });
+
+    for (const modelName of ["k3", "k3-256k"]) {
+      const k3Setting = createSetting({
+        provider_id: "kimi_cn",
+        endpoint_id: "kimi_coding_plan",
+        model_name: modelName,
+        api_key: `pk-${modelName}-fixture`,
+        is_active: true,
+        is_default: false,
+      });
+      expect(k3Setting).toMatchObject({
+        provider_id: "kimi_cn",
+        endpoint_id: "kimi_coding_plan",
+        model_name: modelName,
+        reasoning_effort_map: {
+          low: "low",
+          high: "high",
+          max: "max",
+        },
+        default_reasoning_effort: "high",
+      });
+    }
+  });
+
+  it("catalogs the released Qwen3.8-Max Token Plan model instead of its preview", () => {
+    const aliyun = listProviders().find((provider) => provider.id === "aliyun");
+    const tokenPlan = aliyun?.endpoints?.find((endpoint) => endpoint.id === "aliyun_dashscope_cn_token_plan");
+    const models = tokenPlan?.models.map((model) => model.id);
+
+    expect(tokenPlan).toMatchObject({
+      responses_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      anthropic_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    });
+    expect(models).toContain("qwen3.8-max");
+    expect(models).not.toContain("qwen3.8-max-preview");
+  });
+
+  it("catalogs only DeepSeek V4 Flash as a Responses-capable Codex runtime", async () => {
+    const deepseek = listProviders().find((provider) => provider.id === "deepseek");
+    expect(deepseek).toMatchObject({
+      default_model: "deepseek-v4-flash",
+      responses_base_url: "https://api.deepseek.com",
+    });
+    expect(deepseek?.endpoints?.[0]).toMatchObject({
+      id: "deepseek_api",
+      default_model: "deepseek-v4-flash",
+      responses_base_url: "https://api.deepseek.com",
+    });
+    expect(deepseek?.endpoints?.[0]?.models.map((model) => model.id))
+      .toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
+
+    const setting = createSetting({
+      provider_id: "deepseek",
+      endpoint_id: "deepseek_api",
+      model_name: "deepseek-v4-flash",
+      api_key: "sk-deepseek-test",
+      is_active: true,
+      is_default: true,
+    });
+    expect(resolveCodexResponsesBaseUrlForSetting(setting)).toBe("https://api.deepseek.com");
+    expect(findActiveCodexCompatibleSetting()?.id).toBe(setting.id);
+
+    const proSetting = createSetting({
+      provider_id: "deepseek",
+      endpoint_id: "deepseek_api",
+      model_name: "deepseek-v4-pro",
+      api_key: "sk-deepseek-test",
+      is_active: true,
+    });
+    expect(resolveCodexResponsesBaseUrlForSetting(proSetting)).toBeUndefined();
+
+    const port = await listen(server);
+    const response = await fetch(`http://127.0.0.1:${port}/api/llm/settings?provider_id=deepseek`);
+    const body = await response.json() as {
+      data: { settings: Array<{ id: string; supports_codex_responses: boolean }> };
+    };
+    expect(response.status).toBe(200);
+    expect(body.data.settings.find((candidate) => candidate.id === setting.id))
+      .toMatchObject({ supports_codex_responses: true });
+    expect(body.data.settings.find((candidate) => candidate.id === proSetting.id))
+      .toMatchObject({ supports_codex_responses: false });
+  });
+
+  it("reconciles retired DeepSeek model aliases to V4 Flash", () => {
+    const setting = createSetting({
+      provider_id: "deepseek",
+      endpoint_id: "deepseek_api",
+      model_name: "deepseek-v4-flash",
+      models: ["deepseek-v4-flash"],
+      api_key: "sk-deepseek-legacy-test",
+      is_active: true,
+      is_default: true,
+    });
+    getDb().prepare(`
+      UPDATE llm_settings
+      SET model_name = ?, models = ?
+      WHERE id = ?
+    `).run(
+      "deepseek-chat",
+      JSON.stringify(["deepseek-chat", "deepseek-reasoner"]),
+      setting.id,
+    );
+
+    expect(getSetting(setting.id)).toMatchObject({
+      model_name: "deepseek-v4-flash",
+      models: ["deepseek-v4-flash"],
+      responses_base_url: "https://api.deepseek.com",
+    });
+    expect(findActiveCodexCompatibleSetting()?.id).toBe(setting.id);
   });
 
   afterEach(async () => {
@@ -604,7 +788,7 @@ describe("custom LLM providers", () => {
     expect(response.status).toBe(404);
   });
 
-  it("tests all three /v1 endpoints with the exact model and prefers Claude when both harness protocols work", async () => {
+  it("tests all three /v1 endpoints with the exact model and prefers Codex when Responses works", async () => {
     const upstreamRequests: Array<{
       url?: string;
       model?: string;
@@ -658,7 +842,7 @@ describe("custom LLM providers", () => {
       expect(response.status).toBe(200);
       expect(body.data).toMatchObject({
         available: true,
-        preferred_harness: "claude_agent_sdk",
+        preferred_harness: "codex_appserver",
         endpoints: {
           anthropic: {
             available: true,
@@ -705,6 +889,66 @@ describe("custom LLM providers", () => {
     }
   });
 
+  it("probes a saved setting by id using its encrypted key and independent protocol roots", async () => {
+    const seen: Array<{ url?: string; authorization?: string }> = [];
+    const upstream = http.createServer((req, res) => {
+      req.resume();
+      seen.push({ url: req.url, authorization: req.headers.authorization });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ id: "probe-result" }));
+    });
+    const upstreamPort = await listen(upstream);
+    const root = `http://127.0.0.1:${upstreamPort}`;
+    upsertProvider({
+      id: "saved-runtime",
+      default_model: "saved-model",
+      base_url: `${root}/openai`,
+      chat_completions_base_url: `${root}/openai`,
+      responses_base_url: `${root}/responses-api`,
+      anthropic_base_url: `${root}/anthropic`,
+    });
+    const setting = createSetting({
+      provider_id: "saved-runtime",
+      endpoint_id: "saved-runtime_custom",
+      model_name: "saved-model",
+      api_key: "saved-secret",
+      protocol: "custom",
+      base_url: `${root}/openai`,
+      chat_completions_base_url: `${root}/openai`,
+      responses_base_url: `${root}/responses-api`,
+      anthropic_base_url: `${root}/anthropic`,
+      is_active: true,
+      is_default: true,
+    });
+
+    try {
+      const port = await listen(server);
+      const response = await fetch(`http://127.0.0.1:${port}/api/llm/models/detect-runtime`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ setting_id: setting.id }),
+      });
+      const body = await response.json() as {
+        data: {
+          preferred_harness: string;
+          endpoints: Record<string, { url: string; base_url?: string }>;
+        };
+      };
+      expect(body.data).toMatchObject({
+        preferred_harness: "codex_appserver",
+        endpoints: {
+          anthropic: { url: `${root}/anthropic/v1/messages`, base_url: `${root}/anthropic/v1` },
+          openai: { url: `${root}/openai/v1/chat/completions`, base_url: `${root}/openai/v1` },
+          responses: { url: `${root}/responses-api/v1/responses`, base_url: `${root}/responses-api/v1` },
+        },
+      });
+      expect(seen).toHaveLength(3);
+      expect(seen.every((request) => request.authorization === "Bearer saved-secret")).toBe(true);
+    } finally {
+      await close(upstream);
+    }
+  });
+
   it("discovers protocol roots from an unversioned base URL and falls back to root endpoints", async () => {
     const upstreamRequests: string[] = [];
     const upstream = http.createServer((req, res) => {
@@ -743,7 +987,7 @@ describe("custom LLM providers", () => {
 
       expect(body.data).toMatchObject({
         available: true,
-        preferred_harness: "claude_agent_sdk",
+        preferred_harness: "codex_appserver",
         endpoints: {
           anthropic: {
             available: true,
@@ -825,7 +1069,7 @@ describe("custom LLM providers", () => {
     }
   });
 
-  it("reports a Responses-only endpoint without selecting an unsupported harness", async () => {
+  it("selects Codex for a Responses-only endpoint", async () => {
     const upstream = http.createServer((req, res) => {
       req.resume();
       if (req.url === "/v1/responses") {
@@ -863,8 +1107,8 @@ describe("custom LLM providers", () => {
 
       expect(response.status).toBe(200);
       expect(body.data).toMatchObject({
-        available: false,
-        preferred_harness: null,
+        available: true,
+        preferred_harness: "codex_appserver",
         endpoints: {
           anthropic: { available: false, status: 404 },
           openai: { available: false, status: 404 },
@@ -949,8 +1193,10 @@ describe("custom LLM providers", () => {
     const setting = createSetting({
       provider_id: "aliyun",
       endpoint_id: "aliyun_dashscope_cn_token_plan",
-      model_name: "qwen3.8-max-preview",
+      model_name: "qwen3.8-max",
       api_key: "sk-sp-code-authoritative",
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
       is_active: true,
       is_default: true,
     });
@@ -979,6 +1225,10 @@ describe("custom LLM providers", () => {
     expect(storedData).not.toHaveProperty("base_url");
     expect(storedData).not.toHaveProperty("protocol");
     expect(storedData).not.toHaveProperty("auth_type");
+    expect(storedData).toMatchObject({
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
+    });
 
     expect(getSetting(setting.id)).toMatchObject({
       endpoint_id: "aliyun_dashscope_cn_token_plan",
@@ -989,7 +1239,9 @@ describe("custom LLM providers", () => {
       protocol: "openai_compatible",
       auth_type: "bearer",
       supports_llm: true,
-      supports_image_input: true,
+      supports_image_input: false,
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
     });
   });
 
@@ -1037,6 +1289,39 @@ describe("custom LLM providers", () => {
       preset_source: "custom",
       preset_status: "custom",
       base_url: "https://override.example/v1",
+    });
+  });
+
+  it("persists model-owned DSH reasoning capabilities without a global effort list", () => {
+    upsertProvider({
+      id: "reasoning-gateway",
+      name: "Reasoning gateway",
+      default_model: "gateway-model",
+      base_url: "https://reasoning.example/v1",
+      chat_completions_base_url: "https://reasoning.example/v1",
+    });
+    const setting = createSetting({
+      provider_id: "reasoning-gateway",
+      endpoint_id: "reasoning-gateway_custom",
+      model_name: "gateway-model",
+      api_key: "private-key",
+      protocol: "openai_compatible",
+      base_url: "https://reasoning.example/v1",
+      chat_completions_base_url: "https://reasoning.example/v1",
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
+    });
+
+    expect(getSetting(setting.id)).toMatchObject({
+      reasoning_effort_map: { off: null, medium: "balanced", high: "deep" },
+      default_reasoning_effort: "medium",
+    });
+    expect(() => updateSetting(setting.id, {
+      reasoning_effort_map: { off: null, high: "deep" },
+    })).toThrow(/default_reasoning_effort 'medium' is not declared/);
+    expect(updateSetting(setting.id, { reasoning_effort_map: false })).toMatchObject({
+      reasoning_effort_map: false,
+      default_reasoning_effort: undefined,
     });
   });
 
@@ -1122,7 +1407,7 @@ describe("custom LLM providers", () => {
     expect(() => createSetting({
       provider_id: "aliyun",
       endpoint_id: "aliyun_retired_plan",
-      model_name: "qwen3.8-max-preview",
+      model_name: "qwen3.8-max",
       api_key: "sk-sp-invalid-endpoint",
     })).toThrow("unknown or retired");
   });
@@ -1131,7 +1416,7 @@ describe("custom LLM providers", () => {
     const setting = createSetting({
       provider_id: "aliyun",
       endpoint_id: "aliyun_dashscope_cn_token_plan",
-      model_name: "qwen3.8-max-preview",
+      model_name: "qwen3.8-max",
       api_key: "sk-sp-legacy-token-plan",
       is_active: true,
       is_default: true,
@@ -1194,7 +1479,7 @@ describe("custom LLM providers", () => {
     const setting = createSetting({
       provider_id: "aliyun",
       endpoint_id: "aliyun_dashscope_cn_token_plan",
-      model_name: "qwen3.8-max-preview",
+      model_name: "qwen3.8-max",
       api_key: "legacy-token-plan-key-without-prefix",
       is_active: true,
     });
@@ -1230,7 +1515,7 @@ describe("custom LLM providers", () => {
         stored_endpoint_id: "aliyun_retired_token_plan",
       },
     });
-    expect(findActiveSetting("aliyun", "qwen3.8-max-preview")).toBeUndefined();
+    expect(findActiveSetting("aliyun", "qwen3.8-max")).toBeUndefined();
 
     const port = await listen(server);
     const response = await fetch(`http://127.0.0.1:${port}/api/llm-settings/${setting.id}`);

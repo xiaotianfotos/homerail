@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { http } from '../clients/http-client'
+import { setDesktopBrowserToolsTransportAvailable } from '@/browser-tools/browser-renderer-bridge'
 import {
   agentRuntimeApi,
   getManagerAgentConfig,
@@ -11,6 +12,7 @@ import {
 } from './agent-runtime-api'
 
 afterEach(() => {
+  setDesktopBrowserToolsTransportAvailable(false)
   vi.restoreAllMocks()
 })
 
@@ -31,13 +33,13 @@ describe('agent runtime API', () => {
     expect(post).toHaveBeenNthCalledWith(
       1,
       '/api/manager/chat',
-      { message: 'hello' },
+      { message: 'hello', browser_tools_transport: 'none' },
       { signal: controller.signal }
     )
     expect(post).toHaveBeenNthCalledWith(
       2,
       '/api/manager/chat',
-      { message: 'without signal' },
+      { message: 'without signal', browser_tools_transport: 'none' },
       undefined
     )
     expect(get).toHaveBeenNthCalledWith(1, '/api/manager-agent/config')
@@ -74,10 +76,27 @@ describe('agent runtime API', () => {
         message: 'review this',
         project_id: 'project-1',
         session_id: 'session-1',
-        manager_agent_config: { harness: 'codex_appserver' }
+        manager_agent_config: { harness: 'codex_appserver' },
+        browser_tools_transport: 'none'
       },
       { signal: controller.signal }
     )
+  })
+
+  it('overwrites caller-supplied routing with the current trusted transport', async () => {
+    const post = vi.spyOn(http, 'post').mockResolvedValue({ success: true, data: {} })
+    setDesktopBrowserToolsTransportAvailable(true)
+
+    await managerChat({
+      message: 'route safely',
+      browser_tools_transport: 'renderer',
+      browser_tools_target: { connection_id: 'spoofed' },
+    })
+
+    expect(post).toHaveBeenCalledWith('/api/manager/chat', {
+      message: 'route safely',
+      browser_tools_transport: 'desktop',
+    }, undefined)
   })
 
   it('marks unsuccessful Manager chat responses as errors', async () => {

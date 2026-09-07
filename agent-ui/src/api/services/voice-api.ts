@@ -70,6 +70,19 @@ export interface VoiceModelsRequest {
 
 export type VoiceEndpointProbeKind = 'http' | 'websocket'
 
+/**
+ * Explicit probe outcome attached by newer Manager builds (issue #193) so
+ * UIs can distinguish verified WebSocket upgrades from
+ * authentication-required, not-found, rejected, or unreachable responses
+ * without interpreting status codes themselves.
+ */
+export type VoiceEndpointProbeCapability =
+  | 'verified'
+  | 'authentication_required'
+  | 'not_found'
+  | 'rejected'
+  | 'unreachable'
+
 export interface VoiceEndpointProbeCandidate {
   id: string
   kind: VoiceEndpointProbeKind
@@ -81,6 +94,8 @@ export interface VoiceEndpointProbeResult extends VoiceEndpointProbeCandidate {
   reachable: boolean
   status_code?: number
   message: string
+  /** Additive explicit outcome; older Manager builds omit it. */
+  capability?: VoiceEndpointProbeCapability
 }
 
 export interface VoiceEndpointProbeResponse {

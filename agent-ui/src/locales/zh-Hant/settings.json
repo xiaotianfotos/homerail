@@ -8,9 +8,11 @@
     "git": "Git",
     "providers": "供應商與模型",
     "voice": "語音",
+    "experimental": "實驗性功能",
     "device": "WireGuard",
     "skills": "Skills",
     "plugins": "外掛",
+    "toolProviders": "MCP 與工具",
     "mcp": "MCP 服務器",
     "memory": "記憶"
   },
@@ -20,8 +22,10 @@
     "git": "管理 Git Server token。項目和倉庫在新增目錄時關聯。",
     "providers": "維護供應商、模型能力和本地加密保存的模型配置。",
     "voice": "配置語音播報和按鍵控制。",
+    "experimental": "管理仍在打磨、可能繼續調整的介面能力。",
     "skills": "查看從靜態 Skills 目錄偵測到的能力說明。",
     "plugins": "查看已解析的外掛能力，並啓用或停用可選場景。",
+    "toolProviders": "查看內建 MCP/函式工具提供方及其目前執行連線。",
     "default": "配置 HomeRail Agent UI 使用的本地能力。"
   },
   "general": {
@@ -57,11 +61,11 @@
       "channels": {
         "stable": {
           "label": "穩定版",
-          "description": "只接收正式版本，不會看到 Alpha 或 Beta 預發佈版。"
+          "description": "只接收正式版本，不會看到 Beta 預發佈版。"
         },
         "early-access": {
           "label": "搶先體驗",
-          "description": "跟隨目前 Alpha 通道，未來會自然升級到 Beta 和穩定版，無需再次選擇。"
+          "description": "跟隨 Beta 通道，自動接收後續 Beta 和穩定版更新。"
         }
       },
       "currentVersion": "目前安裝版本：{version}",
@@ -79,6 +83,53 @@
         "error": "更新檢查失敗"
       }
     }
+  },
+  "experimental": {
+    "title": "實驗性功能",
+    "description": "這些功能仍在驗證中，可能隨著使用回饋繼續調整。",
+    "badge": "實驗性",
+    "browserTools": {
+      "title": "允許 AI 操作 HomeRail 介面",
+      "description": "允許 Manager 和 Live Voice 用具名動作開啟或關閉可信的 HomeRail 介面。例如直接開啟某個 DAG 狀態，不需要重現一連串點擊。預設關閉；關閉開關會立即撤銷存取權限。",
+      "state": {
+        "disabled": "已關閉，沒有註冊或連接任何頁面工具。",
+        "restart-required": "已啟用；請重新啟動一次 HomeRail Desktop，以啟用 Chromium WebMCP 執行環境。",
+        "starting": "正在連接安全的頁面直連通道…",
+        "direct": "頁面直連已連接，Manager 和 Live Voice 可以操作目前的精確頁面。",
+        "direct-native": "頁面直連與原生 WebMCP 都已在目前頁面啟用。",
+        "native-only": "原生 WebMCP 已啟用，但 Manager 頁面直連目前無法使用。",
+        "connected": "已連接，AI 可以使用可信的 HomeRail 介面動作。",
+        "unavailable": "目前頁面沒有可用的 Browser Tools 通道。",
+        "error": "Browser Tools 啟動失敗",
+        "native-starting": "原生 Chromium WebMCP：正在探索 6 個可信頁面工具…",
+        "native-connected": "原生 Chromium WebMCP：已連接完整的 6 工具目錄。",
+        "native-unavailable": "原生 Chromium WebMCP 無法使用；頁面直連仍可繼續操作目前頁面。",
+        "native-error": "原生 Chromium WebMCP 啟動失敗；頁面直連與它彼此獨立。"
+      }
+    },
+    "liveVoiceImmersive": {
+      "title": "Live Voice 沉浸介面",
+      "description": "Codex Live Voice 連線成功後自動收起頂部列、側欄和輸入區，只保留生成式 UI 與底部音量波形；中斷連線後自動恢復完整介面。"
+    }
+  },
+  "toolProviders": {
+    "title": "MCP 與工具提供方",
+    "description": "依據 HomeRail 真實的內建工具宣告與目前執行狀態產生的唯讀目錄。外部 MCP Server 在執行鏈真正接通前繼續隱藏，不顯示虛假的可用狀態。",
+    "configuration": {
+      "builtIn": "內建",
+      "experimental": "實驗性"
+    },
+    "runtime": {
+      "available": "可用",
+      "connected": "已連接",
+      "disconnected": "未連接",
+      "unavailable": "不可用"
+    },
+    "toolCount": "{count} 個工具",
+    "nativeTools": "原生函式工具",
+    "readOnly": "唯讀配置",
+    "showTools": "查看已宣告工具",
+    "error": "無法載入工具提供方目錄：{message}"
   },
   "environment": {
     "statusTitle": "DAG 執行環境",

@@ -45,6 +45,8 @@ export const useAgentStore = defineStore('agent', () => {
   const settingsRequestedTab = ref<string | null>(null)
   const voiceCockpitOpen = ref(false)
   const runtimeOverlayOpen = ref(false)
+  const runtimeOverlayRunId = ref<string | null>(null)
+  const runtimeOverlayView = ref<'run_list' | 'dag_graph'>('run_list')
   const onboardingOpen = ref(false)
   const onboardingManualDebug = ref(false)
   const onboardingDismissed = ref(loadOnboardingDismissed())
@@ -207,9 +209,13 @@ export const useAgentStore = defineStore('agent', () => {
   function applyManagerAgentConfig(config: Record<string, any> | null | undefined): boolean {
     if (!config) return false
     if (config.harness === 'codex_appserver') {
-      managerSettingId.value = null
-      managerProviderName.value = 'codex'
-      managerModelName.value = typeof config.model_name === 'string' ? config.model_name : ''
+      const settingId = typeof config.llm_setting_id === 'string' ? config.llm_setting_id : ''
+      const setting = settingId
+        ? llmRuntimeModels.value.find(item => item.id === settingId)
+        : undefined
+      managerSettingId.value = setting?.id ?? null
+      managerProviderName.value = setting?.provider_id || 'codex'
+      managerModelName.value = setting?.model_name || (typeof config.model_name === 'string' ? config.model_name : '')
       persist()
       return true
     }
@@ -350,6 +356,8 @@ export const useAgentStore = defineStore('agent', () => {
     settingsPageOpen.value = false
     voiceCockpitOpen.value = false
     runtimeOverlayOpen.value = false
+    runtimeOverlayRunId.value = null
+    runtimeOverlayView.value = 'run_list'
     inspectorTab.value = 'progress'
     hasStarted.value = true
     managerResponding.value = false
@@ -392,7 +400,21 @@ export const useAgentStore = defineStore('agent', () => {
     if (projectId) void fetchManagerSessions()
   }
 
-  async function switchToRun(runId: string, projectId?: string): Promise<void> {
+  async function switchToRun(
+    runId: string,
+    projectId?: string,
+    signal?: AbortSignal,
+    onActionCommitted?: () => void,
+  ): Promise<boolean> {
+    let dag: DAGExecution | null = null
+    try {
+      const { getDagStatus } = await import('@/api/services/dag-api')
+      dag = await getDagStatus(runId, signal)
+    } catch { /* caller decides whether a missing run is user-visible */ }
+    if (signal?.aborted) throw new DOMException('HomeRail UI tool was cancelled', 'AbortError')
+    if (!dag) return false
+
+    onActionCommitted?.()
     currentRunId.value = runId
     if (projectId) managerProjectId.value = projectId
     managerSessionId.value = null
@@ -402,11 +424,41 @@ export const useAgentStore = defineStore('agent', () => {
     edges.value = []
     selectedNodeId.value = null
     persist()
-    try {
-      const { getDagStatus } = await import('@/api/services/dag-api')
-      const dag = await getDagStatus(runId)
-      if (dag) setDagExecution(dag)
-    } catch { /* ignore */ }
+    setDagExecution(dag)
+    return true
+  }
+
+  async function openRuntimeOverlay(
+    runId?: string,
+    signal?: AbortSignal,
+    onActionCommitted?: () => void,
+  ): Promise<void> {
+    const normalizedRunId = runId?.trim() || null
+    if (normalizedRunId) {
+      const found = await switchToRun(
+        normalizedRunId,
+        undefined,
+        signal,
+        onActionCommitted,
+      )
+      if (!found) throw new Error(`DAG run not found: ${normalizedRunId}`)
+    }
+    if (signal?.aborted) throw new DOMException('HomeRail UI tool was cancelled', 'AbortError')
+    if (!normalizedRunId) onActionCommitted?.()
+    runtimeOverlayRunId.value = normalizedRunId
+    runtimeOverlayView.value = normalizedRunId ? 'dag_graph' : 'run_list'
+    runtimeOverlayOpen.value = true
+  }
+
+  function setRuntimeOverlayState(view: 'run_list' | 'dag_graph', runId?: string | null): void {
+    runtimeOverlayView.value = view
+    runtimeOverlayRunId.value = view === 'dag_graph' ? runId?.trim() || null : null
+  }
+
+  function closeRuntimeOverlay(): void {
+    runtimeOverlayOpen.value = false
+    runtimeOverlayRunId.value = null
+    runtimeOverlayView.value = 'run_list'
   }
 
   async function fetchManagerSessions(): Promise<void> {
@@ -573,6 +625,8 @@ export const useAgentStore = defineStore('agent', () => {
     settingsRequestedTab,
     voiceCockpitOpen,
     runtimeOverlayOpen,
+    runtimeOverlayRunId,
+    runtimeOverlayView,
     onboardingOpen,
     onboardingManualDebug,
     onboardingDismissed,
@@ -626,6 +680,9 @@ export const useAgentStore = defineStore('agent', () => {
     startNewSession,
     restoreSession,
     switchToRun,
+    openRuntimeOverlay,
+    setRuntimeOverlayState,
+    closeRuntimeOverlay,
     initialize: dagEvents.initialize,
     hasWsStreamed,
     resetWsStreamed,

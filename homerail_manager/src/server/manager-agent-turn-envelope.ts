@@ -16,9 +16,11 @@ import {
   managerAgentTurnClaimsSigningInput,
   managerAgentTurnPayloadDigestInput,
   managerAgentTurnScopeFromPayload,
+  validateBrowserToolsTurnBinding,
   validateManagerAgentTurnEnvelope,
   type ManagerAgentTurnEnvelopeV1,
   type ManagerAgentTurnRuntimePlacementV1,
+  type ManagerAgentTurnScopeV1,
 } from "homerail-protocol";
 
 const DEFAULT_TTL_MS = 5 * 60_000;
@@ -34,6 +36,7 @@ export const DEFAULT_MANAGER_AGENT_API_SCOPES = Object.freeze([
   "GET:/api/skills/*",
   "POST:/api/dag/patterns/*/instantiate",
   "POST:/api/dag/workflows/sync",
+  "POST:/api/browser-tools/invoke",
   "POST:/api/plugins/tools/invoke",
   "POST:/api/skills/*/views/*/materialize",
   "POST:/api/skills/*/views/present",
@@ -88,6 +91,10 @@ export class ManagerAgentTurnEnvelopeAuthority {
     if (Object.prototype.hasOwnProperty.call(input.payload, "turn_envelope")) {
       throw new Error("Manager Agent payload already contains a turn envelope");
     }
+    validateBrowserToolsTurnBinding(
+      input.payload.browser_tools_transport,
+      input.payload.browser_tools_target,
+    );
     const ttl = input.ttl_ms ?? DEFAULT_TTL_MS;
     if (!Number.isSafeInteger(ttl) || ttl < 1 || ttl > MANAGER_AGENT_TURN_MAX_TTL_MS) {
       throw new Error("Manager Agent turn envelope TTL is invalid");
@@ -155,24 +162,33 @@ export class ManagerAgentTurnEnvelopeAuthority {
     pathname: string;
     now?: Date;
   }): boolean {
-    if (!input.credential || Buffer.byteLength(input.credential, "utf8") > MAX_CREDENTIAL_BYTES) return false;
+    return this.authorizeApiRequestScope(input) !== null;
+  }
+
+  authorizeApiRequestScope(input: {
+    credential: string;
+    method: string;
+    pathname: string;
+    now?: Date;
+  }): ManagerAgentTurnScopeV1 | null {
+    if (!input.credential || Buffer.byteLength(input.credential, "utf8") > MAX_CREDENTIAL_BYTES) return null;
     let decoded: Buffer;
     try {
       decoded = Buffer.from(input.credential, "base64url");
     } catch {
-      return false;
+      return null;
     }
-    if (decoded.toString("base64url") !== input.credential) return false;
+    if (decoded.toString("base64url") !== input.credential) return null;
     let envelope: ManagerAgentTurnEnvelopeV1;
     try {
       envelope = JSON.parse(decoded.toString("utf8")) as ManagerAgentTurnEnvelopeV1;
     } catch {
-      return false;
+      return null;
     }
     const now = input.now ?? new Date();
     this.#prune(now.getTime());
     const issued = envelope?.claims?.turn_id ? this.#issued.get(envelope.claims.turn_id) : undefined;
-    if (!issued || !isDeepStrictEqual(issued, envelope)) return false;
+    if (!issued || !isDeepStrictEqual(issued, envelope)) return null;
     if (
       envelope.claims.key_id !== this.#keyId
       || Date.parse(envelope.claims.issued_at) > now.getTime() + 10_000
@@ -183,9 +199,11 @@ export class ManagerAgentTurnEnvelopeAuthority {
         createPublicKey(this.#privateKey),
         Buffer.from(envelope.signature, "base64url"),
       )
-    ) return false;
+    ) return null;
     const method = input.method.toUpperCase();
-    return envelope.claims.scope.manager_api_scopes.some((scope) => apiScopeMatches(scope, method, input.pathname));
+    return envelope.claims.scope.manager_api_scopes.some((scope) => apiScopeMatches(scope, method, input.pathname))
+      ? structuredClone(envelope.claims.scope)
+      : null;
   }
 
   #prune(nowMs: number): void {

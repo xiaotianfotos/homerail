@@ -1,6 +1,6 @@
 {
   "name": "homerail-cli",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-beta.1",
   "private": true,
   "description": "HomeRail TypeScript CLI for configuring, running, and inspecting DAG workflows.",
   "license": "MIT",
@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "esbuild": "^0.28.1",
     "tsx": "^4.22.4",
     "typescript": "^5.4.0",
     "vitest": "^4.1.8"

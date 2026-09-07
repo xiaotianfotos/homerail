@@ -55,6 +55,8 @@ export interface DagRuntimeProfileEntry {
   llm_setting_id?: string;
   model_alias?: string;
   agent_type?: string;
+  reasoning_effort?: string;
+  service_tier?: string | null;
 }
 
 export interface DagRuntimeProfile {
@@ -72,6 +74,8 @@ export interface DagRuntimeProfile {
 export interface DagRuntimeProfileResolvedEntry {
   llm_setting_id?: string;
   agent_type?: string;
+  reasoning_effort?: string;
+  service_tier?: string | null;
 }
 
 export interface DagRuntimeProfileResolved {
@@ -161,9 +165,19 @@ function _profileEntry(value: unknown): DagRuntimeProfileEntry | undefined {
   const llmSettingId = _string(raw.llm_setting_id ?? raw.llmSettingId ?? raw.setting_id ?? raw.settingId);
   const modelAlias = _string(raw.model_alias ?? raw.modelAlias);
   const agentType = _string(raw.agent_type ?? raw.agentType ?? raw.harness);
+  const reasoningEffort = _string(raw.reasoning_effort ?? raw.reasoningEffort);
+  const rawServiceTier = Object.prototype.hasOwnProperty.call(raw, "service_tier")
+    ? raw.service_tier
+    : raw.serviceTier;
   if (llmSettingId) entry.llm_setting_id = llmSettingId;
   if (modelAlias) entry.model_alias = modelAlias;
   if (agentType) entry.agent_type = agentType;
+  if (reasoningEffort) entry.reasoning_effort = reasoningEffort;
+  if (rawServiceTier === null) entry.service_tier = null;
+  else {
+    const serviceTier = _string(rawServiceTier);
+    if (serviceTier) entry.service_tier = serviceTier;
+  }
   return Object.keys(entry).length > 0 ? entry : undefined;
 }
 
@@ -609,6 +623,8 @@ function _resolveEntry(entry: DagRuntimeProfileEntry): DagRuntimeProfileResolved
     resolved.llm_setting_id = resolveModelAlias(entry.model_alias).id;
   }
   if (entry.agent_type) resolved.agent_type = entry.agent_type;
+  if (entry.reasoning_effort) resolved.reasoning_effort = entry.reasoning_effort;
+  if (entry.service_tier !== undefined) resolved.service_tier = entry.service_tier;
   return resolved;
 }
 
@@ -654,6 +670,19 @@ export function applyDagRuntimeProfile(parsed: ParsedDAG, profile: DagRuntimePro
       ...base,
       llm_setting_id: override?.llm_setting_id ?? base.llm_setting_id,
       agent_type: override?.agent_type ?? base.agent_type,
+      ...((override?.reasoning_effort !== undefined || override?.service_tier !== undefined)
+        ? {
+            llm: {
+              ...base.llm,
+              ...(override.reasoning_effort !== undefined
+                ? { reasoning_effort: override.reasoning_effort }
+                : {}),
+              ...(override.service_tier !== undefined
+                ? { service_tier: override.service_tier }
+                : {}),
+            },
+          }
+        : {}),
     };
   }
   return {

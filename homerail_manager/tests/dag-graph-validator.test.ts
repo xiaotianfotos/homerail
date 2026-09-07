@@ -365,7 +365,7 @@ nodes:
 `)).toThrow(/non-negative integer/);
   });
 
-  it("rejects join gateways without a complete dependency input contract", () => {
+  it("validates join gateway dependencies and routed input contracts", () => {
     expect(() => parseDAGYaml(`
 name: join-without-dependencies
 nodes:
@@ -398,7 +398,7 @@ nodes:
     outputs:
       passed:
         to: ""
-`)).toThrow(/missing routed input from after dependencies: voter_two/);
+`)).not.toThrow();
 
     expect(() => parseDAGYaml(`
 name: join-with-unawaited-input
@@ -449,6 +449,6 @@ nodes:
     outputs:
       passed:
         to: ""
-`)).toThrow(/threshold 3 exceeds its 2 after dependencies/);
+`)).toThrow(/threshold 3 exceeds its 2 routed inputs/);
   });
 });

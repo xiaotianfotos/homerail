@@ -14,6 +14,8 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent-store'
 import { useDagNodeMessages } from '@/composables/useDagNodeMessages'
+import { useDagNodeResult } from '@/components/agent/dag-node-result/useDagNodeResult'
+import DagNodeResultView from '@/components/agent/dag-node-result/DagNodeResultView.vue'
 import { getAgentPersona, fmtTokens, contextBarColor, contextUsageText } from '@/lib/agentPersonas'
 import { cn } from '@/lib/utils'
 import { http } from '@/api/clients/http-client'
@@ -51,6 +53,10 @@ const { messages, loading } = useDagNodeMessages(
   computed(() => props.selectedNodeId),
   isSelectedManager,
 )
+
+// 非 worker 节点（command/join/condition 等 Manager 逻辑节点）的结构化结果
+const selectedNodeIdRef = computed(() => props.selectedNodeId)
+const { result: nodeResult, loading: resultLoading } = useDagNodeResult(dagRunId, selectedNodeIdRef)
 
 const logScrollRef = ref<HTMLElement | null>(null)
 const taskScrollRef = ref<HTMLElement | null>(null)
@@ -345,6 +351,18 @@ defineExpose({ scrollBy })
         <Workflow class="h-3.5 w-3.5 text-[var(--hr-accent)]" />
         {{ t('dag.detail.managerExecuted') }}
       </div>
+
+      <!-- 非 worker 节点：结构化结果（command/join/condition 等，替代纯文字横幅） -->
+      <section
+        v-if="!nodeSemantic.isWorker"
+        data-testid="dag-node-result"
+        class="flex-shrink-0 border-b border-[var(--hr-border)]"
+      >
+        <div class="flex items-center gap-2 px-6 pt-3 text-xs font-semibold uppercase tracking-wider text-[var(--hr-text-3)]">
+          {{ t('dag.result.title') }}
+        </div>
+        <DagNodeResultView :result="nodeResult" :loading="resultLoading" />
+      </section>
 
       <!-- 面板：任务详情 -->
       <button

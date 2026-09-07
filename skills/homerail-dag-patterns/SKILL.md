@@ -64,6 +64,13 @@ per-panel correction, or later follow-up, load `homerail-dag-ops` and select a
 concrete Workflow that declares those presentation and lifecycle contracts.
 Never promise that a generic pattern will update visible panels.
 
+Inspecting results is the opposite case: it needs no declared presentation
+contract at all. Every non-worker node (command, join, condition, and other
+gateways) already has a structured, human-readable result at
+`GET /api/dag-status/<run_id>/node/<node_id>/result`, and the node drawer plus
+the Voice Cockpit `dag_explorer` widget render it by default. Do not author a
+custom Workflow or generative UI just to make pattern results visible.
+
 ## Select a Pattern
 
 ```bash

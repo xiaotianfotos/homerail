@@ -2,6 +2,7 @@ import {
   codexLiveVoiceWebSocketUrl,
   requestCodexLiveVoiceTicket,
 } from '@/api/services/voice-agent-api'
+import { currentBrowserToolsTurnBinding } from '@/browser-tools/browser-renderer-bridge'
 
 export type CodexLiveVoiceState =
   | 'idle'
@@ -293,6 +294,7 @@ export class CodexLiveVoiceClient {
       sdp,
       project_id: this.options.projectId || null,
       selected_node_id: this.options.selectedNodeId || null,
+      ...currentBrowserToolsTurnBinding(),
     })
     await remotePromise
     this.assertCurrentConnection(generation, peer)

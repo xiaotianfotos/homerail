@@ -67,6 +67,7 @@ describe("built-in DAG patterns", () => {
 
     expect(spec.triggers).toBeUndefined();
     expect(spec.workspace).toEqual({ mode: "shared" });
+    expect(spec.policies).not.toHaveProperty("max_tool_calls_per_node");
     expect(spec.artifacts).toEqual([
       expect.objectContaining({ name: "diagnosis.json", contract: "DiagnosisReport", required: true, publish: "always" }),
       expect.objectContaining({ name: "verification.json", contract: "ConsensusVerification", required: true, publish: "always" }),
@@ -424,6 +425,7 @@ describe("built-in DAG patterns", () => {
       timeout_ms: 120000,
       max_tokens: 64000,
     }]);
+    expect(pattern.workflow.spec.policies).toBeUndefined();
     expect(pattern.parsed.meta.agents).toHaveProperty("executor");
     expect(pattern.parsed.meta.agents).toHaveProperty("advisor");
   });

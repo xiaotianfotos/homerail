@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Unified version, for example 0.1.0-alpha.1
+        description: Unified version, for example 0.1.0-beta.1
         type: string
         required: true
       desktop_sha:
@@ -69,14 +69,14 @@ jobs:
           printf 'channel=%s\n' "$channel" >> "$GITHUB_OUTPUT"
           printf 'prerelease=%s\n' "$prerelease" >> "$GITHUB_OUTPUT"
 
-      - name: Require Alpha while Windows signing is unavailable
+      - name: Allow Alpha and Beta release channels
         shell: bash
         env:
           RELEASE_CHANNEL: ${{ steps.release.outputs.channel }}
         run: |
           set -euo pipefail
-          if [[ "$RELEASE_CHANNEL" != "alpha" ]]; then
-            echo "Desktop Candidate currently supports Alpha only; Beta and Stable require trusted Windows Authenticode signing" >&2
+          if [[ "$RELEASE_CHANNEL" == "latest" ]]; then
+            echo "Desktop Candidate supports Alpha and Beta; Stable remains a separate release gate" >&2
             exit 1
           fi
 
@@ -202,16 +202,7 @@ jobs:
           HOMERAIL_HOME: ${{ runner.temp }}/homerail-candidate-desktop-ci
         run: npm run ci
 
-      - name: Require Alpha for unsigned Windows installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:RELEASE_CHANNEL -ne 'alpha') {
-            throw "Unsigned Windows candidates are allowed only for Alpha; Beta and Stable require trusted Authenticode signing"
-          }
-
-      - name: Build unsigned Windows Alpha installer
+      - name: Build unsigned Windows installer
         if: runner.os == 'Windows'
         working-directory: desktop
         run: >-
@@ -236,7 +227,7 @@ jobs:
             throw "Windows update metadata verification failed"
           }
 
-      - name: Verify unsigned Windows Alpha package
+      - name: Verify Windows package and unsigned policy
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -252,13 +243,19 @@ jobs:
           }
 
           $installer = $installers[0]
-          $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
-          Write-Host "Authenticode status for $($installer.Name): $($signature.Status) ($($signature.StatusMessage))"
-          if ($signature.Status -ne 'NotSigned') {
-            throw "Windows Alpha installer must be explicitly unsigned; got $($signature.Status)"
+          $appExecutable = 'desktop/dist-electron/win-unpacked/HomeRail.exe'
+          if (-not (Test-Path -LiteralPath $appExecutable -PathType Leaf)) {
+            throw "Packaged Windows executable is missing: $appExecutable"
           }
-          if ($null -ne $signature.SignerCertificate) {
-            throw "Windows Alpha installer must not contain an Authenticode signer certificate"
+          foreach ($signedFile in @($installer.FullName, $appExecutable)) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $signedFile
+            Write-Host "Authenticode status for ${signedFile}: $($signature.Status) ($($signature.StatusMessage))"
+            if ($signature.Status -ne 'NotSigned') {
+              throw "Windows $env:RELEASE_CHANNEL binaries must be explicitly unsigned; got $($signature.Status) for $signedFile"
+            }
+            if ($null -ne $signature.SignerCertificate) {
+              throw "Windows $env:RELEASE_CHANNEL binaries must not contain an Authenticode signer certificate"
+            }
           }
 
           $appUpdateConfig = 'desktop/dist-electron/win-unpacked/resources/app-update.yml'
@@ -268,21 +265,22 @@ jobs:
           $appUpdateYaml = [System.IO.File]::ReadAllText(
             (Resolve-Path -LiteralPath $appUpdateConfig).Path
           )
-          if ($appUpdateYaml -match '(?m)^\s*publisherName\s*:') {
-            throw "Unsigned Windows Alpha app-update.yml must not contain publisherName"
+          $hasPublisherName = $appUpdateYaml -match '(?m)^\s*publisherName\s*:'
+          if ($hasPublisherName) {
+            throw "Unsigned Windows $env:RELEASE_CHANNEL app-update.yml must not contain publisherName"
           }
           foreach ($expectedLine in @(
             'provider: github',
             'owner: xiaotianfotos',
             'repo: homerail',
-            'channel: alpha'
+            "channel: $env:RELEASE_CHANNEL"
           )) {
             $pattern = '(?m)^\s*' + [regex]::Escape($expectedLine) + '\s*$'
             if ($appUpdateYaml -notmatch $pattern) {
-              throw "Unsigned Windows Alpha app-update.yml is missing expected update target: $expectedLine"
+              throw "Windows app-update.yml is missing expected update target: $expectedLine"
             }
           }
-          Write-Host "Verified explicitly unsigned Windows Alpha installer without updater publisherName"
+          Write-Host "Verified unsigned Windows $env:RELEASE_CHANNEL package and updater policy"
 
       - name: Write Windows checksums
         if: runner.os == 'Windows'
@@ -290,6 +288,8 @@ jobs:
         run: |
           $metadataNames = if ($env:RELEASE_CHANNEL -eq 'latest') {
             @('latest.yml', 'alpha.yml', 'beta.yml')
+          } elseif ($env:RELEASE_CHANNEL -eq 'beta') {
+            @('beta.yml', 'alpha.yml')
           } else {
             @("$env:RELEASE_CHANNEL.yml")
           }
@@ -514,6 +514,8 @@ jobs:
           metadata_names=("${RELEASE_CHANNEL}-mac.yml")
           if [[ "$RELEASE_CHANNEL" == "latest" ]]; then
             metadata_names=("latest-mac.yml" "alpha-mac.yml" "beta-mac.yml")
+          elif [[ "$RELEASE_CHANNEL" == "beta" ]]; then
+            metadata_names=("beta-mac.yml" "alpha-mac.yml")
           fi
           asset_list="$RUNNER_TEMP/homerail-macos-release-assets.txt"
           find . -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' \) -print > "$asset_list"
