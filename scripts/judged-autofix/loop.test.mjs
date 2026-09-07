@@ -75,3 +75,20 @@ test('test failures, timeouts and source mutations cannot become passing receipt
   const f=fixture(t,code,timeout);const r=await finished(f.dir,f.spec);assert.equal(r.status,status);
  }
 });
+
+test('receipt cannot survive deleted log or changed job identity',async t=>{
+ const f=fixture(t,"console.log('ok')");const receipt=await finished(f.dir,f.spec);
+ const original=JSON.parse(fs.readFileSync(path.join(f.dir,'receipt.json'),'utf8'));
+ fs.writeFileSync(path.join(f.dir,'receipt.json'),JSON.stringify({...original,job_digest:'wrong'}));
+ assert.throws(()=>ensureTestJob(f.dir,f.spec),/job|identity|digest/i);
+ fs.writeFileSync(path.join(f.dir,'receipt.json'),JSON.stringify(original));fs.unlinkSync(receipt.log_path);
+ assert.throws(()=>ensureTestJob(f.dir,f.spec),/log|evidence|ENOENT/i);
+});
+test('committing a source change during tests still invalidates the tested candidate',async t=>{
+ const f=fixture(t,"const fs=require('fs'),cp=require('child_process');fs.writeFileSync('source.txt','changed');cp.execFileSync('git',['add','.']);cp.execFileSync('git',['-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','mutation'])");
+ assert.equal((await finished(f.dir,f.spec)).status,'infrastructure_failed');
+});
+test('dirty candidate is rejected before any test command executes',async t=>{
+ const f=fixture(t,"require('fs').writeFileSync('source.txt','original\\n');require('fs').writeFileSync(process.env.HOME+'/executed','bad')");
+ fs.writeFileSync(path.join(f.repo,'source.txt'),'dirty');assert.equal((await finished(f.dir,f.spec)).status,'infrastructure_failed');assert.ok(!fs.existsSync(path.join(f.spec.home,'executed')));
+});
