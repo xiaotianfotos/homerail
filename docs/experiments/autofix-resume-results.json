@@ -1,0 +1,2137 @@
+{
+  "date": "2026-09-07",
+  "baseline_revision": "e87403d662abd74af2ff9ef8dc757d213997fe6e",
+  "model": "qwen38-flash-next",
+  "backend": "deepseek_harness",
+  "scope": "small-file repair proposal; independent Docker command; local Git publication; not native Auto Fix or GitHub PR validation",
+  "tasks": [
+    {
+      "task": "baseline-1",
+      "phase": "completed",
+      "reasoning_effort": "low",
+      "model_runs": 5,
+      "model_intents": 5,
+      "known_tokens": 31423,
+      "unknown_usage_runs": 0,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "receipt": {
+            "version": 1,
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "91a4a266861457fbf0adf6821f28fb56ed6777cefc56660e43d77c532d5bd191",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T13:55:04.576179167Z",
+            "finished_at": "2026-09-07T13:55:04.717951428Z",
+            "container_id": "ec9fed6ba6627033fb66326bccfeb45b90b50fbd0725ddc168a304a1bfe6eb67",
+            "log_sha256": "2caf1abe45670a60b81a89ea93e98946c26624bb2c303d41f8bb9e06c09d092e"
+          }
+        },
+        {
+          "index": 2,
+          "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+          "receipt": {
+            "version": 1,
+            "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+            "plan_digest": "91a4a266861457fbf0adf6821f28fb56ed6777cefc56660e43d77c532d5bd191",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T13:55:59.313901867Z",
+            "finished_at": "2026-09-07T13:55:59.441751413Z",
+            "container_id": "f9ead2a719b0384dbda925ba31874bd3882fc0208ff7fb75e0286906e49e4531",
+            "log_sha256": "2caf1abe45670a60b81a89ea93e98946c26624bb2c303d41f8bb9e06c09d092e"
+          }
+        },
+        {
+          "index": 3,
+          "tree": "767ea4080a70bd64daded8308920f40745de2614",
+          "receipt": {
+            "version": 1,
+            "tree": "767ea4080a70bd64daded8308920f40745de2614",
+            "plan_digest": "91a4a266861457fbf0adf6821f28fb56ed6777cefc56660e43d77c532d5bd191",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T13:56:27.574332021Z",
+            "finished_at": "2026-09-07T13:56:27.713923318Z",
+            "container_id": "15d18eb21ec1fd17c4106d02172e7e8436ec29616e2214701df9caec216f3f3b",
+            "log_sha256": "2caf1abe45670a60b81a89ea93e98946c26624bb2c303d41f8bb9e06c09d092e"
+          }
+        },
+        {
+          "index": 4,
+          "tree": "a41ad8d6e3553812149c4730213cf62ef6be3d45",
+          "receipt": {
+            "version": 1,
+            "tree": "a41ad8d6e3553812149c4730213cf62ef6be3d45",
+            "plan_digest": "91a4a266861457fbf0adf6821f28fb56ed6777cefc56660e43d77c532d5bd191",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T13:57:11.319159165Z",
+            "finished_at": "2026-09-07T13:57:11.458442207Z",
+            "container_id": "dff2888d666d37e5d208da7be021e2463c5e6371758ecca5199ce95b8c1ac9a7",
+            "log_sha256": "2caf1abe45670a60b81a89ea93e98946c26624bb2c303d41f8bb9e06c09d092e"
+          }
+        },
+        {
+          "index": 5,
+          "tree": "f379de71f488f084d761392a9d8cff303126c311",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "f678aeb177ee197d18c7629c0a3c6a62bbd05da07bad8f44907bf53152629f10",
+            "tree": "f379de71f488f084d761392a9d8cff303126c311",
+            "plan_digest": "91a4a266861457fbf0adf6821f28fb56ed6777cefc56660e43d77c532d5bd191",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:01:12.264128676Z",
+            "finished_at": "2026-09-07T14:01:14.534413906Z",
+            "container_id": "dcc48d3b02c1dd671b79e271966954cb868c5be149523566746e013ad0aec5a2",
+            "log_sha256": "708f3a8ea19b128bd548ea23eb844d40f40f6e58164d7aff31cc08dd7ea4d9bc"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "195541e889c334f40a9b761b",
+          "requested_run_id": "195541e889c334f40a9b761b",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 8.924,
+            "tokens": 2907,
+            "usage": [
+              {
+                "input_tokens": 2325,
+                "output_tokens": 582,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "0d6f096329488a7c90d7bc37f4894325d02fb1c4aaa25fc3c8678f5e67855c4d",
+          "task": "baseline-1",
+          "tool_errors": 0,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({coreFileMode, trackedMode, fsMode}) {\n  if (coreFileMode) {\n    return (fsMode & 0o100) ? \"100755\" : \"100644\";\n  }\n  return trackedMode ?? \"100644\";\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Fix publicationMode to implement correct git filemode semantics: when coreFileMode is true, check only the owner executable bit (0o100) of fsMode to decide 100755 vs 100644; when coreFileMode is false, preserve the trackedMode or default to 100644 for new files."
+          }
+        },
+        {
+          "index": 2,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "c60a705d6a55f3568872f0f8",
+          "requested_run_id": "c60a705d6a55f3568872f0f8",
+          "input_tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+          "metrics": {
+            "run_seconds": 16.722,
+            "tokens": 3820,
+            "usage": [
+              {
+                "input_tokens": 2504,
+                "output_tokens": 1316,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "abb4c50569faa500a387c6138cd90d511db419412e8dc0cf62be5b6223a3a9e9",
+          "task": "baseline-1",
+          "tool_errors": 0,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({ coreFileMode, trackedMode, fsMode }) {\n  if (coreFileMode) {\n    return (fsMode & 0o100) ? \"100755\" : \"100644\";\n  }\n  return trackedMode ?? \"100644\";\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "publicationMode correctly implements git add file-mode semantics: when coreFileMode is true, returns 100755 if the owner executable bit (0o100) is set on fsMode, otherwise 100644; when coreFileMode is false, preserves the trackedMode or defaults new files to 100644."
+          }
+        },
+        {
+          "index": 3,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "d2425b2f7169eb58d918d37e",
+          "requested_run_id": "d2425b2f7169eb58d918d37e",
+          "input_tree": "767ea4080a70bd64daded8308920f40745de2614",
+          "metrics": {
+            "run_seconds": 32.615,
+            "tokens": 10367,
+            "usage": [
+              {
+                "input_tokens": 5058,
+                "output_tokens": 2685,
+                "cache_read_input_tokens": 2624,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 2,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "0b10226204ee0706131bc442b44e666220cd51350fe05664c61396bf7db4f756",
+          "task": "baseline-1",
+          "tool_errors": 1,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({ coreFileMode, trackedMode, fsMode }) {\n  return coreFileMode\n    ? ((fsMode & 0o100) ? \"100755\" : \"100644\")\n    : (trackedMode ?? \"100644\");\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Rewrote publicationMode as a single ternary expression exactly mirroring the acceptance test expected logic: coreFileMode true checks fsMode & 0o100 for owner exec bit to return 100755 or 100644; false preserves trackedMode or defaults to 100644."
+          }
+        },
+        {
+          "index": 4,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "88410096fdb939ef7be42b33",
+          "requested_run_id": "88410096fdb939ef7be42b33",
+          "input_tree": "a41ad8d6e3553812149c4730213cf62ef6be3d45",
+          "metrics": {
+            "run_seconds": 83.371,
+            "tokens": 10260,
+            "usage": [
+              {
+                "input_tokens": 2764,
+                "output_tokens": 7496,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "55cc765ad141d1c4c0973ebd6557c8331c6e2bb0a87f4a5ab64d36cfd1c25a18",
+          "task": "baseline-1",
+          "tool_errors": 0,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({coreFileMode, trackedMode, fsMode}) {\n  if (coreFileMode) {\n    return (fsMode & 0o100) ? '100755' : '100644';\n  }\n  return trackedMode ?? '100644';\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Correctly implements git filemode semantics: when coreFileMode is true, checks owner executable bit (0o100) of fsMode to return 100755 or 100644; when false, preserves trackedMode or defaults to 100644. Logic exactly mirrors the acceptance test expectation. Previous failures were caused by an EACCES permission error in the test runner's cpSync bootstrap before any test code executes, not by a logic defect."
+          }
+        },
+        {
+          "index": 5,
+          "kind": "review",
+          "state": "completed",
+          "run_id": "924a0b56c4c9dcdf913fcfce",
+          "requested_run_id": "924a0b56c4c9dcdf913fcfce",
+          "input_tree": "f379de71f488f084d761392a9d8cff303126c311",
+          "metrics": {
+            "run_seconds": 15.749,
+            "tokens": 4069,
+            "usage": [
+              {
+                "input_tokens": 2852,
+                "output_tokens": 1217,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "6a1969b1c0df57a8793ac2e9c8f9d57ff7cf78fe65e5f882c7f79cdd54e48fdc",
+          "task": "baseline-1",
+          "tool_errors": 0,
+          "result": {
+            "findings": [],
+            "verdict": "clean"
+          }
+        }
+      ],
+      "publication": {
+        "commit": "01ae552c68e92b8f1e054dfa89f54435ae8e1231",
+        "tree": "f379de71f488f084d761392a9d8cff303126c311",
+        "previous_head": "61ca61df95ecccbb19ab989bfd074eb9e5dd1130"
+      },
+      "assessment": "测试器权限错误误判为代码失败；前三份修改语义已正确，仍反复修改格式。修正测试器后从原候选继续并完成。不是干净基线。",
+      "injections": []
+    },
+    {
+      "task": "baseline-2",
+      "phase": "completed",
+      "reasoning_effort": "low",
+      "model_runs": 2,
+      "model_intents": 2,
+      "known_tokens": 14112,
+      "unknown_usage_runs": 0,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "f678aeb177ee197d18c7629c0a3c6a62bbd05da07bad8f44907bf53152629f10",
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "391af645a5e5b86f6ac83135926c3e94376ea623f6860b967a1c7cb6def8daca",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T13:59:07.891807837Z",
+            "finished_at": "2026-09-07T13:59:10.125983633Z",
+            "container_id": "dff6359ab993bce801e3d54f69fecd6dfeead54e237d707681fa2b2d9a8b7311",
+            "log_sha256": "1283b636b250a68bb19033b00ebf1effd167da57f33dd355b3aca225315e3fe6"
+          }
+        },
+        {
+          "index": 2,
+          "tree": "a3ebdaeb322feacc946c219acfcf252129e00ca7",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "f678aeb177ee197d18c7629c0a3c6a62bbd05da07bad8f44907bf53152629f10",
+            "tree": "a3ebdaeb322feacc946c219acfcf252129e00ca7",
+            "plan_digest": "391af645a5e5b86f6ac83135926c3e94376ea623f6860b967a1c7cb6def8daca",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T13:59:36.205233992Z",
+            "finished_at": "2026-09-07T13:59:38.437746317Z",
+            "container_id": "f966a861ec279aada85be0b419f46c98e8e45a17d49dd2011dd418dba7267c98",
+            "log_sha256": "03d1b5dcfdd132432237ac5e8638316644d160353010d5b8f130f0f0278e50e3"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "06680389285fec5ba2f2cd62",
+          "requested_run_id": "06680389285fec5ba2f2cd62",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 16.566,
+            "tokens": 8861,
+            "usage": [
+              {
+                "input_tokens": 3481,
+                "output_tokens": 702,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              },
+              {
+                "input_tokens": 4314,
+                "output_tokens": 364,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 2,
+            "corrections": {
+              "actor": 1
+            },
+            "terminal": "completed"
+          },
+          "result_digest": "4045b5ed3fc11ee7dcc4d4678695d56b1c7eabfb8a0181069206fb274ef7554e",
+          "task": "baseline-2",
+          "tool_errors": 0,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({coreFileMode, trackedMode, fsMode}) {\n  if (coreFileMode) {\n    // git add uses only the owner executable bit to decide 100755 vs 100644\n    return (fsMode & 0o100) ? \"100755\" : \"100644\";\n  }\n  // core.filemode=false: preserve the tracked mode; new files default to regular 100644\n  return trackedMode ?? \"100644\";\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Fixed publicationMode to mirror git add semantics: when coreFileMode is true, only the owner executable bit (0o100) of fsMode selects 100755 vs 100644 (previously it wrongly checked 0o111, causing group/other exec bits like 0o654/0o645 to yield 100755); when coreFileMode is false, it preserves trackedMode and defaults new files to 100644."
+          }
+        },
+        {
+          "index": 2,
+          "kind": "review",
+          "state": "completed",
+          "run_id": "e9e33fc5ec89410daabf5d5d",
+          "requested_run_id": "e9e33fc5ec89410daabf5d5d",
+          "input_tree": "a3ebdaeb322feacc946c219acfcf252129e00ca7",
+          "metrics": {
+            "run_seconds": 20.876,
+            "tokens": 5251,
+            "usage": [
+              {
+                "input_tokens": 3583,
+                "output_tokens": 1668,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "6a1969b1c0df57a8793ac2e9c8f9d57ff7cf78fe65e5f882c7f79cdd54e48fdc",
+          "task": "baseline-2",
+          "tool_errors": 0,
+          "result": {
+            "findings": [],
+            "verdict": "clean"
+          }
+        }
+      ],
+      "publication": {
+        "commit": "36c0da000308ac272f2240452ee08fe04df6d0d8",
+        "tree": "a3ebdaeb322feacc946c219acfcf252129e00ca7",
+        "previous_head": "61ca61df95ecccbb19ab989bfd074eb9e5dd1130"
+      },
+      "assessment": "修正权限和退出分类后的独立基线。编码 DAG 内一次 correction 后交付；真实测试、独立审查和本地提交完成。",
+      "injections": []
+    },
+    {
+      "task": "faults",
+      "phase": "completed",
+      "reasoning_effort": "low",
+      "model_runs": 2,
+      "model_intents": 2,
+      "known_tokens": 13830,
+      "unknown_usage_runs": 0,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "f678aeb177ee197d18c7629c0a3c6a62bbd05da07bad8f44907bf53152629f10",
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "aca8effe31b276c36056da803b5bd1b00e97013463c61c1c523148f7d64a13d3",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T14:02:20.30017505Z",
+            "finished_at": "2026-09-07T14:02:22.917546688Z",
+            "container_id": "7028f65135c150dd9a5918c53906e6408b8bf7fbb1da2e03debcb04e17ade680",
+            "log_sha256": "d3ddd8336486aa9705097bba8fbc06204ff98e4e24e6de8003169403ee29b896"
+          }
+        },
+        {
+          "index": 2,
+          "tree": "3c7612870a6f3ece69c9a247a4a56727a75b252d",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "f678aeb177ee197d18c7629c0a3c6a62bbd05da07bad8f44907bf53152629f10",
+            "tree": "3c7612870a6f3ece69c9a247a4a56727a75b252d",
+            "plan_digest": "aca8effe31b276c36056da803b5bd1b00e97013463c61c1c523148f7d64a13d3",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "infrastructure_failed",
+            "exit_code": 137,
+            "started_at": "2026-09-07T14:02:33.446975599Z",
+            "finished_at": "2026-09-07T14:02:33.776953273Z",
+            "container_id": "7cfe06e432bfecf010168765de861dfb3e04b9b5909646b42312e59b0310aad9",
+            "log_sha256": "7cb03ab03edf5190a8aa546c78285344395fad3d42d4011cd224f934aef96b3f"
+          }
+        },
+        {
+          "index": 3,
+          "tree": "3c7612870a6f3ece69c9a247a4a56727a75b252d",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "f678aeb177ee197d18c7629c0a3c6a62bbd05da07bad8f44907bf53152629f10",
+            "tree": "3c7612870a6f3ece69c9a247a4a56727a75b252d",
+            "plan_digest": "aca8effe31b276c36056da803b5bd1b00e97013463c61c1c523148f7d64a13d3",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:02:34.987424362Z",
+            "finished_at": "2026-09-07T14:02:37.248676846Z",
+            "container_id": "e801424ce98f4d5aaef74883a2f87da62e19e3de083b5fed370c09c83df20cc9",
+            "log_sha256": "af311f42d693cc2cfd65dabd41e66b2f9455b33a61dfe03da7c9ef5bdddbd13e"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "19f0e64b300679ead27abc24",
+          "requested_run_id": "19f0e64b300679ead27abc24",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 9.173,
+            "tokens": 7783,
+            "usage": [
+              {
+                "input_tokens": 3845,
+                "output_tokens": 482,
+                "cache_read_input_tokens": 3456,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 2,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "7902b70b9e221ca8d9d25d797f966b9af28ec49e74f56bda2355300071a183a9",
+          "task": "faults",
+          "tool_errors": 1,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({ coreFileMode, trackedMode, fsMode }) {\n  if (coreFileMode) {\n    return fsMode & 0o100 ? \"100755\" : \"100644\";\n  }\n  return trackedMode ?? \"100644\";\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Fixed publicationMode to mirror git add semantics: with coreFileMode=false preserve trackedMode (default 100644); with true use owner exec bit (0o100) of fsMode."
+          }
+        },
+        {
+          "index": 2,
+          "kind": "review",
+          "state": "completed",
+          "run_id": "95123464ac05a21a9cf76c77",
+          "requested_run_id": "95123464ac05a21a9cf76c77",
+          "input_tree": "3c7612870a6f3ece69c9a247a4a56727a75b252d",
+          "metrics": {
+            "run_seconds": 30.671,
+            "tokens": 6047,
+            "usage": [
+              {
+                "input_tokens": 3474,
+                "output_tokens": 2573,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "6a1969b1c0df57a8793ac2e9c8f9d57ff7cf78fe65e5f882c7f79cdd54e48fdc",
+          "task": "faults",
+          "tool_errors": 0,
+          "result": {
+            "findings": [],
+            "verdict": "clean"
+          }
+        }
+      ],
+      "publication": {
+        "commit": "4b2520ac5be7ba408d54fb310a1f922ab5f7b5bf",
+        "tree": "3c7612870a6f3ece69c9a247a4a56727a75b252d",
+        "previous_head": "61ca61df95ecccbb19ab989bfd074eb9e5dd1130"
+      },
+      "assessment": "组合故障：提交响应丢失、kill 测试容器、测试期间重启 Manager、提交成功后 kill 控制器；全部从已有证据继续。",
+      "injections": [
+        {
+          "at": "2026-09-07T14:02:23.751272+00:00",
+          "event": "controller_error",
+          "code": 1,
+          "message": "fetch failed\n"
+        },
+        {
+          "at": "2026-09-07T14:02:23.751844+00:00",
+          "event": "submission_intent_retained",
+          "workflow": "resume-faults-0c6248c8-1"
+        },
+        {
+          "at": "2026-09-07T14:02:33.229681+00:00",
+          "event": "submission_recovered_once",
+          "run_id": "19f0e64b300679ead27abc24"
+        },
+        {
+          "at": "2026-09-07T14:02:34.389686+00:00",
+          "event": "test_killed",
+          "container": "hr-resume-faults-2",
+          "tree": "3c7612870a6f3ece69c9a247a4a56727a75b252d"
+        },
+        {
+          "at": "2026-09-07T14:02:35.146032+00:00",
+          "event": "test_retry_same_candidate",
+          "container": "hr-resume-faults-3",
+          "tree": "3c7612870a6f3ece69c9a247a4a56727a75b252d"
+        },
+        {
+          "at": "2026-09-07T14:02:37.369017+00:00",
+          "event": "manager_restarted"
+        },
+        {
+          "at": "2026-09-07T14:02:37.888958+00:00",
+          "event": "test_survived_restart",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "f678aeb177ee197d18c7629c0a3c6a62bbd05da07bad8f44907bf53152629f10",
+            "tree": "3c7612870a6f3ece69c9a247a4a56727a75b252d",
+            "plan_digest": "aca8effe31b276c36056da803b5bd1b00e97013463c61c1c523148f7d64a13d3",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:02:34.987424362Z",
+            "finished_at": "2026-09-07T14:02:37.248676846Z",
+            "container_id": "e801424ce98f4d5aaef74883a2f87da62e19e3de083b5fed370c09c83df20cc9",
+            "log_sha256": "af311f42d693cc2cfd65dabd41e66b2f9455b33a61dfe03da7c9ef5bdddbd13e"
+          }
+        },
+        {
+          "at": "2026-09-07T14:03:09.333654+00:00",
+          "event": "controller_error",
+          "code": 137,
+          "message": ""
+        },
+        {
+          "at": "2026-09-07T14:03:09.334411+00:00",
+          "event": "publication_intent_retained",
+          "commit": "4b2520ac5be7ba408d54fb310a1f922ab5f7b5bf"
+        },
+        {
+          "at": "2026-09-07T14:03:09.487739+00:00",
+          "event": "completed",
+          "models": 2,
+          "tests": 3,
+          "commits": "1"
+        },
+        {
+          "at": "2026-09-07T14:03:09.641782+00:00",
+          "event": "completed_rerun_reused_all_evidence"
+        }
+      ]
+    },
+    {
+      "task": "manager-mid-model",
+      "phase": "completed",
+      "reasoning_effort": "low",
+      "model_runs": 2,
+      "model_intents": 2,
+      "known_tokens": 9471,
+      "unknown_usage_runs": 0,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "f678aeb177ee197d18c7629c0a3c6a62bbd05da07bad8f44907bf53152629f10",
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "968aa05560c86e131ef72509e8b637512bb858c1a4d9e2f4daa154ae765995e3",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T14:08:05.717681729Z",
+            "finished_at": "2026-09-07T14:08:07.958508961Z",
+            "container_id": "9812495c6193336d06618133009c8f919bfb057c8bc0f8c874c303e209e22f0b",
+            "log_sha256": "49b5d33e6093b047ee22fab2eb8403e2879b3a411c6e320a39e3fe4b2af22af3"
+          }
+        },
+        {
+          "index": 2,
+          "tree": "e52d597c0917a271024b49e6c2dbb1ddac88bb80",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "f678aeb177ee197d18c7629c0a3c6a62bbd05da07bad8f44907bf53152629f10",
+            "tree": "e52d597c0917a271024b49e6c2dbb1ddac88bb80",
+            "plan_digest": "968aa05560c86e131ef72509e8b637512bb858c1a4d9e2f4daa154ae765995e3",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:08:21.799343671Z",
+            "finished_at": "2026-09-07T14:08:24.036142069Z",
+            "container_id": "5bb26130a1680be2359f433c0823aa9699f2c18aef3f2af0e2a7e2643d79788e",
+            "log_sha256": "53dcaf8e1033d267de29c928ede2d212317a5ab465bee871a85b96f70da24803"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "9fbcdad26d301d97f089dd82",
+          "requested_run_id": "9fbcdad26d301d97f089dd82",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 8.266,
+            "tokens": 3768,
+            "usage": [
+              {
+                "input_tokens": 3493,
+                "output_tokens": 275,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "5248e4ecec9770dcdb1a26fad2cafcdf223fbff1163aec9bb52fe718db39beb3",
+          "task": "manager-mid-model",
+          "tool_errors": 0,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({coreFileMode, trackedMode, fsMode}) {\n  if (coreFileMode) {\n    // Match git add: when core.filemode=true, use the owner executable bit.\n    return (fsMode & 0o100) ? \"100755\" : \"100644\";\n  }\n  // When core.filemode=false, preserve the tracked mode and default new files to regular.\n  return trackedMode ?? \"100644\";\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Implement git add file-mode semantics: coreFileMode=true uses owner exec bit (0o100); false preserves trackedMode or defaults to 100644."
+          }
+        },
+        {
+          "index": 2,
+          "kind": "review",
+          "state": "completed",
+          "run_id": "e145a6358e0db4f8b202665f",
+          "requested_run_id": "e145a6358e0db4f8b202665f",
+          "input_tree": "e52d597c0917a271024b49e6c2dbb1ddac88bb80",
+          "metrics": {
+            "run_seconds": 26.414,
+            "tokens": 5703,
+            "usage": [
+              {
+                "input_tokens": 3507,
+                "output_tokens": 2196,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "6a1969b1c0df57a8793ac2e9c8f9d57ff7cf78fe65e5f882c7f79cdd54e48fdc",
+          "task": "manager-mid-model",
+          "tool_errors": 0,
+          "result": {
+            "findings": [],
+            "verdict": "clean"
+          }
+        }
+      ],
+      "publication": {
+        "commit": "e6494ded70fb84dc0370cb5a024daeb99a0af626",
+        "tree": "e52d597c0917a271024b49e6c2dbb1ddac88bb80",
+        "previous_head": "61ca61df95ecccbb19ab989bfd074eb9e5dd1130"
+      },
+      "assessment": "运行已提交但首个模型 HTTP 请求尚未开始时重启；恢复成功。不能把这次样本当成推理途中恢复。",
+      "injections": [
+        {
+          "at": "2026-09-07T14:08:09.992396+00:00",
+          "event": "restarting_while_model_running",
+          "run_id": "9fbcdad26d301d97f089dd82"
+        },
+        {
+          "at": "2026-09-07T14:08:12.239853+00:00",
+          "event": "manager_restarted"
+        }
+      ]
+    },
+    {
+      "task": "measured-low",
+      "phase": "completed",
+      "reasoning_effort": "low",
+      "model_runs": 2,
+      "model_intents": 2,
+      "known_tokens": 12894,
+      "unknown_usage_runs": 0,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "superseded": "trusted runner changed; revalidate same candidate"
+        },
+        {
+          "index": 2,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "46534a8d573c98ffd5a18921d2300856685082f08d2659cc6adc682b18c2baa6",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T14:12:12.753545758Z",
+            "finished_at": "2026-09-07T14:12:14.995299115Z",
+            "container_id": "2b877a0f9fc9db2fd1f858da4044aec20087c974a637d54e3acc5acc9798abe6",
+            "log_sha256": "f21482633712a4417b07a354af12e5553bd760ac30cc5a79431e9f203468314f"
+          }
+        },
+        {
+          "index": 3,
+          "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+            "plan_digest": "46534a8d573c98ffd5a18921d2300856685082f08d2659cc6adc682b18c2baa6",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:12:34.837837916Z",
+            "finished_at": "2026-09-07T14:12:37.073593136Z",
+            "container_id": "2b245da656e0da5920aff50ba5f2110112ab1e75ffe4e36b4227778ed89380c7",
+            "log_sha256": "12d7f3cab36bf968a61e48f6197c6bac30071605074299d2452f43b08c023616"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "8866926c9b44bc4d97d19224",
+          "requested_run_id": "8866926c9b44bc4d97d19224",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 11.8,
+            "tokens": 7957,
+            "usage": [
+              {
+                "input_tokens": 3903,
+                "output_tokens": 598,
+                "cache_read_input_tokens": 3456,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 2,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "49b6849319c9f4867e0b13625ab5c467960ff80f6cc594f141eaed24f3246a6a",
+          "task": "measured-low",
+          "tool_errors": 1,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({coreFileMode, trackedMode, fsMode}) {\n  if (coreFileMode) {\n    return (fsMode & 0o100) ? \"100755\" : \"100644\";\n  }\n  return trackedMode ?? \"100644\";\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Match git add file-mode semantics: when coreFileMode is true use only the owner executable bit (0o100) of fsMode to choose 100755 vs 100644; when false preserve trackedMode defaulting to 100644. Prior bug used group/other bits (0o111) and ignored coreFileMode/trackedMode, causing failures on fsMode 0o654/0o645."
+          }
+        },
+        {
+          "index": 2,
+          "kind": "review",
+          "state": "completed",
+          "run_id": "9bdbf914d63d70fdd9603eed",
+          "requested_run_id": "9bdbf914d63d70fdd9603eed",
+          "input_tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+          "metrics": {
+            "run_seconds": 19.676,
+            "tokens": 4937,
+            "usage": [
+              {
+                "input_tokens": 3541,
+                "output_tokens": 1396,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "6a1969b1c0df57a8793ac2e9c8f9d57ff7cf78fe65e5f882c7f79cdd54e48fdc",
+          "task": "measured-low",
+          "tool_errors": 0,
+          "result": {
+            "findings": [],
+            "verdict": "clean"
+          }
+        }
+      ],
+      "publication": {
+        "commit": "f58c8747d9e0ca3c112cc2a53be61a0c9cc6e953",
+        "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+        "previous_head": "61ca61df95ecccbb19ab989bfd074eb9e5dd1130"
+      },
+      "assessment": "与 medium 同期启动。宿主 NAS 的权限语义触发额外检查失败，未调用模型；移入 tmpfs 恢复 Git 模式并更换测试器后，废弃旧测试容器，在同任务上完成。一次工具参数错误后修正。",
+      "injections": []
+    },
+    {
+      "task": "measured-medium",
+      "phase": "completed",
+      "reasoning_effort": "medium",
+      "model_runs": 2,
+      "model_intents": 2,
+      "known_tokens": 8566,
+      "unknown_usage_runs": 0,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "superseded": "trusted runner changed; revalidate same candidate"
+        },
+        {
+          "index": 2,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "5b931078374744291e5cc9f0b42cd3c6866392069edd9ec9c6d723c39e8c1b19",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T14:12:14.003564343Z",
+            "finished_at": "2026-09-07T14:12:16.244091849Z",
+            "container_id": "c0845d000f6a7418885723c24bfcdc49627de4f1bf689a6038a00ec3fe8022f4",
+            "log_sha256": "30a08121f5e27db70a765a4dad5337156d79b036f0e62cfd3c0a35a0a7a31597"
+          }
+        },
+        {
+          "index": 3,
+          "tree": "9864ef34d11a2b98c87f60682f450f385adb5ac3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "9864ef34d11a2b98c87f60682f450f385adb5ac3",
+            "plan_digest": "5b931078374744291e5cc9f0b42cd3c6866392069edd9ec9c6d723c39e8c1b19",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:12:29.882636424Z",
+            "finished_at": "2026-09-07T14:12:32.102525431Z",
+            "container_id": "993b8414bd0eee6119ceada7d608907605899df7643632f81ae946857032c6fb",
+            "log_sha256": "32c4a42e2e34687957fdca7251364d5a571c66c5f453bc0b1580cd57f68418da"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "3c87c72b27b3780bb2d7b209",
+          "requested_run_id": "3c87c72b27b3780bb2d7b209",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 6.019,
+            "tokens": 3719,
+            "usage": [
+              {
+                "input_tokens": 3466,
+                "output_tokens": 253,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "38975e11b409c92ffe6e7701450a9a2b90471056a821e81bd3b818825f3cdb1c",
+          "task": "measured-medium",
+          "tool_errors": 0,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({coreFileMode, trackedMode, fsMode}) {\n  if (!coreFileMode) {\n    return trackedMode ?? \"100644\";\n  }\n  return (fsMode & 0o100) ? \"100755\" : \"100644\";\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Fix publicationMode: when coreFileMode is false, preserve the tracked mode (defaulting new files to 100644); when true, use only the owner executable bit (0o100) of fsMode to choose 100755 vs 100644."
+          }
+        },
+        {
+          "index": 2,
+          "kind": "review",
+          "state": "completed",
+          "run_id": "6a94589f3d729da37cf93df9",
+          "requested_run_id": "6a94589f3d729da37cf93df9",
+          "input_tree": "9864ef34d11a2b98c87f60682f450f385adb5ac3",
+          "metrics": {
+            "run_seconds": 20.611,
+            "tokens": 4847,
+            "usage": [
+              {
+                "input_tokens": 3472,
+                "output_tokens": 1375,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "6a1969b1c0df57a8793ac2e9c8f9d57ff7cf78fe65e5f882c7f79cdd54e48fdc",
+          "task": "measured-medium",
+          "tool_errors": 0,
+          "result": {
+            "findings": [],
+            "verdict": "clean"
+          }
+        }
+      ],
+      "publication": {
+        "commit": "4fa2aefb42450f98ad6155e1a50d261438ff3220",
+        "tree": "9864ef34d11a2b98c87f60682f450f385adb5ac3",
+        "previous_head": "61ca61df95ecccbb19ab989bfd074eb9e5dd1130"
+      },
+      "assessment": "与 low 同期启动；同样保留一次被新测试器取代的尝试。模型首次交付通过，无 correction。单样本不足以判断 medium 优于 low。",
+      "injections": []
+    },
+    {
+      "task": "submission-before-send",
+      "phase": "needs_attention",
+      "reasoning_effort": "low",
+      "model_runs": 0,
+      "model_intents": 1,
+      "known_tokens": 0,
+      "unknown_usage_runs": 0,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "c7549606a1d21a89ad23d96b9c5bfecb262b196d77a555e955b3dbcee703b9ff",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T14:12:46.793168995Z",
+            "finished_at": "2026-09-07T14:12:49.024190712Z",
+            "container_id": "4326c92d050bb0a4143406155698f6d54b6006bbe2ca321f376cd79bfb8c634f",
+            "log_sha256": "04ba39b7252248ffa0fd94d98c9ae543815a94fd80b7619aecf7c2c493026d95"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "submitting",
+          "requested_run_id": "f26995dd7558e3027b05290b",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "task": "submission-before-send"
+        }
+      ],
+      "publication": null,
+      "assessment": "提交意图持久化后，代理在转发前断开。Manager 实际未收到请求；三次查询后保留证据暂停。模型调用为零。自动恢复验收未通过。",
+      "injections": []
+    },
+    {
+      "task": "during-inference",
+      "phase": "completed",
+      "reasoning_effort": "low",
+      "model_runs": 3,
+      "model_intents": 3,
+      "known_tokens": 8842,
+      "unknown_usage_runs": 1,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "3346b56116d9db8689583395366959882b63c34619411d20693445fbfa1e29af",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T14:17:50.144616652Z",
+            "finished_at": "2026-09-07T14:17:52.368509548Z",
+            "container_id": "dbc5260130bf6acbc4b53d80a5edf6ebc00cc4a31866d889785559f30b573268",
+            "log_sha256": "ef1873ede19cdfc58d2cb2062fdccc4aa9f1b86e0a62bcf6cbe934d329a27e61"
+          }
+        },
+        {
+          "index": 2,
+          "tree": "f379de71f488f084d761392a9d8cff303126c311",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "f379de71f488f084d761392a9d8cff303126c311",
+            "plan_digest": "3346b56116d9db8689583395366959882b63c34619411d20693445fbfa1e29af",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:18:10.7919837Z",
+            "finished_at": "2026-09-07T14:18:13.005799229Z",
+            "container_id": "7d4e11b1433f3d18c0320745d880bcb3752757e0e250afb3463cfa60e91bb902",
+            "log_sha256": "684d7f45febb40e931d56eed052ed9d7f03a29b762726fe7d697406d7e6d0b04"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "failed",
+          "run_id": "1f5f5ff65623ab46b70bac2e",
+          "requested_run_id": "1f5f5ff65623ab46b70bac2e",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 3.631,
+            "tokens": null,
+            "usage": [],
+            "tool_calls": 0,
+            "corrections": {},
+            "terminal": "failed"
+          },
+          "task": "during-inference",
+          "tool_errors": 0
+        },
+        {
+          "index": 2,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "cd73a15ffe807ad76063cf09",
+          "requested_run_id": "cd73a15ffe807ad76063cf09",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 9.834,
+            "tokens": 4096,
+            "usage": [
+              {
+                "input_tokens": 14,
+                "output_tokens": 626,
+                "cache_read_input_tokens": 3456,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "d4bba8883bff0e3d9c838be5a6e0d0a14f727758d7890de3a3cc97fb8d6c3b85",
+          "task": "during-inference",
+          "tool_errors": 0,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({coreFileMode, trackedMode, fsMode}) {\n  if (coreFileMode) {\n    return (fsMode & 0o100) ? '100755' : '100644';\n  }\n  return trackedMode ?? '100644';\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Fix publicationMode to match git add file-mode semantics: when coreFileMode is true, check only the owner executable bit (0o100) of fsMode; when false, preserve trackedMode or default to 100644 for new files."
+          }
+        },
+        {
+          "index": 3,
+          "kind": "review",
+          "state": "completed",
+          "run_id": "89db279bff86292b8ecc8179",
+          "requested_run_id": "89db279bff86292b8ecc8179",
+          "input_tree": "f379de71f488f084d761392a9d8cff303126c311",
+          "metrics": {
+            "run_seconds": 16.361,
+            "tokens": 4746,
+            "usage": [
+              {
+                "input_tokens": 3478,
+                "output_tokens": 1268,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "6a1969b1c0df57a8793ac2e9c8f9d57ff7cf78fe65e5f882c7f79cdd54e48fdc",
+          "task": "during-inference",
+          "tool_errors": 0,
+          "result": {
+            "findings": [],
+            "verdict": "clean"
+          }
+        }
+      ],
+      "publication": {
+        "commit": "6a4eebece0c494c015ace03e01c198faa02ffbe4",
+        "tree": "f379de71f488f084d761392a9d8cff303126c311",
+        "previous_head": "2c700b5cdb0d0f598f209cd262832e875f462372"
+      },
+      "assessment": "首 token 后重启；原模型 run 失败，后续 coder+review 完成。此时代理尚未传播断开，上游继续生成受测量工具影响，不能据此推算原生取消成本。",
+      "injections": [
+        {
+          "at": "2026-09-07T14:17:56.329743+00:00",
+          "event": "restart_after_observed_first_token",
+          "request_id": "e86f3bd0-7b41-492e-b702-621fefce7f47",
+          "run_id": "1f5f5ff65623ab46b70bac2e",
+          "first_token_at": "2026-09-07T14:17:56.182Z"
+        },
+        {
+          "at": "2026-09-07T14:17:58.659099+00:00",
+          "event": "manager_restarted"
+        },
+        {
+          "at": "2026-09-07T14:18:31.927828+00:00",
+          "event": "observer_finished",
+          "exit_code": 0
+        }
+      ]
+    },
+    {
+      "task": "during-inference-cancel",
+      "phase": "completed",
+      "reasoning_effort": "low",
+      "model_runs": 3,
+      "model_intents": 3,
+      "known_tokens": 8869,
+      "unknown_usage_runs": 1,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "a710eea8c7bc35529ee7bbde2cd17662fcab6863c46a9e57f0f9e8cca60be765",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T14:19:25.245248225Z",
+            "finished_at": "2026-09-07T14:19:27.492340112Z",
+            "container_id": "8dffd63343194f07f55cbd4ba29b5dcf54e9d125cf83abf94e56c70e9453dd70",
+            "log_sha256": "1befd521c26dca8bad285ccbe45ddf42a0d57335063af76a36858f28466f732e"
+          }
+        },
+        {
+          "index": 2,
+          "tree": "f379de71f488f084d761392a9d8cff303126c311",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "f379de71f488f084d761392a9d8cff303126c311",
+            "plan_digest": "a710eea8c7bc35529ee7bbde2cd17662fcab6863c46a9e57f0f9e8cca60be765",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:19:44.762584578Z",
+            "finished_at": "2026-09-07T14:19:46.992860299Z",
+            "container_id": "96704bf311fa8a37680ae3582bcc0a6cca95c6551b9409cee548c28467d05800",
+            "log_sha256": "81b93f682a4120bde5ab8867bb60e196c3127aa676c8330f4b90031a1399582d"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "failed",
+          "run_id": "879ed4df4448afce7b627220",
+          "requested_run_id": "879ed4df4448afce7b627220",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 3.432,
+            "tokens": null,
+            "usage": [],
+            "tool_calls": 0,
+            "corrections": {},
+            "terminal": "failed"
+          },
+          "task": "during-inference-cancel",
+          "tool_errors": 0
+        },
+        {
+          "index": 2,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "f50681086c49eddf32f25fb8",
+          "requested_run_id": "f50681086c49eddf32f25fb8",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 8.971,
+            "tokens": 4070,
+            "usage": [
+              {
+                "input_tokens": 6,
+                "output_tokens": 608,
+                "cache_read_input_tokens": 3456,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "39f09a4b2fa3499702d8ae7553db3816f3ec50804f8a43250b207fd4748b7d0c",
+          "task": "during-inference-cancel",
+          "tool_errors": 0,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({coreFileMode, trackedMode, fsMode}) {\n  if (coreFileMode) {\n    return (fsMode & 0o100) ? '100755' : '100644';\n  }\n  return trackedMode ?? '100644';\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Fix publicationMode to match git add semantics: when coreFileMode=true, use only the owner executable bit (0o100) of fsMode to determine mode; when coreFileMode=false, preserve trackedMode or default to 100644. The previous code always checked all execute bits (0o111) and ignored coreFileMode/trackedMode entirely."
+          }
+        },
+        {
+          "index": 3,
+          "kind": "review",
+          "state": "completed",
+          "run_id": "34803562535fc86c4c0a8e04",
+          "requested_run_id": "34803562535fc86c4c0a8e04",
+          "input_tree": "f379de71f488f084d761392a9d8cff303126c311",
+          "metrics": {
+            "run_seconds": 16.828,
+            "tokens": 4799,
+            "usage": [
+              {
+                "input_tokens": 3494,
+                "output_tokens": 1305,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "6a1969b1c0df57a8793ac2e9c8f9d57ff7cf78fe65e5f882c7f79cdd54e48fdc",
+          "task": "during-inference-cancel",
+          "tool_errors": 0,
+          "result": {
+            "findings": [],
+            "verdict": "clean"
+          }
+        }
+      ],
+      "publication": {
+        "commit": "54c0ae4d63faec231b3f65868d239f4e83ffb1ef",
+        "tree": "f379de71f488f084d761392a9d8cff303126c311",
+        "previous_head": "54568053abac827ce53f23ee6f6abb265f31d97e"
+      },
+      "assessment": "修正代理取消传播后重复首 token 故障；原请求被中断，无最终 usage。候选任务继续并完成，需重做一轮编码；消耗未知，不能记作零。",
+      "injections": [
+        {
+          "at": "2026-09-07T14:19:31.387638+00:00",
+          "event": "restart_after_observed_first_token",
+          "request_id": "164ba50e-2d8f-4c38-8d04-3f06b9cc3e15",
+          "run_id": "879ed4df4448afce7b627220",
+          "first_token_at": "2026-09-07T14:19:31.333Z"
+        },
+        {
+          "at": "2026-09-07T14:19:33.586321+00:00",
+          "event": "manager_restarted"
+        },
+        {
+          "at": "2026-09-07T14:20:07.018166+00:00",
+          "event": "observer_finished",
+          "exit_code": 0
+        }
+      ]
+    },
+    {
+      "task": "faults-final",
+      "phase": "completed",
+      "reasoning_effort": "low",
+      "model_runs": 2,
+      "model_intents": 2,
+      "known_tokens": 8126,
+      "unknown_usage_runs": 0,
+      "test_attempts": [
+        {
+          "index": 1,
+          "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+            "plan_digest": "9ef715a5a9e72d93c664eef6749dbfc31e4957212d901243ce8eff72a6aa3fda",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "failed",
+            "exit_code": 1,
+            "started_at": "2026-09-07T14:20:46.407594898Z",
+            "finished_at": "2026-09-07T14:20:48.643298773Z",
+            "container_id": "35ff5032032d829ac4532bdbcd9a36ddaa912d76b65790d69f0cd52425b79022",
+            "log_sha256": "c2ea901c2483e312a2975a4045d3a5b37d782c5dda82d6c80cf2b1b997a6fa7c"
+          }
+        },
+        {
+          "index": 2,
+          "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+            "plan_digest": "9ef715a5a9e72d93c664eef6749dbfc31e4957212d901243ce8eff72a6aa3fda",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "infrastructure_failed",
+            "exit_code": 137,
+            "started_at": "2026-09-07T14:20:55.891029221Z",
+            "finished_at": "2026-09-07T14:20:56.053228069Z",
+            "container_id": "02e461f5e6d86f74de9c73cc2cab437201b2d34a9ec88e105bb000596141d332",
+            "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "index": 3,
+          "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+          "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+            "plan_digest": "9ef715a5a9e72d93c664eef6749dbfc31e4957212d901243ce8eff72a6aa3fda",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:20:56.389653357Z",
+            "finished_at": "2026-09-07T14:20:58.607801458Z",
+            "container_id": "755bb1f2132094d4d54e277cd49d28bd6e4b8327c8ddf55a75a95e6f70573ca6",
+            "log_sha256": "4128ccd03ff19944701b9981aad43429bb87a08f87b01453ff474835d983c25d"
+          }
+        }
+      ],
+      "model_attempts": [
+        {
+          "index": 1,
+          "kind": "propose",
+          "state": "completed",
+          "run_id": "19ae1f272693aab145089199",
+          "requested_run_id": "19ae1f272693aab145089199",
+          "input_tree": "b09682b3d2062d5c35a5cc8f1e506e71b0c8ded3",
+          "metrics": {
+            "run_seconds": 6.314,
+            "tokens": 3816,
+            "usage": [
+              {
+                "input_tokens": 3484,
+                "output_tokens": 332,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "bcd75d32eaa298936ba0856fa2508745bce8cd098ed7e7b9a339a098c77f56e5",
+          "task": "faults-final",
+          "tool_errors": 0,
+          "result": {
+            "files": [
+              {
+                "content": "export function publicationMode({coreFileMode, trackedMode, fsMode}) {\n  if (coreFileMode) {\n    return (fsMode & 0o100) ? \"100755\" : \"100644\";\n  }\n  return trackedMode ?? \"100644\";\n}\n",
+                "path": "mode.mjs"
+              }
+            ],
+            "summary": "Match git add semantics: honor core.filemode=false by preserving trackedMode (defaulting new files to 100644), and when true use only the owner exec bit (0o100) instead of the prior any-exec-bit 0o111 mask."
+          }
+        },
+        {
+          "index": 2,
+          "kind": "review",
+          "state": "completed",
+          "run_id": "bbd416b9afc3d0ff4adf89f3",
+          "requested_run_id": "bbd416b9afc3d0ff4adf89f3",
+          "input_tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+          "metrics": {
+            "run_seconds": 11.566,
+            "tokens": 4310,
+            "usage": [
+              {
+                "input_tokens": 3492,
+                "output_tokens": 818,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+              }
+            ],
+            "tool_calls": 1,
+            "corrections": {},
+            "terminal": "completed"
+          },
+          "result_digest": "6a1969b1c0df57a8793ac2e9c8f9d57ff7cf78fe65e5f882c7f79cdd54e48fdc",
+          "task": "faults-final",
+          "tool_errors": 0,
+          "result": {
+            "findings": [],
+            "verdict": "clean"
+          }
+        }
+      ],
+      "publication": {
+        "commit": "7895fa933bcb3b2e26ec9ffbcc607b564609bf93",
+        "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+        "previous_head": "61ca61df95ecccbb19ab989bfd074eb9e5dd1130"
+      },
+      "assessment": "最终控制器及可传播取消的代理。四类组合故障全部通过，2 个模型 run、3 次测试、1 个提交；完成后再次执行无额外模型或测试。",
+      "injections": [
+        {
+          "at": "2026-09-07T14:20:48.903211+00:00",
+          "event": "controller_error",
+          "code": 1,
+          "message": "fetch failed\n"
+        },
+        {
+          "at": "2026-09-07T14:20:48.903818+00:00",
+          "event": "submission_intent_retained",
+          "workflow": "resume-faults-final-9202895a-1"
+        },
+        {
+          "at": "2026-09-07T14:20:55.682988+00:00",
+          "event": "submission_recovered_once",
+          "run_id": "19ae1f272693aab145089199"
+        },
+        {
+          "at": "2026-09-07T14:20:56.085308+00:00",
+          "event": "test_killed",
+          "container": "hr-resume-faults-final-9202895a-2",
+          "tree": "970cd49b83b246e4d16ae820703222369c25a6f3"
+        },
+        {
+          "at": "2026-09-07T14:20:56.511782+00:00",
+          "event": "test_retry_same_candidate",
+          "container": "hr-resume-faults-final-9202895a-3",
+          "tree": "970cd49b83b246e4d16ae820703222369c25a6f3"
+        },
+        {
+          "at": "2026-09-07T14:20:58.719008+00:00",
+          "event": "manager_restarted"
+        },
+        {
+          "at": "2026-09-07T14:20:58.843238+00:00",
+          "event": "test_survived_restart",
+          "receipt": {
+            "version": 1,
+            "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+            "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+            "plan_digest": "9ef715a5a9e72d93c664eef6749dbfc31e4957212d901243ce8eff72a6aa3fda",
+            "image": "sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8",
+            "argv": [
+              "node",
+              "--test",
+              "acceptance.test.mjs"
+            ],
+            "status": "passed",
+            "exit_code": 0,
+            "started_at": "2026-09-07T14:20:56.389653357Z",
+            "finished_at": "2026-09-07T14:20:58.607801458Z",
+            "container_id": "755bb1f2132094d4d54e277cd49d28bd6e4b8327c8ddf55a75a95e6f70573ca6",
+            "log_sha256": "4128ccd03ff19944701b9981aad43429bb87a08f87b01453ff474835d983c25d"
+          }
+        },
+        {
+          "at": "2026-09-07T14:21:11.671104+00:00",
+          "event": "controller_error",
+          "code": 137,
+          "message": ""
+        },
+        {
+          "at": "2026-09-07T14:21:11.671621+00:00",
+          "event": "publication_intent_retained",
+          "commit": "7895fa933bcb3b2e26ec9ffbcc607b564609bf93"
+        },
+        {
+          "at": "2026-09-07T14:21:11.832787+00:00",
+          "event": "completed",
+          "models": 2,
+          "tests": 3,
+          "commits": "1"
+        },
+        {
+          "at": "2026-09-07T14:21:11.980327+00:00",
+          "event": "completed_rerun_reused_all_evidence"
+        }
+      ]
+    }
+  ],
+  "proxy_measurements": [
+    {
+      "at": "2026-09-07T14:08:18.058Z",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9761,
+      "total_ms": 4209.693846000009,
+      "ttft_ms": 1162.70233499998,
+      "delivery_ms": 3012.2114960000035,
+      "usage": {
+        "prompt_tokens": 3493,
+        "completion_tokens": 275,
+        "total_tokens": 3768
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:08:54.487Z",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9675,
+      "total_ms": 24880.750843000016,
+      "ttft_ms": 1156.7115789999953,
+      "delivery_ms": 23690.045240000007,
+      "usage": {
+        "prompt_tokens": 3507,
+        "completion_tokens": 2196,
+        "total_tokens": 5703
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:12:26.271Z",
+      "model": "qwen38-flash-next",
+      "reasoning": "medium",
+      "status": 200,
+      "request_bytes": 9766,
+      "total_ms": 4463.189495000057,
+      "ttft_ms": 1153.8920660000294,
+      "delivery_ms": 3269.558243000065,
+      "usage": {
+        "prompt_tokens": 3466,
+        "completion_tokens": 253,
+        "total_tokens": 3719
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:12:27.091Z",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9763,
+      "total_ms": 6545.076601000037,
+      "ttft_ms": 1156.0521779999835,
+      "delivery_ms": 5356.182671000017,
+      "usage": {
+        "prompt_tokens": 3486,
+        "completion_tokens": 338,
+        "total_tokens": 3824
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:12:30.842Z",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 11070,
+      "total_ms": 3708.7697750000516,
+      "ttft_ms": 796.1847889999626,
+      "delivery_ms": 2879.300036999979,
+      "usage": {
+        "prompt_tokens": 3873,
+        "completion_tokens": 260,
+        "total_tokens": 4133,
+        "prompt_tokens_details": {
+          "cached_tokens": 3456
+        }
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:12:34.117Z",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 12046,
+      "total_ms": 3263.316753999912,
+      "ttft_ms": 799.1413449998945,
+      "delivery_ms": 2452.940358000109,
+      "usage": {
+        "prompt_tokens": 4154,
+        "completion_tokens": 226,
+        "total_tokens": 4380,
+        "prompt_tokens_details": {
+          "cached_tokens": 3840
+        }
+      },
+      "finish_reason": "stop"
+    },
+    {
+      "at": "2026-09-07T14:12:56.735Z",
+      "model": "qwen38-flash-next",
+      "reasoning": "medium",
+      "status": 200,
+      "request_bytes": 9572,
+      "total_ms": 19111.318456999958,
+      "ttft_ms": 1158.8022189999465,
+      "delivery_ms": 17912.221345999977,
+      "usage": {
+        "prompt_tokens": 3472,
+        "completion_tokens": 1375,
+        "total_tokens": 4847
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:13:00.762Z",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9681,
+      "total_ms": 18133.55470400001,
+      "ttft_ms": 1189.5181599999778,
+      "delivery_ms": 16911.50581500004,
+      "usage": {
+        "prompt_tokens": 3541,
+        "completion_tokens": 1396,
+        "total_tokens": 4937
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:17:55.026Z",
+      "event": "request_started",
+      "request_id": "e86f3bd0-7b41-492e-b702-621fefce7f47",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "request_bytes": 9696
+    },
+    {
+      "at": "2026-09-07T14:17:56.182Z",
+      "event": "first_token",
+      "request_id": "e86f3bd0-7b41-492e-b702-621fefce7f47",
+      "ttft_ms": 1158.108335
+    },
+    {
+      "at": "2026-09-07T14:18:00.803Z",
+      "event": "request_started",
+      "request_id": "34a296e6-2a55-4a5e-9b4b-01a58a344b21",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "request_bytes": 9696
+    },
+    {
+      "at": "2026-09-07T14:18:01.989Z",
+      "event": "first_token",
+      "request_id": "34a296e6-2a55-4a5e-9b4b-01a58a344b21",
+      "ttft_ms": 1186.954577999999
+    },
+    {
+      "at": "2026-09-07T14:18:03.437Z",
+      "event": "request_finished",
+      "request_id": "e86f3bd0-7b41-492e-b702-621fefce7f47",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9696,
+      "total_ms": 8412.62153,
+      "ttft_ms": 1158.108335,
+      "delivery_ms": 7214.359933999999,
+      "usage": {
+        "prompt_tokens": 3470,
+        "completion_tokens": 537,
+        "total_tokens": 4007
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:18:08.972Z",
+      "event": "request_finished",
+      "request_id": "34a296e6-2a55-4a5e-9b4b-01a58a344b21",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9696,
+      "total_ms": 8170.128316999999,
+      "ttft_ms": 1186.954577999999,
+      "delivery_ms": 6950.561506,
+      "usage": {
+        "prompt_tokens": 3470,
+        "completion_tokens": 626,
+        "total_tokens": 4096,
+        "prompt_tokens_details": {
+          "cached_tokens": 3456
+        }
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:18:15.638Z",
+      "event": "request_started",
+      "request_id": "edc6ad17-655b-4809-84b0-dc7c3d9b9c88",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "request_bytes": 9490
+    },
+    {
+      "at": "2026-09-07T14:18:16.796Z",
+      "event": "first_token",
+      "request_id": "edc6ad17-655b-4809-84b0-dc7c3d9b9c88",
+      "ttft_ms": 1157.8763369999979
+    },
+    {
+      "at": "2026-09-07T14:18:30.464Z",
+      "event": "request_finished",
+      "request_id": "edc6ad17-655b-4809-84b0-dc7c3d9b9c88",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9490,
+      "total_ms": 14826.046039,
+      "ttft_ms": 1157.8763369999979,
+      "delivery_ms": 13634.059084000004,
+      "usage": {
+        "prompt_tokens": 3478,
+        "completion_tokens": 1268,
+        "total_tokens": 4746
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:19:30.165Z",
+      "event": "request_started",
+      "request_id": "164ba50e-2d8f-4c38-8d04-3f06b9cc3e15",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "request_bytes": 9695
+    },
+    {
+      "at": "2026-09-07T14:19:31.333Z",
+      "event": "first_token",
+      "request_id": "164ba50e-2d8f-4c38-8d04-3f06b9cc3e15",
+      "ttft_ms": 1170.0120720000004
+    },
+    {
+      "at": "2026-09-07T14:19:34.161Z",
+      "event": "request_finished",
+      "request_id": "164ba50e-2d8f-4c38-8d04-3f06b9cc3e15",
+      "downstream_disconnected": true,
+      "usage_complete": false,
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9695,
+      "total_ms": 3997.3342700000003,
+      "ttft_ms": 1170.0120720000004,
+      "delivery_ms": 2814.2974780000004,
+      "usage": null,
+      "finish_reason": null
+    },
+    {
+      "at": "2026-09-07T14:19:35.782Z",
+      "event": "request_started",
+      "request_id": "d07d8785-ac04-4e04-8742-ee49c81ded7f",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "request_bytes": 9695
+    },
+    {
+      "at": "2026-09-07T14:19:36.574Z",
+      "event": "first_token",
+      "request_id": "d07d8785-ac04-4e04-8742-ee49c81ded7f",
+      "ttft_ms": 792.5177810000005
+    },
+    {
+      "at": "2026-09-07T14:19:43.168Z",
+      "event": "request_finished",
+      "request_id": "d07d8785-ac04-4e04-8742-ee49c81ded7f",
+      "downstream_disconnected": false,
+      "usage_complete": true,
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9695,
+      "total_ms": 7386.032351000002,
+      "ttft_ms": 792.5177810000005,
+      "delivery_ms": 6560.624932000001,
+      "usage": {
+        "prompt_tokens": 3462,
+        "completion_tokens": 608,
+        "total_tokens": 4070,
+        "prompt_tokens_details": {
+          "cached_tokens": 3456
+        }
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:19:49.647Z",
+      "event": "request_started",
+      "request_id": "2219d0a6-5020-4c29-ac88-8f9119f82800",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "request_bytes": 9598
+    },
+    {
+      "at": "2026-09-07T14:19:50.819Z",
+      "event": "first_token",
+      "request_id": "2219d0a6-5020-4c29-ac88-8f9119f82800",
+      "ttft_ms": 1172.2302049999998
+    },
+    {
+      "at": "2026-09-07T14:20:04.918Z",
+      "event": "request_finished",
+      "request_id": "2219d0a6-5020-4c29-ac88-8f9119f82800",
+      "downstream_disconnected": false,
+      "usage_complete": true,
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9598,
+      "total_ms": 15271.570958000004,
+      "ttft_ms": 1172.2302049999998,
+      "delivery_ms": 14065.530481000002,
+      "usage": {
+        "prompt_tokens": 3494,
+        "completion_tokens": 1305,
+        "total_tokens": 4799
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:20:50.247Z",
+      "event": "request_started",
+      "request_id": "690e3586-f79b-421b-9f76-553b811e5adc",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "request_bytes": 9761
+    },
+    {
+      "at": "2026-09-07T14:20:51.419Z",
+      "event": "first_token",
+      "request_id": "690e3586-f79b-421b-9f76-553b811e5adc",
+      "ttft_ms": 1172.5546920000052
+    },
+    {
+      "at": "2026-09-07T14:20:55.039Z",
+      "event": "request_finished",
+      "request_id": "690e3586-f79b-421b-9f76-553b811e5adc",
+      "downstream_disconnected": false,
+      "usage_complete": true,
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9761,
+      "total_ms": 4792.327130000005,
+      "ttft_ms": 1172.5546920000052,
+      "delivery_ms": 3586.9759290000075,
+      "usage": {
+        "prompt_tokens": 3484,
+        "completion_tokens": 332,
+        "total_tokens": 3816
+      },
+      "finish_reason": "tool_calls"
+    },
+    {
+      "at": "2026-09-07T14:21:00.433Z",
+      "event": "request_started",
+      "request_id": "a731828e-cee8-49ed-96a7-1d4851fd3cae",
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "request_bytes": 9573
+    },
+    {
+      "at": "2026-09-07T14:21:01.603Z",
+      "event": "first_token",
+      "request_id": "a731828e-cee8-49ed-96a7-1d4851fd3cae",
+      "ttft_ms": 1170.3844769999996
+    },
+    {
+      "at": "2026-09-07T14:21:10.421Z",
+      "event": "request_finished",
+      "request_id": "a731828e-cee8-49ed-96a7-1d4851fd3cae",
+      "downstream_disconnected": false,
+      "usage_complete": true,
+      "model": "qwen38-flash-next",
+      "reasoning": "low",
+      "status": 200,
+      "request_bytes": 9573,
+      "total_ms": 9987.70926399999,
+      "ttft_ms": 1170.3844769999996,
+      "delivery_ms": 8783.744249999989,
+      "usage": {
+        "prompt_tokens": 3492,
+        "completion_tokens": 818,
+        "total_tokens": 4310
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "proxy_measurement_limitations": "Only rows containing downstream_disconnected use the corrected cancellation-aware proxy. Earlier completions are diagnostic and not proof of native runtime leakage. Requests are not linked to run IDs by provider metadata.",
+  "verification": {
+    "full_ci_exit_code": 0,
+    "full_ci_passed": 3619,
+    "full_ci_skipped": 3,
+    "focused_final_passed": 26
+  },
+  "retrospective_baseline_candidates": [
+    {
+      "tree": "970cd49b83b246e4d16ae820703222369c25a6f3",
+      "run_id": "195541e889c334f40a9b761b",
+      "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+      "started_at": "2026-09-07T14:27:41.191Z",
+      "finished_at": "2026-09-07T14:27:43.583Z",
+      "exit_code": 0,
+      "tests": 36,
+      "passed": 36,
+      "log_sha256": "a5b7e412108655f96edcc847cf7f3b3672547128bcf76a9fab4a431fce8c019c"
+    },
+    {
+      "tree": "767ea4080a70bd64daded8308920f40745de2614",
+      "run_id": "c60a705d6a55f3568872f0f8",
+      "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+      "started_at": "2026-09-07T14:27:43.591Z",
+      "finished_at": "2026-09-07T14:27:45.961Z",
+      "exit_code": 0,
+      "tests": 36,
+      "passed": 36,
+      "log_sha256": "c5c9bc5b3ab733bb1f0791c7cacce47cf7db06a04ca0c035ccab0cbfaf5a1c2a"
+    },
+    {
+      "tree": "a41ad8d6e3553812149c4730213cf62ef6be3d45",
+      "run_id": "d2425b2f7169eb58d918d37e",
+      "runner_digest": "1fbe4211afc0f78ab820c8202cc631bdf56a2931056476d7d4ab5d37b4666a5c",
+      "started_at": "2026-09-07T14:27:45.971Z",
+      "finished_at": "2026-09-07T14:27:48.327Z",
+      "exit_code": 0,
+      "tests": 36,
+      "passed": 36,
+      "log_sha256": "ee81f9e308003546f5e29fa9d4175926cfdcbedb4dff2e02f6dc2eaaf8c95a6b"
+    }
+  ]
+}
