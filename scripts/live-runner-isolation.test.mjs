@@ -9,15 +9,14 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cleanupScript = path.join(repoRoot, "scripts", "cleanup-dag-patterns-live-runner.sh");
 
-test("routes live jobs to isolated runner slots and serializes only Manager port allocation", () => {
+test("keeps local live-runner isolation separate from stable PR automation", () => {
   const ci = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "ci.yml"), "utf8");
   const review = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "pr-review.yml"), "utf8");
   const actionlint = fs.readFileSync(path.join(repoRoot, ".github", "actionlint.yaml"), "utf8");
   const runner = fs.readFileSync(path.join(repoRoot, "scripts", "run-dag-patterns-live-runner.sh"), "utf8");
 
-  assert.match(ci, /HOMERAIL_LIVE_SLOT: \$\{\{ runner\.name \}\}/);
-  assert.match(ci, /PR_BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
-  assert.match(ci, /HOMERAIL_LIVE_ISSUE_REVISION=\$revision/);
+  assert.doesNotMatch(ci, /live-dag-patterns|live_patterns|wake_model|homerail-live|HOMERAIL_PATTERN_MODEL_BASE_URL/);
+  assert.doesNotMatch(actionlint, /- homerail-live/);
   assert.match(review, /runs-on: \[self-hosted, Linux, X64, homerail-pr-review\]/);
   assert.match(review, /run-pr-review-stable-runner\.sh/);
   assert.doesNotMatch(review, /HOMERAIL_LIVE_SLOT|HOMERAIL_MANAGER_PORT/);

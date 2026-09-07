@@ -24,16 +24,14 @@ test('the live acceptance remains explicit rather than a Manager or built-in Ski
   )
 })
 
-test('the real-model adapter is manual-only and keeps secrets outside the repository', () => {
-  const workflow = read('.github/workflows/three-worker-showcase.yml')
-  const eventBlock = workflow.slice(workflow.indexOf('on:'), workflow.indexOf('permissions:'))
-  assert.match(eventBlock, /workflow_dispatch:/)
-  assert.doesNotMatch(eventBlock, /pull_request:|push:/)
-  assert.match(eventBlock, /asset_path:[\s\S]*required: true/)
-  assert.match(eventBlock, /mission:[\s\S]*required: true/)
-  assert.match(workflow, /secrets\.HOMERAIL_PATTERN_MODEL_BASE_URL/)
-  assert.doesNotMatch(workflow, /api[_-]?key:\s*['"]?sk-/i)
-  assert.match(workflow, /validate:three-worker-showcase-runner/)
+test('GitHub Actions does not dispatch retired real-model DAG validation', () => {
+  const workflowDir = path.join(root, '.github/workflows')
+  assert.equal(fs.existsSync(path.join(workflowDir, 'three-worker-showcase.yml')), false)
+  for (const filename of fs.readdirSync(workflowDir)) {
+    if (!/\.ya?ml$/.test(filename)) continue
+    const workflow = fs.readFileSync(path.join(workflowDir, filename), 'utf8')
+    assert.doesNotMatch(workflow, /homerail-live|validate:dag-patterns|validate:three-worker-showcase|HOMERAIL_PATTERN_MODEL_BASE_URL/, filename)
+  }
 })
 
 test('the live adapter requires an external asset and uses the public idle TTL', () => {
