@@ -132,3 +132,19 @@ test('frozen entry uses approved copy and rejects tampering or unsafe promotion'
  fs.appendFileSync(path.join(manifest.directory,'model.mjs'),'\n//tamper');assert.notEqual(run().status,0,'frozen hash mismatch must stop before execution');
  git(['restore','scripts/judged-autofix/model.mjs']);f.loop.state.phase='model';f.loop.save('active');assert.throws(()=>freezeEngine(f.root),/active|phase|running|round/i);
 });
+test('a different requested check cannot overwrite a pending test intent',async t=>{
+ const f=loopFixture(t);f.loop.config.checks.other={...f.spec.check};
+ const spec={name:'other',repo:f.repo,commit:f.spec.commit,tree:f.spec.tree,check:f.loop.config.checks.other,home:path.join(f.root,'test-home')};
+ const intent={name:'other',directory:path.join(f.root,'pending'),spec};f.loop.round.test_intent=intent;f.loop.save('intent');
+ await assert.rejects(f.loop.test(['oracle']),/pending|intent/i);assert.deepEqual(f.loop.round.test_intent,intent);
+});
+test('surviving test process blocks retries until explicit verified recovery',async t=>{
+ const f=loopFixture(t);f.loop.state.phase='judging';f.loop.state.blocked_test={pid:process.pid,start:null};f.loop.save('blocked');
+ await assert.rejects(f.loop.test(),/recovery|surviving|blocked/i);assert.throws(()=>f.loop.recoverTests(),/alive|running|surviving/i);
+ f.loop.state.blocked_test={pid:999999999,start:'nonexistent'};f.loop.recoverTests();assert.equal(f.loop.state.blocked_test,undefined);assert.equal(f.loop.state.phase,'judging');
+});
+test('freezer rejects task paths inside the candidate including dot prefixes and symlink aliases',t=>{
+ const f=loopFixture(t);const inside=path.join(f.repo,'..task');fs.mkdirSync(inside);fs.writeFileSync(path.join(inside,'config.json'),JSON.stringify({repo:f.repo}));
+ assert.throws(()=>freezeEngine(inside),/outside/i);
+ const alias=path.join(f.root,'alias');fs.symlinkSync(inside,alias,'dir');assert.throws(()=>freezeEngine(alias),/outside/i);
+});
