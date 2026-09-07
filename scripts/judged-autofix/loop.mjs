@@ -190,8 +190,14 @@ export class JudgedLoop {
     }
   }
   judge(file){
-    if(this.state.phase!=='judging')throw new Error('not awaiting judgment');const j=read(file),r=this.round;
+    const j=read(file),r=this.round;
     if(!['accept','revise'].includes(j.verdict)||!j.reason||j.round!==r.index||j.plan_digest!==r.plan_digest)throw new Error('invalid Judger decision');
+    if(this.state.phase==='accepted'){
+      if(j.verdict!=='revise')throw new Error('only revise can revoke an accepted round');
+      r.judgment_history??=[];r.judgment_history.push(r.judgment);
+      if(this.state.publication){this.state.publication_history??=[];this.state.publication_history.push(this.state.publication);this.state.publication=undefined;}
+      this.state.phase='judging';
+    }else if(this.state.phase!=='judging')throw new Error('not awaiting judgment');
     if(j.verdict==='accept'){
       if(!r.candidate_commit||j.tree!==r.candidate_tree)throw new Error('Judger must bind the exact candidate');
       this.assertEvidence();
@@ -200,6 +206,7 @@ export class JudgedLoop {
     r.judgment={...j,at:now()};atomic(path.join(this.directory(),'judgment.json'),r.judgment);this.save('judger_decision');
   }
   publish(bodyFile){
+    bodyFile=path.resolve(bodyFile);
     if(this.state.phase!=='accepted')throw new Error('Judger acceptance required');
     this.assertEvidence();
     const r=this.round;

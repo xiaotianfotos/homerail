@@ -102,6 +102,17 @@ node /work/repair-task/run.mjs /work/repair-task judge /work/repair-task/judgmen
 node /work/repair-task/run.mjs /work/repair-task publish /work/repair-task/pr-body.md
 ```
 
+Body file paths are resolved to absolute paths before GitHub CLI invocation, so
+caller-relative paths retain their intended meaning regardless of the repository
+working directory used by `gh`.
+
+If a publication attempt fails after acceptance, the Judger may revoke acceptance
+by issuing a new decision with `verdict: "revise"` and valid `round`, `plan_digest`
+and `reason`. The prior acceptance judgment is preserved in `judgment_history` and
+the publication intent (if any) in `publication_history`; the loop returns to
+`judging` phase for a new repair cycle without calling GitHub or Git. Invalid
+revocation attempts leave state unchanged.
+
 When a round fails at the proposal stage (e.g. one anchor does not match), the
 Judger may salvage valid saved edits without issuing another model request:
 
