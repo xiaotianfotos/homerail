@@ -22,6 +22,7 @@ import { dagResourcesUnavailableForRun } from "./dag-resource-status.js";
 import { fireDagEventTrigger } from "../runtime/dag-triggers.js";
 import { updateDagState } from "../persistence/dag-runtime-primitives.js";
 import { WorkflowRunAdmissionError } from "../persistence/dag-run-admission.js";
+import { RunCreationConflictError } from "../orchestration/run-creation-identity.js";
 import {
   cleanupRunWorkspaces,
   setRunWorkspacePinned,
@@ -110,6 +111,19 @@ function publicManagerAgentToolCalls(value: unknown): unknown[] {
 
 function _runCreationError(res: http.ServerResponse, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof RunCreationConflictError) {
+    json(res, 409, {
+      success: false,
+      message,
+      error: message,
+      data: {
+        code: "RUN_CREATION_CONFLICT",
+        run_id: error.runId,
+        reason: error.reason,
+      },
+    });
+    return;
+  }
   if (error instanceof WorkflowRunAdmissionError) {
     json(res, 409, {
       success: false,
