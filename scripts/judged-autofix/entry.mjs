@@ -18,7 +18,7 @@ function fail(msg) {
 const taskRoot = process.argv[2];
 if (!taskRoot) fail('missing taskRoot argument');
 
-const root = path.resolve(taskRoot);
+const root = fs.realpathSync(path.resolve(taskRoot));
 const manifestFile = path.join(root, 'engine.json');
 if (!fs.existsSync(manifestFile)) fail('engine.json not found');
 
@@ -26,10 +26,15 @@ let manifest;
 try { manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8')); }
 catch (e) { fail(`engine.json parse error: ${e.message}`); }
 
-// Validate directory is inside taskRoot/engines (no traversal)
+// Validate engine directory is not a symlink and is inside real taskRoot/engines
 const enginesBase = path.join(root, 'engines');
 const resolvedDir = path.resolve(manifest.directory);
-if (!resolvedDir.startsWith(enginesBase + path.sep)) fail('engine directory outside engines base');
+let dirStat;
+try { dirStat = fs.lstatSync(resolvedDir); } catch { fail('engine directory not found'); }
+if (dirStat.isSymbolicLink()) fail('engine directory is a symlink');
+const realEngines = fs.realpathSync(enginesBase);
+const realDir = fs.realpathSync(resolvedDir);
+if (!realDir.startsWith(realEngines + path.sep)) fail('engine directory outside engines base');
 
 // Validate files are exactly the four allowlisted modules
 const fileKeys = Object.keys(manifest.files).sort();

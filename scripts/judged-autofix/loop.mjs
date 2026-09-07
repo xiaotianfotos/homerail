@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {atomic,identity,digest,Repository,safePath} from './evidence.mjs';
 import {api,prepareModel,reconcileSubmission,collectModel} from './model.mjs';
-import {ensureTestJob} from './test-job.mjs';
+import {ensureTestJob,processIdentity} from './test-job.mjs';
 const read = file => JSON.parse(fs.readFileSync(file,'utf8'));
 const now = () => new Date().toISOString();
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -24,6 +24,7 @@ export class JudgedLoop {
   directory(r=this.round){return path.join(this.root,'rounds',String(r.index));}
   assertHead(expected){if(this.repo.git(['rev-parse','HEAD'])!==expected)throw new Error('candidate HEAD drift');}
   plan(file) {
+    if(this.state.blocked_test)throw new Error('surviving test process blocks planning; run recover-tests to verify recovery');
     if(!['ready','judging'].includes(this.state.phase))throw new Error('finish current round before another plan');
     if(this.round&&!this.round.judgment)throw new Error('Judger must assess the previous round first');
     const plan=read(file);
@@ -93,7 +94,8 @@ export class JudgedLoop {
     this.state.phase='test';this.save('candidate_saved');
   }
   async test(names=this.round.plan.checks){
-    const r=this.round;if(!['test','judging','accepted'].includes(this.state.phase))throw new Error('candidate unavailable for testing');
+    const r=this.round;if(this.state.blocked_test)throw new Error('surviving test process blocks testing; run recover-tests to verify recovery');
+    if(!['test','judging','accepted'].includes(this.state.phase))throw new Error('candidate unavailable for testing');
     this.assertHead(r.candidate_commit);if(this.repo.git(['status','--porcelain']))throw new Error('candidate is dirty');
     r.receipts??=[];
     const runnerDigest=digest(fs.readFileSync(new URL('./test-job.mjs',import.meta.url)));
@@ -103,7 +105,8 @@ export class JudgedLoop {
       const prior=r.receipts.find(t=>t.name===name&&t.commit===r.candidate_commit&&t.tree===r.candidate_tree&&t.spec_digest===identity(check)&&t.runner_digest===runnerDigest&&t.status==='passed'&&t.exit_code===0&&!t.signal&&fs.existsSync(t.log_path)&&digest(fs.readFileSync(t.log_path))===t.log_digest);
       if(prior)continue;
       let intent=r.test_intent;
-      if(intent&&intent.name===name){
+      if(intent&&intent.name!==name)throw new Error(`pending test intent for '${intent.name}'; cannot start '${name}'`);
+      if(intent){
         if(identity(intent.spec)!==identity(spec))throw new Error('test intent spec mismatch');
       } else {
         const attempt=r.receipts.length+1;
@@ -114,7 +117,7 @@ export class JudgedLoop {
       receipt={...receipt,job_directory:intent.directory};
       const attempt=r.receipts.length+1;
       r.receipts.push(receipt);atomic(path.join(this.directory(),`receipt-${attempt}.json`),receipt);delete r.test_intent;this.save('test_recorded');
-      if(receipt.status==='infrastructure_failed'&&receipt.error?.includes('surviving child'))throw new Error(`infrastructure_failed: ${receipt.error}`);
+      if(receipt.status==='infrastructure_failed'&&receipt.surviving_child){this.state.blocked_test=receipt.surviving_child;this.state.phase='judging';this.save('test_blocked',{surviving_child:receipt.surviving_child});return;}
     }
     this.state.phase='judging';this.save('awaiting_judger');
   }
@@ -149,12 +152,18 @@ export class JudgedLoop {
     const url=prs[0]?.url??gh(['pr','create','--repo',this.config.github_repo,'--head',branch,'--base',this.config.base_branch??'main','--title',this.config.pr_title,'--body-file',bodyFile]).trim();
     this.state.publication.url=url;this.save('published');return url;
   }
+  recoverTests(){
+    if(!this.state.blocked_test)throw new Error('no blocked test to recover');
+    const{pid,start}=this.state.blocked_test;const current=processIdentity(pid);
+    if(current!==null&&(start===null||String(current)===String(start)))throw new Error('surviving process still alive; wait for completion before recovery');
+    delete this.state.blocked_test;this.state.phase='judging';this.save('recovery_verified');
+  }
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
-  const [root,op,...args]=process.argv.slice(2);if(!root||!op)throw new Error('Usage: loop.mjs <task-directory> plan|step|apply|test|judge|publish|status [file/check]');
+  const [root,op,...args]=process.argv.slice(2);if(!root||!op)throw new Error('Usage: loop.mjs <task-directory> plan|step|apply|test|judge|publish|recover-tests|status [file/check]');
   if(!process.env.HR_JUDGED_LOCKED){const r=spawnSync('flock',['-n',path.join(root,'lock'),process.execPath,fileURLToPath(import.meta.url),root,op,...args],{env:{...process.env,HR_JUDGED_LOCKED:'1'},stdio:'inherit'});process.exit(r.status??1);}
   const loop=new JudgedLoop(root);
-  try{if(op==='plan')loop.plan(args[0]);else if(op==='step')await loop.step();else if(op==='apply')loop.apply();else if(op==='test')await loop.test(args.length?args:undefined);else if(op==='judge')loop.judge(args[0]);else if(op==='publish')loop.publish(args[0]);else if(op!=='status')throw new Error('unknown operation');}
+  try{if(op==='plan')loop.plan(args[0]);else if(op==='step')await loop.step();else if(op==='apply')loop.apply();else if(op==='test')await loop.test(args.length?args:undefined);else if(op==='judge')loop.judge(args[0]);else if(op==='publish')loop.publish(args[0]);else if(op==='recover-tests')loop.recoverTests();else if(op!=='status')throw new Error('unknown operation');}
   catch(e){loop.save('controller_error',{message:e.message});console.error(e.message);process.exitCode=1;}
   console.log(JSON.stringify({phase:loop.state.phase,round:loop.round?.index,run_id:loop.round?.run_id,failure:loop.round?.failure,checks:loop.round?.receipts?.map(x=>({name:x.name,status:x.status})),publication:loop.state.publication}));
 }

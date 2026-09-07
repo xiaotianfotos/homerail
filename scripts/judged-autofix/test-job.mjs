@@ -69,20 +69,24 @@ function validate(r, spec) {
   }
 }
 
-function workerIdentity(pid) {
+export function processIdentity(pid) {
   try {
     const raw = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
     const idx = raw.lastIndexOf(') ');
     if (idx < 0) return null;
     const fields = raw.slice(idx + 2).split(' ');
-    return fields[19] || null;
+    if (fields[0] === 'Z') return null;
+    const starttime = fields[19] || null;
+    if (!starttime) return null;
+    const boot_id = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    return `${boot_id}:${starttime}`;
   } catch { return null; }
 }
 
 function alive(pid, start) {
   try { process.kill(pid, 0); } catch { return false; }
   if (start == null) return false;
-  const current = workerIdentity(pid);
+  const current = processIdentity(pid);
   if (current === null) return false;
   return String(current) === String(start);
 }
@@ -109,17 +113,23 @@ function execute(dir) {
     const s = JSON.parse(fs.readFileSync(sp, 'utf8'));
     if (alive(s.worker_pid, s.worker_start)) return; // worker still running
     // Stale: recover inside lock
-    let childAlive = false;
-    if (s.child_pid != null) { try { process.kill(s.child_pid, 0); childAlive = true; } catch {} }
-    const error = childAlive
-      ? `interrupted: surviving child pid ${s.child_pid}`
+    let surviving_child = null;
+    if (s.child_pid != null) {
+      const cStart = processIdentity(s.child_pid);
+      if (cStart !== null && (s.child_start == null || String(cStart) === String(s.child_start)))
+        surviving_child = { pid: s.child_pid, start: s.child_start ?? null };
+    }
+    const error = surviving_child
+      ? `interrupted: surviving child pid ${surviving_child.pid}`
       : 'interrupted worker: recovered';
-    atomic(rp, infraReceipt(spec, s.started_at, null, error));
+    const receipt = infraReceipt(spec, s.started_at, null, error);
+    if (surviving_child) receipt.surviving_child = surviving_child;
+    atomic(rp, receipt);
     return;
   }
 
   const startedAt = new Date().toISOString();
-  const myStart = workerIdentity(process.pid);
+  const myStart = processIdentity(process.pid);
   atomic(sp, { worker_pid: process.pid, worker_start: myStart, started_at: startedAt });
 
   // Pre-test source check
@@ -155,7 +165,7 @@ function execute(dir) {
     return;
   }
 
-  atomic(sp, { worker_pid: process.pid, worker_start: myStart, started_at: startedAt, child_pid: child.pid });
+  atomic(sp, { worker_pid: process.pid, worker_start: myStart, started_at: startedAt, child_pid: child.pid, child_start: processIdentity(child.pid) });
 
   let timedOut = false, done = false;
   const timer = setTimeout(() => {
