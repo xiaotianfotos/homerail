@@ -4,6 +4,8 @@
 
 2026-09-07；实验分支 `codex/autofix-resume-poc`；基线 `e87403d662abd74af2ff9ef8dc757d213997fe6e`。使用真实 HomeRail DAG、DeepSeek Harness 和本地 `qwen38-flash-next`。测试任务提取自 Auto Fix broker 的 Git 文件模式缺陷：两份源码、36 个不可修改的验收用例。没有把它伪装成原生 Auto Fix 全仓库或真实 GitHub PR 验收。
 
+运行环境说明：本次分支只增加调用方实验控制器，没有部署新的 Manager 实现。实验复用了既有隔离 lab（包含前序 Auto Fix broker 文件模式修复）；Worker 镜像是本地 Qwen 适配镜像，额外配置了 DeepSeek Harness 的 system-role 兼容层，并非原样上游镜像。测试镜像不可变 ID 为 `sha256:419bff80c7dc9ecd49bba901f9a78153c07ac546d99685b46fc49035a54ffef8`，各次收据均有记录。所有故障只作用于该 lab，生产服务未改动。
+
 ## 已确认的能力与边界
 
 - 四类组合故障连续两组通过：提交响应丢失、测试进程被杀、测试期间 Manager 重启、发布完成但确认丢失。最终组仍只有 2 个模型 run、3 次测试、1 个本地提交。
