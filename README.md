@@ -303,6 +303,31 @@ The CLI resolves the Manager URL in this order: `--base-url`,
 `HOMERAIL_MANAGER_URL`, `${HOMERAIL_HOME}/config.json`, then
 `http://localhost:19191`.
 
+Android Live Voice access from the bundled WebView is disabled by default.
+To opt in on a trusted LAN, set this variable in the Manager process environment
+and start (or restart) Manager:
+
+```bash
+export HOMERAIL_ANDROID_LIVE_VOICE_ENABLED=1
+hr start --host 0.0.0.0 --ui
+```
+
+If Manager is already running, restart it after changing the environment.
+Only the value `1` enables this exception. It allows the exact Origin
+`https://appassets.androidplatform.net` for `POST /api/voice-agent/sessions/:id/live-ticket`
+(including its preflight) and the ticket-authenticated `/api/voice-agent/sessions/:id/live`
+WebSocket. Other Manager mutation endpoints keep their existing Origin rules;
+this switch does not add the Android Origin to `HOMERAIL_MANAGER_ADMIN_ORIGINS`.
+Unset the variable or set it to `0` and restart to remove the exception.
+
+The appassets domain is shared by Android apps using WebViewAssetLoader and is
+not proof of a HomeRail installation. Enabling this switch permits any reachable
+client using that Origin to obtain a Live Voice ticket and invoke the voice agent;
+the short-lived ticket is not device authentication. Enable it only on a network
+you trust, not an unprotected public Manager. An explicitly configured global
+`HOMERAIL_MANAGER_ADMIN_ORIGINS` entry remains authoritative even with this switch
+off; remove any appassets entry there if you want default rejection.
+
 For reverse-proxied public access, advertise external endpoints and bind the UI
 to the machine IP:
 

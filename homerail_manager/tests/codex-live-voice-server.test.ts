@@ -59,7 +59,7 @@ async function openTrustedSocket(
   return socket;
 }
 
-function ticketServer(authTimeoutMs?: number): http.Server {
+function ticketServer(authTimeoutMs?: number, androidLiveVoiceEnabled = false): http.Server {
   const server = http.createServer((req, res) => {
     if (!codexLiveVoiceTicketRoutesHandler(req, res)) {
       res.writeHead(404);
@@ -68,8 +68,9 @@ function ticketServer(authTimeoutMs?: number): http.Server {
   });
   setupCodexLiveVoiceWebSocket(server, {
     trustPolicy: createPluginHttpTrustPolicy({
-      bindHost: "127.0.0.1",
+      bindHost: "0.0.0.0",
       allowedOrigins: "http://allowed.test",
+      androidLiveVoiceEnabled,
     }),
     authTimeoutMs,
   });
@@ -108,8 +109,8 @@ describe("Codex Live Voice ticket and Origin boundary", () => {
     await expect(closed).resolves.toBe(4401);
   });
 
-  it("accepts the Android appassets Origin for the authenticated Live Voice socket", async () => {
-    server = ticketServer();
+  it("accepts the opted-in Android appassets Origin for the ticket-authenticated Live Voice socket", async () => {
+    server = ticketServer(undefined, true);
     const port = await listen(server);
     const response = await issueTicket(port, "android-live-voice");
     const body = await response.json() as { data: { ticket: string } };
@@ -124,6 +125,31 @@ describe("Codex Live Voice ticket and Origin boundary", () => {
     socket.send(JSON.stringify({ type: "authenticate", ticket: body.data.ticket }));
 
     await expect(readyPromise).resolves.toMatchObject({ type: "ready" });
+  });
+
+  it.each([
+    [false, HOMERAIL_ANDROID_APPASSETS_ORIGIN],
+    [true, "http://appassets.androidplatform.net"],
+    [true, "https://appassets.androidplatform.net.evil.example"],
+    [true, "https://appassets.androidplatform.net:444"],
+    [true, "https://appassets.androidplatform.net/"],
+    [true, "null"],
+  ] as const)("rejects Live Voice upgrade with opt-in %s and Origin %s", async (enabled, origin) => {
+    server = ticketServer(undefined, enabled);
+    const port = await listen(server);
+    // Even a caller that can obtain a ticket cannot skip the Origin boundary.
+    expect((await issueTicket(port, "android-rejected")).status).toBe(200);
+    await expect(openTrustedSocket(port, "android-rejected", origin)).rejects.toThrow();
+  });
+
+  it("still requires a valid ticket after opting in to Android Live Voice", async () => {
+    server = ticketServer(undefined, true);
+    const port = await listen(server);
+    const socket = await openTrustedSocket(port, "android-invalid-ticket", HOMERAIL_ANDROID_APPASSETS_ORIGIN);
+    sockets.push(socket);
+    const closed = new Promise<number>(resolve => socket.once("close", resolve));
+    socket.send(JSON.stringify({ type: "authenticate", ticket: "invalid-ticket" }));
+    await expect(closed).resolves.toBe(4401);
   });
 
   it("rejects a ticket issued for a different session", async () => {

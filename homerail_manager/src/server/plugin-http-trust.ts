@@ -6,6 +6,7 @@ export const HOMERAIL_MANAGER_ADMIN_TOKEN = "HOMERAIL_MANAGER_ADMIN_TOKEN";
 export const HOMERAIL_MANAGER_ADMIN_ORIGINS = "HOMERAIL_MANAGER_ADMIN_ORIGINS";
 export const HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH = "HOMERAIL_UNSAFE_ALLOW_PUBLIC_MANAGER_WITHOUT_AUTH";
 export const HOMERAIL_ANDROID_APPASSETS_ORIGIN = "https://appassets.androidplatform.net";
+export const HOMERAIL_ANDROID_LIVE_VOICE_ENABLED = "HOMERAIL_ANDROID_LIVE_VOICE_ENABLED";
 export const MIN_ADMIN_TOKEN_BYTES = 32;
 /**
  * Manager admin-token authentication is intentionally disabled for this
@@ -25,6 +26,7 @@ export interface PluginHttpTrustPolicyOptions {
   publicUrl?: string;
   adminToken?: string;
   allowedOrigins?: string;
+  androidLiveVoiceEnabled?: boolean;
   unsafeAllowUnauthenticatedPublic?: boolean;
   turnAuthorizer?: (credential: string, method: string, pathname: string) => boolean;
   scopedMutationAuthorizer?: (input: {
@@ -40,6 +42,7 @@ export interface PluginHttpTrustPolicy {
   readonly publiclyReachable: boolean;
   readonly adminToken?: string;
   readonly allowedOrigins: readonly string[];
+  readonly androidLiveVoiceEnabled: boolean;
   readonly unsafeAllowUnauthenticatedPublic: boolean;
   readonly turnAuthorizer?: (credential: string, method: string, pathname: string) => boolean;
   readonly scopedMutationAuthorizer?: (input: {
@@ -79,6 +82,7 @@ export function createPluginHttpTrustPolicy(
     publiclyReachable,
     adminToken,
     allowedOrigins: Object.freeze(parseAllowedOrigins(options.allowedOrigins)),
+    androidLiveVoiceEnabled: options.androidLiveVoiceEnabled === true,
     unsafeAllowUnauthenticatedPublic,
     turnAuthorizer: options.turnAuthorizer,
     scopedMutationAuthorizer: options.scopedMutationAuthorizer,
@@ -117,6 +121,11 @@ export function pluginHttpTrustHandler(
       || (
         !policy.allowedOrigins.includes(origin)
         && !isTrustedLoopbackUiProxyRequest(req, origin)
+        && !(
+          method === "POST"
+          && /^\/api\/voice-agent\/sessions\/[^/]+\/live-ticket$/.test(pathname)
+          && isAndroidLiveVoiceOriginAllowed(origin, policy)
+        )
       )
     ) {
       req.resume();
@@ -184,6 +193,18 @@ export function pluginHttpTrustHandler(
   return false;
 }
 
+/**
+ * Operator opt-in for Live Voice only. The shared WebViewAssetLoader domain
+ * does not identify a HomeRail installation and is never a global UI origin.
+ * Callers must restrict this exception to Live Voice ticket/socket routes.
+ */
+export function isAndroidLiveVoiceOriginAllowed(
+  origin: string,
+  policy: PluginHttpTrustPolicy,
+): boolean {
+  return policy.androidLiveVoiceEnabled && origin === HOMERAIL_ANDROID_APPASSETS_ORIGIN;
+}
+
 export function isLoopbackHost(value: string): boolean {
   let host = value.trim().toLowerCase();
   if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
@@ -220,10 +241,7 @@ function validateAdminToken(raw: string | undefined): string | undefined {
 
 function parseAllowedOrigins(raw: string | undefined): string[] {
   const values = (raw ?? "").split(",").map((value) => value.trim()).filter(Boolean);
-  // WebViewAssetLoader uses this stable Origin on every Android device. Treat
-  // the bundled Android UI like the bundled loopback UI; configured origins
-  // remain additive and arbitrary web origins still fail closed.
-  const origins = new Set<string>([HOMERAIL_ANDROID_APPASSETS_ORIGIN]);
+  const origins = new Set<string>();
   for (const value of values) {
     if (value === "*" || value === "null") {
       throw new Error(

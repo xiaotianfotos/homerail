@@ -12,6 +12,7 @@ import {
   type CodexLiveVoiceRuntimeEvent,
 } from "./codex-live-voice-runtime.js";
 import {
+  isAndroidLiveVoiceOriginAllowed,
   isLoopbackHost,
   type PluginHttpTrustPolicy,
 } from "./plugin-http-trust.js";
@@ -154,6 +155,7 @@ function trustedWebSocketOrigin(
     || parsed.hash
   ) return false;
   if (policy.allowedOrigins.includes(origin)) return true;
+  if (isAndroidLiveVoiceOriginAllowed(origin, policy)) return true;
   return Boolean(
     req.socket.remoteAddress
     && isLoopbackHost(req.socket.remoteAddress)
