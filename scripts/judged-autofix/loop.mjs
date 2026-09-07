@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {randomUUID} from 'node:crypto';
 import {atomic,identity,digest,Repository,safePath} from './evidence.mjs';
 import {api,prepareModel,reconcileSubmission,collectModel} from './model.mjs';
 const read = file => JSON.parse(fs.readFileSync(file,'utf8'));
@@ -12,8 +13,9 @@ export class JudgedLoop {
     this.root=path.resolve(root);this.config=read(path.join(this.root,'config.json'));
     this.repo=new Repository(this.config.repo);this.file=path.join(this.root,'state.json');
     if(!path.isAbsolute(this.config.repo)||!this.config.id||!this.config.checks)throw new Error('invalid task configuration');
-    this.state=fs.existsSync(this.file)?read(this.file):{version:1,config_digest:identity(this.config),phase:'ready',rounds:[],events:[]};
+    this.state=fs.existsSync(this.file)?read(this.file):{version:1,config_digest:identity(this.config),phase:'ready',rounds:[],events:[],task_nonce:randomUUID()};
     if(this.state.config_digest!==identity(this.config))throw new Error('task configuration changed');
+    if(!this.state.task_nonce){this.state.task_nonce=randomUUID();this.save('task_nonce_initialized');}
   }
   save(event,detail={}){this.state.events.push({at:now(),event,...detail});atomic(this.file,this.state);}
   get round(){return this.state.rounds.at(-1);}
@@ -34,9 +36,9 @@ export class JudgedLoop {
       return {path:c.path,start,end,content:lines.slice(start-1,end).join('\n')};
     });
     const index=this.state.rounds.length+1;
-    const input={objective:plan.objective,judger_strategy:plan.strategy,allowed_paths:plan.allowed_paths,source_commit:base,context,previous:this.state.rounds.slice(-3).map(r=>({round:r.index,summary:r.summary,judgment:r.judgment,failure:r.failure,checks:r.receipts?.map(x=>({name:x.name,status:x.status,tail:x.tail?.slice(-3000)}))}))};
+    const input={objective:plan.objective,judger_strategy:plan.strategy,allowed_paths:plan.allowed_paths,source_commit:base,context,previous:this.state.rounds.slice(-3).map(r=>({round:r.index,summary:r.summary,judgment:r.judgment,failure:r.failure,checks:r.receipts?.filter(x=>x.status!=='passed').map(x=>({name:x.name,status:x.status,tail:x.tail?.replace(/\x1b\[[0-9;]*m/g,'').slice(-2000)}))}))};
     if(Buffer.byteLength(JSON.stringify(input))>96000)throw new Error('context exceeds 96 KiB; narrow the Judger plan');
-    const r={index,base,base_tree:tree,plan,plan_digest:identity(plan),input_digest:identity(input),input_bytes:Buffer.byteLength(JSON.stringify(input)),workflow_id:`judged-${this.config.id}-${index}-${identity({base,plan}).slice(0,8)}`,kind:'propose',state:'prepared',created_at:now()};
+    const r={index,base,base_tree:tree,plan,plan_digest:identity(plan),input_digest:identity(input),input_bytes:Buffer.byteLength(JSON.stringify(input)),workflow_id:`judged-${this.config.id}-${index}-${identity({base,plan,task_nonce:this.state.task_nonce}).slice(0,8)}`,kind:'propose',state:'prepared',created_at:now()};
     this.state.rounds.push(r);atomic(path.join(this.directory(r),'input.json'),input);this.state.phase='model';this.save('judger_plan_recorded');
   }
   async step() {
@@ -46,6 +48,7 @@ export class JudgedLoop {
       await prepareModel(this.config,r,read(path.join(dir,'input.json')));
       r.state='submitting';atomic(path.join(dir,'request.json'),r.payload);this.save('submission_intent');
       const response=await api(this.config,'/api/runs/create-and-run',r.payload);
+      if((response.run_id??response.runId)!==r.requested_run_id)throw new Error(`identity mismatch on submission: expected ${r.requested_run_id}, got ${response.run_id??response.runId}`);
       r.run_id=response.run_id??response.runId;r.state='running';this.save('submitted');return;
     }
     if(r.state==='submitting') {

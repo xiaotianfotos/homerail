@@ -29,17 +29,23 @@ export function workflow(id, kind) {
 }
 export async function prepareModel(plan, attempt, input) {
   const w = workflow(attempt.workflow_id, attempt.kind);
-  await api(plan, '/api/dag/workflows/sync', { yaml_text: JSON.stringify(w), source_path: `judged-autofix:${attempt.workflow_id}` });
+  const wf = await api(plan, '/api/dag/workflows/sync', { yaml_text: JSON.stringify(w), source_path: `judged-autofix:${attempt.workflow_id}` });
   const profile = { profile_id: attempt.workflow_id, workflow_id: attempt.workflow_id, default: { llm_setting_id: plan.setting_id, agent_type: 'deepseek_harness', reasoning_effort: plan.reasoning_effort ?? 'low' } };
-  await api(plan, '/api/dag/profiles/sync', { yaml_text: JSON.stringify(profile), workflow_id: attempt.workflow_id, source_path: 'judged-autofix' });
+  const pr = await api(plan, '/api/dag/profiles/sync', { yaml_text: JSON.stringify(profile), workflow_id: attempt.workflow_id, source_path: 'judged-autofix' });
+  const workflow_revision = wf.workflow?.head_revision;
+  const canonical_hash = wf.workflow?.canonical_hash;
+  const profile_updated_at = pr.profile?.updated_at;
+  if (!Number.isInteger(workflow_revision) || workflow_revision <= 0) throw new Error('invalid workflow revision');
+  if (typeof canonical_hash !== 'string' || !/^[0-9a-f]{64}$/.test(canonical_hash)) throw new Error('invalid canonical hash');
+  if (typeof profile_updated_at !== 'string' || !profile_updated_at) throw new Error('invalid profile updated_at');
   attempt.requested_run_id = identity(attempt.workflow_id).slice(0, 24);
-  attempt.payload = { runId: attempt.requested_run_id, workflow_id: attempt.workflow_id, profile: attempt.workflow_id, prompt: JSON.stringify(input) };
+  attempt.payload = { runId: attempt.requested_run_id, workflow_id: attempt.workflow_id, profile: attempt.workflow_id, prompt: JSON.stringify(input), workflow_revision, canonical_hash, profile_updated_at };
 }
 export async function reconcileSubmission(plan, attempt) {
-  const listed = await api(plan, '/api/runs?limit=1000');
-  const matches = (listed.runs ?? []).filter(r => r.workflowId === attempt.workflow_id && r.runId === attempt.requested_run_id);
-  if (matches.length > 1) throw new Error('ambiguous model submission: multiple runs');
-  return matches[0]?.runId;
+  const result = await api(plan, '/api/runs/create-and-run', attempt.payload);
+  const runId = result.run_id ?? result.runId;
+  if (runId !== attempt.requested_run_id) throw new Error(`identity mismatch: expected ${attempt.requested_run_id}, got ${runId}`);
+  return runId;
 }
 export async function collectModel(plan, attempt, directory) {
   const status = await api(plan, `/api/runs/${attempt.run_id}/status`);
