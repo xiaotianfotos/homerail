@@ -1,9 +1,10 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
+const test=(name,fn)=>nodeTest(name,{skip:process.platform!=='linux'},fn);
 import assert from 'node:assert/strict';
 import { prepareModel, reconcileSubmission } from './model.mjs';
 
 // Judger-owned acceptance oracle: no real provider or GitHub calls.
-test('submission freezes definition pins and replays the exact saved POST after lost acknowledgement', async () => {
+nodeTest('submission freezes definition pins and replays the exact saved POST after lost acknowledgement', async () => {
   const saved = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (url, options) => {
@@ -30,7 +31,7 @@ test('submission freezes definition pins and replays the exact saved POST after 
   } finally { globalThis.fetch=saved; }
 });
 
-test('retry conflicts and a receipt for another run are rejected',async()=>{
+nodeTest('retry conflicts and a receipt for another run are rejected',async()=>{
   const saved=globalThis.fetch;
   const attempt={requested_run_id:'expected',payload:{runId:'expected'}};
   try {

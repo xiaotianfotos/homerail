@@ -102,10 +102,35 @@ node /work/repair-task/run.mjs /work/repair-task judge /work/repair-task/judgmen
 node /work/repair-task/run.mjs /work/repair-task publish /work/repair-task/pr-body.md
 ```
 
+When a round fails at the proposal stage (e.g. one anchor does not match), the
+Judger may salvage valid saved edits without issuing another model request:
+
+```sh
+node /work/repair-task/run.mjs /work/repair-task select-edits /work/repair-task/selection.json
+```
+
+The selection file requires `round`, `plan_digest`, `proposal_digest` (identity of
+the original `proposal.json`), `base`, a nonempty `reason`, and `indices`—a
+nonempty, strictly ascending, unique array of zero-based integers selecting a
+strict subset of the original proposal edits (max 20 edits, <=96 KiB). The original
+`proposal.json` is immutable; selection only reads it. Each chosen edit must pass
+the same safety rules (`safePath`, allowed-paths, exactly-one-old-match, new-file
+for empty old). The resulting commit carries a `Judger-Selection` trailer with the
+selection digest. Any invalid selection leaves the worktree and state untouched,
+allowing correction and retry.
+
 Additional named checks can be run with `test ci`. If an interrupted test worker
 leaves a live child, the task blocks instead of starting another test. After the
 recorded process is gone, the Judger can use `recover-tests`, reassess the result,
 and explicitly rerun tests. Do not modify saved receipts to manufacture success.
+
+## Platform requirements
+
+Process-level tests (Git operations, flock, /proc identity) require Linux; they
+are skipped via `node:test` skip option on other platforms. The first two
+submission tests mock `fetch` and run portably on any OS. The `JudgedLoop`
+constructor throws a clear Linux-required error on non-Linux platforms, while
+module import remains safe for tooling and CI matrix checks.
 
 ## Context, costs and limits
 

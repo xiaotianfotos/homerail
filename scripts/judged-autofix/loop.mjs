@@ -12,6 +12,7 @@ const now = () => new Date().toISOString();
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export class JudgedLoop {
   constructor(root) {
+    if(process.platform!=='linux')throw new Error('JudgedLoop requires Linux (process identity, flock, /proc)');
     this.root=path.resolve(root);this.config=read(path.join(this.root,'config.json'));
     this.repo=new Repository(this.config.repo);this.file=path.join(this.root,'state.json');
     if(!path.isAbsolute(this.config.repo)||!this.config.id||!this.config.checks)throw new Error('invalid task configuration');
@@ -80,6 +81,58 @@ export class JudgedLoop {
       r.candidate_tree=candidate;r.candidate_commit=this.repo.git(['commit-tree',candidate,'-p',r.base],{input:`fix: ${r.summary.slice(0,150)}\n\nJudged-DAG-Run: ${r.run_id}\n`});
       this.state.phase='apply';this.save('candidate_intent');
     }catch(e){r.failure={category:'proposal',message:e.message};this.state.phase='judging';this.save('proposal_rejected');}
+  }
+  selectEdits(file) {
+    if(this.state.blocked_test) throw new Error('surviving test process blocks selection');
+    const r=this.round;
+    if(this.state.phase!=='judging') throw new Error('select-edits only allowed during judging');
+    if(!r.failure||r.failure.category!=='proposal') throw new Error('select-edits requires a proposal failure');
+    if(r.candidate_commit) throw new Error('select-edits requires no existing candidate');
+    if(r.judgment) throw new Error('select-edits requires no prior judgment');
+    const sel=read(file);
+    if(sel.round!==r.index) throw new Error('selection round mismatch');
+    if(sel.plan_digest!==r.plan_digest) throw new Error('selection plan_digest mismatch');
+    if(sel.base!==r.base) throw new Error('selection base mismatch');
+    if(!sel.reason||typeof sel.reason!=='string'||!sel.reason.trim()) throw new Error('selection requires nonempty reason');
+    const dir=this.directory(r);
+    const proposalFile=path.join(dir,'proposal.json');
+    if(!fs.existsSync(proposalFile)) throw new Error('no saved proposal to select from');
+    const proposal=read(proposalFile);
+    if(sel.proposal_digest!==identity(proposal)) throw new Error('proposal identity/digest mismatch');
+    const edits=proposal.edits;
+    if(!Array.isArray(edits)||!edits.length||edits.length>20) throw new Error('invalid saved proposal edits');
+    if(Buffer.byteLength(JSON.stringify(proposal))>96000) throw new Error('proposal exceeds 96 KiB');
+    const indices=sel.indices;
+    if(!Array.isArray(indices)||!indices.length) throw new Error('selection requires nonempty indices');
+    for(let i=0;i<indices.length;i++){
+      if(!Number.isInteger(indices[i])) throw new Error('indices must be integers');
+      if(indices[i]<0||indices[i]>=edits.length) throw new Error('index out of bounds');
+      if(i>0&&indices[i]<=indices[i-1]) throw new Error('indices must be strictly ascending and unique');
+    }
+    this.assertHead(r.base);
+    if(this.repo.git(['status','--porcelain','--untracked-files=normal'])) throw new Error('owned worktree must be clean');
+    const selected=indices.map(i=>edits[i]);
+    const current=new Map(this.repo.entries(r.base_tree).filter(f=>r.plan.allowed_paths.includes(f.path)).map(f=>[f.path,this.repo.bytes(f.sha).toString('utf8')]));
+    const output=new Map();
+    for(const e of selected){
+      safePath(e.path);
+      if(!r.plan.allowed_paths.includes(e.path)||typeof e.old!=='string'||typeof e.new!=='string') throw new Error('edit outside Judger scope');
+      const source=output.has(e.path)?output.get(e.path):current.get(e.path);
+      if(e.old===''){if(source!==undefined) throw new Error('empty old is only for new files');output.set(e.path,e.new);}
+      else{if(source===undefined||source.split(e.old).length!==2) throw new Error(`old text must match exactly once: ${e.path}`);output.set(e.path,source.replace(e.old,()=>e.new));}
+    }
+    const candidate=this.repo.apply(r.base_tree,{files:[...output].map(([p,content])=>({path:p,content}))},r.plan.allowed_paths);
+    if(candidate===r.base_tree) throw new Error('no source change after selection');
+    const selectionDigest=identity(sel);
+    const candidateCommit=this.repo.git(['commit-tree',candidate,'-p',r.base],{input:`fix: ${proposal.summary.slice(0,150)}\n\nJudged-DAG-Run: ${r.run_id}\nJudger-Selection: ${selectionDigest}\n`});
+    atomic(path.join(dir,'selection.json'),sel);
+    r.selection=sel;
+    r.proposal_failure=r.failure;
+    delete r.failure;
+    r.candidate_tree=candidate;
+    r.candidate_commit=candidateCommit;
+    this.state.phase='apply';
+    this.save('selection_applied');
   }
   apply(){
     if(this.state.phase!=='apply')throw new Error('no candidate to apply');const r=this.round;
@@ -193,10 +246,10 @@ export class JudgedLoop {
   }
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
-  const [root,op,...args]=process.argv.slice(2);if(!root||!op)throw new Error('Usage: loop.mjs <task-directory> plan|step|apply|test|judge|publish|recover-tests|status [file/check]');
+  const [root,op,...args]=process.argv.slice(2);if(!root||!op)throw new Error('Usage: loop.mjs <task-directory> plan|step|select-edits|apply|test|judge|publish|recover-tests|status [file/check]');
   if(!process.env.HR_JUDGED_LOCKED){const r=spawnSync('flock',['-n',path.join(root,'lock'),process.execPath,fileURLToPath(import.meta.url),root,op,...args],{env:{...process.env,HR_JUDGED_LOCKED:'1'},stdio:'inherit'});process.exit(r.status??1);}
   const loop=new JudgedLoop(root);
-  try{if(op==='plan')loop.plan(args[0]);else if(op==='step')await loop.step();else if(op==='apply')loop.apply();else if(op==='test')await loop.test(args.length?args:undefined);else if(op==='judge')loop.judge(args[0]);else if(op==='publish')loop.publish(args[0]);else if(op==='recover-tests')loop.recoverTests();else if(op!=='status')throw new Error('unknown operation');}
+  try{if(op==='plan')loop.plan(args[0]);else if(op==='step')await loop.step();else if(op==='select-edits')loop.selectEdits(args[0]);else if(op==='apply')loop.apply();else if(op==='test')await loop.test(args.length?args:undefined);else if(op==='judge')loop.judge(args[0]);else if(op==='publish')loop.publish(args[0]);else if(op==='recover-tests')loop.recoverTests();else if(op!=='status')throw new Error('unknown operation');}
   catch(e){loop.save('controller_error',{message:e.message});console.error(e.message);process.exitCode=1;}
   console.log(JSON.stringify({phase:loop.state.phase,round:loop.round?.index,run_id:loop.round?.run_id,failure:loop.round?.failure,checks:loop.round?.receipts?.map(x=>({name:x.name,status:x.status})),publication:loop.state.publication}));
 }
