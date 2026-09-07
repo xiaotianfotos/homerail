@@ -156,14 +156,14 @@ test('publication reconciles a lost create acknowledgement and refuses changed i
  const body=path.join(f.root,'body.md');fs.writeFileSync(body,'Verified repair\n');
  const bin=path.join(f.root,'bin');fs.mkdirSync(bin);const storage=path.join(f.root,'remote.json');const calls=path.join(f.root,'calls.jsonl');
  const row={url:'https://github.com/owner/repo/pull/1',state:'OPEN',headRefName:'codex/oracle',headRefOid:r.candidate_commit,baseRefName:'main',headRepository:{name:'repo'},headRepositoryOwner:{login:'owner'},title:f.loop.config.pr_title,body:'Verified repair\n'};
- fs.writeFileSync(path.join(bin,'gh'),`#!${process.execPath}\nconst fs=require('fs'),args=process.argv.slice(2),store=${JSON.stringify(storage)},calls=${JSON.stringify(calls)};fs.appendFileSync(calls,JSON.stringify(args)+'\\n');if(args[1]==='list'){console.log(fs.existsSync(store)?'['+fs.readFileSync(store,'utf8')+']':'[]');}else if(args[1]==='create'){fs.writeFileSync(store,JSON.stringify(${JSON.stringify(row)}));console.error('simulated lost acknowledgement');process.exit(1);}else{throw Error('unexpected gh operation')}`,{mode:0o755});
+ fs.writeFileSync(path.join(bin,'gh'),`#!${process.execPath}\nconst fs=require('fs'),args=process.argv.slice(2),store=${JSON.stringify(storage)},calls=${JSON.stringify(calls)};fs.appendFileSync(calls,JSON.stringify(args)+'\\n');if(args[1]==='list'){console.log(fs.existsSync(store)?'['+fs.readFileSync(store,'utf8')+']':'[]');}else if(args[1]==='create'){const b=args[args.indexOf('--body-file')+1];if(!require('path').isAbsolute(b))throw Error('body-file must be absolute');fs.readFileSync(b);fs.writeFileSync(store,JSON.stringify(${JSON.stringify(row)}));console.error('simulated lost acknowledgement');process.exit(1);}else{throw Error('unexpected gh operation')}`,{mode:0o755});
  const git=f.loop.repo.git.bind(f.loop.repo);let pushes=0;f.loop.repo.git=(args,options)=>{if(args[0]==='push'){pushes++;assert.ok(args.some(a=>a.includes(r.candidate_commit)),'push exact accepted SHA');return '';}return git(args,options);};
  const old=process.env.PATH;process.env.PATH=bin+path.delimiter+old;
  try{
-  assert.throws(()=>f.loop.publish(body),/lost acknowledgement/);assert.ok(f.loop.state.publication);
-  fs.writeFileSync(body,'changed');assert.throws(()=>f.loop.publish(body),/intent|body|changed/i);assert.equal(pushes,1);
-  fs.writeFileSync(body,'Verified repair\n');fs.writeFileSync(storage,JSON.stringify({...row,headRefOid:'wrong'}));assert.throws(()=>f.loop.publish(body),/head|mismatch|receipt/i);
-  fs.writeFileSync(storage,JSON.stringify(row));assert.equal(f.loop.publish(body),row.url);
+  assert.throws(()=>f.loop.publish(path.relative(process.cwd(),body)),/lost acknowledgement/);assert.ok(f.loop.state.publication);
+  fs.writeFileSync(body,'changed');assert.throws(()=>f.loop.publish(path.relative(process.cwd(),body)),/intent|body|changed/i);assert.equal(pushes,1);
+  fs.writeFileSync(body,'Verified repair\n');fs.writeFileSync(storage,JSON.stringify({...row,headRefOid:'wrong'}));assert.throws(()=>f.loop.publish(path.relative(process.cwd(),body)),/head|mismatch|receipt/i);
+  fs.writeFileSync(storage,JSON.stringify(row));assert.equal(f.loop.publish(path.relative(process.cwd(),body)),row.url);
   const operations=fs.readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(operations.filter(a=>a[1]==='create').length,1);
  }finally{process.env.PATH=old;}
 });
@@ -192,4 +192,13 @@ test('Judger can retain valid edits from a rejected result without another model
  fs.writeFileSync(decision,JSON.stringify({...selection,proposal_digest:'wrong'}));assert.throws(()=>f.loop.selectEdits(decision),/digest|identity|proposal/i);
  fs.writeFileSync(decision,JSON.stringify(selection));f.loop.selectEdits(decision);assert.equal(f.loop.state.phase,'apply');assert.equal(r.proposal_failure.category,'proposal');assert.equal(r.failure,undefined);assert.equal(fs.readFileSync(file,'utf8'),original);
  f.loop.apply();assert.equal(fs.readFileSync(path.join(f.repo,'source.txt'),'utf8'),'retained\n');assert.deepEqual(r.selection.indices,[0]);
+});
+
+test('Judger can revoke acceptance after a publication failure without losing evidence',async t=>{
+ const f=loopFixture(t);await f.loop.test();const r=f.loop.round;const decision=path.join(f.root,'decision.json');
+ const accept={round:1,plan_digest:'plan',verdict:'accept',reason:'reviewed',tree:r.candidate_tree};fs.writeFileSync(decision,JSON.stringify(accept));f.loop.judge(decision);
+ const accepted=r.judgment;const receipts=JSON.stringify(r.receipts);const publication={head:r.candidate_commit,branch:'codex/oracle',body_digest:'saved'};f.loop.state.publication=publication;f.loop.save('publication_intent');
+ fs.writeFileSync(decision,JSON.stringify({round:1,plan_digest:'wrong',verdict:'revise',reason:'invalid'}));assert.throws(()=>f.loop.judge(decision));assert.equal(f.loop.state.phase,'accepted');
+ fs.writeFileSync(decision,JSON.stringify({round:1,plan_digest:'plan',verdict:'revise',reason:'new publication finding; reopen for repair'}));f.loop.judge(decision);
+ assert.equal(f.loop.state.phase,'judging');assert.equal(r.judgment.verdict,'revise');assert.deepEqual(r.judgment_history.at(-1),accepted);assert.deepEqual(f.loop.state.publication_history.at(-1),publication);assert.equal(f.loop.state.publication,undefined);assert.equal(JSON.stringify(r.receipts),receipts);
 });
