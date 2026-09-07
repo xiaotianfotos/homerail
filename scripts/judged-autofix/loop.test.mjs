@@ -182,3 +182,13 @@ test('a second CLI controller cannot enter while the task lock is held',async t=
  const result=spawnSync(process.execPath,[fileURLToPath(new URL('./loop.mjs',import.meta.url)),f.root,'status'],{encoding:'utf8',env:{...process.env,HR_JUDGED_LOCKED:''}});
  assert.notEqual(result.status,0);assert.equal(fs.readFileSync(path.join(f.root,'state.json'),'utf8'),before);
 });
+test('Judger can retain valid edits from a rejected result without another model request',t=>{
+ const f=loopFixture(t);const r=f.loop.round;r.base=f.spec.commit;r.base_tree=f.spec.tree;delete r.candidate_commit;delete r.candidate_tree;
+ r.plan={allowed_paths:['source.txt'],checks:['oracle']};r.plan_digest=identity(r.plan);r.failure={category:'proposal',message:'bad anchor'};r.run_id='saved-model-run';r.summary='Retained model proposal';f.loop.state.phase='judging';f.loop.save('rejected');
+ const proposal={summary:'model result',edits:[{path:'source.txt',old:'original\n',new:'retained\n'},{path:'source.txt',old:'nonexistent',new:'invalid'}]};fs.mkdirSync(f.loop.directory(),{recursive:true});const file=path.join(f.loop.directory(),'proposal.json');fs.writeFileSync(file,JSON.stringify(proposal));const original=fs.readFileSync(file,'utf8');
+ const selection={round:1,plan_digest:r.plan_digest,proposal_digest:identity(proposal),base:r.base,indices:[0],reason:'Judger reviewed valid retained edit; invalid optional edit deferred'};const decision=path.join(f.root,'selection.json');
+ fs.writeFileSync(decision,JSON.stringify({...selection,indices:[1]}));assert.throws(()=>f.loop.selectEdits(decision),/anchor|match/i);assert.equal(f.loop.state.phase,'judging');
+ fs.writeFileSync(decision,JSON.stringify({...selection,proposal_digest:'wrong'}));assert.throws(()=>f.loop.selectEdits(decision),/digest|identity|proposal/i);
+ fs.writeFileSync(decision,JSON.stringify(selection));f.loop.selectEdits(decision);assert.equal(f.loop.state.phase,'apply');assert.equal(r.proposal_failure.category,'proposal');assert.equal(r.failure,undefined);assert.equal(fs.readFileSync(file,'utf8'),original);
+ f.loop.apply();assert.equal(fs.readFileSync(path.join(f.repo,'source.txt'),'utf8'),'retained\n');assert.deepEqual(r.selection.indices,[0]);
+});
