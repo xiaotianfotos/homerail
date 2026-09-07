@@ -118,3 +118,17 @@ test('missing flock produces a durable infrastructure failure instead of hanging
  const f=fixture(t,"console.log('never')");const old=process.env.PATH;
  try{process.env.PATH='/nonexistent-judged-test-bin';const r=await finished(f.dir,f.spec);assert.equal(r.status,'infrastructure_failed');assert.match(r.error,/spawn|flock|ENOENT/i);}finally{process.env.PATH=old;}
 });
+import {freezeEngine} from './freeze.mjs';
+test('frozen entry uses approved copy and rejects tampering or unsafe promotion',t=>{
+ const f=loopFixture(t);f.loop.state.phase='judging';f.loop.save('ready_for_promotion');
+ const src=path.join(f.repo,'scripts','judged-autofix');fs.mkdirSync(src,{recursive:true});
+ for(const n of ['evidence.mjs','model.mjs','loop.mjs','test-job.mjs','entry.mjs'])fs.copyFileSync(fileURLToPath(new URL(n,import.meta.url)),path.join(src,n));
+ const git=args=>{const p=spawnSync('git',['-C',f.repo,...args],{encoding:'utf8'});assert.equal(p.status,0,p.stderr);return p.stdout.trim();};git(['add','.']);git(['commit','-qm','engine']);
+ freezeEngine(f.root);assert.ok(fs.existsSync(path.join(f.root,'run.mjs')));
+ const manifest=JSON.parse(fs.readFileSync(path.join(f.root,'engine.json'),'utf8'));assert.equal(manifest.source_commit,git(['rev-parse','HEAD']));
+ fs.writeFileSync(path.join(src,'model.mjs'),'throw new Error("mutable candidate executed")');
+ const run=()=>spawnSync(process.execPath,[path.join(f.root,'run.mjs'),f.root,'status'],{encoding:'utf8'});
+ assert.equal(run().status,0,'candidate changes must not change active engine');assert.throws(()=>freezeEngine(f.root),/dirty|clean/i);
+ fs.appendFileSync(path.join(manifest.directory,'model.mjs'),'\n//tamper');assert.notEqual(run().status,0,'frozen hash mismatch must stop before execution');
+ git(['restore','scripts/judged-autofix/model.mjs']);f.loop.state.phase='model';f.loop.save('active');assert.throws(()=>freezeEngine(f.root),/active|phase|running|round/i);
+});
