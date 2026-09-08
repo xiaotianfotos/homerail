@@ -32,7 +32,7 @@ import {
   getDagActorByNode,
 } from "../src/persistence/dag-actors.js";
 import { getRunArtifactBlobPath } from "../src/persistence/run-artifacts.js";
-import { loadRunSnapshot } from "../src/persistence/store.js";
+import { appendChatEntry, loadRunSnapshot } from "../src/persistence/store.js";
 import {
   _clearActiveRuns,
   autoHandoffAfterCorrectionExhausted,
@@ -1455,6 +1455,37 @@ describe("PR Review scenario assets", () => {
     },
     60_000,
   );
+
+  it("durably carries a fenced unverified draft when review coverage is missing", () => {
+    const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
+    for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    installPrepareCommandStub(parsed);
+    const executor = new GraphExecutor(new FakeDAGDispatcher());
+    const runId = "pr-review-durable-draft";
+    executor.createRun(runId, parsed, JSON.stringify(reviewInput()));executor.tick(runId);
+    const nodeId = "kimi_review", run = getActiveRun(runId)!;
+    const sessionId = run.nodeSessions.get(nodeId)!.sessionId;
+    const generation = getDagActorByNode(runId, nodeId)!.generation;
+    const roundId = run.currentRound.round_id;
+    const chat = (text: string, session_id = sessionId) => ({ role: "worker", type: "response", timestamp: Date.now(),
+      content: { text, run_id: runId, node_id: nodeId, session_id, round_id: roundId, generation } });
+    appendChatEntry(runId, nodeId, chat("Completed analysis, still requires evidence verification"));
+    appendChatEntry(runId, nodeId, chat("Stale answer must never be reused", "old-session"));
+    expect(requestNodeCorrection(runId,nodeId,"agent ended without DAG handoff").status).toBe("scheduled");
+    const mailbox = run.dagRun.mailboxes.get(nodeId)!;
+    const recovery = mailbox.get("review_recovery")?.[0];
+    expect(recovery).toMatchObject({ schema: "review-recovery-v1", trust: "unverified_model_draft", mode: "read_only_verify",
+      fence: {runId,nodeId,sessionId,roundId,generation}, draft: { text: "Completed analysis, still requires evidence verification" } });
+    expect(mailbox.get("review_evidence")?.[0]).toMatchObject({ accepted_findings: [], coverage_attestation: null });
+    closeDb();getDb();
+    expect(loadRunSnapshot(runId)?.metadata.dagRuntimeState?.mailboxes[nodeId]?.review_recovery).toEqual([recovery]);
+
+    // Valid structured coverage already saved at the handoff boundary needs
+    // schema-only correction and must remove a previously queued recovery.
+    expect(() => handoffActiveRun(runId,nodeId,"voted",{...modelReview("kimi"),summary:""})).toThrow();
+    expect(requestNodeCorrection(runId,nodeId,"DAG_HANDOFF_CONTRACT_VIOLATION").status).toBe("scheduled");
+    expect(mailbox.has("review_recovery")).toBe(false);
+  });
 
   it("injects only the current session/generation projection into correction mailboxes", () => {
     const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
