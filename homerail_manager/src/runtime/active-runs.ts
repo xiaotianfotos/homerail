@@ -4,6 +4,11 @@ import { chmodSync, closeSync, ftruncateSync, lstatSync, mkdirSync, openSync, re
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { getHomerailHome } from "../config/env.js";
+import {
+  prepareDurableCommand, durableCommandId, getDurableCommand, claimDurableCommand,
+  startDurableCommand, watchDurableCommand, consumeDurableCommand, cancelDurableCommand,
+  type DurableCommandIdentity, type DurableCommandSpec,
+} from "./durable-command.js";
 import { emit } from "../events/bus.js";
 import type { DAGDispatcher, DispatchEnvelope } from "../orchestration/dag-dispatcher.js";
 import type { DAGRun, NodeState } from "../orchestration/dag-engine.js";
@@ -690,7 +695,7 @@ function _nodeSessionScope(node: DAGGraphNode | undefined): "node" | "dispatch" 
 
 function _prepareNodeSessionForDispatch(run: ActiveRun, node: DAGGraphNode): NodeSessionState {
   const current = _ensureNodeSession(run, node.node_id);
-  if (_nodeSessionScope(node) !== "dispatch") return current;
+  if (_nodeSessionScope(node) !== "dispatch" && !node.gateway_config?.durable) return current;
   if (!new Set(["completed", "failed", "cancelled"]).has(current.status)) return current;
   const fresh = _persistNodeSession(run, node.node_id, {
     sessionId: _newSessionId(run.runId, node.node_id),
@@ -799,6 +804,8 @@ function _emitNodeStateChanges(run: ActiveRun, before: Map<string, string>): voi
 }
 
 export function _clearActiveRuns(): void {
+  for (const observer of durableCommandObservers.values()) observer.close();
+  durableCommandObservers.clear();
   store.clear();
 }
 
@@ -1084,6 +1091,7 @@ function _applyOrphanedNodeDemotion(run: ActiveRun): string[] {
     .filter(([nodeId, state]) => (
       state === "RUNNING"
       && !run.dagRun.loopSources.has(nodeId)
+      && !_hasRecoverableDurableCommand(run, nodeId)
       && !interventionProtectedNodeIds.has(nodeId)
     ))
     .map(([nodeId]) => nodeId);
@@ -1443,6 +1451,30 @@ export function dispatchRecoveredRuns(dispatcher: DAGDispatcher): number {
     dispatched += dispatchReadyNodesUntilStable(run.runId, dispatcher);
   }
   return dispatched;
+}
+
+/** Host-only executions can reconnect before any Worker registers. Normal
+ * actor dispatch still uses the existing dispatcher once their result arrives. */
+export function resumeRecoveredDurableCommandGateways(dispatcher: DAGDispatcher): number {
+  const pending = getDb().prepare("SELECT execution_id, run_id FROM dag_durable_commands WHERE consumed = 0").all() as Array<{ execution_id: string; run_id: string }>;
+  for (const record of pending) {
+    const metadata = loadRunMetadata(record.run_id);
+    if (metadata && ["completed", "failed", "cancelled"].includes(metadata.status)) {
+      try { cancelDurableCommand(record.execution_id); }
+      catch (error) { console.warn(`[homerail_manager] durable cancellation recovery failed: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+  }
+  let count = 0;
+  for (const run of store.values()) {
+    if (run.status !== "active") continue;
+    for (const node of run.dagRun.graph.nodes) {
+      if (node.node_type !== "command_gateway" || !node.gateway_config?.durable
+        || run.dagRun.nodeStates.get(node.node_id) !== "RUNNING") continue;
+      try { _startDurableCommandGateway(run, node, dispatcher); count++; }
+      catch (error) { failActiveRun(run.runId, node.node_id, `durable command recovery failed: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+  }
+  return count;
 }
 
 export function getActiveRun(runId: string): ActiveRun | undefined {
@@ -2280,6 +2312,7 @@ export function cancelActiveRun(runId: string): ActiveRun | undefined {
     _restoreMutableRun(run, mutableBefore);
     throw error;
   }
+  _cancelDurableCommands(run);
   _emitNodeStateChanges(run, before);
   emit("dag:run_cancelled", { runId });
   deprovisionProvisionedForRun(runId);
@@ -2316,6 +2349,7 @@ export function abortActiveRun(runId: string, reason: string, nodeId?: string): 
     _restoreMutableRun(run, mutableBefore);
     throw error;
   }
+  _cancelDurableCommands(run);
   _emitNodeStateChanges(run, before);
   emit("dag:engine_aborted", { runId, nodeId, reason });
   emit("dag:run_failed", { runId, nodeId: nodeId ?? "", reason });
@@ -4826,7 +4860,89 @@ function _commandGatewayCwd(
   }
 }
 
-function _commandGatewayResult(run: ActiveRun, node: DAGGraphNode): { port: string; payload: unknown } {
+type CommandPreparation = { spec: DurableCommandSpec; command: string[]; cwdLabel: string | undefined; input: unknown };
+
+const durableCommandObservers = new Map<string, { run: ActiveRun; close: () => void }>();
+function _durableCommandIdentity(run: ActiveRun, nodeId: string): DurableCommandIdentity | undefined {
+  const session = run.nodeSessions.get(nodeId);
+  return session ? { run_id: run.runId, node_id: nodeId, session_id: session.sessionId,
+    round_id: run.currentRound.round_id, attempt: session.attempt } : undefined;
+}
+function _hasRecoverableDurableCommand(run: ActiveRun, nodeId: string): boolean {
+  const node = run.dagRun.graph.nodes.find(n => n.node_id === nodeId);
+  if (node?.node_type !== "command_gateway" || !node.gateway_config?.durable) return false;
+  const identity = _durableCommandIdentity(run, nodeId);
+  const record = identity && getDurableCommand(durableCommandId(identity));
+  return !!record && !record.consumed;
+}
+function _startDurableCommandGateway(run: ActiveRun, node: DAGGraphNode, dispatcher: DAGDispatcher): boolean {
+  if (node.gateway_config?.command_field) throw new Error("durable commands require static argv");
+  const resumed = run.dagRun.nodeStates.get(node.node_id) === "RUNNING";
+  if (!resumed) _prepareNodeSessionForDispatch(run, node);
+  const identity = _durableCommandIdentity(run, node.node_id);
+  if (!identity) throw new Error("durable command session missing");
+  const id = durableCommandId(identity);
+  const existing = durableCommandObservers.get(id);
+  if (existing?.run === run) return false;
+  existing?.close();
+  const prepared = _prepareCommandGateway(run, node);
+  if ("port" in prepared) return Boolean(handoffActiveRun(run.runId, node.node_id, prepared.port, prepared.payload));
+  // Intent and RUNNING state commit together, before the detached runner starts.
+  getDb().transaction(() => {
+    prepareDurableCommand(identity, prepared.spec);
+    if (!resumed) {
+      startNode(run.dagRun, node.node_id);
+      _markNodeSessionStatus(run, node.node_id, "running");
+      writeRunMetadata(run.runId, serializeRunMetadata(run));
+    }
+  }).immediate();
+  const record = claimDurableCommand(id);
+  startDurableCommand(record);
+  const close = watchDurableCommand(record, result => {
+    durableCommandObservers.delete(id);
+    const current = getActiveRun(run.runId);
+    const currentIdentity = current && _durableCommandIdentity(current, node.node_id);
+    if (current !== run || run.status !== "active" || !currentIdentity || durableCommandId(currentIdentity) !== id
+      || run.dagRun.nodeStates.get(node.node_id) !== "RUNNING") return;
+    try {
+      if (result.status === "unknown") cancelDurableCommand(id);
+      const response = result.status === "unknown"
+        ? { port: node.gateway_config?.failure_port || "failed", payload: { ok: false, execution_id: id, outcome: "unknown", error: result.error } }
+        : _commandGatewayEnvelope(run, node, prepared, result);
+      if (consumeDurableCommand(record, () => { handoffActiveRun(run.runId, node.node_id, response.port, response.payload); })) {
+        emit("dag:gateway_executed", { runId: run.runId, nodeId: node.node_id,
+          gatewayType: node.node_type, phase: "completed", executionId: id, port: response.port });
+        dispatchReadyNodesUntilStable(run.runId, dispatcher);
+      }
+    } catch (error) {
+      failActiveRun(run.runId, node.node_id, `durable command handoff failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+  durableCommandObservers.set(id, { run, close });
+  emit("dag:gateway_executed", { runId: run.runId, nodeId: node.node_id,
+    gatewayType: node.node_type, phase: resumed ? "resumed" : "started", executionId: id });
+  return !resumed;
+}
+
+function _cancelDurableCommands(run: ActiveRun): void {
+  for (const [id, observer] of durableCommandObservers) {
+    if (observer.run !== run) continue;
+    observer.close(); durableCommandObservers.delete(id);
+  }
+  for (const node of run.dagRun.graph.nodes) {
+    if (node.node_type !== "command_gateway" || !node.gateway_config?.durable) continue;
+    const identity = _durableCommandIdentity(run, node.node_id);
+    if (!identity) continue;
+    const id = durableCommandId(identity);
+    const record = getDurableCommand(id);
+    if (!record || record.consumed) continue;
+    try { cancelDurableCommand(id); } catch (error) {
+      console.warn(`[homerail_manager] durable command cancellation could not be recorded: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+function _prepareCommandGateway(run: ActiveRun, node: DAGGraphNode): CommandPreparation | { port: string; payload: unknown } {
   const config = node.gateway_config;
   const inputs = _nodeInputs(run.dagRun, node.node_id);
   const selectedInputs = config?.input ? inputs[config.input] : undefined;
@@ -4888,19 +5004,41 @@ function _commandGatewayResult(run: ActiveRun, node: DAGGraphNode): { port: stri
       ? _fieldValue(input, config.stdin_field)
       : undefined;
   const captureLimit = Math.max(1, Math.floor(config?.capture_limit ?? 64_000));
+  return { spec: { argv: resolvedCommand, cwd: cwd ?? process.cwd(),
+    timeout_ms: Math.max(100, Math.floor(config?.timeout_ms ?? 30_000)), capture_limit: captureLimit,
+    ...(config?.stdin_field ? { stdin: JSON.stringify(stdinValue) } : {}) },
+    command, cwdLabel, input: config?.stdin_field === "$inputs" ? inputs : input };
+}
+
+function _commandGatewayResult(run: ActiveRun, node: DAGGraphNode): { port: string; payload: unknown } {
+  const prepared = _prepareCommandGateway(run, node);
+  if ("port" in prepared) return prepared;
+  const { spec } = prepared;
   const startedAt = Date.now();
-  const result = spawnSync(resolvedCommand[0], resolvedCommand.slice(1), {
-    cwd,
-    encoding: "utf8",
-    timeout: Math.max(100, Math.floor(config?.timeout_ms ?? 30_000)),
-    maxBuffer: captureLimit * 2,
-    shell: false,
-    env: process.env,
-    ...(config?.stdin_field ? { input: JSON.stringify(stdinValue) } : {}),
+  const result = spawnSync(spec.argv[0], spec.argv.slice(1), {
+    cwd: spec.cwd, encoding: "utf8", timeout: spec.timeout_ms,
+    maxBuffer: spec.capture_limit * 2, shell: false, env: process.env,
+    ...(spec.stdin === undefined ? {} : { input: spec.stdin }),
   });
-  const exitCode = typeof result.status === "number" ? result.status : null;
+  return _commandGatewayEnvelope(run, node, prepared, {
+    exit_code: typeof result.status === "number" ? result.status : null,
+    signal: result.signal ?? null, stdout: String(result.stdout ?? ""), stderr: String(result.stderr ?? ""),
+    duration_ms: Date.now() - startedAt, error: result.error?.message,
+    timed_out: !!result.error && "code" in result.error && result.error.code === "ETIMEDOUT",
+  });
+}
+
+function _commandGatewayEnvelope(run: ActiveRun, node: DAGGraphNode, prepared: CommandPreparation, result: {
+  exit_code: number | null; signal: string | null; stdout: string; stderr: string;
+  duration_ms: number; error?: string; timed_out: boolean; cancelled?: boolean; overflow?: boolean;
+  receipt_digest?: string;
+}): { port: string; payload: unknown } {
+  const config = node.gateway_config;
+  const { command, cwdLabel, input } = prepared;
+  const captureLimit = prepared.spec.capture_limit;
+  const exitCode = result.exit_code;
   const successCodes = config?.success_exit_codes ?? [0];
-  const ok = exitCode !== null && successCodes.includes(exitCode) && !result.error;
+  const ok = exitCode !== null && successCodes.includes(exitCode) && !result.error && !result.timed_out && !result.cancelled && !result.overflow;
   const stdout = String(result.stdout ?? "").slice(0, captureLimit);
   let value: unknown = stdout;
   if (config?.parse_stdout === "number") value = Number(stdout.trim());
@@ -4921,12 +5059,13 @@ function _commandGatewayResult(run: ActiveRun, node: DAGGraphNode): { port: stri
     signal: result.signal ?? null,
     stdout,
     stderr: String(result.stderr ?? "").slice(0, captureLimit),
-    duration_ms: Date.now() - startedAt,
-    timed_out: result.error && "code" in result.error && result.error.code === "ETIMEDOUT",
-    error: result.error?.message,
+    duration_ms: result.duration_ms,
+    timed_out: result.timed_out,
+    error: result.error,
+    ...(result.cancelled === undefined ? {} : { cancelled: result.cancelled, overflow: result.overflow, receipt_digest: result.receipt_digest }),
     value,
     parse_failed: parseFailed,
-    input: config?.stdin_field === "$inputs" ? inputs : input,
+    input,
   };
   const telemetry = redactTelemetry(payload) as Record<string, unknown>;
   emit("dag:deterministic_command", { runId: run.runId, nodeId: node.node_id, ...telemetry });
@@ -5809,6 +5948,7 @@ function _executeGatewayNode(
   }
 
   if (node.node_type === "command_gateway") {
+    if (node.gateway_config?.durable) return _startDurableCommandGateway(run, node, dispatcher);
     const result = _commandGatewayResult(run, node);
     return Boolean(handoffActiveRun(runId, node.node_id, result.port, result.payload));
   }
@@ -6450,6 +6590,13 @@ export function dispatchReadyNodes(
 
   let count = 0;
   let dispatchCounterChanged = false;
+  for (const node of run.dagRun.graph.nodes) {
+    if (node.node_type === "command_gateway" && node.gateway_config?.durable
+      && run.dagRun.nodeStates.get(node.node_id) === "RUNNING") {
+      try { _startDurableCommandGateway(run, node, dispatcher); }
+      catch (error) { failActiveRun(run.runId, node.node_id, `durable command recovery failed: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+  }
   const before = _snapshotNodeStates(run);
   const ready = getReadyNodes(run.dagRun);
   // Reviewers share one run workspace and execute concurrently. Materialize

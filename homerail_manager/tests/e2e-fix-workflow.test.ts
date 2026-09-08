@@ -8,6 +8,7 @@ import type { DAGDispatcher, DispatchEnvelope } from "../src/orchestration/dag-d
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import { _clearActiveRuns, getActiveRun, handoffActiveRun } from "../src/runtime/active-runs.js";
 import { closeDb } from "../src/persistence/db.js";
+import { subscribe } from "../src/events/bus.js";
 import { loadRunSnapshot } from "../src/persistence/store.js";
 
 // Model transport simulation only. It responds when the native runtime sends
@@ -52,8 +53,7 @@ class FixtureModels implements DAGDispatcher {
         this.executor.tick(envelope.runId); // Same response-driven drain as Worker transport.
         const current = getActiveRun(envelope.runId)!;
         if (current.status !== "active") this.settle();
-        else if (!["plan", "fix", "review_a", "review_b", "review_c", "judge_candidate", "judge_ci"]
-          .some(id => current.dagRun.nodeStates.get(id) === "RUNNING")) {
+        else if (!Array.from(current.dagRun.nodeStates).some(([id, state]) => id !== "cycle" && state === "RUNNING")) {
           throw new Error(`Native graph stalled: ${JSON.stringify({ states: Object.fromEntries(current.dagRun.nodeStates), counters: current.counters })}`);
         }
       } catch (error) { this.reject(error); }
@@ -89,9 +89,13 @@ describe("native E2E Fix topology (real Git/tests, simulated models/GitHub)", ()
     const executor = new GraphExecutor(models); models.executor = executor;
     const completion = new Promise<void>((resolve, reject) => { models.settle = resolve; models.reject = reject; });
     executor.createRun("one-root", parsed, JSON.stringify({ task_id: "fixture", root_run_id: "one-root", require_type_guard: options.requireTypeGuard }));
-    executor.tick("one-root");
-    if (getActiveRun("one-root")?.status !== "active") models.settle();
-    await completion;
+    const unsubscribers = (["dag:run_completed", "dag:run_failed", "dag:run_cancelled"] as const).map(type =>
+      subscribe(type, event => { if ("runId" in event && event.runId === "one-root") models.settle(); }));
+    try {
+      executor.tick("one-root");
+      if (getActiveRun("one-root")?.status !== "active") models.settle();
+      await completion;
+    } finally { unsubscribers.forEach(unsubscribe => unsubscribe()); }
     const ledger = JSON.parse(fs.readFileSync(path.join(root, "ledger.json"), "utf8"));
     const evidenceDir = process.env.HOMERAIL_E2E_FIX_EVIDENCE_DIR;
     if (evidenceDir) {

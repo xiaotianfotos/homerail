@@ -18,6 +18,8 @@ export interface E2eFixWorkflowOptions {
   maxRounds: number;
   stageCommands: Record<E2eFixStage, string[]>;
   stageTimeoutMs?: number;
+  /** Synchronous transport exists only for the original control-flow fixture. */
+  durableStages?: boolean;
 }
 
 // Strict model output shapes. Stage adapters still have to validate scope,
@@ -54,7 +56,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
     throw new Error("E2E Fix maxRounds must be an integer from 1 to 20");
   }
   const timeout = options.stageTimeoutMs ?? 30_000;
-  if (!Number.isSafeInteger(timeout) || timeout < 100 || timeout > 120_000) throw new Error("invalid stage timeout");
+  if (!Number.isSafeInteger(timeout) || timeout < 100 || timeout > 3_600_000) throw new Error("invalid stage timeout");
   const nodes: Record<string, unknown> = {};
   const edges: Record<string, unknown>[] = [];
   const edge = (from: string, to: string) => edges.push({ from, to });
@@ -66,7 +68,8 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
     }
     nodes[name] = {
       kind: "command", inputs: inputs(...ports), outputs: { ready: {}, failed: {} },
-      config: { command: [...argv], stdin_field: "$inputs", timeout_ms: timeout, capture_limit: 96000,
+      config: { command: [...argv], durable: options.durableStages !== false,
+        stdin_field: "$inputs", timeout_ms: timeout, capture_limit: 96000,
         parse_stdout: "json", result_payload: "value", success_port: "ready", failure_port: "failed" },
     };
     nodes[`${name}_failed`] = { kind: "terminal", outcome: "failure", inputs: { evidence: {} } };

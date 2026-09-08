@@ -297,6 +297,7 @@ const CommandNode = Type.Object({
     input: Type.Optional(Identifier),
     command: Type.Optional(Type.Array(Type.String({ maxLength: 16_384 }), { minItems: 1, maxItems: 256 })),
     command_field: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    durable: Type.Optional(Type.Boolean({ description: "Linux-only detached command with persisted intent, bounded output and cold recovery. Requires a static command." })),
     stdin_field: Type.Optional(Type.String({
       minLength: 1,
       maxLength: 256,

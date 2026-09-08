@@ -641,6 +641,9 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
       }
     }
     if (node.kind === "command") {
+      if (node.config.durable && node.config.command_field) {
+        add(`${nodePath}/config`, "DAG_SEMANTIC_DURABLE_STATIC_COMMAND", "durable commands require immutable static argv");
+      }
       if (!node.config.command && !node.config.command_field) {
         add(`${nodePath}/config`, "DAG_SEMANTIC_REQUIRED_COMMAND", "command requires command or command_field");
       }
