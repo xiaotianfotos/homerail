@@ -39,7 +39,9 @@ failed-node session, and records an immutable recovery receipt before dispatch.
 Submitting the identical request returns that receipt without another tick;
 another request or stale digest conflicts. A Manager restart after commit can
 recover the active root through normal cold recovery. Each root permits one
-such configuration recovery.
+such configuration recovery. Recovery must re-acquire a workflow concurrency
+slot; admission and reopening share one transaction. A competing active root
+leaves the failed root and recovery checkpoint unchanged.
 
 Creation time and round expiry are preserved. This does not add a general
 per-dispatch task deadline or token-budget guard: E2E Fix's frozen trusted stages

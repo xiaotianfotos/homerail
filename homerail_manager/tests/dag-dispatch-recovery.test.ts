@@ -7,7 +7,7 @@ import { createSetting, upsertProvider } from "../src/persistence/llm-settings.j
 import { parseWorkflowSource } from "../src/orchestration/workflow-spec-v1.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import { ChangeOrchestrator } from "../src/orchestration/change-orchestrator.js";
-import { _clearActiveRuns, getActiveRun, recoverPreDispatchRun, restoreActiveRun, migrateLegacyReasoningEffortFailure } from "../src/runtime/active-runs.js";
+import { _clearActiveRuns, getActiveRun, recoverPreDispatchRun, restoreActiveRun, migrateLegacyReasoningEffortFailure, cancelActiveRun } from "../src/runtime/active-runs.js";
 import { inspectDispatchRecovery, recoveryDigest, type DispatchRecoveryRequest } from "../src/runtime/dag-dispatch-recovery.js";
 import { preflightDagAgentRuntimes } from "../src/runtime/dag-runtime-preflight.js";
 import { loadRunMetadata, appendEvent, writeRunMetadata } from "../src/persistence/store.js";
@@ -165,5 +165,19 @@ describe.skipIf(process.platform !== "linux")("pre-dispatch recovery", () => {
     metadata.dagRuntimeState!.mailboxes.fix.evidence = [{ plan: "invented" }]; writeRunMetadata("root", metadata);
     expect(() => migrateLegacyReasoningEffortFailure("root", recoveryDigest(metadata))).toThrow(/differs from persisted/);
     expect(loadRunMetadata("root")!.status).toBe("failed");
+  });
+  it("re-admits a terminal root under workflow concurrency policy and leaves no leaked reservation", async () => {
+    await failed(); const intent = request();
+    const workflow = JSON.parse(source());
+    workflow.spec.triggers = { push: { type: "event", event: "repo.push", overlap: "allow", max_concurrency: 1 } };
+    upsertDagWorkflowFromYaml({ yaml_text: JSON.stringify(workflow) });
+    const executor = new GraphExecutor({ dispatch }); executor.createRun("occupied", parsed(), "{}");
+    expect(() => recoverPreDispatchRun("root", intent)).toThrow(/admission conflict/);
+    expect(loadRunMetadata("root")!.status).toBe("failed");
+    expect(inspectDispatchRecovery("root").receipt).toBeUndefined();
+    cancelActiveRun("occupied");
+    expect(recoverPreDispatchRun("root", intent).deduplicated).toBe(false);
+    expect(recoverPreDispatchRun("root", intent).deduplicated).toBe(true);
+    expect(getDb().prepare("SELECT COUNT(*) AS count FROM dag_run_admissions").get()).toEqual({ count: 0 });
   });
 });

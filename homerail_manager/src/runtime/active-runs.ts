@@ -60,6 +60,7 @@ import {
 } from "homerail-protocol";
 import { resolveAgentRuntimeConfig } from "./agent-runtime-resolver.js";
 import { preflightDagAgentRuntimes } from "./dag-runtime-preflight.js";
+import { loadWorkflowConcurrencyPolicy, reserveWorkflowRun, releaseWorkflowRunReservation } from "../persistence/dag-run-admission.js";
 import { assertNoWorkerExecution, getDispatchRecovery, recordDispatchRecovery, recoveryDigest, parseDispatchRecoveryRequest,
   type DispatchRecoveryReceipt } from "./dag-dispatch-recovery.js";
 import { spawnManagerGitSync } from "./manager-git.js";
@@ -6723,6 +6724,10 @@ export function recoverPreDispatchRun(runId: string, value: unknown): { receipt:
         || recoveryDigest(failed) !== request.expected_state_sha256 || checkpoint.failed_sha256 !== request.expected_state_sha256) {
         throw new Error("Pre-dispatch recovery expected state conflict");
       }
+      // Terminal roots released their slot. Re-admit under the same transaction
+      // as reopening, so a simultaneous trigger cannot consume this capacity.
+      const reservation = failed.workflowId ? reserveWorkflowRun({ runId, workflowId: failed.workflowId,
+        source: "recover:pre-dispatch", policy: loadWorkflowConcurrencyPolicy(failed.workflowId) }) : { reserved: false };
       assertNoWorkerExecution(failed);
       const before = JSON.parse(checkpoint.before_json) as PersistedRunMetadata;
       if (before.runId !== runId || before.status !== "active" || before.nodeStates[checkpoint.node_id] !== "READY"
@@ -6768,6 +6773,7 @@ export function recoverPreDispatchRun(runId: string, value: unknown): { receipt:
         changed_agents: request.clear_reasoning_effort_for };
       getDb().prepare("UPDATE dag_dispatch_recoveries SET request_json = ?, receipt_json = ? WHERE run_id = ? AND receipt_json IS NULL")
         .run(requestJson, JSON.stringify(receipt), runId);
+      if (reservation.reserved) releaseWorkflowRunReservation(runId);
       return { receipt, deduplicated: false };
     }).immediate();
     if (!result.deduplicated) {
