@@ -78,6 +78,39 @@ describe("PR closeout evidence validation", () => {
     })).toMatchObject({ valid: true, passed: true, report_status: "pass" });
   });
 
+  function incompletePublication(diagnostics: unknown) {
+    const value = publication();
+    const report = value.report as Record<string, unknown>;
+    const reviewers = report.reviewer_results as Array<Record<string, unknown>>;
+    reviewers[2] = { ...reviewers[2], status: "failed", vote: "abstain", reviewed_files: [],
+      unreviewed_files: ["src/index.ts"], evidence_truncated: false, diagnostics };
+    report.confidence = "medium";
+    value.quorum = { passed: true, successes: 2, total: 3, threshold: 2 };
+    return value;
+  }
+
+  it.each(["handoff_missing", "handoff_arguments_invalid", "contract_validation_failed", "transport_failed", "reviewer_abstained", "unknown"])(
+    "accepts an incomplete third reviewer with an explicit %s diagnostic", (category) => {
+      const value = incompletePublication([{ attempt: 1, category }]);
+      expect(validate({ handoffs: [{ fromNode: "decide", port: "decided", content: value }] }))
+        .toMatchObject({ valid: true, passed: true });
+    },
+  );
+
+  it.each([
+    undefined, [], "handoff_missing", [{ attempt: 1, category: "invented" }],
+    [{ attempt: 1, category: "accepted" }], [{ attempt: 1, category: "provider_output_truncated" }],
+    [{ attempt: 0, category: "handoff_missing" }], [{ attempt: 9, category: "handoff_missing" }],
+    [{ attempt: 1.5, category: "handoff_missing" }], [{ category: "handoff_missing" }],
+    [null, { attempt: 2, category: "handoff_missing" }],
+    [{ attempt: 1, category: "handoff_missing" }, { attempt: 2, category: "accepted" }],
+    Array.from({ length: 9 }, () => ({ attempt: 1, category: "handoff_missing" })),
+  ].map((diagnostics) => ({ diagnostics })))("rejects unexplained or malformed incomplete third-reviewer evidence %#", ({ diagnostics }) => {
+    const value = incompletePublication(diagnostics);
+    expect(validate({ handoffs: [{ fromNode: "decide", port: "decided", content: value }] }))
+      .toMatchObject({ valid: false, passed: false });
+  });
+
   it("rejects findings hidden inside a failed reviewer", () => {
     const value = publication();
     const report = value.report as Record<string, unknown>;

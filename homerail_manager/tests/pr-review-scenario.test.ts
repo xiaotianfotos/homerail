@@ -12,6 +12,7 @@ import {
   changedFileCoverageAttestation,
   changedFileCoverageDigest,
   validateChangedFileCoverageAttestation,
+  validatePrReviewCloseoutEvidence,
 } from "homerail-protocol";
 
 import {
@@ -930,6 +931,12 @@ describe("PR Review scenario assets", () => {
       quorum: { passed: true, successes: 2, total: 3, threshold: 2 },
     });
     expect(getActiveRun(runId)?.status).toBe("completed");
+    expect(validatePrReviewCloseoutEvidence({
+      metadata: { workflowId: "pr-review" },
+      handoffs: [{ fromNode: "decide", port: "decided", content: decision }],
+      expected: { repo: "xiaotianfotos/homerail", pr: 25, base: "a".repeat(40), head: "b".repeat(40) },
+    })).toMatchObject({ valid: true, passed: true });
+
   });
 
   it("executes the compact graph with exactly three model calls", async () => {
