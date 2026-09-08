@@ -257,3 +257,5 @@ HomeRail 最终要成为一个常驻于家庭数据中心的 agent——语音�
 ## License
 
 MIT。详见 [LICENSE](LICENSE)。
+
+无人值守的 Auto Fix 与 PR 检查可使用[持久化事件监控](docs/scenarios/event-supervision.zh-CN.md)，由后台程序等待并恢复结果。

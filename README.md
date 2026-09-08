@@ -418,3 +418,5 @@ recommended Manager Agent runtime.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+For unattended Auto Fix and PR checks, see [durable event supervision](docs/scenarios/event-supervision.md) for persistent Linux monitoring and result recovery.
