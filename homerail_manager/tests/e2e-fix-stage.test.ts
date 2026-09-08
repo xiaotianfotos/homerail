@@ -110,8 +110,14 @@ class Models implements DAGDispatcher {
             ? evidence.findings.map((f: any) => ({ finding_id: f.id, action: "dismiss", reason: "Fixture concern is contradicted by the retained source and test evidence",
               evidence_sha256: [evidence.evidence_sha256[0]] })) : [];
           if (this.scenario === "duplicate-disposition" && dispositions.length) dispositions.push(dispositions[0]);
+          if (this.scenario === "review-context-budget" && evidence.findings?.length) {
+            dispositions.push(...evidence.findings.map((f: any, i: number) => ({ finding_id: f.id,
+              action: i < 2 ? "dismiss" : "revise", reason: "Retained Judger assessment",
+              evidence_sha256: [i === 1 ? "0".repeat(64) : evidence.evidence_sha256[0]] })));
+          }
           result = { dispositions, verdict: good || disputed || this.scenario === "model-accept" ? "accept" : "revise",
-            ...(this.scenario.startsWith("model-") && this.scenario !== "model-no-strategy" ? { retry_strategy: "Use one short unique edit under the fixed output budget" } : {}),
+            ...((this.scenario.startsWith("model-") && this.scenario !== "model-no-strategy") || this.scenario === "review-context-budget"
+              ? { retry_strategy: "Use one short unique edit under the fixed output budget" } : {}),
             reason: good ? "All supplied evidence supports acceptance" : "Address the real retained failure" };
         }
         if (envelope.nodeId === "plan" && this.scenario === "model-same-plan" && value.round > 1) {
@@ -313,7 +319,12 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
           expect(read(1, report.reviewer_id).value.findings).toHaveLength(8);
         }
         expect(read(1, "record_candidate_judgment").action).toBe("revise");
-        expect(read(2, "context").previous.evidence.findings).toHaveLength(24);
+        const feedback = read(2, "context").previous.evidence;
+        expect(feedback.findings).toEqual(review.findings.slice(1));
+        expect(feedback.retry_strategy).toBe("Use one short unique edit under the fixed output budget");
+        expect(read(1, "candidate_judger").value.dispositions).toHaveLength(24);
+        expect(read(1, "record_candidate_judgment").dispositions).toHaveLength(24);
+        expect(read(2, "planner").value.strategy).toBe(feedback.retry_strategy);
       }
       if (scenario.startsWith("model-")) {
         expect(read(1, "test")).toMatchObject({ outcome: "model_failure", tests: [], candidate: null });
@@ -353,6 +364,9 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
       }
       if (blockedReview || blockedModel) {
         expect(read(1, "record_candidate_judgment").action).toBe("pause");
+        if (scenario === "duplicate-disposition") {
+          expect(read(1, "record_candidate_judgment").feedback.findings).toEqual(read(1, "review_evidence").findings);
+        }
         expect(fs.existsSync(path.join(task, "simulated-pr.json"))).toBe(false);
       } else expect(read(rounds, "complete")).toMatchObject({ action: unknownCi ? "pause" : "complete",
         production_eligible: false, acceptance: { eligible: !unknownCi } });

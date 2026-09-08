@@ -228,8 +228,9 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const dispositionIds = dispositions.map((d: any) => d.finding_id);
     const exactDispositions = dispositionIds.length === findings.length && new Set(dispositionIds).size === dispositionIds.length
       && dispositionIds.every((id: string) => findings.some((f: { id: string }) => f.id === id));
-    const dismissed = exactDispositions && findings.every((f: { id: string }) => dispositions.some((d: any) => d.finding_id === f.id && d.action === "dismiss"
-      && typeof d.reason === "string" && d.reason.trim() && d.evidence_sha256?.length && d.evidence_sha256.every((sha: string) => reviewed.evidence_sha256.includes(sha))));
+    const isDismissed = (f: { id: string }) => exactDispositions && dispositions.some((d: any) => d.finding_id === f.id && d.action === "dismiss"
+      && typeof d.reason === "string" && d.reason.trim() && d.evidence_sha256?.length && d.evidence_sha256.every((sha: string) => reviewed.evidence_sha256.includes(sha)));
+    const dismissed = exactDispositions && findings.every(isDismissed);
     const independentSessions = [tested.model_failure?.session_id ?? read("fixer").session_id, evidence.session_id, ...(reviewed?.reports.map((r: any) => r.session_id) ?? [])];
     const approved = tested.outcome === "passed" && new Set(independentSessions).size === independentSessions.length
       && reviewed?.reports.every((r: any) => r.vote !== "approve" || !r.finding_ids.length)
@@ -237,8 +238,11 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const canRevise = !tested.model_failure || (tested.model_failure.outcome === "output_truncated"
       && typeof proposed.retry_strategy === "string" && proposed.retry_strategy.trim().length > 0);
     result = { ...reference(), candidate: tested.candidate, action: proposed.verdict === "revise" && canRevise ? "revise" : proposed.verdict === "accept" && approved ? "publish" : "pause",
-      reason: proposed.reason, feedback: { tests: tested.test_summaries, findings, ...(tested.proposal_error ? { proposal_error: tested.proposal_error } : {}),
-        ...(tested.model_failure ? { model_failure: tested.model_failure, retry_strategy: proposed.retry_strategy ?? null,
+      // Keep full reviewer findings and Judger dispositions in their immutable
+      // artifacts; the next fresh-context plan needs only unresolved concerns.
+      reason: proposed.reason, feedback: { tests: tested.test_summaries, findings: findings.filter((f: { id: string }) => !isDismissed(f)),
+        retry_strategy: proposed.retry_strategy ?? null, ...(tested.proposal_error ? { proposal_error: tested.proposal_error } : {}),
+        ...(tested.model_failure ? { model_failure: tested.model_failure,
           previous_plan: read("freeze_plan").plan, previous_plan_sha256: read("freeze_plan").plan_sha256 } : {}) }, dispositions };
   } else if (stage === "publish" || stage === "ci") {
     if (!providers || providers.mode !== config.mode) throw new Error("publication/CI provider is not configured for this run mode");

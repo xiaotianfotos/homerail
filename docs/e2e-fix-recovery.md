@@ -168,6 +168,13 @@ It saves diagnostics and usage snapshots deduplicated by execution ID. It does
 not turn a model failure into a patch or a passing test: candidate is null,
 tests are empty, and reviewers and publication are skipped for that iteration.
 
+For ordinary review revisions, the next fresh context also retains the Judger's
+`retry_strategy`. It excludes a finding only when the complete disposition set
+matches all finding IDs without duplicates and that dismissal supplies a reason
+and known evidence references. Invalid dismissals remain unresolved. Full findings
+and dispositions remain in the immutable review and judgment artifacts; this
+projection does not relax publication acceptance.
+
 The graph sends this evidence to its Codex Judger. A confirmed output-limit
 failure may enter the feedback edge only when the Judger returns `revise` with
 a nonempty `retry_strategy`. Unknown execution, missing matching usage, or an
