@@ -262,6 +262,7 @@ export interface ActiveRun {
   inputArtifacts?: DagRunInputBinding[];
   brokerState: Record<string, unknown>;
   initialPrompt?: string;
+  creationRequestDigest?: string;
   nodeCount?: number;
   agents?: Record<string, DAGAgentConfig>;
   workspace?: Record<string, unknown>;
@@ -395,6 +396,7 @@ export interface AppendRunNodeResult {
 export interface CreateActiveRunOptions {
   initialPrompt?: string;
   inputArtifacts?: DagRunInputBinding[];
+  creationRequestDigest?: string;
 }
 
 const store = new Map<string, ActiveRun>();
@@ -858,6 +860,7 @@ export function createActiveRun(
     inputArtifacts,
     brokerState: {},
     initialPrompt: options.initialPrompt,
+    creationRequestDigest: options.creationRequestDigest,
     nodeCount: parsedDAG.graph.nodes.length,
     agents: parsedDAG.meta.agents
       ? { ...parsedDAG.meta.agents }
@@ -1318,6 +1321,7 @@ export function restoreActiveRun(
     inputArtifacts: verifiedInputArtifacts.length > 0 ? verifiedInputArtifacts : undefined,
     brokerState: metadata.brokerState ? structuredClone(metadata.brokerState) : {},
     initialPrompt: metadata.initialPrompt,
+    creationRequestDigest: metadata.creationRequestDigest,
     nodeCount: metadata.nodeCount,
     agents: metadata.agents
       ? { ...metadata.agents }

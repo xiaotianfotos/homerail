@@ -34,6 +34,7 @@ export interface SerializableRun {
   inputArtifacts?: DagRunInputBinding[];
   brokerState?: Record<string, unknown>;
   initialPrompt?: string;
+  creationRequestDigest?: string;
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; allowed_surface_views?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;
@@ -271,6 +272,7 @@ export function serializeRunMetadata(run: SerializableRun): PersistedRunMetadata
     inputArtifacts: run.inputArtifacts ? structuredClone(run.inputArtifacts) : undefined,
     brokerState: run.brokerState ? structuredClone(run.brokerState) : undefined,
     initialPrompt: run.initialPrompt,
+    creationRequestDigest: run.creationRequestDigest,
     nodeCount: run.nodeCount,
     agents: run.agents,
     workspace: run.workspace,

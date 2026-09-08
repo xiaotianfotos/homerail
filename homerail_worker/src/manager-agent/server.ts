@@ -166,14 +166,6 @@ function stablePluginModelCallIdentifiers(input: {
   };
 }
 
-function stableSkillPresenterRunId(sessionId: string | undefined, skillId: string, argv: unknown): string {
-  const digest = createHash("sha256")
-    .update(JSON.stringify([sessionId ?? "default", skillId, argv]))
-    .digest("hex")
-    .slice(0, 32);
-  return `skill_${digest}`;
-}
-
 interface VoiceSurfaceState {
   progress: Record<string, unknown> | null;
   taskDraft: Record<string, unknown> | null;
@@ -467,6 +459,10 @@ function projectWorkspace(): string {
   return fs.existsSync(configured) ? configured : process.cwd();
 }
 
+interface ManagerApiError extends Error {
+  statusCode?: number;
+}
+
 async function requestManager(pathname: string, init?: RequestInit): Promise<unknown> {
   const url = `${managerRestUrl()}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
   const envelope = activeManagerTurn.getStore();
@@ -485,12 +481,21 @@ async function requestManager(pathname: string, init?: RequestInit): Promise<unk
       body = { raw: text };
     }
     if (!res.ok) {
-      throw new Error(`Manager API ${res.status}: ${short(body, 800)}`);
+      const apiError: ManagerApiError = Object.assign(
+        new Error(`Manager API ${res.status}: ${short(body, 800)}`),
+        { statusCode: res.status },
+      );
+      throw apiError;
     }
     return body;
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    const error = new Error(redactManagerCredential(message, credential, mutationToken));
+    const error: ManagerApiError = Object.assign(
+      new Error(redactManagerCredential(message, credential, mutationToken)),
+      (cause instanceof Error && (cause as ManagerApiError).statusCode !== undefined)
+        ? { statusCode: (cause as ManagerApiError).statusCode }
+        : {},
+    );
     if (cause instanceof Error) error.name = cause.name;
     throw error;
   }
@@ -1545,20 +1550,24 @@ export function createManagerTools(state: {
         const data = managerData(body);
         const launch = normalizeManagerAgentSkillSupervisedDagLaunch(data);
         if (launch) {
-          const runId = stableSkillPresenterRunId(state.sessionId, skillId, args.argv);
+          const runId = `skill_${randomUUID().replace(/-/g, "")}`;
+          const frozenBody = JSON.stringify({ ...launch, runId });
           let started: Record<string, unknown>;
           try {
             started = await requestManager("/runs/create-and-run", {
               method: "POST",
-              body: JSON.stringify({ ...launch, runId }),
+              body: frozenBody,
             }) as Record<string, unknown>;
           } catch (error) {
-            try {
-              await requestManager(`/runs/${encodeURIComponent(runId)}/status`);
-              started = { data: { run_id: runId } };
-            } catch {
+            const err = error as { statusCode?: number; name?: string };
+            if ((err.statusCode !== undefined && err.statusCode >= 400 && err.statusCode < 500)
+              || err.name === "AbortError") {
               throw error;
             }
+            started = await requestManager("/runs/create-and-run", {
+              method: "POST",
+              body: frozenBody,
+            }) as Record<string, unknown>;
           }
           const compact = compactManagerAgentSkillSupervisedDagResult(
             started,

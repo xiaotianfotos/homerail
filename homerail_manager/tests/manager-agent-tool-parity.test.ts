@@ -22,6 +22,10 @@ import {
   _withManagerTurnEnvelopeForTest,
   createManagerTools as createWorkerManagerTools,
 } from "../../homerail_worker/src/manager-agent/server.js";
+import { ChangeOrchestrator } from "../src/orchestration/change-orchestrator.js";
+import { GraphExecutor } from "../src/orchestration/graph-executor.js";
+import { upsertDagWorkflowFromYaml, upsertDagRuntimeProfileFromYaml } from "../src/persistence/dag-workflows.js";
+import { _clearActiveRuns } from "../src/runtime/active-runs.js";
 import { closeDb } from "../src/persistence/db.js";
 import { assemblePluginTurnContext } from "../src/plugins/context-assembler.js";
 import { syncBuiltinPlugins } from "../src/plugins/registry.js";
@@ -113,6 +117,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  _clearActiveRuns();
   closeDb();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -419,7 +424,8 @@ describe("Manager Agent deterministic result envelope parity", () => {
     ]);
     const launchBodies = observed.filter((entry) => entry.pathname.endsWith("/create-and-run")).map((entry) => entry.body);
     expect(launchBodies).toHaveLength(2);
-    expect(launchBodies[0]).toEqual(launchBodies[1]);
+    expect(launchBodies[0].runId).not.toBe(launchBodies[1].runId);
+    expect({ ...launchBodies[0], runId: undefined }).toEqual({ ...launchBodies[1], runId: undefined });
     expect(launchBodies[0]).toMatchObject({
       workflow_id: "three-worker",
       workflow_revision: 3,
@@ -1015,5 +1021,141 @@ describe("Manager Agent deterministic result envelope parity", () => {
         }],
       })).rejects.toThrow(/enabled plugin Tool/);
     }
+  });
+});
+
+
+// Judger-owned regression oracles for PR #272. Exercise both actual client tools,
+// real profile upserts and the real run lifecycle; only the HTTP boundary is local.
+describe.each(["host", "worker"] as const)("%s skill launch occurrence and recovery", (harness) => {
+  function setupLaunch() {
+    const context = assemblePluginTurnContext(undefined, { modality: "voice" });
+    const tools = createHarnessTools("voice", context);
+    tools.hostState.restUrl = "https://manager.test/api";
+    vi.stubEnv("MANAGER_REST_URL", "https://manager.test/api");
+    return {
+      tool: requireTool(harness === "host" ? tools.hostTools : tools.workerTools, "skill_view_present"),
+      state: harness === "host" ? tools.hostState : tools.workerState,
+      input: { skill_id: "review-regression", argv: ["present", "same"] },
+    };
+  }
+
+  it("launches a fresh run for each presentation after real profile timestamp churn", async () => {
+    const { tool, state, input } = setupLaunch();
+    const workflow = upsertDagWorkflowFromYaml({ yaml_text: `
+api_version: homerail.ai/v1
+kind: Workflow
+metadata: { id: skill-review-regression, name: Skill repeat }
+spec:
+  contracts:
+    Text: { type: string }
+  agents:
+    worker: { system: Return a short result. }
+  nodes:
+    execute:
+      kind: agent
+      agent: worker
+      allowed_dag_tools: [handoff]
+      inputs: { task: { contract: Text } }
+      outputs: { result: { contract: Text } }
+    terminal:
+      kind: terminal
+      outcome: success
+      inputs: { result: { contract: Text } }
+  edges:
+    - { from: $run.input, to: execute.task }
+    - { from: execute.result, to: terminal.result }
+` }).workflow;
+    const dispatch = vi.fn(() => ({ status: "dispatched" as const, targetType: "fake", targetId: "fake" }));
+    const orchestrator = new ChangeOrchestrator(new GraphExecutor({ dispatch }));
+    const posts: Record<string, unknown>[] = [];
+    const statuses: string[] = [];
+    const pins: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const pathname = new URL(url).pathname;
+      let data: unknown;
+      if (pathname.endsWith("/views/present")) {
+        // Ensure a real, distinct wall-clock timestamp without replacing nowIso.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const profile = upsertDagRuntimeProfileFromYaml({
+          workflow_id: workflow.workflow_id,
+          yaml_text: "profile_id: deterministic\ndefault: { agent_type: deterministic }\n",
+        }).profile;
+        pins.push(profile.updated_at);
+        data = { mode: "supervised_dag", launch: {
+          workflow_id: workflow.workflow_id, profile: profile.profile_id,
+          prompt: "same presenter input", workflow_revision: workflow.head_revision,
+          canonical_hash: workflow.canonical_hash, profile_updated_at: profile.updated_at,
+        } };
+      } else if (pathname.endsWith("/create-and-run")) {
+        const body = JSON.parse(String(init?.body));
+        posts.push(body);
+        try {
+          const run = orchestrator.createAndRun({
+            runId: body.runId, workflowId: body.workflow_id, prompt: body.prompt,
+            profile: body.profile, expectedWorkflowRevision: body.workflow_revision,
+            expectedCanonicalHash: body.canonical_hash, expectedProfileUpdatedAt: body.profile_updated_at,
+          });
+          data = { run_id: run.runId, dispatched: run.dispatched };
+        } catch (error) {
+          return new Response(JSON.stringify({ code: "RUN_CREATION_CONFLICT", message: String(error) }), { status: 409 });
+        }
+      } else {
+        statuses.push(pathname);
+        data = { status: "active" }; // Old implementation falsely accepted this.
+      }
+      return new Response(JSON.stringify({ success: true, data }), { status: 200 });
+    });
+    await tool.handler(input);
+    await tool.handler(input);
+    expect(pins[0]).not.toBe(pins[1]);
+    expect(posts).toHaveLength(2);
+    expect(posts[0].runId).not.toBe(posts[1].runId);
+    expect(state.createdRunIds).toEqual(posts.map((post) => post.runId));
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(statuses).toEqual([]);
+  });
+
+  it.each([409, 403])("surfaces HTTP %i without status-only false success or retry", async (status) => {
+    const { tool, state, input } = setupLaunch();
+    const observed: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const pathname = new URL(url).pathname;
+      observed.push(pathname);
+      if (pathname.endsWith("/views/present")) return new Response(JSON.stringify({ data: {
+        mode: "supervised_dag", launch: { workflow_id: "skill-repeat", prompt: "new prompt", workflow_revision: 1, canonical_hash: "a".repeat(64) },
+      } }));
+      if (pathname.endsWith("/create-and-run")) return new Response(JSON.stringify({ code: "RUN_CREATION_CONFLICT" }), { status });
+      return new Response(JSON.stringify({ data: { status: "completed" } }));
+    });
+    await expect(tool.handler(input)).rejects.toThrow(`Manager API ${status}`);
+    expect(observed).toEqual(["/api/skills/review-regression/views/present", "/api/runs/create-and-run"]);
+    expect(state.createdRunIds).toEqual([]);
+    expect(state.objectiveToolCalls).toEqual([]);
+  });
+
+  it("retries a lost acknowledgement with identical POST bytes and a verified creation receipt", async () => {
+    const { tool, state, input } = setupLaunch();
+    const posts: string[] = [];
+    const paths: string[] = [];
+    const launch = { workflow_id: "skill-repeat", prompt: "pinned prompt", profile: "local",
+      workflow_revision: 7, canonical_hash: "a".repeat(64), profile_updated_at: "2026-09-08T00:00:00.000Z" };
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const pathname = new URL(url).pathname;
+      paths.push(pathname);
+      if (pathname.endsWith("/views/present")) return new Response(JSON.stringify({ data: { mode: "supervised_dag", launch } }));
+      if (pathname.endsWith("/create-and-run")) {
+        posts.push(String(init?.body));
+        if (posts.length === 1) throw new TypeError("connection reset after Manager commit");
+        return new Response(JSON.stringify({ data: { run_id: JSON.parse(posts[0]).runId, dispatched: 0 } }));
+      }
+      throw new Error("Status existence cannot prove request identity");
+    });
+    await tool.handler(input);
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toBe(posts[0]);
+    expect(JSON.parse(posts[0])).toMatchObject(launch);
+    expect(state.createdRunIds).toEqual([JSON.parse(posts[0]).runId]);
+    expect(paths).toEqual(["/api/skills/review-regression/views/present", "/api/runs/create-and-run", "/api/runs/create-and-run"]);
   });
 });
