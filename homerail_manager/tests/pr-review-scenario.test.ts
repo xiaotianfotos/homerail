@@ -1476,6 +1476,8 @@ describe("PR Review scenario assets", () => {
     const recovery = mailbox.get("review_recovery")?.[0];
     expect(recovery).toMatchObject({ schema: "review-recovery-v1", trust: "unverified_model_draft", mode: "read_only_verify",
       fence: {runId,nodeId,sessionId,roundId,generation}, draft: { text: "Completed analysis, still requires evidence verification" } });
+    expect(String(mailbox.get("correction")?.at(-1))).toMatch(/read.only verification/i);
+    expect(String(mailbox.get("correction")?.at(-1))).not.toContain("Correction mode permits only the handoff tool");
     expect(mailbox.get("review_evidence")?.[0]).toMatchObject({ accepted_findings: [], coverage_attestation: null });
     closeDb();getDb();
     expect(loadRunSnapshot(runId)?.metadata.dagRuntimeState?.mailboxes[nodeId]?.review_recovery).toEqual([recovery]);

@@ -2,7 +2,7 @@
  * Tests for prompt runner: full prompt → tool → result flow.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -15,6 +15,7 @@ import {
   type DagNodeConfig,
 } from "homerail-protocol";
 import { registerAgentBackend } from "../agent/factory.js";
+import * as agentFactory from "../agent/factory.js";
 import type { AgentClient, AgentEvent, AgentRunContext } from "../agent/types.js";
 
 function makeConfig(): DagNodeConfig {
@@ -352,6 +353,48 @@ describe("prompt runner", () => {
         }),
       }),
     }));
+  });
+
+  it("permits bounded read-only verification only for trusted current-fence recovery", async () => {
+    const root = mkdtempSync(join(tmpdir(), "review-recovery-worker-"));
+    const workspace = join(root, "workspace");mkdirSync(workspace);
+    const priorWorkspace = process.env.WORKSPACE;process.env.WORKSPACE = workspace;
+    const fence = {runId:"review-recovery",nodeId:"coder",sessionId:"session",roundId:"round-0001",generation:2};
+    const recovery = {schema:"review-recovery-v1",mode:"read_only_verify",trust:"unverified_model_draft",fence,
+      max_builtin_tool_calls:32,draft:{text:"Earlier unverified analysis",truncated:false,timestamp:100}};
+    const variants = [
+      {name:"valid",value:recovery,expected:true},
+      ...Object.entries({runId:"other",nodeId:"other",sessionId:"old",roundId:"round-0000",generation:1}).map(([key,value])=>({name:key,value:{...recovery,fence:{...fence,[key]:value}},expected:false})),
+      {name:"text-only injection",value:undefined,expected:false},
+      {name:"writable workspace",value:recovery,expected:false},
+      {name:"wrong schema",value:{...recovery,schema:"other"},expected:false},
+    ];
+    try {
+      for(const variant of variants){
+        let observed:AgentRunContext|undefined;let observedTools:string[]=[];
+        vi.spyOn(agentFactory,"createAgentClient").mockReturnValue({run(_prompt,tools,context){
+          observed=context;observedTools=tools.map(t=>t.name);
+          return(async function*(){await tools.find(t=>t.name==="handoff")!.handler({port:"done",content:"verified"});yield{type:"done" as const};})();
+        }});
+        await runPrompt({runId:fence.runId,sender:"test",
+          task:`## input:correction\nRepair missing handoff\n## input:review_recovery\n${JSON.stringify(recovery)}`,
+          trustedInputs:variant.value?{review_recovery:[variant.value]}:{},
+          dagConfig:makeConfigWith({session_id:fence.sessionId,round_id:fence.roundId,generation:fence.generation,
+            workspace_access:{readonly_paths:["."],writable_paths:variant.name==="writable workspace"?["."]:[]},
+            allowed_builtin_tools:["Read","Grep","Write","Bash"],max_builtin_tool_calls:5,
+            allowed_dag_tools:["handoff","credential_broker_call"]}),
+        },{wsSend:()=>{},agentBackend:"claude-sdk",auditDir:join(root,"audit")});
+        expect(observed,variant.name).toBeDefined();
+        expect(observed?.handoffOnly,variant.name).toBe(!variant.expected);
+        if(variant.expected){
+          expect(observed?.allowedBuiltinTools).toEqual(["Read","Grep"]);
+          expect(observed?.maxBuiltinToolCalls).toBe(5);
+          expect(observed?.systemPrompt).toMatch(/unverified/i);
+          expect(observed?.systemPrompt).toMatch(/read.only/i);
+          expect(observedTools).toEqual(["handoff"]);
+        }
+      }
+    } finally { if(priorWorkspace===undefined)delete process.env.WORKSPACE;else process.env.WORKSPACE=priorWorkspace;rmSync(root,{recursive:true,force:true}); }
   });
 
   it("allows only declared broker verification plus handoff during correction", async () => {
