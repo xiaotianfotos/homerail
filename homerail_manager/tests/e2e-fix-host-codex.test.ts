@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runHostCodexStructuredTurn } from "../src/server/host-codex-manager-agent.js";
 import { parseE2eFixWorkflow, E2E_FIX_STAGES, type E2eFixStage } from "../src/orchestration/e2e-fix-workflow.js";
 import { frozenE2eFixHostCodexCommands } from "../src/runtime/e2e-fix-runtime.js";
+import { e2eFixHostCodexSchema, normalizeE2eFixHostCodexOutput } from "../src/runtime/e2e-fix-host-codex.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -17,6 +18,7 @@ import fs from 'node:fs'; import {createInterface} from 'node:readline';
 if (process.argv.includes('--version')) { console.log('codex-cli fixture'); process.exit(0); }
 const out = value => process.stdout.write(JSON.stringify(value)+'\\n');
 const mode = ${JSON.stringify(mode)};
+fs.writeFileSync(${JSON.stringify(path.join(root, "pid"))},String(process.pid));
 createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line); if (!q.method) return;
  fs.appendFileSync(${JSON.stringify(path.join(root, "requests.jsonl"))}, JSON.stringify(q)+'\\n');
@@ -26,9 +28,14 @@ createInterface({input:process.stdin}).on('line',line=>{
  else if(q.method==='config/read') reply({config:{mcp_servers:{danger:{command:'private-command'}}}});
  else if(q.method==='thread/start') reply({thread:{id:'thread-1'}});
  else if(q.method==='turn/start') {
+  if(mode==='strict-judge'){
+   const valid=s=>!s||typeof s!=='object'||((!s.properties||(s.additionalProperties===false&&Object.keys(s.properties).every(k=>s.required?.includes(k))))&&Object.values(s.properties??{}).every(valid)&&(!s.items||valid(s.items))&&(!s.anyOf||s.anyOf.every(valid)));
+   if(!valid(q.params.outputSchema)){out({id:q.id,error:{message:'invalid_json_schema: all properties must be required'}});return;}
+  }
   reply({turn:{id:'turn-1'}}); if(mode==='timeout') return;
+  if(mode==='provider-error'){event('error',{message:'invalid_json_schema: missing retry_strategy',willRetry:false});return;}
   if(mode==='tool') event('item/started',{item:{type:'commandExecution',id:'bad',command:'forbidden'}});
-  event('item/completed',{item:{type:'agentMessage',id:'result',phase:'final_answer',text:mode==='invalid'?'{}':JSON.stringify({strategy:'minimal change'})}});
+  event('item/completed',{item:{type:'agentMessage',id:'result',phase:'final_answer',text:mode==='invalid'?'{}':JSON.stringify(mode==='strict-judge'?{verdict:'pause',reason:'unknown execution',retry_strategy:null,dispositions:[]}:{strategy:'minimal change'})}});
   event('thread/tokenUsage/updated',{threadId:'thread-1',turnId:'turn-1',tokenUsage:{total:{inputTokens:100,outputTokens:5}}});
   event('turn/completed',{turn:{id:mode==='wrong-turn'?'turn-other':'turn-1',status:mode==='failed'?'failed':'completed'}});
  } else reply({});
@@ -51,10 +58,21 @@ describe.skipIf(process.platform === "win32")("fresh structured host Codex trans
     expect(requests.find(q => q.method === "turn/start").params.outputSchema).toEqual(schema);
     expect(evidence.map(e => e.event)).toEqual(["thread_created", "turn_started", "token_usage", "turn_result"]);
   });
-  it.each(["failed", "wrong-turn", "invalid", "tool", "timeout", "wrong-auth"])("rejects %s without returning model approval", async mode => {
+  it.each(["failed", "wrong-turn", "invalid", "tool", "timeout", "wrong-auth", "provider-error"])("rejects %s without returning model approval or leaking its process", async mode => {
     const { root, binary } = fixture(mode);
     await expect(runHostCodexStructuredTurn({ model: "fixture-model", workspace: root, prompt: "issue", instructions: "plan",
       schema, timeoutMs: mode === "timeout" ? 300 : 5000, outputBytes: 4000, codexBin: binary, evidence: () => {} })).rejects.toThrow();
+    const pid = Number(fs.readFileSync(path.join(root, "pid"), "utf8"));
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 3000, interval: 20 });
+  });
+  it.each(["judge_candidate", "judge_ci"] as const)("uses a strict provider schema and nullable strategy for %s", async role => {
+    const { root, binary } = fixture("strict-judge");
+    const value = await runHostCodexStructuredTurn({ model: "fixture-model", workspace: root, prompt: "failure evidence", instructions: "judge",
+      schema: e2eFixHostCodexSchema(role), timeoutMs: 5000, outputBytes: 4000, codexBin: binary, evidence: () => {} });
+    expect(value).toMatchObject({ retry_strategy: null });
+    expect(normalizeE2eFixHostCodexOutput(role, value)).toEqual({ verdict: "pause", reason: "unknown execution", dispositions: [] });
+    const revision = { verdict: "revise", reason: "truncated", retry_strategy: "Use smaller replacements", dispositions: [] };
+    expect(normalizeE2eFixHostCodexOutput(role, revision)).toEqual(revision);
   });
 });
 

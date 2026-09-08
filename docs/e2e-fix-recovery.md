@@ -1,5 +1,24 @@
 # E2E Fix: recovering a pre-dispatch configuration failure
 
+Host Codex Judgers use a strict provider schema: every property is required,
+with a nullable `retry_strategy` normalized to absence in native Judgment
+receipts. The adapter releases its app-server before yielding final diagnostic
+events, including when a consumer stops on a provider error.
+
+For program-only observation, run
+`node scripts/event-supervisor/watch_e2e_fix.mjs /absolute/watch-options.json`
+under the durable event supervisor. Options are `manager_url`, `task_directory`,
+`evidence_directory`, `timeout_ms` and optional `poll_ms` (default 15000).
+The watcher only reads status and private task artifacts. It exits 0 when a
+terminal status is observed (which may be failed), or 2 on a stranded host
+failure, bounded observation error or deadline. An error receipt matching the
+current host role/round and original claim while the node remains RUNNING for
+five seconds triggers attention. Expected handled Fixer failures stay quiet.
+Use a fresh evidence directory and preserve its attention event key for dedup.
+An observation job for a frozen runtime should not pin the changing development
+checkout's HEAD: the task already binds its runtime and policy. Keep HEAD gates
+on source CI jobs. Do not rerun a DAG because its observer ended or failed.
+
 DSH output diagnostics now retain bounded, content-free byte observations for
 reasoning, visible text and tool arguments. Stream deltas and assembled messages
 are separate counters because their contents can overlap. At most 16 interim

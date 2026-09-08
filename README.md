@@ -190,6 +190,8 @@ New E2E Fix workflows also route confirmed Fixer output truncation to the
 in-graph Judger for a bounded strategy revision; unknown execution pauses.
 DSH provides bounded, content-free output byte diagnostics to distinguish
 observed reasoning, text and tool arguments; these are not token budgets.
+The program-only watcher also alerts when a failed host stage remains RUNNING,
+while expected failures handled by the repair loop stay quiet.
 See the same guide for evidence requirements and remaining recovery limits.
 
 For a topology check without a live model provider, the two-node template ships

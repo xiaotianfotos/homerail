@@ -3071,9 +3071,12 @@ class HostCodexAppServerAdapter {
       if (abortHandler && context.abortSignal) {
         context.abortSignal.removeEventListener("abort", abortHandler);
       }
-      yield this.debugEvent("appserver_done", { stderr_tail: stderr.slice(-2000) || null });
+      // A consumer can throw/break on an error event. Its iterator.return()
+      // enters this finally but stops at the next yield; cleanup must precede
+      // that yield or the app-server child and its pipes remain alive.
       this.shutdown();
       threadLease?.release();
+      yield this.debugEvent("appserver_done", { stderr_tail: stderr.slice(-2000) || null });
     }
     yield { type: "done" };
   }
