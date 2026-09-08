@@ -272,6 +272,29 @@ test('candidate application recovers staged changes and a lost HEAD-update ackno
  f.loop.apply();assert.equal(git(['rev-parse','HEAD']),commit);assert.equal(f.loop.state.phase,'test');
  fs.writeFileSync(path.join(f.root,'state.json'),durable);const restored=new JudgedLoop(f.root);restored.apply();assert.equal(git(['rev-list','--count','HEAD']),'2');assert.equal(git(['status','--porcelain']),'');
 });
+for (const trailing of ['\n', 'keep with trailing spaces   \n']) {
+ test(`unstaged candidate application preserves raw final patch context ${JSON.stringify(trailing)}`, t => {
+  const f=loopFixture(t);const git=args=>{const p=spawnSync('git',['-C',f.repo,...args],{encoding:'utf8'});assert.equal(p.status,0,p.stderr);return p.stdout.trim();};
+  const original='original\nkeep-a\nkeep-b\n'+trailing;
+  const updated='candidate\nkeep-a\nkeep-b\n'+trailing;
+  fs.writeFileSync(path.join(f.repo,'source.txt'),original);git(['add','source.txt']);git(['commit','-qm','trailing-context-base']);
+  const base=git(['rev-parse','HEAD']),baseTree=git(['rev-parse','HEAD^{tree}']);
+  fs.writeFileSync(path.join(f.repo,'source.txt'),updated);git(['add','source.txt']);const tree=git(['write-tree']);const commit=git(['commit-tree',tree,'-p',base,'-m','saved candidate']);
+  // Unlike the existing staged-index recovery fixture, force the normal
+  // application path to generate a patch and apply it from the base index.
+  git(['read-tree',baseTree]);fs.writeFileSync(path.join(f.repo,'source.txt'),original);
+  assert.equal(git(['status','--porcelain']),'');
+  Object.assign(f.loop.round,{base,base_tree:baseTree,candidate_tree:tree,candidate_commit:commit});
+  f.loop.state.phase='apply';f.loop.save('candidate_intent');const durable=fs.readFileSync(path.join(f.root,'state.json'));
+  const resumed=new JudgedLoop(f.root);resumed.apply();
+  assert.equal(git(['rev-parse','HEAD']),commit);assert.equal(git(['write-tree']),tree);
+  assert.equal(fs.readFileSync(path.join(f.repo,'source.txt'),'utf8'),updated);assert.equal(git(['status','--porcelain']),'');
+  fs.writeFileSync(path.join(f.root,'state.json'),durable);
+  new JudgedLoop(f.root).apply();assert.equal(git(['rev-parse','HEAD']),commit);
+  assert.equal(git(['rev-list','--count','HEAD']),'3','restart must not create another candidate commit');
+ });
+}
+
 test('a second CLI controller cannot enter while the task lock is held',async t=>{
  const f=loopFixture(t);const lock=path.join(f.root,'lock');
  const holder=spawn('flock',[lock,process.execPath,'-e',`require('fs').writeFileSync(${JSON.stringify(path.join(f.root,'locked'))},'1');setInterval(()=>{},1000)`],{detached:true,stdio:'ignore'});
