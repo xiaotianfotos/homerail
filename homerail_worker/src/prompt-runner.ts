@@ -328,10 +328,10 @@ export async function runPrompt(
     && job.task.includes("DAG_HANDOFF_WORKSPACE_FILE_REQUIREMENT");
   const READONLY_BUILTIN_TOOLS: ReadonlySet<string> = new Set(["Read", "Grep", "Glob", "LS"]);
   const readOnlyReviewRecovery = (() => {
-    if (!correctionOnly || correctionRepairsWorkspaceEvidence) return false;
+    if (!correctionOnly) return false;
     const recoveryArr = job.trustedInputs?.review_recovery;
     if (!Array.isArray(recoveryArr) || recoveryArr.length === 0) return false;
-    const r = recoveryArr[0] as Record<string, unknown> | undefined;
+    const r = recoveryArr.at(-1) as Record<string, unknown> | undefined;
     if (!r || typeof r !== "object") return false;
     if (r.schema !== "review-recovery-v1") return false;
     if (r.mode !== "read_only_verify") return false;
