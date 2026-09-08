@@ -25,6 +25,25 @@ for (const code of [75, 1]) test(`stable runner preserves unknown execution only
   fs.writeFileSync(path.join(release, "REVISION"), "a".repeat(40));
   fs.writeFileSync(path.join(home, "manager/secrets/dag-mutation.token"), "x".repeat(43), { mode: 0o600 });
   fs.writeFileSync(path.join(release, "scripts/configure-pr-review-runtime-profile.mjs"), "console.log('fixture-profile')\n");
+  // The fixture also supports a stable release containing the optional execution-evidence collector (PR282).
+  // This is a test dependency stub, NOT production evidence: it performs no network access and reports zero model usage.
+  fs.writeFileSync(path.join(release, "scripts/pr-review-execution-evidence.mjs"), [
+    'import fs from "node:fs";',
+    'const [runId, outputPath] = process.argv.slice(2);',
+    'const evidence = {',
+    '  schema: "pr-review-execution-evidence-v1",',
+    '  run_id: runId,',
+    '  quorum_basis: "reviewer_executions",',
+    '  distinct_model_identities: 0,',
+    '  provenance_complete: false,',
+    '  usage_state: "unknown",',
+    '  observed_tokens: null,',
+    '  reviewers: [],',
+    '};',
+    'fs.writeFileSync(outputPath, JSON.stringify(evidence));',
+    'process.exit(0);',
+    '',
+  ].join("\n"));
   const calls = path.join(tmp, "calls.jsonl");
   fs.writeFileSync(path.join(release, "homerail_cli/dist/cli.js"), `
     const fs=require('node:fs');
