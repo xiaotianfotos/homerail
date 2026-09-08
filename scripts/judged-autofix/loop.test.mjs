@@ -484,3 +484,49 @@ for(const problem of ['wrong_url','wrong_target','not_attempted','invalid_source
  f.loop.save('archived_update_fixture');const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));
  assert.equal(fs.readFileSync(f.updates,'utf8'),'x');assert.equal(reopened.state.publication_history.at(-1).url,undefined);
 });
+
+function recoveryDecision(f, target='current', overrides={}) {
+ const p=target==='current'?f.loop.state.publication:f.loop.state.publication_history[target];
+ const r=f.loop.round;
+ const j={action:'abandon-body-update-at-source',task_nonce:f.loop.state.task_nonce,round:r.index,plan_digest:r.plan_digest,head:r.candidate_commit,target,publication_digest:identity(p),previous_attempt_settled:true,reason:'Judger verified previous sender has settled; authorize a new publication intent from the observed owned source',...overrides};
+ const file=path.join(f.root,'publication-recovery.json');fs.writeFileSync(file,JSON.stringify(j));return file;
+}
+async function absentUpdateFixture(t, archived=false) {
+ const f=await publicationUpdateFixture(t,'lost_ack');assert.throws(()=>f.loop.publish(f.body));
+ if(archived)await nextPublicationRevision(f);
+ const row=JSON.parse(fs.readFileSync(f.storage,'utf8'));row.body=f.row.body;fs.writeFileSync(f.storage,JSON.stringify(row));
+ return f;
+}
+for(const archived of [false,true])test(`Judger explicitly resolves ${archived?'archived':'current'} absent update without erasing evidence or repeating authorization`,async t=>{
+ const f=await absentUpdateFixture(t,archived),target=archived?f.loop.state.publication_history.length-1:'current';
+ const pending=JSON.parse(JSON.stringify(target==='current'?f.loop.state.publication:f.loop.state.publication_history[target]));
+ const decision=recoveryDecision(f,target),j=JSON.parse(fs.readFileSync(decision));
+ f.loop.recoverPublication(decision);
+ assert.equal(fs.readFileSync(f.updates,'utf8'),'x','recovery itself must never PATCH');
+ const record=f.loop.state.publication_recoveries.at(-1);
+ assert.deepEqual(record.publication,pending);assert.deepEqual(record.decision,j);assert.equal(record.decision_digest,identity(j));
+ assert.equal(f.loop.state.publication_history.length,1);assert.deepEqual(f.loop.state.publication_history[0],f.previous);
+ assert.equal(f.loop.state.publication,undefined);
+ const reopened=f.attach(new JudgedLoop(f.root));
+ assert.throws(()=>reopened.publish(f.body),/lost update acknowledgement/); // a single new authorized send
+ assert.equal(fs.readFileSync(f.updates,'utf8'),'xx');
+ const row=JSON.parse(fs.readFileSync(f.storage,'utf8'));row.body=f.row.body;fs.writeFileSync(f.storage,JSON.stringify(row));
+ const before=JSON.stringify(reopened.state.publication);
+ try{reopened.recoverPublication(decision);}catch{} // replay may be refused or acknowledged, but never reauthorize
+ assert.equal(JSON.stringify(reopened.state.publication),before);
+ assert.throws(()=>reopened.publish(f.body));assert.equal(fs.readFileSync(f.updates,'utf8'),'xx');
+ assert.equal(reopened.state.publication_recoveries.length,1);
+ const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls.filter(a=>a[1]==='create').length,0);
+});
+for(const bad of ['task','round','plan','head','snapshot','not_settled','string_settled','external_body','wrong_url','wrong_remote_head','bad_source','confirmed','missing_baseline','stale_history'])test(`publication recovery rejects ${bad} before changing custody`,async t=>{
+ const f=await absentUpdateFixture(t,bad==='stale_history');let target=bad==='stale_history'?f.loop.state.publication_history.length-1:'current';
+ if(bad==='bad_source')f.loop.state.publication.body_update.from_body_digest=['a'.repeat(64)];
+ if(bad==='confirmed')f.loop.state.publication.body_update.confirmed=true;
+ if(bad==='missing_baseline')f.loop.state.publication_history=[];
+ if(bad==='stale_history')f.loop.state.publication_history.push({...f.previous});
+ f.loop.save('recovery_negative_fixture');
+ const override={};if(bad==='task')override.task_nonce='other';if(bad==='round')override.round=99;if(bad==='plan')override.plan_digest='other';if(bad==='head')override.head='a'.repeat(40);if(bad==='snapshot')override.publication_digest='0'.repeat(64);if(bad==='not_settled')override.previous_attempt_settled=false;if(bad==='string_settled')override.previous_attempt_settled='true';
+ const decision=recoveryDecision(f,target,override),row=JSON.parse(fs.readFileSync(f.storage));
+ if(bad==='external_body')row.body='unowned';if(bad==='wrong_url')row.url='https://github.com/owner/repo/pull/99';if(bad==='wrong_remote_head')row.headRefOid='b'.repeat(40);fs.writeFileSync(f.storage,JSON.stringify(row));
+ const before=JSON.stringify(f.loop.state);assert.throws(()=>f.loop.recoverPublication(decision));assert.equal(JSON.stringify(f.loop.state),before);assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
+});
