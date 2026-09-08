@@ -430,3 +430,18 @@ test('target-visible reconciliation still verifies the persisted body update tar
  f.loop.state.publication.body_update.to_body_digest='0'.repeat(64);f.loop.save('mismatched_update_intent');
  const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
 });
+
+for(const marker of ['legacy_without_marker','confirmed_without_attempt'])test(`confirmed publication with ${marker} refuses body drift without another update`,async t=>{
+ const f=await publicationUpdateFixture(t);assert.equal(f.loop.publish(f.body),f.row.url);
+ if(marker==='legacy_without_marker')delete f.loop.state.publication.body_update;
+ else f.loop.state.publication.body_update.attempted=false;
+ f.loop.save('confirmed_fixture');fs.writeFileSync(f.storage,JSON.stringify(f.row));
+ const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
+});
+
+test('legacy confirmed publication refuses a replacement URL with the expected body',async t=>{
+ const f=await publicationUpdateFixture(t);assert.equal(f.loop.publish(f.body),f.row.url);
+ delete f.loop.state.publication.body_update;f.loop.save('legacy_confirmed');
+ const row=JSON.parse(fs.readFileSync(f.storage,'utf8'));row.url='https://github.com/owner/repo/pull/99';fs.writeFileSync(f.storage,JSON.stringify(row));
+ const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
+});
