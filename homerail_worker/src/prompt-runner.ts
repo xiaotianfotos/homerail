@@ -546,6 +546,8 @@ export async function runPrompt(
   let nodeFinishReason: string | null = null;
   let nodeOutputTokenLimit: number | null = null;
   let lastUsageEmission: string | undefined;
+  let publicDraftText = "";
+  let publicDraftTruncated = false;
   let workspaceBefore: WorkspaceSnapshot | undefined;
   let terminalActivityEmitted = false;
   let promptResult: PromptRunResult = {
@@ -669,6 +671,14 @@ export async function runPrompt(
           sendContent(event.text);
           audit?.transcript.write({ event: "text", text: redactForTurn(event.text) });
           appendSessionTranscript("text", redactForTurn(event.text));
+          publicDraftText += String(redactForTurn(event.text));
+          if (Buffer.byteLength(publicDraftText, "utf8") > 8192) {
+            const buf = Buffer.from(publicDraftText, "utf8");
+            let start = buf.length - 8192;
+            while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++;
+            publicDraftText = buf.subarray(start).toString("utf8");
+            publicDraftTruncated = true;
+          }
           break;
         case "thinking": {
           // Thinking content is deliberately neither streamed nor persisted.
@@ -919,6 +929,9 @@ export async function runPrompt(
       ...(job.dagConfig.lease_generation !== undefined ? { lease_generation: job.dagConfig.lease_generation } : {}),
       ...(job.dagConfig.command_id !== undefined ? { command_id: job.dagConfig.command_id } : {}),
     };
+    if (publicDraftText.length > 0) {
+      sendStream({ event: "review_draft", schema: "review-draft-v1", text: publicDraftText, truncated: publicDraftTruncated });
+    }
     sendTerminalMessage(JSON.stringify({ type: "node_error", data }));
   }
 
