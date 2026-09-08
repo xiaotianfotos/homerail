@@ -160,7 +160,7 @@ function queryCodexModels(
       else resolve(catalog ?? { binary: resolution.command, models: [] });
     }
 
-    function send(id: number, method: string, params: Record<string, unknown>): void {
+    function send(id: number | undefined, method: string, params: Record<string, unknown>, onSuccess?: () => void): void {
       if (settled || child.stdin.destroyed || !child.stdin.writable) {
         finish(new Error("Codex app-server stdin closed before the request could be sent"));
         return;
@@ -169,6 +169,7 @@ function queryCodexModels(
         `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
         (error) => {
           if (error) finish(error);
+          else if (!settled) onSuccess?.();
         },
       );
     }
@@ -200,7 +201,7 @@ function queryCodexModels(
             finish(new Error(errorMessage(message.error)));
             return;
           }
-          requestModelPage();
+          send(undefined, "initialized", {}, () => requestModelPage());
           continue;
         }
         if (message.id !== pendingModelRequestId) continue;
@@ -252,6 +253,7 @@ function queryCodexModels(
       },
       capabilities: {
         experimentalApi: true,
+        requestAttestation: false,
         optOutNotificationMethods: null,
       },
     });

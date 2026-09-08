@@ -3,7 +3,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
 import type { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { listCodexModels, type CodexModelCatalog } from "../src/server/codex-models.js";
 import { MANAGER_RUNTIME_VERSION } from "../src/runtime-version.js";
@@ -108,18 +108,27 @@ describe("Codex model catalog", () => {
       timeoutMs: 1_000,
     });
 
-    expect(requests.map((request) => request.method)).toEqual(["initialize", "model/list", "model/list"]);
+    expect(requests.map((request) => request.method)).toEqual(["initialize", "initialized", "model/list", "model/list"]);
     expect(requests[0]).toMatchObject({
       params: {
         clientInfo: {
           version: MANAGER_RUNTIME_VERSION,
         },
+        capabilities: {
+          experimentalApi: true,
+          requestAttestation: false,
+        },
       },
     });
+    expect(requests[1]).not.toHaveProperty("id");
     expect(requests[1]).toMatchObject({
-      params: { limit: 100, includeHidden: false },
+      method: "initialized",
+      params: {},
     });
     expect(requests[2]).toMatchObject({
+      params: { limit: 100, includeHidden: false },
+    });
+    expect(requests[3]).toMatchObject({
       params: { limit: 100, includeHidden: false, cursor: "page-2" },
     });
     expect(spawnOptions).toMatchObject({
@@ -842,6 +851,199 @@ describe("Codex model catalog", () => {
     expect(body).toMatchObject({
       success: false,
       error: "Live Voice requires the Codex app-server Manager runtime.",
+    });
+  });
+
+  describe("initialized notification lifecycle", () => {
+    it("defers catalog requests until the initialized write callback succeeds", async () => {
+      const child = new FakeChildProcess();
+      const requests: Array<Record<string, unknown>> = [];
+      let pendingWriteCallback: ((error?: Error | null) => void) | undefined;
+      let interceptNext = false;
+      const originalWrite = child.stdin.write.bind(child.stdin);
+      child.stdin.write = ((chunk: unknown, ...args: unknown[]) => {
+        const cb = args.find((a) => typeof a === "function") as ((e?: Error | null) => void) | undefined;
+        if (interceptNext && cb) {
+          interceptNext = false;
+          pendingWriteCallback = cb;
+          child.stdin.emit("data", chunk);
+          return true;
+        }
+        return (originalWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+      }) as any;
+
+      child.stdin.on("data", (chunk: Buffer | string) => {
+        const request = JSON.parse(chunk.toString().trim()) as Record<string, unknown>;
+        requests.push(request);
+        if (request.id === 1) {
+          interceptNext = true;
+          child.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+        } else if (request.id === 2) {
+          child.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+        }
+      });
+
+      const result = listCodexModels({
+        resolution: { command: "codex", requested: "codex", needsShell: false },
+        spawnImpl: (() => child as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+        timeoutMs: 5_000,
+      });
+
+      expect(requests.map((r) => r.method)).toEqual(["initialize", "initialized"]);
+      expect(pendingWriteCallback).toBeDefined();
+
+      pendingWriteCallback!(null);
+
+      const catalog = await result;
+      expect(requests.map((r) => r.method)).toEqual(["initialize", "initialized", "model/list"]);
+      expect(requests[2]).toMatchObject({ id: 2, method: "model/list" });
+      expect(catalog.models).toEqual([]);
+    });
+
+    it("terminates and rejects when the initialized write callback reports an error", async () => {
+      const child = new FakeChildProcess();
+      const requests: Array<Record<string, unknown>> = [];
+      let pendingWriteCallback: ((error?: Error | null) => void) | undefined;
+      let interceptNext = false;
+      const originalWrite = child.stdin.write.bind(child.stdin);
+      child.stdin.write = ((chunk: unknown, ...args: unknown[]) => {
+        const cb = args.find((a) => typeof a === "function") as ((e?: Error | null) => void) | undefined;
+        if (interceptNext && cb) {
+          interceptNext = false;
+          pendingWriteCallback = cb;
+          child.stdin.emit("data", chunk);
+          return true;
+        }
+        return (originalWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+      }) as any;
+
+      child.stdin.on("data", (chunk: Buffer | string) => {
+        const request = JSON.parse(chunk.toString().trim()) as Record<string, unknown>;
+        requests.push(request);
+        if (request.id === 1) {
+          interceptNext = true;
+          child.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+        }
+      });
+
+      const result = listCodexModels({
+        resolution: { command: "codex", requested: "codex", needsShell: false },
+        spawnImpl: (() => child as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+        timeoutMs: 5_000,
+      });
+
+      expect(requests.map((r) => r.method)).toEqual(["initialize", "initialized"]);
+
+      pendingWriteCallback!(new Error("write ECONNRESET"));
+
+      await expect(result).rejects.toThrow("write ECONNRESET");
+      expect(requests.map((r) => r.method)).toEqual(["initialize", "initialized"]);
+      expect(child.killed).toBe(true);
+    });
+
+    it("does not send a late catalog request after timeout while initialized callback is held", async () => {
+      vi.useFakeTimers();
+      try {
+        const child = new FakeChildProcess();
+        const requests: Array<Record<string, unknown>> = [];
+        let pendingWriteCallback: ((error?: Error | null) => void) | undefined;
+        let interceptNext = false;
+        const originalWrite = child.stdin.write.bind(child.stdin);
+        child.stdin.write = ((chunk: unknown, ...args: unknown[]) => {
+          const cb = args.find((a) => typeof a === "function") as ((e?: Error | null) => void) | undefined;
+          if (interceptNext && cb) {
+            interceptNext = false;
+            pendingWriteCallback = cb;
+            child.stdin.emit("data", chunk);
+            return true;
+          }
+          return (originalWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+        }) as any;
+
+        child.stdin.on("data", (chunk: Buffer | string) => {
+          const request = JSON.parse(chunk.toString().trim()) as Record<string, unknown>;
+          requests.push(request);
+          if (request.id === 1) {
+            interceptNext = true;
+            child.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+          } else if (request.id === 2) {
+            child.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+          }
+        });
+
+        const result = listCodexModels({
+          resolution: { command: "codex", requested: "codex", needsShell: false },
+          spawnImpl: (() => child as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+          timeoutMs: 1_000,
+        });
+        const rejection = expect(result).rejects.toThrow("Timed out");
+
+        await vi.advanceTimersByTimeAsync(1_001);
+        await rejection;
+
+        pendingWriteCallback!(null);
+        expect(requests.map((r) => r.method)).toEqual(["initialize", "initialized"]);
+        expect(child.killed).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("rejects repeated cursors in the model catalog", async () => {
+      const child = new FakeChildProcess();
+      child.stdin.on("data", (chunk: Buffer | string) => {
+        const request = JSON.parse(chunk.toString().trim()) as Record<string, unknown>;
+        if (request.id === 1) {
+          child.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+        } else if (request.id === 2) {
+          child.stdout.write(`${JSON.stringify({
+            jsonrpc: "2.0", id: 2, result: { data: [{ id: "a", model: "a" }], nextCursor: "dup" },
+          })}\n`);
+        } else if (request.id === 3) {
+          child.stdout.write(`${JSON.stringify({
+            jsonrpc: "2.0", id: 3, result: { data: [{ id: "b", model: "b" }], nextCursor: "dup" },
+          })}\n`);
+        }
+      });
+
+      await expect(listCodexModels({
+        resolution: { command: "codex", requested: "codex", needsShell: false },
+        spawnImpl: (() => child as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+        timeoutMs: 1_000,
+      })).rejects.toThrow("repeated model catalog cursor: dup");
+      expect(child.killed).toBe(true);
+    });
+
+    it("terminates the process and clears the timer on success and on initialize error", async () => {
+      const successChild = new FakeChildProcess();
+      successChild.stdin.on("data", (chunk: Buffer | string) => {
+        const request = JSON.parse(chunk.toString().trim()) as Record<string, unknown>;
+        if (request.id === 1) {
+          successChild.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+        } else if (request.id === 2) {
+          successChild.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+        }
+      });
+      await listCodexModels({
+        resolution: { command: "codex", requested: "codex", needsShell: false },
+        spawnImpl: (() => successChild as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+        timeoutMs: 1_000,
+      });
+      expect(successChild.killed).toBe(true);
+
+      const failChild = new FakeChildProcess();
+      failChild.stdin.on("data", (chunk: Buffer | string) => {
+        const request = JSON.parse(chunk.toString().trim()) as Record<string, unknown>;
+        if (request.id === 1) {
+          failChild.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, error: { message: "auth failed" } })}\n`);
+        }
+      });
+      await expect(listCodexModels({
+        resolution: { command: "codex", requested: "codex", needsShell: false },
+        spawnImpl: (() => failChild as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
+        timeoutMs: 1_000,
+      })).rejects.toThrow("auth failed");
+      expect(failChild.killed).toBe(true);
     });
   });
 });
