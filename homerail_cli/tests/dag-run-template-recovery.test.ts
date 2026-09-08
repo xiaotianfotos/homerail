@@ -26,6 +26,7 @@ describe("known-run submission recovery", () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     process.exitCode = undefined;
     if (previousHome === undefined) delete process.env.HOMERAIL_HOME;
     else process.env.HOMERAIL_HOME = previousHome;
@@ -130,5 +131,43 @@ describe("known-run submission recovery", () => {
     expect(process.exitCode).toBe(75); expect(r.output).toEqual([]);
     expect(r.calls.filter(x => x.url.endsWith("/create-and-run"))).toHaveLength(1);
   }, 1500);
+
+  for (const outage of ["status_network", "status_http500", "artifacts_http500"] as const) {
+    it(`preserves the known run on sustained ${outage} after successful creation`, async () => {
+      vi.useFakeTimers();
+      const calls: Array<{ url: string; method: string }> = [];
+      let observations = 0;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+        const target = String(url);
+        calls.push({ url: target, method: String(init?.method ?? "GET") });
+        if (target.endsWith("/api/dag/workflows/sync")) return reply({success: true, data: {workflow: {workflow_id: "recover"}}});
+        if (target.endsWith("/api/runs/create-and-run")) return reply({success: true, data: {run_id: RUN}});
+        if (target.endsWith(`/api/runs/${RUN}/status`) && outage === "artifacts_http500")
+          return reply({success: true, data: {run_id: RUN, status: "completed"}});
+        const route = outage === "artifacts_http500" ? "artifacts" : "status";
+        if (target.endsWith(`/api/runs/${RUN}/${route}`)) {
+          observations++;
+          if (observations === 1) return reply({success: true, data: outage === "artifacts_http500"
+            ? {artifacts: [{name: "review.json", status: "pending", media_type: "application/json"}]}
+            : {run_id: RUN, status: "running"}});
+          if (outage === "status_network") throw new TypeError("status connection reset");
+          return reply({success: false, message: "observation endpoint unavailable"}, 500);
+        }
+        throw new Error("Unexpected request: " + target);
+      });
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const pending = createProgram().parseAsync(["node", "hr", "--json", "dag", "run-template", "recover",
+        "--input", "{}", "--run-id", RUN, "--wait", "--timeout", "600", "--interval", "30"]);
+      await vi.runAllTimersAsync(); await pending;
+      expect(process.exitCode).toBe(75);
+      expect(log.mock.calls).toEqual([]);
+      expect(error.mock.calls.flat().join(" ")).toContain(RUN);
+      expect(error.mock.calls.flat().join(" ")).toContain("180 seconds");
+      expect(observations).toBeGreaterThan(2);
+      expect(calls.filter(x => x.url.endsWith("/create-and-run"))).toHaveLength(1);
+      expect(calls.filter(x => x.method === "POST")).toHaveLength(2); // sync/create; no restart or stop
+    });
+  }
 
 });

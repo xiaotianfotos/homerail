@@ -65,6 +65,11 @@ for (const code of [75, 1]) test(`stable runner preserves unknown execution only
   assert.equal(invocations.filter(args => args.includes("run-template")).length, 1);
   assert.equal(invocations.filter(args => args.includes("stop")).length, code === 75 ? 0 : 1);
   assert.equal(result.status, code);
+  if (code === 75) {
+    assert.match(result.stderr, /observation unavailable during create reconciliation or terminal\/artifact waiting/);
+    assert.match(result.stderr, /may still be running and consuming resources/);
+    assert.match(result.stderr, /inspect the same run ID/);
+  }
   assert.equal(fs.readFileSync(path.join(artifacts, "run-id.txt"), "utf8").trim(), "fixed-run");
 });
 
