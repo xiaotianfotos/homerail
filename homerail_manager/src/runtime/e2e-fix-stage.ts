@@ -11,6 +11,7 @@ import { E2eFixCandidates, E2eFixProposalError, e2eFixDigest, e2eFixPath, immuta
 import { E2eFixIsolatedTest, validateE2eFixTestDefinition, type E2eFixTestDefinition } from "./e2e-fix-test.js";
 import type { E2eFixStage } from "../orchestration/e2e-fix-workflow.js";
 import { validateE2eFixGitHub, type E2eFixGitHubConfig } from "./e2e-fix-github.js";
+import { assertE2eFixStageRuntime } from "./e2e-fix-stage-runtime.js";
 
 const digest = (value: unknown) => e2eFixDigest(JSON.stringify(value));
 type Policy = E2eFixAcceptanceInput["policy"];
@@ -73,7 +74,7 @@ export function authenticateE2eFixInvocation(directory: string, stage: string, r
   const spec = JSON.parse(command.spec_json);
   const config = JSON.parse(fs.readFileSync(path.join(directory, "config.json"), "utf8")) as E2eFixTaskConfig;
   const policyDigest = freezeE2eFixTask(directory, config);
-  if (config.runtime_sha256 && config.runtime_sha256 !== process.env.HOMERAIL_E2E_FIX_RUNTIME_SHA256) throw new Error("task runtime identity mismatch");
+  assertE2eFixStageRuntime(directory, stage, config, policyDigest, spec.argv);
   const metadata = loadRunMetadata(identity.run_id);
   const commandSession = getDagSessionIndex(identity.run_id, stage);
   if (identity.run_id !== config.root_run_id || identity.node_id !== stage || spec.stdin !== rawInput
@@ -271,6 +272,7 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
   } else throw new Error("unknown E2E Fix stage");
   if (Buffer.byteLength(JSON.stringify(result)) > config.context_bytes) throw new Error("stage output exceeds frozen context bound");
   write(stage, result);
-  immutableE2eFixFile(path.join(folder, "executions", `${stage}.json`), JSON.stringify({ execution_id: commandId, identity, policy_sha256: policyDigest, output_sha256: digest(result) }));
+  immutableE2eFixFile(path.join(folder, "executions", `${stage}.json`), JSON.stringify({ execution_id: commandId, identity, policy_sha256: policyDigest,
+    runtime_sha256: process.env.HOMERAIL_E2E_FIX_RUNTIME_SHA256 ?? null, output_sha256: digest(result) }));
   return result;
 }

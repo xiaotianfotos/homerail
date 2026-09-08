@@ -26,4 +26,4 @@ const providers: E2eFixStageProviders = {
 };
 try {
   process.stdout.write(JSON.stringify(runE2eFixStage(directory, stage as E2eFixStage, fs.readFileSync(0, "utf8"), process.env.HOMERAIL_DAG_COMMAND_ID, providers)));
-} catch (error) { process.stderr.write(String(error)); process.exitCode = 1; }
+} catch (error) { process.stderr.write("E2E Fix stage failed: " + (error instanceof Error ? error.message : String(error)) + "\n"); process.exitCode = 1; }

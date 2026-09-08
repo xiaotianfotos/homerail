@@ -186,6 +186,9 @@ commands, recovery, expiry, and concurrency-slot behavior.
 Experimental E2E Fix also supports [recovery from a runtime configuration failure
 before the first Worker dispatch](docs/e2e-fix-recovery.md), preserving completed
 Planner evidence and the original root and round.
+An operator may also authorize one frozen runtime replacement for a verified
+first-round review-aggregation overflow, preserving completed model/test evidence.
+This assisted recovery keeps the original policy and deadline; see the same guide.
 New E2E Fix workflows also route confirmed Fixer output truncation to the
 in-graph Judger for a bounded strategy revision; unknown execution pauses.
 Fixers can submit multiple non-overlapping exact snippets per authorized file.

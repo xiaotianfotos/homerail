@@ -1,4 +1,48 @@
-# E2E Fix: recovering a pre-dispatch configuration failure
+# E2E Fix: bounded recovery with retained evidence
+
+## Review aggregation runtime repair
+
+After a verified first-round `review_evidence` context-overflow failure, a
+trusted operator can authorize one replacement frozen runtime for that stage:
+`POST /api/runs/{run_id}/e2e-fix-review-recovery`. The request uses the ordinary
+DAG mutation authentication and contains `request_id`, `expected_state_sha256`,
+`reason`, `task_directory`, `runtime_directory`, and `runtime_sha256`.
+The state digest is `recoveryDigest(loadRunMetadata(run_id))` from trusted host
+persistence. Both directories must be absolute, private host paths. The new
+interpreter must already be in `HOMERAIL_DAG_COMMAND_ALLOWLIST`; the operator
+must review and test the replacement before approving this request.
+
+The Manager verifies the original command's exact overflow error, native
+completion receipts, model handoffs, candidate snapshot, latest passing test
+receipts and the replacement runtime inventory. It reconstructs the checkpoint
+through the DAG engine and requires an exact replay of the recorded failure,
+with no other ready or in-flight branch. It rejects unknown executions, changed
+artifacts, expired tasks/rounds, missing retry allowance and an occupied workflow
+concurrency slot. A known nonzero command exit by itself does not authorize retry.
+
+One transaction preserves the original round, deadlines, consumed counters,
+completed sessions and candidate, assigns a fresh aggregation session, changes
+only that stage's static command, and records the runtime authorization before
+dispatch. The original policy file and all model/test/publication runtimes stay
+frozen. Subsequent rounds use the approved aggregation runtime under that same
+policy. Repeated identical requests return the original receipt without another
+tick; changed requests conflict. The original failed command and evidence remain
+available, and the task permits only one such recovery.
+
+This is an operator-assisted repair of a deterministic runtime fault, not an
+automatic model retry or proof of an unassisted E2E run. It supports the specific
+first-round aggregation failure only. If the replacement still fails, its
+evidence is retained; it does not gain another recovery allowance or a later
+deadline. Successful recovery admission alone does not prove downstream repair,
+review, publication or CI success.
+
+The native stage suite checks checkpoint reconstruction, receipt tampering,
+expiry, transaction rollback, idempotent HTTP replay and stage-specific runtime
+authorization with real Git/Docker and simulated models. Its recovery runtime
+fixture is deliberately not executed; actual continuation requires separate
+live evidence.
+
+## Pre-dispatch configuration repair and model failures
 
 Patch proposals can contain multiple small edits to one authorized file. Each
 `old` snippet must match the frozen parent exactly once, and matched ranges

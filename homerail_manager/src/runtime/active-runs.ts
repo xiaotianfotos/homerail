@@ -63,6 +63,8 @@ import { preflightDagAgentRuntimes } from "./dag-runtime-preflight.js";
 import { loadWorkflowConcurrencyPolicy, reserveWorkflowRun, releaseWorkflowRunReservation } from "../persistence/dag-run-admission.js";
 import { assertNoWorkerExecution, getDispatchRecovery, recordDispatchRecovery, recoveryDigest, parseDispatchRecoveryRequest,
   type DispatchRecoveryReceipt } from "./dag-dispatch-recovery.js";
+import { getE2eFixReviewRecovery, reviewRecoveryArgv } from "./e2e-fix-stage-runtime.js";
+import { inspectE2eFixReviewRecovery, parseE2eFixReviewRecoveryRequest } from "./e2e-fix-review-recovery.js";
 import { spawnManagerGitSync } from "./manager-git.js";
 import { buildReviewRecovery } from "./review-recovery.js";
 import {
@@ -76,6 +78,7 @@ import {
 import type {
   PersistedGraphData,
   PersistedRunMetadata,
+  PersistedRunSnapshot,
 } from "../persistence/types.js";
 import { dbTransaction } from "../persistence/db.js";
 import type { DagRunStatus } from "../persistence/status.js";
@@ -6789,6 +6792,142 @@ export function recoverPreDispatchRun(runId: string, value: unknown): { receipt:
     if (!result.deduplicated) {
       emit("dag:run_recovered", { runId, recoveredAt: result.receipt.recovered_at,
         demotedFromRunning: [], reason: "verified pre-dispatch configuration recovery" });
+      _emitStatusUpdate(store.get(runId)!);
+    }
+    return result;
+  } catch (error) {
+    if (oldMemory) store.set(runId, oldMemory); else store.delete(runId);
+    throw error;
+  }
+}
+
+/** Reconstruct a first-round terminal command failure without running a node or
+ * changing persistence. This is evidence for a recovery transaction, never
+ * permission to repeat a command: the caller must separately verify its receipt,
+ * side effects, runtime revision, deadline and admission before restoring it. */
+export function reconstructTerminalCommandCheckpoint(
+  snapshot: PersistedRunSnapshot, expectedStateSha256: string, nodeId: string,
+): PersistedRunMetadata {
+  const failed = snapshot.metadata;
+  if (recoveryDigest(failed) !== expectedStateSha256 || failed.status !== "failed"
+    || !failed.graph || !failed.dagRuntimeState || failed.currentRound?.ordinal !== 1
+    || failed.currentRound.status !== "failed" || failed.nodeStates[nodeId] !== "FAILED") {
+    throw new Error("Terminal command checkpoint state conflict");
+  }
+  const node = failed.graph.nodes.find(n => n.node_id === nodeId);
+  const last = snapshot.handoffs.at(-1);
+  if (node?.node_type !== "command_gateway" || !node.gateway_config?.durable
+    || !last || last.fromNode !== nodeId || last.port !== (node.gateway_config.failure_port ?? "failed")
+    || last.roundId !== failed.currentRound.round_id
+    || snapshot.handoffs.some(h => h.roundId !== failed.currentRound!.round_id)) {
+    throw new Error("Terminal command checkpoint requires one native round and final failure handoff");
+  }
+  const { nodes, edges, loopSources } = _graphFromPersisted(failed.graph);
+  const dagRun: DAGRun = {
+    runId: failed.runId, graph: { nodes, edges }, loopSources,
+    nodeStates: new Map(nodes.map(n => [n.node_id, "PENDING" as NodeState])),
+    handoffedNodes: new Set(),
+    afterSatisfied: new Map(nodes.map(n => [n.node_id, new Set<string>()])),
+    inputSatisfied: new Map(nodes.map(n => [n.node_id, new Set<string>()])),
+    mailboxes: new Map(nodes.map(n => [n.node_id, new Map<string, unknown[]>()])),
+  };
+  seedInitialPrompt(dagRun, failed.initialPrompt, failed.runInputTargets, failed.contracts);
+  for (const record of snapshot.handoffs.slice(0, -1)) {
+    if (!dagRun.nodeStates.has(record.fromNode)) throw new Error("Terminal command checkpoint found an unknown node");
+    const transition = handoff(dagRun, record.fromNode, record.port, record.content);
+    if (transition.terminalFailure || transition.terminalOutcome) {
+      throw new Error("Terminal command checkpoint found an earlier terminal or unknown node");
+    }
+  }
+  // A quiescent checkpoint may have only this command ready and loop gateways
+  // waiting for feedback. Never infer completion of another in-flight branch.
+  if (!isDeepStrictEqual(getReadyNodes(dagRun), [nodeId])
+    || [...dagRun.nodeStates].some(([id, state]) => state === "RUNNING" && !loopSources.has(id))) {
+    throw new Error("Terminal command checkpoint is not quiescent");
+  }
+  const simulated = structuredClone(dagRun);
+  if (!handoff(simulated, nodeId, last.port, last.content).terminalFailure) {
+    throw new Error("Terminal command checkpoint lacks terminal failure routing");
+  }
+  // Mirror abortActiveRun's state transition; compare all native mailbox and
+  // dependency state as well as node labels before accepting the reconstruction.
+  for (const [id, state] of simulated.nodeStates) {
+    if (id === nodeId) simulated.nodeStates.set(id, "FAILED");
+    else if (state === "READY" || state === "RUNNING") simulated.nodeStates.set(id, "CANCELLED");
+    else if (state === "PENDING") simulated.nodeStates.set(id, "SKIPPED");
+  }
+  const after = serializeRunMetadata({ ...failed, dagRun: simulated });
+  if (!isDeepStrictEqual(after.nodeStates, failed.nodeStates)
+    || !isDeepStrictEqual(after.dagRuntimeState, failed.dagRuntimeState)
+    || !isDeepStrictEqual(after.handoffedNodes, failed.handoffedNodes)) {
+    throw new Error("Terminal command failure replay differs from persisted state");
+  }
+  const before = serializeRunMetadata({ ...failed, dagRun, status: "active", completedAt: undefined,
+    currentRound: { ...failed.currentRound, status: "active", closed_at: undefined } });
+  // Failure handoffs already consumed budget. Do not rewind any counters.
+  before.counters = structuredClone(failed.counters);
+  if (before.counters) delete before.counters.abort_reason;
+  return structuredClone(before);
+}
+
+/** Host-authorized, one-time recovery of a verified review aggregation overflow.
+ * Only that pure stage gets a replacement runtime; model/test/publication
+ * commands, policy, candidate, native round and spent budgets are unchanged. */
+export function recoverE2eFixReviewRun(runId: string, value: unknown) {
+  const request = parseE2eFixReviewRecoveryRequest(value);
+  const requestJson = JSON.stringify(request); const oldMemory = store.get(runId);
+  try {
+    const result = getDb().transaction(() => {
+      const existing = getE2eFixReviewRecovery(runId);
+      if (existing) {
+        if (existing.request_json !== requestJson) throw new Error("E2E Fix review recovery request conflict");
+        return { receipt: JSON.parse(existing.receipt_json), deduplicated: true };
+      }
+      const checked = inspectE2eFixReviewRecovery(runId, request);
+      const failed = checked.snapshot.metadata;
+      const before = reconstructTerminalCommandCheckpoint(checked.snapshot, request.expected_state_sha256, "review_evidence");
+      const argv = reviewRecoveryArgv(request);
+      if (!_commandAllowlist().has(argv[0].toLowerCase())) throw new Error("Recovery interpreter is not in HOMERAIL_DAG_COMMAND_ALLOWLIST");
+      preflightDagAgentRuntimes(before.graph!, before.agents as Record<string, DAGAgentConfig>);
+      const reservation = failed.workflowId ? reserveWorkflowRun({ runId, workflowId: failed.workflowId,
+        source: "recover:e2e-fix-review", policy: loadWorkflowConcurrencyPolicy(failed.workflowId) }) : { reserved: false };
+      if (before.currentRound?.expires_at !== undefined && before.currentRound.expires_at <= Date.now()) throw new Error("Recovery round expired");
+      if (Date.now() >= before.createdAt + checked.config.total_timeout_ms) throw new Error("Recovery task deadline expired during verification");
+      if (getDb().prepare("SELECT 1 FROM dag_actor_runtimes WHERE run_id = ? AND (state = 'leased' OR target_id IS NOT NULL)").get(runId)) throw new Error("Recovery found an outstanding actor lease");
+      const node = before.graph!.nodes.find(n => n.node_id === "review_evidence")!;
+      node.gateway_config!.command = argv;
+      const changed = getDb().prepare("UPDATE dag_run_rounds SET status = 'active', closed_at = NULL WHERE run_id = ? AND round_id = ? AND status = 'failed'")
+        .run(runId, before.currentRound!.round_id);
+      if (changed.changes !== 1) throw new Error("Recovery round conflict");
+      // New rounds will acquire fresh leases; generation and prior execution
+      // records are retained so delayed Worker messages remain fenced out.
+      getDb().prepare("UPDATE dag_actor_runtimes SET state = 'dormant', version = version + 1, state_changed_at = ?, updated_at = ? WHERE run_id = ? AND state = 'retired'")
+        .run(Date.now(), Date.now(), runId);
+      writeRunMetadata(runId, before); store.delete(runId);
+      const restored = restoreActiveRun(before, { notify: false });
+      if (restored.status !== "restored" || restored.run.status !== "active"
+        || restored.run.dagRun.nodeStates.get("review_evidence") !== "READY") throw new Error("Review recovery could not restore its checkpoint");
+      const run = restored.run;
+      const previous = run.nodeSessions.get("review_evidence");
+      _persistNodeSession(run, "review_evidence", { sessionId: _newSessionId(runId, "review_evidence"),
+        attempt: (previous?.attempt ?? 0) + 1, status: "active" });
+      for (const id of run.dagRun.loopSources) if (run.dagRun.nodeStates.get(id) === "RUNNING") _markNodeSessionStatus(run, id, "running");
+      const resumed = serializeRunMetadata(run); writeRunMetadata(runId, resumed);
+      const receipt = { run_id: runId, request_id: request.request_id, recovered_at: Date.now(),
+        previous_state_sha256: request.expected_state_sha256, resumed_state_sha256: recoveryDigest(resumed),
+        failed_execution_id: checked.failedExecution, round_id: before.currentRound!.round_id,
+        policy_sha256: checked.policy, original_runtime_sha256: checked.config.runtime_sha256 ?? null,
+        replacement_runtime_sha256: request.runtime_sha256, changed_nodes: ["review_evidence"],
+        recovery_attempt: 1, original_deadline: before.createdAt + checked.config.total_timeout_ms,
+        preserved_nodes: Object.keys(before.nodeStates).filter(id => before.nodeStates[id] === "COMPLETED").sort(),
+        candidate: checked.candidate };
+      getDb().prepare("INSERT INTO dag_e2e_fix_review_recoveries(run_id, policy_sha256, request_json, before_json, receipt_json) VALUES (?, ?, ?, ?, ?)")
+        .run(runId, checked.policy, requestJson, JSON.stringify(failed), JSON.stringify(receipt));
+      if (reservation.reserved) releaseWorkflowRunReservation(runId);
+      return { receipt, deduplicated: false };
+    }).immediate();
+    if (!result.deduplicated) {
+      emit("dag:run_recovered", { runId, recoveredAt: result.receipt.recovered_at, demotedFromRunning: [], reason: "verified E2E Fix review aggregation runtime revision" });
       _emitStatusUpdate(store.get(runId)!);
     }
     return result;

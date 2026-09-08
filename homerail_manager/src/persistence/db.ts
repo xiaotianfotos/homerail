@@ -59,6 +59,7 @@ const CLEARABLE_TABLES = new Set([
   "dag_events",
   "dag_run_admissions",
   "dag_dispatch_recoveries",
+  "dag_e2e_fix_review_recoveries",
   "dag_runs",
   "dag_durable_commands",
   "dag_workflow_revisions",
@@ -4985,6 +4986,15 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
       failed_sha256 TEXT NOT NULL,
       request_json TEXT,
       receipt_json TEXT,
+      FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS dag_e2e_fix_review_recoveries (
+      run_id TEXT PRIMARY KEY,
+      policy_sha256 TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      before_json TEXT NOT NULL,
+      receipt_json TEXT NOT NULL,
       FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
     );
 

@@ -2,12 +2,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { freezeE2eFixTask, runE2eFixStage, type E2eFixTaskConfig } from "../src/runtime/e2e-fix-stage.js";
 import { E2E_FIX_STAGES, parseE2eFixWorkflow, type E2eFixStage } from "../src/orchestration/e2e-fix-workflow.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import type { DAGDispatcher, DispatchEnvelope } from "../src/orchestration/dag-dispatcher.js";
-import { _clearActiveRuns, handoffActiveRun, getActiveRun, failActiveRun, requestNodeCorrection } from "../src/runtime/active-runs.js";
+import { _clearActiveRuns, handoffActiveRun, getActiveRun, failActiveRun, requestNodeCorrection, reconstructTerminalCommandCheckpoint, recoverE2eFixReviewRun } from "../src/runtime/active-runs.js";
+import { recoveryDigest } from "../src/runtime/dag-dispatch-recovery.js";
+import { freezeE2eFixRuntime } from "../src/runtime/e2e-fix-runtime.js";
+import { assertE2eFixStageRuntime, reviewRecoveryArgv } from "../src/runtime/e2e-fix-stage-runtime.js";
+import { durableCommandDirectory } from "../src/runtime/durable-command.js";
+import { getDagSessionIndex } from "../src/persistence/dag-session-index.js";
+import { createServer } from "../src/server/http.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import { appendNodeUsage, appendChatEntry, loadRunSnapshot } from "../src/persistence/store.js";
 import { subscribe } from "../src/events/bus.js";
@@ -180,6 +186,113 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         expect(JSON.stringify(snapshot.handoffs.at(-1))).toContain("stage output exceeds frozen context bound");
         expect(fs.existsSync(path.join(folder, "review_evidence.json"))).toBe(false);
         expect(models.calls.some(call => call.nodeId.startsWith("judge_"))).toBe(false);
+        const stateDigest = recoveryDigest(snapshot.metadata);
+        const changes = getDb().prepare("SELECT total_changes() AS changes").get();
+        const checkpoint = reconstructTerminalCommandCheckpoint(snapshot, stateDigest, "review_evidence");
+        expect(Object.entries(checkpoint.nodeStates).filter(([, state]) => state === "READY")).toEqual([["review_evidence", "READY"]]);
+        expect(checkpoint.createdAt).toBe(snapshot.metadata.createdAt);
+        expect(checkpoint.currentRound).toMatchObject({ round_id: snapshot.metadata.currentRound!.round_id, ordinal: 1,
+          opened_at: snapshot.metadata.currentRound!.opened_at, status: "active" });
+        expect(checkpoint.currentRound!.closed_at).toBeUndefined();
+        const { abort_reason: _, ...spent } = snapshot.metadata.counters!;
+        expect(checkpoint.counters).toEqual(spent);
+        for (const [id, state] of Object.entries(snapshot.metadata.nodeStates)) {
+          if (state === "COMPLETED") expect(checkpoint.nodeStates[id]).toBe("COMPLETED");
+        }
+        expect(getDb().prepare("SELECT total_changes() AS changes").get()).toEqual(changes);
+        expect(recoveryDigest(loadRunSnapshot("native-root")!.metadata)).toBe(stateDigest);
+        checkpoint.graph!.nodes.find(n => n.node_id === "review_evidence")!.gateway_config!.command = ["changed-copy"];
+        expect(recoveryDigest(snapshot.metadata)).toBe(stateDigest);
+        expect(() => reconstructTerminalCommandCheckpoint(snapshot, "0".repeat(64), "review_evidence")).toThrow(/state conflict/);
+        const changedMailbox = structuredClone(snapshot);
+        changedMailbox.metadata.dagRuntimeState!.mailboxes.review_evidence.test.push({ forged: true });
+        expect(() => reconstructTerminalCommandCheckpoint(changedMailbox, recoveryDigest(changedMailbox.metadata), "review_evidence")).toThrow(/replay differs/);
+        const missingHandoff = structuredClone(snapshot);
+        missingHandoff.handoffs.splice(missingHandoff.handoffs.findIndex(h => h.fromNode === "review_a"), 1);
+        expect(() => reconstructTerminalCommandCheckpoint(missingHandoff, stateDigest, "review_evidence")).toThrow(/not quiescent/);
+        const laterRound = structuredClone(snapshot);
+        laterRound.metadata.currentRound!.ordinal = 2;
+        expect(() => reconstructTerminalCommandCheckpoint(laterRound, recoveryDigest(laterRound.metadata), "review_evidence")).toThrow(/state conflict/);
+        // The replacement here is an inert runtime fixture. This proves only
+        // admission/transaction/fences, not that genuinely large data will fit.
+        // No tick follows recovery, so no model/test/command can execute again.
+        const runtimeSource = path.join(root, "runtime-source");
+        fs.mkdirSync(path.join(runtimeSource, "dist/runtime"), { recursive: true });
+        fs.writeFileSync(path.join(runtimeSource, "package.json"), JSON.stringify({ name: "recovery-runtime-fixture", type: "module" }));
+        fs.writeFileSync(path.join(runtimeSource, "dist/runtime/e2e-fix-stage-cli.js"), "throw new Error('fixture must never be executed');");
+        const runtime = freezeE2eFixRuntime(path.join(root, "replacement-runtime"), runtimeSource);
+        const request = { request_id: "review-recovery-1", expected_state_sha256: stateDigest, reason: "Verify explicit deterministic-stage runtime revision",
+          task_directory: task, runtime_directory: runtime.directory, runtime_sha256: runtime.sha256 };
+        process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST += "," + runtime.node;
+        const unchanged = () => expect(recoveryDigest(loadRunSnapshot("native-root")!.metadata)).toBe(stateDigest);
+        const clock = vi.spyOn(Date, "now").mockReturnValue(snapshot.metadata.createdAt + configuration.total_timeout_ms + 1);
+        try { expect(() => recoverE2eFixReviewRun("native-root", request)).toThrow(/deadline mismatch/); }
+        finally { clock.mockRestore(); }
+        unchanged();
+        fs.writeFileSync(path.join(runtime.directory, "extra.js"), "unexpected");
+        expect(() => recoverE2eFixReviewRun("native-root", request)).toThrow(/Unexpected recovery runtime file/);
+        unchanged(); fs.unlinkSync(path.join(runtime.directory, "extra.js"));
+        const completedCommand = getDb().prepare("SELECT execution_id FROM dag_durable_commands WHERE run_id = ? LIMIT 1").get("native-root") as { execution_id: string };
+        const commandLog = path.join(durableCommandDirectory(completedCommand.execution_id), "stdout.log");
+        const originalLog = fs.readFileSync(commandLog);
+        fs.appendFileSync(commandLog, "changed");
+        expect(() => recoverE2eFixReviewRun("native-root", request)).toThrow(/uncertain/);
+        unchanged(); fs.writeFileSync(commandLog, originalLog);
+        const failedSession = getDagSessionIndex("native-root", "review_evidence");
+        getDb().exec("CREATE TRIGGER reject_review_recovery BEFORE INSERT ON dag_e2e_fix_review_recoveries BEGIN SELECT RAISE(ABORT, 'injected recovery commit failure'); END");
+        expect(() => recoverE2eFixReviewRun("native-root", request)).toThrow(/injected recovery commit failure/);
+        unchanged();
+        expect(getActiveRun("native-root")?.status).toBe("failed");
+        expect(getDagSessionIndex("native-root", "review_evidence")).toEqual(failedSession);
+        getDb().exec("DROP TRIGGER reject_review_recovery");
+        const callsBefore = models.calls.length;
+        const result = recoverE2eFixReviewRun("native-root", request);
+        expect(result.deduplicated).toBe(false);
+        expect(result.receipt.changed_nodes).toEqual(["review_evidence"]);
+        expect(result.receipt.original_deadline).toBe(snapshot.metadata.createdAt + configuration.total_timeout_ms);
+        expect(getActiveRun("native-root")?.dagRun.nodeStates.get("review_evidence")).toBe("READY");
+        expect(getDagSessionIndex("native-root", "review_evidence")?.session_id).not.toBe(failedSession?.session_id);
+        expect(recoverE2eFixReviewRun("native-root", request)).toEqual({ ...result, deduplicated: true });
+        expect(() => recoverE2eFixReviewRun("native-root", { ...request, reason: "changed request" })).toThrow(/request conflict/);
+        expect(models.calls).toHaveLength(callsBefore);
+        expect(getDb().prepare("SELECT count(*) AS count FROM dag_e2e_fix_review_recoveries").get()).toEqual({ count: 1 });
+        const commandCount = getDb().prepare("SELECT count(*) AS count FROM dag_durable_commands").get();
+        const previousToken = process.env.HOMERAIL_DAG_MUTATION_TOKEN;
+        process.env.HOMERAIL_DAG_MUTATION_TOKEN = "review-recovery-test-token";
+        const server = createServer(0, undefined, models, false);
+        try {
+          await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+          const address = server.address() as { port: number };
+          const rejected = await fetch(`http://127.0.0.1:${address.port}/api/runs/native-root/e2e-fix-review-recovery`, {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request),
+          });
+          expect(rejected.status).toBe(403); await rejected.text();
+          const response = await fetch(`http://127.0.0.1:${address.port}/api/runs/native-root/e2e-fix-review-recovery`, {
+            method: "POST", headers: { "content-type": "application/json", "x-homerail-dag-token": process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? "" },
+            body: JSON.stringify(request),
+          });
+          const body = await response.json();
+          expect(response.status).toBe(200); expect(body.data).toMatchObject({ deduplicated: true, dispatched: 0, receipt: result.receipt });
+          expect(getDb().prepare("SELECT count(*) AS count FROM dag_durable_commands").get()).toEqual(commandCount);
+          expect(models.calls).toHaveLength(callsBefore);
+        } finally {
+          await new Promise<void>(resolve => server.close(() => resolve()));
+          if (previousToken === undefined) delete process.env.HOMERAIL_DAG_MUTATION_TOKEN;
+          else process.env.HOMERAIL_DAG_MUTATION_TOKEN = previousToken;
+        }
+        const oldRuntime = process.env.HOMERAIL_E2E_FIX_RUNTIME_SHA256;
+        process.env.HOMERAIL_E2E_FIX_RUNTIME_SHA256 = runtime.sha256;
+        const policy = fs.readFileSync(path.join(task, "config.sha256"), "utf8");
+        const pinned = { root_run_id: "native-root", runtime_sha256: "a".repeat(64) };
+        try {
+          expect(() => assertE2eFixStageRuntime(task, "review_evidence", pinned, policy, reviewRecoveryArgv(request))).not.toThrow();
+          expect(() => assertE2eFixStageRuntime(task, "plan", pinned, policy, reviewRecoveryArgv(request))).toThrow(/runtime identity/);
+          expect(() => assertE2eFixStageRuntime(task, "review_evidence", pinned, policy, ["different-command"])).toThrow(/runtime identity/);
+          expect(() => assertE2eFixStageRuntime(task, "review_evidence", pinned, "b".repeat(64), reviewRecoveryArgv(request))).toThrow(/runtime identity/);
+        } finally {
+          if (oldRuntime === undefined) delete process.env.HOMERAIL_E2E_FIX_RUNTIME_SHA256;
+          else process.env.HOMERAIL_E2E_FIX_RUNTIME_SHA256 = oldRuntime;
+        }
         return;
       }
       const unknownCi = ["unknown-ci", "stale-ci"].includes(scenario);

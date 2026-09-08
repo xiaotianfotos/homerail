@@ -25,6 +25,7 @@ import {
   interveneActiveRunActor,
   restoreActiveRun,
   recoverPreDispatchRun,
+  recoverE2eFixReviewRun,
   resumeWaitingActiveRun,
   type InterveneDagActorRequest,
   type InterveneDagActorResult,
@@ -417,6 +418,11 @@ export class ChangeOrchestrator {
     const result = recoverPreDispatchRun(runId, request);
     const dispatched = result.deduplicated ? 0 : this.graphExecutor.tick(runId);
     return { ...result, dispatched };
+  }
+
+  recoverE2eFixReview(runId: string, request: unknown) {
+    const result = recoverE2eFixReviewRun(runId, request);
+    return { ...result, dispatched: result.deduplicated ? 0 : this.graphExecutor.tick(runId) };
   }
 
   createAndRun(request: CreateAndRunRequest): CreateAndRunResponse {
