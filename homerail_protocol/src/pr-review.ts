@@ -241,7 +241,7 @@ export function classifyReviewFailure(reason: unknown): ReviewFailureCategory {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return "unknown";
   if (
-    /(?:max[_ ]?tokens|output[_ ]?limit|truncat|stop[_ ]?reason[^A-Za-z]*max[_ ]?tokens|DAG_REVIEW_EVIDENCE_TRUNCATED)/i.test(normalized)
+    /(?:max[-_ ]?tokens|output[_ ]?limit|truncat|stop[_ ]?reason[^A-Za-z]*max[-_ ]?tokens|DAG_REVIEW_EVIDENCE_TRUNCATED)/i.test(normalized)
   ) {
     return "provider_output_truncated";
   }
@@ -251,7 +251,7 @@ export function classifyReviewFailure(reason: unknown): ReviewFailureCategory {
     return "handoff_arguments_invalid";
   }
   if (
-    /(?:DAG_HANDOFF_CONTRACT_VIOLATION|DAG_HANDOFF_SCHEMA|contract[_ -]?valid|output contract|schema validation)/i.test(normalized)
+    /(?:DAG_HANDOFF_CONTRACT_VIOLATION|DAG_HANDOFF_SCHEMA|contract[_ -]?valid(?:ation|ated|ity)\b|output contract|schema validation)/i.test(normalized)
   ) {
     return "contract_validation_failed";
   }
@@ -332,10 +332,15 @@ export function sanitizeAttemptDiagnostic(
     ? diagnostic.failure_reason
     : options.failure_reason;
   const declaredCategory = enumOrFallback(diagnostic.failure_category, REVIEW_FAILURE_CATEGORIES, "unknown");
+  const knownTruncationFinish = /^(?:max[-_ ]?tokens|length)$/i.test(String(diagnostic.finish_reason ?? ""));
   const failureCategory = declaredCategory === "unknown"
     || (declaredCategory === "accepted" && options.failure_reason !== undefined)
     ? classifyReviewFailure(failureReason ?? diagnostic.finish_reason ?? "")
-    : declaredCategory;
+    : declaredCategory === "accepted"
+      ? "accepted"
+      : knownTruncationFinish
+        ? "provider_output_truncated"
+        : declaredCategory;
   const diagnosticValue: AttemptDiagnosticV1 = {
     schema: ATTEMPT_DIAGNOSTIC_SCHEMA_ID,
     attempt,
