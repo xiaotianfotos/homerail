@@ -81,6 +81,10 @@ class Models implements DAGDispatcher {
           const code = this.scenario === "test-review-loop" ? ["module.exports=(a,b)=>a-b;\n", "module.exports=(a,b)=>Math.abs(a+b);\n", "module.exports=(a,b)=>a+b;\n"][value.round - 1]
             : this.scenario === "ci-feedback" && value.round === 2 ? "module.exports=(a,b)=>a+b+0;\n" : "module.exports=(a,b)=>a+b;\n";
           result = { summary: "repair candidate " + value.round, edits: [{ path: "sum.cjs", old: this.scenario === "invalid-proposal" && value.round === 1 ? "stale source" : value.sources["sum.cjs"], new: code }] };
+          if (this.scenario === "model-truncated") result = { summary: "repair with short independent snippets", edits: [
+            { path: "sum.cjs", old: "=>0", new: "=>a+b" },
+            { path: "sum.cjs", old: "module.exports", new: "// add signed numbers\nmodule.exports" },
+          ] };
         } else if (envelope.nodeId.startsWith("review_")) {
           // Deterministic reviewer substitute. It examines the source actually
           // delivered by the stage, independently of sibling votes.
@@ -169,9 +173,13 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         expect(fs.existsSync(path.join(task, "rounds", "1", "fixer.json"))).toBe(false);
         expect(read(1, "fixer_failure").attempts).toHaveLength(scenario === "model-stale-evidence" ? 0 : 1);
         expect(models.calls.some(c => c.nodeId.startsWith("review_") && (c.inputs.evidence.at(-1) as any).round === 1)).toBe(false);
-        if (scenario === "model-truncated") expect(read(2, "context").previous.evidence).toMatchObject({
-          retry_strategy: expect.any(String), model_failure: { outcome: "output_truncated", attempts: [{ output_tokens: 8191 }] },
-        });
+        if (scenario === "model-truncated") {
+          expect(read(2, "context").previous.evidence).toMatchObject({
+            retry_strategy: expect.any(String), model_failure: { outcome: "output_truncated", attempts: [{ output_tokens: 8191 }] },
+          });
+          expect(read(2, "fixer").value.edits).toHaveLength(2);
+          expect(read(2, "fixer").value.edits.every((edit: {path: string}) => edit.path === "sum.cjs")).toBe(true);
+        }
         if (scenario === "model-same-plan") {
           expect(models.calls.filter(c => c.nodeId === "plan")).toHaveLength(2);
           expect(models.calls.filter(c => c.nodeId === "fix")).toHaveLength(1);

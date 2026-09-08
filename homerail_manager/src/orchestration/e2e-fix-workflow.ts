@@ -197,7 +197,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
       contracts: { TaskReference: { type: "object", required: ["task_id"], properties: { task_id: text } }, Plan: plan, Patch: patch, Review: review, Judgment: judgment },
       agents: {
         planner: { system: "You are the Codex Planner. Propose a bounded strategy and allowed paths using the supplied issue, source and prior evidence. Return Plan via handoff; do not claim tests ran." },
-        fixer: { system: "Apply the supplied frozen Codex plan by proposing minimal exact old/new edits. Use short uniquely matching snippets, never repeat an entire existing file when a local edit suffices. Return Patch via handoff. Do not expand scope, execute publication or approve your own work." },
+        fixer: { system: "Apply the supplied frozen Codex plan by proposing minimal exact old/new edits. Use short uniquely matching snippets, never repeat an entire existing file when a local edit suffices. Multiple edits to one file are allowed only when each old snippet matches the supplied original source exactly once and their ranges do not overlap; do not target text introduced by another edit. Return Patch via handoff. Do not expand scope, execute publication or approve your own work." },
         ...Object.fromEntries(["a", "b", "c"].map(id => [`reviewer_${id}`, {
           system: "Independently review this candidate and its test evidence. Return Review via handoff. Do not modify files, invent execution evidence, or consult another reviewer vote.",
         }])),

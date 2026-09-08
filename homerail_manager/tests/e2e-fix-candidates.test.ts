@@ -56,8 +56,31 @@ describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () =>
   it("rejects stale, ambiguous, duplicate and no-op edits", () => {
     expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "missing", new: "x" }] })).toThrow(/stale/);
     expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "a", new: "x" }] })).toThrow(/ambiguous/);
-    expect(() => store.capture({ ...request(), edits: [...request().edits, ...request().edits] })).toThrow(/scope/);
+    expect(() => store.capture({ ...request(), edits: [...request().edits, ...request().edits] })).toThrow(/overlapping|duplicate/);
     expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "a-b", new: "a-b" }] })).toThrow(/unchanged/);
+  });
+  it("applies multiple disjoint snippets in one file against the frozen parent regardless of order", () => {
+    const edits = [{ path: "sum.cjs", old: "module.exports", new: "// literal $& is preserved\nmodule.exports" },
+      { path: "sum.cjs", old: "a-b", new: "a+b" }];
+    const candidate = store.capture({ ...request(), edits: [...edits].reverse() });
+    expect(store.source(candidate.head, ["sum.cjs"])["sum.cjs"]).toBe("// literal $& is preserved\nmodule.exports = (a,b) => a+b;\n");
+    const other = new E2eFixCandidates(path.join(root, "other")); other.seed(repo, base);
+    expect(other.capture({ ...request(), edits })).toEqual(candidate);
+  });
+  it("rejects overlapping snippets, including identical ranges, before saving a candidate", () => {
+    expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "a-b", new: "a+b" },
+      { path: "sum.cjs", old: "a-b;", new: "a*b;" }] })).toThrow(/overlapping/);
+    expect(fs.existsSync(path.join(store.directory, "candidates", "1.json"))).toBe(false);
+  });
+  it("rejects a chained edit that only matches newly introduced text", () => {
+    expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "a-b", new: "a+b" },
+      { path: "sum.cjs", old: "a+b", new: "a*b" }] })).toThrow(/stale/);
+  });
+  it("rejects duplicate new files and combined no-op changes", () => {
+    expect(() => store.capture({ ...request(), allowed_paths: ["new.cjs"], edits: [
+      { path: "new.cjs", old: "", new: "first" }, { path: "new.cjs", old: "", new: "second" }] })).toThrow(/duplicate/);
+    expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "module.", new: "module" },
+      { path: "sum.cjs", old: "exports", new: ".exports" }] })).toThrow(/unchanged combined/);
   });
   it("preserves literal dollar substitutions and only permits explicit new-file scope", () => {
     const candidate = store.capture({ ...request(), allowed_paths: ["new.cjs"], edits: [{ path: "new.cjs", old: "", new: "module.exports='$&';" }] });

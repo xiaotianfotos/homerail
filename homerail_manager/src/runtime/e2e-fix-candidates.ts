@@ -118,19 +118,36 @@ export class E2eFixCandidates {
     if (!Array.isArray(input.edits) || !input.edits.length || input.edits.length > 20
       || Buffer.byteLength(JSON.stringify(input.edits)) > 1_000_000) throw new E2eFixProposalError("invalid patch size");
     const current = new Map(this.entries(input.parent).map(e => [e.path, e]));
-    const seen = new Set<string>();
-    const replacements: Array<{ path: string; bytes: string; mode: string }> = [];
+    const changes = new Map<string, { source: string; mode: string; exists: boolean;
+      edits: Array<{ start: number; end: number; replacement: string }> }>();
     for (const edit of input.edits) {
       try { e2eFixPath(edit.path); } catch { throw new E2eFixProposalError("unsafe repository path in proposal"); }
-      if (!input.allowed_paths.includes(edit.path) || seen.has(edit.path)
+      if (!input.allowed_paths.includes(edit.path)
         || input.protected_paths.some(p => edit.path === p || edit.path.startsWith(p + "/"))) throw new E2eFixProposalError("patch exceeds frozen scope");
-      seen.add(edit.path);
       if (typeof edit.old !== "string" || typeof edit.new !== "string" || edit.old.includes("\0") || edit.new.includes("\0") || edit.old === edit.new) throw new E2eFixProposalError("invalid or unchanged edit");
       const previous = current.get(edit.path);
       const source = previous?.bytes.toString("utf8") ?? "";
       if (previous && !Buffer.from(source).equals(previous.bytes)) throw new Error("patch targets non-UTF-8 source");
       if (previous ? !edit.old || source.indexOf(edit.old) < 0 || source.indexOf(edit.old) !== source.lastIndexOf(edit.old) : edit.old !== "") throw new E2eFixProposalError("stale or ambiguous patch");
-      replacements.push({ path: edit.path, mode: previous?.mode ?? "100644", bytes: previous ? source.replace(edit.old, () => edit.new) : edit.new });
+      const change = changes.get(edit.path) ?? { source, mode: previous?.mode ?? "100644", exists: !!previous, edits: [] };
+      const start = previous ? source.indexOf(edit.old) : 0;
+      change.edits.push({ start, end: start + edit.old.length, replacement: edit.new });
+      changes.set(edit.path, change);
+    }
+    const replacements: Array<{ path: string; bytes: string; mode: string }> = [];
+    for (const [file, change] of changes) {
+      // All matches refer to the frozen parent, never to text introduced by an
+      // earlier edit. Apply non-overlapping ranges in reverse offset order so
+      // model serialization order cannot silently change patch semantics.
+      const edits = change.edits.sort((a, b) => a.start - b.start);
+      if ((!change.exists && edits.length !== 1)
+        || edits.some((edit, i) => i > 0 && edits[i - 1].end > edit.start)) {
+        throw new E2eFixProposalError("overlapping or duplicate patch edits");
+      }
+      let bytes = change.source;
+      for (const edit of [...edits].reverse()) bytes = bytes.slice(0, edit.start) + edit.replacement + bytes.slice(edit.end);
+      if (change.exists && bytes === change.source) throw new E2eFixProposalError("unchanged combined patch");
+      replacements.push({ path: file, bytes, mode: change.mode });
     }
     const index = path.join(this.directory, `index-${randomUUID()}`);
     const env = { GIT_INDEX_FILE: index };

@@ -1,5 +1,14 @@
 # E2E Fix: recovering a pre-dispatch configuration failure
 
+Patch proposals can contain multiple small edits to one authorized file. Each
+`old` snippet must match the frozen parent exactly once, and matched ranges
+must not overlap. Edits are applied in reverse offset order, so their array
+order cannot change the result. An edit cannot match text inserted by another
+edit. Duplicate new-file creation, combined no-op changes, out-of-scope paths
+and protected paths remain rejected. This lets the executor accept the same
+short-snippet format requested by the Codex plan without requiring whole-file
+replacements; it does not establish why a previous model response truncated.
+
 Host Codex Judgers use a strict provider schema: every property is required,
 with a nullable `retry_strategy` normalized to absence in native Judgment
 receipts. The adapter releases its app-server before yielding final diagnostic
