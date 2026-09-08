@@ -8,6 +8,7 @@ import { loadRunMetadata, loadRunSnapshot, loadNodeUsages } from "../persistence
 import { E2eFixCandidates, E2eFixProposalError, e2eFixDigest, e2eFixPath, immutableE2eFixFile, type E2eFixEdit } from "./e2e-fix-candidates.js";
 import { E2eFixIsolatedTest, validateE2eFixTestDefinition, type E2eFixTestDefinition } from "./e2e-fix-test.js";
 import type { E2eFixStage } from "../orchestration/e2e-fix-workflow.js";
+import { validateE2eFixGitHub, type E2eFixGitHubConfig } from "./e2e-fix-github.js";
 
 const digest = (value: unknown) => e2eFixDigest(JSON.stringify(value));
 type Policy = E2eFixAcceptanceInput["policy"];
@@ -19,11 +20,12 @@ export interface E2eFixTaskConfig {
   tests: E2eFixTestDefinition[]; policy: Omit<Policy, "sha256">;
   max_rounds: number; max_infra_retries: number; context_bytes: number; total_timeout_ms: number;
   runtime_sha256?: string;
+  github?: E2eFixGitHubConfig;
 }
 export interface E2eFixStageProviders {
   mode: "production" | "simulation";
   publish(config: E2eFixTaskConfig, candidate: E2eFixCandidate, directory: string): E2eFixAcceptanceInput["publication"];
-  ci(config: E2eFixTaskConfig, candidate: E2eFixCandidate, publication: E2eFixAcceptanceInput["publication"], directory: string): E2eFixAcceptanceInput["ci"];
+  ci(config: E2eFixTaskConfig, candidate: E2eFixCandidate, publication: E2eFixAcceptanceInput["publication"], directory: string): E2eFixAcceptanceInput["ci"] & { feedback?: unknown };
 }
 interface ModelEvidence {
   node_id: string; dispatch_id: string; session_id: string; attempt: number;
@@ -49,6 +51,7 @@ export function freezeE2eFixTask(directory: string, config: E2eFixTaskConfig): s
     || !isDeepStrictEqual([...config.tests.map(t => t.id)].sort(), [...config.policy.required_tests].sort())
     || !isDeepStrictEqual([...config.policy.reviewer_ids].sort(), ["review_a", "review_b", "review_c"])) throw new Error("frozen test/reviewer set mismatch");
   E2eFixAcceptancePolicySchema.parse({ ...config.policy, sha256: digest(config) });
+  if (config.github || config.mode === "production") validateE2eFixGitHub(config);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   if (!fs.lstatSync(directory).isDirectory() || (fs.statSync(directory).mode & 0o077)) throw new Error("task custody must be private");
   immutableE2eFixFile(path.join(directory, "config.json"), JSON.stringify(config));
@@ -200,14 +203,14 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const candidate = decision.candidate;
     if (stage === "publish") result = { ...reference(), candidate, publication: providers.publish(config, candidate, directory) };
     else {
-      const publication = read("publish").publication; const ci = providers.ci(config, candidate, publication, directory);
+      const publication = read("publish").publication; const { feedback, ...ci } = providers.ci(config, candidate, publication, directory);
       const conclusions = policy.required_ci_jobs.map(key => ci.jobs.find(j => j.key === key)?.conclusion);
       const known = sameE2eFixCandidate(ci.candidate, candidate) && publication.state === "open"
         && publication.observed_head === candidate.head && ci.observed_pr_head === candidate.head
         && ci.pr === publication.pr && ci.workflow_path === policy.ci_workflow_path
         && new Set(ci.jobs.map(j => j.key)).size === ci.jobs.length
         && ci.status === "completed" && conclusions.every(c => c === "success" || c === "failure");
-      result = { ...reference(), candidate, ci, review_reports: read("review_evidence").reports,
+      result = { ...reference(), candidate, ci, ci_feedback: feedback ?? null, review_reports: read("review_evidence").reports,
         candidate_judgment: decision, policy,
         outcome: !known ? "infrastructure_failure" : conclusions.every(c => c === "success") ? "ci_passed" : "code_failure" };
     }
@@ -221,7 +224,7 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const acceptance = evaluateE2eFixAcceptance({ candidate, policy, fixer_dispatch_id: fixer.dispatch_id, fixer_session_id: fixer.session_id,
       tests: read("test").tests, reviews, judgment, publication: read("publish").publication, ci: read("ci").ci });
     result = { ...reference(), candidate, action: evidence.value.verdict === "revise" && read("ci").outcome === "code_failure" ? "revise" : acceptance.eligible ? "complete" : "pause",
-      reason: evidence.value.reason, feedback: read("ci").ci, acceptance, mode: config.mode, production_eligible: config.mode === "production" && acceptance.eligible };
+      reason: evidence.value.reason, feedback: { ci: read("ci").ci, details: read("ci").ci_feedback }, acceptance, mode: config.mode, production_eligible: config.mode === "production" && acceptance.eligible };
   } else throw new Error("unknown E2E Fix stage");
   if (Buffer.byteLength(JSON.stringify(result)) > config.context_bytes) throw new Error("stage output exceeds frozen context bound");
   write(stage, result);

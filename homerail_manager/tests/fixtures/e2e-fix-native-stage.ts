@@ -17,9 +17,11 @@ const providers: E2eFixStageProviders = {
     const scenario = JSON.parse(fs.readFileSync(path.join(directory, "fixture-scenario.json"), "utf8"));
     const unknown = scenario === "unknown-ci";
     const stale = scenario === "stale-ci";
+    const failed = scenario === "ci-feedback" && candidate.round === 1;
     return { candidate, artifact_sha256: e2eFixDigest("simulated-ci:" + candidate.head), pr: publication.pr,
       workflow_run_id: "simulated-ci", workflow_attempt: 1, workflow_path: config.policy.ci_workflow_path,
-      observed_pr_head: stale ? config.base : candidate.head, status: unknown ? "unknown" : "completed", jobs: config.policy.required_ci_jobs.map(key => ({ key, conclusion: stale ? "failure" : "success" })) };
+      observed_pr_head: stale ? config.base : candidate.head, status: unknown ? "unknown" : "completed", jobs: config.policy.required_ci_jobs.map(key => ({ key, conclusion: stale || failed ? "failure" : "success" })),
+      feedback: failed ? { logs: [{ tail: "CI fixture assertion failure requiring a revision" }] } : null };
   },
 };
 try {

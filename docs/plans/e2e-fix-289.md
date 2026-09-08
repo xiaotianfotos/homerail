@@ -293,10 +293,10 @@ Judger 记录和最终共享门禁已接入原生 while/feedback，适配器不�
 这里的语义审查是确定性替身，GitHub 无网络调用；即使模拟门禁通过，结果仍明确
 标记 `production_eligible: false`，不能算作真实模型或真实 PR 成功。
 
-**尚未完成**：生产发布/CI provider、跨反馈与模型阶段
+**尚未完成**：跨反馈与模型阶段
 恢复矩阵、停滞指纹/实际 token 预算，以及真实模型、GitHub 和两个真实 issue 验收。
-CLI 只提供阶段调用入口，尚未配置生产发布 provider；因此还不注册为可直接使用的
-E2E Fix 模板。下一步先补这些边界，再启动隔离的真实服务演练。
+CLI 的生产发布/CI provider 接入见下文；真实凭证、模型和故障恢复仍待演练，因此
+还不注册为可直接使用的 E2E Fix 模板。
 
 ## P2 运行时快照边界
 
@@ -321,3 +321,37 @@ Node 路径加入 command allowlist。生产模式要求冻结运行时；阶段
 Docker服务；升级这些组件后的兼容性仍需验证。该机制依赖可信宿主和私有目录，
 不防御同 UID 的任意恶意宿主程序。跨数据库版本迁移也不能靠旧快照自动保证。
 后续真实部署必须对已运行任务采用兼容升级策略，或先结束任务再迁移数据库。
+
+## P2 GitHub 程序阶段（尚未通过真实发布验收）
+
+阶段 CLI 已接入生产 GitHub provider。冻结配置增加目标 base 分支、必需 job 的
+精确名称映射、checkout action 的完整提交 SHA 和观察时限/间隔。模型没有 GitHub
+凭证；宿主程序通过已有 `gh` 身份调用固定 GitHub API，并使用其 Git credential
+helper 推送任务专属 `codex/e2e-fix-*` 分支。启动真实任务前必须确认该身份具备
+目标仓库和 Actions 权限；本实现不会给模型配置 token 或开放发布工具。
+
+发布前核对私有候选 Git、冻结 CI workflow 内容和已发布历史的祖先关系。
+分支更新带精确 lease；PR 的仓库、分支、base、任务标记、正文和编号均持久绑定。
+首次创建 draft PR，后续轮次更新同一分支/PR，不另建 PR。关闭或丢失的已拥有 PR、
+外部分支修改和身份不符均拒绝。创建与推送先持久化意图及一次性 claim；写请求
+应答丢失时只读对账，不能因为未收到成功响应就再次创建或覆盖。
+
+当前仓库没有 pull_request synchronize 触发，因此程序显式 dispatch CI，并冻结
+candidate head 为 target_ref。记录派发前已有 run，排除它们，再绑定唯一新 run
+及 attempt；等待仅由宿主阶段程序执行，不消耗模型 token。每个必需 job 精确匹配
+名称与结论，重复、缺失、跳过、旧 head、attempt 漂移和观察失败不能算通过。
+
+此外读取每个必需 job 的原始日志，核对冻结 checkout action 在第一个执行步骤
+输出的实际 `git log -1 --format=%H`。仅解析 checkout 到下一步骤之前的区间，
+不接受候选代码随后打印的同名命令或 SHA。取不到日志、格式不支持或 head 不符
+均保持 unknown；不能以 workflow head 或提交的 target_ref 代替实际 checkout。
+这依赖可信 GitHub 服务及冻结 workflow 的“checkout 是第一个 action”契约，
+不是任意 CI 系统的通用证明。已用本仓库历史 Linux 和 Windows 原始 CI 日志核对
+该格式；这两份历史日志只证明解析兼容性，不计入新候选的 CI 成功证据。
+
+失败 job 的完整日志留在宿主证据目录，有界摘要随 CI 证据进入 Judger，再传给
+下一轮 Planner。新增原生整图用例验证 CI 失败 → 图内修复 → 同 PR 更新 → 验收，
+仍使用模拟模型和 GitHub。API 注入测试覆盖丢失 push/create/dispatch 应答、重复
+调用、分支漂移、未知创建结果、重复 run、attempt 漂移、缺失/跳过 job、错误
+checkout 和日志反馈。真实 GitHub 写入、真实模型及整个任务恢复仍须 P3/P4 验收；
+这些测试不授权把模拟结果标为生产通过，当前也未创建实现 PR 或演练 PR。

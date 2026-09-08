@@ -43,7 +43,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "test-review-loop" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition";
+type Scenario = "test-review-loop" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback";
 
 class Models implements DAGDispatcher {
   constructor(readonly scenario: Scenario) {}
@@ -58,7 +58,8 @@ class Models implements DAGDispatcher {
         let result: unknown;
         if (envelope.nodeId === "plan") result = { strategy: "Implement signed addition using current evidence", allowed_paths: ["sum.cjs"] };
         else if (envelope.nodeId === "fix") {
-          const code = this.scenario === "test-review-loop" ? ["module.exports=(a,b)=>a-b;\n", "module.exports=(a,b)=>Math.abs(a+b);\n", "module.exports=(a,b)=>a+b;\n"][value.round - 1] : "module.exports=(a,b)=>a+b;\n";
+          const code = this.scenario === "test-review-loop" ? ["module.exports=(a,b)=>a-b;\n", "module.exports=(a,b)=>Math.abs(a+b);\n", "module.exports=(a,b)=>a+b;\n"][value.round - 1]
+            : this.scenario === "ci-feedback" && value.round === 2 ? "module.exports=(a,b)=>a+b+0;\n" : "module.exports=(a,b)=>a+b;\n";
           result = { summary: "repair candidate " + value.round, edits: [{ path: "sum.cjs", old: this.scenario === "invalid-proposal" && value.round === 1 ? "stale source" : value.sources["sum.cjs"], new: code }] };
         } else if (envelope.nodeId.startsWith("review_")) {
           // Deterministic reviewer substitute. It examines the source actually
@@ -89,7 +90,7 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["test-review-loop", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition"])("autonomously handles %s in one root", async (scenario) => {
+  it.each<Scenario>(["test-review-loop", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
     const task = path.join(root, "task");
@@ -133,7 +134,7 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
       const blockedReview = ["unresolved-review", "duplicate-disposition"].includes(scenario);
       expect(getActiveRun("native-root")?.status, JSON.stringify(snapshot.handoffs.at(-1))).toBe(unknownCi || blockedReview ? "cancelled" : "completed");
       const read = (round: number, name: string) => JSON.parse(fs.readFileSync(path.join(task, "rounds", String(round), name + ".json"), "utf8"));
-      const rounds = scenario === "test-review-loop" ? 3 : scenario === "invalid-proposal" ? 2 : 1;
+      const rounds = scenario === "test-review-loop" ? 3 : ["invalid-proposal", "ci-feedback"].includes(scenario) ? 2 : 1;
       if (scenario === "test-review-loop") {
         expect(read(1, "test").outcome).toBe("code_failure");
         expect(read(2, "test").outcome).toBe("passed"); expect(read(2, "review_evidence").findings.length).toBe(3);
@@ -144,6 +145,11 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
       } else if (unknownCi) {
         expect(read(1, "ci").outcome).toBe("infrastructure_failure");
         expect(read(1, "ci_judger").value.verdict).toBe("revise");
+      } else if (scenario === "ci-feedback") {
+        expect(read(1, "ci").outcome).toBe("code_failure");
+        expect(read(2, "context").previous.evidence.details.logs[0].tail).toContain("CI fixture assertion failure");
+        expect(read(2, "publish").publication.pr).toBe(read(1, "publish").publication.pr);
+        expect(models.calls.filter(c => c.nodeId === "judge_ci")).toHaveLength(2);
       }
       if (blockedReview) {
         expect(read(1, "record_candidate_judgment").action).toBe("pause");
