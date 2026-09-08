@@ -343,6 +343,8 @@ describe("Codex model catalog", () => {
       await new Promise((r) => setTimeout(r, 0));
       ctrl.release(1, new Error("notification write failed"));
       await expect(promise).rejects.toThrow("notification write failed");
+      expect(ctrl.child.killed).toBe(true);
+      expect(ctrl.messages.map((m) => m.method)).toEqual(["initialize", "initialized"]);
     });
 
     it("catches synchronous stdin write throw", async () => {
@@ -372,7 +374,7 @@ describe("Codex model catalog", () => {
         const rejection = expect(promise).rejects.toThrow("Timed out");
         await vi.advanceTimersByTimeAsync(6_000);
         await rejection;
-        expect(ctrl.child).toBeDefined();
+        expect(ctrl.child.killed).toBe(true);
       } finally {
         vi.useRealTimers();
       }
@@ -436,6 +438,8 @@ describe("Codex model catalog", () => {
       await new Promise((r) => setTimeout(r, 0));
       ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, result: { data: [], nextCursor: "c1" } })}\n`);
       await expect(promise).rejects.toThrow("repeated model catalog cursor: c1");
+      expect(ctrl.child.killed).toBe(true);
+      expect(ctrl.messages.map((m) => m.id)).toEqual([1, undefined, 2, 3]);
     });
 
     it("ignores model responses before pendingModelRequestId is set", async () => {
@@ -462,6 +466,7 @@ describe("Codex model catalog", () => {
       await new Promise((r) => setTimeout(r, 0));
       ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
       await promise;
+      expect(ctrl.child.killed).toBe(true);
     });
   });
 
