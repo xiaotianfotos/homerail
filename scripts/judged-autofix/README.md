@@ -68,6 +68,15 @@ Create an external task directory and `config.json` (replace example paths and I
 }
 ```
 
+The optional `publish_checks` field (default `[]`) names additional checks that
+must produce trusted passing receipts before acceptance or publication. Every
+check listed in `plan.checks` is always required regardless of this field. An
+explicit `publish_checks` list must contain only strings naming keys in
+`checks`; it is validated at task initialization before any model round begins.
+Omission is handled without rewriting immutable configuration, so existing
+tasks created without this field resume unchanged after reviewed engine
+promotion.
+
 Configuration is immutable for the task. Supply the Manager mutation token via
 `HOMERAIL_DAG_MUTATION_TOKEN` on the supervising host. The local model does not
 receive GitHub authentication; `publish` uses the host's existing Git/`gh` login.

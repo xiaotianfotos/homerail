@@ -16,6 +16,7 @@ export class JudgedLoop {
     this.root=path.resolve(root);this.config=read(path.join(this.root,'config.json'));
     this.repo=new Repository(this.config.repo);this.file=path.join(this.root,'state.json');
     if(!path.isAbsolute(this.config.repo)||!this.config.id||!this.config.checks)throw new Error('invalid task configuration');
+    if(this.config.publish_checks!==undefined&&(!Array.isArray(this.config.publish_checks)||!this.config.publish_checks.every(n=>typeof n==='string'&&Object.prototype.hasOwnProperty.call(this.config.checks,n))))throw new Error('publish_checks must be an array of strings naming keys in checks');
     this.state=fs.existsSync(this.file)?read(this.file):{version:1,config_digest:identity(this.config),phase:'ready',rounds:[],events:[],task_nonce:randomUUID()};
     if(this.state.config_digest!==identity(this.config))throw new Error('task configuration changed');
     if(!this.state.task_nonce){this.state.task_nonce=randomUUID();this.save('task_nonce_initialized');}
@@ -183,7 +184,7 @@ export class JudgedLoop {
     const r=this.round;this.assertHead(r.candidate_commit);
     if(this.repo.git(['status','--porcelain']))throw new Error('candidate is dirty');
     const runnerDigest=digest(fs.readFileSync(new URL('./test-job.mjs',import.meta.url)));
-    for(const name of[...r.plan.checks,...this.config.publish_checks]){
+    for(const name of[...r.plan.checks,...(this.config.publish_checks??[])]){
       const check=this.config.checks[name];
       if(!r.receipts?.some(t=>t.name===name&&t.tree===r.candidate_tree&&t.commit===r.candidate_commit&&t.spec_digest===identity(check)&&t.runner_digest===runnerDigest&&t.status==='passed'&&t.exit_code===0&&!t.signal&&fs.existsSync(t.log_path)&&digest(fs.readFileSync(t.log_path))===t.log_digest))
         throw new Error(`missing trusted passing receipt or evidence mismatch for ${name}`);
