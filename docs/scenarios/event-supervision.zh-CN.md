@@ -55,6 +55,8 @@ python3 scripts/event-supervisor/durable.py reconcile /absolute/registration.jso
 `runner.json`（退出码、任务快照、日志摘要）。服务重启后复用完成收据；若原执行器仍存活，
 按 boot ID 与进程启动标识接回观察，先发一次中断通知，完成后再通知，不重新运行命令。
 `reconcile` 只观察已有执行；结果未知且原进程已消失时返回 75，不编造退出码或重启任务。
+从未启动的注册同样返回 75，不写误报警或发送通知；没有执行记录不等于证据损坏。
+真实的摘要、日志或收据不匹配仍返回错误，并保留一次幂等告警。
 完成但命令失败与命令通过由 `status` 和事件 outcome 区分。
 
 读取通知后核对本地事件、当前 round/plan/head、执行收据及独立测试/审查产物，再由 Judger

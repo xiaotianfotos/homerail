@@ -254,8 +254,10 @@ class DurableTests(unittest.TestCase):
         record, r = self.register()
         result = subprocess.run([sys.executable, str(Path(r['runtime']) / 'durable.py'),
                                  'run', str(record), '--reconcile-only'], capture_output=True)
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 75)
         self.assertFalse((self.root / 'runs').exists())
+        self.assertFalse((self.root / 'deliveries').exists())
+        self.assertFalse((self.root / 'events/evidence_invalid.json').exists())
 
     def test_lost_supervisor_result_reuses_runner_receipt(self):
         record, _ = self.register()
@@ -281,6 +283,11 @@ class DurableTests(unittest.TestCase):
         self.assertEqual(self.event('evidence_invalid')['delivery'], 'queued')
         self.assertEqual(durable.read(execution)['status'], 'running')
         self.assertEqual((self.root / 'runs').read_text(), 'run\n')
+        r = durable.read(record)
+        reconcile = subprocess.run([sys.executable, str(Path(r['runtime']) / 'durable.py'),
+                                    'reconcile', str(record)], capture_output=True)
+        self.assertEqual(reconcile.returncode, 1)
+        self.assertEqual((self.root / 'deliveries').read_text(), 'queue\nqueue\n')
 
     def test_changed_head_refuses_command_before_execution(self):
         repo = self.root / 'repo'

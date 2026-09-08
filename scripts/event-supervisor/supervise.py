@@ -181,7 +181,9 @@ def main(spec_path, reconcile_only=False, expected_digest=None):
                 notify(root, spec, old.get('event_kind', 'finished'), old)
             return 0
         if reconcile_only:
-            raise ValueError('no execution exists; reconcile cannot start a command')
+            # An installed job may not have started yet. No receipt is expected,
+            # so this is unavailable observation, not corrupted evidence.
+            return 75
         try:
             before = observe(spec)
             validate(spec, before)

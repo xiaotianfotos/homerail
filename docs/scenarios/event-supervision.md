@@ -117,6 +117,9 @@ unknown outcome for the Judger; it cannot reconstruct an exit code.
 `reconcile` uses the installed runtime and only observes existing execution. It
 cannot start a new command. It waits for an identified surviving executor,
 promotes a valid completed receipt, or exits 75 for an unresolved interruption.
+A registration that has never executed also returns 75, without an alert or
+queue delivery: absent execution is not corrupt evidence. Digest/log/receipt
+mismatches still produce an evidence error and an idempotent alert.
 Check `status`/event outcome to distinguish a completed failed command from a
 passed command. Changed specs or receipts are errors, not permission to retry.
 
