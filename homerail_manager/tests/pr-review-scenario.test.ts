@@ -1234,7 +1234,7 @@ describe("PR Review scenario assets", () => {
     const runId = `pr-review-terminal-diagnostic-${vote}`;
     executor.createRun(runId, parsed, JSON.stringify(reviewInput()));
     executor.tick(runId);
-    expect(requestNodeCorrection(runId, "qwen_review", "agent ended without DAG handoff").status).toBe("scheduled");
+    expect(requestNodeCorrection(runId, "qwen_review", "agent ended without DAG handoff", {}).status).toBe("scheduled");
     executor.tick(runId);
     handoffActiveRun(runId, "qwen_review", vote === "approve" ? "voted" : "failed", modelReview("qwen", vote), undefined, {
       transportDiagnostic: { failure_category: "accepted", finish_reason: "end_turn", output_tokens: 77 },

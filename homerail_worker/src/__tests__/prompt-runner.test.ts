@@ -83,6 +83,38 @@ describe("prompt runner", () => {
     expect(activities.map((activity) => activity.sequence)).toEqual([1, 2]);
   });
 
+  it.each([false, true])("preserves public streamed draft before a missing handoff, bounded=%s", async (large) => {
+    const root = mkdtempSync(join(tmpdir(), "review-public-stream-"));
+    const chunks = large ? ["审🙂".repeat(5000), "\nFinding: src/a.ts dereferences null."] : ["Finding: ", "src/a.ts dereferences null."];
+    const agent: AgentClient = { run() { return (async function* () {
+      yield {type:"text" as const, text:chunks[0]};
+      yield {type:"thinking" as const, text:"PRIVATE_REASONING_DO_NOT_SAVE"};
+      yield {type:"tool_result" as const, tool_use_id:"read-1",content:"UNVERIFIED_TOOL_OUTPUT_DO_NOT_COPY"};
+      yield {type:"text" as const, text:chunks[1]};
+      yield {type:"done" as const};
+    })(); } };
+    registerAgentBackend("test-public-stream-snapshot", () => agent);
+    const sent: string[] = [];
+    try {
+      await runPrompt({task:"Review the immutable file",sender:"test",runId:"stream-run",
+        dagConfig:makeConfigWith({session_id:"session",round_id:"round-0001",generation:2})},
+        {wsSend:d=>sent.push(d),agentBackend:"test-public-stream-snapshot",auditDir:root});
+      const messages = sent.map(s=>JSON.parse(s));
+      const snapshotIndex = messages.findIndex(m=>m.type==="stream"&&m.data?.event==="review_draft");
+      expect(snapshotIndex).toBeGreaterThan(-1);
+      expect(snapshotIndex).toBeLessThan(messages.findIndex(m=>m.type==="node_error"));
+      const draft = messages[snapshotIndex].data;
+      expect(draft).toMatchObject({schema:"review-draft-v1",type:"review_draft",truncated:large,
+        run_id:"stream-run",node_id:"coder",session_id:"session",round_id:"round-0001",generation:2});
+      expect(Buffer.byteLength(draft.text,"utf8")).toBeLessThanOrEqual(8192);
+      expect(draft.text).toContain("Finding: src/a.ts dereferences null.");
+      expect(draft.text).not.toContain("\uFFFD");
+      expect(draft.text).not.toContain("UNVERIFIED_TOOL_OUTPUT_DO_NOT_COPY");
+      expect(sent.join("\n")).not.toContain("PRIVATE_REASONING_DO_NOT_SAVE");
+      if(!large) expect(draft.text).toBe(chunks.join(""));
+    } finally { rmSync(root,{recursive:true,force:true}); }
+  });
+
   it("renews activity for reasoning without streaming or persisting its content", async () => {
     const mockAgent: AgentClient = {
       run() {

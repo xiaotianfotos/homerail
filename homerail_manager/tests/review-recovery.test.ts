@@ -25,6 +25,23 @@ describe("bounded unverified review recovery", () => {
     expect(value).not.toHaveProperty("accepted_findings");
   });
 
+  it("prefers a bounded public-stream snapshot over the last text chunk", () => {
+    const snapshot = { ...message("ignored raw text"), content: {
+      ...message("").content, type: "review_draft", event: "review_draft",
+      schema: "review-draft-v1", text: "Finding: src/a.ts has a null dereference.", truncated: false,
+    } };
+    const value = buildReviewRecovery({ fence, chats: [message("Finding: "), message("src/a.ts has a null dereference."), snapshot] });
+    expect(value.draft).toEqual({ text: snapshot.content.text, truncated: false, timestamp: 100 });
+    const stale = { ...snapshot, content: { ...snapshot.content, generation: 1, text: "stale" } };
+    expect(buildReviewRecovery({ fence, chats: [snapshot, stale] }).draft?.text).toBe(snapshot.content.text);
+    const oversized = { ...snapshot, content: { ...snapshot.content, text: "审🙂".repeat(5000), truncated: false } };
+    const bounded = buildReviewRecovery({ fence, chats: [oversized] }).draft;
+    expect(Buffer.byteLength(bounded!.text, "utf8")).toBeLessThanOrEqual(8192);
+    expect(bounded?.truncated).toBe(true);
+    expect(bounded?.text).not.toContain("\uFFFD");
+    expect(buildReviewRecovery({ fence, chats: [{ ...snapshot, content: { ...snapshot.content, truncated: true } }] }).draft?.truncated).toBe(true);
+  });
+
   it("keeps missing evidence explicit and excludes unfenced/plain content", () => {
     const value = buildReviewRecovery({ fence, chats: [null, {}, { content: "not an attested answer" }, message("   ")] });
     expect(value.draft).toBeNull();
