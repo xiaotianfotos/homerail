@@ -1,4 +1,5 @@
 import * as http from "node:http";
+import { inspectDispatchRecovery } from "../runtime/dag-dispatch-recovery.js";
 import {
   loadRunMetadata,
   loadRunSnapshot,
@@ -565,6 +566,16 @@ export function inspectionRoutesHandler(
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
 
   // GET /api/runs
+  const dispatchRecoveryMatch = pathname.match(/^\/api\/runs\/([^/]+)\/pre-dispatch-recovery$/);
+  if (dispatchRecoveryMatch && req.method === "GET") {
+    try { _ok(res, "Pre-dispatch recovery checkpoint", inspectDispatchRecovery(decodeURIComponent(dispatchRecoveryMatch[1]))); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      json(res, 400, { success: false, message, error: message });
+    }
+    return true;
+  }
+
   if (pathname === "/api/runs" && req.method === "GET") {
     const runs = listPersistedRunSummaries();
     _ok(res, `Found ${runs.length} runs`, { runs, total: runs.length });

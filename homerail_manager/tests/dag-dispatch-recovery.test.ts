@@ -14,6 +14,7 @@ import { loadRunMetadata, appendEvent, writeRunMetadata } from "../src/persisten
 import { getDagSessionIndex } from "../src/persistence/dag-session-index.js";
 import { listDagRunRounds } from "../src/persistence/dag-run-rounds.js";
 import { subscribe } from "../src/events/bus.js";
+import { createServer } from "../src/server/http.js";
 import { upsertDagWorkflowFromYaml, upsertDagRuntimeProfileFromYaml } from "../src/persistence/dag-workflows.js";
 
 describe.skipIf(process.platform !== "linux")("pre-dispatch recovery", () => {
@@ -179,5 +180,28 @@ describe.skipIf(process.platform !== "linux")("pre-dispatch recovery", () => {
     expect(recoverPreDispatchRun("root", intent).deduplicated).toBe(false);
     expect(recoverPreDispatchRun("root", intent).deduplicated).toBe(true);
     expect(getDb().prepare("SELECT COUNT(*) AS count FROM dag_run_admissions").get()).toEqual({ count: 0 });
+  });
+  it("exposes inspection and idempotent recovery through the real HTTP router", async () => {
+    await failed();
+    const server = createServer(0, undefined, { dispatch }, false);
+    try {
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address() as { port: number };
+      const url = `http://127.0.0.1:${address.port}/api/runs/root/pre-dispatch-recovery`;
+      const inspection = await fetch(url); const inspected = await inspection.json();
+      expect(inspection.status).toBe(200);
+      expect(inspected.data.expected_state_sha256).toBe(recoveryDigest(loadRunMetadata("root")));
+      const options = { method: "POST", headers: { "content-type": "application/json",
+        "x-homerail-dag-token": process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? "" }, body: JSON.stringify(request()) };
+      const response = await fetch(url, options); const first = await response.json();
+      expect(response.status).toBe(200); expect(first.data.deduplicated).toBe(false);
+      const repeated = await fetch(url, options); const second = await repeated.json();
+      expect(repeated.status).toBe(200); expect(second.data.deduplicated).toBe(true);
+      expect(second.data.receipt).toEqual(first.data.receipt);
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(fs.readFileSync(path.join(root, "planner-count"), "utf8")).toBe("x");
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
 });
