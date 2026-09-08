@@ -177,6 +177,27 @@ test('transient result fetch failure remains retryable on the same run',async t=
  assert.equal(restarted.round.failure,undefined);
  assert.ok(f.calls.every(c=>c.method==='GET'));
 });
+test('proposal persistence failure propagates and resumes the saved run after controller restart',async t=>{
+ const raw=JSON.stringify({edits:[{path:'source.txt',old:'original',new:'recovered'}],summary:'saved valid proposal'});
+ const f=terminalModelFixture(t,{raw});
+ const rename=fs.renameSync;let fail=true;
+ t.mock.method(fs,'renameSync',(from,to)=>{
+  if(fail&&String(to).endsWith('/proposal.json')){fail=false;throw Object.assign(new Error('simulated proposal persistence ENOSPC'),{code:'ENOSPC'});}
+  return rename(from,to);
+ });
+ await assert.rejects(f.loop.step(),/ENOSPC/);
+ // The CLI persists controller_error before exiting; exercise that same
+ // save, so retry cannot depend on discarding in-memory mutations.
+ f.loop.save('controller_error',{message:'simulated proposal persistence ENOSPC'});
+ const restarted=new JudgedLoop(f.root);
+ assert.equal(restarted.state.phase,'model');assert.equal(restarted.round.failure,undefined);
+ assert.equal(restarted.round.run_id,'saved-run');
+ assert.equal(fs.readFileSync(path.join(f.root,'rounds/1/result.json'),'utf8'),raw);
+ await restarted.step();assert.equal(restarted.state.phase,'apply');
+ assert.equal(restarted.round.run_id,'saved-run');assert.equal(restarted.round.failure,undefined);
+ restarted.apply();assert.equal(fs.readFileSync(path.join(f.repo,'source.txt'),'utf8'),'recovered\n');
+ assert.ok(f.calls.every(c=>c.method==='GET'),'recovery must not create another model run');
+});
 test('loop records durable receipts and refuses acceptance after evidence tampering',async t=>{
  const f=loopFixture(t);await f.loop.test();const r=f.loop.round;
  assert.equal(f.loop.state.phase,'judging');assert.equal(r.receipts[0].status,'passed');assert.ok(r.receipts[0].runner_digest);
