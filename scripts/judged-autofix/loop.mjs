@@ -248,6 +248,7 @@ export class JudgedLoop {
     const repoJoin=`${pr.headRepositoryOwner?.login}/${pr.headRepository?.name}`.toLowerCase();
     if(repoJoin!==repo.toLowerCase())throw new Error('PR headRepository mismatch with config repo');
     if(pr.title!==intent.title)throw new Error('PR title mismatch');
+    if(this.state.publication.url&&this.state.publication.url!==pr.url)throw new Error('confirmed publication URL mismatch; replacement URL not adopted');
     if(this.state.publication.body_update){
       if(this.state.publication.body_update.url!==pr.url)throw new Error('body_update URL does not match current PR URL; replacement URL not adopted');
       if(this.state.publication.body_update.to_body_digest!==intent.body_digest)throw new Error('body_update target digest does not match current intent');
@@ -258,6 +259,7 @@ export class JudgedLoop {
       }
       this.state.publication.url=pr.url;this.save('published');return pr.url;
     }
+    if(this.state.publication.url)throw new Error('confirmed publication body drift requires Judger reconciliation');
     // PR body does not match target intent – attempt or resume durable body update
     if(this.state.publication.body_update){
       const bu=this.state.publication.body_update;

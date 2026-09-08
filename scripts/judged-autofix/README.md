@@ -129,7 +129,8 @@ at-most-one send from the controller's perspective but does not claim server-sid
 atomicity. After a successful update, the `body_update` marker is retained with
 `confirmed: true` rather than cleared, so a subsequent reopen that observes an
 externally restored old body is treated as a reconciliation conflict and never
-emits another PATCH.
+emits another PATCH. A confirmed publication never changes its body or URL until
+the Judger authorizes a new revision.
 
 If a publication attempt fails after acceptance, the Judger may revoke acceptance
 by issuing a new decision with `verdict: "revise"` and valid `round`, `plan_digest`
