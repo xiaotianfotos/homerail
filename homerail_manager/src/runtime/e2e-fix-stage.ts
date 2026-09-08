@@ -24,7 +24,7 @@ export interface E2eFixTaskConfig {
   max_rounds: number; max_infra_retries: number; context_bytes: number; total_timeout_ms: number;
   runtime_sha256?: string;
   github?: E2eFixGitHubConfig;
-  host_codex?: { model: string; timeout_ms: number; output_bytes: number };
+  host_codex?: { model: string; timeout_ms: number; output_bytes: number; fixer?: boolean };
 }
 export interface E2eFixStageProviders {
   mode: "production" | "simulation";
@@ -49,7 +49,7 @@ export function freezeE2eFixTask(directory: string, config: E2eFixTaskConfig): s
     || (config.mode === "production" && !/^[a-f0-9]{64}$/.test(config.runtime_sha256 ?? ""))
     || (config.runtime_sha256 !== undefined && !/^[a-f0-9]{64}$/.test(config.runtime_sha256))
     || new Set(config.allowed_paths).size !== config.allowed_paths.length) throw new Error("invalid frozen E2E Fix configuration");
-  if (config.host_codex && (!config.host_codex.model?.trim()
+  if (config.host_codex && ((config.host_codex.fixer !== undefined && typeof config.host_codex.fixer !== "boolean") || !config.host_codex.model?.trim()
     || !Number.isInteger(config.host_codex.timeout_ms) || config.host_codex.timeout_ms < 1000 || config.host_codex.timeout_ms > 3_500_000
     || !Number.isInteger(config.host_codex.output_bytes) || config.host_codex.output_bytes < 1000 || config.host_codex.output_bytes > 96000)) throw new Error("invalid frozen host Codex bounds");
   [...config.allowed_paths, ...config.protected_paths].forEach(e2eFixPath);
@@ -108,7 +108,7 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     if (!session || current.nodeStates[node] !== "COMPLETED" || session.status !== "completed"
       || !latest || !isDeepStrictEqual(latest.content, submitted)) throw new Error(`model handoff provenance mismatch: ${node}`);
     const graphNode = current.graph?.nodes.find(n => n.node_id === node);
-    if (config.host_codex && ["plan", "judge_candidate", "judge_ci"].includes(node)) {
+    if (config.host_codex && (["plan", "judge_candidate", "judge_ci"].includes(node) || (node === "fix" && config.host_codex.fixer))) {
       if (graphNode?.node_type !== "command_gateway" || !current.currentRound?.round_id) throw new Error("host Codex role requires a native command");
       const evidence = readE2eFixHostCodexEvidence(directory, node, round, {
         run_id: config.root_run_id, node_id: node, session_id: session.session_id,

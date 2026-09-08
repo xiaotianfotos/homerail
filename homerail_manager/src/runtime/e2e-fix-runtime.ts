@@ -119,9 +119,9 @@ export function loadFrozenE2eFixRuntime(directory: string, sha256: string): E2eF
   return { directory, sha256, node: path.join(directory, "node"), bootstrap: path.join(directory, "bootstrap.mjs") };
 }
 
-export function frozenE2eFixHostCodexCommands(runtime: E2eFixFrozenRuntime, taskDirectory: string) {
+export function frozenE2eFixHostCodexCommands(runtime: E2eFixFrozenRuntime, taskDirectory: string, options: { fixer?: boolean } = {}) {
   // Apply the same path/digest validation as program stages.
   frozenE2eFixStageCommands(runtime, taskDirectory);
-  return Object.fromEntries(["plan", "judge_candidate", "judge_ci"].map(role => [role,
-    [runtime.node, runtime.bootstrap, runtime.sha256, taskDirectory, "host-codex", role]])) as Record<"plan" | "judge_candidate" | "judge_ci", string[]>;
+  return Object.fromEntries(["plan", "judge_candidate", "judge_ci", ...(options.fixer ? ["fix"] : [])].map(role => [role,
+    [runtime.node, runtime.bootstrap, runtime.sha256, taskDirectory, "host-codex", role]])) as Record<"plan" | "judge_candidate" | "judge_ci", string[]> & Partial<Record<"fix", string[]>>;
 }

@@ -47,6 +47,11 @@ describe("trusted E2E Fix task configuration", () => {
     const value = config(root); value.policy.required_tests = ["invented-pass"];
     expect(() => freezeE2eFixTask(root, value)).toThrow(/set mismatch/);
   });
+  it("rejects ambiguous host Fixer configuration before freezing policy", () => {
+    const value = config(root);
+    value.host_codex = { model: "fixture", timeout_ms: 1000, output_bytes: 4000, fixer: "true" as unknown as boolean };
+    expect(() => freezeE2eFixTask(root, value)).toThrow(/host Codex bounds/);
+  });
 });
 
 type Scenario = "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"

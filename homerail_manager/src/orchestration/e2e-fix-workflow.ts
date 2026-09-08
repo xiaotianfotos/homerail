@@ -20,8 +20,8 @@ export interface E2eFixWorkflowOptions {
   stageTimeoutMs?: number;
   /** Synchronous transport exists only for the original control-flow fixture. */
   durableStages?: boolean;
-  /** Explicit trusted host-account transport for the three Codex roles. */
-  hostCodexCommands?: Record<"plan" | "judge_candidate" | "judge_ci", string[]>;
+  /** Explicit trusted host transport for planning/judgment and optional fixing. */
+  hostCodexCommands?: Record<"plan" | "judge_candidate" | "judge_ci", string[]> & Partial<Record<"fix", string[]>>;
 }
 
 // Strict model output shapes. Stage adapters still have to validate scope,
@@ -86,7 +86,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
     edges.push({ from: `${name}.failed`, to: `${name}_failed.evidence`, condition: "on_failure" });
   };
   const actor = (node: string, agent: string, contract: string) => {
-    if (options.hostCodexCommands && ["plan", "judge_candidate", "judge_ci"].includes(node)) {
+    if (options.hostCodexCommands && (["plan", "judge_candidate", "judge_ci"].includes(node) || (node === "fix" && options.hostCodexCommands.fix !== undefined))) {
       const argv = options.hostCodexCommands[node as keyof typeof options.hostCodexCommands];
       if (!argv?.length || argv.some(v => typeof v !== "string" || !v || v.includes("\0"))) throw new Error("invalid host Codex argv");
       nodes[node] = { kind: "command", inputs: { evidence: {} }, outputs: { result: { contract }, failed: {} },
@@ -158,7 +158,9 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
   edge("freeze_plan.ready", "fix.evidence");
   edge("freeze_plan.ready", "capture.plan");
   edge("fix.result", "capture.patch");
-  edges.push({ from: "fix.failed", to: "capture.failure", condition: "on_failure" });
+  // Host model execution failures have durable command evidence, not Worker
+  // chat diagnostics. Preserve their terminal failure route without replay.
+  if (!options.hostCodexCommands?.fix) edges.push({ from: "fix.failed", to: "capture.failure", condition: "on_failure" });
   edge("capture.ready", "test.candidate");
   edge("test.ready", "test_route.state");
   for (const id of ["a", "b", "c"]) {

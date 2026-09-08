@@ -12,7 +12,7 @@ function read(file) {
 
 /** Read-only observation of a trusted host failure stranded in a RUNNING
  * command. The caller owns waiting/notification; this never advances a DAG.
- * Expected handled Fixer failures are deliberately excluded. */
+ * Expected handled Worker Fixer failures are deliberately excluded. */
 export function observeE2eFixHostFailure(taskDirectory, status, now = Date.now()) {
   if (!path.isAbsolute(taskDirectory)) throw new Error('absolute trusted task directory required');
   if (status?.terminal || status?.status !== 'active') return null;
@@ -23,9 +23,11 @@ export function observeE2eFixHostFailure(taskDirectory, status, now = Date.now()
   if (config.root_run_id !== status.run_id || !config.host_codex) return null;
   const round = status.current_round;
   if (!Number.isSafeInteger(round?.ordinal) || round.ordinal < 1 || round.ordinal > config.max_rounds) return null;
-  for (const role of ['plan', 'judge_candidate', 'judge_ci']) {
+  const iteration = status.counters?.gateway_iterations?.cycle ?? round.ordinal;
+  if (!Number.isSafeInteger(iteration) || iteration < 1 || iteration > config.max_rounds) return null;
+  for (const role of ['plan', 'judge_candidate', 'judge_ci', ...(config.host_codex.fixer === true ? ['fix'] : [])]) {
     if (status.node_states?.[role] !== 'RUNNING') continue;
-    const dir = path.join(taskDirectory, 'rounds', String(round.ordinal), 'host-codex', role);
+    const dir = path.join(taskDirectory, 'rounds', String(iteration), 'host-codex', role);
     const file = path.join(dir, 'failure.json');
     if (!fs.existsSync(file)) continue;
     const bytes = read(file), failure = JSON.parse(bytes), claim = JSON.parse(read(path.join(dir, 'claim.json')));

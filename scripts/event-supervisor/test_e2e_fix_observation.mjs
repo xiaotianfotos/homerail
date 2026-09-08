@@ -34,6 +34,27 @@ test('stays quiet during normal receipt delivery and after native termination', 
   assert.equal(observeE2eFixHostFailure(f.dir,{...f.status,terminal:true},9000),null);
   assert.equal(observeE2eFixHostFailure(f.dir,{...f.status,node_states:{fix:'FAILED',judge_candidate:'COMPLETED'}},9000),null);
 });
+test('observes the current repair iteration instead of the lifecycle round ordinal', t => {
+  const f=fixture(t), current=path.join(f.dir,'rounds/2/host-codex/judge_candidate');
+  fs.mkdirSync(current,{recursive:true});
+  fs.cpSync(f.folder,current,{recursive:true});fs.rmSync(f.folder,{recursive:true});
+  const status={...f.status,counters:{gateway_iterations:{cycle:2}}};
+  assert.equal(observeE2eFixHostFailure(f.dir,status,9000).role,'judge_candidate');
+  assert.equal(observeE2eFixHostFailure(f.dir,{...status,counters:{gateway_iterations:{cycle:4}}},9000),null);
+});
+test('observes opted-in host Fixer failures without treating Worker failures as host evidence', t => {
+  const f=fixture(t), folder=path.join(f.dir,'rounds/1/host-codex/fix');
+  fs.mkdirSync(folder,{recursive:true});
+  const failure={...f.failure,identity:{...f.failure.identity,node_id:'fix'}};
+  fs.writeFileSync(path.join(folder,'claim.json'),JSON.stringify({command_id:failure.command_id,identity:failure.identity}));
+  fs.writeFileSync(path.join(folder,'failure.json'),JSON.stringify(failure));
+  const status={...f.status,node_states:{fix:'RUNNING'}};
+  assert.equal(observeE2eFixHostFailure(f.dir,status,9000),null);
+  const config=JSON.parse(fs.readFileSync(path.join(f.dir,'config.json')));config.host_codex.fixer=true;
+  const raw=JSON.stringify(config);fs.writeFileSync(path.join(f.dir,'config.json'),raw);
+  fs.writeFileSync(path.join(f.dir,'config.sha256'),createHash('sha256').update(raw).digest('hex'));
+  assert.equal(observeE2eFixHostFailure(f.dir,status,9000).role,'fix');
+});
 test('rejects mismatched claims and old-round identities', t => {
   const f=fixture(t);f.failure.identity.session_id='stale';f.save();
   assert.throws(()=>observeE2eFixHostFailure(f.dir,f.status,9000),/identity/);

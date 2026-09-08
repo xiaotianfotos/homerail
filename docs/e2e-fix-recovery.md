@@ -53,6 +53,27 @@ and protected paths remain rejected. This lets the executor accept the same
 short-snippet format requested by the Codex plan without requiring whole-file
 replacements; it does not establish why a previous model response truncated.
 
+### Optional host Codex Fixer
+
+For a newly frozen task, set `host_codex.fixer: true` and build its host commands
+with `frozenE2eFixHostCodexCommands(runtime, taskDirectory, { fixer: true })`.
+Both are required: a command alone does not authorize host Fixer receipts.
+The default remains a Worker Fixer. Changing an existing frozen task is rejected;
+this option is not an automatic fallback or a way to revive a terminal root.
+
+The Fixer is a native durable command with an ephemeral, read-only Codex session
+and no tools. It implements the approved plan by returning the same `Patch`
+contract used by Worker Fixers. Candidate capture enforces scope and exact edits;
+programs execute tests and publish. Planner, Fixer and Judger have distinct
+sessions, while all three reviewers remain independent Worker nodes.
+
+A host Fixer process/provider failure follows its single terminal failure edge,
+preserving claims and evidence rather than reading Worker diagnostics or spending
+again. This does not recover unknown model execution. The observer uses the
+native cycle iteration for artifact paths, independently of lifecycle round IDs,
+and includes opted-in host Fixer failures when a command becomes stranded.
+Existing output-truncation feedback applies to Worker Fixers.
+
 Host Codex Judgers use a strict provider schema: every property is required,
 with a nullable `retry_strategy` normalized to absence in native Judgment
 receipts. The adapter releases its app-server before yielding final diagnostic

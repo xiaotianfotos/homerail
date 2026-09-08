@@ -28,14 +28,14 @@ createInterface({input:process.stdin}).on('line',line=>{
  else if(q.method==='config/read') reply({config:{mcp_servers:{danger:{command:'private-command'}}}});
  else if(q.method==='thread/start') reply({thread:{id:'thread-1'}});
  else if(q.method==='turn/start') {
-  if(mode==='strict-judge'){
+  if(mode==='strict-judge'||mode==='strict-patch'){
    const valid=s=>!s||typeof s!=='object'||((!s.properties||(s.additionalProperties===false&&Object.keys(s.properties).every(k=>s.required?.includes(k))))&&Object.values(s.properties??{}).every(valid)&&(!s.items||valid(s.items))&&(!s.anyOf||s.anyOf.every(valid)));
    if(!valid(q.params.outputSchema)){out({id:q.id,error:{message:'invalid_json_schema: all properties must be required'}});return;}
   }
   reply({turn:{id:'turn-1'}}); if(mode==='timeout') return;
   if(mode==='provider-error'){event('error',{message:'invalid_json_schema: missing retry_strategy',willRetry:false});return;}
   if(mode==='tool') event('item/started',{item:{type:'commandExecution',id:'bad',command:'forbidden'}});
-  event('item/completed',{item:{type:'agentMessage',id:'result',phase:'final_answer',text:mode==='invalid'?'{}':JSON.stringify(mode==='strict-judge'?{verdict:'pause',reason:'unknown execution',retry_strategy:null,dispositions:[]}:{strategy:'minimal change'})}});
+  event('item/completed',{item:{type:'agentMessage',id:'result',phase:'final_answer',text:mode==='invalid'?'{}':JSON.stringify(mode==='strict-patch'?{summary:'bounded patch',edits:[{path:'sum.cjs',old:'a-b',new:'a+b'}]}:mode==='strict-judge'?{verdict:'pause',reason:'unknown execution',retry_strategy:null,dispositions:[]}:{strategy:'minimal change'})}});
   event('thread/tokenUsage/updated',{threadId:'thread-1',turnId:'turn-1',tokenUsage:{total:{inputTokens:100,outputTokens:5}}});
   event('turn/completed',{turn:{id:mode==='wrong-turn'?'turn-other':'turn-1',status:mode==='failed'?'failed':'completed'}});
  } else reply({});
@@ -74,6 +74,16 @@ describe.skipIf(process.platform === "win32")("fresh structured host Codex trans
     const revision = { verdict: "revise", reason: "truncated", retry_strategy: "Use smaller replacements", dispositions: [] };
     expect(normalizeE2eFixHostCodexOutput(role, revision)).toEqual(revision);
   });
+  it("returns a strict patch through a fresh restricted host session", async () => {
+    const { root, binary } = fixture("strict-patch");
+    const value = await runHostCodexStructuredTurn({ model: "fixture-model", workspace: root, prompt: "frozen plan and sources", instructions: "bounded fixer",
+      schema: e2eFixHostCodexSchema("fix"), timeoutMs: 5000, outputBytes: 4000, codexBin: binary, evidence: () => {} });
+    expect(value).toEqual({ summary: "bounded patch", edits: [{ path: "sum.cjs", old: "a-b", new: "a+b" }] });
+    expect(normalizeE2eFixHostCodexOutput("fix", value)).toEqual(value);
+    const requests = fs.readFileSync(path.join(root, "requests.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(requests.find(q => q.method === "thread/start").params).toMatchObject({ ephemeral: true, sandbox: "read-only", dynamicTools: [] });
+    expect(requests.filter(q => q.method === "turn/start")).toHaveLength(1);
+  });
 });
 
 it("keeps host Codex roles inside the native DAG with durable failure routes", () => {
@@ -87,7 +97,18 @@ it("keeps host Codex roles inside the native DAG with durable failure routes", (
   expect(parsed.graph.nodes.find(n => n.node_id === "fix")?.node_type).toBe("agent");
 });
 
-it("authenticates host receipts against command/session, output and event bytes", async () => {
+it("uses an opted-in durable Fixer with a single failure route and independent Worker reviewers", () => {
+  const commands = frozenE2eFixHostCodexCommands({ directory: "/frozen", sha256: "a".repeat(64), node: "/frozen/node", bootstrap: "/frozen/bootstrap.mjs" }, "/task", { fixer: true });
+  expect(commands.fix?.slice(-4)).toEqual(["a".repeat(64), "/task", "host-codex", "fix"]);
+  const stageCommands = Object.fromEntries(E2E_FIX_STAGES.map(stage => [stage, ["node", "/stage", stage]])) as Record<E2eFixStage, string[]>;
+  const parsed = parseE2eFixWorkflow({ workflowId: "host-fixer", maxRounds: 3, stageCommands, hostCodexCommands: commands });
+  expect(parsed.graph.nodes.find(n => n.node_id === "fix")).toMatchObject({ node_type: "command_gateway", gateway_config: { durable: true } });
+  const failures = parsed.graph.edges.filter(e => e.from_node === "fix" && e.from_port === "failed");
+  expect(failures).toHaveLength(1); expect(failures[0].terminal_outcome).toBe("failure");
+  for (const id of ["review_a", "review_b", "review_c"]) expect(parsed.graph.nodes.find(n => n.node_id === id)?.node_type).toBe("agent");
+});
+
+it.each(["plan", "fix"])("authenticates %s receipts against command/session, output and event bytes", async role => {
   const { prepareDurableCommand } = await import("../src/runtime/durable-command.js");
   const { closeDb } = await import("../src/persistence/db.js");
   const { readE2eFixHostCodexEvidence } = await import("../src/runtime/e2e-fix-host-codex.js");
@@ -96,20 +117,25 @@ it("authenticates host receipts against command/session, output and event bytes"
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hr-codex-receipt-")); roots.push(root);
   const before = process.env.HOMERAIL_HOME; process.env.HOMERAIL_HOME = path.join(root, "home"); closeDb();
   try {
-    const identity = { run_id: "root", node_id: "plan", session_id: "session", round_id: "round", attempt: 1 };
+    const identity = { run_id: "root", node_id: role, session_id: "session", round_id: "round", attempt: 1 };
     const command = prepareDurableCommand(identity, { argv: [process.execPath, "role"], cwd: root, stdin: "{}", timeout_ms: 1000, capture_limit: 2000 });
-    const folder = path.join(root, "rounds", "1", "host-codex", "plan"); fs.mkdirSync(folder, { recursive: true });
+    const folder = path.join(root, "rounds", "1", "host-codex", role); fs.mkdirSync(folder, { recursive: true });
     const runtime = "a".repeat(64); const model = "fixture-model";
-    fs.writeFileSync(path.join(root, "config.json"), JSON.stringify({ runtime_sha256: runtime, host_codex: { model } }));
+    fs.writeFileSync(path.join(root, "config.json"), JSON.stringify({ runtime_sha256: runtime, host_codex: { model, fixer: role === "fix" } }));
     const events = [{ event: "thread_created", thread_id: "native", persistent: false }, { event: "turn_started", turn_id: "turn" },
       { event: "turn_result", turn_id: "turn", status: "completed" }].map(e => JSON.stringify(e)).join("\n") + "\n";
     fs.writeFileSync(path.join(folder, "events.jsonl"), events);
-    const value = { strategy: "minimal" };
+    const value = role === "fix" ? { summary: "minimal", edits: [{ path: "sum.cjs", old: "a-b", new: "a+b" }] } : { strategy: "minimal" };
     fs.writeFileSync(path.join(folder, "receipt.json"), JSON.stringify({ version: 1, command_id: command.execution_id, identity, round: 1, runtime_sha256: runtime, model,
       input_sha256: e2eFixDigest(JSON.stringify("{}")), output_sha256: e2eFixDigest(JSON.stringify(value)), events_sha256: e2eFixDigest(events), value }));
-    expect(readE2eFixHostCodexEvidence(root, "plan", 1, identity)).toMatchObject({ value, native_thread_id: "native", usages: [] });
-    expect(() => readE2eFixHostCodexEvidence(root, "plan", 1, { ...identity, session_id: "other" })).toThrow(/provenance/);
+    expect(readE2eFixHostCodexEvidence(root, role, 1, identity)).toMatchObject({ value, native_thread_id: "native", usages: [] });
+    expect(() => readE2eFixHostCodexEvidence(root, role, 1, { ...identity, session_id: "other" })).toThrow(/provenance/);
+    if (role === "fix") {
+      fs.writeFileSync(path.join(root, "config.json"), JSON.stringify({ runtime_sha256: runtime, host_codex: { model } }));
+      expect(() => readE2eFixHostCodexEvidence(root, role, 1, identity)).toThrow(/provenance/);
+      fs.writeFileSync(path.join(root, "config.json"), JSON.stringify({ runtime_sha256: runtime, host_codex: { model, fixer: true } }));
+    }
     fs.appendFileSync(path.join(folder, "events.jsonl"), " ");
-    expect(() => readE2eFixHostCodexEvidence(root, "plan", 1, identity)).toThrow(/provenance/);
+    expect(() => readE2eFixHostCodexEvidence(root, role, 1, identity)).toThrow(/provenance/);
   } finally { closeDb(); if (before === undefined) delete process.env.HOMERAIL_HOME; else process.env.HOMERAIL_HOME = before; }
 });
