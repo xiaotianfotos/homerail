@@ -144,6 +144,17 @@ leaves a live child, the task blocks instead of starting another test. After the
 recorded process is gone, the Judger can use `recover-tests`, reassess the result,
 and explicitly rerun tests. Do not modify saved receipts to manufacture success.
 
+When a terminal run produces evidence gaps (missing or unparseable result artifact),
+the controller enters `judging` with a structured failure record
+(`model_result`/`missing_result_artifact` or `model_result`/`invalid_result_json`)
+instead of polling indefinitely. Downloaded artifact bytes, when available, are retained
+on disk in `result.json` for inspection; missing artifacts are recorded explicitly.
+Proposals emitted by unsuccessful runs
+(`model_terminal`/`run_not_completed`) remain drafts requiring explicit Judger
+review; they are never applied automatically. Transient collection failures
+(HTTP 503, network timeouts, filesystem errors) propagate as exceptions and remain
+retryable on the same run identity without resubmission or state regression.
+
 ## Platform requirements
 
 Process-level tests (Git operations, flock, /proc identity) require Linux; they
