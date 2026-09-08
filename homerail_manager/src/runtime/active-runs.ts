@@ -6515,9 +6515,18 @@ export function dispatchReadyNodesUntilStable(
   const maxPasses = Math.max(1, run.dagRun.graph.nodes.length * 2);
   let total = 0;
   for (let pass = 0; pass < maxPasses; pass++) {
+    const before = new Map(run.dagRun.nodeStates);
     const advanced = dispatchReadyNodes(runId, dispatcher);
     total += advanced;
-    if (advanced === 0) break;
+    if (advanced === 0) {
+      const after = run.dagRun.nodeStates;
+      if (after.size !== before.size) continue;
+      let changed = false;
+      for (const [k, v] of after) {
+        if (before.get(k) !== v) { changed = true; break; }
+      }
+      if (!changed) break;
+    }
   }
   return total;
 }
