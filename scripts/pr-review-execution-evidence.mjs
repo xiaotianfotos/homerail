@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const SLOTS = { qwen_review: 'qwen', kimi_review: 'kimi', glm_review: 'glm' };
@@ -18,15 +19,15 @@ function extractDispatch(msg, runId, nodeId) {
   if (!msg || msg.role !== 'manager' || msg.type !== 'prompt') return null;
   const c = msg.content;
   if (!c || c.runId !== runId || c.nodeId !== nodeId) return null;
-  if (typeof c.sessionId !== 'string' || c.sessionId.length === 0) return null;
+  const sid = safe(c.sessionId);
+  if (!sid) return null;
   if (typeof msg.timestamp !== 'number' || !Number.isFinite(msg.timestamp)) return null;
   const ac = c.agentConfig;
   const llm = ac?.llm;
-  if (!llm) return null;
   return {
-    session_id: c.sessionId,
+    session_id: sid,
     timestamp: msg.timestamp,
-    binding: { provider: safe(llm.provider), model: safe(llm.model), backend: safe(ac.agent_type), setting_id: safe(ac.llm_setting_id) }
+    binding: { provider: safe(llm?.provider), model: safe(llm?.model), backend: safe(ac?.agent_type), setting_id: safe(ac?.llm_setting_id) }
   };
 }
 
@@ -35,22 +36,25 @@ function extractUsage(msg, runId, nodeId) {
   const c = msg.content;
   if (!c || c.type !== 'usage') return null;
   if (c.run_id !== runId || c.node_id !== nodeId) return null;
-  if (typeof c.execution_id !== 'string' || c.execution_id.length === 0) return null;
-  if (typeof c.session_id !== 'string' || c.session_id.length === 0) return null;
+  if (typeof msg.timestamp !== 'number' || !Number.isFinite(msg.timestamp)) return null;
+  const eid = safe(c.execution_id);
+  if (!eid) return null;
+  const sid = safe(c.session_id);
+  if (!sid) return null;
   const u = c.usage;
   if (!u || !nonNegInt(u.input_tokens) || !nonNegInt(u.output_tokens) ||
     !nonNegInt(u.cache_read_input_tokens) || !nonNegInt(u.cache_creation_input_tokens)) return null;
-  const ts = (typeof msg.timestamp === 'number' && Number.isFinite(msg.timestamp)) ? msg.timestamp : 0;
-  const fr = (typeof c.finish_reason === 'string' && c.finish_reason.length > 0) ? c.finish_reason : null;
+  const fr = safe(c.finish_reason);
   const dm = (typeof c.duration_ms === 'number' && Number.isFinite(c.duration_ms) && c.duration_ms >= 0) ? c.duration_ms : null;
   return {
-    session_id: c.session_id, timestamp: ts, execution_id: c.execution_id,
+    session_id: sid, timestamp: msg.timestamp, execution_id: eid,
     usage: { input_tokens: u.input_tokens, output_tokens: u.output_tokens, cache_read_input_tokens: u.cache_read_input_tokens, cache_creation_input_tokens: u.cache_creation_input_tokens },
     finish_reason: fr, duration_ms: dm
   };
 }
 
 export function buildPrReviewExecutionEvidence({ runId, chatsByNode }) {
+  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) throw new Error('unsafe runId');
   const reviewers = [];
   const identities = new Set();
 
@@ -72,11 +76,11 @@ export function buildPrReviewExecutionEvidence({ runId, chatsByNode }) {
     rawU.sort((a, b) => a.timestamp - b.timestamp);
 
     const dispatches = [];
+    const seen = new Set();
     for (const d of rawD) {
-      const prev = dispatches[dispatches.length - 1];
-      if (prev && prev.timestamp === d.timestamp && prev.session_id === d.session_id &&
-        prev.binding.provider === d.binding.provider && prev.binding.model === d.binding.model &&
-        prev.binding.backend === d.binding.backend && prev.binding.setting_id === d.binding.setting_id) continue;
+      const key = JSON.stringify([d.timestamp, d.session_id, d.binding]);
+      if (seen.has(key)) continue;
+      seen.add(key);
       dispatches.push(d);
     }
     for (const d of dispatches) {
@@ -92,20 +96,22 @@ export function buildPrReviewExecutionEvidence({ runId, chatsByNode }) {
       if (di === -1) continue;
       const existing = execMap.get(u.execution_id);
       if (!existing) {
-        execMap.set(u.execution_id, { dispatch_index: di, session_id: u.session_id, usage: { ...u.usage }, finish_reason: u.finish_reason, duration_ms: u.duration_ms });
+        const settled = u.finish_reason !== null && u.duration_ms !== null;
+        execMap.set(u.execution_id, { dispatch_index: di, session_id: u.session_id, usage: { ...u.usage }, finish_reason: u.finish_reason, duration_ms: u.duration_ms, settled });
       } else {
+        if (existing.session_id !== u.session_id) continue;
         const k = ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'];
         for (const key of k) if (u.usage[key] > existing.usage[key]) existing.usage[key] = u.usage[key];
         if (u.finish_reason !== null && existing.finish_reason === null) existing.finish_reason = u.finish_reason;
         if (u.duration_ms !== null && existing.duration_ms === null) existing.duration_ms = u.duration_ms;
+        if (u.finish_reason !== null && u.duration_ms !== null) existing.settled = true;
       }
     }
 
     const executions = [];
     const accounted = new Set();
     for (const [id, ex] of execMap) {
-      const isFinal = ex.finish_reason !== null && ex.duration_ms !== null;
-      executions.push({ execution_id: id, session_id: ex.session_id, dispatch_index: ex.dispatch_index, usage_state: isFinal ? 'final' : 'partial', usage: ex.usage, finish_reason: ex.finish_reason, duration_ms: ex.duration_ms });
+      executions.push({ execution_id: id, session_id: ex.session_id, dispatch_index: ex.dispatch_index, usage_state: ex.settled ? 'final' : 'partial', usage: ex.usage, finish_reason: ex.finish_reason, duration_ms: ex.duration_ms });
       accounted.add(ex.dispatch_index);
     }
     const unaccounted = dispatches.filter((_, i) => !accounted.has(i)).length;
@@ -141,14 +147,15 @@ export function buildPrReviewExecutionEvidence({ runId, chatsByNode }) {
 
 export async function collectPrReviewExecutionEvidence({ managerUrl, runId, outputPath }) {
   if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) throw new Error('unsafe runId');
+  const base = managerUrl.replace(/\/+$/, '');
   const headers = {};
   const token = process.env.HOMERAIL_DAG_MUTATION_TOKEN;
-  if (token) headers['authorization'] = `Bearer ${token}`;
+  if (token) headers['x-homerail-dag-token'] = token;
   const chatsByNode = {};
   for (const nodeId of Object.keys(SLOTS)) {
     try {
-      const url = `${managerUrl}/api/dag-status/${encodeURIComponent(runId)}/node/${nodeId}/chat`;
-      const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+      const url = `${base}/api/dag-status/${encodeURIComponent(runId)}/node/${nodeId}/chat`;
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000), redirect: 'error' });
       if (!res.ok) { chatsByNode[nodeId] = null; continue; }
       const body = await res.json();
       if (!body?.success) { chatsByNode[nodeId] = null; continue; }
@@ -159,8 +166,8 @@ export async function collectPrReviewExecutionEvidence({ managerUrl, runId, outp
   const evidence = buildPrReviewExecutionEvidence({ runId, chatsByNode });
   const dir = path.dirname(outputPath);
   fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.tmp-${process.pid}-${Date.now()}.json`);
-  fs.writeFileSync(tmp, JSON.stringify(evidence, null, 2), { mode: 0o600 });
+  const tmp = path.join(dir, `.tmp-${process.pid}-${randomUUID()}.json`);
+  fs.writeFileSync(tmp, JSON.stringify(evidence, null, 2), { flag: 'wx', mode: 0o600 });
   fs.renameSync(tmp, outputPath);
   return evidence;
 }
