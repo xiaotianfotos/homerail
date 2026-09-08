@@ -2142,6 +2142,24 @@ describe("PR Review scenario assets", () => {
       { passed: false, successes: 1, total: 3, threshold: 2 },
     ).status).toBe(0);
 
+    for (const category of ["handoff_missing", "handoff_arguments_invalid", "contract_validation_failed", "transport_failed", "unknown", "reviewer_abstained"]) {
+      for (const projectionLost of [false, true]) {
+        const independentFailure = { ...inconclusiveReport, reviewer_results: [
+          normalizedReview("qwen"),
+          { ...normalizedReview("kimi", "abstain", { diagnostics: [{ attempt: 1, category }] }), evidence_truncated: projectionLost },
+          normalizedReview("glm", "abstain", { diagnostics: [{ attempt: 1, category: "reviewer_abstained" }] }),
+        ] };
+        const result = runValidator("cancelled", independentFailure, { passed: false, successes: 1, total: 3, threshold: 2 });
+        expect(result.status, `${category} projectionLost=${projectionLost}: ${result.stderr}`).toBe(0);
+      }
+    }
+    const concealedTruncation = { ...inconclusiveReport, reviewer_results: [
+      normalizedReview("qwen"),
+      { ...normalizedReview("kimi", "abstain", { diagnostics: [{ attempt: 1, category: "provider_output_truncated" }] }), evidence_truncated: false },
+      normalizedReview("glm", "abstain", { diagnostics: [{ attempt: 1, category: "reviewer_abstained" }] }),
+    ] };
+    expect(runValidator("cancelled", concealedTruncation, { passed: false, successes: 1, total: 3, threshold: 2 }).status).toBe(1);
+
     const truncated = {
       ...inconclusiveReport,
       status: "findings",

@@ -158,6 +158,18 @@ describe("attempt diagnostic classification and sanitization", () => {
     expect(classifyReviewFailure("")).toBe("unknown");
   });
 
+  it("recognizes the observed DSH max-tokens finish without inferring truncation from token counts", () => {
+    expect(classifyReviewFailure("max-tokens")).toBe("provider_output_truncated");
+    expect(classifyReviewFailure("contract validation failed")).toBe("contract_validation_failed");
+    expect(sanitizeAttemptDiagnostic({ failure_category: "handoff_missing", finish_reason: "max-tokens",
+      output_tokens: 32767, output_token_limit: 32768 })).toMatchObject({
+      failure_category: "provider_output_truncated", finish_reason: "max-tokens",
+    });
+    expect(sanitizeAttemptDiagnostic({ failure_category: "handoff_missing", finish_reason: null,
+      output_tokens: 32767, output_token_limit: 32768 })?.failure_category).toBe("handoff_missing");
+    expect(sanitizeAttemptDiagnostic({ failure_category: "accepted", finish_reason: "max-tokens" })?.failure_category).toBe("accepted");
+  });
+
   it("keeps missing provider fields explicit unknown/null", () => {
     const diagnostic = sanitizeAttemptDiagnostic({}, { attempt: 2 });
     expect(diagnostic).toMatchObject({
