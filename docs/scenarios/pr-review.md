@@ -40,10 +40,12 @@ metadata.
    Manager command-output limit and records `diff_truncated` explicitly.
    Bounded author/committer metadata is captured for audit history, then
    deterministically stripped from the model context.
-2. Qwen, Kimi, and GLM start from the same exact evidence independently and in
-   parallel. Each performs a complete PR review covering runtime correctness,
-   security, compatibility, tests, and user-visible behavior, then casts one
-   `approve` or `request_changes` vote. The trusted checkout is
+2. The three stable reviewer slots (historically labeled Qwen, Kimi, and GLM)
+   start from the same exact evidence independently and in parallel. Their
+   actual provider and model identities come from persisted Manager dispatch
+   bindings and may differ from the slot labels. Each slot performs a complete
+   PR review covering runtime correctness, security, compatibility, tests, and
+   user-visible behavior, then casts one `approve` or `request_changes` vote. The trusted checkout is
    mounted read-only. Reviewers that need repository evidence receive only the
    read-only `Read`, `Grep`, `Glob`, and `LS` tools, so they can inspect
    complete files, trace callers, and search tests without granting untrusted PR
@@ -71,6 +73,70 @@ metadata.
    terminal state, the stable runner renders Markdown deterministically from
    that JSON plus `command.json`, so the exact Manager run id cannot be invented
    or altered by a model.
+
+## Recovery and diagnostics
+
+When a reviewer has no accepted coverage attestation, the Manager can supply a
+fenced `review-recovery-v1` input for a fresh correction. It preserves a public
+model draft as unverified evidence, never as accepted findings or coverage. The
+Worker records only public text before a terminal error, retaining at most the
+last 8,192 UTF-8 bytes without splitting characters; hidden reasoning and tool
+results are excluded. Older Worker text remains a bounded fallback. Drafts and
+accepted evidence are persisted separately.
+
+Recovery requires Manager-provided trusted inputs matching the exact run, node,
+session, round and generation plus an explicit read-only workspace policy.
+Only already-declared Read/Grep/Glob/LS tools are available, with at most 32 calls
+or a smaller configured limit. Writes and broker actions remain unavailable.
+The reviewer must verify source evidence before attesting coverage; otherwise
+it returns a structured failed/abstain result. Existing accepted coverage keeps
+ordinary contract-only correction. A logical DAG session ID does not imply
+that a provider SDK conversation was resumed.
+
+`handoff_missing` identifies an absent final handoff. Missing coverage, invalid
+arguments, transport errors and unknown failures do not by themselves mean
+truncation. `evidence_truncated` describes bounded projection loss or an observed
+provider output-limit finish; explicit abstention remains a separate category.
+For a failed attempt, a confirmed provider finish such as max-tokens, max_tokens or length takes
+precedence over a missing-handoff or contract-error label. Token counts near the
+configured limit alone do not establish truncation. A successfully accepted handoff
+retains its accepted category.
+Unknown provider usage and finish fields stay null. The Manager refreshes the
+normalizer input after the final handoff so diagnostics include the actual
+terminal attempt rather than only the previous failure.
+
+## Execution identity and usage evidence
+
+The default quorum counts 2/3 approving reviewer executions plus zero retained
+findings; it does not measure distinct model weights. The environment variable
+`HOMERAIL_PR_REVIEW_DIVERSITY_POLICY` controls a configuration-time preflight:
+
+- `executions` (default): preserves historical backend behavior. The Claude
+  Agent SDK harness requires three distinct setting IDs; DSH may intentionally
+  share one OpenAI-compatible setting across all three slots.
+- `distinct_models` (opt-in): validates that all three reviewer roles resolve
+  to three distinct configured `[provider_id, model_name]` JSON tuples before
+  Runtime Profile sync or model dispatch, rejecting missing or duplicate
+  identity. Setting IDs or endpoint URLs alone do not constitute diversity.
+
+This preflight is configuration-time, not atomic Manager admission. Later
+configuration edits and aliased endpoint weights remain tracked as #273
+followup.
+
+A trusted host collector produces `pr-review-execution.json` from persisted
+Manager prompts and Worker usage snapshots for all three slots on both
+successful and failed review paths. The sidecar records actual provider, model,
+backend, and setting history plus explicit unavailable markers; it never
+persists API keys, endpoints, prompts, prose, or debug text.
+
+The Markdown renderer shows dispatch bindings separately from slot votes.
+Per-execution cumulative usage snapshots deduplicate; observed token totals
+include uncached input, output, cache-read, and cache-create once. Unknown
+totals remain `null`; missing executions stay incomplete. The usage state is
+`final` only when at least one runtime usage snapshot carries both
+`finish_reason` and `duration_ms`; partial or unknown state never means
+zero-cost or settled billing. Request-level provider attribution, upstream
+cancel acknowledgement, and complete billing settlement remain #271 followup.
 
 ## Outputs
 

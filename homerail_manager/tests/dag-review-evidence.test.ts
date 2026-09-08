@@ -442,7 +442,7 @@ nodes:
       expect.objectContaining({
         attempt: 1,
         finish_reason: "max_tokens",
-        failure_category: "contract_validation_failed",
+        failure_category: "provider_output_truncated",
       }),
     ]);
     _clearActiveRuns();
