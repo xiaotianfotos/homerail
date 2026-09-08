@@ -130,6 +130,7 @@ spec:
             - accepted
             - provider_output_truncated
             - handoff_arguments_invalid
+            - handoff_missing
             - contract_validation_failed
             - transport_failed
             - reviewer_abstained
@@ -346,6 +347,7 @@ spec:
                   - accepted
                   - provider_output_truncated
                   - handoff_arguments_invalid
+                  - handoff_missing
                   - contract_validation_failed
                   - transport_failed
                   - reviewer_abstained
@@ -440,6 +442,7 @@ spec:
                   - accepted
                   - provider_output_truncated
                   - handoff_arguments_invalid
+                  - handoff_missing
                   - contract_validation_failed
                   - transport_failed
                   - reviewer_abstained

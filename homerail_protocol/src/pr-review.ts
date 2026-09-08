@@ -64,6 +64,7 @@ export interface ReviewFindingV1 {
 export const REVIEW_FAILURE_CATEGORIES = [
   "provider_output_truncated",
   "handoff_arguments_invalid",
+  "handoff_missing",
   "contract_validation_failed",
   "transport_failed",
   "reviewer_abstained",
