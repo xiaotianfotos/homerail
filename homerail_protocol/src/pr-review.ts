@@ -337,7 +337,7 @@ export function sanitizeAttemptDiagnostic(
     || (declaredCategory === "accepted" && options.failure_reason !== undefined)
     ? classifyReviewFailure(failureReason ?? diagnostic.finish_reason ?? "")
     : declaredCategory;
-  const failureCategory = baseCategory !== "accepted" && knownTruncationFinish
+  const failureCategory = baseCategory !== "accepted" && baseCategory !== "reviewer_abstained" && knownTruncationFinish
     ? "provider_output_truncated"
     : baseCategory;
   const diagnosticValue: AttemptDiagnosticV1 = {
