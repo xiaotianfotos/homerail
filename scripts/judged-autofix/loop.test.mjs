@@ -146,9 +146,19 @@ test('invalid JSON result is retained verbatim and reaches judgment',async t=>{
  assert.equal(f.loop.state.phase,'judging');
  assert.equal(f.loop.round.failure.category,'model_result');
  assert.equal(f.loop.round.failure.code,'invalid_result_json');
+ assert.equal(f.loop.round.failure.status,'completed');
  assert.equal(fs.readFileSync(path.join(f.root,'rounds/1/result.json'),'utf8'),raw);
  assert.equal(f.loop.round.candidate_commit,undefined);
  assert.equal(new JudgedLoop(f.root).round.failure.code,'invalid_result_json');
+});
+test('JSON null and invalid summary proposals reach judgment without escaping the collection boundary',async t=>{
+ for(const value of [null,{edits:[{path:'source.txt',old:'original',new:'changed'}],summary:null}])await t.test(JSON.stringify(value),async child=>{
+  const f=terminalModelFixture(child,{raw:JSON.stringify(value)});await f.loop.step();
+  assert.equal(f.loop.state.phase,'judging');assert.equal(f.loop.round.failure.category,'proposal');
+  assert.equal(f.loop.round.candidate_commit,undefined);
+  assert.equal(new JudgedLoop(f.root).round.failure.category,'proposal');
+  assert.equal(fs.readFileSync(path.join(f.root,'rounds/1/result.json'),'utf8'),JSON.stringify(value));
+ });
 });
 test('failed or cancelled terminal runs cannot apply a ready proposal',async t=>{
  for(const status of ['failed','cancelled'])await t.test(status,async child=>{
