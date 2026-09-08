@@ -77,7 +77,7 @@ function renderExecutionEvidence(evidence) {
   out.push("Observed token totals reflect partial or unknown accounting and are not settled billing.");
   const distinct = evidence.distinct_model_identities;
   if (distinct != null) {
-    out.push(`Manager-resolved provider/model identities: ${distinct} — not proof of independent model weights.`);
+    out.push(`Known Manager-resolved provider/model identities: ${distinct} — not proof of independent model weights.`);
   }
   return out;
 }
