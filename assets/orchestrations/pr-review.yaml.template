@@ -10,7 +10,7 @@ metadata:
 
 spec:
   description: |
-    Read-only pull request review by three distinct models. Each model inspects
+    Read-only pull request review by three reviewer executions. Each reviewer inspects
     the complete immutable diff and casts one approve or request-changes vote.
     A deterministic two-of-three decision produces the review result. The
     workflow never commits, approves, or merges code. Models attest compact
@@ -1378,7 +1378,7 @@ spec:
               if(!trusted||typeof trusted!=='object'||!trusted.coverage||typeof trusted.coverage!=='object'||reviews.length!==3)throw new Error('three normalized model reviews and trusted context are required');
               const identities=new Set(reviews.map(review=>review&&review.reviewer));
               if(identities.size!==3||!['qwen','kimi','glm'].every(id=>identities.has(id)))throw new Error('model review identities are invalid');
-              const complete=reviews.filter(review=>review.status==='complete'&&(review.vote==='approve'||review.vote==='request_changes')),approvals=complete.filter(review=>review.vote==='approve').length,changes=complete.filter(review=>review.vote==='request_changes').length,abstentions=3-complete.length,selected=reviews.flatMap(review=>Array.isArray(review.findings)?review.findings:[]),seen=new Set(),findings=selected.filter(finding=>{if(!finding||typeof finding!=='object')return false;const key=findingKey(finding);if(seen.has(key))return false;seen.add(key);return true}),enoughEvidence=complete.length>=2,passed=enoughEvidence&&approvals>=2&&findings.length===0,status=findings.length>0?'findings':passed?'pass':'inconclusive',confidence=complete.length===3?'high':complete.length===2?'medium':'low',summary=`Three-model review: ${approvals} approve, ${changes} request changes, ${abstentions} abstain; ${findings.length} retained actionable finding${findings.length===1?'':'s'}.`,report={repo:trusted.repo,pr:trusted.pr,base:trusted.base,head:trusted.head,status,confidence,summary,coverage:trusted.coverage,actionable_count:findings.length,findings,reviewer_results:reviews},quorum={passed,successes:approvals,total:3,threshold:2};
+              const complete=reviews.filter(review=>review.status==='complete'&&(review.vote==='approve'||review.vote==='request_changes')),approvals=complete.filter(review=>review.vote==='approve').length,changes=complete.filter(review=>review.vote==='request_changes').length,abstentions=3-complete.length,selected=reviews.flatMap(review=>Array.isArray(review.findings)?review.findings:[]),seen=new Set(),findings=selected.filter(finding=>{if(!finding||typeof finding!=='object')return false;const key=findingKey(finding);if(seen.has(key))return false;seen.add(key);return true}),enoughEvidence=complete.length>=2,passed=enoughEvidence&&approvals>=2&&findings.length===0,status=findings.length>0?'findings':passed?'pass':'inconclusive',confidence=complete.length===3?'high':complete.length===2?'medium':'low',summary=`Three-reviewer execution review: ${approvals} approve, ${changes} request changes, ${abstentions} abstain; ${findings.length} retained actionable finding${findings.length===1?'':'s'}.`,report={repo:trusted.repo,pr:trusted.pr,base:trusted.base,head:trusted.head,status,confidence,summary,coverage:trusted.coverage,actionable_count:findings.length,findings,reviewer_results:reviews},quorum={passed,successes:approvals,total:3,threshold:2};
               process.stdout.write(JSON.stringify({report,quorum}));
             });
         stdin_field: "$inputs"

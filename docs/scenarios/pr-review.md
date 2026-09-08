@@ -40,10 +40,12 @@ metadata.
    Manager command-output limit and records `diff_truncated` explicitly.
    Bounded author/committer metadata is captured for audit history, then
    deterministically stripped from the model context.
-2. Qwen, Kimi, and GLM start from the same exact evidence independently and in
-   parallel. Each performs a complete PR review covering runtime correctness,
-   security, compatibility, tests, and user-visible behavior, then casts one
-   `approve` or `request_changes` vote. The trusted checkout is
+2. The three stable reviewer slots (historically labeled Qwen, Kimi, and GLM)
+   start from the same exact evidence independently and in parallel. Their
+   actual provider and model identities come from persisted Manager dispatch
+   bindings and may differ from the slot labels. Each slot performs a complete
+   PR review covering runtime correctness, security, compatibility, tests, and
+   user-visible behavior, then casts one `approve` or `request_changes` vote. The trusted checkout is
    mounted read-only. Reviewers that need repository evidence receive only the
    read-only `Read`, `Grep`, `Glob`, and `LS` tools, so they can inspect
    complete files, trace callers, and search tests without granting untrusted PR
@@ -72,121 +74,36 @@ metadata.
    that JSON plus `command.json`, so the exact Manager run id cannot be invented
    or altered by a model.
 
-## Recovery and diagnostics
 
-When a reviewer has no accepted coverage attestation, the Manager can supply a
-fenced `review-recovery-v1` input for a fresh correction. It preserves a public
-model draft as unverified evidence, never as accepted findings or coverage. The
-Worker records only public text before a terminal error, retaining at most the
-last 8,192 UTF-8 bytes without splitting characters; hidden reasoning and tool
-results are excluded. Older Worker text remains a bounded fallback. Drafts and
-accepted evidence are persisted separately.
+## Execution identity and usage evidence
 
-Recovery requires Manager-provided trusted inputs matching the exact run, node,
-session, round and generation plus an explicit read-only workspace policy.
-Only already-declared Read/Grep/Glob/LS tools are available, with at most 32 calls
-or a smaller configured limit. Writes and broker actions remain unavailable.
-The reviewer must verify source evidence before attesting coverage; otherwise
-it returns a structured failed/abstain result. Existing accepted coverage keeps
-ordinary contract-only correction. A logical DAG session ID does not imply
-that a provider SDK conversation was resumed.
+The default quorum counts 2/3 approving reviewer executions plus zero retained
+findings; it does not measure distinct model weights. The environment variable
+`HOMERAIL_PR_REVIEW_DIVERSITY_POLICY` controls a configuration-time preflight:
 
-`handoff_missing` identifies an absent final handoff. Missing coverage, invalid
-arguments, transport errors and unknown failures do not by themselves mean
-truncation. `evidence_truncated` describes bounded projection loss or an observed
-provider output-limit finish; explicit abstention remains a separate category.
-For a failed attempt, a confirmed provider finish such as max-tokens, max_tokens or length takes
-precedence over a missing-handoff or contract-error label. Token counts near the
-configured limit alone do not establish truncation. A successfully accepted handoff
-retains its accepted category.
-Unknown provider usage and finish fields stay null. The Manager refreshes the
-normalizer input after the final handoff so diagnostics include the actual
-terminal attempt rather than only the previous failure.
+- `executions` (default): preserves historical backend behavior. The Claude
+  Agent SDK harness requires three distinct setting IDs; DSH may intentionally
+  share one OpenAI-compatible setting across all three slots.
+- `distinct_models` (opt-in): validates that all three reviewer roles resolve
+  to three distinct configured `[provider_id, model_name]` JSON tuples before
+  Runtime Profile sync or model dispatch, rejecting missing or duplicate
+  identity. Setting IDs or endpoint URLs alone do not constitute diversity.
 
-## Outputs
+This preflight is configuration-time, not atomic Manager admission. Later
+configuration edits and aliased endpoint weights remain tracked as #273
+followup.
 
-- `pr-review.json`
-- `pr-review.md`
-- three normalized independent reviews and votes (model settings are selected
-  by the private Runtime Profile)
-- deterministic approval-threshold and finding-veto payload
-- Manager audit summary and per-node metrics
-- HomeRail run id and replayable event history
+A trusted host collector produces `pr-review-execution.json` from persisted
+Manager prompts and Worker usage snapshots for all three slots on both
+successful and failed review paths. The sidecar records actual provider, model,
+backend, and setting history plus explicit unavailable markers; it never
+persists API keys, endpoints, prompts, prose, or debug text.
 
-The workflow does not modify the reviewed repository, submit a GitHub review,
-approve a PR, or merge code. Its GitHub Check passes only when at least two
-models approve and no complete reviewer reports an actionable finding.
-
-## CI Adapter
-
-`.github/workflows/pr-review.yml` is intentionally thin. It converts GitHub
-event fields into the public CLI input, then submits it to the auto-deployed
-stable Manager. It does not install packages, build the pull-request checkout,
-copy a Seed Home, or start an ephemeral Manager. The stable release syncs its
-tracked template, binds a private database Runtime Profile, calls
-`hr dag run-template ... --wait`, downloads the declared JSON artifact,
-renders `pr-review.md` locally from the authoritative result and command run id,
-uploads both files as CI evidence, and copies the Markdown into the GitHub Check
-summary. The run and its event history remain visible in the normal production
-UI. Workflow contracts and deterministic quorum remain authoritative; the
-adapter does not reconstruct a report from raw handoffs.
-The adapter verifies that the run reached the terminal state implied by the
-gate, all artifacts are structured and non-empty, at least two approvals exist
-for a pass, every complete reviewer finding is preserved, and Markdown contains
-the exact HomeRail run id and report identity. Any request-changes finding is
-retained as `cancelled` plus `findings`; fewer than two complete approvals with
-no findings is retained as `cancelled` plus `inconclusive`.
-Infrastructure and artifact-integrity failures also fail the check. Whether
-that check blocks merging is a repository branch-protection decision; findings
-and inconclusive results remain complete diagnostic outputs.
-
-Automatic self-hosted execution is restricted to non-draft, same-repository PRs
-created by the trusted maintainer. This avoids running untrusted fork content on
-the `.112` runner. Maintainers can use `workflow_dispatch` for an explicit
-review after evaluating that boundary.
-
-Manual dispatch may also select one Manager LLM setting and
-`deepseek_harness` for all three reviewer slots. This creates three independent
-DSH processes and votes while intentionally sharing the same model setting; it
-uses the separate `pr-review-dsh` profile by default and cannot overwrite the
-normal mixed-model profile.
-
-PR Review jobs require a dedicated self-hosted runner with the
-`homerail-pr-review` label. Live catalog validation continues to use the
-`homerail-live` label and may start a current-commit transient runtime because it
-is explicitly validating that commit's Manager/Worker protocol. Auto Fix uses a
-third Actions runner labeled `homerail-auto-fix`. PR Review and Auto Fix may run
-concurrently but both submit to the one stable Manager; do not combine their
-labels on one Actions runner process.
-
-Runner repository configuration:
-
-- `HOMERAIL_STABLE_ROOT`: immutable auto-deployed release root whose `current`
-  symlink identifies the active stable runtime;
-- `HOMERAIL_STABLE_HOME`: persistent Home used by that Manager;
-- `HOMERAIL_STABLE_MANAGER_URL`: host-local Manager URL. It must be loopback or
-  the Docker bridge gateway, never a LAN Manager endpoint;
-- `HOMERAIL_PR_REVIEW_PRIMARY_MODEL`: exact setting id, display name, or model
-  name selected from the stable Manager database. It drives the first review;
-- `HOMERAIL_PR_REVIEW_ARBITER_MODEL`: a distinct active setting selected from
-  the same database and drives the second review;
-- `HOMERAIL_PR_REVIEW_THIRD_MODEL`: a third distinct active setting that drives
-  the final review vote. The normal mixed profile requires all three settings
-  to expose Anthropic-compatible endpoints because it uses the Claude Agent SDK
-  harness. An explicit DSH dispatch instead requires one OpenAI-compatible
-  Chat Completions setting.
-
-The production profile binds `qwen_reviewer` to the released `qwen3.8-max`
-Aliyun Token Plan setting, `kimi_reviewer` to K3, and `glm_reviewer` to
-GLM-5.2. Do not retain `qwen3.8-max-preview` as the primary selector after the
-released model is available.
-
-The GitHub Actions adapter supplies `github.api_url` as
-`HOMERAIL_GITHUB_API_BASE_URL`, so credential-free-accessible GitHub Enterprise
-repositories use the correct metadata and checkout host instead of deriving a
-`github.com` URL.
-
-The model selectors are local runner environment values, not public GitHub
-variables. The synced Runtime Profile stores only database setting IDs. The
-stable runner reads the existing 0600 DAG mutation token from the persistent
-Home; it never places that token in GitHub Secrets or a Worker environment.
+The Markdown renderer shows dispatch bindings separately from slot votes.
+Per-execution cumulative usage snapshots deduplicate; observed token totals
+include uncached input, output, cache-read, and cache-create once. Unknown
+totals remain `null`; missing executions stay incomplete. The usage state is
+`final` only when at least one runtime usage snapshot carries both
+`finish_reason` and `duration_ms`; partial or unknown state never means
+zero-cost or settled billing. Request-level provider attribution, upstream
+cancel acknowledgement, and complete billing settlement remain #271 followup.

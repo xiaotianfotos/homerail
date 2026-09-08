@@ -97,16 +97,33 @@ export function prReviewRuntimeProfileYaml({
   third,
   agentType = "claude-sdk",
   reasoningEffort,
+  diversityPolicy = "executions",
 }) {
   agentType = normalizedAgentType(agentType);
   reasoningEffort = normalizedDshReasoningEffort(reasoningEffort, agentType, [primary, arbiter, third]);
   if (agentType === "claude-sdk" && new Set([primary.id, arbiter.id, third.id]).size !== 3) {
     throw new Error("PR Review requires three distinct LLM settings");
   }
+  if (diversityPolicy !== "executions" && diversityPolicy !== "distinct_models") {
+    throw new Error(`unsupported diversity policy: ${diversityPolicy}`);
+  }
+  if (diversityPolicy === "distinct_models") {
+    const identities = [primary, arbiter, third].map((s) => {
+      const provider = nonEmpty(s.provider_id);
+      const model = nonEmpty(s.model_name);
+      if (!provider || !model) {
+        throw new Error(`PR Review distinct_models: provider and model are required for setting ${s.id ?? "unknown"}`);
+      }
+      return JSON.stringify([provider, model]);
+    });
+    if (new Set(identities).size !== 3) {
+      throw new Error("PR Review distinct_models policy requires three distinct provider/model identities");
+    }
+  }
   const settingsByRole = { primary, arbiter, third };
   const description = agentType === "deepseek_harness"
-    ? "Three independent DeepSeek Harness reviewer processes; model settings may intentionally be shared."
-    : "Three-model PR review with one independent vote per model.";
+    ? `Three independent DeepSeek Harness reviewer processes; model settings may intentionally be shared; quorum counts reviewer executions; diversity preflight ${diversityPolicy}.`
+    : `Three reviewer executions with separate setting IDs; quorum counts reviewer executions; diversity preflight ${diversityPolicy}.`;
   return [
     `profile_id: ${yamlString(profileId)}`,
     `workflow_id: ${yamlString(workflowId)}`,
@@ -154,6 +171,7 @@ export async function configurePrReviewRuntimeProfile({
   arbiterSelector = process.env.HOMERAIL_PR_REVIEW_ARBITER_MODEL,
   thirdSelector = process.env.HOMERAIL_PR_REVIEW_THIRD_MODEL,
   reasoningEffort = process.env.HOMERAIL_PR_REVIEW_REASONING_EFFORT,
+  diversityPolicy = process.env.HOMERAIL_PR_REVIEW_DIVERSITY_POLICY ?? "executions",
 } = {}) {
   const normalizedManagerUrl = managerUrl.replace(/\/+$/, "");
   workflowId = nonEmpty(workflowId) ?? "pr-review";
@@ -173,6 +191,7 @@ export async function configurePrReviewRuntimeProfile({
     third,
     agentType,
     reasoningEffort,
+    diversityPolicy,
   });
   const synced = await request(normalizedManagerUrl, "/api/dag/profiles/sync", {
     method: "POST",
