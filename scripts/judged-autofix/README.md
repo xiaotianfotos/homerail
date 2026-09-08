@@ -115,6 +115,91 @@ Body file paths are resolved to absolute paths before GitHub CLI invocation, so
 caller-relative paths retain their intended meaning regardless of the repository
 working directory used by `gh`.
 
+When an already-owned PR exists with a previously confirmed body (recorded in
+`publication_history`), `publish` may update its description in-place via
+`gh api --method PATCH` rather than failing. The update is resumable: a durable
+`body_update` intent with an `attempted` flag is persisted before the API call,
+allowing a controller reopen to reconcile a successful write whose
+acknowledgement was lost without issuing another PATCH. If `attempted` is true
+but the target body is not yet visible (ambiguous pre-send crash or stale read),
+publish throws a reconciliation-pending error rather than repeating the mutation.
+This implementation does not use a server-side compare-and-swap guard, so a
+post-read concurrent external edit cannot be excluded; the mechanism guarantees
+at-most-one send from the controller's perspective but does not claim server-side
+atomicity. After a successful update, the `body_update` marker is retained with
+`confirmed: true` rather than cleared, so a subsequent reopen that observes an
+externally restored old body is treated as a reconciliation conflict and never
+emits another PATCH. A confirmed publication never changes its body or URL until
+the Judger authorizes a new revision.
+
+When a revision is accepted after a body update's acknowledgement was lost, the
+prior publication state (including the unacknowledged `body_update`) is archived
+to `publication_history` without a top-level `url`. The next publish reconciles
+this entry by verifying `attempted`, URL match, valid hex digests, and that the
+actual PR body equals `to_body_digest`. On success the archived entry receives
+the current URL and `confirmed: true`; on any mismatch publish fails closed with
+a reconciliation diagnostic and no further PATCH is sent.
+
+When an attempted body update's acknowledgement is lost and automatic reconciliation
+cannot succeed (the target body is not visible at the PR source), the Judger may
+explicitly authorize recovery via `recover-publication`. This operation is an
+abandonment at the observed source: it validates that the previous sender has settled
+(`previous_attempt_settled: true` attestation), records the entire abandoned intent in
+`publication_recoveries`, and clears custody so a subsequent `publish` may create a new
+intent. The decision schema requires `action: "abandon-body-update-at-source"`, exact
+`task_nonce`/`round`/`plan_digest`/`head` bindings, a `target` (either `"current"` or a
+nonnegative `publication_history` index), `publication_digest` matching the pending
+entry's identity, and a nonempty `reason`. Recovery performs read-only `gh pr list`
+only; it never PATCHes, pushes, or creates. Source body equality is an observation of
+the current remote state, not proof that the original request never landed. Replaying
+an already-applied decision is rejected without side effects; a fresh, separately
+reviewed decision is required for another recovery attempt. If the target is already
+visible at the PR source, ordinary `publish` reconciles it without recovery. Revise
+alone does not resolve an old pending update.
+
+Explicit recovery also handles `attempted:false` crash-after-intent-before-send:
+a durable body_update where the sender never dispatched (attempted persisted as
+boolean `false`) may be abandoned with the same evidence-bound decision. State
+markers `attempted` must be strict boolean `true` or `false`; missing, null,
+number, or string values are rejected. When `publish` finds an empty PR list but
+the publication or a matching history entry already carries URL or body_update
+custody, it refuses replacement creation with a diagnostic (owned PR missing);
+this does NOT auto-adopt or replace a deleted PR and does not claim GitHub CAS.
+
+#### Invocation
+
+```sh
+node /work/repair-task/run.mjs /work/repair-task recover-publication /work/repair-task/recovery.json
+node /work/repair-task/run.mjs /work/repair-task publish /work/repair-task/pr-body.md
+```
+
+#### Recovery decision semantics
+
+The loop must be in the `accepted` phase with valid evidence. The decision JSON
+requires exact fields: `action:"abandon-body-update-at-source"`, `task_nonce`,
+`round`, `plan_digest`, `head` (= current candidate commit),
+`previous_attempt_settled: true` (operator attestation, not programmatic proof
+of absence), `reason` (nonempty), `target` (`"current"` or nonnegative history
+index), and `publication_digest` (identity of the pending entry).
+
+When `target` is a history index and a matching active publication exists, it
+must be a **prepared current intent**: no `url`, `body_update` strictly
+`undefined`, `head` equal to the current candidate, and a valid 64-char
+lowercase-hex `body_digest`. This is the safe intent that `publish` persisted
+before its reconciliation guard fired without sending any PATCH. Any other
+matching active publication (with url, body_update, wrong head, or invalid
+digest) is rejected before mutation.
+
+The baseline search never skips an unresolved update: any matching history
+entry between the baseline and the target that has a `body_update` but no
+top-level `url` blocks recovery regardless of `attempted` or `confirmed`
+values. Recovery is rejected before any state change.
+
+Recovery performs read-only `gh pr list` only. At most one body send occurs
+**per intent**; recovery clears custody so the next `publish` creates a new
+independent intent. No server-side CAS or automatic convergence guarantee
+exists—recovery is a manual evidence-bound operator decision.
+
 If a publication attempt fails after acceptance, the Judger may revoke acceptance
 by issuing a new decision with `verdict: "revise"` and valid `round`, `plan_digest`
 and `reason`. The prior acceptance judgment is preserved in `judgment_history` and

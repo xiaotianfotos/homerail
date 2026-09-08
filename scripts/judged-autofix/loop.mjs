@@ -236,6 +236,8 @@ export class JudgedLoop {
     let pr;
     if(prs.length===1){pr=prs[0];}
     else if(prs.length===0){
+      if(this.state.publication&&(this.state.publication.url||this.state.publication.body_update))throw new Error('owned PR missing; refusing replacement create (publication has confirmed url or body_update custody)');
+      const hist=this.state.publication_history;if(hist)for(let i=hist.length-1;i>=0;i--){const h=hist[i];if(h.repo===repo&&h.branch===branch&&h.base===base&&h.title===title){if(h.url||h.body_update)throw new Error('owned PR missing; refusing replacement create (history entry has url or body_update custody)');}}
       gh(['pr','create','--repo',repo,'--head',branch,'--base',base,'--title',title,'--body-file',bodyFile]);
       const after=JSON.parse(gh(['pr','list','--repo',repo,'--head',branch,'--state','all','--json',jsonFields]));
       if(after.length!==1)throw new Error('expected one PR after create, got '+after.length);
@@ -248,8 +250,150 @@ export class JudgedLoop {
     const repoJoin=`${pr.headRepositoryOwner?.login}/${pr.headRepository?.name}`.toLowerCase();
     if(repoJoin!==repo.toLowerCase())throw new Error('PR headRepository mismatch with config repo');
     if(pr.title!==intent.title)throw new Error('PR title mismatch');
-    if(digest(Buffer.from(pr.body))!==intent.body_digest)throw new Error('PR body digest mismatch');
+    if(this.state.publication.url&&this.state.publication.url!==pr.url)throw new Error('confirmed publication URL mismatch; replacement URL not adopted');
+    if(this.state.publication.body_update){
+      if(this.state.publication.body_update.url!==pr.url)throw new Error('body_update URL does not match current PR URL; replacement URL not adopted');
+      if(this.state.publication.body_update.to_body_digest!==intent.body_digest)throw new Error('body_update target digest does not match current intent');
+    }
+    if(!this.state.publication.url&&!this.state.publication.body_update){const hist=this.state.publication_history;if(hist)for(let i=hist.length-1;i>=0;i--){const h=hist[i];if(h.repo===repo&&h.branch===branch&&h.base===base&&h.title===title){if(h.url)break;if(!h.body_update)continue;const bu=h.body_update;if(bu.attempted!==true)throw new Error('archived update reconciliation: entry not attempted');if(bu.url!==pr.url)throw new Error('archived update reconciliation: URL mismatch');if(typeof h.body_digest!=='string'||!/^[a-f0-9]{64}$/.test(h.body_digest))throw new Error('archived update reconciliation: invalid archived body_digest');if(typeof bu.from_body_digest!=='string'||!/^[a-f0-9]{64}$/.test(bu.from_body_digest))throw new Error('archived update reconciliation: invalid from_body_digest');if(typeof bu.to_body_digest!=='string'||!/^[a-f0-9]{64}$/.test(bu.to_body_digest))throw new Error('archived update reconciliation: invalid to_body_digest');if(bu.to_body_digest!==h.body_digest)throw new Error('archived update reconciliation: to_body_digest does not match archived body_digest');if(digest(Buffer.from(pr.body))!==bu.to_body_digest)throw new Error('archived update reconciliation: lost update acknowledgement; PR body does not match to_body_digest');h.url=pr.url;h.body_update.confirmed=true;this.save('archived_update_reconciled');break;}}}
+    if(digest(Buffer.from(pr.body))===intent.body_digest){
+      if(this.state.publication.body_update){
+        this.state.publication.body_update.confirmed=true;
+      }
+      this.state.publication.url=pr.url;this.save('published');return pr.url;
+    }
+    if(this.state.publication.url)throw new Error('confirmed publication body drift requires Judger reconciliation');
+    // PR body does not match target intent – attempt or resume durable body update
+    if(this.state.publication.body_update){
+      const bu=this.state.publication.body_update;
+      if(bu.attempted)throw new Error('lost update acknowledgement; attempted body update not confirmed against target body; requires Judger reconciliation');
+      if(digest(Buffer.from(pr.body))!==bu.from_body_digest)throw new Error('body_update source digest does not match current PR body');
+    }else{
+      const history=this.state.publication_history;
+      let latest=null;
+      if(history)for(let i=history.length-1;i>=0;i--){const h=history[i];if(h.repo===repo&&h.branch===branch&&h.base===base&&h.url&&h.title===title&&h.body_digest&&/^[a-f0-9]{64}$/.test(h.body_digest)){latest=h;break;}}
+      if(!latest)throw new Error('no confirmed publication history for current repo/branch/base/title; refusing PR body update');
+      if(latest.url!==pr.url)throw new Error('PR URL does not match latest confirmed publication history');
+      if(digest(Buffer.from(pr.body))!==latest.body_digest)throw new Error('PR body does not match latest confirmed publication; external or unknown modification');
+      this.state.publication.body_update={url:pr.url,from_body_digest:digest(Buffer.from(pr.body)),to_body_digest:intent.body_digest,attempted:false};
+      this.save('body_update_intent');
+    }
+    const urlMatch=pr.url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)$/i);
+    if(!urlMatch)throw new Error('cannot derive API endpoint from PR URL');
+    if(`${urlMatch[1]}/${urlMatch[2]}`.toLowerCase()!==repo.toLowerCase())throw new Error('PR URL repository does not match config repo');
+    const endpoint=`repos/${urlMatch[1]}/${urlMatch[2]}/pulls/${urlMatch[3]}`;
+    const inputFile=path.join(this.root,'body-update-input.json');
+    atomic(inputFile,{body:bodyBuf.toString('utf8')});
+    this.state.publication.body_update.attempted=true;this.save('body_update_attempted');
+    gh(['api','--method','PATCH',endpoint,'--input',inputFile]);
+    const verify=JSON.parse(gh(['pr','list','--repo',repo,'--head',branch,'--state','all','--json',jsonFields]));
+    if(verify.length!==1)throw new Error('expected one PR after body update, got '+verify.length);
+    const vp=verify[0];
+    if(vp.state!=='OPEN')throw new Error('PR is not OPEN after body update');
+    if(vp.headRefOid!==intent.head)throw new Error('PR headRefOid mismatch after body update');
+    if(vp.headRefName!==intent.branch)throw new Error('PR headRefName mismatch after body update');
+    if(vp.baseRefName!==intent.base)throw new Error('PR baseRefName mismatch after body update');
+    if(vp.url!==pr.url)throw new Error('PR URL changed after body update');
+    if(`${vp.headRepositoryOwner?.login}/${vp.headRepository?.name}`.toLowerCase()!==repo.toLowerCase())throw new Error('PR headRepository mismatch after body update');
+    if(vp.title!==intent.title)throw new Error('PR title mismatch after body update');
+    if(digest(Buffer.from(vp.body))!==intent.body_digest)throw new Error('PR body digest still mismatched after body update');
+    this.state.publication.body_update.confirmed=true;
     this.state.publication.url=pr.url;this.save('published');return pr.url;
+  }
+  recoverPublication(file){
+    file=path.resolve(file);
+    const j=read(file);
+    if(j.action!=='abandon-body-update-at-source')throw new Error('invalid recovery action');
+    if(this.state.phase!=='accepted')throw new Error('Judger acceptance required');
+    this.assertEvidence();
+    const r=this.round;
+    if(j.task_nonce!==this.state.task_nonce)throw new Error('recovery decision task_nonce mismatch');
+    if(j.round!==r.index)throw new Error('recovery decision round mismatch');
+    if(j.plan_digest!==r.plan_digest)throw new Error('recovery decision plan_digest mismatch');
+    if(j.head!==r.candidate_commit)throw new Error('recovery decision head mismatch with current candidate');
+    if(j.previous_attempt_settled!==true)throw new Error('previous_attempt_settled must be strictly true');
+    if(!j.reason||typeof j.reason!=='string')throw new Error('recovery decision requires nonempty reason');
+    const isCurrent=j.target==='current';
+    if(!isCurrent&&(!Number.isInteger(j.target)||j.target<0))throw new Error('invalid recovery target');
+    const decisionId=identity(j);
+    const existing=this.state.publication_recoveries;
+    if(existing&&existing.some(rec=>rec.decision_digest===decisionId))throw new Error('recovery decision already applied');
+    let p;
+    if(isCurrent){
+      if(!this.state.publication)throw new Error('no active publication to recover');
+      p=this.state.publication;
+    }else{
+      const h=this.state.publication_history;
+      if(!h||j.target>=h.length)throw new Error('publication_history target out of range');
+      p=h[j.target];
+    }
+    if(identity(p)!==j.publication_digest)throw new Error('publication_digest mismatch');
+    if(p.url)throw new Error('publication already has confirmed URL');
+    const bu=p.body_update;
+    if(!bu)throw new Error('no body_update to recover');
+    if(bu.confirmed===true)throw new Error('body_update already confirmed');
+    if(bu.attempted!==true&&bu.attempted!==false)throw new Error('body_update attempted must be strict boolean true or false');
+    const repo=this.config.github_repo;
+    const base=this.config.base_branch??'main';
+    const title=this.config.pr_title;
+    const branch=this.repo.git(['branch','--show-current']);
+    if(!branch.startsWith('codex/'))throw new Error('publication requires an isolated codex branch');
+    if(p.repo!==repo)throw new Error('publication repo mismatch');
+    if(p.branch!==branch)throw new Error('publication branch mismatch');
+    if(p.base!==base)throw new Error('publication base mismatch');
+    if(p.title!==title)throw new Error('publication title mismatch');
+    const hex64=/^[a-f0-9]{64}$/;
+    if(typeof p.body_digest!=='string'||!hex64.test(p.body_digest))throw new Error('invalid publication body_digest');
+    if(typeof bu.from_body_digest!=='string'||!hex64.test(bu.from_body_digest))throw new Error('invalid from_body_digest');
+    if(typeof bu.to_body_digest!=='string'||!hex64.test(bu.to_body_digest))throw new Error('invalid to_body_digest');
+    if(bu.to_body_digest!==p.body_digest)throw new Error('to_body_digest does not match publication body_digest');
+    if(!isCurrent){
+      const hist=this.state.publication_history;
+      for(let i=j.target+1;i<hist.length;i++){
+        const h=hist[i];
+        if(h.repo===repo&&h.branch===branch&&h.base===base&&h.title===title)throw new Error('later matching publication entry exists; recovery target is stale');
+      }
+      if(this.state.publication){
+        const ap=this.state.publication;
+        if(ap.repo===repo&&ap.branch===branch&&ap.base===base&&ap.title===title){
+          if(ap.url||ap.body_update!==undefined||ap.head!==r.candidate_commit||typeof ap.body_digest!=='string'||!hex64.test(ap.body_digest))throw new Error('active publication matches target; recovery target is stale');
+        }
+      }
+    }
+    const hist=this.state.publication_history??[];
+    const searchEnd=isCurrent?hist.length:j.target;
+    let baseline=null;
+    for(let i=searchEnd-1;i>=0;i--){
+      const h=hist[i];
+      if(h.repo===repo&&h.branch===branch&&h.base===base&&h.title===title){
+        if(h.url&&typeof h.body_digest==='string'&&hex64.test(h.body_digest)){baseline=h;break;}
+        if(!h.url&&h.body_update)throw new Error('intervening unresolved update found; cannot recover past it');
+      }
+    }
+    if(!baseline)throw new Error('no confirmed publication baseline found');
+    if(bu.url!==baseline.url)throw new Error('body_update URL does not match confirmed baseline URL');
+    if(bu.from_body_digest!==baseline.body_digest)throw new Error('body_update source digest does not match confirmed baseline body_digest');
+    this.assertHead(r.candidate_commit);
+    if(this.repo.git(['status','--porcelain']))throw new Error('candidate is dirty');
+    const gh=args=>{const x=spawnSync('gh',args,{encoding:'utf8',cwd:this.config.repo});if(x.status!==0)throw new Error(x.stderr);return x.stdout;};
+    const jsonFields='url,state,headRefOid,baseRefName,headRefName,headRepository,headRepositoryOwner,title,body';
+    const prs=JSON.parse(gh(['pr','list','--repo',repo,'--head',branch,'--state','all','--json',jsonFields]));
+    if(prs.length===0)throw new Error('no PR found for branch '+branch);
+    if(prs.length>1)throw new Error('multiple PRs found for branch '+branch);
+    const pr=prs[0];
+    if(pr.state!=='OPEN')throw new Error('existing PR is not OPEN');
+    if(pr.url!==bu.url)throw new Error('PR URL mismatch with body_update URL');
+    if(pr.headRefOid!==r.candidate_commit)throw new Error('PR headRefOid mismatch with current candidate');
+    if(pr.headRefName!==branch)throw new Error('PR headRefName mismatch');
+    if(pr.baseRefName!==base)throw new Error('PR baseRefName mismatch');
+    const repoJoin=`${pr.headRepositoryOwner?.login}/${pr.headRepository?.name}`.toLowerCase();
+    if(repoJoin!==repo.toLowerCase())throw new Error('PR headRepository mismatch with config repo');
+    if(pr.title!==title)throw new Error('PR title mismatch');
+    if(digest(Buffer.from(pr.body))!==bu.from_body_digest)throw new Error('PR body digest does not match from_body_digest');
+    if(!this.state.publication_recoveries)this.state.publication_recoveries=[];
+    this.state.publication_recoveries.push({decision_digest:decisionId,decision:j,publication:JSON.parse(JSON.stringify(p)),at:now()});
+    if(isCurrent){delete this.state.publication;}else{this.state.publication_history.splice(j.target,1);}
+    this.save('publication_recovery_authorized');
   }
   recoverTests(){
     if(!this.state.blocked_test)throw new Error('no blocked test to recover');
@@ -259,10 +403,10 @@ export class JudgedLoop {
   }
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
-  const [root,op,...args]=process.argv.slice(2);if(!root||!op)throw new Error('Usage: loop.mjs <task-directory> plan|step|select-edits|apply|test|judge|publish|recover-tests|status [file/check]');
+  const [root,op,...args]=process.argv.slice(2);if(!root||!op)throw new Error('Usage: loop.mjs <task-directory> plan|step|select-edits|apply|test|judge|publish|recover-publication|recover-tests|status [file/check]');
   if(!process.env.HR_JUDGED_LOCKED){const r=spawnSync('flock',['-n',path.join(root,'lock'),process.execPath,fileURLToPath(import.meta.url),root,op,...args],{env:{...process.env,HR_JUDGED_LOCKED:'1'},stdio:'inherit'});process.exit(r.status??1);}
   const loop=new JudgedLoop(root);
-  try{if(op==='plan')loop.plan(args[0]);else if(op==='step')await loop.step();else if(op==='select-edits')loop.selectEdits(args[0]);else if(op==='apply')loop.apply();else if(op==='test')await loop.test(args.length?args:undefined);else if(op==='judge')loop.judge(args[0]);else if(op==='publish')loop.publish(args[0]);else if(op==='recover-tests')loop.recoverTests();else if(op!=='status')throw new Error('unknown operation');}
+  try{if(op==='plan')loop.plan(args[0]);else if(op==='step')await loop.step();else if(op==='select-edits')loop.selectEdits(args[0]);else if(op==='apply')loop.apply();else if(op==='test')await loop.test(args.length?args:undefined);else if(op==='judge')loop.judge(args[0]);else if(op==='publish')loop.publish(args[0]);else if(op==='recover-publication')loop.recoverPublication(args[0]);else if(op==='recover-tests')loop.recoverTests();else if(op!=='status')throw new Error('unknown operation');}
   catch(e){loop.save('controller_error',{message:e.message});console.error(e.message);process.exitCode=1;}
   console.log(JSON.stringify({phase:loop.state.phase,round:loop.round?.index,run_id:loop.round?.run_id,failure:loop.round?.failure,checks:loop.round?.receipts?.map(x=>({name:x.name,status:x.status})),publication:loop.state.publication}));
 }
