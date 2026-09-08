@@ -114,7 +114,7 @@ export function prReviewRuntimeProfileYaml({
       if (!provider || !model) {
         throw new Error(`PR Review distinct_models: provider and model are required for setting ${s.id ?? "unknown"}`);
       }
-      return `${provider}/${model}`;
+      return JSON.stringify([provider, model]);
     });
     if (new Set(identities).size !== 3) {
       throw new Error("PR Review distinct_models policy requires three distinct provider/model identities");

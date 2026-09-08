@@ -76,6 +76,14 @@ RUN_ID="${HOMERAIL_STABLE_RUN_ID:-$(
   "$HOMERAIL_STABLE_NODE" -e 'process.stdout.write(require("node:crypto").randomUUID())'
 )}"
 
+collect_pr_review_execution_evidence() {
+  if [ "$TASK" != "pr-review" ]; then
+    return 0
+  fi
+  "$HOMERAIL_STABLE_NODE" "$HOMERAIL_STABLE_RELEASE/scripts/pr-review-execution-evidence.mjs" \
+    "$1" "$ARTIFACT_DIR/pr-review-execution.json" >/dev/null 2>&1 || true
+}
+
 collect_run_evidence() {
   local run_id="$1"
   stable_hr dag quick "$run_id" --events 120 >"$ARTIFACT_DIR/dag-quick.txt" 2>&1 || true
@@ -89,6 +97,7 @@ collect_run_evidence() {
       stable_hr dag artifact "$run_id" "$artifact" --output "$ARTIFACT_DIR/$artifact" >/dev/null 2>&1 || true
     done
   fi
+  collect_pr_review_execution_evidence "$run_id"
 }
 
 render_pr_review_markdown() {
@@ -98,6 +107,7 @@ render_pr_review_markdown() {
   "$HOMERAIL_STABLE_NODE" "$MARKDOWN_SCRIPT" \
     "$COMMAND_PATH" \
     "$ARTIFACT_DIR/pr-review.json" \
+    "$ARTIFACT_DIR/pr-review-execution.json" \
     >"$ARTIFACT_DIR/pr-review.md.tmp"
   mv "$ARTIFACT_DIR/pr-review.md.tmp" "$ARTIFACT_DIR/pr-review.md"
 }
@@ -173,6 +183,7 @@ for artifact in "${ARTIFACT_NAMES[@]}"; do
   stable_hr dag artifact "$RUN_ID" "$artifact" --output "$ARTIFACT_DIR/$artifact"
   test -s "$ARTIFACT_DIR/$artifact"
 done
+collect_pr_review_execution_evidence "$RUN_ID"
 render_pr_review_markdown
 
 case "$TASK" in
