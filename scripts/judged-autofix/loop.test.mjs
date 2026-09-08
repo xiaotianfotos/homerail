@@ -100,6 +100,73 @@ function loopFixture(t,code="console.log('trusted')",overrides={}){
  fs.writeFileSync(path.join(root,'config.json'),JSON.stringify(config));const loop=new JudgedLoop(root);
  loop.state.phase='test';loop.state.rounds=[{index:1,plan:{checks:['oracle']},plan_digest:'plan',candidate_commit:f.spec.commit,candidate_tree:f.spec.tree}];loop.save('fixture');return {...f,root,loop};
 }
+function terminalModelFixture(t, options={}) {
+ const f=loopFixture(t,"console.log('trusted')",{manager_url:'http://manager.invalid'});
+ const r=f.loop.round;
+ r.plan.allowed_paths=['source.txt'];
+ Object.assign(r,{base:r.candidate_commit,base_tree:r.candidate_tree,run_id:'saved-run',state:'running',kind:'propose'});
+ delete r.candidate_commit;delete r.candidate_tree;
+ f.loop.state.phase='model';f.loop.save('terminal_model_fixture');
+ const calls=[];
+ t.mock.method(globalThis,'fetch',async(url,init)=>{
+  calls.push({url,method:init?.method});
+  if(url.endsWith('/status'))return new Response(JSON.stringify({data:{terminal:true,status:options.status??'completed',created_at:'2026-09-08T00:00:00Z',completed_at:'2026-09-08T00:00:10Z'}}));
+  if(url.endsWith('/chat'))return new Response(JSON.stringify({data:{messages:[{content:{type:'usage',execution_id:'first',usage:{input_tokens:10,output_tokens:5}}},{content:{text:'Saved candidate draft'}}]}}));
+  if(url.endsWith('/artifacts'))return new Response(JSON.stringify({data:{artifacts:options.raw===undefined?[]:[{name:'result.json',status:'ready'}]}}));
+  if(url.endsWith('/content'))return options.httpError?new Response('temporarily unavailable',{status:503}):new Response(options.raw);
+  throw new Error('unexpected request '+url);
+ });
+ return {...f,calls};
+}
+test('terminal run without result enters durable judgment instead of polling forever',async t=>{
+ const f=terminalModelFixture(t);
+ await f.loop.step();
+ assert.equal(f.loop.state.phase,'judging');
+ assert.equal(f.loop.round.failure.category,'model_result');
+ assert.equal(f.loop.round.failure.code,'missing_result_artifact');
+ assert.equal(f.loop.round.failure.status,'completed');
+ assert.equal(f.loop.round.metrics.tokens,15);
+ assert.equal(f.loop.round.candidate_commit,undefined);
+ assert.ok(fs.existsSync(path.join(f.root,'rounds/1/chat.json')));
+ const restarted=new JudgedLoop(f.root),count=f.calls.length;
+ assert.deepEqual(restarted.round.failure,f.loop.round.failure);
+ await restarted.step();assert.equal(f.calls.length,count,'terminal evidence gap must not keep polling');
+ const j=path.join(f.root,'revise.json');fs.writeFileSync(j,JSON.stringify({round:1,plan_digest:'plan',verdict:'revise',reason:'Saved terminal evidence inspected; authorize a new scoped attempt'}));
+ restarted.judge(j);
+ const p=path.join(f.root,'plan.json');fs.writeFileSync(p,JSON.stringify({objective:'repair remaining issue',strategy:'Edit only source.txt using a fresh context',allowed_paths:['source.txt'],checks:['oracle'],context:[{path:'source.txt'}]}));
+ restarted.plan(p);
+ assert.equal(restarted.round.index,2);assert.equal(restarted.round.base,f.spec.commit);
+ const input=JSON.parse(fs.readFileSync(path.join(f.root,'rounds/2/input.json'),'utf8'));
+ assert.equal(input.previous[0].failure.code,'missing_result_artifact');
+ assert.equal(f.calls.length,count,'authorizing next round must not resubmit the completed run');
+});
+test('invalid JSON result is retained verbatim and reaches judgment',async t=>{
+ const raw='{"edits":[{"path":"source.txt","old":"original"';
+ const f=terminalModelFixture(t,{raw});await f.loop.step();
+ assert.equal(f.loop.state.phase,'judging');
+ assert.equal(f.loop.round.failure.category,'model_result');
+ assert.equal(f.loop.round.failure.code,'invalid_result_json');
+ assert.equal(fs.readFileSync(path.join(f.root,'rounds/1/result.json'),'utf8'),raw);
+ assert.equal(f.loop.round.candidate_commit,undefined);
+ assert.equal(new JudgedLoop(f.root).round.failure.code,'invalid_result_json');
+});
+test('failed or cancelled terminal runs cannot apply a ready proposal',async t=>{
+ for(const status of ['failed','cancelled'])await t.test(status,async child=>{
+  const raw=JSON.stringify({edits:[{path:'source.txt',old:'original',new:'unexpected'}],summary:'must remain a draft'});
+  const f=terminalModelFixture(child,{status,raw});await f.loop.step();
+  assert.equal(f.loop.state.phase,'judging');assert.equal(f.loop.round.failure.status,status);
+  assert.equal(f.loop.round.failure.category,'model_terminal');assert.equal(f.loop.round.candidate_commit,undefined);
+  assert.equal(fs.readFileSync(path.join(f.repo,'source.txt'),'utf8'),'original\n');
+  assert.equal(fs.readFileSync(path.join(f.root,'rounds/1/result.json'),'utf8'),raw);
+ });
+});
+test('transient result fetch failure remains retryable on the same run',async t=>{
+ const f=terminalModelFixture(t,{raw:'{}',httpError:true});
+ await assert.rejects(f.loop.step(),/503/);
+ const restarted=new JudgedLoop(f.root);assert.equal(restarted.state.phase,'model');assert.equal(restarted.round.run_id,'saved-run');
+ assert.equal(restarted.round.failure,undefined);
+ assert.ok(f.calls.every(c=>c.method==='GET'));
+});
 test('loop records durable receipts and refuses acceptance after evidence tampering',async t=>{
  const f=loopFixture(t);await f.loop.test();const r=f.loop.round;
  assert.equal(f.loop.state.phase,'judging');assert.equal(r.receipts[0].status,'passed');assert.ok(r.receipts[0].runner_digest);
