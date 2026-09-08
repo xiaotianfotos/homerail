@@ -95,6 +95,10 @@ that a provider SDK conversation was resumed.
 arguments, transport errors and unknown failures do not by themselves mean
 truncation. `evidence_truncated` describes bounded projection loss or an observed
 provider output-limit finish; explicit abstention remains a separate category.
+For a failed attempt, a confirmed provider finish such as max-tokens, max_tokens or length takes
+precedence over a missing-handoff or contract-error label. Token counts near the
+configured limit alone do not establish truncation. A successfully accepted handoff
+retains its accepted category.
 Unknown provider usage and finish fields stay null. The Manager refreshes the
 normalizer input after the final handoff so diagnostics include the actual
 terminal attempt rather than only the previous failure.
