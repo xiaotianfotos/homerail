@@ -961,7 +961,7 @@ describe("prompt runner", () => {
         session_id: "session-deferred",
         attempt_diagnostics: expect.objectContaining({
           schema: "attempt-diagnostic-v1",
-          failure_category: "unknown",
+          failure_category: "handoff_missing",
         }),
       }),
     })]);
