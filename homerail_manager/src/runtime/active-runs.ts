@@ -2422,7 +2422,7 @@ function _correctionPrompt(
       ? { canonical_handoff: redactTelemetry(receipt.canonical_handoff) }
       : {}),
   }));
-  const brokerGuidance = brokerActions.length > 0
+  const brokerGuidance = !readOnlyReviewRecovery && brokerActions.length > 0
     ? [
         "Correction mode permits only declared credential_broker_call verification actions and the final handoff tool call. Do not use any built-in tools or other DAG tools.",
         `Broker verification actions available when required by the corrected output: ${brokerActions.join(", ")}.`,
