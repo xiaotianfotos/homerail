@@ -1238,7 +1238,7 @@ describe("PR Review scenario assets", () => {
     executor.tick(runId);
     handoffActiveRun(runId, "qwen_review", vote === "approve" ? "voted" : "failed", modelReview("qwen", vote), undefined, {
       transportDiagnostic: { failure_category: "accepted", finish_reason: "end_turn", output_tokens: 77 },
-      ...(vote === "abstain" ? { failureReason: "reviewer abstained" } : {}),
+      // Real Worker transport marks a valid handoff accepted; Manager must derive semantic abstention.
     });
     const projection = getActiveRun(runId)?.dagRun.mailboxes.get("normalize_qwen_review")?.get("evidence")?.[0] as Record<string, unknown>;
     expect(projection.attempt_diagnostics).toEqual([
