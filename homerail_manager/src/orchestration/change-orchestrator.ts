@@ -23,12 +23,14 @@ import {
   decideActiveRunApproval,
   injectActiveRun,
   interveneActiveRunActor,
+  restoreActiveRun,
   resumeWaitingActiveRun,
   type InterveneDagActorRequest,
   type InterveneDagActorResult,
   type ResumeWaitingRunRequest,
 } from "../runtime/active-runs.js";
 import type { DagApprovalRecord } from "../persistence/dag-runtime-primitives.js";
+import { loadRunMetadata } from "../persistence/store.js";
 import type { DagRunInputBindingRequest } from "homerail-protocol";
 import { resolveDagRunInputBindings } from "../persistence/run-input-artifacts.js";
 import type { InjectResult, CancelAllResult, CheckpointResumeRequest } from "../runtime/active-runs.js";
@@ -44,6 +46,7 @@ import {
   type SendDagActorLiveCommandRequest,
   type SendDagActorLiveCommandResult,
 } from "../runtime/dag-actor-live-command-runtime.js";
+import { creationRequestDigest, RunCreationConflictError } from "./run-creation-identity.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = process.env.HOMERAIL_REPO_ROOT
@@ -317,6 +320,32 @@ export class ChangeOrchestrator {
   constructor(private graphExecutor: GraphExecutor) {}
 
   createRun(request: CreateRunRequest): CreateRunResponse {
+    const digest = creationRequestDigest(request);
+
+    if (request.runId) {
+      const existing = loadRunMetadata(request.runId);
+      if (existing) {
+        if (!existing.creationRequestDigest) {
+          throw new RunCreationConflictError(request.runId, "legacy_run");
+        }
+        if (existing.creationRequestDigest !== digest) {
+          throw new RunCreationConflictError(request.runId, "request_mismatch");
+        }
+        return {
+          runId: existing.runId,
+          workflowId: existing.workflowId,
+          workflowName: existing.workflowName,
+          workflowRevision: existing.workflowRevision,
+          canonicalHash: existing.canonicalHash,
+          compilerVersion: existing.compilerVersion,
+          sourceApiVersion: existing.sourceApiVersion,
+          nodeCount: existing.nodeCount ?? Object.keys(existing.nodeStates).length,
+          status: existing.status,
+          createdAt: existing.createdAt,
+        };
+      }
+    }
+
     const parsed = _loadDagForRequest(request);
     assertNoYamlProviderRuntime(parsed);
     const dagWithProfile = _applyRuntimeProfile(parsed, request);
@@ -342,7 +371,7 @@ export class ChangeOrchestrator {
       : { reserved: false };
     const run = (() => {
       try {
-        return this.graphExecutor.createRun(runId, dagWithRuntime, request.prompt, inputArtifacts);
+        return this.graphExecutor.createRun(runId, dagWithRuntime, request.prompt, inputArtifacts, digest);
       } finally {
         if (reservation.reserved) {
           try {
@@ -379,7 +408,31 @@ export class ChangeOrchestrator {
 
   createAndRun(request: CreateAndRunRequest): CreateAndRunResponse {
     const createResult = this.createRun(request);
-    const invokeResult = this.invokeRun(createResult.runId);
+    // Cold-start lazy restore: if createRun replayed an active status from
+    // persisted metadata but the run is not in this process's memory, restore
+    // it via the supported recovery primitive before attempting to invoke.
+    let effectiveStatus = createResult.status;
+    if (effectiveStatus === "active" && !this.graphExecutor.getRun(createResult.runId)) {
+      const metadata = loadRunMetadata(createResult.runId);
+      if (!metadata) {
+        throw new Error(`Run metadata missing for active run ${createResult.runId}`);
+      }
+      const restoreResult = restoreActiveRun(metadata);
+      if (restoreResult.status === "skipped" && !this.graphExecutor.getRun(createResult.runId)) {
+        throw new Error(
+          `Cannot resume run ${createResult.runId}: restore skipped (${restoreResult.reason})`,
+        );
+      }
+      if (restoreResult.status === "restored") {
+        const actualStatus = restoreResult.run.status;
+        if (actualStatus !== "active") {
+          effectiveStatus = actualStatus as typeof effectiveStatus;
+        }
+      }
+    }
+    const dispatched = effectiveStatus === "active"
+      ? this.invokeRun(createResult.runId).dispatched
+      : 0;
     return {
       run_id: createResult.runId,
       runId: createResult.runId,
@@ -390,9 +443,9 @@ export class ChangeOrchestrator {
       compilerVersion: createResult.compilerVersion,
       sourceApiVersion: createResult.sourceApiVersion,
       nodeCount: createResult.nodeCount,
-      status: createResult.status,
+      status: effectiveStatus,
       createdAt: createResult.createdAt,
-      dispatched: invokeResult.dispatched,
+      dispatched,
     };
   }
 

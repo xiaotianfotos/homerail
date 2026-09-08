@@ -17,8 +17,9 @@ export class GraphExecutor {
     parsedDAG: ParsedDAG,
     initialPrompt?: string,
     inputArtifacts?: DagRunInputBinding[],
+    creationRequestDigest?: string,
   ): ActiveRun {
-    return createActiveRun(runId, parsedDAG, { initialPrompt, inputArtifacts });
+    return createActiveRun(runId, parsedDAG, { initialPrompt, inputArtifacts, creationRequestDigest });
   }
 
   tick(runId: string): number {

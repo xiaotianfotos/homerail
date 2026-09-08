@@ -16,12 +16,14 @@ import {
   type ManagerAgentConfigRoutesOptions,
 } from "./manager-agent-config.js";
 import { getSetting } from "../persistence/llm-settings.js";
+import { loadRunMetadata } from "../persistence/store.js";
 import { ManagerAgentRuntimeError, runManagerAgentTurn } from "./manager-agent-runtime.js";
 import { pinHomeRailBrowserUiTurnBinding } from "./browser-ui-tools.js";
 import { dagResourcesUnavailableForRun } from "./dag-resource-status.js";
 import { fireDagEventTrigger } from "../runtime/dag-triggers.js";
 import { updateDagState } from "../persistence/dag-runtime-primitives.js";
 import { WorkflowRunAdmissionError } from "../persistence/dag-run-admission.js";
+import { RunCreationConflictError } from "../orchestration/run-creation-identity.js";
 import {
   cleanupRunWorkspaces,
   setRunWorkspacePinned,
@@ -108,8 +110,34 @@ function publicManagerAgentToolCalls(value: unknown): unknown[] {
   });
 }
 
+function _runVersionFields(body: Record<string, unknown>): { expectedWorkflowRevision?: number; expectedCanonicalHash?: string; expectedProfileUpdatedAt?: string } {
+  const expectedWorkflowRevision = body.workflow_revision === undefined ? undefined : Number(body.workflow_revision);
+  const expectedCanonicalHash = typeof body.canonical_hash === "string" ? body.canonical_hash.trim() : undefined;
+  const expectedProfileUpdatedAt = typeof body.profile_updated_at === "string" ? body.profile_updated_at.trim() : undefined;
+  if (expectedWorkflowRevision !== undefined && (!Number.isSafeInteger(expectedWorkflowRevision) || expectedWorkflowRevision < 1)) {
+    throw new Error("workflow_revision must be a positive integer");
+  }
+  if (expectedCanonicalHash !== undefined && !/^[a-f0-9]{64}$/.test(expectedCanonicalHash)) {
+    throw new Error("canonical_hash must be a SHA-256 digest");
+  }
+  return { expectedWorkflowRevision, expectedCanonicalHash, expectedProfileUpdatedAt };
+}
+
 function _runCreationError(res: http.ServerResponse, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof RunCreationConflictError) {
+    json(res, 409, {
+      success: false,
+      message,
+      error: message,
+      data: {
+        code: "RUN_CREATION_CONFLICT",
+        run_id: error.runId,
+        reason: error.reason,
+      },
+    });
+    return;
+  }
   if (error instanceof WorkflowRunAdmissionError) {
     json(res, 409, {
       success: false,
@@ -471,7 +499,8 @@ export function mutationRoutesHandler(
         const llmSettingId = typeof b.llm_setting_id === "string" && b.llm_setting_id.trim() ? b.llm_setting_id.trim() : undefined;
         try {
           const runInputs = _runInputFields(b);
-          const result = changeOrchestrator.createRun({ yamlPath, workflowId, profile, runId, prompt, llmSettingId, ...runInputs });
+          const versionFields = _runVersionFields(b);
+          const result = changeOrchestrator.createRun({ yamlPath, workflowId, profile, runId, prompt, llmSettingId, ...versionFields, ...runInputs });
           _created(res, "Run created", result);
         } catch (err) {
           _runCreationError(res, err);
@@ -485,14 +514,6 @@ export function mutationRoutesHandler(
 
   // POST /api/runs/create-and-run (atomic create + invoke)
   if (pathname === "/api/runs/create-and-run" && req.method === "POST") {
-    const unavailable = dagResourcesUnavailableForRun();
-    if (unavailable) {
-      _unavailable(res, unavailable.message, {
-        code: unavailable.code,
-        dag_resources: unavailable.status,
-      });
-      return true;
-    }
     _readJsonBody(req)
       .then((body) => {
         const b = body as Record<string, unknown>;
@@ -510,31 +531,34 @@ export function mutationRoutesHandler(
         const runId = typeof b.runId === "string" ? b.runId : undefined;
         const prompt = typeof b.prompt === "string" ? b.prompt : undefined;
         const llmSettingId = typeof b.llm_setting_id === "string" && b.llm_setting_id.trim() ? b.llm_setting_id.trim() : undefined;
-        const expectedWorkflowRevision = b.workflow_revision === undefined ? undefined : Number(b.workflow_revision);
-        const expectedCanonicalHash = typeof b.canonical_hash === "string" ? b.canonical_hash.trim() : undefined;
-        const expectedProfileUpdatedAt = typeof b.profile_updated_at === "string" ? b.profile_updated_at.trim() : undefined;
-        if (expectedWorkflowRevision !== undefined && (!Number.isSafeInteger(expectedWorkflowRevision) || expectedWorkflowRevision < 1)) {
-          _badRequest(res, "workflow_revision must be a positive integer");
-          return;
-        }
-        if (expectedCanonicalHash !== undefined && !/^[a-f0-9]{64}$/.test(expectedCanonicalHash)) {
-          _badRequest(res, "canonical_hash must be a SHA-256 digest");
-          return;
-        }
         try {
           const runInputs = _runInputFields(b);
-          const result = changeOrchestrator.createAndRun({
+          const versionFields = _runVersionFields(b);
+          const request = {
             yamlPath,
             workflowId,
             profile,
             runId,
             prompt,
             llmSettingId,
-            expectedWorkflowRevision,
-            expectedCanonicalHash,
-            expectedProfileUpdatedAt,
+            ...versionFields,
             ...runInputs,
-          });
+          };
+          const existing = runId ? loadRunMetadata(runId) : undefined;
+          if (existing) {
+            changeOrchestrator.createRun(request);
+          }
+          if (!existing || existing.status === "active") {
+            const unavailable = dagResourcesUnavailableForRun();
+            if (unavailable) {
+              _unavailable(res, unavailable.message, {
+                code: unavailable.code,
+                dag_resources: unavailable.status,
+              });
+              return;
+            }
+          }
+          const result = changeOrchestrator.createAndRun(request);
           _created(res, "Run created and invoked", result);
         } catch (err) {
           _runCreationError(res, err);

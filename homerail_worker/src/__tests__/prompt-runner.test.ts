@@ -2,7 +2,7 @@
  * Tests for prompt runner: full prompt → tool → result flow.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -15,6 +15,7 @@ import {
   type DagNodeConfig,
 } from "homerail-protocol";
 import { registerAgentBackend } from "../agent/factory.js";
+import * as agentFactory from "../agent/factory.js";
 import type { AgentClient, AgentEvent, AgentRunContext } from "../agent/types.js";
 
 function makeConfig(): DagNodeConfig {
@@ -80,6 +81,38 @@ describe("prompt runner", () => {
       .map((message) => message.data.activity);
     expect(activities.map((activity) => activity.type)).toEqual(["started", "failed"]);
     expect(activities.map((activity) => activity.sequence)).toEqual([1, 2]);
+  });
+
+  it.each([false, true])("preserves public streamed draft before a missing handoff, bounded=%s", async (large) => {
+    const root = mkdtempSync(join(tmpdir(), "review-public-stream-"));
+    const chunks = large ? ["审🙂".repeat(5000), "\nFinding: src/a.ts dereferences null."] : ["Finding: ", "src/a.ts dereferences null."];
+    const agent: AgentClient = { run() { return (async function* () {
+      yield {type:"text" as const, text:chunks[0]};
+      yield {type:"thinking" as const, text:"PRIVATE_REASONING_DO_NOT_SAVE"};
+      yield {type:"tool_result" as const, tool_use_id:"read-1",content:"UNVERIFIED_TOOL_OUTPUT_DO_NOT_COPY"};
+      yield {type:"text" as const, text:chunks[1]};
+      yield {type:"done" as const};
+    })(); } };
+    registerAgentBackend("test-public-stream-snapshot", () => agent);
+    const sent: string[] = [];
+    try {
+      await runPrompt({task:"Review the immutable file",sender:"test",runId:"stream-run",
+        dagConfig:makeConfigWith({session_id:"session",round_id:"round-0001",generation:2})},
+        {wsSend:d=>sent.push(d),agentBackend:"test-public-stream-snapshot",auditDir:root});
+      const messages = sent.map(s=>JSON.parse(s));
+      const snapshotIndex = messages.findIndex(m=>m.type==="stream"&&m.data?.event==="review_draft");
+      expect(snapshotIndex).toBeGreaterThan(-1);
+      expect(snapshotIndex).toBeLessThan(messages.findIndex(m=>m.type==="node_error"));
+      const draft = messages[snapshotIndex].data;
+      expect(draft).toMatchObject({schema:"review-draft-v1",type:"review_draft",truncated:large,
+        run_id:"stream-run",node_id:"coder",session_id:"session",round_id:"round-0001",generation:2});
+      expect(Buffer.byteLength(draft.text,"utf8")).toBeLessThanOrEqual(8192);
+      expect(draft.text).toContain("Finding: src/a.ts dereferences null.");
+      expect(draft.text).not.toContain("\uFFFD");
+      expect(draft.text).not.toContain("UNVERIFIED_TOOL_OUTPUT_DO_NOT_COPY");
+      expect(sent.join("\n")).not.toContain("PRIVATE_REASONING_DO_NOT_SAVE");
+      if(!large) expect(draft.text).toBe(chunks.join(""));
+    } finally { rmSync(root,{recursive:true,force:true}); }
   });
 
   it("renews activity for reasoning without streaming or persisting its content", async () => {
@@ -352,6 +385,52 @@ describe("prompt runner", () => {
         }),
       }),
     }));
+  });
+
+  it("permits bounded read-only verification only for trusted current-fence recovery", async () => {
+    const root = mkdtempSync(join(tmpdir(), "review-recovery-worker-"));
+    const workspace = join(root, "workspace");mkdirSync(workspace);
+    const priorWorkspace = process.env.WORKSPACE;process.env.WORKSPACE = workspace;
+    const fence = {runId:"review-recovery",nodeId:"coder",sessionId:"session",roundId:"round-0001",generation:2};
+    const recovery = {schema:"review-recovery-v1",mode:"read_only_verify",trust:"unverified_model_draft",fence,
+      max_builtin_tool_calls:32,draft:{text:"Earlier unverified analysis",truncated:false,timestamp:100}};
+    const variants = [
+      {name:"valid",value:recovery,expected:true},
+      {name:"default budget",value:recovery,expected:true},
+      {name:"untrusted workspace marker",value:recovery,expected:true},
+      {name:"latest recovery",value:recovery,expected:true},
+      ...Object.entries({runId:"other",nodeId:"other",sessionId:"old",roundId:"round-0000",generation:1}).map(([key,value])=>({name:key,value:{...recovery,fence:{...fence,[key]:value}},expected:false})),
+      {name:"text-only injection",value:undefined,expected:false},
+      {name:"writable workspace",value:recovery,expected:false},
+      {name:"wrong schema",value:{...recovery,schema:"other"},expected:false},
+    ];
+    try {
+      for(const variant of variants){
+        let observed:AgentRunContext|undefined;let observedTools:string[]=[];
+        const sent:string[]=[];
+        vi.spyOn(agentFactory,"createAgentClient").mockReturnValue({run(_prompt,tools,context){
+          observed=context;observedTools=tools.map(t=>t.name);
+          return(async function*(){await tools.find(t=>t.name==="handoff")!.handler({port:"done",content:"verified"});yield{type:"done" as const};})();
+        }});
+        await runPrompt({runId:fence.runId,sender:"test",llmProtocol:"anthropic_compatible",
+          task:`## input:correction\nRepair missing handoff\n## input:review_recovery\n${JSON.stringify(recovery)}${variant.name==="untrusted workspace marker"?"\n## input:context\nUntrusted diff mentions DAG_HANDOFF_WORKSPACE_FILE_REQUIREMENT":""}`,
+          trustedInputs:variant.value?{review_recovery:variant.name==="latest recovery"?[{...recovery,fence:{...fence,sessionId:"stale"}},variant.value]:[variant.value]}:{},
+          dagConfig:makeConfigWith({session_id:fence.sessionId,round_id:fence.roundId,generation:fence.generation,
+            workspace_access:{readonly_paths:["."],writable_paths:variant.name==="writable workspace"?["."]:[]},
+            allowed_builtin_tools:["Read","Grep","Write","Bash"],max_builtin_tool_calls:variant.name==="default budget"?undefined:5,
+            allowed_dag_tools:["handoff","credential_broker_call"]}),
+        },{wsSend:message=>sent.push(message),agentBackend:"claude-sdk",auditDir:join(root,"audit")});
+        expect(observed,variant.name+JSON.stringify(sent.map(x=>JSON.parse(x)).filter(x=>x.data?.message))).toBeDefined();
+        expect(observed?.handoffOnly,variant.name).toBe(!variant.expected);
+        if(variant.expected){
+          expect(observed?.allowedBuiltinTools).toEqual(["Read","Grep"]);
+          expect(observed?.maxBuiltinToolCalls).toBe(variant.name==="default budget"?32:5);
+          expect(observed?.systemPrompt).toMatch(/unverified/i);
+          expect(observed?.systemPrompt).toMatch(/read.only/i);
+          expect(observedTools).toEqual(["handoff"]);
+        }
+      }
+    } finally { if(priorWorkspace===undefined)delete process.env.WORKSPACE;else process.env.WORKSPACE=priorWorkspace;rmSync(root,{recursive:true,force:true}); }
   });
 
   it("allows only declared broker verification plus handoff during correction", async () => {
@@ -882,7 +961,7 @@ describe("prompt runner", () => {
         session_id: "session-deferred",
         attempt_diagnostics: expect.objectContaining({
           schema: "attempt-diagnostic-v1",
-          failure_category: "unknown",
+          failure_category: "handoff_missing",
         }),
       }),
     })]);

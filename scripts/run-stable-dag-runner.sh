@@ -76,6 +76,15 @@ RUN_ID="${HOMERAIL_STABLE_RUN_ID:-$(
   "$HOMERAIL_STABLE_NODE" -e 'process.stdout.write(require("node:crypto").randomUUID())'
 )}"
 
+collect_pr_review_execution_evidence() {
+  if [ "$TASK" != "pr-review" ]; then
+    return 0
+  fi
+  rm -f "$ARTIFACT_DIR/pr-review-execution.json"
+  "$HOMERAIL_STABLE_NODE" "$HOMERAIL_STABLE_RELEASE/scripts/pr-review-execution-evidence.mjs" \
+    "$1" "$ARTIFACT_DIR/pr-review-execution.json" >/dev/null
+}
+
 collect_run_evidence() {
   local run_id="$1"
   stable_hr dag quick "$run_id" --events 120 >"$ARTIFACT_DIR/dag-quick.txt" 2>&1 || true
@@ -89,6 +98,7 @@ collect_run_evidence() {
       stable_hr dag artifact "$run_id" "$artifact" --output "$ARTIFACT_DIR/$artifact" >/dev/null 2>&1 || true
     done
   fi
+  collect_pr_review_execution_evidence "$run_id"
 }
 
 render_pr_review_markdown() {
@@ -98,6 +108,7 @@ render_pr_review_markdown() {
   "$HOMERAIL_STABLE_NODE" "$MARKDOWN_SCRIPT" \
     "$COMMAND_PATH" \
     "$ARTIFACT_DIR/pr-review.json" \
+    "$ARTIFACT_DIR/pr-review-execution.json" \
     >"$ARTIFACT_DIR/pr-review.md.tmp"
   mv "$ARTIFACT_DIR/pr-review.md.tmp" "$ARTIFACT_DIR/pr-review.md"
 }
@@ -110,14 +121,19 @@ RUN_ARGS=(
   --timeout "$TIMEOUT_SECONDS"
   --run-id "$RUN_ID"
 )
-if ! stable_hr "${RUN_ARGS[@]}" \
-  >"$COMMAND_TMP" 2> >(tee "$STDERR_PATH" >&2); then
+if stable_hr "${RUN_ARGS[@]}" \
+  >"$COMMAND_TMP" 2> >(tee "$STDERR_PATH" >&2); then cli_status=0; else cli_status=$?; fi
+if [ "$cli_status" -ne 0 ]; then
   if [ -s "$COMMAND_TMP" ]; then
     mv "$COMMAND_TMP" "$ARTIFACT_DIR/command.failed.json"
   else
     rm -f "$COMMAND_TMP"
   fi
-  stable_hr stop "$RUN_ID" >/dev/null 2>&1 || true
+  if [ "$cli_status" -eq 75 ]; then
+    printf '%s\n' "DAG run ${RUN_ID} observation unavailable during create reconciliation or terminal/artifact waiting; not calling stop. It may still be running and consuming resources; inspect the same run ID to resume observation or explicitly stop it." >&2
+  else
+    stable_hr stop "$RUN_ID" >/dev/null 2>&1 || true
+  fi
   collect_run_evidence "$RUN_ID"
   printf '%s\n' "$RUN_ID" >"$ARTIFACT_DIR/run-id.txt"
   printf '%s\n' "$HOMERAIL_STABLE_REVISION" >"$ARTIFACT_DIR/manager-revision.txt"
@@ -131,7 +147,7 @@ if ! stable_hr "${RUN_ARGS[@]}" \
       sleep 1
     done
   fi
-  exit 1
+  exit "$cli_status"
 fi
 mv "$COMMAND_TMP" "$COMMAND_PATH"
 [ -s "$STDERR_PATH" ] || rm -f "$STDERR_PATH"
@@ -173,6 +189,7 @@ for artifact in "${ARTIFACT_NAMES[@]}"; do
   stable_hr dag artifact "$RUN_ID" "$artifact" --output "$ARTIFACT_DIR/$artifact"
   test -s "$ARTIFACT_DIR/$artifact"
 done
+collect_pr_review_execution_evidence "$RUN_ID"
 render_pr_review_markdown
 
 case "$TASK" in
