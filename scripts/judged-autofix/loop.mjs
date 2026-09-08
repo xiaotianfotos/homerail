@@ -237,7 +237,7 @@ export class JudgedLoop {
     if(prs.length===1){pr=prs[0];}
     else if(prs.length===0){
       if(this.state.publication&&(this.state.publication.url||this.state.publication.body_update))throw new Error('owned PR missing; refusing replacement create (publication has confirmed url or body_update custody)');
-      const hist=this.state.publication_history;if(hist)for(let i=hist.length-1;i>=0;i--){const h=hist[i];if(h.repo===repo&&h.branch===branch&&h.base===base&&h.title===title){if(h.url||h.body_update)throw new Error('owned PR missing; refusing replacement create (history entry has url or body_update custody)');break;}}
+      const hist=this.state.publication_history;if(hist)for(let i=hist.length-1;i>=0;i--){const h=hist[i];if(h.repo===repo&&h.branch===branch&&h.base===base&&h.title===title){if(h.url||h.body_update)throw new Error('owned PR missing; refusing replacement create (history entry has url or body_update custody)');}}
       gh(['pr','create','--repo',repo,'--head',branch,'--base',base,'--title',title,'--body-file',bodyFile]);
       const after=JSON.parse(gh(['pr','list','--repo',repo,'--head',branch,'--state','all','--json',jsonFields]));
       if(after.length!==1)throw new Error('expected one PR after create, got '+after.length);
