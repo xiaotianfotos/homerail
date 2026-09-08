@@ -47,6 +47,11 @@ import { ensureManagerSkillsInstalled, readManagerSkill } from "../src/server/ma
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const workflowPath = path.join(repositoryRoot, "assets", "orchestrations", "pr-review.yaml.template");
 
+// These integration scenarios run real command subprocesses and persist DAG state.
+// Hosted Windows runs can exceed the 15s CI default (observed: 15.5s and 23.8s).
+// Keep the normal timeout elsewhere and allow bounded Windows runner variance.
+const windowsIntegrationTimeout = process.platform === "win32" ? 60_000 : undefined;
+
 type ModelId = "qwen" | "kimi" | "glm";
 type Vote = "approve" | "request_changes" | "abstain";
 type Coverage = { digest: string; count: number };
@@ -1538,7 +1543,7 @@ describe("PR Review scenario assets", () => {
         output_tokens: 700,
       }),
     ]);
-  });
+  }, windowsIntegrationTimeout);
 
   it("rejects a stale transport handoff without altering the current projection or mailbox", () => {
     const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
@@ -1641,7 +1646,7 @@ describe("PR Review scenario assets", () => {
       });
       expect(getActiveRun(runId)?.status).toBe("completed");
     }
-  });
+  }, windowsIntegrationTimeout);
 
   it("computes trusted digest/count outside model output and reconstructs canonical reviewed files", () => {
     const cwd = path.join(tmpHome, "prepare-50-file-coverage");
