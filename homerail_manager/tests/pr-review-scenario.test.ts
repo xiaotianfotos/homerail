@@ -1225,6 +1225,38 @@ describe("PR Review scenario assets", () => {
     expect(getActiveRun(runId)?.status).toBe("cancelled");
   });
 
+  it.each(["approve", "abstain"] as const)("projects the authoritative final %s attempt before normalizer dispatch", (vote) => {
+    const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
+    for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    installPrepareCommandStub(parsed);
+    const dispatcher = new ReentrantDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    const runId = `pr-review-terminal-diagnostic-${vote}`;
+    executor.createRun(runId, parsed, JSON.stringify(reviewInput()));
+    executor.tick(runId);
+    expect(requestNodeCorrection(runId, "qwen_review", "agent ended without DAG handoff").status).toBe("scheduled");
+    executor.tick(runId);
+    handoffActiveRun(runId, "qwen_review", vote === "approve" ? "voted" : "failed", modelReview("qwen", vote), undefined, {
+      transportDiagnostic: { failure_category: "accepted", finish_reason: "end_turn", output_tokens: 77 },
+      ...(vote === "abstain" ? { failureReason: "reviewer abstained" } : {}),
+    });
+    const projection = getActiveRun(runId)?.dagRun.mailboxes.get("normalize_qwen_review")?.get("evidence")?.[0] as Record<string, unknown>;
+    expect(projection.attempt_diagnostics).toEqual([
+      expect.objectContaining({ attempt: 1, failure_category: "handoff_missing", finish_reason: null }),
+      expect.objectContaining({ attempt: 2, failure_category: vote === "approve" ? "accepted" : "reviewer_abstained",
+        finish_reason: "end_turn", output_tokens: 77, contract_stage: "handoff_applied" }),
+    ]);
+    handoffActiveRun(runId, "kimi_review", "voted", modelReview("kimi"));
+    handoffActiveRun(runId, "glm_review", "voted", modelReview("glm"));
+    executor.tick(runId);
+    const normalized = loadRunSnapshot(runId)?.handoffs.find(h => h.fromNode === "normalize_qwen_review")?.content;
+    expect(normalized).toMatchObject({ evidence_truncated: false,
+      diagnostics: [expect.objectContaining({ attempt: 1, category: "handoff_missing" }),
+        expect.objectContaining({ attempt: 2, category: vote === "approve" ? "accepted" : "reviewer_abstained",
+          finish_reason: "end_turn", output_tokens: 77, contract_validation_stage: "contract_validated" })],
+    });
+  });
+
   it("recovers a 50-file three-finding incomplete handoff through minimal correction", async () => {
     const files = Array.from({ length: 50 }, (_, index) => `src/file-${String(index + 1).padStart(2, "0")}.ts`);
     const preparedCoverage = coverageFor(files);

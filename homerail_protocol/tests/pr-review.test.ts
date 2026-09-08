@@ -160,6 +160,11 @@ describe("attempt diagnostic classification and sanitization", () => {
 
   it("recognizes the observed DSH max-tokens finish without inferring truncation from token counts", () => {
     expect(classifyReviewFailure("max-tokens")).toBe("provider_output_truncated");
+    for (const category of ["unknown", "accepted"]) {
+      expect(sanitizeAttemptDiagnostic({ failure_category: category, finish_reason: "max-tokens" },
+        { failure_reason: "agent ended without DAG handoff" })?.failure_category).toBe("provider_output_truncated");
+    }
+    expect(sanitizeAttemptDiagnostic({ finish_reason: "length" })?.failure_category).toBe("provider_output_truncated");
     expect(classifyReviewFailure("contract validation failed")).toBe("contract_validation_failed");
     expect(sanitizeAttemptDiagnostic({ failure_category: "handoff_missing", finish_reason: "max-tokens",
       output_tokens: 32767, output_token_limit: 32768 })).toMatchObject({
