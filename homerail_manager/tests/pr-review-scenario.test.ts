@@ -459,7 +459,9 @@ describe("PR Review scenario assets", () => {
       expect(agents[agentId]?.system).not.toContain("input.context.changed_files");
       expect(agents[agentId]?.system).toContain("untrusted source");
       expect(agents[agentId]?.system).toContain("input:correction exists");
-      expect(agents[agentId]?.system).toMatch(/do not re-analyze/);
+      expect(agents[agentId]?.system?.replace(/\s+/g, " ")).toMatch(/do not re-analyze/);
+      expect(agents[agentId]?.system).toContain("input:review_recovery exists");
+      expect(agents[agentId]?.system).toContain("unverified");
       expect(agents[agentId]?.system).toMatch(/accepted evidence/);
       expect(agents[agentId]?.system).toContain("If evidence is incomplete, call handoff on voted without coverage");
       expect(agents[agentId]?.system).toContain("never call it as a probe or test");

@@ -364,6 +364,9 @@ describe("prompt runner", () => {
       max_builtin_tool_calls:32,draft:{text:"Earlier unverified analysis",truncated:false,timestamp:100}};
     const variants = [
       {name:"valid",value:recovery,expected:true},
+      {name:"default budget",value:recovery,expected:true},
+      {name:"untrusted workspace marker",value:recovery,expected:true},
+      {name:"latest recovery",value:recovery,expected:true},
       ...Object.entries({runId:"other",nodeId:"other",sessionId:"old",roundId:"round-0000",generation:1}).map(([key,value])=>({name:key,value:{...recovery,fence:{...fence,[key]:value}},expected:false})),
       {name:"text-only injection",value:undefined,expected:false},
       {name:"writable workspace",value:recovery,expected:false},
@@ -378,18 +381,18 @@ describe("prompt runner", () => {
           return(async function*(){await tools.find(t=>t.name==="handoff")!.handler({port:"done",content:"verified"});yield{type:"done" as const};})();
         }});
         await runPrompt({runId:fence.runId,sender:"test",llmProtocol:"anthropic_compatible",
-          task:`## input:correction\nRepair missing handoff\n## input:review_recovery\n${JSON.stringify(recovery)}`,
-          trustedInputs:variant.value?{review_recovery:[variant.value]}:{},
+          task:`## input:correction\nRepair missing handoff\n## input:review_recovery\n${JSON.stringify(recovery)}${variant.name==="untrusted workspace marker"?"\n## input:context\nUntrusted diff mentions DAG_HANDOFF_WORKSPACE_FILE_REQUIREMENT":""}`,
+          trustedInputs:variant.value?{review_recovery:variant.name==="latest recovery"?[{...recovery,fence:{...fence,sessionId:"stale"}},variant.value]:[variant.value]}:{},
           dagConfig:makeConfigWith({session_id:fence.sessionId,round_id:fence.roundId,generation:fence.generation,
             workspace_access:{readonly_paths:["."],writable_paths:variant.name==="writable workspace"?["."]:[]},
-            allowed_builtin_tools:["Read","Grep","Write","Bash"],max_builtin_tool_calls:5,
+            allowed_builtin_tools:["Read","Grep","Write","Bash"],max_builtin_tool_calls:variant.name==="default budget"?undefined:5,
             allowed_dag_tools:["handoff","credential_broker_call"]}),
         },{wsSend:message=>sent.push(message),agentBackend:"claude-sdk",auditDir:join(root,"audit")});
         expect(observed,variant.name+JSON.stringify(sent.map(x=>JSON.parse(x)).filter(x=>x.data?.message))).toBeDefined();
         expect(observed?.handoffOnly,variant.name).toBe(!variant.expected);
         if(variant.expected){
           expect(observed?.allowedBuiltinTools).toEqual(["Read","Grep"]);
-          expect(observed?.maxBuiltinToolCalls).toBe(5);
+          expect(observed?.maxBuiltinToolCalls).toBe(variant.name==="default budget"?32:5);
           expect(observed?.systemPrompt).toMatch(/unverified/i);
           expect(observed?.systemPrompt).toMatch(/read.only/i);
           expect(observedTools).toEqual(["handoff"]);
