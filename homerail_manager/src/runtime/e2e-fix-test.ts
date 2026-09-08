@@ -14,6 +14,7 @@ export interface E2eFixTestDefinition {
 }
 export interface E2eFixTestIntent {
   candidate: E2eFixCandidate; definition: E2eFixTestDefinition; snapshot: string; candidate_store: string;
+  attempt?: number;
 }
 export interface E2eFixTestReceipt {
   candidate: E2eFixCandidate; check_id: string; execution_id: string; spec_digest: string;
@@ -68,6 +69,7 @@ export class E2eFixIsolatedTest {
   constructor(readonly directory: string, readonly intent: E2eFixTestIntent, private readonly docker: E2eFixDocker = e2eFixDocker) {
     if (process.platform !== "linux") throw new Error("isolated E2E Fix tests require Linux");
     E2eFixCandidateSchema.parse(intent.candidate); validateE2eFixTestDefinition(intent.definition);
+    if (intent.attempt !== undefined && (!Number.isSafeInteger(intent.attempt) || intent.attempt < 1 || intent.attempt > 3)) throw new Error("invalid test attempt");
     if (!path.isAbsolute(directory) || !path.isAbsolute(intent.snapshot) || intent.snapshot.includes(",")) throw new Error("invalid test artifact location");
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     if (!fs.lstatSync(directory).isDirectory() || (fs.statSync(directory).mode & 0o077)) throw new Error("test directory must be private");

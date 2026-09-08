@@ -48,7 +48,13 @@ const review = {
 };
 const judgment = {
   type: "object", additionalProperties: false, required: ["verdict", "reason"],
-  properties: { verdict: { enum: ["accept", "revise", "pause"] }, reason: text },
+  properties: { verdict: { enum: ["accept", "revise", "pause"] }, reason: text,
+    dispositions: { type: "array", maxItems: 100, items: { type: "object", additionalProperties: false,
+      required: ["finding_id", "action", "reason", "evidence_sha256"], properties: {
+        finding_id: { type: "string", pattern: "^[a-f0-9]{64}$" }, action: { enum: ["dismiss", "revise", "escalate"] }, reason: text,
+        evidence_sha256: { type: "array", minItems: 1, maxItems: 20, items: { type: "string", pattern: "^[a-f0-9]{64}$" } },
+      } } },
+  },
 };
 
 export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
@@ -105,7 +111,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
   actor("fix", "fixer", "Patch");
   command("capture", ["plan", "patch"]);
   command("test", ["candidate"]);
-  route("test_route", "outcome", { passed: "review", code_failure: "judge" }, "pause");
+  route("test_route", "outcome", { passed: "review", code_failure: "judge", proposal_rejected: "judge" }, "pause");
   for (const id of ["a", "b", "c"]) actor(`review_${id}`, `reviewer_${id}`, "Review");
   collect("reviews", "all", ["a", "b", "c"]);
   command("review_evidence", ["reports", "test"]);

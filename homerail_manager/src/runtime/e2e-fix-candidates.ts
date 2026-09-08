@@ -25,6 +25,7 @@ export function immutableE2eFixFile(file: string, bytes: string | Buffer): void 
   try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
 }
 export interface E2eFixEdit { path: string; old: string; new: string }
+export class E2eFixProposalError extends Error {}
 interface TreeEntry { path: string; mode: string; sha: string; bytes: Buffer }
 
 /** Host-owned Git object store. No checkout, hooks, index or branches in the
@@ -115,20 +116,20 @@ export class E2eFixCandidates {
     if (!input.allowed_paths.length || new Set(input.allowed_paths).size !== input.allowed_paths.length) throw new Error("invalid write scope");
     [...input.allowed_paths, ...input.protected_paths].forEach(e2eFixPath);
     if (!Array.isArray(input.edits) || !input.edits.length || input.edits.length > 20
-      || Buffer.byteLength(JSON.stringify(input.edits)) > 1_000_000) throw new Error("invalid patch size");
+      || Buffer.byteLength(JSON.stringify(input.edits)) > 1_000_000) throw new E2eFixProposalError("invalid patch size");
     const current = new Map(this.entries(input.parent).map(e => [e.path, e]));
     const seen = new Set<string>();
     const replacements: Array<{ path: string; bytes: string; mode: string }> = [];
     for (const edit of input.edits) {
-      e2eFixPath(edit.path);
+      try { e2eFixPath(edit.path); } catch { throw new E2eFixProposalError("unsafe repository path in proposal"); }
       if (!input.allowed_paths.includes(edit.path) || seen.has(edit.path)
-        || input.protected_paths.some(p => edit.path === p || edit.path.startsWith(p + "/"))) throw new Error("patch exceeds frozen scope");
+        || input.protected_paths.some(p => edit.path === p || edit.path.startsWith(p + "/"))) throw new E2eFixProposalError("patch exceeds frozen scope");
       seen.add(edit.path);
-      if (typeof edit.old !== "string" || typeof edit.new !== "string" || edit.old.includes("\0") || edit.new.includes("\0") || edit.old === edit.new) throw new Error("invalid or unchanged edit");
+      if (typeof edit.old !== "string" || typeof edit.new !== "string" || edit.old.includes("\0") || edit.new.includes("\0") || edit.old === edit.new) throw new E2eFixProposalError("invalid or unchanged edit");
       const previous = current.get(edit.path);
       const source = previous?.bytes.toString("utf8") ?? "";
       if (previous && !Buffer.from(source).equals(previous.bytes)) throw new Error("patch targets non-UTF-8 source");
-      if (previous ? !edit.old || source.indexOf(edit.old) < 0 || source.indexOf(edit.old) !== source.lastIndexOf(edit.old) : edit.old !== "") throw new Error("stale or ambiguous patch");
+      if (previous ? !edit.old || source.indexOf(edit.old) < 0 || source.indexOf(edit.old) !== source.lastIndexOf(edit.old) : edit.old !== "") throw new E2eFixProposalError("stale or ambiguous patch");
       replacements.push({ path: edit.path, mode: previous?.mode ?? "100644", bytes: previous ? source.replace(edit.old, () => edit.new) : edit.new });
     }
     const index = path.join(this.directory, `index-${randomUUID()}`);

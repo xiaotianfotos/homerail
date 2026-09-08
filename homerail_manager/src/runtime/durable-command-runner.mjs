@@ -61,7 +61,8 @@ async function execute() {
       result = { exit_code: null, signal: null };
     } else {
     child = spawn(spec.argv[0], spec.argv.slice(1), {
-      cwd: spec.cwd, env: process.env, shell: false, detached: true, stdio: ["pipe", "pipe", "pipe"],
+      cwd: spec.cwd, env: { ...process.env, HOMERAIL_DAG_COMMAND_ID: path.basename(dir) },
+      shell: false, detached: true, stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdout.on("data", bytes => capture("stdout", bytes));
     child.stderr.on("data", bytes => capture("stderr", bytes));
