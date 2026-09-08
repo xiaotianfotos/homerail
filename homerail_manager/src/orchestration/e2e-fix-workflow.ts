@@ -43,6 +43,8 @@ const patch = {
 };
 const review = {
   type: "object", additionalProperties: false, required: ["vote", "summary", "findings"],
+  allOf: [{ if: { properties: { vote: { const: "approve" } } },
+    then: { properties: { findings: { type: "array", maxItems: 0 } } } }],
   properties: {
     vote: { enum: ["approve", "request_changes", "abstain"] }, summary: text,
     findings: { type: "array", maxItems: 100, items: text,
@@ -196,6 +198,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
       // Native handoffs include program/gateway nodes, not just model calls.
       // Freeze enough bounded admission for the full worst-case round path.
       policies: { max_parallelism: 3, max_dispatches: options.maxRounds * 7,
+        max_corrections_per_node: 1,
         max_handoffs: options.maxRounds * 24 + 4, max_edge_traversals: options.maxRounds },
       contracts: { TaskReference: { type: "object", required: ["task_id"], properties: { task_id: text } }, Plan: plan, Patch: patch, Review: review, Judgment: judgment },
       agents: {

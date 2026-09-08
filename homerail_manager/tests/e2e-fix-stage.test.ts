@@ -54,7 +54,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+type Scenario = "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
   | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
@@ -103,6 +103,10 @@ class Models implements DAGDispatcher {
           const bad = value.sources["sum.cjs"].includes("Math.abs") || (["unresolved-review", "dismissed-review", "duplicate-disposition"].includes(this.scenario) && envelope.nodeId === "review_c");
           result = { vote: bad ? "request_changes" : "approve", summary: envelope.nodeId + ": signed-input review",
             findings: bad ? [value.sources["sum.cjs"].includes("Math.abs") ? "Negative sums are incorrectly made positive" : "Fixture disputed concern"] : [] };
+          if (this.scenario.startsWith("review-contract-") && envelope.nodeId === "review_a"
+            && (this.scenario === "review-contract-exhausted" || !envelope.inputs.correction?.length)) {
+            result = { vote: "approve", summary: "Correct signed addition", findings: ["The candidate correctly adds signed values"] };
+          }
           if (this.scenario === "approve-observations") (result as { findings: string[] }).findings = ["The source correctly implements addition"];
           if (this.scenario.startsWith("review-context-") && bad) {
             (result as { findings: string[] }).findings = Array.from({ length: 8 }, (_, i) =>
@@ -134,7 +138,14 @@ class Models implements DAGDispatcher {
           usage: { input_tokens: 101, output_tokens: 13, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, timestamp: Date.now() });
         appendNodeUsage({ runId: envelope.runId, nodeId: envelope.nodeId,
           usage: { input_tokens: 99999, output_tokens: 99999, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, timestamp: Date.now() });
-        handoffActiveRun(envelope.runId, envelope.nodeId, "result", result);
+        try { handoffActiveRun(envelope.runId, envelope.nodeId, "result", result); }
+        catch (error) {
+          if (!this.scenario.startsWith("review-contract-") || envelope.nodeId !== "review_a") throw error;
+          expect(String(error)).toContain("DAG_HANDOFF_CONTRACT_VIOLATION");
+          const correction = requestNodeCorrection(envelope.runId, envelope.nodeId, String(error), { port: "result", content: result });
+          if (correction.status === "exhausted") failActiveRun(envelope.runId, envelope.nodeId, "Review contract correction exhausted");
+          else expect(correction.status).toBe("scheduled");
+        }
         this.executor.tick(envelope.runId);
       } catch (error) { this.error = error; }
     });
@@ -143,7 +154,7 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+  it.each<Scenario>(["review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
     "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
@@ -168,6 +179,9 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
       const stageCommands = Object.fromEntries(E2E_FIX_STAGES.map(stage => [stage, [process.execPath, "--import", "tsx",
         path.resolve("tests/fixtures/e2e-fix-native-stage.ts"), task, stage]])) as Record<E2eFixStage, string[]>;
       const parsed = parseE2eFixWorkflow({ workflowId: "trusted-stages", maxRounds: 4, stageCommands, stageTimeoutMs: 30000 });
+      // Existing frozen workflows lacked the conditional approval contract.
+      // Keep this legacy fixture to prove the downstream gate still rejects it.
+      if (scenario === "approve-observations") delete (parsed.meta.contracts!.Review as { allOf?: unknown }).allOf;
       for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
       const models = new Models(scenario); const executor = new GraphExecutor(models); models.executor = executor;
       const done = new Promise<void>(resolve => {
@@ -307,6 +321,26 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         }
         return;
       }
+      if (scenario.startsWith("review-contract-")) {
+        const calls = models.calls.filter(c => c.nodeId === "review_a");
+        expect(calls).toHaveLength(2);
+        expect(calls[1].inputs.evidence).toEqual(calls[0].inputs.evidence);
+        expect(JSON.stringify(calls[1].inputs.correction)).toContain("Previous rejected handoff");
+        expect(JSON.stringify(calls[1].inputs.correction)).toContain("The candidate correctly adds signed values");
+        expect(models.calls.filter(c => c.nodeId === "review_b")).toHaveLength(1);
+        expect(models.calls.filter(c => c.nodeId === "review_c")).toHaveLength(1);
+        expect(models.calls.filter(c => c.nodeId === "fix")).toHaveLength(1);
+        expect(snapshot.handoffs.filter(h => h.fromNode === "test")).toHaveLength(1);
+        expect(snapshot.metadata.counters!.corrections.review_a).toBe(1);
+        if (scenario === "review-contract-exhausted") {
+          expect(snapshot.metadata.status).toBe("failed");
+          expect(snapshot.handoffs.some(h => h.fromNode === "review_a")).toBe(false);
+          expect(fs.existsSync(path.join(task, "simulated-pr.json"))).toBe(false);
+          expect(models.calls.some(c => c.nodeId.startsWith("judge_"))).toBe(false);
+          return;
+        }
+        expect(snapshot.handoffs.filter(h => h.fromNode === "review_a")).toHaveLength(1);
+      }
       const unknownCi = ["unknown-ci", "stale-ci"].includes(scenario);
       const blockedReview = ["approve-observations", "unresolved-review", "duplicate-disposition"].includes(scenario);
       const blockedModel = ["model-unknown", "model-accept", "model-no-strategy", "model-stale-evidence"].includes(scenario);
@@ -391,7 +425,9 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         expect(read(round, "fixer").usages[0].usage.input_tokens).toBe(101);
       }
       expect(models.calls.filter(c => c.nodeId === "fix")).toHaveLength(rounds);
-      expect(new Set(models.calls.map(c => c.sessionId)).size).toBe(models.calls.length);
+      // Corrections retain the logical session/broker fence; each Worker
+      // execution is separately scoped. Genuine repair rounds get fresh sessions.
+      expect(new Set(models.calls.map(c => c.sessionId)).size).toBe(models.calls.length - (scenario === "review-contract-correct" ? 1 : 0));
       expect(models.calls.every(c => Buffer.byteLength(JSON.stringify(c.inputs)) <= 96000)).toBe(true);
       expect(snapshot.handoffs.filter(h => h.fromNode === "test")).toHaveLength(rounds);
     } finally {

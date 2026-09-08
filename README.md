@@ -196,6 +196,8 @@ See [configuration and failure boundaries](docs/e2e-fix-recovery.md).
 Oversized review evidence can project full source into a base-to-candidate diff
 while preserving the complete issue and findings. Review approvals require empty
 `findings`; positive observations belong in `summary`.
+New workflows reject contradictory approvals at handoff and allow one native
+node correction, retaining completed fixes, tests and other reviewers.
 
 New E2E Fix workflows also route confirmed Fixer output truncation to the
 in-graph Judger for a bounded strategy revision; unknown execution pauses.

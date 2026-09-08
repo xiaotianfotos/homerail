@@ -63,6 +63,24 @@ contradictory reports are preserved and cannot satisfy the approval gate,
 even if their text appears positive. Clarifying the prompt for new workflows
 does not repair already frozen reviewer prompts or previously emitted votes.
 
+New workflows enforce the approval/findings relation in the Review JSON Schema,
+before a handoff can reach the aggregation node. A rejected report therefore
+uses the existing native node-correction path, with at most one correction per
+node for the task. Only that node is rescheduled; completed candidate capture,
+tests and sibling reviews are retained. The correction input includes the
+contract error, original inputs and a bounded rendering of the rejected report.
+Exhaustion fails the node; the runtime cannot synthesize a successful report.
+
+This path preserves the logical session and its authorization fence. It is not
+a new repair round. Worker correction mode replaces the system prompt and
+allows only a handoff. The local DeepSeek Harness adapter creates a new isolated
+process/session store for every execution and does not resume model history;
+other backends retain their own session semantics. Input and correction sizes
+remain subject to their existing bounds. A later correction may keep genuine
+defects and change the vote to `request_changes`; code never removes findings
+or converts a vote on the model's behalf. An already accepted legacy handoff is
+outside this pre-handoff correction path and is not retroactively rewritten.
+
 ## Pre-dispatch configuration repair and model failures
 
 Patch proposals can contain multiple small edits to one authorized file. Each
