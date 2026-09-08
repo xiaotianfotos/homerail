@@ -256,3 +256,36 @@ test("formal PR Review runs for maintainer-owned PRs when they become ready", ()
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.doesNotMatch(workflow, /pull_request_target:/);
 });
+
+test("distinct-model preflight rejects aliased setting IDs and preserves execution-vote policy", () => {
+  const a = { ...primary, provider_id: "glm", model_name: "glm-5.3" };
+  const b = { ...arbiter, provider_id: "kimi_cn", model_name: "k3" };
+  const c = { ...third, provider_id: "glm", model_name: "glm-5.3" };
+  const args = { profileId: "identity-test", primary: a, arbiter: b, third: c };
+  assert.match(prReviewRuntimeProfileYaml(args), /reviewer executions/);
+  assert.throws(() => prReviewRuntimeProfileYaml({ ...args, diversityPolicy: "distinct_models" }), /distinct provider\/model identities/);
+  assert.match(prReviewRuntimeProfileYaml({ ...args, third: { ...c, model_name: "glm-other" }, diversityPolicy: "distinct_models" }), /distinct_models/);
+  assert.throws(() => prReviewRuntimeProfileYaml({ ...args, third: { ...c, provider_id: undefined }, diversityPolicy: "distinct_models" }), /provider.*model.*required/);
+  assert.throws(() => prReviewRuntimeProfileYaml({ ...args, diversityPolicy: "typo" }), /diversity policy/);
+  const shared = { ...a, protocol: "openai_compatible", base_url: "http://model.test/v1" };
+  assert.match(prReviewRuntimeProfileYaml({ ...args, primary: shared, arbiter: shared, third: shared, agentType: "deepseek_harness", diversityPolicy: "executions" }), /reviewer executions/);
+  assert.throws(() => prReviewRuntimeProfileYaml({ ...args, primary: shared, arbiter: shared, third: shared, agentType: "deepseek_harness", diversityPolicy: "distinct_models" }), /distinct provider\/model identities/);
+});
+
+test("strict identity preflight fails before profile mutation or model dispatch", async () => {
+  const requests = [];
+  const aliases = [
+    { ...primary, provider_id: "glm", model_name: "glm-5.3" },
+    { ...arbiter, provider_id: "kimi_cn", model_name: "k3" },
+    { ...third, provider_id: "glm", model_name: "glm-5.3" },
+  ];
+  const server = http.createServer((request, response) => {
+    requests.push([request.method, request.url]);response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({success:true,data:{settings:aliases}}));
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await assert.rejects(configurePrReviewRuntimeProfile({ managerUrl: `http://127.0.0.1:${server.address().port}`, primarySelector:primary.id, arbiterSelector:arbiter.id, thirdSelector:third.id, diversityPolicy:"distinct_models" }), /distinct provider\/model identities/);
+    assert.deepEqual(requests, [["GET", "/api/llm/settings"]]);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
