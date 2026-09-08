@@ -214,7 +214,9 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
       return { ...bound(tested.candidate, evidence), reviewer_id: node, dispatch_id: evidence.dispatch_id, session_id: evidence.session_id,
         status: "complete" as const, vote: evidence.value.vote, finding_ids: findings.map((f: { id: string }) => f.id), findings, summary: evidence.value.summary };
     });
-    result = { ...tested, outcome: "reviewed", reports, findings: reports.flatMap(r => r.findings),
+    // Keep each finding body once. Reports reference those bodies by ID; the
+    // complete original reviewer output remains in its immutable artifact.
+    result = { ...tested, outcome: "reviewed", reports: reports.map(({ findings: _, ...report }) => report), findings: reports.flatMap(r => r.findings),
       evidence_sha256: [...tested.tests.map((t: { artifact_sha256: string }) => t.artifact_sha256), ...reports.map(r => r.artifact_sha256)] };
   } else if (stage === "record_candidate_judgment") {
     const tested = read("test"); const reviewed = fs.existsSync(path.join(folder, "review_evidence.json")) ? read("review_evidence") : null;

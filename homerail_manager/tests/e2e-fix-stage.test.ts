@@ -43,7 +43,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "test-review-loop" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+type Scenario = "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
   | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
@@ -80,7 +80,8 @@ class Models implements DAGDispatcher {
           }
           const code = this.scenario === "test-review-loop" ? ["module.exports=(a,b)=>a-b;\n", "module.exports=(a,b)=>Math.abs(a+b);\n", "module.exports=(a,b)=>a+b;\n"][value.round - 1]
             : this.scenario === "ci-feedback" && value.round === 2 ? "module.exports=(a,b)=>a+b+0;\n" : "module.exports=(a,b)=>a+b;\n";
-          result = { summary: "repair candidate " + value.round, edits: [{ path: "sum.cjs", old: this.scenario === "invalid-proposal" && value.round === 1 ? "stale source" : value.sources["sum.cjs"], new: code }] };
+          result = { summary: "repair candidate " + value.round, edits: [{ path: "sum.cjs", old: this.scenario === "invalid-proposal" && value.round === 1 ? "stale source" : value.sources["sum.cjs"],
+            new: this.scenario.startsWith("review-context-") && value.round === 1 ? "module.exports=(a,b)=>Math.abs(a+b);\n" : code }] };
           if (this.scenario === "model-truncated") result = { summary: "repair with short independent snippets", edits: [
             { path: "sum.cjs", old: "=>0", new: "=>a+b" },
             { path: "sum.cjs", old: "module.exports", new: "// add signed numbers\nmodule.exports" },
@@ -91,6 +92,10 @@ class Models implements DAGDispatcher {
           const bad = value.sources["sum.cjs"].includes("Math.abs") || (["unresolved-review", "dismissed-review", "duplicate-disposition"].includes(this.scenario) && envelope.nodeId === "review_c");
           result = { vote: bad ? "request_changes" : "approve", summary: envelope.nodeId + ": signed-input review",
             findings: bad ? [value.sources["sum.cjs"].includes("Math.abs") ? "Negative sums are incorrectly made positive" : "Fixture disputed concern"] : [] };
+          if (this.scenario.startsWith("review-context-") && bad) {
+            (result as { findings: string[] }).findings = Array.from({ length: 8 }, (_, i) =>
+              `Finding ${i}: negative sums are incorrectly made positive. ` + "Signed addition must preserve negative results. ".repeat(10));
+          }
         } else {
           const evidence = value.values?.[0] ?? value;
           const good = evidence.outcome === "ci_passed" || (evidence.outcome === "reviewed" && !evidence.findings.length);
@@ -120,7 +125,7 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["test-review-loop", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+  it.each<Scenario>(["test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
     "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
@@ -130,6 +135,10 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
     const unsubscribers: Array<() => void> = [];
     try {
       const configuration = config(root, process.env.HOMERAIL_E2E_FIX_TEST_IMAGE);
+      if (scenario.startsWith("review-context-")) {
+        configuration.context_bytes = 64000;
+        configuration.issue.body += "\n" + "Retain the complete issue acceptance scope. ".repeat(scenario === "review-context-oversize" ? 1000 : 900);
+      }
       fs.mkdirSync(configuration.source_repo);
       const git = (...args: string[]) => {
         const result = spawnSync("git", ["-C", configuration.source_repo, ...args], { encoding: "utf8" }); if (result.status !== 0) throw new Error(result.stderr); return result.stdout.trim();
@@ -161,12 +170,38 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
           commands: getDb().prepare("SELECT execution_id, identity_json, consumed FROM dag_durable_commands").all() }));
       }
       expect(models.error).toBeUndefined();
+      if (scenario === "review-context-oversize") {
+        expect(getActiveRun("native-root")?.status).toBe("failed");
+        const folder = path.join(task, "rounds", "1");
+        expect(JSON.parse(fs.readFileSync(path.join(folder, "test.json"), "utf8")).outcome).toBe("passed");
+        for (const reviewer of configuration.policy.reviewer_ids) {
+          expect(JSON.parse(fs.readFileSync(path.join(folder, reviewer + ".json"), "utf8")).value.findings).toHaveLength(8);
+        }
+        expect(JSON.stringify(snapshot.handoffs.at(-1))).toContain("stage output exceeds frozen context bound");
+        expect(fs.existsSync(path.join(folder, "review_evidence.json"))).toBe(false);
+        expect(models.calls.some(call => call.nodeId.startsWith("judge_"))).toBe(false);
+        return;
+      }
       const unknownCi = ["unknown-ci", "stale-ci"].includes(scenario);
       const blockedReview = ["unresolved-review", "duplicate-disposition"].includes(scenario);
       const blockedModel = ["model-unknown", "model-accept", "model-no-strategy", "model-stale-evidence"].includes(scenario);
       expect(getActiveRun("native-root")?.status, JSON.stringify(snapshot.handoffs.at(-1))).toBe(scenario === "model-same-plan" ? "failed" : unknownCi || blockedReview || blockedModel ? "cancelled" : "completed");
       const read = (round: number, name: string) => JSON.parse(fs.readFileSync(path.join(task, "rounds", String(round), name + ".json"), "utf8"));
-      const rounds = scenario === "test-review-loop" ? 3 : ["invalid-proposal", "ci-feedback", "model-truncated"].includes(scenario) ? 2 : 1;
+      const rounds = scenario === "test-review-loop" ? 3 : ["review-context-budget", "invalid-proposal", "ci-feedback", "model-truncated"].includes(scenario) ? 2 : 1;
+      if (scenario === "review-context-budget") {
+        const review = read(1, "review_evidence");
+        expect(review.findings).toHaveLength(24);
+        expect(Buffer.byteLength(JSON.stringify(review))).toBeLessThanOrEqual(configuration.context_bytes);
+        expect(Buffer.byteLength(JSON.stringify({ ...review, reports: review.reports.map((report: any) => ({ ...report,
+          findings: review.findings.filter((finding: any) => report.finding_ids.includes(finding.id)) })) }))).toBeGreaterThan(configuration.context_bytes);
+        for (const report of review.reports) {
+          expect(report.findings).toBeUndefined();
+          expect(report.finding_ids).toHaveLength(8);
+          expect(read(1, report.reviewer_id).value.findings).toHaveLength(8);
+        }
+        expect(read(1, "record_candidate_judgment").action).toBe("revise");
+        expect(read(2, "context").previous.evidence.findings).toHaveLength(24);
+      }
       if (scenario.startsWith("model-")) {
         expect(read(1, "test")).toMatchObject({ outcome: "model_failure", tests: [], candidate: null });
         expect(fs.existsSync(path.join(task, "rounds", "1", "tests"))).toBe(false);
