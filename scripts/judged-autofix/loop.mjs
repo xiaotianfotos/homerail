@@ -64,12 +64,15 @@ export class JudgedLoop {
     const result=await collectModel(this.config,r,dir);if(!result)return;
     r.state='finished';r.finished_at=now();
     if(result.failed){r.failure=result.failure??{category:'model_transport',status:result.status};this.state.phase='judging';this.save('model_failed');return;}
+    let edits;
     try {
       if(!result.value||typeof result.value!=='object'||Array.isArray(result.value))throw new Error('proposal must be a non-null object');
       if(typeof result.value.summary!=='string'||!result.value.summary.length||result.value.summary.length>1500)throw new Error('proposal requires a summary string of 1-1500 characters');
-      const edits=result.value.edits;
+      edits=result.value.edits;
       if(!Array.isArray(edits)||!edits.length||edits.length>20)throw new Error('invalid edits');
-      atomic(path.join(dir,'proposal.json'),result.value);r.summary=result.value.summary;
+    }catch(e){r.failure={category:'proposal',message:e.message};this.state.phase='judging';this.save('proposal_rejected');return;}
+    atomic(path.join(dir,'proposal.json'),result.value);r.summary=result.value.summary;
+    try {
       this.assertHead(r.base);
       const current=new Map(this.repo.entries(r.base_tree).filter(f=>r.plan.allowed_paths.includes(f.path)).map(f=>[f.path,this.repo.bytes(f.sha).toString('utf8')]));const output=new Map();
       if(Buffer.byteLength(JSON.stringify(result.value))>96000)throw new Error('proposal exceeds 96 KiB');
