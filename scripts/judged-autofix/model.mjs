@@ -68,7 +68,7 @@ export async function collectModel(plan, attempt, directory) {
     fs.writeFileSync(`${directory}/result.json`, text);
     if (status.status !== 'completed') return { failed: true, status: status.status, failure: { category: 'model_terminal', status: status.status, code: 'run_not_completed', message: `terminal run status ${status.status} cannot yield a valid proposal` } };
     try { return { value: JSON.parse(text) }; }
-    catch (e) { if (e instanceof SyntaxError) return { failed: true, status: 'completed', failure: { category: 'model_result', code: 'invalid_result_json', message: e.message.slice(0, 200) } }; throw e; }
+    catch (e) { if (e instanceof SyntaxError) return { failed: true, status: 'completed', failure: { category: 'model_result', status: 'completed', code: 'invalid_result_json', message: 'result artifact is not valid JSON' } }; throw e; }
   }
   if (status.status === 'completed') return { failed: true, status: 'completed', failure: { category: 'model_result', status: 'completed', code: 'missing_result_artifact', message: 'completed run has no ready result artifact' } };
   return { failed: true, status: status.status, failure: { category: 'model_terminal', status: status.status, code: 'run_not_completed', message: `terminal run status ${status.status} produced no result artifact` } };
