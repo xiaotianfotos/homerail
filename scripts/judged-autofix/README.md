@@ -140,6 +140,23 @@ actual PR body equals `to_body_digest`. On success the archived entry receives
 the current URL and `confirmed: true`; on any mismatch publish fails closed with
 a reconciliation diagnostic and no further PATCH is sent.
 
+When an attempted body update's acknowledgement is lost and automatic reconciliation
+cannot succeed (the target body is not visible at the PR source), the Judger may
+explicitly authorize recovery via `recover-publication`. This operation is an
+abandonment at the observed source: it validates that the previous sender has settled
+(`previous_attempt_settled: true` attestation), records the entire abandoned intent in
+`publication_recoveries`, and clears custody so a subsequent `publish` may create a new
+intent. The decision schema requires `action: "abandon-body-update-at-source"`, exact
+`task_nonce`/`round`/`plan_digest`/`head` bindings, a `target` (either `"current"` or a
+nonnegative `publication_history` index), `publication_digest` matching the pending
+entry's identity, and a nonempty `reason`. Recovery performs read-only `gh pr list`
+only; it never PATCHes, pushes, or creates. Source body equality is an observation of
+the current remote state, not proof that the original request never landed. Replaying
+an already-applied decision is rejected without side effects; a fresh, separately
+reviewed decision is required for another recovery attempt. If the target is already
+visible at the PR source, ordinary `publish` reconciles it without recovery. Revise
+alone does not resolve an old pending update.
+
 If a publication attempt fails after acceptance, the Judger may revoke acceptance
 by issuing a new decision with `verdict: "revise"` and valid `round`, `plan_digest`
 and `reason`. The prior acceptance judgment is preserved in `judgment_history` and
