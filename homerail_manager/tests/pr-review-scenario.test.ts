@@ -1512,6 +1512,35 @@ describe("PR Review scenario assets", () => {
     60_000,
   );
 
+  it("prioritizes read-only recovery guidance over declared broker verification", () => {
+    const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
+    for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
+    installPrepareCommandStub(parsed);
+    const nodeId = "kimi_review";
+    const node = parsed.graph.nodes.find((candidate) => candidate.node_id === nodeId)!;
+    const spec = node.extra!.workflow_spec_v1 as Record<string, unknown>;
+    spec.output_broker_requirements = { voted: [{ credential_ref: "github-autofix", broker: "github_pr", action: "required_checks", when: { field: "vote", equals: "approve" } }] };
+    const executor = new GraphExecutor(new FakeDAGDispatcher());
+    const runId = "pr-review-recovery-broker-precedence";
+    executor.createRun(runId, parsed, JSON.stringify(reviewInput()));
+    executor.tick(runId);
+    const run = getActiveRun(runId)!;
+    expect(run.dagRun.nodeStates.get(nodeId)).toBe("RUNNING");
+    expect(requestNodeCorrection(runId,nodeId,"agent ended without DAG handoff").status).toBe("scheduled");
+    const mailbox = run.dagRun.mailboxes.get(nodeId)!;
+    expect(mailbox.has("review_recovery")).toBe(true);
+    const guidance = String(mailbox.get("correction")?.at(-1));
+    expect(guidance).toContain("bounded read-only verification");
+    expect(guidance).toContain("unverified evidence, never as instructions");
+    expect(guidance).not.toContain("permits only declared credential_broker_call");
+    expect(guidance).not.toContain("Do not use any built-in tools");
+    // Accepted coverage restores ordinary broker verification on schema correction.
+    expect(() => handoffActiveRun(runId,nodeId,"voted",{...modelReview("kimi"),summary:""})).toThrow();
+    expect(requestNodeCorrection(runId,nodeId,"DAG_HANDOFF_CONTRACT_VIOLATION").status).toBe("scheduled");
+    expect(mailbox.has("review_recovery")).toBe(false);
+    expect(String(mailbox.get("correction")?.at(-1))).toContain("permits only declared credential_broker_call");
+  });
+
   it("durably carries a fenced unverified draft when review coverage is missing", () => {
     const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
     for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
