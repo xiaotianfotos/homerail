@@ -5,7 +5,7 @@ import {
   isFullGitRevision,
 } from "homerail-protocol";
 
-import type { BaseResponse, HomeRailClient } from "../client.js";
+import { HomeRailTransportError, type BaseResponse, type HomeRailClient } from "../client.js";
 import { parseSettingIdOption } from "../command-options.js";
 import { getClient } from "../index.js";
 import {
@@ -60,6 +60,13 @@ interface PollOutage {
   lastError?: unknown;
 }
 
+export class RunObservationUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RunObservationUnavailableError";
+  }
+}
+
 async function resilientPoll<T>(
   operation: () => Promise<T>,
   outage: PollOutage,
@@ -75,7 +82,7 @@ async function resilientPoll<T>(
     outage.startedAt ??= now;
     outage.lastError = error;
     if (now - outage.startedAt >= MAX_CONTINUOUS_MANAGER_OUTAGE_MS) {
-      throw new Error(
+      throw new RunObservationUnavailableError(
         `${label} lost contact with the stable Manager for 180 seconds: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -217,11 +224,44 @@ function responseData(response: unknown): Record<string, unknown> {
   return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
 }
 
+async function reconcileAfterLostCreate(
+  client: HomeRailClient,
+  runId: string,
+  workflowId: string,
+  timeoutSeconds: number,
+  intervalSeconds: number,
+  originalError: Error,
+): Promise<{ runId: string; workflowId: string }> {
+  const budgetMs = Math.min(timeoutSeconds * 1_000, 180_000);
+  const deadline = Date.now() + budgetMs;
+  let lastEvidence: string | undefined;
+  while (Date.now() <= deadline) {
+    try {
+      const response = await client.get(`/api/runs/${encodeURIComponent(runId)}/status`);
+      const data = responseData(response);
+      const observedRunId = optionalString(data.run_id) ?? optionalString(data.runId);
+      const status = optionalString(data.status);
+      if (observedRunId === runId && status) {
+        return { runId, workflowId };
+      }
+      lastEvidence = `observed run_id=${observedRunId ?? "none"} status=${status ?? "none"}`;
+    } catch (err: unknown) {
+      lastEvidence = err instanceof Error ? err.message : String(err);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalSeconds * 1_000));
+  }
+  throw new RunObservationUnavailableError(
+    `DAG run ${runId} observation unavailable after lost create: ${originalError.message}${lastEvidence ? `; last evidence: ${lastEvidence}` : ""}`,
+  );
+}
+
 async function startTemplateRun(
   client: HomeRailClient,
   template: string,
   input: Record<string, unknown>,
   opts: RunTemplateOptions,
+  recoveryTimeoutSeconds?: number,
+  recoveryIntervalSeconds?: number,
 ): Promise<{ runId: string; workflowId: string }> {
   const filePath = resolveTemplatePath(orchestrationsDir(), template);
   if (!fs.existsSync(filePath)) throw new Error(`DAG template not found: ${template}`);
@@ -232,13 +272,24 @@ async function startTemplateRun(
   const workflow = responseData(syncResponse).workflow as Record<string, unknown> | undefined;
   const workflowId = optionalString(workflow?.workflow_id);
   if (!workflowId) throw new Error("Manager did not return workflow_id after template sync");
-  const response = await client.post<BaseResponse>("/api/runs/create-and-run", {
-    workflow_id: workflowId,
-    prompt: JSON.stringify(input),
-    ...(opts.profile ? { profile: opts.profile } : {}),
-    ...(opts.settingId ? { llm_setting_id: opts.settingId } : {}),
-    ...(opts.runId ? { runId: opts.runId } : {}),
-  });
+  let response: BaseResponse;
+  try {
+    response = await client.post<BaseResponse>("/api/runs/create-and-run", {
+      workflow_id: workflowId,
+      prompt: JSON.stringify(input),
+      ...(opts.profile ? { profile: opts.profile } : {}),
+      ...(opts.settingId ? { llm_setting_id: opts.settingId } : {}),
+      ...(opts.runId ? { runId: opts.runId } : {}),
+    });
+  } catch (err: unknown) {
+    if (err instanceof HomeRailTransportError && opts.runId) {
+      return reconcileAfterLostCreate(
+        client, opts.runId, workflowId,
+        recoveryTimeoutSeconds ?? 0, recoveryIntervalSeconds ?? 0, err,
+      );
+    }
+    throw err;
+  }
   const data = responseData(response);
   const runId = optionalString(data.run_id) ?? optionalString(data.runId);
   if (!runId) throw new Error("Manager did not return run id");
@@ -350,23 +401,32 @@ export function registerDagRunTemplateCommands(dag: Command, program: Command): 
         const logicalInput = parseObject(opts.input, "--input");
         const normalizedTemplate = path.basename(template).replace(/\.(yaml|yml)(\.template)?$/, "");
         const client = getClient(global);
+        let timeout: number | undefined;
+        let interval: number | undefined;
+        if (opts.wait || opts.runId) {
+          timeout = positiveNumber(opts.timeout, "--timeout");
+          interval = positiveNumber(opts.interval, "--interval");
+        }
         const input = normalizedTemplate === "pr-review"
           ? manualRunEnvelope(await resolvePrReviewInput(logicalInput))
           : normalizedTemplate === "pr-closeout"
             ? manualCloseoutEnvelope(await resolvePrCloseoutInput(logicalInput, { client }))
             : logicalInput;
-        const started = await startTemplateRun(client, template, input, opts);
+        const started = await startTemplateRun(client, template, input, opts, timeout, interval);
         if (!opts.wait) {
           const output = { run_id: started.runId, workflow_id: started.workflowId, input };
           console.log(global.json ? JSON.stringify(output) : `Run started: ${started.runId}\nWorkflow: ${started.workflowId}`);
           return;
         }
-        const timeout = positiveNumber(opts.timeout, "--timeout");
-        const interval = positiveNumber(opts.interval, "--interval");
-        const status = await waitForTerminal(client, started.runId, timeout, interval);
-        const artifacts = await waitForArtifacts(client, started.runId, timeout, interval);
+        const status = await waitForTerminal(client, started.runId, timeout!, interval!);
+        const artifacts = await waitForArtifacts(client, started.runId, timeout!, interval!);
         printTerminalSummary(started.runId, started.workflowId, status, artifacts, Boolean(global.json));
-      } catch (error) {
+      } catch (error: unknown) {
+        if (error instanceof RunObservationUnavailableError) {
+          console.error(`Error: ${error.message}`);
+          process.exitCode = 75;
+          return;
+        }
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;
       }

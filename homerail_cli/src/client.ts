@@ -4,6 +4,13 @@ import {
 } from "./local-config.js";
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+export class HomeRailTransportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HomeRailTransportError";
+  }
+}
+
 export interface BaseResponse {
   success: boolean;
   message: string;
@@ -189,6 +196,7 @@ export class HomeRailClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
+    let httpRejection = false;
     try {
       const init: RequestInit = {
         method,
@@ -228,15 +236,18 @@ export class HomeRailClient {
         } catch {
           // ignore parse error on error body
         }
+        httpRejection = true;
         throw new Error(message);
       }
 
       return (await response.json()) as T;
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`Request timed out after ${this.timeoutMs}ms`);
+        throw new HomeRailTransportError(`Request timed out after ${this.timeoutMs}ms`);
       }
-      throw redactClientError(err, this.adminToken, this.mutationToken);
+      const redacted = redactClientError(err, this.adminToken, this.mutationToken);
+      if (!httpRejection) throw new HomeRailTransportError(redacted.message);
+      throw redacted;
     } finally {
       clearTimeout(timer);
     }
