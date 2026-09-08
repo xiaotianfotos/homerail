@@ -7,9 +7,9 @@ import { freezeE2eFixTask, runE2eFixStage, type E2eFixTaskConfig } from "../src/
 import { E2E_FIX_STAGES, parseE2eFixWorkflow, type E2eFixStage } from "../src/orchestration/e2e-fix-workflow.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import type { DAGDispatcher, DispatchEnvelope } from "../src/orchestration/dag-dispatcher.js";
-import { _clearActiveRuns, handoffActiveRun, getActiveRun } from "../src/runtime/active-runs.js";
+import { _clearActiveRuns, handoffActiveRun, getActiveRun, failActiveRun, requestNodeCorrection } from "../src/runtime/active-runs.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
-import { appendNodeUsage, loadRunSnapshot } from "../src/persistence/store.js";
+import { appendNodeUsage, appendChatEntry, loadRunSnapshot } from "../src/persistence/store.js";
 import { subscribe } from "../src/events/bus.js";
 import { e2eFixDocker } from "../src/runtime/e2e-fix-test.js";
 
@@ -43,7 +43,8 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "test-review-loop" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback";
+type Scenario = "test-review-loop" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+  | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
   constructor(readonly scenario: Scenario) {}
@@ -56,8 +57,27 @@ class Models implements DAGDispatcher {
       try {
         const value: any = envelope.inputs.evidence.at(-1);
         let result: unknown;
-        if (envelope.nodeId === "plan") result = { strategy: "Implement signed addition using current evidence", allowed_paths: ["sum.cjs"] };
+        if (envelope.nodeId === "plan") result = { strategy: value.previous?.evidence?.retry_strategy && this.scenario !== "model-same-plan"
+          ? "Use one short unique edit under the fixed output budget" : "Implement signed addition using current evidence", allowed_paths: ["sum.cjs"] };
         else if (envelope.nodeId === "fix") {
+          if (this.scenario.startsWith("model-") && value.round === 1) {
+            const session = this.scenario === "model-stale-evidence" ? "old-session" : envelope.sessionId;
+            const scope = { run_id: envelope.runId, node_id: envelope.nodeId, session_id: session,
+              round_id: getActiveRun(envelope.runId)!.currentRound.round_id };
+            const finish = this.scenario === "model-unknown" ? null : "max-tokens";
+            for (let i = 0; i < 2; i++) appendChatEntry(envelope.runId, envelope.nodeId, {
+              role: "worker", type: "response", timestamp: Date.now(), content: { ...scope, type: "usage", execution_id: "failed-execution",
+                usage: { input_tokens: 101, output_tokens: 8191, cache_read_input_tokens: 0 }, duration_ms: 1234, finish_reason: finish },
+            });
+            const diagnostics = { finish_reason: finish, output_tokens: 8191, output_token_limit: 8192 };
+            appendChatEntry(envelope.runId, envelope.nodeId, { role: "worker", type: "response", timestamp: Date.now(),
+              content: { ...scope, message: "agent ended without DAG handoff", attempt_diagnostics: diagnostics } });
+            if (finish && session === envelope.sessionId) expect(requestNodeCorrection(envelope.runId, envelope.nodeId,
+              "agent ended without DAG handoff", diagnostics).status).toBe("unavailable");
+            failActiveRun(envelope.runId, envelope.nodeId, "agent ended without DAG handoff");
+            this.executor.tick(envelope.runId);
+            return;
+          }
           const code = this.scenario === "test-review-loop" ? ["module.exports=(a,b)=>a-b;\n", "module.exports=(a,b)=>Math.abs(a+b);\n", "module.exports=(a,b)=>a+b;\n"][value.round - 1]
             : this.scenario === "ci-feedback" && value.round === 2 ? "module.exports=(a,b)=>a+b+0;\n" : "module.exports=(a,b)=>a+b;\n";
           result = { summary: "repair candidate " + value.round, edits: [{ path: "sum.cjs", old: this.scenario === "invalid-proposal" && value.round === 1 ? "stale source" : value.sources["sum.cjs"], new: code }] };
@@ -75,7 +95,13 @@ class Models implements DAGDispatcher {
             ? evidence.findings.map((f: any) => ({ finding_id: f.id, action: "dismiss", reason: "Fixture concern is contradicted by the retained source and test evidence",
               evidence_sha256: [evidence.evidence_sha256[0]] })) : [];
           if (this.scenario === "duplicate-disposition" && dispositions.length) dispositions.push(dispositions[0]);
-          result = { dispositions, verdict: good || disputed ? "accept" : "revise", reason: good ? "All supplied evidence supports acceptance" : "Address the real retained failure" };
+          result = { dispositions, verdict: good || disputed || this.scenario === "model-accept" ? "accept" : "revise",
+            ...(this.scenario.startsWith("model-") && this.scenario !== "model-no-strategy" ? { retry_strategy: "Use one short unique edit under the fixed output budget" } : {}),
+            reason: good ? "All supplied evidence supports acceptance" : "Address the real retained failure" };
+        }
+        if (envelope.nodeId === "plan" && this.scenario === "model-same-plan" && value.round > 1) {
+          // JSON key order and cosmetic whitespace cannot bypass the unchanged-plan fence.
+          result = { allowed_paths: ["sum.cjs"], strategy: " Implement signed addition using current evidence " };
         }
         appendNodeUsage({ runId: envelope.runId, nodeId: envelope.nodeId, scope: { session_id: envelope.sessionId },
           usage: { input_tokens: 101, output_tokens: 13, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, timestamp: Date.now() });
@@ -90,7 +116,8 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["test-review-loop", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback"])("autonomously handles %s in one root", async (scenario) => {
+  it.each<Scenario>(["test-review-loop", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+    "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
     const task = path.join(root, "task");
@@ -132,9 +159,26 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
       expect(models.error).toBeUndefined();
       const unknownCi = ["unknown-ci", "stale-ci"].includes(scenario);
       const blockedReview = ["unresolved-review", "duplicate-disposition"].includes(scenario);
-      expect(getActiveRun("native-root")?.status, JSON.stringify(snapshot.handoffs.at(-1))).toBe(unknownCi || blockedReview ? "cancelled" : "completed");
+      const blockedModel = ["model-unknown", "model-accept", "model-no-strategy", "model-stale-evidence"].includes(scenario);
+      expect(getActiveRun("native-root")?.status, JSON.stringify(snapshot.handoffs.at(-1))).toBe(scenario === "model-same-plan" ? "failed" : unknownCi || blockedReview || blockedModel ? "cancelled" : "completed");
       const read = (round: number, name: string) => JSON.parse(fs.readFileSync(path.join(task, "rounds", String(round), name + ".json"), "utf8"));
-      const rounds = scenario === "test-review-loop" ? 3 : ["invalid-proposal", "ci-feedback"].includes(scenario) ? 2 : 1;
+      const rounds = scenario === "test-review-loop" ? 3 : ["invalid-proposal", "ci-feedback", "model-truncated"].includes(scenario) ? 2 : 1;
+      if (scenario.startsWith("model-")) {
+        expect(read(1, "test")).toMatchObject({ outcome: "model_failure", tests: [], candidate: null });
+        expect(fs.existsSync(path.join(task, "rounds", "1", "tests"))).toBe(false);
+        expect(fs.existsSync(path.join(task, "rounds", "1", "fixer.json"))).toBe(false);
+        expect(read(1, "fixer_failure").attempts).toHaveLength(scenario === "model-stale-evidence" ? 0 : 1);
+        expect(models.calls.some(c => c.nodeId.startsWith("review_") && (c.inputs.evidence.at(-1) as any).round === 1)).toBe(false);
+        if (scenario === "model-truncated") expect(read(2, "context").previous.evidence).toMatchObject({
+          retry_strategy: expect.any(String), model_failure: { outcome: "output_truncated", attempts: [{ output_tokens: 8191 }] },
+        });
+        if (scenario === "model-same-plan") {
+          expect(models.calls.filter(c => c.nodeId === "plan")).toHaveLength(2);
+          expect(models.calls.filter(c => c.nodeId === "fix")).toHaveLength(1);
+          expect(fs.existsSync(path.join(task, "simulated-pr.json"))).toBe(false);
+          return;
+        }
+      }
       if (scenario === "test-review-loop") {
         expect(read(1, "test").outcome).toBe("code_failure");
         expect(read(2, "test").outcome).toBe("passed"); expect(read(2, "review_evidence").findings.length).toBe(3);
@@ -151,12 +195,13 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         expect(read(2, "publish").publication.pr).toBe(read(1, "publish").publication.pr);
         expect(models.calls.filter(c => c.nodeId === "judge_ci")).toHaveLength(2);
       }
-      if (blockedReview) {
+      if (blockedReview || blockedModel) {
         expect(read(1, "record_candidate_judgment").action).toBe("pause");
         expect(fs.existsSync(path.join(task, "simulated-pr.json"))).toBe(false);
       } else expect(read(rounds, "complete")).toMatchObject({ action: unknownCi ? "pause" : "complete",
         production_eligible: false, acceptance: { eligible: !unknownCi } });
       for (let round = 1; round <= rounds; round++) {
+        if (scenario.startsWith("model-") && round === 1) continue;
         expect(read(round, "fixer").usages).toHaveLength(1);
         expect(read(round, "fixer").usages[0].usage.input_tokens).toBe(101);
       }

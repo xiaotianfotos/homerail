@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { readE2eFixHostCodexEvidence } from "./e2e-fix-host-codex.js";
+import { readE2eFixModelFailure } from "./e2e-fix-model-failure.js";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { E2eFixAcceptancePolicySchema, evaluateE2eFixAcceptance, sameE2eFixCandidate, type E2eFixAcceptanceInput, type E2eFixCandidate } from "homerail-protocol";
@@ -147,23 +148,37 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
   } else if (stage === "freeze_plan") {
     const context = read("context"); const evidence = modelEvidence("plan", one("plan")); const plan = evidence.value;
     if (!Array.isArray(plan.allowed_paths) || !plan.allowed_paths.length || plan.allowed_paths.some((p: string) => !config.allowed_paths.includes(p))) throw new Error("Codex plan exceeds frozen scope");
+    const previousPlan = context.previous?.evidence?.previous_plan;
+    if (context.previous?.evidence?.model_failure && previousPlan
+      && plan.strategy.trim() === previousPlan.strategy.trim()
+      && isDeepStrictEqual([...new Set(plan.allowed_paths)].sort(), [...new Set(previousPlan.allowed_paths)].sort())) {
+      throw new Error("model failure recovery requires a changed Codex plan");
+    }
     write("planner", evidence);
-    result = { ...reference(), plan, plan_sha256: digest(plan), sources: context.sources, parent: context.parent, issue: config.issue, previous: context.previous };
+    result = { ...reference(), plan, plan_sha256: digest(plan), sources: Object.fromEntries(plan.allowed_paths.map((p: string) => [p, context.sources[p]])), parent: context.parent, issue: config.issue, previous: context.previous };
   } else if (stage === "capture") {
-    const frozen = read("freeze_plan"); const fixer = modelEvidence("fix", one("patch")); write("fixer", fixer);
-    try {
-      const candidate = candidates.capture({ ...reference(), plan_sha256: frozen.plan_sha256, base: config.base,
-        repo: config.repo, parent: frozen.parent, allowed_paths: frozen.plan.allowed_paths, protected_paths: config.protected_paths,
-        summary: fixer.value.summary, edits: fixer.value.edits as E2eFixEdit[] });
-      result = { ...reference(), candidate };
-    } catch (error) {
-      if (!(error instanceof E2eFixProposalError)) throw error;
-      result = { ...reference(), candidate: null, outcome: "proposal_rejected", error: error.message };
+    const frozen = read("freeze_plan");
+    if (one("failure") !== undefined) {
+      const failure = readE2eFixModelFailure(config.root_run_id, "fix", one("failure"));
+      write("fixer_failure", failure);
+      result = { ...reference(), candidate: null, outcome: "model_failure", model_failure: failure };
+    } else {
+      const fixer = modelEvidence("fix", one("patch")); write("fixer", fixer);
+      try {
+        const candidate = candidates.capture({ ...reference(), plan_sha256: frozen.plan_sha256, base: config.base,
+          repo: config.repo, parent: frozen.parent, allowed_paths: frozen.plan.allowed_paths, protected_paths: config.protected_paths,
+          summary: fixer.value.summary, edits: fixer.value.edits as E2eFixEdit[] });
+        result = { ...reference(), candidate };
+      } catch (error) {
+        if (!(error instanceof E2eFixProposalError)) throw error;
+        result = { ...reference(), candidate: null, outcome: "proposal_rejected", error: error.message };
+      }
     }
   } else if (stage === "test") {
     const captured = read("capture");
     if (!captured.candidate) {
-      result = { ...reference(), candidate: null, tests: [], outcome: "proposal_rejected", proposal_error: captured.error,
+      result = { ...reference(), candidate: null, tests: [], outcome: captured.outcome,
+        ...(captured.model_failure ? { model_failure: captured.model_failure } : { proposal_error: captured.error }),
         sources: read("context").sources, issue: config.issue, test_summaries: [] };
     } else {
       const candidate = captured.candidate as E2eFixCandidate;
@@ -212,12 +227,16 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
       && dispositionIds.every((id: string) => findings.some((f: { id: string }) => f.id === id));
     const dismissed = exactDispositions && findings.every((f: { id: string }) => dispositions.some((d: any) => d.finding_id === f.id && d.action === "dismiss"
       && typeof d.reason === "string" && d.reason.trim() && d.evidence_sha256?.length && d.evidence_sha256.every((sha: string) => reviewed.evidence_sha256.includes(sha))));
-    const independentSessions = [read("fixer").session_id, evidence.session_id, ...(reviewed?.reports.map((r: any) => r.session_id) ?? [])];
+    const independentSessions = [tested.model_failure?.session_id ?? read("fixer").session_id, evidence.session_id, ...(reviewed?.reports.map((r: any) => r.session_id) ?? [])];
     const approved = tested.outcome === "passed" && new Set(independentSessions).size === independentSessions.length
       && reviewed?.reports.every((r: any) => r.vote !== "approve" || !r.finding_ids.length)
       && reviewed?.reports.filter((r: any) => r.vote === "approve").length >= policy.review_approvals && dismissed;
-    result = { ...reference(), candidate: tested.candidate, action: proposed.verdict === "revise" ? "revise" : proposed.verdict === "accept" && approved ? "publish" : "pause",
-      reason: proposed.reason, feedback: { tests: tested.test_summaries, findings, ...(tested.proposal_error ? { proposal_error: tested.proposal_error } : {}) }, dispositions };
+    const canRevise = !tested.model_failure || (tested.model_failure.outcome === "output_truncated"
+      && typeof proposed.retry_strategy === "string" && proposed.retry_strategy.trim().length > 0);
+    result = { ...reference(), candidate: tested.candidate, action: proposed.verdict === "revise" && canRevise ? "revise" : proposed.verdict === "accept" && approved ? "publish" : "pause",
+      reason: proposed.reason, feedback: { tests: tested.test_summaries, findings, ...(tested.proposal_error ? { proposal_error: tested.proposal_error } : {}),
+        ...(tested.model_failure ? { model_failure: tested.model_failure, retry_strategy: proposed.retry_strategy ?? null,
+          previous_plan: read("freeze_plan").plan, previous_plan_sha256: read("freeze_plan").plan_sha256 } : {}) }, dispositions };
   } else if (stage === "publish" || stage === "ci") {
     if (!providers || providers.mode !== config.mode) throw new Error("publication/CI provider is not configured for this run mode");
     const decision = read("record_candidate_judgment");

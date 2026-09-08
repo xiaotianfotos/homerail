@@ -72,3 +72,36 @@ recovery commit and dispatch, checks fresh-session dispatch, injects transaction
 failure, and rejects stale requests, partial profile correction, changed command
 logs, legacy mailbox divergence and completed/cancelled roots. This proves the
 recovery contract, not a successful real issue-to-PR run.
+
+## Model failures inside the native repair loop
+
+Newly built E2E Fix workflows route `fix.failed` into the trusted candidate
+stage. That stage requires a failed persisted node/session and reads matching
+Worker or Node transport records for the current session and native round.
+It saves diagnostics and usage snapshots deduplicated by execution ID. It does
+not turn a model failure into a patch or a passing test: candidate is null,
+tests are empty, and reviewers and publication are skipped for that iteration.
+
+The graph sends this evidence to its Codex Judger. A confirmed output-limit
+failure may enter the feedback edge only when the Judger returns `revise` with
+a nonempty `retry_strategy`. Unknown execution, missing matching usage, or an
+`accept` without a candidate pauses. The next fresh Planner receives that
+strategy and prior diagnostic/cost evidence. The trusted plan stage rejects an
+identical strategy/path set before another Fixer dispatch (ignoring JSON key
+order and cosmetic surrounding whitespace), and sends the Fixer only sources
+within the Planner's approved path subset. This is a bounded
+change check, not proof of semantic progress; assessing the strategy remains
+the Judger's responsibility.
+
+This uses the existing root, iteration and time limits, without increasing the
+output allowance or resetting prior evidence. It does not retrofit a failure
+edge into an already failed historical workflow, prove arbitrary recovery, or
+provide a cumulative model-token admission budget. Those remain separate work.
+
+The opt-in `tests/e2e-fix-stage.test.ts` suite uses real native stages, Git and
+Docker with simulated models/GitHub. It verifies output truncation → Judger
+strategy → new-context repair → tests/reviews/publication/CI, and rejects unknown
+or stale execution evidence, an unchanged plan, missing strategy and attempted
+acceptance without a patch. Set `HOMERAIL_E2E_FIX_TEST_IMAGE` to an immutable
+local Node image ID to run these scenarios. This is control-flow evidence;
+real model and real GitHub acceptance must be demonstrated separately.

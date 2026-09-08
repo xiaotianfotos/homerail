@@ -50,7 +50,7 @@ const review = {
 };
 const judgment = {
   type: "object", additionalProperties: false, required: ["verdict", "reason"],
-  properties: { verdict: { enum: ["accept", "revise", "pause"] }, reason: text,
+  properties: { verdict: { enum: ["accept", "revise", "pause"] }, reason: text, retry_strategy: text,
     dispositions: { type: "array", maxItems: 100, items: { type: "object", additionalProperties: false,
       required: ["finding_id", "action", "reason", "evidence_sha256"], properties: {
         finding_id: { type: "string", pattern: "^[a-f0-9]{64}$" }, action: { enum: ["dismiss", "revise", "escalate"] }, reason: text,
@@ -123,9 +123,10 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
   actor("plan", "planner", "Plan");
   command("freeze_plan", ["context", "plan"]);
   actor("fix", "fixer", "Patch");
-  command("capture", ["plan", "patch"]);
+  (nodes.fix as { outputs: Record<string, unknown> }).outputs.failed = {};
+  command("capture", ["plan", "patch", "failure"]);
   command("test", ["candidate"]);
-  route("test_route", "outcome", { passed: "review", code_failure: "judge", proposal_rejected: "judge" }, "pause");
+  route("test_route", "outcome", { passed: "review", code_failure: "judge", proposal_rejected: "judge", model_failure: "judge" }, "pause");
   for (const id of ["a", "b", "c"]) actor(`review_${id}`, `reviewer_${id}`, "Review");
   collect("reviews", "all", ["a", "b", "c"]);
   command("review_evidence", ["reports", "test"]);
@@ -157,6 +158,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
   edge("freeze_plan.ready", "fix.evidence");
   edge("freeze_plan.ready", "capture.plan");
   edge("fix.result", "capture.patch");
+  edges.push({ from: "fix.failed", to: "capture.failure", condition: "on_failure" });
   edge("capture.ready", "test.candidate");
   edge("test.ready", "test_route.state");
   for (const id of ["a", "b", "c"]) {
@@ -195,7 +197,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
       contracts: { TaskReference: { type: "object", required: ["task_id"], properties: { task_id: text } }, Plan: plan, Patch: patch, Review: review, Judgment: judgment },
       agents: {
         planner: { system: "You are the Codex Planner. Propose a bounded strategy and allowed paths using the supplied issue, source and prior evidence. Return Plan via handoff; do not claim tests ran." },
-        fixer: { system: "Apply the supplied frozen Codex plan by proposing exact old/new edits. Return Patch via handoff. Do not expand scope, execute publication or approve your own work." },
+        fixer: { system: "Apply the supplied frozen Codex plan by proposing minimal exact old/new edits. Use short uniquely matching snippets, never repeat an entire existing file when a local edit suffices. Return Patch via handoff. Do not expand scope, execute publication or approve your own work." },
         ...Object.fromEntries(["a", "b", "c"].map(id => [`reviewer_${id}`, {
           system: "Independently review this candidate and its test evidence. Return Review via handoff. Do not modify files, invent execution evidence, or consult another reviewer vote.",
         }])),
