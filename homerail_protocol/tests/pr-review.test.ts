@@ -136,6 +136,18 @@ describe("bounded review findings", () => {
 });
 
 describe("attempt diagnostic classification and sanitization", () => {
+  it.each(["agent ended without DAG handoff", "agent ended without a contract-valid handoff"])(
+    "classifies missing handoff without inventing provider truncation: %s", (reason) => {
+      expect(classifyReviewFailure(reason)).toBe("handoff_missing");
+      expect(sanitizeAttemptDiagnostic({}, { failure_reason: reason })).toMatchObject({
+        failure_category: "handoff_missing", finish_reason: null,
+        output_tokens: null, output_token_limit: null,
+      });
+      expect(sanitizeAttemptDiagnostic({ failure_category: "handoff_missing" })?.failure_category)
+        .toBe("handoff_missing");
+    },
+  );
+
   it("classifies provider truncation distinctly from abstention", () => {
     expect(classifyReviewFailure("output limit reached, stop_reason=max_tokens")).toBe("provider_output_truncated");
     expect(classifyReviewFailure("DAG_HANDOFF_ARGUMENTS_INVALID unexpected key")).toBe("handoff_arguments_invalid");
@@ -144,6 +156,39 @@ describe("attempt diagnostic classification and sanitization", () => {
     expect(classifyReviewFailure("reviewer abstained because evidence was incomplete")).toBe("reviewer_abstained");
     expect(classifyReviewFailure("handoff_applied")).toBe("accepted");
     expect(classifyReviewFailure("")).toBe("unknown");
+  });
+
+  it("recognizes the observed DSH max-tokens finish without inferring truncation from token counts", () => {
+    expect(classifyReviewFailure("max-tokens")).toBe("provider_output_truncated");
+    for (const category of ["unknown", "accepted"]) {
+      expect(sanitizeAttemptDiagnostic({ failure_category: category, finish_reason: "max-tokens" },
+        { failure_reason: "agent ended without DAG handoff" })?.failure_category).toBe("provider_output_truncated");
+    }
+    expect(sanitizeAttemptDiagnostic({ finish_reason: "length" })?.failure_category).toBe("provider_output_truncated");
+    expect(classifyReviewFailure("contract validation failed")).toBe("contract_validation_failed");
+    expect(sanitizeAttemptDiagnostic({ failure_category: "handoff_missing", finish_reason: "max-tokens",
+      output_tokens: 32767, output_token_limit: 32768 })).toMatchObject({
+      failure_category: "provider_output_truncated", finish_reason: "max-tokens",
+    });
+    expect(sanitizeAttemptDiagnostic({ failure_category: "handoff_missing", finish_reason: null,
+      output_tokens: 32767, output_token_limit: 32768 })?.failure_category).toBe("handoff_missing");
+    expect(sanitizeAttemptDiagnostic({ failure_category: "accepted", finish_reason: "max-tokens" })?.failure_category).toBe("accepted");
+  });
+
+  it.each(["max_tokens", "max-tokens", "length"])("preserves explicit abstention with %s finish metadata", (finish_reason) => {
+    for (const diagnostic of [
+      { failure_category: "reviewer_abstained", finish_reason },
+      { failure_category: "accepted", finish_reason },
+      { finish_reason },
+    ]) {
+      expect(sanitizeAttemptDiagnostic(diagnostic, { failure_reason: "DAG_REVIEWER_ABSTAINED" }))
+        .toMatchObject({ failure_category: "reviewer_abstained", finish_reason });
+    }
+    // Missing or invalid handoffs still retain positive provider truncation evidence.
+    for (const failure_category of ["handoff_missing", "contract_validation_failed"]) {
+      expect(sanitizeAttemptDiagnostic({ failure_category, finish_reason })?.failure_category)
+        .toBe("provider_output_truncated");
+    }
   });
 
   it("keeps missing provider fields explicit unknown/null", () => {

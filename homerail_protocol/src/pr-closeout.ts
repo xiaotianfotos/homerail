@@ -6,7 +6,7 @@
  * @version 0.1.0
  */
 
-import { isFullGitRevision } from "./pr-review.js";
+import { isFullGitRevision, REVIEW_FAILURE_CATEGORIES } from "./pr-review.js";
 
 const REVIEW_STATUSES = new Set(["pass", "findings", "inconclusive"]);
 const REVIEW_CONFIDENCE = new Set(["high", "medium", "low"]);
@@ -24,6 +24,28 @@ const FINDING_FIELDS = [
   "recommendation",
   "confidence",
 ] as const;
+
+const FAILURE_CATEGORY_SET = new Set<string>(REVIEW_FAILURE_CATEGORIES);
+const INCOMPLETE_DIAGNOSTIC_FINAL_CATEGORIES = new Set<string>([
+  "handoff_missing",
+  "handoff_arguments_invalid",
+  "contract_validation_failed",
+  "transport_failed",
+  "reviewer_abstained",
+  "unknown",
+]);
+
+function hasValidIncompleteDiagnostics(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 8) return false;
+  for (const entry of value) {
+    const rec = record(entry);
+    if (!rec) return false;
+    if (!Number.isSafeInteger(rec.attempt) || (rec.attempt as number) < 1 || (rec.attempt as number) > 8) return false;
+    if (typeof rec.category !== "string" || !FAILURE_CATEGORY_SET.has(rec.category)) return false;
+  }
+  const lastEntry = record(value[value.length - 1]);
+  return lastEntry !== undefined && INCOMPLETE_DIAGNOSTIC_FINAL_CATEGORIES.has(String(lastEntry.category));
+}
 
 export interface PrReviewCloseoutIdentity {
   repo: string;
@@ -231,8 +253,9 @@ export function validatePrReviewCloseoutEvidence(
       if (reviewer.reviewed_files.length > 0 && reviewer.unreviewed_files.length > 0) {
         return invalid("a failed pr-review reviewer cannot claim both reviewed and unreviewed files", partial);
       }
-      if (reviewer.evidence_truncated !== true && reviewer.unreviewed_files.length > 0) {
-        return invalid("a deliberate pr-review abstention cannot leave files unreviewed", partial);
+      if (reviewer.evidence_truncated !== true && reviewer.unreviewed_files.length > 0
+        && !hasValidIncompleteDiagnostics(reviewer.diagnostics)) {
+        return invalid("a deliberate pr-review abstention with unreviewed files requires valid diagnostics", partial);
       }
       for (const finding of reviewer.findings) reviewerFindingKeys.add(findingKey(finding)!);
     }

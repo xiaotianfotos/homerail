@@ -72,6 +72,37 @@ metadata.
    that JSON plus `command.json`, so the exact Manager run id cannot be invented
    or altered by a model.
 
+## Recovery and diagnostics
+
+When a reviewer has no accepted coverage attestation, the Manager can supply a
+fenced `review-recovery-v1` input for a fresh correction. It preserves a public
+model draft as unverified evidence, never as accepted findings or coverage. The
+Worker records only public text before a terminal error, retaining at most the
+last 8,192 UTF-8 bytes without splitting characters; hidden reasoning and tool
+results are excluded. Older Worker text remains a bounded fallback. Drafts and
+accepted evidence are persisted separately.
+
+Recovery requires Manager-provided trusted inputs matching the exact run, node,
+session, round and generation plus an explicit read-only workspace policy.
+Only already-declared Read/Grep/Glob/LS tools are available, with at most 32 calls
+or a smaller configured limit. Writes and broker actions remain unavailable.
+The reviewer must verify source evidence before attesting coverage; otherwise
+it returns a structured failed/abstain result. Existing accepted coverage keeps
+ordinary contract-only correction. A logical DAG session ID does not imply
+that a provider SDK conversation was resumed.
+
+`handoff_missing` identifies an absent final handoff. Missing coverage, invalid
+arguments, transport errors and unknown failures do not by themselves mean
+truncation. `evidence_truncated` describes bounded projection loss or an observed
+provider output-limit finish; explicit abstention remains a separate category.
+For a failed attempt, a confirmed provider finish such as max-tokens, max_tokens or length takes
+precedence over a missing-handoff or contract-error label. Token counts near the
+configured limit alone do not establish truncation. A successfully accepted handoff
+retains its accepted category.
+Unknown provider usage and finish fields stay null. The Manager refreshes the
+normalizer input after the final handoff so diagnostics include the actual
+terminal attempt rather than only the previous failure.
+
 ## Outputs
 
 - `pr-review.json`
