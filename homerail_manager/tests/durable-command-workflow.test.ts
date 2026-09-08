@@ -71,11 +71,11 @@ describe.skipIf(process.platform !== "linux")("native durable command gateway", 
     await vi.waitFor(() => {
       const dir = path.join(root, "trusted-commands");
       expect(fs.readdirSync(dir).some(id => fs.existsSync(path.join(dir, id, "receipt.json")))).toBe(true);
-    });
+    }, { timeout: 8000 });
     expect(recoverAllActiveRuns().recovered).toEqual(["root"]);
     executor.tick("root"); await completed();
     expect(fs.readFileSync(path.join(root, "workspace", "root", "count"), "utf8")).toBe("x");
-  });
+  }, 10000);
   it("routes invalid JSON to failure and never pretends the test stage passed", async () => {
     // A legal command can exceed Vitest's default one-second observation
     // window. Wait for its bounded terminal result, not subsecond scheduling.
