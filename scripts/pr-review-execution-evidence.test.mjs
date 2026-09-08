@@ -57,3 +57,26 @@ test('collector writes bounded allowlisted evidence even if a degraded reviewer 
  try{const file=path.join(dir,'evidence.json');const e=await collectPrReviewExecutionEvidence({managerUrl:`http://127.0.0.1:${server.address().port}`,runId,outputPath:file});assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),e);assert.equal(requested.length,3);assert.equal(e.provenance_complete,false);assert.equal(e.usage_state,'partial');assert.doesNotMatch(fs.readFileSync(file,'utf8'),/DO_NOT_LEAK|NEVER_PUBLISH/);}
  finally{await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('partial metadata from separate snapshots cannot synthesize final settlement',async()=>{
+ const {buildPrReviewExecutionEvidence}=await mod();const chats=baseChats();const n='qwen_review';chats[n]=[prompt(n),usage(n,'exec',u(),{finish_reason:'completed'},2),usage(n,'exec',u(),{duration_ms:100},3)];
+ const e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});assert.equal(e.reviewers[0].executions[0].usage_state,'partial');assert.equal(e.usage_state,'partial');
+});
+
+test('missing resolved binding remains an unaccounted dispatch instead of disappearing',async()=>{
+ const {buildPrReviewExecutionEvidence}=await mod();const chats=baseChats();const m=prompt('qwen_review','glm','glm-5.3',3);delete m.content.agentConfig.llm;chats.qwen_review.push(m);
+ const e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});assert.equal(e.provenance_complete,false);assert.equal(e.usage_state,'partial');assert.equal(e.reviewers[0].unaccounted_dispatches,1);
+});
+
+test('safe IDs, single-fence execution attribution and complete prompt replay deduplication',async()=>{
+ const {buildPrReviewExecutionEvidence}=await mod();assert.throws(()=>buildPrReviewExecutionEvidence({runId:'../bad',chatsByNode:{}}),/runId/);
+ const chats=baseChats();const n='qwen_review';const replay=prompt(n);const changed=prompt(n,'other','model',1);chats[n].splice(1,0,changed,replay);let e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});assert.equal(e.reviewers[0].dispatches.length,2);
+ const next=prompt(n,'glm','glm-5.3',3);next.content.sessionId='next-session';chats[n]=[...baseChats()[n],next,usage(n,n,u(900,900,900),{session_id:'next-session'},4)];e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});assert.equal(e.observed_tokens,51);assert.equal(e.usage_state,'partial');
+ chats[n]=[prompt(n),usage(n,'x'.repeat(257),u(900,900,900))];e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});assert.equal(e.observed_tokens,34);
+});
+
+test('collector uses the established Manager header without following credential-bearing redirects',async()=>{
+ const {collectPrReviewExecutionEvidence}=await mod();let auth;const old=process.env.HOMERAIL_DAG_MUTATION_TOKEN;process.env.HOMERAIL_DAG_MUTATION_TOKEN='test-audit-token';const server=http.createServer((req,res)=>{auth=req.headers;res.setHeader('content-type','application/json');res.end(JSON.stringify({success:true,data:{messages:[]}}));});await new Promise(r=>server.listen(0,'127.0.0.1',r));const dir=fs.mkdtempSync(path.join(os.tmpdir(),'review-audit-auth-'));
+ try{await collectPrReviewExecutionEvidence({managerUrl:`http://127.0.0.1:${server.address().port}/`,runId,outputPath:path.join(dir,'evidence.json')});assert.equal(auth['x-homerail-dag-token'],'test-audit-token');assert.equal(auth.authorization,undefined);}
+ finally{if(old===undefined)delete process.env.HOMERAIL_DAG_MUTATION_TOKEN;else process.env.HOMERAIL_DAG_MUTATION_TOKEN=old;await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});}
+});
