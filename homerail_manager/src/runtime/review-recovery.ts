@@ -51,8 +51,14 @@ function extractDraft(fence: ReviewRecoveryFence, chats: readonly unknown[]): Re
     if (content === null || content === undefined || typeof content !== "object") continue;
     const c = content as Record<string, unknown>;
     if (typeof c.text !== "string") continue;
-    // content.type must be absent or "text"
-    if (c.type !== undefined && c.type !== "text") continue;
+    // Accept legacy text (absent/"text") or bounded review_draft snapshots
+    const isSnapshot = c.type === "review_draft";
+    if (!isSnapshot && c.type !== undefined && c.type !== "text") continue;
+    if (isSnapshot) {
+      if (c.event !== "review_draft") continue;
+      if (c.schema !== "review-draft-v1") continue;
+      if (typeof c.truncated !== "boolean") continue;
+    }
     // Exact fence match required
     if (c.run_id !== fence.runId) continue;
     if (c.node_id !== fence.nodeId) continue;
@@ -64,7 +70,11 @@ function extractDraft(fence: ReviewRecoveryFence, chats: readonly unknown[]): Re
     // Require finite numeric timestamp on the entry
     const ts = obj.timestamp;
     if (typeof ts !== "number" || !Number.isFinite(ts)) continue;
-    return capToUtf8Bytes(c.text, ts);
+    const capped = capToUtf8Bytes(c.text, ts);
+    if (isSnapshot && c.truncated) {
+      return { ...capped, truncated: true };
+    }
+    return capped;
   }
   return null;
 }
