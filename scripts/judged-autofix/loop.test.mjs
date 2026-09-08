@@ -419,3 +419,14 @@ test('pending PR update does not adopt a replacement URL even if its body matche
  const row=JSON.parse(fs.readFileSync(f.storage,'utf8'));row.url='https://github.com/owner/repo/pull/99';fs.writeFileSync(f.storage,JSON.stringify(row));
  const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
 });
+
+test('completed PR body update does not overwrite a later external restoration of the old text',async t=>{
+ const f=await publicationUpdateFixture(t);assert.equal(f.loop.publish(f.body),f.row.url);
+ fs.writeFileSync(f.storage,JSON.stringify(f.row));const reopened=f.attach(new JudgedLoop(f.root));
+ assert.throws(()=>reopened.publish(f.body));assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
+});
+test('target-visible reconciliation still verifies the persisted body update target digest',async t=>{
+ const f=await publicationUpdateFixture(t,'lost_ack');assert.throws(()=>f.loop.publish(f.body));
+ f.loop.state.publication.body_update.to_body_digest='0'.repeat(64);f.loop.save('mismatched_update_intent');
+ const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
+});
