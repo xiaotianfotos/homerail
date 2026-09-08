@@ -2962,7 +2962,17 @@ export function handoffActiveRun(
       if (evidence) {
         const evidenceContext = _reviewEvidenceContext(run, fromNode);
         if (evidenceContext) {
-          recordReviewHandoffEvidence(evidenceContext, evidence);
+          const eo = effectiveContent as Record<string, unknown> | null;
+          const isReviewerAbstain = eo !== null
+            && typeof eo === "object"
+            && !Array.isArray(eo)
+            && typeof eo.reviewer === "string"
+            && eo.status === "failed"
+            && eo.vote === "abstain";
+          const effectiveEvidence = isReviewerAbstain && !evidence.failureReason
+            ? { ...evidence, failureReason: "DAG_REVIEWER_ABSTAINED" }
+            : evidence;
+          recordReviewHandoffEvidence(evidenceContext, effectiveEvidence);
           _refreshReviewEvidenceProjection(run, fromNode, evidenceContext);
         }
       }
