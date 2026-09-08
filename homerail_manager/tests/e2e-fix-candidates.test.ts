@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { E2eFixCandidates } from "../src/runtime/e2e-fix-candidates.js";
 
 describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () => {
@@ -15,11 +15,14 @@ describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () =>
     root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-candidates-")); repo = path.join(root, "source");
     fs.mkdirSync(repo); git("init"); git("config", "user.name", "fixture"); git("config", "user.email", "fixture@example.invalid");
     fs.writeFileSync(path.join(repo, "sum.cjs"), "module.exports = (a,b) => a-b;\n");
-    fs.mkdirSync(path.join(repo, "tests")); fs.writeFileSync(path.join(repo, "tests", "frozen.cjs"), "trusted test\n");
-    git("add", "."); git("-c", "commit.gpgsign=false", "commit", "-m", "base"); base = git("rev-parse", "HEAD");
+    fs.mkdirSync(path.join(repo, "tests", "nested"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "tests", "frozen.cjs"), "trusted test\n");
+    fs.writeFileSync(path.join(repo, "tests", "nested", "executable.sh"), "#!/bin/sh\nprintf 'executable preserved\\n'\n", { mode: 0o755 });
+    git("add", "."); git("update-index", "--chmod=+x", "tests/nested/executable.sh");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base"); base = git("rev-parse", "HEAD");
     store = new E2eFixCandidates(path.join(root, "private")); store.seed(repo, base);
   });
-  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  afterEach(() => { vi.restoreAllMocks(); fs.rmSync(root, { recursive: true, force: true }); });
   function request() {
     return { task_id: "issue-1", root_run_id: "root", round: 1, plan_sha256: "a".repeat(64), policy_sha256: "b".repeat(64),
       repo: "fixture/repo", base, parent: base, allowed_paths: ["sum.cjs"], protected_paths: ["tests"], summary: "add correctly",
@@ -92,12 +95,57 @@ describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () =>
     expect(fs.readFileSync(path.join(dir, "sum.cjs"), "utf8")).toContain("a+b");
     expect(fs.existsSync(path.join(dir, ".git"))).toBe(false);
   });
-  it.each(["content", "missing", "extra", "symlink", "directory"])("rejects snapshot %s drift", kind => {
+  it("normalizes inherited file and directory modes before publishing the snapshot", () => {
+    const candidate = store.capture(request());
+    const open = fs.openSync;
+    let injected = 0;
+    vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
+      const fd = open(file, flags, mode);
+      if (typeof file === "string" && file.includes(".tmp/") && flags === "wx") {
+        injected++;
+        fs.fchmodSync(fd, 0o700);
+        for (let dir = path.dirname(file); dir.includes(".tmp"); dir = path.dirname(dir)) fs.chmodSync(dir, 0o700);
+      }
+      return fd;
+    });
+    const dir = store.snapshot(candidate.tree);
+    expect(injected).toBe(3);
+    expect(fs.statSync(dir).mode & 0o7777).toBe(0o755);
+    expect(fs.statSync(path.join(dir, "tests", "nested")).mode & 0o7777).toBe(0o755);
+    expect(fs.statSync(path.join(dir, "sum.cjs")).mode & 0o7777).toBe(0o444);
+    expect(fs.statSync(path.join(dir, "tests", "nested", "executable.sh")).mode & 0o7777).toBe(0o555);
+    expect(fs.statSync(store.directory).mode & 0o077).toBe(0);
+    expect(store.snapshot(candidate.tree)).toBe(dir);
+  });
+  it("rejects malformed temporary bytes without publishing and permits a clean retry", () => {
+    const candidate = store.capture(request());
+    const destination = path.join(store.directory, "snapshots", candidate.tree);
+    const verify = store.verifySnapshot.bind(store);
+    vi.spyOn(store, "verifySnapshot").mockImplementationOnce((tree, dir) => {
+      const file = path.join(dir, "sum.cjs"); fs.chmodSync(file, 0o644); fs.writeFileSync(file, "corrupted");
+      verify(tree, dir);
+    });
+    expect(() => store.snapshot(candidate.tree)).toThrow(/snapshot/);
+    expect(fs.existsSync(destination)).toBe(false);
+    expect(fs.readdirSync(path.dirname(destination))).toEqual([]);
+    expect(fs.readFileSync(path.join(store.snapshot(candidate.tree), "sum.cjs"), "utf8")).toContain("a+b");
+  });
+  it("never replaces a published dangling symlink", () => {
+    const candidate = store.capture(request());
+    const destination = path.join(store.directory, "snapshots", candidate.tree);
+    fs.mkdirSync(path.dirname(destination)); fs.symlinkSync(path.join(root, "missing"), destination);
+    expect(() => store.snapshot(candidate.tree)).toThrow(/snapshot/);
+    expect(fs.lstatSync(destination).isSymbolicLink()).toBe(true);
+  });
+  it.each(["content", "missing", "extra", "symlink", "directory", "writable", "unreadable", "untraversable"])("rejects snapshot %s drift", kind => {
     const candidate = store.capture(request()); const dir = store.snapshot(candidate.tree); const file = path.join(dir, "sum.cjs");
     if (kind === "content") { fs.chmodSync(file, 0o644); fs.writeFileSync(file, "forged"); }
     if (kind === "missing") fs.unlinkSync(file);
     if (kind === "extra") fs.writeFileSync(path.join(dir, "forged-receipt.json"), "{}");
     if (kind === "directory") fs.mkdirSync(path.join(dir, "extra"));
+    if (kind === "writable") fs.chmodSync(file, 0o644);
+    if (kind === "unreadable") fs.chmodSync(file, 0o400);
+    if (kind === "untraversable") fs.chmodSync(path.join(dir, "tests"), 0o700);
     if (kind === "symlink") { fs.unlinkSync(file); fs.symlinkSync(path.join(repo, "sum.cjs"), file); }
     expect(() => store.snapshot(candidate.tree)).toThrow(/snapshot/);
   });

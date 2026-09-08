@@ -174,24 +174,48 @@ export class E2eFixCandidates {
   snapshot(tree: string): string {
     if (!revision.test(tree)) throw new Error("invalid tree identity");
     const destination = path.join(this.directory, "snapshots", tree);
-    if (fs.existsSync(destination)) { this.verifySnapshot(tree, destination); return destination; }
+    if (fs.lstatSync(destination, { throwIfNoEntry: false })) { this.verifySnapshot(tree, destination); return destination; }
     const temporary = `${destination}.${randomUUID()}.tmp`;
     fs.mkdirSync(temporary, { recursive: true, mode: 0o755 });
     try {
+      const directories = new Set([temporary]);
       for (const entry of this.entries(tree)) {
         const file = path.join(temporary, entry.path);
         fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o755 });
-        const fd = fs.openSync(file, "wx", entry.mode === "100755" ? 0o555 : 0o444);
-        try { fs.writeFileSync(fd, entry.bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+        for (let dir = path.dirname(file); dir !== temporary; dir = path.dirname(dir)) directories.add(dir);
+        const mode = entry.mode === "100755" ? 0o555 : 0o444;
+        const fd = fs.openSync(file, "wx", mode);
+        try {
+          fs.writeFileSync(fd, entry.bytes);
+          // Inherited ACLs can override the requested creation mode. Normalize
+          // the actual inode before testing or publishing this read-only mount.
+          fs.fchmodSync(fd, mode);
+          fs.fsyncSync(fd);
+        } finally { fs.closeSync(fd); }
+      }
+      for (const directory of directories) {
+        fs.chmodSync(directory, 0o755);
+        const fd = fs.openSync(directory, "r");
+        try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      }
+      this.verifySnapshot(tree, temporary);
+      // A concurrent publisher's snapshot must be verified, never repaired.
+      if (fs.lstatSync(destination, { throwIfNoEntry: false })) {
+        this.verifySnapshot(tree, destination); return destination;
       }
       try { fs.renameSync(temporary, destination); }
-      catch (error) { if (!fs.existsSync(destination)) throw error; }
+      catch (error) {
+        if (!["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      }
       this.verifySnapshot(tree, destination);
+      const parent = fs.openSync(path.dirname(destination), "r");
+      try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
       return destination;
     } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
   }
   verifySnapshot(tree: string, directory: string): void {
-    if (!fs.lstatSync(directory).isDirectory()) throw new Error("snapshot must be a real directory");
+    const root = fs.lstatSync(directory);
+    if (!root.isDirectory() || (root.mode & 0o7777) !== 0o755) throw new Error("snapshot must be a traversable real directory");
     const entries = new Map(this.entries(tree).map(e => [e.path, e]));
     const seen = new Set<string>();
     const walk = (relative: string) => {
@@ -199,12 +223,12 @@ export class E2eFixCandidates {
         const key = relative ? relative + "/" + name : name;
         const file = path.join(directory, key); const stat = fs.lstatSync(file);
         if (stat.isDirectory()) {
-          if (![...entries.keys()].some(p => p.startsWith(key + "/"))) throw new Error("unexpected snapshot directory");
+          if ((stat.mode & 0o7777) !== 0o755 || ![...entries.keys()].some(p => p.startsWith(key + "/"))) throw new Error("unexpected snapshot directory or permissions");
           walk(key);
         } else {
           const entry = entries.get(key);
           if (!stat.isFile() || !entry || !fs.readFileSync(file).equals(entry.bytes)
-            || Boolean(stat.mode & 0o111) !== (entry.mode === "100755")) throw new Error("snapshot inventory/content changed");
+            || (stat.mode & 0o7777) !== (entry.mode === "100755" ? 0o555 : 0o444)) throw new Error("snapshot inventory/content changed");
           seen.add(key);
         }
       }

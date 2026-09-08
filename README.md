@@ -189,6 +189,8 @@ Planner evidence and the original root and round.
 New E2E Fix workflows also route confirmed Fixer output truncation to the
 in-graph Judger for a bounded strategy revision; unknown execution pauses.
 Fixers can submit multiple non-overlapping exact snippets per authorized file.
+Trusted candidate snapshots normalize storage permissions and pass validation
+before publication; invalid published snapshots are rejected without rewriting.
 DSH provides bounded, content-free output byte diagnostics to distinguish
 observed reasoning, text and tool arguments; these are not token budgets.
 The program-only watcher also alerts when a failed host stage remains RUNNING,

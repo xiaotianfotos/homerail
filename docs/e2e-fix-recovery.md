@@ -147,3 +147,14 @@ or stale execution evidence, an unchanged plan, missing strategy and attempted
 acceptance without a patch. Set `HOMERAIL_E2E_FIX_TEST_IMAGE` to an immutable
 local Node image ID to run these scenarios. This is control-flow evidence;
 real model and real GitHub acceptance must be demonstrated separately.
+
+## Candidate snapshot publication
+
+Trusted candidate snapshots normalize file modes from Git (`0444` for regular
+files, `0555` for executables) and directory modes to `0755`, including on
+storage with inherited ACLs. The private candidate store remains private;
+only the snapshot is mounted into the non-root test container. The complete
+temporary snapshot is checked before publication. A malformed temporary
+snapshot is discarded, so a retry can rebuild it. A previously published
+snapshot with changed bytes, permissions, entries or unsafe links is rejected
+without being rewritten.
