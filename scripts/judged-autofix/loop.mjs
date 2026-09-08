@@ -248,7 +248,50 @@ export class JudgedLoop {
     const repoJoin=`${pr.headRepositoryOwner?.login}/${pr.headRepository?.name}`.toLowerCase();
     if(repoJoin!==repo.toLowerCase())throw new Error('PR headRepository mismatch with config repo');
     if(pr.title!==intent.title)throw new Error('PR title mismatch');
-    if(digest(Buffer.from(pr.body))!==intent.body_digest)throw new Error('PR body digest mismatch');
+    if(digest(Buffer.from(pr.body))===intent.body_digest){
+      if(this.state.publication.body_update){
+        if(this.state.publication.body_update.url!==pr.url)throw new Error('body_update URL does not match current PR URL; replacement URL not adopted');
+        this.state.publication.body_update=undefined;
+      }
+      this.state.publication.url=pr.url;this.save('published');return pr.url;
+    }
+    // PR body does not match target intent – attempt or resume durable body update
+    if(this.state.publication.body_update){
+      const bu=this.state.publication.body_update;
+      if(bu.url!==pr.url)throw new Error('body_update URL does not match current PR URL; replacement URL not adopted');
+      if(bu.to_body_digest!==intent.body_digest)throw new Error('body_update target digest does not match current intent');
+      if(bu.attempted)throw new Error('PR body update reconciliation pending: attempted update not confirmed against target body; requires Judger reconciliation');
+      if(digest(Buffer.from(pr.body))!==bu.from_body_digest)throw new Error('body_update source digest does not match current PR body');
+    }else{
+      const history=this.state.publication_history;
+      let latest=null;
+      if(history)for(let i=history.length-1;i>=0;i--){const h=history[i];if(h.repo===repo&&h.branch===branch&&h.base===base&&h.url&&h.title===title&&h.body_digest&&/^[a-f0-9]{64}$/.test(h.body_digest)){latest=h;break;}}
+      if(!latest)throw new Error('no confirmed publication history for current repo/branch/base/title; refusing PR body update');
+      if(latest.url!==pr.url)throw new Error('PR URL does not match latest confirmed publication history');
+      if(digest(Buffer.from(pr.body))!==latest.body_digest)throw new Error('PR body does not match latest confirmed publication; external or unknown modification');
+      this.state.publication.body_update={url:pr.url,from_body_digest:digest(Buffer.from(pr.body)),to_body_digest:intent.body_digest,attempted:false};
+      this.save('body_update_intent');
+    }
+    const urlMatch=pr.url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)$/i);
+    if(!urlMatch)throw new Error('cannot derive API endpoint from PR URL');
+    if(`${urlMatch[1]}/${urlMatch[2]}`.toLowerCase()!==repo.toLowerCase())throw new Error('PR URL repository does not match config repo');
+    const endpoint=`repos/${urlMatch[1]}/${urlMatch[2]}/pulls/${urlMatch[3]}`;
+    const inputFile=path.join(this.root,'body-update-input.json');
+    atomic(inputFile,{body:bodyBuf.toString('utf8')});
+    this.state.publication.body_update.attempted=true;this.save('body_update_attempted');
+    gh(['api','--method','PATCH',endpoint,'--input',inputFile]);
+    const verify=JSON.parse(gh(['pr','list','--repo',repo,'--head',branch,'--state','all','--json',jsonFields]));
+    if(verify.length!==1)throw new Error('expected one PR after body update, got '+verify.length);
+    const vp=verify[0];
+    if(vp.state!=='OPEN')throw new Error('PR is not OPEN after body update');
+    if(vp.headRefOid!==intent.head)throw new Error('PR headRefOid mismatch after body update');
+    if(vp.headRefName!==intent.branch)throw new Error('PR headRefName mismatch after body update');
+    if(vp.baseRefName!==intent.base)throw new Error('PR baseRefName mismatch after body update');
+    if(vp.url!==pr.url)throw new Error('PR URL changed after body update');
+    if(`${vp.headRepositoryOwner?.login}/${vp.headRepository?.name}`.toLowerCase()!==repo.toLowerCase())throw new Error('PR headRepository mismatch after body update');
+    if(vp.title!==intent.title)throw new Error('PR title mismatch after body update');
+    if(digest(Buffer.from(vp.body))!==intent.body_digest)throw new Error('PR body digest still mismatched after body update');
+    this.state.publication.body_update=undefined;
     this.state.publication.url=pr.url;this.save('published');return pr.url;
   }
   recoverTests(){

@@ -115,6 +115,18 @@ Body file paths are resolved to absolute paths before GitHub CLI invocation, so
 caller-relative paths retain their intended meaning regardless of the repository
 working directory used by `gh`.
 
+When an already-owned PR exists with a previously confirmed body (recorded in
+`publication_history`), `publish` may update its description in-place via
+`gh api --method PATCH` rather than failing. The update is resumable: a durable
+`body_update` intent with an `attempted` flag is persisted before the API call,
+allowing a controller reopen to reconcile a successful write whose
+acknowledgement was lost without issuing another PATCH. If `attempted` is true
+but the target body is not yet visible (ambiguous pre-send crash or stale read),
+publish throws a reconciliation-pending error rather than repeating the mutation.
+GitHub does not provide a compare-and-swap body-hash guard, so a post-read
+concurrent external edit cannot be excluded; the mechanism guarantees at-most-one
+send from the controller's perspective but does not claim server-side atomicity.
+
 If a publication attempt fails after acceptance, the Judger may revoke acceptance
 by issuing a new decision with `verdict: "revise"` and valid `round`, `plan_digest`
 and `reason`. The prior acceptance judgment is preserved in `judgment_history` and
