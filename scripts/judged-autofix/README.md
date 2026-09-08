@@ -132,6 +132,14 @@ externally restored old body is treated as a reconciliation conflict and never
 emits another PATCH. A confirmed publication never changes its body or URL until
 the Judger authorizes a new revision.
 
+When a revision is accepted after a body update's acknowledgement was lost, the
+prior publication state (including the unacknowledged `body_update`) is archived
+to `publication_history` without a top-level `url`. The next publish reconciles
+this entry by verifying `attempted`, URL match, valid hex digests, and that the
+actual PR body equals `to_body_digest`. On success the archived entry receives
+the current URL and `confirmed: true`; on any mismatch publish fails closed with
+a reconciliation diagnostic and no further PATCH is sent.
+
 If a publication attempt fails after acceptance, the Judger may revoke acceptance
 by issuing a new decision with `verdict: "revise"` and valid `round`, `plan_digest`
 and `reason`. The prior acceptance judgment is preserved in `judgment_history` and

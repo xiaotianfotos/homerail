@@ -253,6 +253,7 @@ export class JudgedLoop {
       if(this.state.publication.body_update.url!==pr.url)throw new Error('body_update URL does not match current PR URL; replacement URL not adopted');
       if(this.state.publication.body_update.to_body_digest!==intent.body_digest)throw new Error('body_update target digest does not match current intent');
     }
+    if(!this.state.publication.url&&!this.state.publication.body_update){const hist=this.state.publication_history;if(hist)for(let i=hist.length-1;i>=0;i--){const h=hist[i];if(h.repo===repo&&h.branch===branch&&h.base===base&&h.title===title&&h.body_digest&&/^[a-f0-9]{64}$/.test(h.body_digest)){if(h.url)break;if(!h.body_update)continue;const bu=h.body_update;if(!bu.attempted)throw new Error('archived update reconciliation: entry not attempted');if(bu.url!==pr.url)throw new Error('archived update reconciliation: URL mismatch');if(!/^[a-f0-9]{64}$/.test(bu.from_body_digest))throw new Error('archived update reconciliation: invalid from_body_digest');if(!/^[a-f0-9]{64}$/.test(bu.to_body_digest))throw new Error('archived update reconciliation: invalid to_body_digest');if(bu.to_body_digest!==h.body_digest)throw new Error('archived update reconciliation: to_body_digest does not match archived body_digest');if(digest(Buffer.from(pr.body))!==bu.to_body_digest)throw new Error('archived update reconciliation: lost update acknowledgement; PR body does not match to_body_digest');h.url=pr.url;h.body_update.confirmed=true;this.save('archived_update_reconciled');break;}}}
     if(digest(Buffer.from(pr.body))===intent.body_digest){
       if(this.state.publication.body_update){
         this.state.publication.body_update.confirmed=true;
@@ -263,7 +264,7 @@ export class JudgedLoop {
     // PR body does not match target intent – attempt or resume durable body update
     if(this.state.publication.body_update){
       const bu=this.state.publication.body_update;
-      if(bu.attempted)throw new Error('PR body update reconciliation pending: attempted update not confirmed against target body; requires Judger reconciliation');
+      if(bu.attempted)throw new Error('lost update acknowledgement; attempted body update not confirmed against target body; requires Judger reconciliation');
       if(digest(Buffer.from(pr.body))!==bu.from_body_digest)throw new Error('body_update source digest does not match current PR body');
     }else{
       const history=this.state.publication_history;
