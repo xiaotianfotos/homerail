@@ -145,7 +145,7 @@ export class JudgedLoop {
     const head=this.repo.git(['rev-parse','HEAD']);
     if(head===r.base){
       const index=this.repo.git(['write-tree']);
-      if(index===r.base_tree){const patch=this.repo.git(['diff','--binary',r.base_tree,r.candidate_tree]);this.repo.git(['apply','--index','--binary','-'],{input:patch+'\n'});}
+      if(index===r.base_tree){const patch=this.repo.gitRaw(['diff','--binary',r.base_tree,r.candidate_tree]);this.repo.git(['apply','--index','--binary','-'],{input:patch});}
       else if(index!==r.candidate_tree)throw new Error('index drift during recovery');
       if(this.repo.git(['diff','--name-only']))throw new Error('worktree drift during recovery');
       this.repo.git(['update-ref','HEAD',r.candidate_commit,r.base]);
