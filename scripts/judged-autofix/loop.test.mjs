@@ -94,9 +94,9 @@ test('dirty candidate is rejected before any test command executes',async t=>{
  fs.writeFileSync(path.join(f.repo,'source.txt'),'dirty');assert.equal((await finished(f.dir,f.spec)).status,'infrastructure_failed');assert.ok(!fs.existsSync(path.join(f.spec.home,'executed')));
 });
 import {JudgedLoop} from './loop.mjs';
-function loopFixture(t,code="console.log('trusted')"){
+function loopFixture(t,code="console.log('trusted')",overrides={}){
  const f=fixture(t,code);const root=path.join(f.root,'task');fs.mkdirSync(root);
- const config={id:'test',repo:f.repo,checks:{oracle:f.spec.check},publish_checks:['oracle']};
+ const config={id:'test',repo:f.repo,checks:{oracle:f.spec.check},publish_checks:['oracle'],...overrides};
  fs.writeFileSync(path.join(root,'config.json'),JSON.stringify(config));const loop=new JudgedLoop(root);
  loop.state.phase='test';loop.state.rounds=[{index:1,plan:{checks:['oracle']},plan_digest:'plan',candidate_commit:f.spec.commit,candidate_tree:f.spec.tree}];loop.save('fixture');return {...f,root,loop};
 }
@@ -150,7 +150,7 @@ test('freezer rejects task paths inside the candidate including dot prefixes and
  const alias=path.join(f.root,'alias');fs.symlinkSync(inside,alias,'dir');assert.throws(()=>freezeEngine(alias),/outside/i);
 });
 test('publication reconciles a lost create acknowledgement and refuses changed intent or wrong head',async t=>{
- const f=loopFixture(t);f.loop.config.github_repo='owner/repo';f.loop.config.base_branch='main';f.loop.config.pr_title='Reviewed repair';f.loop.state.config_digest=identity(f.loop.config);f.loop.save('config');
+ const f=loopFixture(t,undefined,{publish_checks:undefined});f.loop.config.github_repo='owner/repo';f.loop.config.base_branch='main';f.loop.config.pr_title='Reviewed repair';f.loop.state.config_digest=identity(f.loop.config);f.loop.save('config');
  spawnSync('git',['-C',f.repo,'switch','-c','codex/oracle'],{encoding:'utf8'});
  await f.loop.test();const r=f.loop.round;const judge=path.join(f.root,'approve.json');fs.writeFileSync(judge,JSON.stringify({round:1,plan_digest:'plan',verdict:'accept',reason:'reviewed',tree:r.candidate_tree}));f.loop.judge(judge);
  const body=path.join(f.root,'body.md');fs.writeFileSync(body,'Verified repair\n');
@@ -201,4 +201,34 @@ test('Judger can revoke acceptance after a publication failure without losing ev
  fs.writeFileSync(decision,JSON.stringify({round:1,plan_digest:'wrong',verdict:'revise',reason:'invalid'}));assert.throws(()=>f.loop.judge(decision));assert.equal(f.loop.state.phase,'accepted');
  fs.writeFileSync(decision,JSON.stringify({round:1,plan_digest:'plan',verdict:'revise',reason:'new publication finding; reopen for repair'}));f.loop.judge(decision);
  assert.equal(f.loop.state.phase,'judging');assert.equal(r.judgment.verdict,'revise');assert.deepEqual(r.judgment_history.at(-1),accepted);assert.deepEqual(f.loop.state.publication_history.at(-1),publication);assert.equal(f.loop.state.publication,undefined);assert.equal(JSON.stringify(r.receipts),receipts);
+});
+
+
+test('omitted publication checks resume immutable task state and still require all plan evidence',async t=>{
+ const f=loopFixture(t,undefined,{publish_checks:undefined});
+ const raw=fs.readFileSync(path.join(f.root,'config.json'),'utf8');
+ const initialDigest=f.loop.state.config_digest;
+ assert.throws(()=>f.loop.assertEvidence(),/missing trusted passing receipt/i);
+ await f.loop.test();
+ const restored=new JudgedLoop(f.root);
+ assert.equal(restored.state.config_digest,initialDigest);
+ const receipts=JSON.stringify(restored.round.receipts);
+ const decision=path.join(f.root,'decision.json');
+ fs.writeFileSync(decision,JSON.stringify({round:1,plan_digest:'plan',tree:restored.round.candidate_tree,verdict:'accept',reason:'reviewed omitted optional config'}));
+ restored.judge(decision);
+ assert.equal(restored.state.phase,'accepted');
+ assert.equal(JSON.stringify(restored.round.receipts),receipts);
+ assert.equal(fs.readFileSync(path.join(f.root,'config.json'),'utf8'),raw);
+ assert.equal(restored.state.config_digest,identity(JSON.parse(raw)));
+});
+
+test('invalid explicit publication checks fail before task state or model work exists',t=>{
+ for(const bad of [null,'oracle',{},['missing'],[1],['toString'],['constructor']]){
+  const f=fixture(t,"console.log('unused')");
+  const task=path.join(f.root,'task');fs.mkdirSync(task);
+  fs.writeFileSync(path.join(task,'config.json'),JSON.stringify({id:'bad-config',repo:f.repo,checks:{oracle:f.spec.check},publish_checks:bad}));
+  assert.throws(()=>new JudgedLoop(task),/publish_checks/i,JSON.stringify(bad));
+  assert.ok(!fs.existsSync(path.join(task,'state.json')));
+  assert.ok(!fs.existsSync(path.join(task,'rounds')));
+ }
 });
