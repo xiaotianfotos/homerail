@@ -77,10 +77,12 @@ describe.skipIf(process.platform !== "linux")("native durable command gateway", 
     expect(fs.readFileSync(path.join(root, "workspace", "root", "count"), "utf8")).toBe("x");
   });
   it("routes invalid JSON to failure and never pretends the test stage passed", async () => {
-    start("console.log('not-json')");
-    await vi.waitFor(() => expect(getActiveRun("root")?.status).toBe("failed"));
+    // A legal command can exceed Vitest's default one-second observation
+    // window. Wait for its bounded terminal result, not subsecond scheduling.
+    start("setTimeout(()=>console.log('not-json'),1100)");
+    await vi.waitFor(() => expect(getActiveRun("root")?.status).toBe("failed"), { timeout: 8000 });
     expect(loadRunSnapshot("root")!.handoffs[0].content).toMatchObject({ parse_failed: true });
-  });
+  }, 10000);
   it("cancellation fences a late completion", async () => {
     start("setInterval(()=>{},1000)");
     cancelActiveRun("root");

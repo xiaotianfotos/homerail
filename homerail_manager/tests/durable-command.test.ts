@@ -131,16 +131,17 @@ describe.skipIf(process.platform !== "linux")("durable host command execution", 
     } finally { try { process.kill(-child.pid, "SIGKILL"); } catch {} }
   });
   it("delivers one terminal notification and none while the state is unchanged", async () => {
-    const prepared = prepare("setTimeout(()=>console.log('done'),200)");
+    const prepared = prepare("setTimeout(()=>console.log('done'),1100)");
     const record = claimDurableCommand(prepared.execution_id);
     const results: unknown[] = [];
     observers.push(watchDurableCommand(record, result => results.push(result)));
     expect(results).toEqual([]);
     startDurableCommand(record);
-    await vi.waitFor(() => expect(results).toHaveLength(1));
+    // Includes the command's 3s budget and the 1s observation fallback.
+    await vi.waitFor(() => expect(results).toHaveLength(1), { timeout: 5000 });
     expect(results[0]).toMatchObject({ status: "finished", exit_code: 0 });
     fs.writeFileSync(path.join(durableCommandDirectory(record.execution_id), "late-event"), "duplicate");
     await new Promise(resolve => setImmediate(resolve));
     expect(results).toHaveLength(1);
-  });
+  }, 8000);
 });
