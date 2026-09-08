@@ -24,6 +24,7 @@ import {
   injectActiveRun,
   interveneActiveRunActor,
   restoreActiveRun,
+  recoverPreDispatchRun,
   resumeWaitingActiveRun,
   type InterveneDagActorRequest,
   type InterveneDagActorResult,
@@ -47,6 +48,7 @@ import {
   type SendDagActorLiveCommandResult,
 } from "../runtime/dag-actor-live-command-runtime.js";
 import { creationRequestDigest, RunCreationConflictError } from "./run-creation-identity.js";
+import { preflightDagAgentRuntimes } from "../runtime/dag-runtime-preflight.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = process.env.HOMERAIL_REPO_ROOT
@@ -351,6 +353,11 @@ export class ChangeOrchestrator {
     const dagWithProfile = _applyRuntimeProfile(parsed, request);
     const dagWithRuntime = _applyRunRuntimeSelection(dagWithProfile, request.llmSettingId);
     assertProviderPolicy(dagWithRuntime);
+    // Durable workflows can spend on host commands before reaching an agent.
+    // Validate even downstream/conditional roles before admitting that work.
+    if (dagWithRuntime.graph.nodes.some(node => node.gateway_config?.durable)) {
+      preflightDagAgentRuntimes(dagWithRuntime.graph, dagWithRuntime.meta.agents);
+    }
 
     const runId = request.runId ?? _generateRunId();
     const requestedInputArtifacts = request.inputArtifacts ?? [];
@@ -404,6 +411,12 @@ export class ChangeOrchestrator {
     }
     const dispatched = this.graphExecutor.tick(runId);
     return { dispatched };
+  }
+
+  recoverPreDispatch(runId: string, request: unknown) {
+    const result = recoverPreDispatchRun(runId, request);
+    const dispatched = result.deduplicated ? 0 : this.graphExecutor.tick(runId);
+    return { ...result, dispatched };
   }
 
   createAndRun(request: CreateAndRunRequest): CreateAndRunResponse {

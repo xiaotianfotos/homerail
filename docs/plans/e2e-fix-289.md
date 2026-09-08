@@ -396,3 +396,24 @@ owner-execute 位，使快照拒绝自己的 bootstrap。快照现显式归一�
 缺少完成/checkout 证据时，GPT-6 返回 pause，未将票数替代 CI。用时约6.8秒，
 后端报告10884输入、55输出token。宿主角色另外强制核对 ChatGPT 账号类型并选择
 OpenAI provider，防止宿主默认 provider 配置无意改变规划/裁决模型。
+
+## Issue #292：首次 Worker 派发前的配置失败恢复
+
+真实 Issue #245 根任务完成 initialize/context/plan/freeze_plan 后，Manager 因
+Qwen 自定义模型没有 selectable reasoning efforts 而拒绝 Fixer 的 low 配置。
+这次失败发生在 Worker 派发之前；独立 Qwen 通路去掉 effort 后成功，649 输入、
+79 输出 token，派发到有效交接约 2.8 秒。该准备成功不替代原 issue 的修复结果。
+
+现为含持久命令的工作流提前校验全部 agent/advisor 运行配置，避免先消耗宿主
+Planner。派发时仍复核配置，并为符合条件的首次派发前失败保留原子恢复检查点。
+恢复接口和明确限制见 [E2E Fix recovery](../e2e-fix-recovery.md)。
+
+恢复保留原 root、round、创建时间、预算计数、已完成阶段和可信命令回执；只允许
+清除尚未执行的 DeepSeek 角色 effort，重新校验所有后续角色，并使用新会话。
+重复请求复用提交回执；过期状态、曾有租约/派发、模型执行不确定或命令回执损坏
+均拒绝。没有 Worker token 记录本身不构成可恢复证据。此能力不包含模型调用
+中断恢复，也不保证任意代码问题收敛，不能用它宣称整个 P2/P3 已完成。
+
+已在原失败任务的私有数据库副本验证严格旧记录迁移：原 round-0001 和四个
+完成阶段保留，Fixer 唯一 READY；副本没有派发 Worker 或重跑 Planner。真实根
+任务续跑、完整 issue→PR、两项真实问题和全部故障矩阵仍待后续证据。

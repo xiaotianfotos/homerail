@@ -147,6 +147,9 @@ hr scorecard <run_id>
 hr eval-run <run_id>
 ```
 
+实验性的 E2E Fix 支持[首次 Worker 派发前的运行配置失败恢复](docs/e2e-fix-recovery.md)，
+保留已完成的 Planner 证据、原 root 和 round。
+
 若暂时没有真实的模型 provider，只想验证拓扑，two-node 模板自带一个离线确定性 profile：
 
 ```bash

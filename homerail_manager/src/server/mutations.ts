@@ -17,6 +17,7 @@ import {
 } from "./manager-agent-config.js";
 import { getSetting } from "../persistence/llm-settings.js";
 import { loadRunMetadata } from "../persistence/store.js";
+import { inspectDispatchRecovery } from "../runtime/dag-dispatch-recovery.js";
 import { ManagerAgentRuntimeError, runManagerAgentTurn } from "./manager-agent-runtime.js";
 import { pinHomeRailBrowserUiTurnBinding } from "./browser-ui-tools.js";
 import { dagResourcesUnavailableForRun } from "./dag-resource-status.js";
@@ -962,6 +963,21 @@ export function mutationRoutesHandler(
       if (!result.updated) throw new Error(`state version conflict: current version is ${result.record.version}`);
       _ok(res, "DAG state updated", result);
     }).catch((error) => _badRequest(res, error instanceof Error ? error.message : String(error)));
+    return true;
+  }
+
+  const dispatchRecoveryMatch = pathname.match(/^\/api\/runs\/([^/]+)\/pre-dispatch-recovery$/);
+  if (dispatchRecoveryMatch && (req.method === "GET" || req.method === "POST")) {
+    const runId = decodeURIComponent(dispatchRecoveryMatch[1]);
+    if (req.method === "GET") {
+      try { _ok(res, "Pre-dispatch recovery checkpoint", inspectDispatchRecovery(runId)); }
+      catch (error) { _badRequest(res, error instanceof Error ? error.message : String(error)); }
+    } else {
+      _readJsonBody(req).then(body => {
+        const result = changeOrchestrator.recoverPreDispatch(runId, body);
+        _ok(res, "Pre-dispatch recovery committed", result);
+      }).catch(error => _badRequest(res, error instanceof Error ? error.message : String(error)));
+    }
     return true;
   }
 

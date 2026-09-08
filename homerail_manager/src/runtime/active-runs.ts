@@ -59,6 +59,9 @@ import {
   type DagRunInputBinding,
 } from "homerail-protocol";
 import { resolveAgentRuntimeConfig } from "./agent-runtime-resolver.js";
+import { preflightDagAgentRuntimes } from "./dag-runtime-preflight.js";
+import { assertNoWorkerExecution, getDispatchRecovery, recordDispatchRecovery, recoveryDigest, parseDispatchRecoveryRequest,
+  type DispatchRecoveryReceipt } from "./dag-dispatch-recovery.js";
 import { spawnManagerGitSync } from "./manager-git.js";
 import { buildReviewRecovery } from "./review-recovery.js";
 import {
@@ -1260,6 +1263,7 @@ export type RestoreActiveRunResult =
 /** Reconstruct a single nonterminal run from persisted metadata. */
 export function restoreActiveRun(
   metadata: PersistedRunMetadata,
+  options: { notify?: boolean } = {},
 ): RestoreActiveRunResult {
   if (metadata.status !== "active" && metadata.status !== "waiting") {
     return { status: "skipped", reason: `run is ${metadata.status}` };
@@ -1373,16 +1377,18 @@ export function restoreActiveRun(
     writeRunMetadata(metadata.runId, serializeRunMetadata(run));
   }
 
-  emit("dag:run_recovered", {
-    runId: metadata.runId,
-    recoveredAt: Date.now(),
-    demotedFromRunning,
-    settledPendingNodes,
-    reason: demotedFromRunning.length
-      ? "orphaned running nodes demoted to failed"
-      : undefined,
-  });
-  _emitStatusUpdate(run);
+  if (options.notify !== false) {
+    emit("dag:run_recovered", {
+      runId: metadata.runId,
+      recoveredAt: Date.now(),
+      demotedFromRunning,
+      settledPendingNodes,
+      reason: demotedFromRunning.length
+        ? "orphaned running nodes demoted to failed"
+        : undefined,
+    });
+    _emitStatusUpdate(run);
+  }
 
   return { status: "restored", run, demotedFromRunning };
 }
@@ -6061,7 +6067,7 @@ type DispatchCredentialResolution =
 
 type DispatchEnvelopeBuildResult =
   | { ok: true; envelope: DispatchEnvelope }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; runtimeConfigurationFailure?: boolean };
 
 function _isDisabledDirectLlmAgent(agentConfig: DAGAgentConfig): boolean {
   return isDisabledDirectLlmAgentType(agentConfig.agent_type);
@@ -6406,7 +6412,7 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
     };
   }
   const credentials = _withDispatchCredentials(agentConfig);
-  if (!credentials.ok) return credentials;
+  if (!credentials.ok) return { ...credentials, runtimeConfigurationFailure: true };
   const advisorResolution = _advisorConfigs(run, node);
   if (!advisorResolution.ok) return advisorResolution;
   let credentialProjections: DagCredentialProjection[];
@@ -6629,7 +6635,19 @@ export function dispatchReadyNodes(
 
     const built = _buildDispatchEnvelope(run, nodeId);
     if (!built.ok) {
-      failActiveRun(runId, nodeId, built.reason);
+      let checkpoint: PersistedRunMetadata | undefined;
+      if (built.runtimeConfigurationFailure && !getDispatchRecovery(runId)) {
+        const beforeFailure = structuredClone(serializeRunMetadata(run));
+        try { assertNoWorkerExecution(beforeFailure); checkpoint = beforeFailure; }
+        catch { /* Other execution may be uncertain: ordinary failure, no recovery checkpoint. */ }
+      }
+      const mutableBefore = _snapshotMutableRun(run);
+      try {
+        getDb().transaction(() => {
+          failActiveRun(runId, nodeId, built.reason);
+          if (checkpoint) recordDispatchRecovery(checkpoint, nodeId, built.reason);
+        }).immediate();
+      } catch (error) { _restoreMutableRun(run, mutableBefore); throw error; }
       continue;
     }
     if (run.counters.dispatches >= run.limits.max_dispatches) {
@@ -6685,14 +6703,133 @@ export function dispatchReadyNodes(
   return count;
 }
 
-/**
- * Advance every synchronously reachable READY node, stopping once execution
- * is waiting on an agent, an asynchronous gateway, or external capacity.
- *
- * Broker gateways complete outside GraphExecutor.tick(). Their callback must
- * therefore drain condition/join/while chains itself; otherwise a newly READY
- * deterministic gateway has no subsequent event that can wake it.
- */
+/** Resume only an executor-recorded configuration failure before the first
+ * Worker dispatch. The transaction keeps native commands, round and counters;
+ * the caller ticks only after commit. Duplicate requests never tick again. */
+export function recoverPreDispatchRun(runId: string, value: unknown): { receipt: DispatchRecoveryReceipt; deduplicated: boolean } {
+  const request = parseDispatchRecoveryRequest(value);
+  const oldMemory = store.get(runId);
+  try {
+    const result = getDb().transaction(() => {
+      const checkpoint = getDispatchRecovery(runId);
+      if (!checkpoint) throw new Error("No durable pre-dispatch recovery checkpoint");
+      const requestJson = JSON.stringify(request);
+      if (checkpoint.receipt_json) {
+        if (checkpoint.request_json !== requestJson) throw new Error("Pre-dispatch recovery request conflict");
+        return { receipt: JSON.parse(checkpoint.receipt_json) as DispatchRecoveryReceipt, deduplicated: true };
+      }
+      const failed = loadRunMetadata(runId);
+      if (!failed || failed.status !== "failed" || failed.currentRound?.status !== "failed"
+        || recoveryDigest(failed) !== request.expected_state_sha256 || checkpoint.failed_sha256 !== request.expected_state_sha256) {
+        throw new Error("Pre-dispatch recovery expected state conflict");
+      }
+      assertNoWorkerExecution(failed);
+      const before = JSON.parse(checkpoint.before_json) as PersistedRunMetadata;
+      if (before.runId !== runId || before.status !== "active" || before.nodeStates[checkpoint.node_id] !== "READY"
+        || before.currentRound?.round_id !== failed.currentRound.round_id
+        || before.createdAt !== failed.createdAt || recoveryDigest(before.counters) !== recoveryDigest(failed.counters)
+        || recoveryDigest(before.graph) !== recoveryDigest(failed.graph)) throw new Error("Invalid pre-dispatch recovery checkpoint");
+      const agents = structuredClone(before.agents ?? {}) as Record<string, DAGAgentConfig>;
+      for (const id of request.clear_reasoning_effort_for) {
+        const agent = agents[id];
+        if (!agent || agent.agent_type !== "deepseek_harness" || !agent.llm?.reasoning_effort
+          || before.graph!.nodes.some(node => node.agent === id && before.nodeStates[node.node_id] === "COMPLETED")) {
+          throw new Error(`Cannot clear undispatched reasoning effort for ${id}`);
+        }
+        delete agent.llm.reasoning_effort;
+      }
+      preflightDagAgentRuntimes(before.graph!, agents);
+      before.agents = agents;
+      // No round or task deadline is reset. Expired task policy will still be
+      // rejected by its frozen trusted stages; explicit round expiry fails here.
+      if (before.currentRound?.expires_at !== undefined && before.currentRound.expires_at <= Date.now()) throw new Error("Recovery round expired");
+      const changed = getDb().prepare(`UPDATE dag_run_rounds SET status = 'active', closed_at = NULL
+        WHERE run_id = ? AND round_id = ? AND ordinal = ? AND status = 'failed'`)
+        .run(runId, before.currentRound!.round_id, before.currentRound!.ordinal);
+      if (changed.changes !== 1) throw new Error("Recovery round conflict");
+      getDb().prepare(`UPDATE dag_actor_runtimes SET state = 'dormant', version = version + 1,
+        state_changed_at = ?, updated_at = ? WHERE run_id = ? AND state = 'retired' AND lease_generation = 0`)
+        .run(Date.now(), Date.now(), runId);
+      writeRunMetadata(runId, before);
+      store.delete(runId);
+      const restored = restoreActiveRun(before, { notify: false });
+      if (restored.status !== "restored" || restored.run.status !== "active"
+        || restored.run.dagRun.nodeStates.get(checkpoint.node_id) !== "READY") throw new Error("Recovery could not restore READY node");
+      const run = restored.run;
+      // Discard any failed node context even if the workflow chose node scope.
+      const previousSession = run.nodeSessions.get(checkpoint.node_id);
+      _persistNodeSession(run, checkpoint.node_id, { sessionId: _newSessionId(runId, checkpoint.node_id),
+        attempt: (previousSession?.attempt ?? 0) + 1, status: "active" });
+      const resumed = serializeRunMetadata(run);
+      writeRunMetadata(runId, resumed);
+      const receipt: DispatchRecoveryReceipt = { run_id: runId, node_id: checkpoint.node_id, request_id: request.request_id,
+        recovered_at: Date.now(), previous_state_sha256: checkpoint.failed_sha256, resumed_state_sha256: recoveryDigest(resumed),
+        round_id: before.currentRound!.round_id, preserved_nodes: Object.keys(before.nodeStates).filter(id => before.nodeStates[id] === "COMPLETED").sort(),
+        changed_agents: request.clear_reasoning_effort_for };
+      getDb().prepare("UPDATE dag_dispatch_recoveries SET request_json = ?, receipt_json = ? WHERE run_id = ? AND receipt_json IS NULL")
+        .run(requestJson, JSON.stringify(receipt), runId);
+      return { receipt, deduplicated: false };
+    }).immediate();
+    if (!result.deduplicated) {
+      emit("dag:run_recovered", { runId, recoveredAt: result.receipt.recovered_at,
+        demotedFromRunning: [], reason: "verified pre-dispatch configuration recovery" });
+      _emitStatusUpdate(store.get(runId)!);
+    }
+    return result;
+  } catch (error) {
+    if (oldMemory) store.set(runId, oldMemory); else store.delete(runId);
+    throw error;
+  }
+}
+
+/** Operator-only migration for the old resolver failure lacking a checkpoint.
+ * Reconstruct from immutable handoffs and demand an exact simulation of the
+ * recorded failure. This cannot admit a generic legacy failure or guess state. */
+export function migrateLegacyReasoningEffortFailure(runId: string, expectedStateSha256: string): void {
+  getDb().transaction(() => {
+    if (getDispatchRecovery(runId)) throw new Error("Recovery checkpoint already exists");
+    const snapshot = loadRunSnapshot(runId);
+    const failed = snapshot?.metadata;
+    if (!snapshot || !failed || failed.status !== "failed" || !failed.graph || !failed.dagRuntimeState
+      || recoveryDigest(failed) !== expectedStateSha256 || failed.currentRound?.status !== "failed") throw new Error("Legacy recovery state conflict");
+    assertNoWorkerExecution(failed);
+    const failures = snapshot.events.filter(event => event.type === "dag:node_failed");
+    const payload = failures[0]?.payload as { nodeId?: string; reason?: string } | undefined;
+    if (failures.length !== 1 || !payload?.nodeId || typeof payload.reason !== "string"
+      || !/^DeepSeek Harness model '[^']+' does not declare selectable reasoning efforts\.$/.test(payload.reason)
+      || snapshot.handoffs.some(record => record.timestamp > failures[0].timestamp)) throw new Error("Legacy failure lacks exact resolver provenance");
+    const node = failed.graph.nodes.find(n => n.node_id === payload.nodeId);
+    const config = node && (failed.agents?.[node.agent] as DAGAgentConfig | undefined);
+    if (!config?.llm?.reasoning_effort || config.agent_type !== "deepseek_harness") throw new Error("Legacy failure runtime mismatch");
+    const resolution = _withDispatchCredentials(config);
+    if (resolution.ok || resolution.reason !== payload.reason) throw new Error("Legacy resolver failure no longer reproducible");
+    const metadata = structuredClone(failed);
+    metadata.status = "active"; delete metadata.completedAt;
+    metadata.currentRound!.status = "active"; delete metadata.currentRound!.closed_at;
+    delete metadata.dagRuntimeState; metadata.nodeStates = {}; metadata.handoffedNodes = [];
+    const { dagRun } = _rebuildDagRunFromPersisted(metadata, metadata.graph!);
+    seedInitialPrompt(dagRun, metadata.initialPrompt, metadata.runInputTargets, metadata.contracts);
+    for (const id of dagRun.loopSources) {
+      if (failed.nodeStates[id] === "RUNNING") dagRun.nodeStates.set(id, "RUNNING");
+    }
+    if (dagRun.nodeStates.get(node!.node_id) !== "READY") throw new Error("Legacy replay did not reconstruct READY node");
+    const before = serializeRunMetadata({ ...metadata, dagRun });
+    const simulated = structuredClone(dagRun);
+    failNode(simulated, node!.node_id, { error: payload.reason });
+    const states = [...simulated.nodeStates.values()];
+    if (!states.some(s => ["READY", "RUNNING", "WAITING_FOR_APPROVAL", "WAITING_FOR_COMMAND"].includes(s))) {
+      for (const [id, state] of simulated.nodeStates) if (state === "PENDING") simulated.nodeStates.set(id, "SKIPPED");
+    }
+    const after = serializeRunMetadata({ ...metadata, dagRun: simulated });
+    if (!isDeepStrictEqual(after.nodeStates, failed.nodeStates)
+      || !isDeepStrictEqual(after.dagRuntimeState, failed.dagRuntimeState)
+      || !isDeepStrictEqual(after.handoffedNodes, failed.handoffedNodes)) throw new Error("Legacy failure replay differs from persisted state");
+    recordDispatchRecovery(before, node!.node_id, payload.reason);
+  }).immediate();
+}
+
+/** Advance synchronously reachable READY nodes until an agent, asynchronous
+ * gateway or capacity boundary requires another event. */
 export function dispatchReadyNodesUntilStable(
   runId: string,
   dispatcher: DAGDispatcher,
