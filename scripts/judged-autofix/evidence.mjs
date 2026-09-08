@@ -44,7 +44,8 @@ export function validatePlan(plan) {
 }
 export class Repository {
   constructor(root, gitBin = 'git') { this.root = root; this.gitBin = gitBin; }
-  git(args, options = {}) { return command(this.gitBin, ['-C', this.root, ...args], options).trimEnd(); }
+  gitRaw(args, options = {}) { return command(this.gitBin, ['-C', this.root, ...args], options); }
+  git(args, options = {}) { return this.gitRaw(args, options).trimEnd(); }
   entries(tree) {
     return this.git(['ls-tree', '-rz', tree]).split('\0').filter(Boolean).map(line => {
       const [meta, name] = line.split('\t'); const [mode, type, sha] = meta.split(' ');
