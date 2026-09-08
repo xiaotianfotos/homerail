@@ -4,8 +4,8 @@ import * as http from 'node:http'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { chromium, type Browser } from 'playwright'
+import { afterEach, beforeEach, describe, expect, it, onTestFailed } from 'vitest'
+import { chromium, type Browser, type Page } from 'playwright'
 import { validateHomerailA2uiSurface } from 'homerail-protocol'
 import {
   buildCustomRendererSrcdoc,
@@ -16,6 +16,24 @@ import {
 
 let browser: Browser | undefined
 let server: http.Server | undefined
+let page: Page
+let origin: string
+let phase = 'not started'
+let phaseStartedAt = 0
+let completedPhases: { phase: string; duration_ms: number }[] = []
+let consoleMessages: string[] = []
+
+function enterPhase(next: string): void {
+  const now = performance.now()
+  if (phaseStartedAt) completedPhases.push({ phase, duration_ms: Math.round(now - phaseStartedAt) })
+  phase = next
+  phaseStartedAt = now
+}
+
+// Browser cold startup has its own bounded fixture budget; it must not consume
+// the renderer's assertion budget or outlive a timed-out test.
+const browserSetupTimeout = process.platform === 'win32' ? 120_000 : 60_000
+const browserLaunchTimeout = process.platform === 'win32' ? 90_000 : 50_000
 const browserIsolationTimeout = process.platform === 'win32' ? 120_000 : 45_000
 
 async function listen(): Promise<{ origin: string }> {
@@ -32,6 +50,61 @@ async function listen(): Promise<{ origin: string }> {
   return { origin: `http://127.0.0.1:${address.port}` }
 }
 
+beforeEach(async () => {
+  phase = 'not started'
+  phaseStartedAt = 0
+  completedPhases = []
+  consoleMessages = []
+  onTestFailed(() => {
+    // Use only in-memory diagnostics: a stuck page must not stall reporting.
+    console.error('Custom Renderer browser failure', JSON.stringify({
+      phase,
+      phase_elapsed_ms: Math.round(performance.now() - phaseStartedAt),
+      completedPhases,
+      consoleMessages,
+    }))
+  })
+  enterPhase('listen fixture')
+  origin = (await listen()).origin
+  const programFiles = process.env.ProgramFiles ?? process.env.PROGRAMFILES
+  const programFilesX86 = process.env['ProgramFiles(x86)'] ?? process.env['PROGRAMFILES(X86)']
+  const localAppData = process.env.LocalAppData ?? process.env.LOCALAPPDATA
+  const windowsBrowserPaths = process.platform === 'win32'
+    ? [
+        programFiles && path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        programFilesX86 && path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        localAppData && path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        programFiles && path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+        programFilesX86 && path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      ].filter((candidate): candidate is string => Boolean(candidate))
+    : []
+  const executablePath = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    process.env.CHROME_BIN,
+    ...windowsBrowserPaths,
+    path.join(os.homedir(), '.local/bin/google-chrome'),
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+  ].find(candidate => candidate && fs.existsSync(candidate))
+  enterPhase(`launch Chromium (${executablePath ?? chromium.executablePath()})`)
+  browser = await chromium.launch({ headless: true, timeout: browserLaunchTimeout, ...(executablePath ? { executablePath } : {}) })
+  enterPhase('create browser context')
+  const browserContext = await browser.newContext()
+  browserContext.setDefaultTimeout(10_000)
+  browserContext.setDefaultNavigationTimeout(10_000)
+  enterPhase('create page')
+  page = await browserContext.newPage()
+  page.on('console', message => {
+    if (consoleMessages.length < 50) consoleMessages.push(`${message.type()}: ${message.text()}`)
+  })
+  page.on('pageerror', error => {
+    if (consoleMessages.length < 50) consoleMessages.push(`pageerror: ${error.message}`)
+  })
+  enterPhase('navigate fixture')
+  await page.goto(origin, { waitUntil: 'domcontentloaded' })
+  enterPhase('fixture ready')
+}, browserSetupTimeout)
+
 afterEach(async () => {
   await browser?.close()
   browser = undefined
@@ -41,7 +114,6 @@ afterEach(async () => {
 
 describe('Custom Renderer real Chromium isolation', () => {
   it('contains untrusted code and returns only native A2UI JSON without iframe DOM', async () => {
-    const { origin } = await listen()
     const identity: CustomRendererIdentityV1 = {
       plugin_id: 'com.example.malicious',
       plugin_version: '1.0.0',
@@ -89,38 +161,13 @@ describe('Custom Renderer real Chromium isolation', () => {
       context: { device: 'desktop' },
     } as never)
 
-    const programFiles = process.env.ProgramFiles ?? process.env.PROGRAMFILES
-    const programFilesX86 = process.env['ProgramFiles(x86)'] ?? process.env['PROGRAMFILES(X86)']
-    const localAppData = process.env.LocalAppData ?? process.env.LOCALAPPDATA
-    const windowsBrowserPaths = process.platform === 'win32'
-      ? [
-          programFiles && path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-          programFilesX86 && path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-          localAppData && path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-          programFiles && path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-          programFilesX86 && path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-        ].filter((candidate): candidate is string => Boolean(candidate))
-      : []
-    const executablePath = [
-      process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-      process.env.CHROME_BIN,
-      ...windowsBrowserPaths,
-      path.join(os.homedir(), '.local/bin/google-chrome'),
-      '/usr/bin/google-chrome',
-      '/usr/bin/chromium',
-    ].find(candidate => candidate && fs.existsSync(candidate))
-    browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) })
-    const browserContext = await browser.newContext()
-    const page = await browserContext.newPage()
     const leakedRequests: string[] = []
     const navigations: string[] = []
-    const consoleMessages: string[] = []
     page.on('request', request => {
       if (request.url().includes('attacker.invalid')) leakedRequests.push(request.url())
     })
     page.on('framenavigated', frame => navigations.push(frame.url()))
-    page.on('console', message => consoleMessages.push(`${message.type()}: ${message.text()}`))
-    await page.goto(origin, { waitUntil: 'domcontentloaded' })
+    enterPhase('worker bootstrap probe')
 
     const bootstrapProbe = await page.evaluate(({ bootstrap, probeIdentity, probeNonce }) => new Promise<string>((resolve) => {
       const url = URL.createObjectURL(new Blob([bootstrap], { type: 'text/javascript' }))
@@ -143,6 +190,7 @@ describe('Custom Renderer real Chromium isolation', () => {
     }), { bootstrap: CUSTOM_RENDERER_WORKER_BOOTSTRAP, probeIdentity: identity, probeNonce: nonce })
     expect(bootstrapProbe).toBe('homerail.custom-renderer.worker.ready')
 
+    enterPhase('mount renderer frame')
     await page.evaluate(({ frameSource, envelope }) => {
       const messages: unknown[] = []
       Object.defineProperty(window, '__customRendererMessages', { value: messages, configurable: true })
@@ -158,6 +206,7 @@ describe('Custom Renderer real Chromium isolation', () => {
       document.querySelector('#host')?.append(frame)
     }, { frameSource: srcdoc, envelope: init })
 
+    enterPhase('wait for renderer A2UI')
     try {
       // Playwright defaults to requestAnimationFrame polling here. Hosted
       // Windows browsers may throttle rAF even though postMessage delivery
@@ -168,10 +217,11 @@ describe('Custom Renderer real Chromium isolation', () => {
         timeout: 10_000,
       })
     } catch (cause) {
-      const messages = await page.evaluate(() => (window as any).__customRendererMessages)
-      throw new Error(`Renderer did not return A2UI: messages=${JSON.stringify(messages)} console=${JSON.stringify(consoleMessages)}`, { cause })
+      // Do not issue another potentially unbounded evaluate on a stalled page.
+      throw new Error(`Renderer did not return A2UI: console=${JSON.stringify(consoleMessages)}`, { cause })
     }
 
+    enterPhase('validate A2UI and isolation')
     const messages = await page.evaluate(() => (window as any).__customRendererMessages)
     expect(messages.map((message: any) => message?.type)).toEqual([
       'homerail.custom-renderer.ready',

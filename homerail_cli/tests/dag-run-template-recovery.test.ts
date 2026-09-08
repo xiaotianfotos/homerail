@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -98,6 +99,60 @@ describe("known-run submission recovery", () => {
       expect(r.calls.filter(x => x.method === "POST")).toHaveLength(2);
     }, 1500);
   }
+
+  for (const httpError of [500, 502, 503, 504]) {
+    it(`reconciles HTTP ${httpError} after the run was accepted without issuing another create`, async () => {
+      const r = await exercise({ httpError });
+      expect(process.exitCode).toBeUndefined();
+      expect(r.output.some(x => JSON.parse(x).run_id === RUN)).toBe(true);
+      expect(r.calls.filter(x => x.url.endsWith("/create-and-run"))).toHaveLength(1);
+      expect(r.calls.filter(x => x.method === "POST")).toHaveLength(2);
+    });
+  }
+
+  it("leaves an ambiguous HTTP 502 create available for Judger reconciliation", async () => {
+    const r = await exercise({ httpError: 502, unavailable: "missing" });
+    expect(process.exitCode).toBe(75);
+    expect(r.output).toEqual([]);
+    expect(r.calls.filter(x => x.url.endsWith("/create-and-run"))).toHaveLength(1);
+  });
+
+  it("recovers through real HTTP when a proxy returns 502 after accepting the create", async () => {
+    const calls: string[] = [];
+    let accepted = false;
+    const server = http.createServer((req, res) => {
+      calls.push(`${req.method} ${req.url}`);
+      req.resume();
+      res.setHeader("content-type", "application/json");
+      let data: unknown;
+      if (req.url === "/api/dag/workflows/sync") data = { workflow: { workflow_id: "recover" } };
+      else if (req.url === "/api/runs/create-and-run") {
+        accepted = true;
+        res.writeHead(502, { "content-type": "text/html" });
+        res.end("<html>upstream response lost</html>");
+        return;
+      } else if (req.url === `/api/runs/${RUN}/status` && accepted) {
+        data = { run_id: RUN, status: "completed" };
+      } else if (req.url === `/api/runs/${RUN}/artifacts` && accepted) data = { artifacts: [] };
+      else { res.statusCode = 404; res.end("{}"); return; }
+      res.end(JSON.stringify({ success: true, data }));
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const address = server.address() as { port: number };
+      await createProgram().parseAsync(["node", "hr", "--json", "--base-url", `http://127.0.0.1:${address.port}`,
+        "dag", "run-template", "recover", "--input", "{}", "--run-id", RUN,
+        "--wait", "--timeout", "2", "--interval", "0.01"]);
+      expect(process.exitCode).toBeUndefined();
+      expect(log.mock.calls.some(([value]) => JSON.parse(String(value)).run_id === RUN)).toBe(true);
+      expect(calls.filter(call => call.startsWith("POST "))).toEqual([
+        "POST /api/dag/workflows/sync", "POST /api/runs/create-and-run",
+      ]);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
 
   for (const httpError of [401, 409]) {
     it(`does not adopt an existing run after explicit HTTP ${httpError} rejection`, async () => {

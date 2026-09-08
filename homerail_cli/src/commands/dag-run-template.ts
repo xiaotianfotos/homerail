@@ -5,7 +5,7 @@ import {
   isFullGitRevision,
 } from "homerail-protocol";
 
-import { HomeRailTransportError, type BaseResponse, type HomeRailClient } from "../client.js";
+import { HomeRailHttpError, HomeRailTransportError, type BaseResponse, type HomeRailClient } from "../client.js";
 import { parseSettingIdOption } from "../command-options.js";
 import { getClient } from "../index.js";
 import {
@@ -286,7 +286,11 @@ async function startTemplateRun(
       ...(opts.runId ? { runId: opts.runId } : {}),
     });
   } catch (err: unknown) {
-    if (err instanceof HomeRailTransportError && opts.runId) {
+    // A server/proxy can fail after Manager has persisted the run. Read the
+    // known identity before deciding; an HTTP 5xx does not prove rejection.
+    const ambiguous = err instanceof HomeRailTransportError
+      || (err instanceof HomeRailHttpError && err.status >= 500 && err.status < 600);
+    if (ambiguous && opts.runId) {
       return reconcileAfterLostCreate(
         client, opts.runId, workflowId,
         recoveryTimeoutSeconds ?? 0, recoveryIntervalSeconds ?? 0, err,

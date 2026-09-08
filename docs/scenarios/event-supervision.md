@@ -128,6 +128,10 @@ promotes a valid completed receipt, or exits 75 for an unresolved interruption.
 A registration that has never executed also returns 75, without an alert or
 queue delivery: absent execution is not corrupt evidence. Digest/log/receipt
 mismatches still produce an evidence error and an idempotent alert.
+Already-completed executions also revalidate the stored runner digest, log and
+summary before reusing the result. This checks historical evidence without
+rewriting the original completion or requiring the checkout to remain at its
+old head. Judger separately checks whether that result applies to the current task.
 Check `status`/event outcome to distinguish a completed failed command from a
 passed command. Changed specs or receipts are errors, not permission to retry.
 

@@ -57,6 +57,9 @@ python3 scripts/event-supervisor/durable.py reconcile /absolute/registration.jso
 `reconcile` 只观察已有执行；结果未知且原进程已消失时返回 75，不编造退出码或重启任务。
 从未启动的注册同样返回 75，不写误报警或发送通知；没有执行记录不等于证据损坏。
 真实的摘要、日志或收据不匹配仍返回错误，并保留一次幂等告警。
+已完成的执行也会重新核对保存的执行器收据摘要、日志和汇总内容，不能仅凭 finished 状态复用。
+历史完成记录保持原样；工作区后续推进到新提交不影响历史证据校验，结果是否适用于当前任务
+仍由 Judger 单独判断。
 完成但命令失败与命令通过由 `status` 和事件 outcome 区分。
 
 读取通知后核对本地事件、当前 round/plan/head、执行收据及独立测试/审查产物，再由 Judger

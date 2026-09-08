@@ -344,6 +344,51 @@ class DurableTests(unittest.TestCase):
         self.assertEqual(reconcile.returncode, 1)
         self.assertEqual((self.root / 'deliveries').read_text(), 'queue\nqueue\n')
 
+    def test_completed_evidence_is_revalidated_without_reexecution(self):
+        for corruption in ('log', 'receipt', 'summary', 'missing_receipt'):
+            with self.subTest(corruption=corruption):
+                self.spec.update(execution_id=corruption, event_dir=str(self.root / corruption))
+                record, r = self.register()
+                self.assertEqual(self.run_record(record).returncode, 0)
+                events = Path(self.spec['event_dir'])
+                completion = (events / 'finished.json').read_bytes()
+                if corruption == 'log':
+                    (events / 'execution.log').write_text('modified after completion')
+                elif corruption == 'missing_receipt':
+                    (events / 'runner.json').unlink()
+                else:
+                    path = events / ('runner.json' if corruption == 'receipt' else 'execution.json')
+                    value = durable.read(path)
+                    value['exit_code'] = 7
+                    durable.save(path, value)
+                for _ in range(2):
+                    result = subprocess.run([sys.executable, str(Path(r['runtime']) / 'durable.py'),
+                                             'reconcile', str(record)], capture_output=True)
+                    self.assertEqual(result.returncode, 1)
+                self.assertEqual(durable.read(events / 'evidence_invalid.json')['delivery'], 'queued')
+                self.assertEqual((events / 'finished.json').read_bytes(), completion)
+        self.assertEqual((self.root / 'runs').read_text(), 'run\n' * 4)
+        self.assertEqual((self.root / 'deliveries').read_text(), 'queue\n' * 8)
+
+    def test_completed_receipt_remains_reusable_after_checkout_advances(self):
+        repo = self.root / 'repo'
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+        commit = ['git', '-C', str(repo), '-c', 'user.name=Test',
+                  '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm']
+        subprocess.run(commit + ['tested'], check=True)
+        head = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        self.spec.update(repo_dir=str(repo), head=head)
+        record, r = self.register()
+        self.assertEqual(self.run_record(record).returncode, 0)
+        completion = (self.root / 'events/finished.json').read_bytes()
+        subprocess.run(commit + ['next candidate'], check=True)
+        result = subprocess.run([sys.executable, str(Path(r['runtime']) / 'durable.py'),
+                                 'reconcile', str(record)], capture_output=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual((self.root / 'events/finished.json').read_bytes(), completion)
+        self.assertEqual((self.root / 'runs').read_text(), 'run\n')
+        self.assertEqual((self.root / 'deliveries').read_text(), 'queue\n')
+
     def test_changed_head_refuses_command_before_execution(self):
         repo = self.root / 'repo'
         subprocess.run(['git', 'init', '-q', str(repo)], check=True)

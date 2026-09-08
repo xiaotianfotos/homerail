@@ -227,7 +227,7 @@ stable runner reads the existing 0600 DAG mutation token from the persistent
 Home; it never places that token in GitHub Secrets or a Worker environment.
 
 When `dag run-template --run-id` loses the create acknowledgement after a
-transport failure, the CLI performs read-only status queries for that exact
+transport failure or an HTTP 5xx server/proxy response, the CLI performs read-only status queries for that exact
 run ID. Reconciliation is bounded by the requested timeout and capped at 180
 seconds, including each request and polling delay. A successful observation
 with the matching run ID resumes normal terminal/artifact waiting; the run
@@ -235,6 +235,9 @@ need not already be terminal. If identity observation remains unavailable, the
 CLI exits 75 and the stable runner retains evidence without issuing stop. The
 later terminal-wait deadline remains a separate error path. No second create
 is sent, and retry-safe create is not assumed on an older Manager.
+An HTTP 5xx response can arrive after Manager persisted the run. HTTP 4xx
+rejections, including authentication errors and identity conflicts, remain errors
+and do not adopt an existing run.
 
 After a successful create or adoption, continuous terminal-status or artifact
 observation failure for 180 seconds also exits 75, including HTTP errors such

@@ -11,6 +11,13 @@ export class HomeRailTransportError extends Error {
   }
 }
 
+export class HomeRailHttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "HomeRailHttpError";
+  }
+}
+
 export interface BaseResponse {
   success: boolean;
   message: string;
@@ -242,7 +249,7 @@ export class HomeRailClient {
           // ignore parse error on error body
         }
         httpRejection = true;
-        throw new Error(message);
+        throw new HomeRailHttpError(response.status, message);
       }
 
       return (await response.json()) as T;
@@ -251,6 +258,9 @@ export class HomeRailClient {
         throw new HomeRailTransportError(`Request timed out after ${effectiveTimeout}ms`);
       }
       const redacted = redactClientError(err, this.adminToken, this.mutationToken);
+      if (err instanceof HomeRailHttpError) {
+        throw new HomeRailHttpError(err.status, redacted.message);
+      }
       if (!httpRejection) throw new HomeRailTransportError(redacted.message);
       throw redacted;
     } finally {

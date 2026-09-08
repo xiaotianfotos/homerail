@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { HomeRailClient } from "../src/client.js";
+import { HomeRailClient, HomeRailHttpError } from "../src/client.js";
 import {
   HOMERAIL_MANAGER_ADMIN_TOKEN,
   configuredManagerPort,
@@ -314,6 +314,20 @@ describe("HomeRailClient.delete", () => {
 });
 
 describe("HomeRailClient error handling", () => {
+  it("preserves HTTP status while redacting credentials from server errors", async () => {
+    const token = "fixture-private-token";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => ({ message: `upstream failed: ${token}` }),
+    } as unknown as Response);
+    const client = new HomeRailClient({ mutationToken: token });
+    const error = await client.post("/api/runs/create-and-run", {}).catch(err => err);
+    expect(error).toBeInstanceOf(HomeRailHttpError);
+    expect(error.status).toBe(502);
+    expect(error.message).not.toContain(token);
+  });
+
   it("throws on non-ok response with message from body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: false,
