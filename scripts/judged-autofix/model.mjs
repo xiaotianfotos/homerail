@@ -63,11 +63,13 @@ export async function collectModel(plan, attempt, directory) {
   attempt.metrics = { run_seconds: (Date.parse(status.completed_at) - Date.parse(status.created_at)) / 1000, tokens: tokens || null, usage: [...latest.values()], tool_calls: tools, corrections: status.counters?.corrections, terminal: status.status };
   const artifacts = await api(plan, `/api/runs/${attempt.run_id}/artifacts`);
   const result = artifacts.artifacts?.find(a => a.name === 'result.json' && a.status === 'ready');
-  if (!result) {
-    if (status.status === 'completed') throw new Error('completed run missing declared result artifact');
-    return { failed: true, status: status.status };
+  if (result) {
+    const text = await api(plan, `/api/runs/${attempt.run_id}/artifacts/result.json/content`, undefined, true);
+    fs.writeFileSync(`${directory}/result.json`, text);
+    if (status.status !== 'completed') return { failed: true, status: status.status, failure: { category: 'model_terminal', status: status.status, code: 'run_not_completed', message: `terminal run status ${status.status} cannot yield a valid proposal` } };
+    try { return { value: JSON.parse(text) }; }
+    catch (e) { if (e instanceof SyntaxError) return { failed: true, status: 'completed', failure: { category: 'model_result', code: 'invalid_result_json', message: e.message.slice(0, 200) } }; throw e; }
   }
-  const text = await api(plan, `/api/runs/${attempt.run_id}/artifacts/result.json/content`, undefined, true);
-  fs.writeFileSync(`${directory}/result.json`, text);
-  return { value: JSON.parse(text) };
+  if (status.status === 'completed') return { failed: true, status: 'completed', failure: { category: 'model_result', status: 'completed', code: 'missing_result_artifact', message: 'completed run has no ready result artifact' } };
+  return { failed: true, status: status.status, failure: { category: 'model_terminal', status: status.status, code: 'run_not_completed', message: `terminal run status ${status.status} produced no result artifact` } };
 }

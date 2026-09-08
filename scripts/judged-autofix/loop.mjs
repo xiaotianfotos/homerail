@@ -63,7 +63,7 @@ export class JudgedLoop {
     }
     const result=await collectModel(this.config,r,dir);if(!result)return;
     r.state='finished';r.finished_at=now();
-    if(result.failed){r.failure={category:'model_transport',status:result.status};this.state.phase='judging';this.save('model_failed');return;}
+    if(result.failed){r.failure=result.failure??{category:'model_transport',status:result.status};this.state.phase='judging';this.save('model_failed');return;}
     atomic(path.join(dir,'proposal.json'),result.value);r.summary=result.value.summary;
     try {
       this.assertHead(r.base);
