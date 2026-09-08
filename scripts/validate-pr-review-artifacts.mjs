@@ -145,13 +145,13 @@ export function validatePrReviewArtifacts(command, publication, markdown) {
         "handoff_arguments_invalid",
         "contract_validation_failed",
         "transport_failed",
+        "handoff_missing",
+        "reviewer_abstained",
         "unknown",
       ]);
-      if (category === "reviewer_abstained") {
-        invariant(reviewer.evidence_truncated === false, `${reviewer.reviewer} deliberate abstention was reported as truncation`);
-      } else {
-        invariant(failureCategories.has(category), `${reviewer.reviewer} failed with an invalid attempt category`);
-        invariant(reviewer.evidence_truncated === true, `${reviewer.reviewer} failed without marking incomplete evidence`);
+      invariant(failureCategories.has(category), `${reviewer.reviewer} failed with an invalid attempt category`);
+      if (category === "provider_output_truncated") {
+        invariant(reviewer.evidence_truncated === true, `${reviewer.reviewer} provider truncation without incomplete evidence`);
       }
       if (!coverageMatchesReport) {
         invariant(reviewer.reviewed_files.length === 0, `${reviewer.reviewer} claimed reviewed files without the canonical coverage attestation`);
@@ -213,6 +213,7 @@ const attemptCategories = new Set([
   "handoff_arguments_invalid",
   "contract_validation_failed",
   "transport_failed",
+  "handoff_missing",
   "reviewer_abstained",
   "unknown",
 ]);
