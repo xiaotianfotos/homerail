@@ -42,3 +42,5 @@ export * from "./pr-review.js";
 export * from "./runtime-environment.js";
 export * from "./browser-tools.js";
 export * from "./tool-providers.js";
+
+export * from "./e2e-fix.js";

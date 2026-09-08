@@ -149,3 +149,20 @@ P4 的确定性故障与 P5 的真实 issue 要分别报告，不能混成同一
   P1/P2 通过只能称控制流/恢复验证通过；不能提前关闭 #289。
 
 下一步：完成 P0 的阶段契约和具体测试映射，先实现 P1 的三轮确定性闭环。
+
+## P0 契约落地记录
+
+`homerail_protocol/src/e2e-fix.ts` 定义候选身份与验收输入，供 Manager 的
+可信存储适配层使用。身份包括 task/root run/round、plan/policy digest、
+repo/base/head/tree。32 个定向用例覆盖当前身份、必需 CI、审查独立性、
+Judger 对报告和 finding 的绑定、PR/工作流目标，以及异常/缺失证据。
+
+`evaluateE2eFixAcceptance` 只检查已经由可信存储加载和验证过的记录，返回
+是否有资格完成，不执行测试、不验证哈希对应的文件，也不提交终态。
+后续 Manager 适配器必须自行读取回执/报告、校验来源和字节，禁止将模型
+提交的一整份 acceptance JSON 直接传入。这个模块单独通过测试不算 P1/P2 完成。
+
+模型 handoff 只能提出方案、候选修改或 Judger 决策。测试、发布与 CI 字段
+必须来自可信适配器，policy 必须来自启动时冻结的 Manager 配置。
+适配器对每个 check 先按执行意图确定唯一有效 attempt；不能从历史中挑一个
+通过结果遮住后来的失败。不同 workflow/PR 即使具有相同 head 也不能替代。
