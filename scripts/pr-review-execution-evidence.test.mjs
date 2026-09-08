@@ -124,3 +124,10 @@ stable_hr() {
   }
  }finally{await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('an explicitly supplied corrupt evidence file fails rendering instead of hiding the corruption',async()=>{
+ const {spawnSync}=await import('node:child_process');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'render-corrupt-audit-'));
+ try{fs.writeFileSync(path.join(dir,'command.json'),JSON.stringify({run_id:runId}));fs.writeFileSync(path.join(dir,'report.json'),JSON.stringify({report:{reviewer_results:[{},{},{}],findings:[]},quorum:{}}));fs.writeFileSync(path.join(dir,'evidence.json'),'{broken');
+ const r=spawnSync(process.execPath,[new URL('./render-pr-review-markdown.mjs',import.meta.url).pathname,path.join(dir,'command.json'),path.join(dir,'report.json'),path.join(dir,'evidence.json')],{encoding:'utf8'});assert.notEqual(r.status,0);assert.match(r.stderr,/Unable to render/);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
