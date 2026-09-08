@@ -23,7 +23,7 @@ GitHub issue。下面 16 个旧 issue 统一归入 #289 并关闭；这是跟踪
 | [#271](https://github.com/xiaotianfotos/homerail/issues/271) | 供应商请求归属与 token 完整性 | 仍需核对完整验收范围 | 请求关联 run/dispatch/turn；记录首 token、取消和最终 usage；区分 unknown/partial/final，验证终态后无多余推理、迟到与重复累计量不重计缓存输入。 |
 | [#273](https://github.com/xiaotianfotos/homerail/issues/273) | 审查模型来源与多样性政策 | 仍需核对完整验收范围 | 报告程序解析的实际 provider/model/backend；区分独立采样与不同模型；按冻结政策验证别名、重复设置、设置变化及降级审查。 |
 | [#290](https://github.com/xiaotianfotos/homerail/issues/290) | 快照文件权限受继承 ACL 影响 | 分支已修正并有回归 | 发布前归一化并核对权限；不能仅凭文件创建 mode 判断真实权限。 |
-| [#291](https://github.com/xiaotianfotos/homerail/issues/291) | Docker 镜像精确 ID / RepoDigest 选择 | 真实候选通过行为和仓库测试；尚无验收 PR | 保留兼容行为及九项回归；修复正确性不能代替完整审查、发布与同 head CI。 |
+| [#291](https://github.com/xiaotianfotos/homerail/issues/291) | Docker 镜像精确 ID / RepoDigest 选择 | PR #304 已通过原生 E2E 独立验收；未合并 | 保留兼容行为及九项回归；修复正确性不能代替完整审查、发布与同 head CI。 |
 | [#292](https://github.com/xiaotianfotos/homerail/issues/292) | 首次 Worker 派发前配置失败浪费 Planner | 已实现预检和严格恢复边界 | 只接受证据证明尚未派发的检查点；保留原预算、截止时间、计划与完成回执；不能用于已执行的模型失败。 |
 | [#293](https://github.com/xiaotianfotos/homerail/issues/293) | HTTP 测试 fixture 丢失服务引用 | 分支已修正 | 参数化 fixture 跟踪并关闭每个已启动实例，验证调度器不会在 teardown 后继续运行。 |
 | [#294](https://github.com/xiaotianfotos/homerail/issues/294) | 持久命令测试先于执行截止时间超时 | 分支已修正并有回归 | 等待覆盖执行 deadline 加有界观察开销；保留 1.1 秒合法执行、非法 JSON、退出码和唯一终态通知断言。 |
@@ -129,3 +129,25 @@ Qwen 模型、独立会话；不代表模型多样性，也不证明任意问题
 `385821985b62f40487595a955c376b03264c0feb`，独立初始化检查及完整仓库测试
 24 项通过，原生发布 PR #305，正在等待 CI。Fixer 报告输出 24105 token，
 未再受旧 8K 上限截断。整体 #289 目标仍未完成。
+
+### 成本清单与新增证据缺口
+
+新增只读 `scripts/e2e-fix-report.mjs`，使用方式见
+[成本与尝试记录](../e2e-fix-report.md)。按执行去重累计快照，缓存输入不再次
+加入总量；保留失败 Host 日志及 Worker 失败投影中的已知成本，未知用量与耗时
+保留为空/不完整。根任务副本不能重复计数，报告不宣称账单完整或 E2E 验收通过。
+
+已读取九个不同历史根任务，保留全部报告而非只选成功样本。另一个同 root 的
+初始配置目录没有执行轮次，未与后来的实际执行目录重复累计，原目录仍保留。
+#291 第四次演练已保存图内调用报告输入 126833、输出 14452，总计 141285 token；
+其中 Qwen Fixer/Reviewer 输入 69504、输出 13791，Host Codex 输入 57329、
+输出 661。这不包含外部规划对话、诊断调用及任何尚未发现的丢失记录，不能作为
+整体成本或与不同旧验收配置进行严格统计对照。脚本契约 218 项通过；增加累计
+计数倒退和溢出反例后，报告专属五项再次通过。运行时源码未改，无需重复原 DAG。
+
+- **L019：Worker 模型来源回执不完整。** 真实 Fixer/Reviewer 的 ModelEvidence
+  中 `model:null`，原因是当前实现读取图中的 `agent.model`，而实际运行由数据库
+  setting 解析。不能查询当前可变 setting 然后伪装历史执行身份，也不能因此宣称
+  模型多样性。待补：派发时持久化不含凭证的实际 backend/provider/model 与
+  session/execution 绑定，角色证据引用该快照；覆盖别名、设置变化、缺失和冲突。
+  当前报告如实保留 null，既有单模型演练的配置证据另存，不重写旧角色回执。
