@@ -175,6 +175,22 @@ describe("attempt diagnostic classification and sanitization", () => {
     expect(sanitizeAttemptDiagnostic({ failure_category: "accepted", finish_reason: "max-tokens" })?.failure_category).toBe("accepted");
   });
 
+  it.each(["max_tokens", "max-tokens", "length"])("preserves explicit abstention with %s finish metadata", (finish_reason) => {
+    for (const diagnostic of [
+      { failure_category: "reviewer_abstained", finish_reason },
+      { failure_category: "accepted", finish_reason },
+      { finish_reason },
+    ]) {
+      expect(sanitizeAttemptDiagnostic(diagnostic, { failure_reason: "DAG_REVIEWER_ABSTAINED" }))
+        .toMatchObject({ failure_category: "reviewer_abstained", finish_reason });
+    }
+    // Missing or invalid handoffs still retain positive provider truncation evidence.
+    for (const failure_category of ["handoff_missing", "contract_validation_failed"]) {
+      expect(sanitizeAttemptDiagnostic({ failure_category, finish_reason })?.failure_category)
+        .toBe("provider_output_truncated");
+    }
+  });
+
   it("keeps missing provider fields explicit unknown/null", () => {
     const diagnostic = sanitizeAttemptDiagnostic({}, { attempt: 2 });
     expect(diagnostic).toMatchObject({

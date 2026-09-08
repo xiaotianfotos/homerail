@@ -1225,26 +1225,30 @@ describe("PR Review scenario assets", () => {
     expect(getActiveRun(runId)?.status).toBe("cancelled");
   });
 
-  it.each(["approve", "abstain"] as const)("projects the authoritative final %s attempt before normalizer dispatch", (vote) => {
+  it.each([
+    ["approve", "end_turn"], ["abstain", "end_turn"],
+    ["approve", "max_tokens"], ["abstain", "max_tokens"],
+    ["abstain", "length"],
+  ] as const)("projects the authoritative final %s attempt with %s before normalizer dispatch", (vote, finishReason) => {
     const parsed = parseWorkflowSource(fs.readFileSync(workflowPath, "utf8"));
     for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
     installPrepareCommandStub(parsed);
     const dispatcher = new ReentrantDispatcher();
     const executor = new GraphExecutor(dispatcher);
-    const runId = `pr-review-terminal-diagnostic-${vote}`;
+    const runId = `pr-review-terminal-diagnostic-${vote}-${finishReason}`;
     executor.createRun(runId, parsed, JSON.stringify(reviewInput()));
     executor.tick(runId);
     expect(requestNodeCorrection(runId, "qwen_review", "agent ended without DAG handoff", {}).status).toBe("scheduled");
     executor.tick(runId);
     handoffActiveRun(runId, "qwen_review", vote === "approve" ? "voted" : "failed", modelReview("qwen", vote), undefined, {
-      transportDiagnostic: { failure_category: "accepted", finish_reason: "end_turn", output_tokens: 77 },
+      transportDiagnostic: { failure_category: "accepted", finish_reason: finishReason, output_tokens: 77 },
       // Real Worker transport marks a valid handoff accepted; Manager must derive semantic abstention.
     });
     const projection = getActiveRun(runId)?.dagRun.mailboxes.get("normalize_qwen_review")?.get("evidence")?.[0] as Record<string, unknown>;
     expect(projection.attempt_diagnostics).toEqual([
       expect.objectContaining({ attempt: 1, failure_category: "handoff_missing", finish_reason: null }),
       expect.objectContaining({ attempt: 2, failure_category: vote === "approve" ? "accepted" : "reviewer_abstained",
-        finish_reason: "end_turn", output_tokens: 77, contract_stage: "handoff_applied" }),
+        finish_reason: finishReason, output_tokens: 77, contract_stage: "handoff_applied" }),
     ]);
     handoffActiveRun(runId, "kimi_review", "voted", modelReview("kimi"));
     handoffActiveRun(runId, "glm_review", "voted", modelReview("glm"));
@@ -1253,7 +1257,7 @@ describe("PR Review scenario assets", () => {
     expect(normalized).toMatchObject({ evidence_truncated: false,
       diagnostics: [expect.objectContaining({ attempt: 1, category: "handoff_missing" }),
         expect.objectContaining({ attempt: 2, category: vote === "approve" ? "accepted" : "reviewer_abstained",
-          finish_reason: "end_turn", output_tokens: 77, contract_validation_stage: "contract_validated" })],
+          finish_reason: finishReason, output_tokens: 77, contract_validation_stage: "contract_validated" })],
     });
   });
 
