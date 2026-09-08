@@ -80,8 +80,9 @@ collect_pr_review_execution_evidence() {
   if [ "$TASK" != "pr-review" ]; then
     return 0
   fi
+  rm -f "$ARTIFACT_DIR/pr-review-execution.json"
   "$HOMERAIL_STABLE_NODE" "$HOMERAIL_STABLE_RELEASE/scripts/pr-review-execution-evidence.mjs" \
-    "$1" "$ARTIFACT_DIR/pr-review-execution.json" >/dev/null 2>&1 || true
+    "$1" "$ARTIFACT_DIR/pr-review-execution.json" >/dev/null
 }
 
 collect_run_evidence() {
