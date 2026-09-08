@@ -44,8 +44,8 @@ export class HomeRailClient {
     return resolveConfiguredManagerUrl(override).replace(/\/+$/, "");
   }
 
-  async get<T = BaseResponse>(path: string): Promise<T> {
-    return this.request<T>("GET", path);
+  async get<T = BaseResponse>(path: string, timeoutMs?: number): Promise<T> {
+    return this.request<T>("GET", path, undefined, timeoutMs);
   }
 
   async post<T = BaseResponse>(path: string, body?: unknown): Promise<T> {
@@ -191,10 +191,15 @@ export class HomeRailClient {
     payload?:
       | { type: "json"; value: unknown }
       | { type: "binary"; value: Uint8Array; contentType: string },
+    timeoutMs?: number,
   ): Promise<T> {
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+      throw new TypeError("timeoutMs must be a finite positive number");
+    }
     const url = `${this.baseUrl}${path}`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const effectiveTimeout = timeoutMs !== undefined ? Math.min(this.timeoutMs, timeoutMs) : this.timeoutMs;
+    const timer = setTimeout(() => controller.abort(), effectiveTimeout);
 
     let httpRejection = false;
     try {
@@ -243,7 +248,7 @@ export class HomeRailClient {
       return (await response.json()) as T;
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new HomeRailTransportError(`Request timed out after ${this.timeoutMs}ms`);
+        throw new HomeRailTransportError(`Request timed out after ${effectiveTimeout}ms`);
       }
       const redacted = redactClientError(err, this.adminToken, this.mutationToken);
       if (!httpRejection) throw new HomeRailTransportError(redacted.message);

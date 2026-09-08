@@ -110,9 +110,8 @@ RUN_ARGS=(
   --timeout "$TIMEOUT_SECONDS"
   --run-id "$RUN_ID"
 )
-stable_hr "${RUN_ARGS[@]}" \
-  >"$COMMAND_TMP" 2> >(tee "$STDERR_PATH" >&2)
-cli_status=$?
+if stable_hr "${RUN_ARGS[@]}" \
+  >"$COMMAND_TMP" 2> >(tee "$STDERR_PATH" >&2); then cli_status=0; else cli_status=$?; fi
 if [ "$cli_status" -ne 0 ]; then
   if [ -s "$COMMAND_TMP" ]; then
     mv "$COMMAND_TMP" "$ARTIFACT_DIR/command.failed.json"

@@ -236,19 +236,23 @@ async function reconcileAfterLostCreate(
   const deadline = Date.now() + budgetMs;
   let lastEvidence: string | undefined;
   while (Date.now() <= deadline) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
     try {
-      const response = await client.get(`/api/runs/${encodeURIComponent(runId)}/status`);
+      const response = await client.get(`/api/runs/${encodeURIComponent(runId)}/status`, remaining);
       const data = responseData(response);
       const observedRunId = optionalString(data.run_id) ?? optionalString(data.runId);
       const status = optionalString(data.status);
-      if (observedRunId === runId && status) {
+      if (response.success === true && observedRunId === runId && status && Date.now() <= deadline) {
         return { runId, workflowId };
       }
       lastEvidence = `observed run_id=${observedRunId ?? "none"} status=${status ?? "none"}`;
     } catch (err: unknown) {
       lastEvidence = err instanceof Error ? err.message : String(err);
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalSeconds * 1_000));
+    const sleepRemaining = deadline - Date.now();
+    if (sleepRemaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(intervalSeconds * 1_000, sleepRemaining)));
   }
   throw new RunObservationUnavailableError(
     `DAG run ${runId} observation unavailable after lost create: ${originalError.message}${lastEvidence ? `; last evidence: ${lastEvidence}` : ""}`,

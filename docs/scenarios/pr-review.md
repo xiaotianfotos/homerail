@@ -159,3 +159,11 @@ The model selectors are local runner environment values, not public GitHub
 variables. The synced Runtime Profile stores only database setting IDs. The
 stable runner reads the existing 0600 DAG mutation token from the persistent
 Home; it never places that token in GitHub Secrets or a Worker environment.
+
+When the stable runner loses the create acknowledgement, it reconciles the
+known run identity with a bounded GET status poll capped by the remaining
+observation deadline. If the deadline expires before a confirmed terminal
+status arrives the runner exits 75 to signal observation-unknown without
+issuing stop, preserving the run for operator inspection. Normal terminal
+statuses are reported as observed. Retry-safe create is not assumed on an
+older Manager; reconciliation only adopts the pre-assigned run identifier.
