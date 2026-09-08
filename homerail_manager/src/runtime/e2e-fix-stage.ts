@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { readE2eFixHostCodexEvidence } from "./e2e-fix-host-codex.js";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { E2eFixAcceptancePolicySchema, evaluateE2eFixAcceptance, sameE2eFixCandidate, type E2eFixAcceptanceInput, type E2eFixCandidate } from "homerail-protocol";
@@ -21,6 +22,7 @@ export interface E2eFixTaskConfig {
   max_rounds: number; max_infra_retries: number; context_bytes: number; total_timeout_ms: number;
   runtime_sha256?: string;
   github?: E2eFixGitHubConfig;
+  host_codex?: { model: string; timeout_ms: number; output_bytes: number };
 }
 export interface E2eFixStageProviders {
   mode: "production" | "simulation";
@@ -29,7 +31,7 @@ export interface E2eFixStageProviders {
 }
 interface ModelEvidence {
   node_id: string; dispatch_id: string; session_id: string; attempt: number;
-  agent_type: string; model: string | null; artifact_sha256: string; value: any; usage_status: "reported_session_snapshots" | "unknown"; usages: unknown[];
+  agent_type: string; model: string | null; artifact_sha256: string; value: any; usage_status: "reported_session_snapshots" | "reported_host_turn" | "unknown"; usages: unknown[];
 }
 
 /** Host API only. Never construct this policy from issue text or model output. */
@@ -45,6 +47,9 @@ export function freezeE2eFixTask(directory: string, config: E2eFixTaskConfig): s
     || (config.mode === "production" && !/^[a-f0-9]{64}$/.test(config.runtime_sha256 ?? ""))
     || (config.runtime_sha256 !== undefined && !/^[a-f0-9]{64}$/.test(config.runtime_sha256))
     || new Set(config.allowed_paths).size !== config.allowed_paths.length) throw new Error("invalid frozen E2E Fix configuration");
+  if (config.host_codex && (!config.host_codex.model?.trim()
+    || !Number.isInteger(config.host_codex.timeout_ms) || config.host_codex.timeout_ms < 1000 || config.host_codex.timeout_ms > 3_500_000
+    || !Number.isInteger(config.host_codex.output_bytes) || config.host_codex.output_bytes < 1000 || config.host_codex.output_bytes > 96000)) throw new Error("invalid frozen host Codex bounds");
   [...config.allowed_paths, ...config.protected_paths].forEach(e2eFixPath);
   config.tests.forEach(validateE2eFixTestDefinition);
   if (new Set(config.tests.map(t => t.id)).size !== config.tests.length
@@ -59,10 +64,7 @@ export function freezeE2eFixTask(directory: string, config: E2eFixTaskConfig): s
   return digest(config);
 }
 
-/** Each invocation executes exactly one native node. No repair/dispatch loop is
- * hidden here. Model evidence comes from Manager persistence, not self-reports. */
-export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: string,
-  commandId = process.env.HOMERAIL_DAG_COMMAND_ID, providers?: E2eFixStageProviders): unknown {
+export function authenticateE2eFixInvocation(directory: string, stage: string, rawInput: string, commandId?: string) {
   if (!commandId) throw new Error("E2E Fix stages require native durable command authority");
   const command = getDurableCommand(commandId);
   if (!command || command.consumed) throw new Error("command authority missing or already consumed");
@@ -74,12 +76,20 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
   const metadata = loadRunMetadata(identity.run_id);
   const commandSession = getDagSessionIndex(identity.run_id, stage);
   if (identity.run_id !== config.root_run_id || identity.node_id !== stage || spec.stdin !== rawInput
-    || metadata?.status !== "active" || metadata.nodeStates[stage] !== "RUNNING"
+    || metadata?.status !== "active" || metadata.currentRound?.round_id !== identity.round_id || metadata.nodeStates[stage] !== "RUNNING"
     || commandSession?.session_id !== identity.session_id || commandSession.attempt !== identity.attempt) throw new Error("native stage identity/input mismatch");
   const now = Date.now();
   if (now - metadata.createdAt > config.total_timeout_ms) throw new Error("root execution deadline exceeded");
   const round = stage === "initialize" ? 0 : metadata.counters?.gateway_iterations.cycle ?? 0;
   if (stage !== "initialize" && (!Number.isInteger(round) || round < 1 || round > config.max_rounds)) throw new Error("native round budget exceeded");
+  return { config, policyDigest, metadata, round, identity, command, spec };
+}
+
+/** Each invocation executes exactly one native node. No repair/dispatch loop is
+ * hidden here. Model evidence comes from Manager persistence, not self-reports. */
+export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: string,
+  commandId = process.env.HOMERAIL_DAG_COMMAND_ID, providers?: E2eFixStageProviders): unknown {
+  const { config, policyDigest, round, identity } = authenticateE2eFixInvocation(directory, stage, rawInput, commandId);
   const inputs = JSON.parse(rawInput) as Record<string, unknown[]>;
   const one = (name: string): any => inputs[name]?.at(-1);
   const folder = path.join(directory, "rounds", String(round));
@@ -96,6 +106,18 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     if (!session || current.nodeStates[node] !== "COMPLETED" || session.status !== "completed"
       || !latest || !isDeepStrictEqual(latest.content, submitted)) throw new Error(`model handoff provenance mismatch: ${node}`);
     const graphNode = current.graph?.nodes.find(n => n.node_id === node);
+    if (config.host_codex && ["plan", "judge_candidate", "judge_ci"].includes(node)) {
+      if (graphNode?.node_type !== "command_gateway" || !current.currentRound?.round_id) throw new Error("host Codex role requires a native command");
+      const evidence = readE2eFixHostCodexEvidence(directory, node, round, {
+        run_id: config.root_run_id, node_id: node, session_id: session.session_id,
+        round_id: current.currentRound.round_id, attempt: session.attempt,
+      });
+      if (!isDeepStrictEqual(evidence.value, latest.content)) throw new Error("host Codex handoff differs from receipt");
+      return { node_id: node, session_id: session.session_id, attempt: session.attempt,
+        dispatch_id: evidence.command_id, agent_type: "codex_appserver", model: evidence.model,
+        artifact_sha256: digest(evidence), value: evidence.value,
+        usage_status: evidence.usages.length ? "reported_host_turn" : "unknown", usages: evidence.usages };
+    }
     const agent = graphNode && current.agents?.[graphNode.agent];
     const type = agent?.agent_type ?? "unknown";
     if (config.mode === "production" && (["plan", "judge_candidate", "judge_ci"].includes(node) ? type !== "codex_appserver" : type === "deterministic" || type === "unknown")) throw new Error(`unapproved role backend: ${node}`);

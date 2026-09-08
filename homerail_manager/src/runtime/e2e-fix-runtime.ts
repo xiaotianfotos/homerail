@@ -33,7 +33,9 @@ export function freezeE2eFixRuntime(directory: string,
     if (bytes > 512 * 1024 * 1024 || inventory.length >= 20000) throw new Error("runtime snapshot exceeds size budget");
     const file = path.join(temporary, relative);
     immutableE2eFixFile(file, content);
-    if (executable) fs.chmodSync(file, 0o700);
+    // Some storage ACLs add owner-execute even when open requested 0600.
+    // Normalize both kinds before recording/publishing the inventory.
+    fs.chmodSync(file, executable ? 0o700 : 0o600);
     inventory.push({ path: relative, sha256: e2eFixDigest(content), executable });
   };
   const copy = (from: string, to: string) => {
@@ -115,4 +117,11 @@ export function loadFrozenE2eFixRuntime(directory: string, sha256: string): E2eF
   if (!path.isAbsolute(directory) || !/^[a-f0-9]{64}$/.test(sha256)
     || e2eFixDigest(fs.readFileSync(path.join(directory, "manifest.json"))) !== sha256) throw new Error("frozen runtime manifest identity mismatch");
   return { directory, sha256, node: path.join(directory, "node"), bootstrap: path.join(directory, "bootstrap.mjs") };
+}
+
+export function frozenE2eFixHostCodexCommands(runtime: E2eFixFrozenRuntime, taskDirectory: string) {
+  // Apply the same path/digest validation as program stages.
+  frozenE2eFixStageCommands(runtime, taskDirectory);
+  return Object.fromEntries(["plan", "judge_candidate", "judge_ci"].map(role => [role,
+    [runtime.node, runtime.bootstrap, runtime.sha256, taskDirectory, "host-codex", role]])) as Record<"plan" | "judge_candidate" | "judge_ci", string[]>;
 }

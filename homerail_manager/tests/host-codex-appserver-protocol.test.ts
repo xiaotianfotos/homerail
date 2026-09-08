@@ -227,6 +227,7 @@ describe("Host Codex app-server protocol params", () => {
       },
       { method: "turn/completed", payload: { turn: { status: "completed" } } },
     ])).toEqual([
+      { type: "debug", source: "host-codex-appserver", message: "turn_result", data: { turn_id: undefined, status: "completed", error: null } },
       { type: "text", text: "legacy response" },
       { type: "turn_complete" },
     ]);

@@ -20,6 +20,8 @@ export interface E2eFixWorkflowOptions {
   stageTimeoutMs?: number;
   /** Synchronous transport exists only for the original control-flow fixture. */
   durableStages?: boolean;
+  /** Explicit trusted host-account transport for the three Codex roles. */
+  hostCodexCommands?: Record<"plan" | "judge_candidate" | "judge_ci", string[]>;
 }
 
 // Strict model output shapes. Stage adapters still have to validate scope,
@@ -57,6 +59,8 @@ const judgment = {
   },
 };
 
+export const E2E_FIX_MODEL_CONTRACTS = { Plan: plan, Patch: patch, Review: review, Judgment: judgment };
+
 export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
   if (!Number.isSafeInteger(options.maxRounds) || options.maxRounds < 1 || options.maxRounds > 20) {
     throw new Error("E2E Fix maxRounds must be an integer from 1 to 20");
@@ -82,6 +86,16 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
     edges.push({ from: `${name}.failed`, to: `${name}_failed.evidence`, condition: "on_failure" });
   };
   const actor = (node: string, agent: string, contract: string) => {
+    if (options.hostCodexCommands && ["plan", "judge_candidate", "judge_ci"].includes(node)) {
+      const argv = options.hostCodexCommands[node as keyof typeof options.hostCodexCommands];
+      if (!argv?.length || argv.some(v => typeof v !== "string" || !v || v.includes("\0"))) throw new Error("invalid host Codex argv");
+      nodes[node] = { kind: "command", inputs: { evidence: {} }, outputs: { result: { contract }, failed: {} },
+        config: { command: [...argv], durable: true, stdin_field: "$inputs", timeout_ms: timeout,
+          capture_limit: 96000, parse_stdout: "json", result_payload: "value", success_port: "result", failure_port: "failed" } };
+      nodes[`${node}_failed`] = { kind: "terminal", outcome: "failure", inputs: { evidence: {} } };
+      edges.push({ from: `${node}.failed`, to: `${node}_failed.evidence`, condition: "on_failure" });
+      return;
+    }
     nodes[node] = { kind: "agent", agent, session_scope: "dispatch", allowed_dag_tools: ["handoff"],
       allowed_builtin_tools: [], codex_sandbox: "read-only",
       inputs: { evidence: {} }, outputs: { result: { contract } } };

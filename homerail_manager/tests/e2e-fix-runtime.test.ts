@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { freezeE2eFixRuntime, frozenE2eFixStageCommands, loadFrozenE2eFixRuntime, type E2eFixFrozenRuntime } from "../src/runtime/e2e-fix-runtime.js";
 import { freezeE2eFixTask } from "../src/runtime/e2e-fix-stage.js";
 import { GraphExecutor } from "../src/orchestration/graph-executor.js";
@@ -36,6 +36,17 @@ describe.skipIf(process.platform !== "linux")("frozen E2E Fix runtime", () => {
     const result = execute(loadFrozenE2eFixRuntime(runtime.directory, runtime.sha256));
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ value: "original dependency", args: ["/private/task", "context"] });
+  });
+  it("normalizes execute bits added by inherited filesystem ACLs before freezing", () => {
+    const link = fs.linkSync;
+    const inherited = vi.spyOn(fs, "linkSync").mockImplementation((from, to) => {
+      link(from, to); fs.chmodSync(to, 0o700);
+    });
+    let runtime: E2eFixFrozenRuntime;
+    try { runtime = freezeE2eFixRuntime(path.join(root, "frozen"), source); }
+    finally { inherited.mockRestore(); }
+    expect(fs.statSync(path.join(runtime.directory, "bootstrap.mjs")).mode & 0o111).toBe(0);
+    const result = execute(runtime); expect(result.status, result.stderr).toBe(0);
   });
   it("preserves different nested dependency versions", () => {
     fs.writeFileSync(path.join(source, "package.json"), JSON.stringify({ type: "module", dependencies: { example: "1", shared: "1" } }));

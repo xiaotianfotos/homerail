@@ -355,3 +355,44 @@ candidate head 为 target_ref。记录派发前已有 run，排除它们，再�
 调用、分支漂移、未知创建结果、重复 run、attempt 漂移、缺失/跳过 job、错误
 checkout 和日志反馈。真实 GitHub 写入、真实模型及整个任务恢复仍须 P3/P4 验收；
 这些测试不授权把模拟结果标为生产通过，当前也未创建实现 PR 或演练 PR。
+
+## P2 宿主 Codex 账号通路
+
+DAG Worker 的 `codex_appserver` 使用 Responses API 凭证，不能直接复用宿主的
+ChatGPT 登录。增加显式的 `host_codex` 冻结配置及
+`frozenE2eFixHostCodexCommands`：只替换 plan、judge_candidate、judge_ci 三个节点的
+模型传输。它们仍是原生图中的 durable command，失败进入独立终止边，反馈仍由
+同一个 while/feedback 控制；适配器只执行一个模型回合，不在外部推进修复循环。
+Fixer 和 Reviewer 保留原生 agent Worker 路径。
+
+宿主复用已有账号 app-server 适配器，不把账号凭证复制到 Worker。每次新建临时
+thread，使用只读 sandbox、结构化输出契约，禁用 shell、unified_exec、apps、
+multi_agent、skill_search 和 web search，并在创建 thread 前关闭解析到的 MCP
+服务器。程序核对实际 turn completed 状态、thread/turn 标识、输出契约及有界
+时间/字节，超时、失败、意外工具或无效输出都不能形成审批结果。
+
+执行前持久化一次性 claim；事件逐条 fsync，最终回执绑定原生命令、会话、round、
+运行时、输入/输出和事件摘要。消费方同时核对原生已完成 handoff 与私有模型回执。
+完整回执可以复用；已有 claim 但没有完成回执属于未知执行，不自动再调用模型。
+原始事件中的累计 token 快照独立保存，不能求和当作实际消耗。
+
+已完成真实宿主账号结构化调用准备验证；初次调用在配置加载阶段失败，修正了
+当前 Codex 不接受用 null 清除 model_instructions_file 的兼容问题。重试成功，
+约 7.1 秒，后端报告 10778 输入、49 输出 token。短输入仍有明显固定开销，实际
+全任务 token 预算与上下文保留额仍待实现，字节限制不能冒充后端 token 硬限制。
+宿主 Codex 二进制及账号配置目前也不属于 Manager/Node 快照，需要后续运行身份
+与升级兼容验收。此准备验证不计作完整 E2E、真实 issue 或 GitHub 发布验收。
+
+在实际 /vol2 路径进行原生图验证时，发现存储 ACL 会给以 0600 新建的文件增加
+owner-execute 位，使快照拒绝自己的 bootstrap。快照现显式归一化可执行与普通
+文件权限，再发布清单；新增模拟继承 ACL 的执行回归验证，并保留原失败现场。
+
+权限修正后，真实原生图已完成 initialize → context → 宿主 GPT-6 plan → freeze_plan，
+可信阶段成功读取原生命令对应的模型回执与用量（10954 输入、60 输出 token）。
+该验证没有外部模型 dispatcher，未运行 Fixer、Reviewers、Docker 测试或 GitHub
+阶段；它只证明宿主账号模型与可信原生阶段的接入。完整 E2E 验收仍未通过。
+
+追加真实 Judger 准备验证：当给定测试通过与两票 approve、但 CI 因读取超时而
+缺少完成/checkout 证据时，GPT-6 返回 pause，未将票数替代 CI。用时约6.8秒，
+后端报告10884输入、55输出token。宿主角色另外强制核对 ChatGPT 账号类型并选择
+OpenAI provider，防止宿主默认 provider 配置无意改变规划/裁决模型。
