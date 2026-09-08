@@ -369,17 +369,18 @@ async function publicationUpdateFixture(t, mode='normal') {
  const previous={head:'a'.repeat(40),branch:'codex/oracle',repo:'owner/repo',base:'main',title:row.title,body_digest:digest(Buffer.from(previousBody)),url:row.url};
  f.loop.state.publication_history=[previous];f.loop.save('previous_publication');
  const bin=path.join(f.root,'bin');fs.mkdirSync(bin);const storage=path.join(f.root,'remote.json'),calls=path.join(f.root,'calls.jsonl'),updates=path.join(f.root,'updates'),stale=path.join(f.root,'stale');fs.writeFileSync(storage,JSON.stringify(row));
- const setup={storage,calls,updates,stale,mode,state:f.loop.file,old:row,newBody:nextBody};
+ const setup={storage,calls,updates,stale,mode,state:f.loop.file,old:row,targetFile:body};
  fs.writeFileSync(path.join(bin,'gh'),`#!${process.execPath}\nconst fs=require('fs'),assert=require('assert/strict'),crypto=require('crypto');const cfg=${JSON.stringify(setup)};const args=process.argv.slice(2);fs.appendFileSync(cfg.calls,JSON.stringify(args)+'\\n');
  if(args[0]==='pr'&&args[1]==='list'){
   if(cfg.mode==='stale'&&fs.existsSync(cfg.updates)&&!fs.existsSync(cfg.stale)){fs.writeFileSync(cfg.stale,'1');console.log(JSON.stringify([cfg.old]));}
   else console.log('['+fs.readFileSync(cfg.storage,'utf8')+']');
  }else if(args[0]==='api'){
   assert.ok(args.includes('PATCH'));assert.ok(args.includes('repos/owner/repo/pulls/1'));
-  const p=args[args.indexOf('--input')+1];assert.ok(require('path').isAbsolute(p));const input=JSON.parse(fs.readFileSync(p,'utf8'));assert.deepEqual(input,{body:cfg.newBody});
+  const p=args[args.indexOf('--input')+1];assert.ok(require('path').isAbsolute(p));const input=JSON.parse(fs.readFileSync(p,'utf8'));assert.deepEqual(input,{body:fs.readFileSync(cfg.targetFile,'utf8')});
   const state=JSON.parse(fs.readFileSync(cfg.state,'utf8'));const intent=state.publication.body_update;
-  const sha=s=>crypto.createHash('sha256').update(s).digest('hex');assert.equal(intent.url,cfg.old.url);assert.equal(intent.from_body_digest,sha(cfg.old.body));assert.equal(intent.to_body_digest,sha(cfg.newBody));assert.equal(intent.attempted,true);
-  const current=JSON.parse(fs.readFileSync(cfg.storage,'utf8'));current.body=input.body;fs.writeFileSync(cfg.storage,JSON.stringify(current));fs.appendFileSync(cfg.updates,'x');
+  const current=JSON.parse(fs.readFileSync(cfg.storage,'utf8'));
+  const sha=s=>crypto.createHash('sha256').update(s).digest('hex');assert.equal(intent.url,cfg.old.url);assert.equal(intent.from_body_digest,sha(current.body));assert.equal(intent.to_body_digest,sha(input.body));assert.equal(intent.attempted,true);
+  current.body=input.body;fs.writeFileSync(cfg.storage,JSON.stringify(current));fs.appendFileSync(cfg.updates,'x');
   if(cfg.mode==='lost_ack'){console.error('simulated lost update acknowledgement');process.exit(1);}console.log(JSON.stringify(current));
  }else{throw Error('unexpected GitHub mutation: '+JSON.stringify(args));}`,{mode:0o755});
  const originalPath=process.env.PATH;process.env.PATH=bin+path.delimiter+originalPath;t.after(()=>{process.env.PATH=originalPath;});
@@ -444,4 +445,39 @@ test('legacy confirmed publication refuses a replacement URL with the expected b
  delete f.loop.state.publication.body_update;f.loop.save('legacy_confirmed');
  const row=JSON.parse(fs.readFileSync(f.storage,'utf8'));row.url='https://github.com/owner/repo/pull/99';fs.writeFileSync(f.storage,JSON.stringify(row));
  const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
+});
+
+
+async function nextPublicationRevision(f) {
+ const r=f.loop.round;const file=path.join(f.root,'next-judgment.json');
+ fs.writeFileSync(file,JSON.stringify({round:r.index,plan_digest:r.plan_digest,verdict:'revise',reason:'Authorize next repair after response loss'}));f.loop.judge(file);
+ fs.writeFileSync(path.join(f.repo,'source.txt'),'next validated revision\n');f.loop.repo.git(['add','source.txt']);f.loop.repo.git(['commit','-qm','next repair']);
+ const next={index:r.index+1,plan:{checks:['oracle']},plan_digest:'next-plan',candidate_commit:f.loop.repo.git(['rev-parse','HEAD']),candidate_tree:f.loop.repo.git(['rev-parse','HEAD^{tree}'])};
+ f.loop.state.rounds.push(next);f.loop.state.phase='test';f.loop.save('next_candidate');await f.loop.test();
+ fs.writeFileSync(file,JSON.stringify({round:next.index,plan_digest:next.plan_digest,tree:next.candidate_tree,verdict:'accept',reason:'Independent oracle accepts next candidate'}));f.loop.judge(file);
+ const remote=JSON.parse(fs.readFileSync(f.storage,'utf8'));remote.headRefOid=next.candidate_commit;fs.writeFileSync(f.storage,JSON.stringify(remote));
+ fs.writeFileSync(f.body,'Approved description for the next repair\n');
+ return f.loop.state.publication_history.at(-1);
+}
+test('a new accepted revision reconciles an archived landed update before publishing its next body',async t=>{
+ const f=await publicationUpdateFixture(t,'lost_ack');assert.throws(()=>f.loop.publish(f.body),/lost update acknowledgement/);
+ const priorTarget=JSON.parse(fs.readFileSync(f.storage,'utf8')).body;const archived=await nextPublicationRevision(f);assert.equal(archived.url,undefined);
+ assert.throws(()=>f.loop.publish(f.body),/lost update acknowledgement/);
+ assert.equal(fs.readFileSync(f.updates,'utf8'),'xx');
+ const reopened=f.attach(new JudgedLoop(f.root));assert.equal(reopened.publish(f.body),f.row.url);
+ assert.equal(fs.readFileSync(f.updates,'utf8'),'xx');assert.equal(reopened.state.publication_history.at(-1).url,f.row.url);
+ assert.equal(reopened.state.publication_history.at(-1).body_digest,digest(Buffer.from(priorTarget)));
+ assert.equal(reopened.state.publication_history.at(-1).body_update.confirmed,true);
+ assert.equal(reopened.state.rounds.length,2);
+});
+for(const problem of ['wrong_url','wrong_target','not_attempted','invalid_source_hash','pending_target_absent'])test(`archived update reconciliation refuses ${problem} without another write`,async t=>{
+ const f=await publicationUpdateFixture(t,'lost_ack');assert.throws(()=>f.loop.publish(f.body),/lost update acknowledgement/);
+ const archived=await nextPublicationRevision(f);
+ if(problem==='wrong_url')archived.body_update.url='https://github.com/owner/repo/pull/99';
+ if(problem==='wrong_target')archived.body_update.to_body_digest='0'.repeat(64);
+ if(problem==='not_attempted')archived.body_update.attempted=false;
+ if(problem==='invalid_source_hash')archived.body_update.from_body_digest='invalid';
+ if(problem==='pending_target_absent'){const row=JSON.parse(fs.readFileSync(f.storage,'utf8'));row.body=f.row.body;fs.writeFileSync(f.storage,JSON.stringify(row));}
+ f.loop.save('archived_update_fixture');const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));
+ assert.equal(fs.readFileSync(f.updates,'utf8'),'x');assert.equal(reopened.state.publication_history.at(-1).url,undefined);
 });
