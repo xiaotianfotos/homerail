@@ -136,6 +136,18 @@ describe("bounded review findings", () => {
 });
 
 describe("attempt diagnostic classification and sanitization", () => {
+  it.each(["agent ended without DAG handoff", "agent ended without a contract-valid handoff"])(
+    "classifies missing handoff without inventing provider truncation: %s", (reason) => {
+      expect(classifyReviewFailure(reason)).toBe("handoff_missing");
+      expect(sanitizeAttemptDiagnostic({}, { failure_reason: reason })).toMatchObject({
+        failure_category: "handoff_missing", finish_reason: null,
+        output_tokens: null, output_token_limit: null,
+      });
+      expect(sanitizeAttemptDiagnostic({ failure_category: "handoff_missing" })?.failure_category)
+        .toBe("handoff_missing");
+    },
+  );
+
   it("classifies provider truncation distinctly from abstention", () => {
     expect(classifyReviewFailure("output limit reached, stop_reason=max_tokens")).toBe("provider_output_truncated");
     expect(classifyReviewFailure("DAG_HANDOFF_ARGUMENTS_INVALID unexpected key")).toBe("handoff_arguments_invalid");

@@ -137,7 +137,7 @@ function normalizedReview(
     }),
     reviewed_files: coverageValid ? [...changedFiles] : [],
     unreviewed_files: coverageValid ? [] : [...changedFiles],
-    evidence_truncated: failed ? category !== "reviewer_abstained" : false,
+    evidence_truncated: failed && category === "provider_output_truncated",
     diagnostics,
   };
 }
@@ -617,11 +617,12 @@ describe("PR Review scenario assets", () => {
 
   it.each([
     ["provider_output_truncated", "provider_output_truncated", true],
-    ["handoff_arguments_invalid", "handoff_arguments_invalid", true],
-    ["contract_validation_failed", "contract_validation_failed", true],
-    ["transport_failed", "transport_failed", true],
-    ["reviewer_abstained", "unknown", true],
-    ["unknown", "unknown", true],
+    ["handoff_arguments_invalid", "handoff_arguments_invalid", false],
+    ["contract_validation_failed", "contract_validation_failed", false],
+    ["transport_failed", "transport_failed", false],
+    ["reviewer_abstained", "reviewer_abstained", false],
+    ["handoff_missing", "handoff_missing", false],
+    ["unknown", "unknown", false],
   ] as const)("normalizes the %s attempt category as %s with evidence_truncated=%s", (category, expectedCategory, truncated) => {
     const { code, args } = commandCode("normalize_kimi_review");
     const result = spawnSync(process.execPath, ["-e", code, ...args], {
@@ -645,6 +646,27 @@ describe("PR Review scenario assets", () => {
       evidence_truncated: truncated,
       diagnostics: [{ attempt: 1, category: expectedCategory }],
     });
+  });
+
+
+  it.each(["qwen", "kimi", "glm"])("keeps missing handoff, coverage and actual projection loss separate for %s", (reviewer) => {
+    const { code, args } = commandCode(`normalize_${reviewer}_review`);
+    for (const projectionTruncated of [false, true]) {
+      const result = spawnSync(process.execPath, ["-e", code, ...args], {
+        encoding: "utf8",
+        input: JSON.stringify({
+          trusted: [trustedContext()], success: [], failure: [{ error: "agent ended without DAG handoff" }],
+          evidence: [{ reviewer: `${reviewer}_review`, accepted_findings: [],
+            projection_truncated: projectionTruncated,
+            attempt_diagnostics: [{ attempt: 1, failure_category: "handoff_missing" }] }],
+        }),
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ status: "failed", vote: "abstain",
+        evidence_truncated: projectionTruncated, reviewed_files: [], unreviewed_files: ["src/run.ts"],
+        diagnostics: [{ attempt: 1, category: "handoff_missing", finish_reason: null, output_tokens: null }],
+      });
+    }
   });
 
   it("keeps a deliberate abstention distinct from provider truncation", () => {
@@ -701,7 +723,7 @@ describe("PR Review scenario assets", () => {
       reviewer,
       status: "failed",
       vote: "abstain",
-      evidence_truncated: true,
+      evidence_truncated: false,
       findings: [],
       diagnostics: [{
         attempt: 1,
@@ -744,7 +766,7 @@ describe("PR Review scenario assets", () => {
       vote: "abstain",
       reviewed_files: [],
       unreviewed_files: files,
-      evidence_truncated: true,
+      evidence_truncated: false,
       diagnostics: [{ attempt: 1, category: "handoff_arguments_invalid", tool_arguments_parse_state: "parse_failed" }],
     });
     const published = JSON.parse(result.stdout) as { findings: Array<{ title: string }> };
@@ -772,7 +794,7 @@ describe("PR Review scenario assets", () => {
       status: "failed",
       vote: "abstain",
       findings: [],
-      evidence_truncated: true,
+      evidence_truncated: false,
       diagnostics: [{ attempt: 1, category: "unknown" }],
     });
   });
@@ -897,8 +919,8 @@ describe("PR Review scenario assets", () => {
       vote: "abstain",
       reviewed_files: [],
       unreviewed_files: ["src/run.ts"],
-      evidence_truncated: true,
-      diagnostics: [{ attempt: 1, category: "unknown" }],
+      evidence_truncated: false,
+      diagnostics: [{ attempt: 1, category: "reviewer_abstained" }],
     });
     const decision = loadRunSnapshot(runId)?.handoffs.find(
       (handoff) => handoff.fromNode === "decide" && handoff.port === "decided",
@@ -1018,7 +1040,7 @@ describe("PR Review scenario assets", () => {
       reviewer: "glm",
       status: "failed",
       vote: "abstain",
-      evidence_truncated: true,
+      evidence_truncated: false,
       unreviewed_files: ["src/run.ts"],
       diagnostics: [{ attempt: 1, category: "unknown" }],
     });
@@ -1099,7 +1121,7 @@ describe("PR Review scenario assets", () => {
       reviewer: "qwen",
       status: "failed",
       vote: "abstain",
-      evidence_truncated: true,
+      evidence_truncated: false,
       findings,
       diagnostics: [
         expect.objectContaining({ attempt: 1, category: "contract_validation_failed" }),
@@ -1286,8 +1308,8 @@ describe("PR Review scenario assets", () => {
     expect(correctionPrompt).not.toMatch(/git diff|reserialize|changed_files/i);
     expect(correctionPrompt).toMatch(/Reuse completed evidence/i);
 
-    // The correction attempt is truncated by the provider, but the final
-    // payload still contains the valid compact coverage attestation.
+    // The correction explicitly abstains with valid coverage. No provider
+    // truncation was observed or supplied by this fixture.
     handoffActiveRun(
       runId,
       "qwen_review",
@@ -1305,7 +1327,7 @@ describe("PR Review scenario assets", () => {
       reviewer: "qwen",
       status: "failed",
       vote: "abstain",
-      evidence_truncated: true,
+      evidence_truncated: false,
       reviewed_files: files,
       unreviewed_files: [],
       coverage: preparedCoverage,
