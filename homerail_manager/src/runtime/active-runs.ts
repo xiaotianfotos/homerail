@@ -55,6 +55,7 @@ import {
 } from "homerail-protocol";
 import { resolveAgentRuntimeConfig } from "./agent-runtime-resolver.js";
 import { spawnManagerGitSync } from "./manager-git.js";
+import { buildReviewRecovery } from "./review-recovery.js";
 import {
   writeRunMetadata,
   appendHandoff,
@@ -2550,6 +2551,27 @@ export function requestNodeCorrection(
   run.counters.corrections[nodeId] = attempt;
   const mailbox = run.dagRun.mailboxes.get(nodeId);
   if (mailbox) {
+    if (evidenceContext) {
+      const evidence = (mailbox.get("review_evidence") ?? [])[0] as
+        { coverage_attestation?: unknown } | undefined;
+      if (evidence === undefined || evidence.coverage_attestation == null) {
+        const chats = loadRunSnapshot(runId)?.chats[nodeId] ?? [];
+        mailbox.set("review_recovery", [buildReviewRecovery({
+          fence: {
+            runId,
+            nodeId,
+            sessionId: evidenceContext.sessionId,
+            roundId: evidenceContext.roundId,
+            generation: evidenceContext.generation,
+          },
+          chats,
+        })]);
+      } else {
+        mailbox.delete("review_recovery");
+      }
+    } else {
+      mailbox.delete("review_recovery");
+    }
     const values = mailbox.get("correction") ?? [];
     values.push(_correctionPrompt(
       nodeId,
@@ -2571,8 +2593,8 @@ export function requestNodeCorrection(
   run.dagRun.nodeStates.set(nodeId, "READY");
   run.dagRun.handoffedNodes.delete(nodeId);
   // A correction retries the same logical dispatch after a rejected handoff; it
-  // is not a new review round. Keep the provider session (and any broker action
-  // receipts fenced to it) active. A successful handoff still marks the session
+  // is not a new review round. The logical session and any broker action receipts
+  // fenced to it are preserved. A successful handoff still marks the session
   // completed, so the next real re-entry of a dispatch-scoped node gets a fresh
   // context through _prepareNodeSessionForDispatch.
   writeRunMetadata(runId, serializeRunMetadata(run));
