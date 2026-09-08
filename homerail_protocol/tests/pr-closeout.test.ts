@@ -102,6 +102,8 @@ describe("PR closeout evidence validation", () => {
     [{ attempt: 1, category: "accepted" }], [{ attempt: 1, category: "provider_output_truncated" }],
     [{ attempt: 0, category: "handoff_missing" }], [{ attempt: 9, category: "handoff_missing" }],
     [{ attempt: 1.5, category: "handoff_missing" }], [{ category: "handoff_missing" }],
+    [{ attempt: 1, category: ["unknown"] }],
+    [{ attempt: 1, category: ["accepted"] }, { attempt: 2, category: "handoff_missing" }],
     [null, { attempt: 2, category: "handoff_missing" }],
     [{ attempt: 1, category: "handoff_missing" }, { attempt: 2, category: "accepted" }],
     Array.from({ length: 9 }, () => ({ attempt: 1, category: "handoff_missing" })),
