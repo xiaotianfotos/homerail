@@ -28,7 +28,7 @@ import {
 } from "../src/persistence/dag-actor-surface-patches.js";
 import { closeDb, getDb } from "../src/persistence/db.js";
 import { loadSessionTranscript } from "../src/persistence/dag-session-files.js";
-import { _clearAllPersistence, loadNodeUsages } from "../src/persistence/store.js";
+import { _clearAllPersistence, loadNodeUsages, loadRunSnapshot } from "../src/persistence/store.js";
 import { listDagActivityEvents } from "../src/persistence/dag-activity-journal.js";
 import {
   _clearActiveRuns,
@@ -315,6 +315,34 @@ describe("round-aware terminal websocket transport", () => {
       expect(correctionEvents).toHaveLength(1);
       expect(applied).toBe(1);
       expect(getActiveRun(runId)?.dagRun.nodeStates.get("actor")).toBe("READY");
+    } finally {
+      ws.terminate();
+      await closeServer(server);
+    }
+  });
+
+  it.each(["worker", "node"] as const)("preserves %s truncation evidence without another correction", async (sourceType) => {
+    const runId = `run-${sourceType}-truncated`;
+    const envelope = startRoundTwo(runId);
+    const correctionEvents: unknown[] = [];
+    subscribe("dag:node_correction_requested", (payload) => correctionEvents.push(payload));
+    const { server, ws, sourceId } = await openTransport(sourceType, runId, () => {});
+    const lease = acquireDagActorLease({ run_id: runId, actor_id: "researcher", target_type: sourceType, target_id: sourceId });
+    const diagnostics = { schema: "attempt-diagnostic-v1", attempt: 1, finish_reason: "max-tokens",
+      output_tokens: 8191, output_token_limit: 8192, failure_category: "provider_output_truncated" };
+    try {
+      ws.send(JSON.stringify({ type: "node_error", data: {
+        runId, nodeId: "actor", message: "agent ended without DAG handoff", attempt_diagnostics: diagnostics,
+        session_id: envelope.sessionId, round_id: "round-0002", actor_id: "researcher", generation: 1,
+        lease_generation: lease.lease_generation, command_id: `${runId}-command-2`,
+      } }));
+      await vi.waitFor(() => expect(getActiveRun(runId)?.dagRun.nodeStates.get("actor")).toBe("FAILED"));
+      expect(correctionEvents).toEqual([]);
+      expect(getActiveRun(runId)?.counters.corrections.actor).toBeUndefined();
+      expect(loadRunSnapshot(runId)?.chats.actor.some(chat =>
+        (chat.content as { attempt_diagnostics?: unknown })?.attempt_diagnostics
+        && JSON.stringify((chat.content as { attempt_diagnostics?: unknown }).attempt_diagnostics) === JSON.stringify(diagnostics),
+      )).toBe(true);
     } finally {
       ws.terminate();
       await closeServer(server);

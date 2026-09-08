@@ -49,6 +49,16 @@ still enforce their original task deadline. Whole-graph recovery, unknown model
 requests, exhausted budgets and guaranteed semantic convergence remain separate
 work.
 
+When a Worker reports output truncation without a retained rejected handoff,
+review recovery path or reusable broker receipt, the Manager does not spend
+ordinary handoff-correction attempts on the same task and output limit. It
+retains the transport diagnostic and uses the normal node failure path, even
+with a zero correction budget; truncation must not synthesize success. This
+guard does not change output limits or provide post-execution recovery. Such a
+continuation needs an explicitly changed, bounded input or output policy and
+must preserve earlier model evidence, plans and consumed budgets. The
+pre-dispatch API above cannot recover a root that already executed a Worker.
+
 Older failures have no executor checkpoint and are rejected by this API. An
 operator-only program migration supports the precise legacy “does not declare
 selectable reasoning efforts” failure: it requires the original resolver error,

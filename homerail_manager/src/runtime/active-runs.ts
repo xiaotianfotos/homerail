@@ -2556,10 +2556,6 @@ export function requestNodeCorrection(
     }
     _refreshReviewEvidenceProjection(run, nodeId, evidenceContext);
   }
-  if (previousAttempts >= maxAttempts) {
-    return { status: "exhausted", run, attempts: previousAttempts, maxAttempts };
-  }
-
   const before = _snapshotNodeStates(run);
   const attempt = previousAttempts + 1;
   const outputEdges = run.dagRun.graph.edges
@@ -2596,6 +2592,20 @@ export function requestNodeCorrection(
         && receipt.session_id === sessionId
         && brokerActionKeys.has(`${receipt.credential_ref}\u0000${receipt.broker}\u0000${receipt.action}`)
       ));
+  const diagnostic = sanitizeAttemptDiagnostic(diagnostics, { attempt: failedAttempt, failure_reason: reason });
+  if (diagnostic?.failure_category === "provider_output_truncated"
+    && !evidenceContext && rejectedHandoff === undefined && brokerReceipts.length === 0) {
+    // A fresh handoff-only turn cannot recover output that was never retained.
+    // Repeating the same task and output cap spends the budget again. Return
+    // unavailable (not exhausted) so transports use failure handling rather
+    // than synthesizing a successful handoff for an unconstrained output.
+    // Review recovery and retained handoff/broker evidence have distinct repair
+    // paths and keep their existing bounded correction policy.
+    return { status: "unavailable", reason: "Provider output truncated without recoverable handoff evidence; changed-input recovery required" };
+  }
+  if (previousAttempts >= maxAttempts) {
+    return { status: "exhausted", run, attempts: previousAttempts, maxAttempts };
+  }
   run.counters.corrections[nodeId] = attempt;
   const mailbox = run.dagRun.mailboxes.get(nodeId);
   if (mailbox) {
