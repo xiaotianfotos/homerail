@@ -41,7 +41,7 @@ function hasValidIncompleteDiagnostics(value: unknown): boolean {
     const rec = record(entry);
     if (!rec) return false;
     if (!Number.isSafeInteger(rec.attempt) || (rec.attempt as number) < 1 || (rec.attempt as number) > 8) return false;
-    if (!FAILURE_CATEGORY_SET.has(String(rec.category))) return false;
+    if (typeof rec.category !== "string" || !FAILURE_CATEGORY_SET.has(rec.category)) return false;
   }
   const lastEntry = record(value[value.length - 1]);
   return lastEntry !== undefined && INCOMPLETE_DIAGNOSTIC_FINAL_CATEGORIES.has(String(lastEntry.category));
