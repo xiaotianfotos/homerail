@@ -18,6 +18,7 @@ export interface E2eFixTaskConfig {
   allowed_paths: string[]; protected_paths: string[];
   tests: E2eFixTestDefinition[]; policy: Omit<Policy, "sha256">;
   max_rounds: number; max_infra_retries: number; context_bytes: number; total_timeout_ms: number;
+  runtime_sha256?: string;
 }
 export interface E2eFixStageProviders {
   mode: "production" | "simulation";
@@ -39,6 +40,8 @@ export function freezeE2eFixTask(directory: string, config: E2eFixTaskConfig): s
     || !Number.isInteger(config.context_bytes) || config.context_bytes < 1000 || config.context_bytes > 96000
     || !Number.isInteger(config.total_timeout_ms) || config.total_timeout_ms < 1000 || config.total_timeout_ms > 86_400_000
     || !config.allowed_paths.length || config.allowed_paths.length > 20
+    || (config.mode === "production" && !/^[a-f0-9]{64}$/.test(config.runtime_sha256 ?? ""))
+    || (config.runtime_sha256 !== undefined && !/^[a-f0-9]{64}$/.test(config.runtime_sha256))
     || new Set(config.allowed_paths).size !== config.allowed_paths.length) throw new Error("invalid frozen E2E Fix configuration");
   [...config.allowed_paths, ...config.protected_paths].forEach(e2eFixPath);
   config.tests.forEach(validateE2eFixTestDefinition);
@@ -64,6 +67,7 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
   const spec = JSON.parse(command.spec_json);
   const config = JSON.parse(fs.readFileSync(path.join(directory, "config.json"), "utf8")) as E2eFixTaskConfig;
   const policyDigest = freezeE2eFixTask(directory, config);
+  if (config.runtime_sha256 && config.runtime_sha256 !== process.env.HOMERAIL_E2E_FIX_RUNTIME_SHA256) throw new Error("task runtime identity mismatch");
   const metadata = loadRunMetadata(identity.run_id);
   const commandSession = getDagSessionIndex(identity.run_id, stage);
   if (identity.run_id !== config.root_run_id || identity.node_id !== stage || spec.stdin !== rawInput
