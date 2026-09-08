@@ -157,6 +157,15 @@ reviewed decision is required for another recovery attempt. If the target is alr
 visible at the PR source, ordinary `publish` reconciles it without recovery. Revise
 alone does not resolve an old pending update.
 
+Explicit recovery also handles `attempted:false` crash-after-intent-before-send:
+a durable body_update where the sender never dispatched (attempted persisted as
+boolean `false`) may be abandoned with the same evidence-bound decision. State
+markers `attempted` must be strict boolean `true` or `false`; missing, null,
+number, or string values are rejected. When `publish` finds an empty PR list but
+the publication or a matching history entry already carries URL or body_update
+custody, it refuses replacement creation with a diagnostic (owned PR missing);
+this does NOT auto-adopt or replace a deleted PR and does not claim GitHub CAS.
+
 #### Invocation
 
 ```sh
