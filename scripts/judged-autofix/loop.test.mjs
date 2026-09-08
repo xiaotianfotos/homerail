@@ -530,3 +530,40 @@ for(const bad of ['task','round','plan','head','snapshot','not_settled','string_
  if(bad==='external_body')row.body='unowned';if(bad==='wrong_url')row.url='https://github.com/owner/repo/pull/99';if(bad==='wrong_remote_head')row.headRefOid='b'.repeat(40);fs.writeFileSync(f.storage,JSON.stringify(row));
  const before=JSON.stringify(f.loop.state);assert.throws(()=>f.loop.recoverPublication(decision));assert.equal(JSON.stringify(f.loop.state),before);assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
 });
+
+// The real CLI sequence first attempts publish in the new round, leaving a
+// prepared current intent before it encounters the unresolved archived update.
+test('archived recovery remains reachable after the next publish has already failed',async t=>{
+ const f=await absentUpdateFixture(t,true);
+ assert.throws(()=>f.loop.publish(f.body),/archived update reconciliation/);
+ const active=JSON.parse(JSON.stringify(f.loop.state.publication));
+ assert.equal(active.body_update,undefined);assert.equal(active.url,undefined);
+ const target=f.loop.state.publication_history.length-1;
+ const decision=recoveryDecision(f,target);
+ f.loop.recoverPublication(decision);
+ assert.deepEqual(f.loop.state.publication,active,'preserve current approved intent');
+ assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
+ const reopened=f.attach(new JudgedLoop(f.root));
+ assert.throws(()=>reopened.publish(f.body),/lost update acknowledgement/);
+ assert.equal(reopened.publish(f.body),f.row.url);
+ assert.equal(fs.readFileSync(f.updates,'utf8'),'xx');
+ assert.equal(reopened.state.publication_recoveries.length,1);
+});
+for(const marker of [false,'true'])test(`recovery cannot skip intervening unresolved history with attempted=${marker}`,async t=>{
+ const f=await absentUpdateFixture(t);
+ const pending=JSON.parse(JSON.stringify(f.loop.state.publication));pending.body_update.attempted=marker;
+ f.loop.state.publication_history.push(pending);f.loop.save('intervening_pending');
+ const decision=recoveryDecision(f),before=JSON.stringify(f.loop.state);
+ assert.throws(()=>f.loop.recoverPublication(decision));assert.equal(JSON.stringify(f.loop.state),before);
+ assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
+});
+for(const bad of ['attempted_update','confirmed_url','wrong_head','invalid_body_digest'])test(`archived recovery rejects an unsafe current intent: ${bad}`,async t=>{
+ const f=await absentUpdateFixture(t,true);assert.throws(()=>f.loop.publish(f.body));
+ const current=f.loop.state.publication;
+ if(bad==='attempted_update')current.body_update={attempted:true};
+ if(bad==='confirmed_url')current.url=f.row.url;
+ if(bad==='wrong_head')current.head='0'.repeat(40);
+ if(bad==='invalid_body_digest')current.body_digest=[current.body_digest];
+ f.loop.save('unsafe_active_intent');const decision=recoveryDecision(f,f.loop.state.publication_history.length-1),before=JSON.stringify(f.loop.state);
+ assert.throws(()=>f.loop.recoverPublication(decision));assert.equal(JSON.stringify(f.loop.state),before);assert.equal(fs.readFileSync(f.updates,'utf8'),'x');
+});
