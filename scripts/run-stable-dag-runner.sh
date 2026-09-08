@@ -121,14 +121,19 @@ RUN_ARGS=(
   --timeout "$TIMEOUT_SECONDS"
   --run-id "$RUN_ID"
 )
-if ! stable_hr "${RUN_ARGS[@]}" \
-  >"$COMMAND_TMP" 2> >(tee "$STDERR_PATH" >&2); then
+if stable_hr "${RUN_ARGS[@]}" \
+  >"$COMMAND_TMP" 2> >(tee "$STDERR_PATH" >&2); then cli_status=0; else cli_status=$?; fi
+if [ "$cli_status" -ne 0 ]; then
   if [ -s "$COMMAND_TMP" ]; then
     mv "$COMMAND_TMP" "$ARTIFACT_DIR/command.failed.json"
   else
     rm -f "$COMMAND_TMP"
   fi
-  stable_hr stop "$RUN_ID" >/dev/null 2>&1 || true
+  if [ "$cli_status" -eq 75 ]; then
+    printf '%s\n' "DAG run ${RUN_ID} observation unavailable during create reconciliation or terminal/artifact waiting; not calling stop. It may still be running and consuming resources; inspect the same run ID to resume observation or explicitly stop it." >&2
+  else
+    stable_hr stop "$RUN_ID" >/dev/null 2>&1 || true
+  fi
   collect_run_evidence "$RUN_ID"
   printf '%s\n' "$RUN_ID" >"$ARTIFACT_DIR/run-id.txt"
   printf '%s\n' "$HOMERAIL_STABLE_REVISION" >"$ARTIFACT_DIR/manager-revision.txt"
@@ -142,7 +147,7 @@ if ! stable_hr "${RUN_ARGS[@]}" \
       sleep 1
     done
   fi
-  exit 1
+  exit "$cli_status"
 fi
 mv "$COMMAND_TMP" "$COMMAND_PATH"
 [ -s "$STDERR_PATH" ] || rm -f "$STDERR_PATH"

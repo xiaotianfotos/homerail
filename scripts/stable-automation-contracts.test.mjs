@@ -3,8 +3,75 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
+import { spawnSync } from "node:child_process";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+for (const code of [75, 1]) test(`stable runner preserves unknown execution only for CLI exit ${code}`, { skip: process.platform === "win32" }, t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hr-stable-observation-"));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const stable = path.join(tmp, "stable");
+  const release = path.join(stable, "releases", "fixture");
+  const home = path.join(tmp, "home");
+  const artifacts = path.join(tmp, "artifacts");
+  const bin = path.join(tmp, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "curl"), '#!/bin/sh\ncase "$*" in */health) exit 0;; *) exit 9;; esac\n', { mode: 0o700 });
+  for (const dir of ["runtime", "homerail_cli/dist", "scripts"]) fs.mkdirSync(path.join(release, dir), { recursive: true });
+  fs.mkdirSync(path.join(home, "manager/secrets"), { recursive: true });
+  fs.symlinkSync(release, path.join(stable, "current"));
+  fs.symlinkSync(process.execPath, path.join(release, "runtime/node"));
+  fs.writeFileSync(path.join(release, "REVISION"), "a".repeat(40));
+  fs.writeFileSync(path.join(home, "manager/secrets/dag-mutation.token"), "x".repeat(43), { mode: 0o600 });
+  fs.writeFileSync(path.join(release, "scripts/configure-pr-review-runtime-profile.mjs"), "console.log('fixture-profile')\n");
+  // The fixture also supports a stable release containing the optional execution-evidence collector (PR282).
+  // This is a test dependency stub, NOT production evidence: it performs no network access and reports zero model usage.
+  fs.writeFileSync(path.join(release, "scripts/pr-review-execution-evidence.mjs"), [
+    'import fs from "node:fs";',
+    'const [runId, outputPath] = process.argv.slice(2);',
+    'const evidence = {',
+    '  schema: "pr-review-execution-evidence-v1",',
+    '  run_id: runId,',
+    '  quorum_basis: "reviewer_executions",',
+    '  distinct_model_identities: 0,',
+    '  provenance_complete: false,',
+    '  usage_state: "unknown",',
+    '  observed_tokens: null,',
+    '  reviewers: [],',
+    '};',
+    'fs.writeFileSync(outputPath, JSON.stringify(evidence));',
+    'process.exit(0);',
+    '',
+  ].join("\n"));
+  const calls = path.join(tmp, "calls.jsonl");
+  fs.writeFileSync(path.join(release, "homerail_cli/dist/cli.js"), `
+    const fs=require('node:fs');
+    const args=process.argv.slice(2);
+    fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(args)+'\\n');
+    if(args.includes('run-template')){console.error('Observation unavailable for fixed-run');process.exit(${code});}
+    console.log('{}');
+  `);
+  const result = spawnSync("bash", [path.join(root, "scripts/run-stable-dag-runner.sh")], {
+    encoding: "utf8", timeout: 10000,
+    env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH, HOMERAIL_STABLE_ROOT: stable, HOMERAIL_STABLE_HOME: home,
+      HOMERAIL_STABLE_MANAGER_URL: "http://127.0.0.1:19991", HOMERAIL_STABLE_TASK: "pr-review",
+      HOMERAIL_STABLE_RUN_ID: "fixed-run", HOMERAIL_PR_REVIEW_INPUT: "{}",
+      HOMERAIL_PR_REVIEW_INPUT_FILE: "", HOMERAIL_PR_REVIEW_ARTIFACT_DIR: artifacts },
+  });
+  assert.equal(result.error, undefined);
+  assert.ok(fs.existsSync(calls), result.stderr || result.stdout || "fixture CLI was not invoked");
+  const invocations = fs.readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse);
+  assert.equal(invocations.filter(args => args.includes("run-template")).length, 1);
+  assert.equal(invocations.filter(args => args.includes("stop")).length, code === 75 ? 0 : 1);
+  assert.equal(result.status, code);
+  if (code === 75) {
+    assert.match(result.stderr, /observation unavailable during create reconciliation or terminal\/artifact waiting/);
+    assert.match(result.stderr, /may still be running and consuming resources/);
+    assert.match(result.stderr, /inspect the same run ID/);
+  }
+  assert.equal(fs.readFileSync(path.join(artifacts, "run-id.txt"), "utf8").trim(), "fixed-run");
+});
 
 test("stable runner uses the deployed release and never starts a transient Manager", () => {
   const bootstrap = fs.readFileSync(path.join(root, "scripts/lib/stable-automation-runtime.sh"), "utf8");
