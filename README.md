@@ -188,6 +188,8 @@ before the first Worker dispatch](docs/e2e-fix-recovery.md), preserving complete
 Planner evidence and the original root and round.
 New E2E Fix workflows also route confirmed Fixer output truncation to the
 in-graph Judger for a bounded strategy revision; unknown execution pauses.
+DSH provides bounded, content-free output byte diagnostics to distinguish
+observed reasoning, text and tool arguments; these are not token budgets.
 See the same guide for evidence requirements and remaining recovery limits.
 
 For a topology check without a live model provider, the two-node template ships

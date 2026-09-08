@@ -77,4 +77,26 @@ nodes:
     append(usage({ usage: { input_tokens: 1, output_tokens: -1, cache_read_input_tokens: 0 } })); append(error());
     expect(read()).toMatchObject({ outcome: "unknown", attempts: [], usage_status: "unknown" });
   });
+  it("deduplicates scoped byte observations without carrying raw debug fields or summing copies", () => {
+    const data = { version: 1, final: true, unit: "utf8_bytes", scope: "observed_root_session_events_not_tokens",
+      stream_bytes: { text: 0, reasoning: 8000, tool_arguments: 512 },
+      message_bytes: { text: 0, reasoning: 8000, tool_arguments: 512 },
+      stream_events: 10, message_events: 1, interim_snapshots: 1, raw_output: "must not reach Judger" };
+    const observation = { ...scope, type: "agent_debug", execution_id: "execution-one", source: "deepseek-harness",
+      message: "output_observation", data };
+    append(observation); append(observation);
+    append({ ...observation, session_id: "stale", data: { ...data, stream_bytes: { text: 100, reasoning: 0, tool_arguments: 0 } } });
+    append(usage()); append(error());
+    const result = read();
+    expect(result.attempts).toHaveLength(1);
+    expect(result.attempts[0]).toMatchObject({ output_tokens: 8191,
+      output_observation: { stream_bytes: data.stream_bytes, message_bytes: data.message_bytes } });
+    expect(JSON.stringify(result)).not.toContain("must not reach Judger");
+  });
+  it("rejects malformed observations and does not use debug output as proof of truncation", () => {
+    append({ ...scope, type: "agent_debug", execution_id: "execution-one", source: "deepseek-harness",
+      message: "output_observation", data: { version: 1, final: true, unit: "tokens", output_tokens: 8191 } });
+    append(usage({ finish_reason: null })); append(error());
+    expect(read()).toMatchObject({ outcome: "unknown", attempts: [{ output_observation: null }] });
+  });
 });

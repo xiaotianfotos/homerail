@@ -696,6 +696,7 @@ export async function runPrompt(
           const debugData = redactForTurn(event.data ?? {}) as Record<string, unknown>;
           sendStream({
             event: "agent_debug",
+            execution_id: usageExecutionId,
             source: event.source,
             message: debugMessage,
             data: debugData,

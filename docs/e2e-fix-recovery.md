@@ -1,5 +1,19 @@
 # E2E Fix: recovering a pre-dispatch configuration failure
 
+DSH output diagnostics now retain bounded, content-free byte observations for
+reasoning, visible text and tool arguments. Stream deltas and assembled messages
+are separate counters because their contents can overlap. At most 16 interim
+snapshots and one final snapshot are emitted per adapter invocation. The Worker
+binds diagnostics to its usage execution ID; failure evidence exposes the latest
+validated snapshot from the matching native session and round to the Judger.
+No reasoning text or incomplete tool arguments are copied into these records,
+and a partial tool call never becomes a handoff. These counters measure observed
+UTF-8 bytes, not token usage; zero means unobserved, not proof that the provider
+generated nothing. A process crash or early handoff can omit the final snapshot.
+Old Worker images do not provide this evidence. This improves diagnosis, but
+does not implement a cumulative token admission limit or retain raw partial
+model output.
+
 E2E Fix remains experimental. This recovery handles a narrow failure: the
 Manager rejects an agent runtime configuration before the root's first Worker
 dispatch. It does not retry an uncertain model request or revive arbitrary

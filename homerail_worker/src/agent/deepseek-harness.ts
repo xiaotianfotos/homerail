@@ -21,6 +21,7 @@ import {
   type HarnessNotification,
 } from "@deepseek-ai/dsh-sdk-client";
 import { sanitizedAgentChildEnv } from "./child-env.js";
+import { DeepSeekHarnessOutputObservation } from "./deepseek-harness-output.js";
 import type {
   AgentClient,
   AgentEvent,
@@ -380,6 +381,7 @@ export class DeepSeekHarnessAdapter implements AgentClient {
     let aggregateUsage: AgentUsage = {};
     let latestFinishReason: string | null = null;
     const queue = new AsyncQueue<AgentEvent>();
+    const outputObservation = new DeepSeekHarnessOutputObservation();
 
     try {
       const providerProfile = dshProviderProfile(context, this.maxTokens);
@@ -507,6 +509,10 @@ export class DeepSeekHarnessAdapter implements AgentClient {
               if (!isPromptReceipt(notification, sessionId, messageId)) continue;
               receivedPrompt = true;
             }
+            if (notification.method === "session.event" && notification.params.sessionId === sessionId) {
+              const observation = outputObservation.observe(notification.params.event);
+              if (observation) queue.push(observation);
+            }
             const mapped = notificationEvents(notification, aggregateUsage);
             aggregateUsage = mapped.usage;
             if (mapped.finish !== null) latestFinishReason = mapped.finish;
@@ -520,6 +526,8 @@ export class DeepSeekHarnessAdapter implements AgentClient {
 
       for await (const event of queue) yield event;
       await runTask;
+      const observation = outputObservation.end();
+      if (observation) yield observation;
       yield {
         type: "done",
         usage: aggregateUsage,
@@ -528,6 +536,8 @@ export class DeepSeekHarnessAdapter implements AgentClient {
         output_token_limit: this.maxTokens,
       };
     } catch (error) {
+      const observation = outputObservation.end();
+      if (observation) yield observation;
       const message = redactSecret(error instanceof Error ? error.message : String(error), context.apiKey);
       yield { type: "error", message: `DeepSeek Harness failed: ${message}` };
       yield {

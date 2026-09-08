@@ -116,6 +116,24 @@ function status(sessionId, value) {
 
 function finish(reason = "completed") {
   const sessionId = activeSession;
+  if (process.env.DSH_FAKE_TRUNCATED_OUTPUT) {
+    const content = [
+      { type: "reasoning", text: "私密推理test-secret" },
+      { type: "tool-call", id: "partial", name: "handoff", arguments: '{"port":"done","content":' },
+    ];
+    if (process.env.DSH_FAKE_TRUNCATED_OUTPUT === "stream") {
+      event(sessionId, "assistant/chunk", { turn: 1, step: 1,
+        chunk: { type: "reasoning-delta", index: 0, text: content[0].text } });
+      event(sessionId, "assistant/chunk", { turn: 1, step: 1,
+        chunk: { type: "tool-call-delta", index: 1, id: "partial", argumentsDelta: content[1].arguments } });
+    }
+    event(sessionId, "assistant/message", { turn: 1, step: 1,
+      message: { id: "partial-message", role: "assistant", content },
+      usage: { inputTokens: 17, outputTokens: 8191 } });
+    event(sessionId, "turn/end", { turn: 1, reason: { kind: "max-tokens" } });
+    status(sessionId, "idle");
+    return;
+  }
   event(sessionId, "assistant/chunk", {
     turn: 1,
     step: 1,

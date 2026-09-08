@@ -151,6 +151,8 @@ hr eval-run <run_id>
 保留已完成的 Planner 证据、原 root 和 round。
 新建 E2E Fix 工作流还会把已确认的 Fixer 输出截断送入图内 Judger，
 由它提出有界的策略调整；执行状态未知则暂停。证据要求和恢复边界见同一指南。
+DSH 还提供有界且不含原文的输出字节诊断，区分观察到的推理、正文和工具参数；
+这不等于 token 预算限制。
 
 若暂时没有真实的模型 provider，只想验证拓扑，two-node 模板自带一个离线确定性 profile：
 

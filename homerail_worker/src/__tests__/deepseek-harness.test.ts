@@ -51,6 +51,22 @@ async function collect(
 }
 
 describe("DeepSeekHarnessAdapter", () => {
+  it.each(["stream", "message"])("retains content-free %s truncation diagnostics without inventing a handoff", async mode => {
+    vi.stubEnv("DSH_FAKE_TRUNCATED_OUTPUT", mode);
+    const events = await collect(new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime }), context());
+    const observations = events.filter(e => e.type === "debug" && e.message === "output_observation");
+    expect(observations.at(-1)).toMatchObject({ data: {
+      final: true, unit: "utf8_bytes", message_events: 1,
+      stream_bytes: { text: 0, reasoning: mode === "stream" ? Buffer.byteLength("私密推理test-secret") : 0,
+        tool_arguments: mode === "stream" ? Buffer.byteLength('{"port":"done","content":') : 0 },
+      message_bytes: { text: 0, reasoning: Buffer.byteLength("私密推理test-secret"),
+        tool_arguments: Buffer.byteLength('{"port":"done","content":') },
+    } });
+    expect(JSON.stringify(observations)).not.toMatch(/test-secret|私密推理|handoff|partial-message/);
+    expect(events.some(e => e.type === "tool_use")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "done", finish_reason: "max-tokens", usage: { output_tokens: 8191 } });
+  });
+
   it("exposes the configured output limit before handoff can end consumption", async () => {
     const adapter = new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime, maxTokens: 16_384 });
     const events = await collect(adapter, context());
