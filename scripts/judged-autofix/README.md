@@ -123,9 +123,13 @@ allowing a controller reopen to reconcile a successful write whose
 acknowledgement was lost without issuing another PATCH. If `attempted` is true
 but the target body is not yet visible (ambiguous pre-send crash or stale read),
 publish throws a reconciliation-pending error rather than repeating the mutation.
-GitHub does not provide a compare-and-swap body-hash guard, so a post-read
-concurrent external edit cannot be excluded; the mechanism guarantees at-most-one
-send from the controller's perspective but does not claim server-side atomicity.
+This implementation does not use a server-side compare-and-swap guard, so a
+post-read concurrent external edit cannot be excluded; the mechanism guarantees
+at-most-one send from the controller's perspective but does not claim server-side
+atomicity. After a successful update, the `body_update` marker is retained with
+`confirmed: true` rather than cleared, so a subsequent reopen that observes an
+externally restored old body is treated as a reconciliation conflict and never
+emits another PATCH.
 
 If a publication attempt fails after acceptance, the Judger may revoke acceptance
 by issuing a new decision with `verdict: "revise"` and valid `round`, `plan_digest`
