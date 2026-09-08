@@ -353,7 +353,9 @@ export class JudgedLoop {
       }
       if(this.state.publication){
         const ap=this.state.publication;
-        if(ap.repo===repo&&ap.branch===branch&&ap.base===base&&ap.title===title)throw new Error('active publication matches target; recovery target is stale');
+        if(ap.repo===repo&&ap.branch===branch&&ap.base===base&&ap.title===title){
+          if(ap.url||ap.body_update!==undefined||ap.head!==r.candidate_commit||typeof ap.body_digest!=='string'||!hex64.test(ap.body_digest))throw new Error('active publication matches target; recovery target is stale');
+        }
       }
     }
     const hist=this.state.publication_history??[];
@@ -363,7 +365,7 @@ export class JudgedLoop {
       const h=hist[i];
       if(h.repo===repo&&h.branch===branch&&h.base===base&&h.title===title){
         if(h.url&&typeof h.body_digest==='string'&&hex64.test(h.body_digest)){baseline=h;break;}
-        if(!h.url&&h.body_update&&h.body_update.attempted===true&&h.body_update.confirmed!==true)throw new Error('intervening unresolved update found; cannot recover past it');
+        if(!h.url&&h.body_update)throw new Error('intervening unresolved update found; cannot recover past it');
       }
     }
     if(!baseline)throw new Error('no confirmed publication baseline found');

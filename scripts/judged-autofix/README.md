@@ -157,6 +157,40 @@ reviewed decision is required for another recovery attempt. If the target is alr
 visible at the PR source, ordinary `publish` reconciles it without recovery. Revise
 alone does not resolve an old pending update.
 
+#### Invocation
+
+```sh
+node /work/repair-task/run.mjs /work/repair-task recover-publication /work/repair-task/recovery.json
+node /work/repair-task/run.mjs /work/repair-task publish /work/repair-task/pr-body.md
+```
+
+#### Recovery decision semantics
+
+The loop must be in the `accepted` phase with valid evidence. The decision JSON
+requires exact fields: `action:"abandon-body-update-at-source"`, `task_nonce`,
+`round`, `plan_digest`, `head` (= current candidate commit),
+`previous_attempt_settled: true` (operator attestation, not programmatic proof
+of absence), `reason` (nonempty), `target` (`"current"` or nonnegative history
+index), and `publication_digest` (identity of the pending entry).
+
+When `target` is a history index and a matching active publication exists, it
+must be a **prepared current intent**: no `url`, `body_update` strictly
+`undefined`, `head` equal to the current candidate, and a valid 64-char
+lowercase-hex `body_digest`. This is the safe intent that `publish` persisted
+before its reconciliation guard fired without sending any PATCH. Any other
+matching active publication (with url, body_update, wrong head, or invalid
+digest) is rejected before mutation.
+
+The baseline search never skips an unresolved update: any matching history
+entry between the baseline and the target that has a `body_update` but no
+top-level `url` blocks recovery regardless of `attempted` or `confirmed`
+values. Recovery is rejected before any state change.
+
+Recovery performs read-only `gh pr list` only. At most one body send occurs
+**per intent**; recovery clears custody so the next `publish` creates a new
+independent intent. No server-side CAS or automatic convergence guarantee
+exists—recovery is a manual evidence-bound operator decision.
+
 If a publication attempt fails after acceptance, the Judger may revoke acceptance
 by issuing a new decision with `verdict: "revise"` and valid `round`, `plan_digest`
 and `reason`. The prior acceptance judgment is preserved in `judgment_history` and
