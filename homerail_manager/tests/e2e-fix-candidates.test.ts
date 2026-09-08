@@ -1,0 +1,85 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { E2eFixCandidates } from "../src/runtime/e2e-fix-candidates.js";
+
+describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () => {
+  let root: string; let repo: string; let store: E2eFixCandidates; let base: string;
+  const git = (...args: string[]) => {
+    const r = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim();
+  };
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-candidates-")); repo = path.join(root, "source");
+    fs.mkdirSync(repo); git("init"); git("config", "user.name", "fixture"); git("config", "user.email", "fixture@example.invalid");
+    fs.writeFileSync(path.join(repo, "sum.cjs"), "module.exports = (a,b) => a-b;\n");
+    fs.mkdirSync(path.join(repo, "tests")); fs.writeFileSync(path.join(repo, "tests", "frozen.cjs"), "trusted test\n");
+    git("add", "."); git("-c", "commit.gpgsign=false", "commit", "-m", "base"); base = git("rev-parse", "HEAD");
+    store = new E2eFixCandidates(path.join(root, "private")); store.seed(repo, base);
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  function request() {
+    return { task_id: "issue-1", root_run_id: "root", round: 1, plan_sha256: "a".repeat(64), policy_sha256: "b".repeat(64),
+      repo: "fixture/repo", base, parent: base, allowed_paths: ["sum.cjs"], protected_paths: ["tests"], summary: "add correctly",
+      edits: [{ path: "sum.cjs", old: "a-b", new: "a+b" }] };
+  }
+  it("creates a real deterministic commit without changing a dirty caller checkout/index", () => {
+    fs.writeFileSync(path.join(repo, "untracked"), "keep me"); fs.appendFileSync(path.join(repo, "sum.cjs"), "// local edit\n");
+    const before = git("status", "--porcelain");
+    const candidate = store.capture(request());
+    expect(store.capture(request())).toEqual(candidate);
+    expect(candidate.head).not.toBe(base);
+    expect(store.source(candidate.head, ["sum.cjs"])["sum.cjs"]).toBe("module.exports = (a,b) => a+b;\n");
+    expect(git("rev-parse", "HEAD")).toBe(base); expect(git("status", "--porcelain")).toBe(before);
+  });
+  it("retains previous candidates and rejects a different proposal for the same round", () => {
+    const first = store.capture(request());
+    const second = store.capture({ ...request(), round: 2, parent: first.head, edits: [{ path: "sum.cjs", old: "a+b", new: "Number(a)+Number(b)" }] });
+    expect(second.head).not.toBe(first.head);
+    expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "a-b", new: "a*b" }] })).toThrow(/immutable/);
+    expect(store.source(first.head, ["sum.cjs"])["sum.cjs"]).toContain("a+b");
+  });
+  it("rejects a candidate relabeled with a different plan or Git tree", () => {
+    const value = store.capture(request()); store.verifyCandidate(value);
+    expect(() => store.verifyCandidate({ ...value, plan_sha256: "c".repeat(64) })).toThrow(/identity/);
+    expect(() => store.verifyCandidate({ ...value, tree: "e".repeat(40) })).toThrow(/head\/tree/);
+  });
+  it.each(["../outside", "/tmp/outside", ".git/config", "x/.GIT/hooks", "sum.cjs/../x"])("rejects unsafe path %s", name => {
+    expect(() => store.capture({ ...request(), allowed_paths: [name], edits: [{ path: name, old: "", new: "evil" }] })).toThrow(/unsafe/);
+  });
+  it("rejects edits to frozen test definitions even if a model puts them in its plan", () => {
+    expect(() => store.capture({ ...request(), allowed_paths: ["tests/frozen.cjs"],
+      edits: [{ path: "tests/frozen.cjs", old: "trusted test", new: "always pass" }] })).toThrow(/scope/);
+  });
+  it("rejects stale, ambiguous, duplicate and no-op edits", () => {
+    expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "missing", new: "x" }] })).toThrow(/stale/);
+    expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "a", new: "x" }] })).toThrow(/ambiguous/);
+    expect(() => store.capture({ ...request(), edits: [...request().edits, ...request().edits] })).toThrow(/scope/);
+    expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "a-b", new: "a-b" }] })).toThrow(/unchanged/);
+  });
+  it("preserves literal dollar substitutions and only permits explicit new-file scope", () => {
+    const candidate = store.capture({ ...request(), allowed_paths: ["new.cjs"], edits: [{ path: "new.cjs", old: "", new: "module.exports='$&';" }] });
+    expect(store.source(candidate.head, ["new.cjs"])["new.cjs"]).toBe("module.exports='$&';");
+  });
+  it("builds and reuses an exact regular-file snapshot", () => {
+    const candidate = store.capture(request()); const dir = store.snapshot(candidate.tree);
+    expect(store.snapshot(candidate.tree)).toBe(dir);
+    expect(fs.readFileSync(path.join(dir, "sum.cjs"), "utf8")).toContain("a+b");
+    expect(fs.existsSync(path.join(dir, ".git"))).toBe(false);
+  });
+  it.each(["content", "missing", "extra", "symlink", "directory"])("rejects snapshot %s drift", kind => {
+    const candidate = store.capture(request()); const dir = store.snapshot(candidate.tree); const file = path.join(dir, "sum.cjs");
+    if (kind === "content") { fs.chmodSync(file, 0o644); fs.writeFileSync(file, "forged"); }
+    if (kind === "missing") fs.unlinkSync(file);
+    if (kind === "extra") fs.writeFileSync(path.join(dir, "forged-receipt.json"), "{}");
+    if (kind === "directory") fs.mkdirSync(path.join(dir, "extra"));
+    if (kind === "symlink") { fs.unlinkSync(file); fs.symlinkSync(path.join(repo, "sum.cjs"), file); }
+    expect(() => store.snapshot(candidate.tree)).toThrow(/snapshot/);
+  });
+  it("rejects a malicious snapshot path before creating any directory", () => {
+    expect(() => store.snapshot("../../escape")).toThrow(/identity/);
+    expect(fs.existsSync(path.join(root, "escape"))).toBe(false);
+  });
+});

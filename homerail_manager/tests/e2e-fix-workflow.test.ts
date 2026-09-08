@@ -83,7 +83,8 @@ describe("native E2E Fix topology (real Git/tests, simulated models/GitHub)", ()
   async function run(maxRounds = 4, options: { acceptBroken?: boolean; requireTypeGuard?: boolean } = {}) {
     const stageCommands = Object.fromEntries(E2E_FIX_STAGES.map(stage => [stage, [process.execPath,
       path.resolve("tests/fixtures/e2e-fix-stage.mjs"), root, stage]])) as Record<E2eFixStage, string[]>;
-    const parsed = parseE2eFixWorkflow({ workflowId: "e2e-fix-topology", maxRounds, stageCommands, stageTimeoutMs: 15000 });
+    const parsed = parseE2eFixWorkflow({ workflowId: "e2e-fix-topology", maxRounds, stageCommands, stageTimeoutMs: 15000,
+      durableStages: process.platform === "linux" });
     for (const agent of Object.values(parsed.meta.agents ?? {})) agent.agent_type = "deterministic";
     const models = new FixtureModels(options.acceptBroken === true);
     const executor = new GraphExecutor(models); models.executor = executor;
