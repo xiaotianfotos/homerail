@@ -470,13 +470,16 @@ test('a new accepted revision reconciles an archived landed update before publis
  assert.equal(reopened.state.publication_history.at(-1).body_update.confirmed,true);
  assert.equal(reopened.state.rounds.length,2);
 });
-for(const problem of ['wrong_url','wrong_target','not_attempted','invalid_source_hash','pending_target_absent'])test(`archived update reconciliation refuses ${problem} without another write`,async t=>{
+for(const problem of ['wrong_url','wrong_target','not_attempted','invalid_source_hash','pending_target_absent','non_boolean_attempted','array_source_hash','invalid_archived_hash_pending'])test(`archived update reconciliation refuses ${problem} without another write`,async t=>{
  const f=await publicationUpdateFixture(t,'lost_ack');assert.throws(()=>f.loop.publish(f.body),/lost update acknowledgement/);
  const archived=await nextPublicationRevision(f);
  if(problem==='wrong_url')archived.body_update.url='https://github.com/owner/repo/pull/99';
  if(problem==='wrong_target')archived.body_update.to_body_digest='0'.repeat(64);
  if(problem==='not_attempted')archived.body_update.attempted=false;
  if(problem==='invalid_source_hash')archived.body_update.from_body_digest='invalid';
+ if(problem==='non_boolean_attempted')archived.body_update.attempted='true';
+ if(problem==='array_source_hash')archived.body_update.from_body_digest=[archived.body_update.from_body_digest];
+ if(problem==='invalid_archived_hash_pending'){archived.body_digest='invalid';const row=JSON.parse(fs.readFileSync(f.storage,'utf8'));row.body=f.row.body;fs.writeFileSync(f.storage,JSON.stringify(row));}
  if(problem==='pending_target_absent'){const row=JSON.parse(fs.readFileSync(f.storage,'utf8'));row.body=f.row.body;fs.writeFileSync(f.storage,JSON.stringify(row));}
  f.loop.save('archived_update_fixture');const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));
  assert.equal(fs.readFileSync(f.updates,'utf8'),'x');assert.equal(reopened.state.publication_history.at(-1).url,undefined);
