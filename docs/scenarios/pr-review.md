@@ -169,3 +169,15 @@ need not already be terminal. If identity observation remains unavailable, the
 CLI exits 75 and the stable runner retains evidence without issuing stop. The
 later terminal-wait deadline remains a separate error path. No second create
 is sent, and retry-safe create is not assumed on an older Manager.
+
+After a successful create or adoption, continuous terminal-status or artifact
+observation failure for 180 seconds also exits 75, including HTTP errors such
+as 500. This intentionally preserves the known run and evidence without
+automatic stop; observation failure is not a confirmed execution failure. CLI
+failure ends local observation only—a run may still execute and consume
+resources. The operator must inspect the same run ID, resume observation, or
+explicitly stop according to intent; do not resubmit `run-template` as a resume
+operation. The 75 path itself does not enforce a server-side runtime or token
+budget or guarantee eventual convergence. A normal terminal/artifact wait
+deadline remains a separate ordinary failure that triggers the existing runner
+stop attempt, not exit 75. No second create is sent.

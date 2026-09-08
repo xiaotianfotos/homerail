@@ -119,7 +119,7 @@ if [ "$cli_status" -ne 0 ]; then
     rm -f "$COMMAND_TMP"
   fi
   if [ "$cli_status" -eq 75 ]; then
-    printf '%s\n' "DAG run ${RUN_ID} observation unavailable after create; not calling stop to preserve the run for operator inspection." >&2
+    printf '%s\n' "DAG run ${RUN_ID} observation unavailable during create reconciliation or terminal/artifact waiting; not calling stop. It may still be running and consuming resources; inspect the same run ID to resume observation or explicitly stop it." >&2
   else
     stable_hr stop "$RUN_ID" >/dev/null 2>&1 || true
   fi
