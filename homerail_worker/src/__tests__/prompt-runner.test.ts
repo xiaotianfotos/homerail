@@ -372,19 +372,20 @@ describe("prompt runner", () => {
     try {
       for(const variant of variants){
         let observed:AgentRunContext|undefined;let observedTools:string[]=[];
+        const sent:string[]=[];
         vi.spyOn(agentFactory,"createAgentClient").mockReturnValue({run(_prompt,tools,context){
           observed=context;observedTools=tools.map(t=>t.name);
           return(async function*(){await tools.find(t=>t.name==="handoff")!.handler({port:"done",content:"verified"});yield{type:"done" as const};})();
         }});
-        await runPrompt({runId:fence.runId,sender:"test",
+        await runPrompt({runId:fence.runId,sender:"test",llmProtocol:"anthropic_compatible",
           task:`## input:correction\nRepair missing handoff\n## input:review_recovery\n${JSON.stringify(recovery)}`,
           trustedInputs:variant.value?{review_recovery:[variant.value]}:{},
           dagConfig:makeConfigWith({session_id:fence.sessionId,round_id:fence.roundId,generation:fence.generation,
             workspace_access:{readonly_paths:["."],writable_paths:variant.name==="writable workspace"?["."]:[]},
             allowed_builtin_tools:["Read","Grep","Write","Bash"],max_builtin_tool_calls:5,
             allowed_dag_tools:["handoff","credential_broker_call"]}),
-        },{wsSend:()=>{},agentBackend:"claude-sdk",auditDir:join(root,"audit")});
-        expect(observed,variant.name).toBeDefined();
+        },{wsSend:message=>sent.push(message),agentBackend:"claude-sdk",auditDir:join(root,"audit")});
+        expect(observed,variant.name+JSON.stringify(sent.map(x=>JSON.parse(x)).filter(x=>x.data?.message))).toBeDefined();
         expect(observed?.handoffOnly,variant.name).toBe(!variant.expected);
         if(variant.expected){
           expect(observed?.allowedBuiltinTools).toEqual(["Read","Grep"]);
