@@ -593,3 +593,19 @@ for(const custody of ['confirmed_current','pending_current','pending_archived','
  const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));assert.equal(fs.existsSync(created),false,'must refuse before creating replacement PR');
  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls.filter(a=>a[0]==='pr'&&a[1]==='create').length,0);
 });
+
+for(const custody of ['confirmed_history','pending_archived'])test(`missing owned PR scans past newer prepared history to ${custody}`,async t=>{
+ const f=await publicationUpdateFixture(t,'lost_ack');
+ if(custody==='pending_archived')assert.throws(()=>f.loop.publish(f.body),/lost update acknowledgement/);
+ // A newer round may persist only publication_intent before observation fails;
+ // revising then archives that prepared record after older URL/update custody.
+ const older=custody==='pending_archived'?f.loop.state.publication:f.previous;
+ const prepared={head:'b'.repeat(40),branch:older.branch,repo:older.repo,base:older.base,title:older.title,body_digest:digest(Buffer.from('Prepared body without remote acknowledgement'))};
+ if(custody==='pending_archived')f.loop.state.publication_history.push(older);
+ f.loop.state.publication_history.push(prepared);delete f.loop.state.publication;f.loop.save('prepared_history_after_older_custody');
+ const created=path.join(f.root,'unexpected-created');
+ fs.writeFileSync(path.join(f.root,'bin/gh'),`#!${process.execPath}\nconst fs=require('fs');const a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(f.calls)},JSON.stringify(a)+'\\n');if(a[0]==='pr'&&a[1]==='list')console.log('[]');else if(a[0]==='pr'&&a[1]==='create'){fs.writeFileSync(${JSON.stringify(created)},'orphan');console.log('https://github.com/owner/repo/pull/2');}else throw Error('unexpected operation');`,{mode:0o755});
+ const reopened=f.attach(new JudgedLoop(f.root));assert.throws(()=>reopened.publish(f.body));
+ assert.equal(fs.existsSync(created),false,'newer prepared history must not hide older PR custody');
+ const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls.filter(a=>a[0]==='pr'&&a[1]==='create').length,0);
+});
