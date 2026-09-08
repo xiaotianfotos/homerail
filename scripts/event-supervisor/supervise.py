@@ -150,9 +150,11 @@ def rejoin_runner(root, spec, record):
     return promote_receipt(root, spec, record)
 
 
-def main(spec_path, reconcile_only=False):
+def main(spec_path, reconcile_only=False, expected_digest=None):
     spec_path = Path(spec_path).resolve()
     raw = spec_path.read_bytes()
+    if expected_digest is not None and hashlib.sha256(raw).hexdigest() != expected_digest:
+        raise ValueError('spec changed after registration validation; no command executed')
     spec = json.loads(raw)
     root = Path(spec['event_dir']).resolve()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)

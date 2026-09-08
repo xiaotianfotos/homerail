@@ -320,7 +320,8 @@ def run(record_path, reconcile_only=False):
         return 1 if reconcile_only else 0
     from supervise import main
     try:
-        return main(Path(record['spec_path']), reconcile_only=reconcile_only)
+        return main(Path(record['spec_path']), reconcile_only=reconcile_only,
+                    expected_digest=record['spec_digest'])
     except (OSError, ValueError, KeyError, TypeError) as exc:
         from supervise import notify
         with locked(root / 'lock'):

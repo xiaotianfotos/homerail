@@ -293,6 +293,16 @@ class DurableTests(unittest.TestCase):
         self.assertFalse((self.root / 'runs').exists())
         self.assertTrue(self.event('preflight_failed'))
 
+    def test_spec_read_race_cannot_execute_an_unregistered_command(self):
+        from supervise import main
+        record, r = self.register()
+        self.spec['argv'] = [sys.executable, str(self.queue)]
+        self.path.write_text(json.dumps(self.spec))
+        with self.assertRaisesRegex(ValueError, 'registration validation'):
+            main(self.path, expected_digest=r['spec_digest'])
+        self.assertFalse((self.root / 'events').exists())
+        self.assertFalse((self.root / 'deliveries').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
