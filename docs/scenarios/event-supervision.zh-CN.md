@@ -62,6 +62,11 @@ python3 scripts/event-supervisor/durable.py reconcile /absolute/registration.jso
 读取通知后核对本地事件、当前 round/plan/head、执行收据及独立测试/审查产物，再由 Judger
 判断，并保存幂等消费回执。重复或过期事件只记录，不能因此重跑 DAG、测试或发布。
 GitHub 观察失败不代表工作流失败，工作流绿色也不代表所有模型完成审查。
+API 的 workflow path 可带 `@ref` 后缀，两种形式都支持；run ID、attempt 和提交仍须匹配。
+GitHub 收据及完成事件的 `after.github` 保存固定目标、观察结果及结果文件摘要。
+失败结果保留 `workflow_failed`、`observation_unavailable`、`observation_deadline`
+或身份/观察错误，不再全部归为执行失败。缺失或矛盾的结果仍是证据错误；
+消费者须先读取具体 outcome，才能判断工作流是否确实失败。
 
 通知发送前保存尝试状态。送达失败、超时或不确定时不盲目重发，因此不承诺恰好一次外部修改或
 必达唤醒。整机掉电仍可能发生在执行收据写入前；此时检查已保存的候选、实际远端执行和现有测试，

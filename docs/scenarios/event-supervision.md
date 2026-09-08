@@ -97,6 +97,14 @@ or the observation deadline. It never dispatches, cancels, or publishes. The
 deadline is checked between bounded API requests; it is not a workflow timeout.
 An unavailable observation does not prove the workflow failed. A successful
 workflow does not prove all reviewers completed: the Judger must read artifacts.
+The API workflow path may include an `@ref` suffix; both that form and the plain
+path are accepted while run ID, attempt and workflow commit remain pinned.
+GitHub receipts and finished events embed `after.github` with the immutable
+target, adapter result and its file digest. Non-success outcomes preserve
+`workflow_failed`, `observation_unavailable`, `observation_deadline` or the
+identity/observation error, rather than labeling every condition execution failure.
+A missing or inconsistent adapter result remains an evidence error. Consumers
+must read the typed outcome before deciding whether a workflow actually failed.
 
 ## Recover and consume evidence
 

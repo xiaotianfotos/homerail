@@ -16,6 +16,21 @@ import time
 from supervise import environment, observe, process_identity, save, validate
 
 
+def github_observation(root, target, code):
+    """Preserve the adapter result in the hashed receipt, including read outages."""
+    raw = (root / 'github-result.json').read_bytes()
+    result = json.loads(raw)
+    outcomes = {'success', 'workflow_failed', 'observation_unavailable',
+                'observation_deadline', 'invalid_observation', 'stale_pr',
+                'wrong_execution', 'unknown_status'}
+    if not isinstance(result, dict) or result.get('outcome') not in outcomes:
+        raise ValueError('invalid GitHub adapter result')
+    if code != (0 if result['outcome'] == 'success' else 1):
+        raise ValueError('GitHub adapter result differs from exit code')
+    return {'target': target, 'result': result,
+            'sha256': hashlib.sha256(raw).hexdigest()}
+
+
 def execute(spec_path):
     raw = Path(spec_path).read_bytes()
     spec = json.loads(raw)
@@ -37,6 +52,8 @@ def execute(spec_path):
             validate(spec, before)
             command = ([sys.executable, str(Path(__file__).with_name('watch_github.py')), str(spec_path)]
                        if 'github' in spec else spec['argv'])
+            if 'github' in spec and (root / 'github-result.json').exists():
+                raise ValueError('GitHub adapter result predates this execution')
             # stdout/stderr already point at the supervisor's private log file.
             child = subprocess.Popen(command, cwd=spec['cwd'], env=environment(spec))
             record.update(status='running', pid=child.pid, child_identity=process_identity(child.pid), before=before)
@@ -45,8 +62,13 @@ def execute(spec_path):
             after = observe(spec)
             validate(spec, after)
             success = code == 0 and (not spec.get('task_root') or after['phase'] in spec['expected_phases'])
+            outcome = 'needs_judger' if success else 'execution_failed'
+            if 'github' in spec:
+                after['github'] = github_observation(root, spec['github'], code)
+                if code != 0:
+                    outcome = after['github']['result']['outcome']
             record.update(status='finished', exit_code=code, after=after,
-                          outcome='needs_judger' if success else 'execution_failed', finished_at=time.time(),
+                          outcome=outcome, finished_at=time.time(),
                           log_digest=hashlib.sha256((root / 'execution.log').read_bytes()).hexdigest())
             save(receipt_path, record)
             return 0

@@ -20,8 +20,15 @@ def check(spec, pr, run):
     # branch: bind workflow_head and pr_head independently, never conflate them.
     if pr['number'] != spec['pr'] or pr['state'] != 'open' or pr['head']['sha'] != spec['pr_head']:
         return 'stale_pr'
+    workflow_path = run['path']
+    expected_path = spec['workflow_path']
+    # REST responses may include @ref; the pinned run/attempt/head remain the
+    # execution identity. Do not strip arbitrary owner/repository prefixes.
+    path_matches = isinstance(workflow_path, str) and (
+        workflow_path == expected_path or
+        (workflow_path.startswith(expected_path + '@') and len(workflow_path) > len(expected_path) + 1))
     if (run['id'] != spec['run_id'] or run['run_attempt'] != spec['run_attempt'] or
-            run['head_sha'] != spec['workflow_head'] or run['path'] != spec['workflow_path']):
+            run['head_sha'] != spec['workflow_head'] or not path_matches):
         return 'wrong_execution'
     if run['status'] == 'completed':
         return 'success' if run['conclusion'] == 'success' else 'workflow_failed'

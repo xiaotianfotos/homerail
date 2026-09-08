@@ -104,7 +104,12 @@ class DurableTests(unittest.TestCase):
         self.assertTrue(self.event('registration_invalid'))
 
     def test_actual_killed_supervisor_preserves_original_child(self):
-        self.job.write_text(self.job.read_text() + '\nimport time;time.sleep(1)\n')
+        release = self.root / 'allow-finish'
+        self.job.write_text(self.job.read_text() +
+                           '\nimport time\ndeadline=time.monotonic()+60\n'
+                           'while not Path(__file__).with_name("allow-finish").exists():\n'
+                           ' if time.monotonic()>deadline:raise RuntimeError("fixture deadline")\n'
+                           ' time.sleep(.01)\n')
         record, r = self.register()
         proc = subprocess.Popen([sys.executable, str(Path(r['runtime']) / 'durable.py'), 'run', str(record)])
         try:
@@ -117,6 +122,7 @@ class DurableTests(unittest.TestCase):
             cmd = [sys.executable, str(Path(r['runtime']) / 'durable.py'), 'run', str(record)]
             recovery = subprocess.Popen(cmd)
             def cleanup_recovery():
+                release.touch()
                 try:
                     recovery.wait(timeout=5)
                 except subprocess.TimeoutExpired:
@@ -135,6 +141,7 @@ class DurableTests(unittest.TestCase):
                         durable.lifecycle(action, record, self.units)
             self.assertEqual((self.root / 'runs').read_text(), 'run\n')
             self.assertEqual((self.root / 'deliveries').read_text(), 'queue\n')
+            release.touch()
             self.assertEqual(recovery.wait(timeout=5), 0)
             # The detached trusted runner records completion despite supervisor death.
             self.assertEqual(durable.read(self.root / 'events/runner.json')['status'], 'finished')
@@ -143,9 +150,57 @@ class DurableTests(unittest.TestCase):
             self.assertEqual((self.root / 'runs').read_text(), 'run\n')
             self.assertEqual((self.root / 'deliveries').read_text(), 'queue\nqueue\n')
         finally:
+            release.touch()
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
+
+    def test_github_observation_result_reaches_durable_event(self):
+        del self.spec['argv']
+        self.spec['github'] = {'repo': 'owner/repo', 'pr': 1, 'run_id': 7, 'run_attempt': 1,
+                               'workflow_head': 'a'*40, 'pr_head': 'b'*40,
+                               'workflow_path': '.github/workflows/ci.yml',
+                               'maximum_wait_seconds': .000000001}
+        record, _ = self.register()
+        self.run_record(record)
+        receipt = self.event('runner')
+        event = self.event('finished')
+        self.assertEqual(receipt['outcome'], 'observation_deadline')
+        self.assertEqual(event['details']['outcome'], 'observation_deadline')
+        self.assertEqual(event['details']['after']['github']['target'], self.spec['github'])
+        self.assertEqual(event['details']['after']['github']['result']['outcome'], 'observation_deadline')
+        self.assertEqual(self.run_record(record).returncode, 0)
+        self.assertEqual((self.root / 'deliveries').read_text(), 'queue\n')
+
+    def test_github_completed_checks_and_stale_target_remain_distinct(self):
+        del self.spec['argv']
+        self.spec['github'] = {'repo': 'owner/repo', 'pr': 1, 'run_id': 7, 'run_attempt': 1,
+                               'workflow_head': 'a'*40, 'pr_head': 'b'*40,
+                               'workflow_path': '.github/workflows/ci.yml'}
+        gh = self.root / 'gh'
+        self.spec['environment'] = {'PATH': str(self.root) + os.pathsep + os.environ.get('PATH', '')}
+        for number, (case, expected) in enumerate([
+                ('success', 'needs_judger'), ('failure', 'workflow_failed'), ('stale', 'stale_pr')], 1):
+            with self.subTest(case=case):
+                pr = {'number': number, 'state': 'open', 'head': {'sha': ('c' if case == 'stale' else 'b')*40}}
+                run = {'id': 7, 'run_attempt': 1, 'head_sha': 'a'*40,
+                       'path': '.github/workflows/ci.yml@main', 'status': 'completed',
+                       'conclusion': case, 'html_url': 'https://example.invalid/run/7'}
+                self.spec.update(id=case, event_dir=str(self.root / case))
+                # Separate immutable targets for separate observations.
+                self.spec['github']['pr'] = number
+                gh.write_text('#!' + sys.executable + '\nimport sys\nprint(' +
+                              repr(json.dumps(pr)) + ' if "/pulls/" in sys.argv[-1] else ' +
+                              repr(json.dumps(run)) + ')\n')
+                gh.chmod(0o700)
+                record, _ = self.register()
+                self.run_record(record)
+                event_root = self.root / case
+                event = durable.read(event_root / 'finished.json')
+                self.assertEqual(event['details']['outcome'], expected)
+                self.assertEqual(event['details']['after']['github']['result']['conclusion'], case)
+                self.assertEqual(self.run_record(record).returncode, 0)
+        self.assertEqual((self.root / 'deliveries').read_text(), 'queue\n'*3)
 
     def test_concurrent_supervisors_only_execute_once(self):
         self.job.write_text(self.job.read_text() + '\nimport time;time.sleep(.2)\n')
