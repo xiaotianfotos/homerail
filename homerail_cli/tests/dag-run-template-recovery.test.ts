@@ -35,7 +35,7 @@ describe("known-run submission recovery", () => {
   });
 
   async function exercise(options: { terminal?: string; unavailable?: "missing" | "network" | "wrong_id";
-      httpError?: number; noRunId?: boolean; lateVisibility?: boolean; invalidTimeout?: boolean } = {}) {
+      httpError?: number; noRunId?: boolean; lateVisibility?: boolean; invalidTimeout?: boolean; stalledStatus?: boolean; falseSuccess?: boolean; longInterval?: boolean } = {}) {
     const calls: Array<{ url: string; method: string }> = [];
     let polls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
@@ -49,9 +49,13 @@ describe("known-run submission recovery", () => {
       }
       if (target.endsWith(`/api/runs/${RUN}/status`)) {
         polls++;
+        if (options.stalledStatus) return new Promise<Response>((resolve, reject) => {
+          const timer = setTimeout(() => resolve(reply({ success: true, data: {run_id: RUN, status: "completed"} })), 250);
+          init?.signal?.addEventListener("abort", () => {clearTimeout(timer); reject(new DOMException("aborted", "AbortError"));}, {once: true});
+        });
         if (options.unavailable === "missing" || (options.lateVisibility && polls === 1)) return reply({ success: false, message: "run not found" }, 404);
         if (options.unavailable === "network" || (options.lateVisibility && polls === 2)) throw new TypeError("status connection reset");
-        return reply({ success: true, data: { run_id: options.unavailable === "wrong_id" ? "another-run" : RUN,
+        return reply({ success: !options.falseSuccess, data: { run_id: options.unavailable === "wrong_id" ? "another-run" : RUN,
           status: options.lateVisibility && polls === 3 ? "running" : (options.terminal ?? "completed") } });
       }
       if (target.endsWith(`/api/runs/${RUN}/artifacts`)) return reply({ success: true, data: { artifacts: [] } });
@@ -60,7 +64,7 @@ describe("known-run submission recovery", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const args = ["node", "hr", "--json", "dag", "run-template", "recover", "--input", "{}",
-      "--wait", "--interval", "0.001", "--timeout", options.invalidTimeout ? "invalid" : "0.03"];
+      "--wait", "--interval", options.longInterval ? "0.25" : "0.001", "--timeout", options.invalidTimeout ? "invalid" : "0.03"];
     if (!options.noRunId) args.push("--run-id", RUN);
     await createProgram().parseAsync(args);
     return { calls, polls, output: log.mock.calls.map(x => String(x[0])), errors: error.mock.calls.map(x => String(x[0])) };
@@ -115,4 +119,16 @@ describe("known-run submission recovery", () => {
     expect(process.exitCode).toBe(1);
     expect(r.calls.some(x => x.url.endsWith("/create-and-run"))).toBe(false);
   });
+  it("rejects an unsuccessful status envelope even when it contains the requested identity", async () => {
+    const r = await exercise({ falseSuccess: true });
+    expect(process.exitCode).toBe(75); expect(r.output).toEqual([]);
+  });
+  for (const mode of ["stalledStatus", "longInterval"] as const) it(`recovery deadline bounds ${mode} and never adopts a late response`, async () => {
+    const started = performance.now();
+    const r = await exercise(mode === "stalledStatus" ? {stalledStatus: true} : {longInterval: true, unavailable: "missing"});
+    expect(performance.now()-started).toBeLessThan(180);
+    expect(process.exitCode).toBe(75); expect(r.output).toEqual([]);
+    expect(r.calls.filter(x => x.url.endsWith("/create-and-run"))).toHaveLength(1);
+  }, 1500);
+
 });
