@@ -3,7 +3,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
 import type { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { listCodexModels, type CodexModelCatalog } from "../src/server/codex-models.js";
 import { MANAGER_RUNTIME_VERSION } from "../src/runtime-version.js";
@@ -108,18 +108,23 @@ describe("Codex model catalog", () => {
       timeoutMs: 1_000,
     });
 
-    expect(requests.map((request) => request.method)).toEqual(["initialize", "model/list", "model/list"]);
+    expect(requests.map((request) => request.method)).toEqual(["initialize", "initialized", "model/list", "model/list"]);
     expect(requests[0]).toMatchObject({
       params: {
         clientInfo: {
           version: MANAGER_RUNTIME_VERSION,
         },
+        capabilities: {
+          experimentalApi: true,
+          requestAttestation: false,
+        },
       },
     });
-    expect(requests[1]).toMatchObject({
+    expect(requests[1]).toEqual({ jsonrpc: "2.0", method: "initialized", params: {} });
+    expect(requests[2]).toMatchObject({
       params: { limit: 100, includeHidden: false },
     });
-    expect(requests[2]).toMatchObject({
+    expect(requests[3]).toMatchObject({
       params: { limit: 100, includeHidden: false, cursor: "page-2" },
     });
     expect(spawnOptions).toMatchObject({
@@ -234,6 +239,228 @@ describe("Codex model catalog", () => {
       spawnImpl: (() => child as unknown as ChildProcessWithoutNullStreams) as typeof spawn,
       timeoutMs: 1_000,
     })).rejects.toThrow("write EPIPE");
+  });
+
+  describe("initialization lifecycle", () => {
+    function controlledChild() {
+      const messages: Array<Record<string, unknown>> = [];
+      const cbs: Array<{ idx: number; cb: (e?: Error | null) => void }> = [];
+      const stdinErrs: Array<(e: Error) => void> = [];
+      let destroyed = false;
+      let writable = true;
+      let syncThrow: Error | null = null;
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      const stdin = {
+        get destroyed() { return destroyed; },
+        get writable() { return writable; },
+        write(chunk: unknown, cb?: (error?: Error | null) => void): boolean {
+          if (syncThrow) { const e = syncThrow; syncThrow = null; throw e; }
+          messages.push(JSON.parse(String(chunk).trim()) as Record<string, unknown>);
+          if (cb) cbs.push({ idx: messages.length - 1, cb });
+          return false;
+        },
+        on(ev: string, h: (...args: unknown[]) => void) {
+          if (ev === "error") stdinErrs.push(h as (e: Error) => void);
+          return this;
+        },
+      };
+      const child = Object.assign(new EventEmitter(), {
+        stdin, stdout, stderr, killed: false,
+        kill(): boolean { child.killed = true; child.emit("exit", 0, null); return true; },
+      });
+      const release = (idx: number, err?: Error | null) => { cbs.find((e) => e.idx === idx)?.cb(err ?? null); };
+      return {
+        child: child as unknown as ChildProcessWithoutNullStreams,
+        messages, stdout, release,
+        destroyStdin() { destroyed = true; writable = false; },
+        emitStdinError(err: Error) { for (const h of stdinErrs) h(err); },
+        setSyncThrow(err: Error) { syncThrow = err; },
+      };
+    }
+
+    const baseOpts = (child: unknown, timeoutMs = 1000) => ({
+      resolution: { command: "/usr/bin/codex", requested: "codex", needsShell: false },
+      spawnImpl: (() => child as ChildProcessWithoutNullStreams) as typeof spawn,
+      timeoutMs,
+    });
+
+    it("does not send initialized before initialize succeeds", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child));
+      expect(ctrl.messages[0]?.method).toBe("initialize");
+      expect(ctrl.messages.length).toBe(1);
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(ctrl.messages[1]?.method).toBe("initialized");
+      expect(ctrl.messages[1]).toEqual({ jsonrpc: "2.0", method: "initialized", params: {} });
+      ctrl.release(1);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+      await expect(promise).resolves.toEqual({ binary: "/usr/bin/codex", models: [] });
+    });
+
+    it("does not send model/list before notification write callback fires", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(ctrl.messages.length).toBe(2);
+      ctrl.release(1, null);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(ctrl.messages.length).toBe(3);
+      expect(ctrl.messages[2]?.method).toBe("model/list");
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+      await expect(promise).resolves.toEqual({ binary: "/usr/bin/codex", models: [] });
+    });
+
+    it("handles initialize error without sending notification", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, error: { message: "auth failed" } })}\n`);
+      await expect(promise).rejects.toThrow("auth failed");
+      expect(ctrl.messages.filter((m) => m.method === "initialized")).toHaveLength(0);
+    });
+
+    it("ignores duplicate initialize responses", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(ctrl.messages.filter((m) => m.method === "initialized")).toHaveLength(1);
+      ctrl.release(1);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+      await expect(promise).resolves.toEqual({ binary: "/usr/bin/codex", models: [] });
+    });
+
+    it("routes notification write callback error through finish", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.release(1, new Error("notification write failed"));
+      await expect(promise).rejects.toThrow("notification write failed");
+    });
+
+    it("catches synchronous stdin write throw", async () => {
+      const ctrl = controlledChild();
+      ctrl.setSyncThrow(new Error("sync write boom"));
+      await expect(listCodexModels(baseOpts(ctrl.child))).rejects.toThrow("sync write boom");
+    });
+
+    it("finishes when stdin is closed before model/list can be sent", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.destroyStdin();
+      ctrl.release(1);
+      await new Promise((r) => setTimeout(r, 0));
+      await expect(promise).rejects.toThrow("stdin closed");
+    });
+
+    it("times out while notification write callback is held", async () => {
+      vi.useFakeTimers();
+      try {
+        const ctrl = controlledChild();
+        const promise = listCodexModels(baseOpts(ctrl.child, 5_000));
+        ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+        const rejection = expect(promise).rejects.toThrow("Timed out");
+        await vi.advanceTimersByTimeAsync(6_000);
+        await rejection;
+        expect(ctrl.child).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("terminates process on timeout while callback held", async () => {
+      vi.useFakeTimers();
+      try {
+        const ctrl = controlledChild();
+        const promise = listCodexModels(baseOpts(ctrl.child, 5_000));
+        ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+        const rejection = expect(promise).rejects.toThrow("Timed out");
+        await vi.advanceTimersByTimeAsync(6_000);
+        await rejection;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("produces no further writes after settlement from late write callback", async () => {
+      vi.useFakeTimers();
+      try {
+        const ctrl = controlledChild();
+        const promise = listCodexModels(baseOpts(ctrl.child, 5_000));
+        ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+        const rejection = expect(promise).rejects.toThrow("Timed out");
+        await vi.advanceTimersByTimeAsync(6_000);
+        await rejection;
+        const countBefore = ctrl.messages.length;
+        ctrl.release(1);
+        await vi.advanceTimersByTimeAsync(10);
+        expect(ctrl.messages.length).toBe(countBefore);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("produces no writes from stdout after settlement", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child, 50));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.release(1);
+      await new Promise((r) => setTimeout(r, 100));
+      await expect(promise).rejects.toThrow("Timed out");
+      const countBefore = ctrl.messages.length;
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(ctrl.messages.length).toBe(countBefore);
+    });
+
+    it("rejects repeated cursor and cleans up process", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.release(1);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [], nextCursor: "c1" } })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, result: { data: [], nextCursor: "c1" } })}\n`);
+      await expect(promise).rejects.toThrow("repeated model catalog cursor: c1");
+    });
+
+    it("ignores model responses before pendingModelRequestId is set", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(ctrl.messages.length).toBe(2);
+      ctrl.release(1);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(ctrl.messages.length).toBe(3);
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+      await expect(promise).resolves.toEqual({ binary: "/usr/bin/codex", models: [] });
+    });
+
+    it("cleans up process on successful completion", async () => {
+      const ctrl = controlledChild();
+      const promise = listCodexModels(baseOpts(ctrl.child));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.release(1);
+      await new Promise((r) => setTimeout(r, 0));
+      ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
+      await promise;
+    });
   });
 
   it("serves the model catalog from the Manager Agent API", async () => {
