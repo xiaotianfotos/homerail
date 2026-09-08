@@ -45,7 +45,8 @@ const review = {
   type: "object", additionalProperties: false, required: ["vote", "summary", "findings"],
   properties: {
     vote: { enum: ["approve", "request_changes", "abstain"] }, summary: text,
-    findings: { type: "array", maxItems: 100, items: text },
+    findings: { type: "array", maxItems: 100, items: text,
+      description: "Actionable unresolved defects only; empty for approve. Positive observations belong in summary." },
   },
 };
 const judgment = {
@@ -201,7 +202,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
         planner: { system: "You are the Codex Planner. Propose a bounded strategy and allowed paths using the supplied issue, source and prior evidence. Return Plan via handoff; do not claim tests ran." },
         fixer: { system: "Apply the supplied frozen Codex plan by proposing minimal exact old/new edits. Use short uniquely matching snippets, never repeat an entire existing file when a local edit suffices. Multiple edits to one file are allowed only when each old snippet matches the supplied original source exactly once and their ranges do not overlap; do not target text introduced by another edit. Return Patch via handoff. Do not expand scope, execute publication or approve your own work." },
         ...Object.fromEntries(["a", "b", "c"].map(id => [`reviewer_${id}`, {
-          system: "Independently review this candidate and its test evidence. Return Review via handoff. Do not modify files, invent execution evidence, or consult another reviewer vote.",
+          system: "Independently review this candidate and its test evidence. Return Review via handoff. findings contains actionable unresolved defects only; put positive observations and review coverage in summary. An approve vote requires findings: []; use request_changes for defects and abstain for insufficient evidence. Do not modify files, invent execution evidence, or consult another reviewer vote.",
         }])),
         judger: { system: "You are the Codex Judger. Evaluate supplied authoritative evidence, distinguish code failure from infrastructure/unknown, and return accept/revise/pause with reasons. An accept proposal is still checked by trusted program policy. Do not change policy or publish directly." },
       },

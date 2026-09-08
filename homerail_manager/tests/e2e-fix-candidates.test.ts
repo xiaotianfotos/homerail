@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { E2eFixCandidates } from "../src/runtime/e2e-fix-candidates.js";
+import { projectE2eFixReviewContext } from "../src/runtime/e2e-fix-review-context.js";
 
 describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () => {
   let root: string; let repo: string; let store: E2eFixCandidates; let base: string;
@@ -43,6 +44,36 @@ describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () =>
     expect(second.head).not.toBe(first.head);
     expect(() => store.capture({ ...request(), edits: [{ path: "sum.cjs", old: "a-b", new: "a*b" }] })).toThrow(/immutable/);
     expect(store.source(first.head, ["sum.cjs"])["sum.cjs"]).toContain("a+b");
+  });
+  it("projects large unchanged source while preserving every review concern and the complete issue", () => {
+    fs.writeFileSync(path.join(repo, "sum.cjs"), "// unchanged context\n".repeat(2500) + "module.exports = (a,b) => a-b;\n");
+    git("add", "."); git("-c", "commit.gpgsign=false", "commit", "-m", "large base"); base = git("rev-parse", "HEAD");
+    store = new E2eFixCandidates(path.join(root, "large-private")); store.seed(repo, base);
+    const first = store.capture(request());
+    const candidate = store.capture({ ...request(), round: 2, parent: first.head,
+      allowed_paths: ["sum.cjs", "new.cjs"], edits: [{ path: "new.cjs", old: "", new: "module.exports = 'new file';\n" }] });
+    const evidence = { candidate, sources: store.source(candidate.head, ["sum.cjs", "new.cjs"]),
+      issue: { body: "Preserve signed numbers, exact scope and all requirements" },
+      reports: [{ vote: "request_changes", finding_ids: ["concern"] }], findings: [{ id: "concern", message: "Do not hide this concern" }] };
+    const original = JSON.stringify(evidence);
+    const projected = projectE2eFixReviewContext(evidence, store, 5000);
+    expect(JSON.stringify(evidence)).toBe(original);
+    expect(Buffer.byteLength(JSON.stringify(projected))).toBeLessThan(5000);
+    expect(projected.issue).toEqual(evidence.issue); expect(projected.reports).toEqual(evidence.reports);
+    expect(projected.findings).toEqual(evidence.findings);
+    expect("source_context" in projected).toBe(true);
+    if (!("source_context" in projected)) throw new Error("expected diff projection");
+    // Cumulative diff must include the previous round's fix and a new file.
+    expect(projected.source_context.diff).toContain("-module.exports = (a,b) => a-b;");
+    expect(projected.source_context.diff).toContain("+module.exports = (a,b) => a+b;");
+    expect(projected.source_context.diff).toContain("+module.exports = 'new file';");
+    expect(projected.source_context.limitation).toContain("Unchanged source");
+    expect(projectE2eFixReviewContext(evidence, store, 96000)).toBe(evidence);
+    const huge = { ...evidence, findings: [{ id: "concern", message: "Must preserve every finding. ".repeat(3000) }] };
+    const stillLarge = projectE2eFixReviewContext(huge, store, 5000);
+    expect(stillLarge.findings).toEqual(huge.findings);
+    expect(Buffer.byteLength(JSON.stringify(stillLarge))).toBeGreaterThan(5000);
+    expect(() => store.reviewDiff({ ...candidate, tree: "e".repeat(40) }, ["sum.cjs"])).toThrow(/head\/tree/);
   });
   it("rejects a candidate relabeled with a different plan or Git tree", () => {
     const value = store.capture(request()); store.verifyCandidate(value);

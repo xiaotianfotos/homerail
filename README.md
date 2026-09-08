@@ -193,6 +193,9 @@ An explicitly frozen `host_codex.fixer: true` configuration can use a native
 host Codex Fixer with separate local-model reviewers. It returns a structured
 patch; trusted programs still apply changes, execute tests and publish.
 See [configuration and failure boundaries](docs/e2e-fix-recovery.md).
+Oversized review evidence can project full source into a base-to-candidate diff
+while preserving the complete issue and findings. Review approvals require empty
+`findings`; positive observations belong in `summary`.
 
 New E2E Fix workflows also route confirmed Fixer output truncation to the
 in-graph Judger for a bounded strategy revision; unknown execution pauses.

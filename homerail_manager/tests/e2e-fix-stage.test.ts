@@ -54,7 +54,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+type Scenario = "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
   | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
@@ -103,6 +103,7 @@ class Models implements DAGDispatcher {
           const bad = value.sources["sum.cjs"].includes("Math.abs") || (["unresolved-review", "dismissed-review", "duplicate-disposition"].includes(this.scenario) && envelope.nodeId === "review_c");
           result = { vote: bad ? "request_changes" : "approve", summary: envelope.nodeId + ": signed-input review",
             findings: bad ? [value.sources["sum.cjs"].includes("Math.abs") ? "Negative sums are incorrectly made positive" : "Fixture disputed concern"] : [] };
+          if (this.scenario === "approve-observations") (result as { findings: string[] }).findings = ["The source correctly implements addition"];
           if (this.scenario.startsWith("review-context-") && bad) {
             (result as { findings: string[] }).findings = Array.from({ length: 8 }, (_, i) =>
               `Finding ${i}: negative sums are incorrectly made positive. ` + "Signed addition must preserve negative results. ".repeat(10));
@@ -110,7 +111,7 @@ class Models implements DAGDispatcher {
         } else {
           const evidence = value.values?.[0] ?? value;
           const good = evidence.outcome === "ci_passed" || (evidence.outcome === "reviewed" && !evidence.findings.length);
-          const disputed = ["unresolved-review", "dismissed-review", "duplicate-disposition"].includes(this.scenario);
+          const disputed = ["approve-observations", "unresolved-review", "dismissed-review", "duplicate-disposition"].includes(this.scenario);
           const dispositions = disputed && this.scenario !== "unresolved-review" && evidence.findings?.length
             ? evidence.findings.map((f: any) => ({ finding_id: f.id, action: "dismiss", reason: "Fixture concern is contradicted by the retained source and test evidence",
               evidence_sha256: [evidence.evidence_sha256[0]] })) : [];
@@ -142,7 +143,7 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+  it.each<Scenario>(["approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
     "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
@@ -307,11 +308,20 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         return;
       }
       const unknownCi = ["unknown-ci", "stale-ci"].includes(scenario);
-      const blockedReview = ["unresolved-review", "duplicate-disposition"].includes(scenario);
+      const blockedReview = ["approve-observations", "unresolved-review", "duplicate-disposition"].includes(scenario);
       const blockedModel = ["model-unknown", "model-accept", "model-no-strategy", "model-stale-evidence"].includes(scenario);
       expect(getActiveRun("native-root")?.status, JSON.stringify(snapshot.handoffs.at(-1))).toBe(scenario === "model-same-plan" ? "failed" : unknownCi || blockedReview || blockedModel ? "cancelled" : "completed");
       const read = (round: number, name: string) => JSON.parse(fs.readFileSync(path.join(task, "rounds", String(round), name + ".json"), "utf8"));
       const rounds = scenario === "test-review-loop" ? 3 : ["review-context-budget", "invalid-proposal", "ci-feedback", "model-truncated"].includes(scenario) ? 2 : 1;
+      if (scenario === "approve-observations") {
+        const review = read(1, "review_evidence");
+        expect(review.review_contract_errors).toHaveLength(3);
+        expect(review.reports.every((r: any) => r.vote === "approve")).toBe(true);
+        expect(read(1, "candidate_judger").value.verdict).toBe("accept");
+        expect(read(1, "candidate_judger").value.dispositions).toHaveLength(3);
+        expect(read(1, "record_candidate_judgment").action).toBe("pause");
+        expect(snapshot.metadata.nodeStates.publish).toBe("SKIPPED");
+      }
       if (scenario === "review-context-budget") {
         const review = read(1, "review_evidence");
         expect(review.findings).toHaveLength(24);

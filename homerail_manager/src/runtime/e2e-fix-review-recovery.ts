@@ -10,6 +10,7 @@ import { E2eFixCandidates, e2eFixDigest } from "./e2e-fix-candidates.js";
 import { loadFrozenE2eFixRuntime } from "./e2e-fix-runtime.js";
 import type { E2eFixTaskConfig } from "./e2e-fix-stage.js";
 import type { E2eFixReviewRecoveryRequest } from "./e2e-fix-stage-runtime.js";
+import { readE2eFixHostCodexEvidence } from "./e2e-fix-host-codex.js";
 
 export function parseE2eFixReviewRecoveryRequest(value: unknown): E2eFixReviewRecoveryRequest {
   const v = value as E2eFixReviewRecoveryRequest;
@@ -99,7 +100,8 @@ export function inspectE2eFixReviewRecovery(runId: string, request: E2eFixReview
       const completed = snapshot.handoffs.filter(h => h.fromNode === identity.node_id).at(-1);
       if (result.exit_code !== 0 || failed.nodeStates[identity.node_id] !== "COMPLETED"
         || !completed || !isDeepStrictEqual(JSON.parse(result.stdout), completed.content)) throw new Error("Recovery completed command evidence mismatch");
-      if (!["plan", "judge_candidate", "judge_ci"].includes(identity.node_id)) {
+      if (!["plan", "judge_candidate", "judge_ci"].includes(identity.node_id)
+        && !(identity.node_id === "fix" && config.host_codex?.fixer)) {
         const output = JSON.parse(result.stdout);
         if (![0, 1].includes(output.round) || !isDeepStrictEqual(read(path.join(task, "rounds", String(output.round), identity.node_id + ".json")), output)) throw new Error("Recovery stage artifact differs from native output");
       }
@@ -133,8 +135,15 @@ export function inspectE2eFixReviewRecovery(runId: string, request: E2eFixReview
     const session = getDagSessionIndex(runId, role);
     const handoff = snapshot.handoffs.filter(h => h.fromNode === role && h.port === "result").at(-1);
     if (failed.nodeStates[role] !== "COMPLETED" || session?.status !== "completed" || artifact.session_id !== session.session_id
-      || !handoff || !isDeepStrictEqual(artifact.value, handoff.content)
-      || artifact.artifact_sha256 !== e2eFixDigest(JSON.stringify({ node: role, session: session.session_id, value: artifact.value }))) throw new Error("Recovery model evidence mismatch");
+      || !handoff || !isDeepStrictEqual(artifact.value, handoff.content)) throw new Error("Recovery model evidence mismatch");
+    if (role === "fix" && config.host_codex?.fixer) {
+      const host = readE2eFixHostCodexEvidence(task, "fix", 1, { run_id: runId, node_id: role,
+        session_id: session.session_id, round_id: failed.currentRound!.round_id, attempt: session.attempt });
+      if (!isDeepStrictEqual(host.value, artifact.value) || artifact.dispatch_id !== host.command_id
+        || artifact.artifact_sha256 !== e2eFixDigest(JSON.stringify(host))) throw new Error("Recovery host Fixer evidence mismatch");
+    } else if (artifact.artifact_sha256 !== e2eFixDigest(JSON.stringify({ node: role, session: session.session_id, value: artifact.value }))) {
+      throw new Error("Recovery model evidence mismatch");
+    }
   }
   verifyReviewRecoveryRuntime(request);
   return { snapshot, config, policy, failedExecution, candidate };

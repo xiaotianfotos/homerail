@@ -151,6 +151,8 @@ hr eval-run <run_id>
 保留已完成的 Planner 证据、原 root 和 round。
 首轮审查汇总因上下文超限失败时，操作者也可授权一次冻结运行时替换，保留已完成的
 模型和测试证据。这是人工介入的恢复，原策略与截止时间不变；具体边界见同一指南。
+审查汇总超限时，可将完整源码投影为基线到候选的差异，同时保留完整 issue 和所有
+发现。审查通过要求 `findings` 为空；正面评价应放入 `summary`。
 显式冻结 `host_codex.fixer: true` 后，可使用原生宿主 Codex Fixer，并保留
 独立的本地模型 Reviewer。Fixer 只返回结构化补丁，仍由可信程序应用修改、
 执行测试和发布。配置及失败边界见 [E2E Fix 恢复说明](docs/e2e-fix-recovery.md)。

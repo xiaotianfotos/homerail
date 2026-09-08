@@ -94,6 +94,12 @@ export class E2eFixCandidates {
       return [name, text];
     }));
   }
+  reviewDiff(candidate: E2eFixCandidate, allowedPaths: string[]): string {
+    this.verifyCandidate(candidate);
+    allowedPaths.forEach(e2eFixPath);
+    return this.git(["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=20",
+      candidate.base, candidate.head, "--", ...allowedPaths]).toString("utf8");
+  }
   verifyCandidate(candidate: E2eFixCandidate): void {
     E2eFixCandidateSchema.parse(candidate);
     const seed = JSON.parse(fs.readFileSync(path.join(this.directory, "seed.json"), "utf8"));

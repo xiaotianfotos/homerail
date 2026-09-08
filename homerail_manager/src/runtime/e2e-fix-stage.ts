@@ -12,6 +12,7 @@ import { E2eFixIsolatedTest, validateE2eFixTestDefinition, type E2eFixTestDefini
 import type { E2eFixStage } from "../orchestration/e2e-fix-workflow.js";
 import { validateE2eFixGitHub, type E2eFixGitHubConfig } from "./e2e-fix-github.js";
 import { assertE2eFixStageRuntime } from "./e2e-fix-stage-runtime.js";
+import { projectE2eFixReviewContext } from "./e2e-fix-review-context.js";
 
 const digest = (value: unknown) => e2eFixDigest(JSON.stringify(value));
 type Policy = E2eFixAcceptanceInput["policy"];
@@ -219,6 +220,10 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     // complete original reviewer output remains in its immutable artifact.
     result = { ...tested, outcome: "reviewed", reports: reports.map(({ findings: _, ...report }) => report), findings: reports.flatMap(r => r.findings),
       evidence_sha256: [...tested.tests.map((t: { artifact_sha256: string }) => t.artifact_sha256), ...reports.map(r => r.artifact_sha256)] };
+    const invalidApprovals = reports.filter(r => r.vote === "approve" && r.finding_ids.length);
+    if (invalidApprovals.length) result.review_contract_errors = invalidApprovals.map(r => ({ reviewer_id: r.reviewer_id,
+      code: "approve_with_findings", reason: "Approval requires empty findings. This report cannot count toward publication, even if the Judger dismisses its findings." }));
+    result = projectE2eFixReviewContext(result, candidates, config.context_bytes);
   } else if (stage === "record_candidate_judgment") {
     const tested = read("test"); const reviewed = fs.existsSync(path.join(folder, "review_evidence.json")) ? read("review_evidence") : null;
     const evidence = modelEvidence("judge_candidate", one("judgment")); write("candidate_judger", evidence);

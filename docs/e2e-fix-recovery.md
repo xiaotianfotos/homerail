@@ -42,6 +42,27 @@ authorization with real Git/Docker and simulated models. Its recovery runtime
 fixture is deliberately not executed; actual continuation requires separate
 live evidence.
 
+Recovery also authenticates an explicitly frozen host Codex Fixer using its
+native command, session, structured-output receipt and event journal. Worker
+Fixers retain their original handoff provenance checks; opting into a host
+Fixer does not authorize replacing a model result or replaying its command.
+
+When full source plus combined reviews exceeds the frozen context bound, the
+aggregation stage can replace the full source rendering with a trusted Git
+diff from the frozen base to the candidate, including 20 context lines. This
+includes changes retained from earlier repair iterations. The full issue,
+findings, reports and evidence digests remain intact. Full source remains in
+the immutable `test.json` artifact, identified by a digest, and each reviewer
+has already received it. The projection explicitly identifies omitted unchanged
+source. If the projection still exceeds the bound, the stage still fails;
+it never truncates findings or increases the task's context allowance.
+
+Review `findings` are unresolved actionable defects. Positive observations
+belong in `summary`; `approve` requires an empty `findings` array. Existing
+contradictory reports are preserved and cannot satisfy the approval gate,
+even if their text appears positive. Clarifying the prompt for new workflows
+does not repair already frozen reviewer prompts or previously emitted votes.
+
 ## Pre-dispatch configuration repair and model failures
 
 Patch proposals can contain multiple small edits to one authorized file. Each
