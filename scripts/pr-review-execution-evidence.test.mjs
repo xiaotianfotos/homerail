@@ -1,0 +1,59 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+
+const runId='run-audit-1';
+const slots={qwen_review:'qwen',kimi_review:'kimi',glm_review:'glm'};
+const prompt=(node,provider='glm',model='glm-5.3',stamp=1)=>({role:'manager',type:'prompt',timestamp:stamp,content:{runId,nodeId:node,sessionId:`session-${node}`,agentConfig:{agent_type:'claude-sdk',llm_setting_id:`setting-${node}`,llm:{provider,model,api_key:'NEVER_PUBLISH_SECRET',base_url:'https://user:password@example.test/api?key=SECRET'}}}});
+const usage=(node,id,u,extra={},stamp=2)=>({role:'worker',type:'response',timestamp:stamp,content:{type:'usage',event:'usage',run_id:runId,node_id:node,session_id:`session-${node}`,execution_id:id,usage:u,...extra}});
+const u=(input=10,output=5,cached=2)=>({input_tokens:input,output_tokens:output,cache_read_input_tokens:cached,cache_creation_input_tokens:0});
+async function mod(){return import('./pr-review-execution-evidence.mjs');}
+function baseChats(){return Object.fromEntries(Object.keys(slots).map(n=>[n,[prompt(n,n==='kimi_review'?'kimi_cn':'glm',n==='kimi_review'?'k3':'glm-5.3'),usage(n,n,u(),{finish_reason:'completed',duration_ms:100})]]));}
+
+test('reports Manager-resolved model identity, not model-authored slot names or setting diversity',async()=>{
+ const {buildPrReviewExecutionEvidence}=await mod();const chats=baseChats();
+ chats.qwen_review.push({role:'worker',type:'response',content:{reviewer:'qwen',provider:'qwen',model:'qwen',text:'NEVER_PUBLISH_PROMPT'}});
+ const evidence=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});
+ assert.equal(evidence.schema,'pr-review-execution-evidence-v1');assert.equal(evidence.run_id,runId);assert.equal(evidence.quorum_basis,'reviewer_executions');
+ assert.equal(evidence.distinct_model_identities,2);assert.equal(evidence.provenance_complete,true);
+ const q=evidence.reviewers.find(r=>r.node_id==='qwen_review');assert.equal(q.slot,'qwen');assert.deepEqual(q.dispatches[0].binding,{provider:'glm',model:'glm-5.3',backend:'claude-sdk',setting_id:'setting-qwen_review'});
+ assert.doesNotMatch(JSON.stringify(evidence),/NEVER_PUBLISH|password|example\.test|api_key|base_url/);
+});
+
+test('deduplicates cumulative snapshots, final settlement may arrive after terminal handoff',async()=>{
+ const {buildPrReviewExecutionEvidence}=await mod();const chats=baseChats();const n='qwen_review';
+ chats[n]=[prompt(n),usage(n,'exec1',u(10,5,2)),usage(n,'exec1',u(10,5,2)),{role:'worker',type:'response',content:{type:'node_handoff',run_id:runId,node_id:n}},usage(n,'exec1',u(20,8,4),{finish_reason:'completed',duration_ms:160},9),usage(n,'exec1',u(10,5,2),{},3)];
+ const e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});const q=e.reviewers.find(r=>r.node_id===n);
+ assert.equal(q.executions.length,1);assert.equal(q.executions[0].usage_state,'final');assert.deepEqual(q.executions[0].usage,u(20,8,4));assert.equal(e.usage_state,'final');assert.equal(e.observed_tokens,32+17+17);
+});
+
+test('fresh correction adds an execution and preserves unknown or partial accounting',async()=>{
+ const {buildPrReviewExecutionEvidence}=await mod();const chats=baseChats(),n='qwen_review';
+ chats[n].push(prompt(n,'glm','glm-5.3',3),usage(n,'correction',u(12,3,4),{},4));
+ let e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});assert.equal(e.usage_state,'partial');assert.equal(e.observed_tokens,70);assert.equal(e.reviewers.find(r=>r.node_id===n).executions.length,2);
+ chats[n].push(prompt(n,'glm','glm-5.3',5));e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});assert.equal(e.usage_state,'partial');assert.equal(e.reviewers.find(r=>r.node_id===n).unaccounted_dispatches,1);
+ const noUsage=Object.fromEntries(Object.keys(slots).map(n=>[n,[prompt(n)]]));e=buildPrReviewExecutionEvidence({runId,chatsByNode:noUsage});assert.equal(e.usage_state,'unknown');assert.equal(e.observed_tokens,null);
+});
+
+test('missing chat and malformed or stale usage cannot become complete zero-cost execution',async()=>{
+ const {buildPrReviewExecutionEvidence}=await mod();const chats=baseChats();chats.kimi_review=null;
+ chats.qwen_review=[prompt('qwen_review'),usage('qwen_review','bad',u(-1,2,0)),usage('qwen_review','stale',u(900,900,900),{run_id:'other-run'}),usage('qwen_review','wrong-session',u(900,900,900),{session_id:'old-session'})];
+ const e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});assert.equal(e.provenance_complete,false);assert.equal(e.usage_state,'partial');assert.equal(e.observed_tokens,17);assert.equal(e.reviewers.find(r=>r.node_id==='kimi_review').availability,'unavailable');
+ const empty=buildPrReviewExecutionEvidence({runId,chatsByNode:{}});assert.equal(empty.usage_state,'unknown');assert.equal(empty.observed_tokens,null);
+});
+
+test('immutable persisted dispatch history survives changed live setting configuration and replay',async()=>{
+ const {buildPrReviewExecutionEvidence}=await mod();const chats=baseChats(),before=JSON.stringify(chats);
+ const e=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});const replay=JSON.parse(before);assert.deepEqual(buildPrReviewExecutionEvidence({runId,chatsByNode:replay}),e);assert.equal(JSON.stringify(chats),before);
+ // A later dispatch really changing identity must remain visible, not replace history.
+ replay.qwen_review.push(prompt('qwen_review','qwen','new-model',3));const changed=buildPrReviewExecutionEvidence({runId,chatsByNode:replay});assert.equal(changed.distinct_model_identities,3);assert.equal(changed.reviewers[0].dispatches.length,2);
+});
+
+test('collector writes bounded allowlisted evidence even if a degraded reviewer chat is unavailable',async()=>{
+ const {collectPrReviewExecutionEvidence}=await mod();const requested=[];const server=http.createServer((req,res)=>{requested.push(req.url);res.setHeader('content-type','application/json');const node=Object.keys(slots).find(n=>req.url.endsWith(`/node/${n}/chat`));if(node==='kimi_review'){res.statusCode=503;res.end(JSON.stringify({success:false,message:'DO_NOT_LEAK_SERVER_ERROR'}));return;}res.end(JSON.stringify({success:true,data:{messages:baseChats()[node]??[]}}));});await new Promise(r=>server.listen(0,'127.0.0.1',r));const dir=fs.mkdtempSync(path.join(os.tmpdir(),'review-audit-'));
+ try{const file=path.join(dir,'evidence.json');const e=await collectPrReviewExecutionEvidence({managerUrl:`http://127.0.0.1:${server.address().port}`,runId,outputPath:file});assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),e);assert.equal(requested.length,3);assert.equal(e.provenance_complete,false);assert.equal(e.usage_state,'partial');assert.doesNotMatch(fs.readFileSync(file,'utf8'),/DO_NOT_LEAK|NEVER_PUBLISH/);}
+ finally{await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});}
+});
