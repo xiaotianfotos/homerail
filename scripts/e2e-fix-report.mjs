@@ -108,6 +108,8 @@ export function reportTask(directory) {
         ? timing.finished - timing.started : null;
       models.push({ role, transport: host ? 'host_codex' : evidence?.agent_type ?? 'unknown',
         model: evidence?.model ?? receipt?.model ?? null,
+        provider: evidence?.runtime?.status === 'verified_dispatch' ? evidence.runtime.provider : null,
+        runtime_source: evidence?.runtime?.source ?? (receipt ? 'host_request_receipt' : null),
         session_id: evidence?.session_id ?? claim?.identity?.session_id ?? workerFailure?.session_id ?? null,
         outcome: failure || workerFailure ? 'failure_artifact_present' : evidence ? 'role_artifact_present' : 'unconfirmed',
         duration_ms: duration, usage_source: projection ? 'failure_projection' : host ? 'host_journal' : 'role_artifact', usage });

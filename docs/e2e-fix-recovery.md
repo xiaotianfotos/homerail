@@ -269,3 +269,20 @@ temporary snapshot is checked before publication. A malformed temporary
 snapshot is discarded, so a retry can rebuild it. A previously published
 snapshot with changed bytes, permissions, entries or unsafe links is rejected
 without being rewritten.
+# Model runtime evidence across aggregation recovery
+
+New E2E role artifacts bind the resolved Manager dispatch runtime to the retained
+session, round, actor generation, physical target, lease and reported execution.
+Production stages reject missing or conflicting runtime evidence. This records
+the selected provider/model; it does not attest which model a provider served.
+
+An explicitly admitted aggregation recovery may contain older role artifacts
+without runtime metadata. The recovery verifies their original digest format,
+handoff and session. When the replacement stage reads them, it compares every
+legacy field with freshly loaded native evidence, retains the original bytes,
+and writes the new dispatch projection to `<reviewer>_runtime.json`. It does not
+rewrite previous votes or rerun a model to add metadata. New-format artifacts
+also require an exact match with the retained Manager dispatch projection.
+
+新回执绑定当时的 Manager 派发模型身份。受限汇总恢复兼容旧回执：重新核对
+全部旧字段，保留原字节，来源投影另存，不查询当前设置冒充历史，也不重跑模型。

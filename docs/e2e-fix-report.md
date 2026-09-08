@@ -28,6 +28,11 @@ model, test, PR or CI execution, and omits issue bodies, credentials and model o
   冲突、倒退或超出整数精度也报错。模型身份缺失时输出 `null`，不从可变设置猜测。
   Duplicate root copies, conflicting or decreasing counters, and unsafe integer totals
   are rejected. Missing model identity remains null rather than inferred from mutable settings.
+- 新角色回执引用 Manager 当时保存的派发模型身份；报告会输出该 provider/model
+  及来源。它证明派发选择，不能替代供应商对实际服务模型的证明。旧记录不回填猜测。
+  New role receipts reference the retained Manager dispatch selection, including provider,
+  model and source. This establishes the dispatched selection, not provider attestation.
+  Historical missing identities are not filled with guesses.
 - 仅 Host 已保留 started/finished 时报告角色耗时。未知耗时为 `null`；不把 CI
   等待时间算作模型推理，也不推算缺少原始时间证据的生成速率。
   Role duration is available only from retained host start/finish times. Unknown duration

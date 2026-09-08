@@ -11,6 +11,7 @@ import { loadFrozenE2eFixRuntime } from "./e2e-fix-runtime.js";
 import type { E2eFixTaskConfig } from "./e2e-fix-stage.js";
 import type { E2eFixReviewRecoveryRequest } from "./e2e-fix-stage-runtime.js";
 import { readE2eFixHostCodexEvidence } from "./e2e-fix-host-codex.js";
+import { readE2eFixModelRuntime } from "./e2e-fix-model-runtime.js";
 
 export function parseE2eFixReviewRecoveryRequest(value: unknown): E2eFixReviewRecoveryRequest {
   const v = value as E2eFixReviewRecoveryRequest;
@@ -141,8 +142,15 @@ export function inspectE2eFixReviewRecovery(runId: string, request: E2eFixReview
         session_id: session.session_id, round_id: failed.currentRound!.round_id, attempt: session.attempt });
       if (!isDeepStrictEqual(host.value, artifact.value) || artifact.dispatch_id !== host.command_id
         || artifact.artifact_sha256 !== e2eFixDigest(JSON.stringify(host))) throw new Error("Recovery host Fixer evidence mismatch");
-    } else if (artifact.artifact_sha256 !== e2eFixDigest(JSON.stringify({ node: role, session: session.session_id, value: artifact.value }))) {
-      throw new Error("Recovery model evidence mismatch");
+    } else {
+      if (artifact.runtime !== undefined) {
+        const runtime = readE2eFixModelRuntime(snapshot, { run_id: runId, node_id: role,
+          session_id: session.session_id, round_id: failed.currentRound!.round_id });
+        if (!isDeepStrictEqual(artifact.runtime, runtime)
+          || (config.mode === "production" && runtime.status !== "verified_dispatch")) throw new Error("Recovery model runtime mismatch");
+      }
+      if (artifact.artifact_sha256 !== e2eFixDigest(JSON.stringify({ node: role, session: session.session_id, value: artifact.value,
+        ...(artifact.runtime === undefined ? {} : { runtime: artifact.runtime }) }))) throw new Error("Recovery model evidence mismatch");
     }
   }
   verifyReviewRecoveryRuntime(request);

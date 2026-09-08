@@ -13,6 +13,7 @@ import type { E2eFixStage } from "../orchestration/e2e-fix-workflow.js";
 import { validateE2eFixGitHub, type E2eFixGitHubConfig } from "./e2e-fix-github.js";
 import { assertE2eFixStageRuntime } from "./e2e-fix-stage-runtime.js";
 import { projectE2eFixReviewContext } from "./e2e-fix-review-context.js";
+import { readE2eFixModelRuntime, verifyLegacyE2eFixModelArtifact } from "./e2e-fix-model-runtime.js";
 
 const digest = (value: unknown) => e2eFixDigest(JSON.stringify(value));
 type Policy = E2eFixAcceptanceInput["policy"];
@@ -35,6 +36,7 @@ export interface E2eFixStageProviders {
 interface ModelEvidence {
   node_id: string; dispatch_id: string; session_id: string; attempt: number;
   agent_type: string; model: string | null; artifact_sha256: string; value: any; usage_status: "reported_session_snapshots" | "reported_host_turn" | "unknown"; usages: unknown[];
+  runtime?: ReturnType<typeof readE2eFixModelRuntime>;
 }
 
 /** Host API only. Never construct this policy from issue text or model output. */
@@ -125,9 +127,17 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const type = agent?.agent_type ?? "unknown";
     if (config.mode === "production" && (["plan", "judge_candidate", "judge_ci"].includes(node) ? type !== "codex_appserver" : type === "deterministic" || type === "unknown")) throw new Error(`unapproved role backend: ${node}`);
     const usages = loadNodeUsages(config.root_run_id).filter(u => u.nodeId === node && u.scope?.session_id === session.session_id);
+    const runtime = readE2eFixModelRuntime(loadRunSnapshot(config.root_run_id)!, {
+      run_id: config.root_run_id, node_id: node, session_id: session.session_id,
+      round_id: current.currentRound!.round_id,
+    });
+    if (config.mode === "production" && (runtime.status !== "verified_dispatch" || runtime.agent_type !== type)) {
+      throw new Error(`verified model dispatch runtime required: ${node}`);
+    }
     return { node_id: node, session_id: session.session_id, attempt: session.attempt,
       dispatch_id: `${config.root_run_id}:${node}:${session.session_id}:${session.attempt}`,
-      agent_type: type, model: agent?.model ?? null, artifact_sha256: digest({ node, session: session.session_id, value: latest.content }),
+      agent_type: type, model: runtime.status === "verified_dispatch" ? runtime.model : null, runtime,
+      artifact_sha256: digest({ node, session: session.session_id, value: latest.content, runtime }),
       value: latest.content, usage_status: usages.length ? "reported_session_snapshots" : "unknown", usages };
   };
   let result: any;
@@ -211,7 +221,16 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const tested = read("test");
     const reports = config.policy.reviewer_ids.map(node => {
       const latest = loadRunSnapshot(config.root_run_id)?.handoffs.filter(h => h.fromNode === node && h.port === "result").at(-1);
-      const evidence = modelEvidence(node, latest?.content); write(node, evidence);
+      let evidence = modelEvidence(node, latest?.content);
+      if (fs.existsSync(path.join(folder, node + ".json")) && read(node).runtime === undefined && evidence.runtime) {
+        const current = loadRunMetadata(config.root_run_id)!;
+        const graphNode = current.graph?.nodes.find(n => n.node_id === node);
+        const legacyModel = (graphNode && current.agents?.[graphNode.agent]?.model) ?? null;
+        const original = verifyLegacyE2eFixModelArtifact(read(node), evidence, legacyModel) as ModelEvidence;
+        write(node + "_runtime", evidence.runtime);
+        evidence = original;
+      }
+      write(node, evidence);
       const findings = evidence.value.findings.map((message: string) => ({ id: digest({ candidate: tested.candidate, node, message }), message }));
       return { ...bound(tested.candidate, evidence), reviewer_id: node, dispatch_id: evidence.dispatch_id, session_id: evidence.session_id,
         status: "complete" as const, vote: evidence.value.vote, finding_ids: findings.map((f: { id: string }) => f.id), findings, summary: evidence.value.summary };
