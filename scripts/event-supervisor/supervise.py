@@ -115,6 +115,26 @@ def validate(spec, snapshot):
         raise ValueError('stale job: current repository head differs from immutable spec')
 
 
+def completed_receipt(root, record):
+    """Check preserved completion evidence even on a terminal-state replay."""
+    path = root / 'runner.json'
+    raw = path.read_bytes()
+    receipt = json.loads(raw)
+    if receipt.get('status') != 'finished' or receipt['spec_digest'] != record['spec_digest']:
+        raise ValueError('completed runner receipt is missing or belongs to another spec')
+    receipt_digest = hashlib.sha256(raw).hexdigest()
+    if record.get('runner_receipt_digest') != receipt_digest:
+        raise ValueError('completed runner receipt changed')
+    if hashlib.sha256((root / 'execution.log').read_bytes()).hexdigest() != receipt['log_digest']:
+        raise ValueError('runner log differs from completed receipt')
+    for field in ('exit_code', 'after', 'outcome', 'finished_at'):
+        if record[field] != receipt[field]:
+            raise ValueError('execution summary differs from completed receipt: ' + field)
+    # The checkout may legitimately have advanced after completion. Validate
+    # historical evidence here; current candidate acceptance belongs to Judger.
+    return receipt
+
+
 def promote_receipt(root, spec, record):
     """Caller holds the execution lock. Preserve original interruption evidence."""
     path = root / 'runner.json'
@@ -178,6 +198,8 @@ def main(spec_path, reconcile_only=False, expected_digest=None):
                     if reconcile_only and not recovered:
                         return 75
             else:
+                if old.get('event_kind') != 'preflight_failed':
+                    completed_receipt(root, old)
                 notify(root, spec, old.get('event_kind', 'finished'), old)
             return 0
         if reconcile_only:
