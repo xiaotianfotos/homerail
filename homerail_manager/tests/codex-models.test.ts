@@ -354,12 +354,13 @@ describe("Codex model catalog", () => {
     it("finishes when stdin is closed before model/list can be sent", async () => {
       const ctrl = controlledChild();
       const promise = listCodexModels(baseOpts(ctrl.child));
+      const rejection = expect(promise).rejects.toThrow("stdin closed");
       ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
       await new Promise((r) => setTimeout(r, 0));
       ctrl.destroyStdin();
       ctrl.release(1);
       await new Promise((r) => setTimeout(r, 0));
-      await expect(promise).rejects.toThrow("stdin closed");
+      await rejection;
     });
 
     it("times out while notification write callback is held", async () => {
@@ -412,11 +413,12 @@ describe("Codex model catalog", () => {
     it("produces no writes from stdout after settlement", async () => {
       const ctrl = controlledChild();
       const promise = listCodexModels(baseOpts(ctrl.child, 50));
+      const rejection = expect(promise).rejects.toThrow("Timed out");
       ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
       await new Promise((r) => setTimeout(r, 0));
       ctrl.release(1);
       await new Promise((r) => setTimeout(r, 100));
-      await expect(promise).rejects.toThrow("Timed out");
+      await rejection;
       const countBefore = ctrl.messages.length;
       ctrl.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, result: { data: [] } })}\n`);
       await new Promise((r) => setTimeout(r, 10));
