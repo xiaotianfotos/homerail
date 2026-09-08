@@ -260,6 +260,9 @@ export function classifyReviewFailure(reason: unknown): ReviewFailureCategory {
   ) {
     return "transport_failed";
   }
+  if (/(?:ended without.*handoff|exhausted.*handoff|DAG_HANDOFF_MISSING)/i.test(normalized)) {
+    return "handoff_missing";
+  }
   if (/(?:abstain|DAG_REVIEWER_ABSTAINED)/i.test(normalized)) {
     return "reviewer_abstained";
   }
