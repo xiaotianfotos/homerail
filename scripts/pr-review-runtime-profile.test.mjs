@@ -289,3 +289,8 @@ test("strict identity preflight fails before profile mutation or model dispatch"
     assert.deepEqual(requests, [["GET", "/api/llm/settings"]]);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
+
+test("configured identities use unambiguous provider/model tuples", () => {
+ const yaml = prReviewRuntimeProfileYaml({profileId:"tuple-test",primary:{...primary,provider_id:"org",model_name:"family/model"},arbiter:{...arbiter,provider_id:"org/family",model_name:"model"},third:{...third,provider_id:"third",model_name:"other"},diversityPolicy:"distinct_models"});
+ assert.match(yaml,/distinct_models/);
+});

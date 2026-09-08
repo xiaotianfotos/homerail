@@ -80,3 +80,47 @@ test('collector uses the established Manager header without following credential
  try{await collectPrReviewExecutionEvidence({managerUrl:`http://127.0.0.1:${server.address().port}/`,runId,outputPath:path.join(dir,'evidence.json')});assert.equal(auth['x-homerail-dag-token'],'test-audit-token');assert.equal(auth.authorization,undefined);}
  finally{if(old===undefined)delete process.env.HOMERAIL_DAG_MUTATION_TOKEN;else process.env.HOMERAIL_DAG_MUTATION_TOKEN=old;await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('rendered report labels execution quorum and actual bindings, missing accounting remains explicit',async()=>{
+ const {renderPrReviewMarkdown}=await import('./render-pr-review-markdown.mjs');const {buildPrReviewExecutionEvidence}=await mod();const chats=baseChats();chats.kimi_review=null;
+ const audit=buildPrReviewExecutionEvidence({runId,chatsByNode:chats});
+ const report={repo:'org/repo',pr:1,base:'a'.repeat(40),head:'b'.repeat(40),status:'pass',confidence:'medium',actionable_count:0,summary:'Two approve, one abstains',findings:[],reviewer_results:[{reviewer:'qwen',status:'complete',vote:'approve',summary:'ok'},{reviewer:'kimi',status:'failed',vote:'abstain',summary:'incomplete'},{reviewer:'glm',status:'complete',vote:'approve',summary:'ok'}]};
+ const publication={report,quorum:{passed:true,successes:2,total:3,threshold:2}};
+ const md=renderPrReviewMarkdown({run_id:runId},publication,audit);assert.match(md,/reviewer executions/);assert.match(md,/glm\/glm-5\.3/);assert.match(md,/claude-sdk/);assert.match(md,/partial/);assert.match(md,/unavailable/);assert.doesNotMatch(md,/NEVER_PUBLISH|## Model votes/);
+ assert.throws(()=>renderPrReviewMarkdown({run_id:runId},publication,{...audit,run_id:'other'}),/run.*mismatch/);
+ const missing=renderPrReviewMarkdown({run_id:runId},publication);assert.match(missing,/unavailable|not available/);assert.doesNotMatch(missing,/## Model votes/);
+});
+
+test('stable runner collects sanitized execution evidence on both successful quorum and command failure',async()=>{
+ const {spawn}=await import('node:child_process');
+ const requests=[];const server=http.createServer((req,res)=>{requests.push(req.url);res.setHeader('content-type','application/json');const node=Object.keys(slots).find(n=>req.url.endsWith(`/node/${n}/chat`));res.end(JSON.stringify({success:true,data:{messages:baseChats()[node]??[]}}));});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'stable-review-audit-'));
+ try{
+  const scripts=path.join(dir,'scripts');fs.mkdirSync(path.join(scripts,'lib'),{recursive:true});
+  for(const f of ['run-stable-dag-runner.sh','render-pr-review-markdown.mjs','pr-review-execution-evidence.mjs'])fs.copyFileSync(new URL(f,import.meta.url),path.join(scripts,f));
+  fs.writeFileSync(path.join(scripts,'configure-pr-review-runtime-profile.mjs'),"process.stdout.write('test-profile');\n");
+  fs.writeFileSync(path.join(scripts,'validate-pr-review-artifacts.mjs'),'process.exit(0);\n');
+  fs.writeFileSync(path.join(scripts,'lib/stable-automation-runtime.sh'),`initialize_stable_automation_runtime() { HOMERAIL_STABLE_RELEASE="$HOMERAIL_TEST_RELEASE"; HOMERAIL_STABLE_NODE="$HOMERAIL_TEST_NODE"; HOMERAIL_STABLE_REVISION=test; }
+stable_hr() {
+ if [ "$1" = "--json" ]; then
+  if [ "$HOMERAIL_TEST_MODE" = "failure" ]; then return 1; fi
+  printf '%s\\n' '{"run_id":"${runId}","status":"completed"}'; return 0
+ fi
+ if [ "$1" = "dag" ] && [ "$2" = "artifact" ]; then
+  cp "$HOMERAIL_TEST_PUBLICATION" "$6"; return 0
+ fi
+ return 0
+}
+`);
+  const report={repo:'org/repo',pr:1,base:'a'.repeat(40),head:'b'.repeat(40),status:'pass',confidence:'medium',actionable_count:0,summary:'Two approve, one abstains',findings:[],reviewer_results:[{reviewer:'qwen',status:'complete',vote:'approve',summary:'ok'},{reviewer:'kimi',status:'failed',vote:'abstain',summary:'incomplete'},{reviewer:'glm',status:'complete',vote:'approve',summary:'ok'}]};
+  const publication=path.join(dir,'publication.json');fs.writeFileSync(publication,JSON.stringify({report,quorum:{passed:true,successes:2,total:3,threshold:2}}));
+  for(const mode of ['success','failure']){
+   const artifacts=path.join(dir,mode);const before=requests.length;
+   const env={...process.env,HOMERAIL_TEST_RELEASE:dir,HOMERAIL_TEST_NODE:process.execPath,HOMERAIL_TEST_MODE:mode,HOMERAIL_TEST_PUBLICATION:publication,HOMERAIL_STABLE_TASK:'pr-review',HOMERAIL_STABLE_RUN_ID:runId,HOMERAIL_PR_REVIEW_INPUT:'{}',HOMERAIL_PR_REVIEW_INPUT_FILE:'',HOMERAIL_PR_REVIEW_ARTIFACT_DIR:artifacts,HOMERAIL_MANAGER_URL:`http://127.0.0.1:${server.address().port}`};
+   const child=spawn('bash',[path.join(scripts,'run-stable-dag-runner.sh')],{env});let stderr='';child.stderr.on('data',c=>stderr+=c);child.stdout.resume();const code=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve);});
+   assert.equal(code,mode==='success'?0:1,stderr);assert.equal(requests.length-before,3,`${mode} must collect all slots`);
+   const e=JSON.parse(fs.readFileSync(path.join(artifacts,'pr-review-execution.json'),'utf8'));assert.equal(e.run_id,runId);assert.equal(e.distinct_model_identities,2);assert.doesNotMatch(JSON.stringify(e),/NEVER_PUBLISH_SECRET/);
+   if(mode==='success')assert.match(fs.readFileSync(path.join(artifacts,'pr-review.md'),'utf8'),/glm\/glm-5\.3/);
+  }
+ }finally{await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});}
+});
