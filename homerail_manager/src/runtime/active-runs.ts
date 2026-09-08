@@ -2963,7 +2963,7 @@ export function handoffActiveRun(
         const evidenceContext = _reviewEvidenceContext(run, fromNode);
         if (evidenceContext) {
           recordReviewHandoffEvidence(evidenceContext, evidence);
-          writeReviewEvidenceProjectionFile(evidenceContext);
+          _refreshReviewEvidenceProjection(run, fromNode, evidenceContext);
         }
       }
       writeRunMetadata(runId, serializeRunMetadata(run));

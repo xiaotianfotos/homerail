@@ -333,14 +333,13 @@ export function sanitizeAttemptDiagnostic(
     : options.failure_reason;
   const declaredCategory = enumOrFallback(diagnostic.failure_category, REVIEW_FAILURE_CATEGORIES, "unknown");
   const knownTruncationFinish = /^(?:max[-_ ]?tokens|length)$/i.test(String(diagnostic.finish_reason ?? ""));
-  const failureCategory = declaredCategory === "unknown"
+  const baseCategory = declaredCategory === "unknown"
     || (declaredCategory === "accepted" && options.failure_reason !== undefined)
     ? classifyReviewFailure(failureReason ?? diagnostic.finish_reason ?? "")
-    : declaredCategory === "accepted"
-      ? "accepted"
-      : knownTruncationFinish
-        ? "provider_output_truncated"
-        : declaredCategory;
+    : declaredCategory;
+  const failureCategory = baseCategory !== "accepted" && knownTruncationFinish
+    ? "provider_output_truncated"
+    : baseCategory;
   const diagnosticValue: AttemptDiagnosticV1 = {
     schema: ATTEMPT_DIAGNOSTIC_SCHEMA_ID,
     attempt,
