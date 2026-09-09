@@ -100,6 +100,14 @@ export class E2eFixCandidates {
     return this.git(["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=20",
       candidate.base, candidate.head, "--", ...allowedPaths]).toString("utf8");
   }
+  reviewRoundDiff(candidate: E2eFixCandidate, parent: string, allowedPaths: string[]): string {
+    this.verifyCandidate(candidate);
+    const ancestry = this.git(["rev-list", "--parents", "-n", "1", candidate.head]).toString().trim().split(/\s+/);
+    if (ancestry.length !== 2 || ancestry[1] !== parent) throw new Error("review parent differs from candidate commit parent");
+    allowedPaths.forEach(e2eFixPath);
+    return this.git(["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=20",
+      parent, candidate.head, "--", ...allowedPaths]).toString("utf8");
+  }
   verifyCandidate(candidate: E2eFixCandidate): void {
     E2eFixCandidateSchema.parse(candidate);
     const seed = JSON.parse(fs.readFileSync(path.join(this.directory, "seed.json"), "utf8"));

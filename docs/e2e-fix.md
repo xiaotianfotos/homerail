@@ -183,3 +183,24 @@ then terminates through the freeze-plan failure route before dispatching the
 Fixer. This is a failed, explainable run, not successful repair or an automatic
 scope expansion. Semantic relevance remains a responsibility of the model
 roles; this contract cannot independently prove causality from arbitrary code.
+
+## 返修审查上下文 / Repair review context
+
+可信测试阶段向每位 Reviewer 和候选 Judger 提供本轮冻结方案及摘要、上轮失败
+和策略、真实父提交到候选的差异。累计差异仍以原始 base 为起点，避免新一轮
+掩盖早先改动。完整源码存于本轮不可变 `test_sources.json`，测试输出绑定其
+摘要。完整源码导致上下文超限时，程序尝试提供累计差异，并明确指出未提供的
+源码和证据文件；不能据此充分判断时，Reviewer 应 abstain，Judger 应 pause。
+失败原因、方案、意见和票数不会为了适配上下文而截断，投影后仍超限则拒绝。
+该机制补齐语义判断输入，不保证模型一定识别无关修复。
+
+Reviewers and the candidate Judger receive the frozen plan and digest, prior
+failure and retry strategy, and the verified parent-to-candidate diff. The
+cumulative diff still starts from the original base. Complete source is kept
+in immutable `test_sources.json` with a digest in the trusted test output. If
+full source exceeds the context bound, the program attempts a cumulative diff
+projection and explicitly identifies the omitted source. Reviewers must abstain
+and the Judger must pause if the supplied context is insufficient. Repair
+targets, findings, and votes are never truncated to fit; oversized projections
+are rejected. This supplies evidence for semantic assessment, not a guarantee
+that a model will detect every unrelated repair.

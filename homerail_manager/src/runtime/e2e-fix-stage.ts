@@ -243,6 +243,16 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
           return { check_id: d.id, attempts: attempts.length, log_tail: fs.readFileSync(path.join(dir, String(attempts.at(-1)), "test.log"), "utf8").slice(-5000) };
         }) };
     }
+    const frozen = read("freeze_plan");
+    result.repair_context = { plan: frozen.plan, plan_sha256: frozen.plan_sha256,
+      parent_head: frozen.parent, previous: frozen.previous,
+      ...(captured.candidate ? { round_diff: candidates.reviewRoundDiff(captured.candidate, frozen.parent, config.allowed_paths) } : {}) };
+    // Preserve the complete sources even if the model-facing stage output has
+    // to use a diff. The raw file remains bound by a digest in trusted output.
+    write("test_sources", result.sources);
+    result.source_evidence = { artifact: "test_sources.json", sha256: digest(result.sources) };
+    if (captured.candidate) result = projectE2eFixReviewContext(result, candidates, config.context_bytes,
+      { artifact: "test_sources.json", reviewersHadFullSources: false });
   } else if (stage === "review_evidence") {
     const tested = read("test");
     const reports = config.policy.reviewer_ids.map(node => {
@@ -268,7 +278,8 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const invalidApprovals = reports.filter(r => r.vote === "approve" && r.finding_ids.length);
     if (invalidApprovals.length) result.review_contract_errors = invalidApprovals.map(r => ({ reviewer_id: r.reviewer_id,
       code: "approve_with_findings", reason: "Approval requires empty findings. This report cannot count toward publication, even if the Judger dismisses its findings." }));
-    result = projectE2eFixReviewContext(result, candidates, config.context_bytes);
+    result = projectE2eFixReviewContext(result, candidates, config.context_bytes,
+      { artifact: tested.source_evidence?.artifact ?? "test.json", reviewersHadFullSources: Boolean(tested.sources) });
   } else if (stage === "record_candidate_judgment") {
     const tested = read("test"); const reviewed = fs.existsSync(path.join(folder, "review_evidence.json")) ? read("review_evidence") : null;
     const evidence = modelEvidence("judge_candidate", one("judgment")); write("candidate_judger", evidence);

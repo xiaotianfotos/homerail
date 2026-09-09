@@ -52,7 +52,13 @@ describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () =>
     const first = store.capture(request());
     const candidate = store.capture({ ...request(), round: 2, parent: first.head,
       allowed_paths: ["sum.cjs", "new.cjs"], edits: [{ path: "new.cjs", old: "", new: "module.exports = 'new file';\n" }] });
+    const roundDiff = store.reviewRoundDiff(candidate, first.head, ["sum.cjs", "new.cjs"]);
+    expect(roundDiff).toContain("+module.exports = 'new file';");
+    expect(roundDiff).not.toContain("a+b");
+    expect(() => store.reviewRoundDiff(candidate, base, ["sum.cjs", "new.cjs"])).toThrow(/parent/);
     const evidence = { candidate, sources: store.source(candidate.head, ["sum.cjs", "new.cjs"]),
+      repair_context: { plan: { strategy: "Expose the new entry point" }, parent_head: first.head, round_diff: roundDiff,
+        previous: { reason: "Entry point missing", evidence: { retry_strategy: "Add the missing entry point" } } },
       issue: { body: "Preserve signed numbers, exact scope and all requirements" },
       reports: [{ vote: "request_changes", finding_ids: ["concern"] }], findings: [{ id: "concern", message: "Do not hide this concern" }] };
     const original = JSON.stringify(evidence);
@@ -61,6 +67,7 @@ describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () =>
     expect(Buffer.byteLength(JSON.stringify(projected))).toBeLessThan(5000);
     expect(projected.issue).toEqual(evidence.issue); expect(projected.reports).toEqual(evidence.reports);
     expect(projected.findings).toEqual(evidence.findings);
+    expect(projected.repair_context).toEqual(evidence.repair_context);
     expect("source_context" in projected).toBe(true);
     if (!("source_context" in projected)) throw new Error("expected diff projection");
     // Cumulative diff must include the previous round's fix and a new file.
@@ -68,6 +75,15 @@ describe.skipIf(process.platform !== "linux")("E2E Fix frozen candidates", () =>
     expect(projected.source_context.diff).toContain("+module.exports = (a,b) => a+b;");
     expect(projected.source_context.diff).toContain("+module.exports = 'new file';");
     expect(projected.source_context.limitation).toContain("Unchanged source");
+    const reviewerProjection = projectE2eFixReviewContext(evidence, store, 5000,
+      { artifact: "test_sources.json", reviewersHadFullSources: false });
+    if (!("source_context" in reviewerProjection)) throw new Error("expected reviewer projection");
+    expect(reviewerProjection.source_context.full_sources_artifact).toBe("test_sources.json");
+    expect(reviewerProjection.source_context.full_sources_sha256).toBe(projected.source_context.full_sources_sha256);
+    expect(reviewerProjection.source_context.limitation).toContain("not the omitted source");
+    expect(reviewerProjection.repair_context).toEqual(evidence.repair_context);
+    // A second projection cannot erase the repair target or claim the omitted source was delivered.
+    expect(projectE2eFixReviewContext(reviewerProjection, store, 100)).toBe(reviewerProjection);
     expect(projectE2eFixReviewContext(evidence, store, 96000)).toBe(evidence);
     const huge = { ...evidence, findings: [{ id: "concern", message: "Must preserve every finding. ".repeat(3000) }] };
     const stillLarge = projectE2eFixReviewContext(huge, store, 5000);

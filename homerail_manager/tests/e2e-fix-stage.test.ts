@@ -18,6 +18,7 @@ import { closeDb, getDb } from "../src/persistence/db.js";
 import { appendNodeUsage, appendChatEntry, loadRunSnapshot } from "../src/persistence/store.js";
 import { subscribe } from "../src/events/bus.js";
 import { e2eFixDocker } from "../src/runtime/e2e-fix-test.js";
+import { e2eFixDigest } from "../src/runtime/e2e-fix-candidates.js";
 
 function config(root: string, image = "sha256:" + "1".repeat(64)): E2eFixTaskConfig {
   return { version: 1, task_id: "issue-fixture", root_run_id: "native-root", mode: "simulation", source_repo: path.join(root, "repo"), repo: "fixture/repo", base: "a".repeat(40),
@@ -54,7 +55,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "blocked-plan" | "stagnation-test" | "stagnation-same-plan" | "interrupted-test" | "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+type Scenario = "review-source-projection" | "blocked-plan" | "stagnation-test" | "stagnation-same-plan" | "interrupted-test" | "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
   | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
@@ -93,6 +94,9 @@ class Models implements DAGDispatcher {
             : this.scenario === "ci-feedback" && value.round === 2 ? "module.exports=(a,b)=>a+b+0;\n" : "module.exports=(a,b)=>a+b;\n";
           result = { summary: "repair candidate " + value.round, edits: [{ path: "sum.cjs", old: this.scenario === "invalid-proposal" && value.round === 1 ? "stale source" : value.sources["sum.cjs"],
             new: this.scenario.startsWith("review-context-") && value.round === 1 ? "module.exports=(a,b)=>Math.abs(a+b);\n" : code }] };
+          if (this.scenario === "review-source-projection") result = { summary: "Fix the signed sum without copying unchanged context", edits: [
+            { path: "sum.cjs", old: "=>0", new: "=>a+b" },
+          ] };
           if (this.scenario.startsWith("stagnation-")) result = { summary: "Cosmetic unsuccessful change", edits: [{
             path: "sum.cjs", old: value.sources["sum.cjs"], new: `module.exports=(a,b)=>a-b; // attempt ${value.round}\n`,
           }] };
@@ -102,10 +106,13 @@ class Models implements DAGDispatcher {
           ] };
         } else if (envelope.nodeId.startsWith("review_")) {
           // Deterministic reviewer substitute. It examines the source actually
-          // delivered by the stage, independently of sibling votes.
-          const bad = value.sources["sum.cjs"].includes("Math.abs") || (["unresolved-review", "dismissed-review", "duplicate-disposition"].includes(this.scenario) && envelope.nodeId === "review_c");
+          // delivered by the stage, independently of sibling votes. For a
+          // projection it inspects only added lines, never the omitted source.
+          const source = value.sources?.["sum.cjs"] ?? value.source_context.diff.split("\n")
+            .filter((line: string) => line.startsWith("+") && !line.startsWith("+++")).join("\n");
+          const bad = source.includes("Math.abs") || (["unresolved-review", "dismissed-review", "duplicate-disposition"].includes(this.scenario) && envelope.nodeId === "review_c");
           result = { vote: bad ? "request_changes" : "approve", summary: envelope.nodeId + ": signed-input review",
-            findings: bad ? [value.sources["sum.cjs"].includes("Math.abs") ? "Negative sums are incorrectly made positive" : "Fixture disputed concern"] : [] };
+            findings: bad ? [source.includes("Math.abs") ? "Negative sums are incorrectly made positive" : "Fixture disputed concern"] : [] };
           if (this.scenario.startsWith("review-contract-") && envelope.nodeId === "review_a"
             && (this.scenario === "review-contract-exhausted" || !envelope.inputs.correction?.length)) {
             result = { vote: "approve", summary: "Correct signed addition", findings: ["The candidate correctly adds signed values"] };
@@ -156,14 +163,18 @@ class Models implements DAGDispatcher {
           else expect(correction.status).toBe("scheduled");
         }
         this.executor.tick(envelope.runId);
-      } catch (error) { this.error = error; }
+      } catch (error) {
+        this.error = error;
+        failActiveRun(envelope.runId, envelope.nodeId, "Deterministic model fixture failed");
+        this.executor.tick(envelope.runId);
+      }
     });
     return { status: "dispatched" as const, targetType: "fake" as const, targetId: "model-substitute" };
   }
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["blocked-plan", "stagnation-test", "stagnation-same-plan", "interrupted-test", "review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+  it.each<Scenario>(["review-source-projection", "blocked-plan", "stagnation-test", "stagnation-same-plan", "interrupted-test", "review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
     "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
@@ -178,12 +189,19 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         configuration.context_bytes = 64000;
         configuration.issue.body += "\n" + "Retain the complete issue acceptance scope. ".repeat(scenario === "review-context-oversize" ? 1000 : 900);
       }
+      if (scenario === "review-source-projection") configuration.context_bytes = 64000;
       fs.mkdirSync(configuration.source_repo);
       const git = (...args: string[]) => {
         const result = spawnSync("git", ["-C", configuration.source_repo, ...args], { encoding: "utf8" }); if (result.status !== 0) throw new Error(result.stderr); return result.stdout.trim();
       };
       git("init"); git("config", "user.name", "fixture"); git("config", "user.email", "fixture@example.invalid");
       fs.writeFileSync(path.join(configuration.source_repo, "sum.cjs"), "module.exports=(a,b)=>0;\n"); git("add", "."); git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      if (scenario === "review-source-projection") {
+        // The plan fits the frozen bound, but adding trusted test/repair evidence
+        // crosses it. Exercise projection at review admission, not plan rejection.
+        fs.writeFileSync(path.join(configuration.source_repo, "sum.cjs"), "// unchanged context\n".repeat(2860) + "module.exports=(a,b)=>0;\n");
+        git("add", "."); git("-c", "commit.gpgsign=false", "commit", "-m", "large unchanged source");
+      }
       configuration.base = git("rev-parse", "HEAD"); freezeE2eFixTask(task, configuration);
       fs.writeFileSync(path.join(task, "fixture-scenario.json"), JSON.stringify(scenario));
       const stageCommands = Object.fromEntries(E2E_FIX_STAGES.map(stage => [stage, [process.execPath, "--import", "tsx",
@@ -418,6 +436,22 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         expect(read(1, "record_candidate_judgment").action).toBe("pause");
         expect(snapshot.metadata.nodeStates.publish).toBe("SKIPPED");
       }
+      if (scenario === "review-source-projection") {
+        const tested = read(1, "test");
+        expect(tested.sources).toBeUndefined();
+        expect(tested.source_context.full_sources_artifact).toBe("test_sources.json");
+        expect(tested.source_context.limitation).toContain("not the omitted source");
+        expect(tested.source_context.diff).toContain("+module.exports=(a,b)=>a+b;");
+        expect(e2eFixDigest(JSON.stringify(read(1, "test_sources")))).toBe(tested.source_evidence.sha256);
+        expect(Buffer.byteLength(JSON.stringify({ ...tested, sources: read(1, "test_sources") }))).toBeGreaterThan(configuration.context_bytes);
+        expect(Buffer.byteLength(JSON.stringify(tested))).toBeLessThanOrEqual(configuration.context_bytes);
+        for (const dispatch of models.calls.filter(c => c.nodeId.startsWith("review_") || c.nodeId === "judge_candidate")) {
+          const value = dispatch.inputs.evidence.at(-1) as any;
+          const evidence = value.values?.[0] ?? value;
+          expect(evidence.repair_context).toEqual(tested.repair_context);
+          expect(evidence.source_context).toEqual(tested.source_context);
+        }
+      }
       if (scenario === "review-context-budget") {
         const review = read(1, "review_evidence");
         expect(review.findings).toHaveLength(24);
@@ -472,6 +506,19 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         expect(read(2, "context").previous.evidence.details.logs[0].tail).toContain("CI fixture assertion failure");
         expect(read(2, "context").previous.evidence.retry_strategy).toBe(read(1, "ci_judger").value.retry_strategy);
         expect(read(2, "planner").value.strategy).toBe(read(1, "ci_judger").value.retry_strategy);
+        const secondReviewers = models.calls.filter(c => c.nodeId.startsWith("review_") && (c.inputs.evidence.at(-1) as any).round === 2);
+        expect(secondReviewers).toHaveLength(3);
+        for (const dispatch of secondReviewers) {
+          const evidence = dispatch.inputs.evidence.at(-1) as any;
+          expect(evidence.repair_context).toMatchObject({ plan: read(2, "freeze_plan").plan,
+            plan_sha256: read(2, "freeze_plan").plan_sha256, parent_head: read(1, "capture").candidate.head,
+            previous: read(2, "context").previous });
+          // This deterministic fixture proves delivery, not semantic correctness of its cosmetic patch.
+          expect(evidence.repair_context.round_diff).toContain("-module.exports=(a,b)=>a+b;");
+          expect(evidence.repair_context.round_diff).toContain("+module.exports=(a,b)=>a+b+0;");
+          expect(read(2, "test_sources")).toEqual(evidence.sources);
+          expect(evidence.source_evidence.sha256).toBe(e2eFixDigest(JSON.stringify(read(2, "test_sources"))));
+        }
         expect(read(2, "publish").publication.pr).toBe(read(1, "publish").publication.pr);
         expect(models.calls.filter(c => c.nodeId === "judge_ci")).toHaveLength(2);
       }
