@@ -147,6 +147,8 @@ hr scorecard <run_id>
 hr eval-run <run_id>
 ```
 
+可选的[本地模型 token 准入路由](docs/e2e-fix-token-admission.md)按完整请求计数，在转发前检查上下文容量并保留配置的输出额度。
+
 实验性的 E2E Fix 支持[首次 Worker 派发前的运行配置失败恢复](docs/e2e-fix-recovery.md)，
 保留已完成的 Planner 证据、原 root 和 round。
 首轮审查汇总因上下文超限失败时，操作者也可授权一次冻结运行时替换，保留已完成的

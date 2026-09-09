@@ -183,6 +183,8 @@ logical actors under the same run, see [Multi-Round DAGs](docs/multi-round-dags.
 The guide covers strict WorkflowSpec v1 authoring, round fencing, CLI and HTTP
 commands, recovery, expiry, and concurrency-slot behavior.
 
+An optional [tokenizer-based local-model route](docs/e2e-fix-token-admission.md) checks complete requests and preserves the configured output reserve before forwarding.
+
 Experimental E2E Fix also supports [recovery from a runtime configuration failure
 before the first Worker dispatch](docs/e2e-fix-recovery.md), preserving completed
 Planner evidence and the original root and round.

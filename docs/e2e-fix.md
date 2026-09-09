@@ -210,3 +210,6 @@ vote/summary/findings. Configured independent approvals, finding dispositions,
 trusted tests and same-head CI are still required; votes cannot turn failed or
 unknown execution into success. Complete source is retained with a digest;
 oversized source may be projected to a clearly labelled cumulative diff.
+
+本地 FreeToken/Qwen 可配置[tokenizer 请求前准入](e2e-fix-token-admission.md)。
+该路由与 Worker 策略摘要须一起配置，不能把原有字节上限或模型声明的窗口误称为已启用 token 校验。

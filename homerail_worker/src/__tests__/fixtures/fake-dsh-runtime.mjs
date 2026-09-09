@@ -175,7 +175,7 @@ function finish(reason = "completed") {
       content: [{ type: "text", text: "finished" }],
       source: { kind: "model", provider: "deepseek-official", model: "test-model" },
     },
-    usage: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 2 },
+    usage: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 2, cacheWriteTokens: Number(process.env.DSH_FAKE_CACHE_WRITE ?? 0) },
   });
   event(sessionId, "turn/end", { turn: 1, reason });
   status(sessionId, "idle");
@@ -202,6 +202,7 @@ lines.on("line", async (line) => {
         argv: process.argv.slice(2),
         baseUrl: providerProfile?.baseURL,
         reasoningEffort: providerProfile?.reasoning,
+        contextWindow: providerProfile?.models?.[0]?.contextWindow,
         reasoningEfforts: providerProfile?.models?.[0]?.reasoningEfforts,
         apiKeyPresent: Boolean(process.env.HOMERAIL_DSH_API_KEY),
         managerToken: process.env.HOMERAIL_WORKER_TOKEN,
