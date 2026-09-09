@@ -697,6 +697,13 @@ export function inspectionRoutesHandler(
     return true;
   }
 
+  // A launcher must detect read-only creation reconciliation support before
+  // issuing a request that can spend model tokens. No credentials in this view.
+  if (pathname === "/api/e2e-fix/capabilities" && req.method === "GET") {
+    _ok(res, "E2E Fix creation identity support", { creation_identity_version: 1 });
+    return true;
+  }
+
   // GET /api/runs/:run_id/status
   if (pathname.match(/^\/api\/runs\/[^/]+\/status$/) && req.method === "GET") {
     const runId = pathname.split("/")[3];
@@ -1018,6 +1025,9 @@ export function inspectionRoutesHandler(
     _ok(res, "Run metadata retrieved", {
       runId: metadata.runId,
       workflowId: metadata.workflowId,
+      workflowRevision: metadata.workflowRevision,
+      canonicalHash: metadata.canonicalHash,
+      creationRequestDigest: metadata.creationRequestDigest,
       workflowName: metadata.workflowName,
       nodeCount: metadata.nodeCount,
       agents: metadata.agents,

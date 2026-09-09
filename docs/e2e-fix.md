@@ -4,7 +4,7 @@ E2E Fix 把方案、修复、可信测试、审查、Judger、PR 和 CI 放在�
 工作流中。当前准备入口适用于 Linux Manager 宿主；配置、候选库和冻结运行时
 必须留在宿主私有目录，不能放进被修复仓库或挂载给模型 Worker。
 
-状态：仓库已提供可复现的准备命令；统一的启动与启动应答丢失对账命令仍待交付。
+状态：仓库提供准备、启动与启动应答丢失后的只读对账命令。
 `prepared.json` 只证明准备完成，不代表模型可用、任务启动或验收通过。
 不要直接用普通 `hr run` 启动本工作流：它必须使用冻结的 `root_run_id`，
 并绑定同步得到的 workflow revision/hash 和 profile 版本。
@@ -73,6 +73,37 @@ command 的路径已绑定最终目录，准备后不得移动。重复命令拒
 持续推进，后台程序仅在异常或结束通知。恢复约束见 [恢复协议](e2e-fix-recovery.md)，
 费用汇总见 [证据报告](e2e-fix-report.md)，完整验收边界见 [实施计划](plans/e2e-fix-289.md)。
 
+## 启动和对账
+
+将 `HOMERAIL_MANAGER_URL` 显式指向隔离 Manager，按现有凭证机制设置
+`HOMERAIL_DAG_MUTATION_TOKEN`（命令不保存 token），然后执行：
+
+```bash
+node scripts/e2e-fix.mjs start /srv/homerail-private/my-task
+node scripts/e2e-fix.mjs reconcile /srv/homerail-private/my-task
+```
+
+start 先检查准备清单和 Manager 的创建身份能力，再同步 workflow/profile，
+固定其 revision/hash/更新时间。创建请求发送前，原子保存 `launch-intent.json`；
+同目录只有一个调用者能取得创建权。请求使用冻结 root ID，图内的业务阶段仍全部
+由 Manager 驱动。随后通过只读接口核对原始创建请求摘要、workflow/head revision，
+匹配后保存 `launched.json`。没有把 HTTP 创建应答本身当作核验结果。
+
+重复 start 在已有 intent 时只查询，不再次同步或 POST 创建；reconcile 始终
+不发送写请求。Manager URL 也被 intent 固定，不能把另一台 Manager 的同名 root
+认作原任务。首次启动前，旧 Manager 若缺少身份查询能力则拒绝执行。
+
+返回 `observed` 仅表示已核对根任务身份，`run_status` 才是其当前状态；
+它不代表测试、审查或 PR 已通过。`unknown` 表示 intent 存在但 root 尚不可见，
+`not_submitted` 表示未发现 intent，两者 CLI 退出码均为 2。网络错误、旧接口或
+身份冲突退出码为 1。保留现场，并在有明确状态变化后再对账，避免不断询问模型。
+
+若进程在写 intent 后、实际发送前退出，与“已发送但应答丢失”可能无法区分。
+当前入口保守保留 unknown，没有自动重发机制；配置准入失败的自动修复也未提供。
+不要删除 intent 或换 root 试探重跑。需要经独立证据确认后使用受支持恢复协议，
+这项限制不等于阶段执行可以任意恢复。准备/启动命令不安装监督器；运行完成或异常
+唤醒应另接事件监督程序，不能把短连接 CLI 留作业务调度器。
+
 ## English
 
 Run the two commands above on the Linux Manager host after building all packages.
@@ -87,7 +118,15 @@ during preparation; the bootstrap verifies the entire inventory before stage exe
 Use trusted test definitions and an explicit GitHub check policy. Model credentials
 belong in Manager settings, and GitHub publication uses the host identity.
 
-A consolidated start/reconciliation command remains pending. Ordinary `hr run` is
-insufficient because the frozen root ID and synced workflow/profile revisions must
-match. Never retry an uncertain creation with a new identity. Byte/time/round limits
-are not a task-wide token budget or proof of model availability or E2E acceptance.
+Use `start` / `reconcile` with an explicit `HOMERAIL_MANAGER_URL` and the existing
+mutation-token environment. Start verifies capability support, syncs the frozen
+workflow/profile, atomically records a pinned creation intent and submits once.
+All later calls reconcile through GET only; matching persisted request identity
+produces `launched.json`. Credentials are never saved. Ordinary `hr run` cannot
+replace this identity contract. An observed root is not E2E acceptance.
+
+Unknown creation outcomes remain unknown; this entrypoint does not automatically
+retry an intent left before sending or repair rejected admission. Preserve evidence
+and use a supported recovery procedure after investigation, never a new root as a
+probe. Completion/exception supervision is configured separately. Byte/time/round
+limits are not a task-wide token budget or a proof of successful execution.
