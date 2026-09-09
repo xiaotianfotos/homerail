@@ -12,7 +12,7 @@ import { E2eFixIsolatedTest, validateE2eFixTestDefinition, type E2eFixTestDefini
 import type { E2eFixStage } from "../orchestration/e2e-fix-workflow.js";
 import { validateE2eFixGitHub, type E2eFixGitHubConfig } from "./e2e-fix-github.js";
 import { assertE2eFixStageRuntime } from "./e2e-fix-stage-runtime.js";
-import { projectE2eFixReviewContext } from "./e2e-fix-review-context.js";
+import { projectE2eFixReviewContext, publishE2eFixReviewContext } from "./e2e-fix-review-context.js";
 import { readE2eFixModelRuntime, verifyLegacyE2eFixModelArtifact } from "./e2e-fix-model-runtime.js";
 import { assessE2eFixProgress, e2eFixFailureFingerprint, sameE2eFixPlan, type E2eFixFailureObservation } from "./e2e-fix-progress.js";
 
@@ -269,6 +269,7 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
       { artifact: "test_sources.json", reviewersHadFullSources: false });
   } else if (stage === "review_evidence") {
     const tested = read("test");
+    const reviewerInput = config.design ? read("publish") : tested;
     const reports = config.policy.reviewer_ids.map(node => {
       const latest = loadRunSnapshot(config.root_run_id)?.handoffs.filter(h => h.fromNode === node && h.port === "result").at(-1);
       let evidence = modelEvidence(node, latest?.content);
@@ -287,13 +288,13 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     });
     // Keep each finding body once. Reports reference those bodies by ID; the
     // complete original reviewer output remains in its immutable artifact.
-    result = { ...tested, ...(config.design ? { publication: read("publish").publication } : {}), outcome: "reviewed", reports: reports.map(({ findings: _, ...report }) => report), findings: reports.flatMap(r => r.findings),
+    result = { ...reviewerInput, outcome: "reviewed", reports: reports.map(({ findings: _, ...report }) => report), findings: reports.flatMap(r => r.findings),
       evidence_sha256: [...tested.tests.map((t: { artifact_sha256: string }) => t.artifact_sha256), ...reports.map(r => r.artifact_sha256)] };
     const invalidApprovals = reports.filter(r => r.vote === "approve" && r.finding_ids.length);
     if (invalidApprovals.length) result.review_contract_errors = invalidApprovals.map(r => ({ reviewer_id: r.reviewer_id,
       code: "approve_with_findings", reason: "Approval requires empty findings. This report cannot count toward publication, even if the Judger dismisses its findings." }));
     result = projectE2eFixReviewContext(result, candidates, config.context_bytes,
-      { artifact: tested.source_evidence?.artifact ?? "test.json", reviewersHadFullSources: Boolean(tested.sources) });
+      { artifact: tested.source_evidence?.artifact ?? "test.json", reviewersHadFullSources: Boolean(reviewerInput.sources) });
   } else if (stage === "record_candidate_judgment") {
     const tested = read("test"); const reviewed = fs.existsSync(path.join(folder, "review_evidence.json")) ? read("review_evidence") : null;
     if (config.design) {
@@ -352,12 +353,16 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     }
     const candidate = decision.candidate;
     if (stage === "publish") {
-      const publication = providers.publish(config, candidate, directory);
-      if (!sameE2eFixCandidate(publication.candidate, candidate) || publication.state !== "open" || publication.observed_head !== candidate.head) {
-        throw new Error("published PR does not match the tested candidate");
+      if (config.design) {
+        result = publishE2eFixReviewContext(read("test"), candidates, config.context_bytes,
+          () => providers.publish(config, candidate, directory));
+      } else {
+        const publication = providers.publish(config, candidate, directory);
+        if (!sameE2eFixCandidate(publication.candidate, candidate) || publication.state !== "open" || publication.observed_head !== candidate.head) {
+          throw new Error("published PR does not match the tested candidate");
+        }
+        result = { ...reference(), candidate, publication };
       }
-      result = config.design ? projectE2eFixReviewContext({ ...read("test"), publication }, candidates, config.context_bytes,
-        { artifact: "test_sources.json", reviewersHadFullSources: false }) : { ...reference(), candidate, publication };
     }
     else {
       const publication = read("publish").publication; const { feedback, ...ci } = providers.ci(config, candidate, publication, directory);

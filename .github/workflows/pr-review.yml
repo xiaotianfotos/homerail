@@ -49,7 +49,9 @@ permissions:
 
 concurrency:
   group: homerail-pr-review-${{ github.event.pull_request.number || inputs.pr }}
-  cancel-in-progress: true
+  # Cancelling the Actions observer does not cancel its durable Manager DAG.
+  # Let it collect the original result before a later trigger takes this slot.
+  cancel-in-progress: false
 
 jobs:
   review:

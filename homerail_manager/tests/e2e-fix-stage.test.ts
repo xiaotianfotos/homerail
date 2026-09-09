@@ -55,7 +55,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "fixed-test-review-loop" | "fixed-ci-feedback" | "fixed-quorum" | "fixed-unknown-ci" | "fixed-stagnation" | "review-source-projection" | "blocked-plan" | "stagnation-test" | "stagnation-same-plan" | "oom-test" | "install-failure" | "setup-success" | "missing-template" | "interrupted-test" | "review-contract-correct" | "review-contract-correct-retry" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+type Scenario = "fixed-source-projection" | "fixed-test-review-loop" | "fixed-ci-feedback" | "fixed-quorum" | "fixed-unknown-ci" | "fixed-stagnation" | "review-source-projection" | "blocked-plan" | "stagnation-test" | "stagnation-same-plan" | "oom-test" | "install-failure" | "setup-success" | "missing-template" | "interrupted-test" | "review-contract-correct" | "review-contract-correct-retry" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
   | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
@@ -102,7 +102,7 @@ class Models implements DAGDispatcher {
             : ["ci-feedback", "fixed-ci-feedback"].includes(this.scenario) && value.round === 2 ? "module.exports=(a,b)=>a+b+0;\n" : "module.exports=(a,b)=>a+b;\n";
           result = { summary: "repair candidate " + value.round, edits: [{ path: "sum.cjs", old: this.scenario === "invalid-proposal" && value.round === 1 ? "stale source" : value.sources["sum.cjs"],
             new: this.scenario.startsWith("review-context-") && value.round === 1 ? "module.exports=(a,b)=>Math.abs(a+b);\n" : code }] };
-          if (this.scenario === "review-source-projection") result = { summary: "Fix the signed sum without copying unchanged context", edits: [
+          if (["review-source-projection", "fixed-source-projection"].includes(this.scenario)) result = { summary: "Fix the signed sum without copying unchanged context", edits: [
             { path: "sum.cjs", old: "=>0", new: "=>a+b" },
           ] };
           if (this.scenario.startsWith("stagnation-") || this.scenario === "fixed-stagnation") result = { summary: "Cosmetic unsuccessful change", edits: [{
@@ -186,7 +186,7 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["fixed-test-review-loop", "fixed-ci-feedback", "fixed-quorum", "fixed-unknown-ci", "fixed-stagnation", "review-source-projection", "blocked-plan", "stagnation-test", "stagnation-same-plan", "oom-test", "install-failure", "setup-success", "missing-template", "interrupted-test", "review-contract-correct", "review-contract-correct-retry", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+  it.each<Scenario>(["fixed-source-projection", "fixed-test-review-loop", "fixed-ci-feedback", "fixed-quorum", "fixed-unknown-ci", "fixed-stagnation", "review-source-projection", "blocked-plan", "stagnation-test", "stagnation-same-plan", "oom-test", "install-failure", "setup-success", "missing-template", "interrupted-test", "review-contract-correct", "review-contract-correct-retry", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
     "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
@@ -215,17 +215,17 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         configuration.context_bytes = 64000;
         configuration.issue.body += "\n" + "Retain the complete issue acceptance scope. ".repeat(scenario === "review-context-oversize" ? 1000 : 900);
       }
-      if (scenario === "review-source-projection") configuration.context_bytes = 64000;
+      if (["review-source-projection", "fixed-source-projection"].includes(scenario)) configuration.context_bytes = 64000;
       fs.mkdirSync(configuration.source_repo);
       const git = (...args: string[]) => {
         const result = spawnSync("git", ["-C", configuration.source_repo, ...args], { encoding: "utf8" }); if (result.status !== 0) throw new Error(result.stderr); return result.stdout.trim();
       };
       git("init"); git("config", "user.name", "fixture"); git("config", "user.email", "fixture@example.invalid");
       fs.writeFileSync(path.join(configuration.source_repo, "sum.cjs"), "module.exports=(a,b)=>0;\n"); git("add", "."); git("-c", "commit.gpgsign=false", "commit", "-m", "base");
-      if (scenario === "review-source-projection") {
+      if (["review-source-projection", "fixed-source-projection"].includes(scenario)) {
         // The plan fits the frozen bound, but adding trusted test/repair evidence
         // crosses it. Exercise projection at review admission, not plan rejection.
-        fs.writeFileSync(path.join(configuration.source_repo, "sum.cjs"), "// unchanged context\n".repeat(2860) + "module.exports=(a,b)=>0;\n");
+        fs.writeFileSync(path.join(configuration.source_repo, "sum.cjs"), "// unchanged context\n".repeat(scenario === "fixed-source-projection" ? 2780 : 2860) + "module.exports=(a,b)=>0;\n");
         git("add", "."); git("-c", "commit.gpgsign=false", "commit", "-m", "large unchanged source");
       }
       configuration.base = git("rev-parse", "HEAD"); freezeE2eFixTask(task, configuration);
@@ -286,6 +286,20 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         expect(new Set(models.calls.map(c => c.sessionId)).size).toBe(models.calls.length);
         const final = path.join(task, "rounds", String(roundCount));
         if (!paused) expect(JSON.parse(fs.readFileSync(path.join(final, "complete.json"), "utf8"))).toMatchObject({ action: "complete", decision_source: "trusted_review_quorum", acceptance: { eligible: true } });
+        if (scenario === "fixed-source-projection") {
+          const read = (name: string) => JSON.parse(fs.readFileSync(path.join(final, name + ".json"), "utf8"));
+          const tested = read("test"); const published = read("publish"); const reviewed = read("review_evidence");
+          expect(tested.sources).toBeDefined();
+          expect(Buffer.byteLength(JSON.stringify(tested))).toBeLessThanOrEqual(configuration.context_bytes);
+          expect(Buffer.byteLength(JSON.stringify({ ...tested, publication: published.publication }))).toBeGreaterThan(configuration.context_bytes);
+          expect(published.sources).toBeUndefined();
+          expect(reviewed.sources).toBeUndefined();
+          expect(reviewed.source_context).toEqual(published.source_context);
+          expect(reviewed.source_context.limitation).toContain("Reviewers receive this projection, not the omitted source");
+          for (const call of models.calls.filter(c => c.nodeId.startsWith("review_"))) {
+            expect(call.inputs.evidence.at(-1)).toEqual(published);
+          }
+        }
         if (scenario === "fixed-quorum") {
           const reviewed = JSON.parse(fs.readFileSync(path.join(final, "review_evidence.json"), "utf8"));
           expect(reviewed.findings).toHaveLength(1); // Retained dissent, not a fabricated Judger dismissal.
