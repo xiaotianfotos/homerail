@@ -57,13 +57,20 @@ export function readE2eFixModelFailure(runId: string, nodeId: string, routed: un
       duration_ms: Number.isFinite(c.duration_ms) && c.duration_ms >= 0 ? c.duration_ms : null,
       finish_reason: typeof c.finish_reason === "string" ? c.finish_reason.slice(0, 128) : null });
   }
-  const attempts = [...usages.values()].map(attempt => ({ ...attempt,
-    output_observation: outputs.get(attempt.execution_id) ?? null }));
+  // A killed Worker may persist stream observations before the provider sends
+  // any usage. Preserve that execution without converting bytes to tokens or
+  // silently dropping its unknown cost from the next stage's evidence.
+  const executionIds = new Set([...usages.keys(), ...outputs.keys()]);
+  const attempts = [...executionIds].map(executionId => ({
+    ...(usages.get(executionId) ?? { execution_id: executionId, input_tokens: null,
+      output_tokens: null, cache_read_input_tokens: null, duration_ms: null, finish_reason: null }),
+    output_observation: outputs.get(executionId) ?? null }));
   const confirmedTruncation = diagnostic?.failure_category === "provider_output_truncated"
     && attempts.length > 0 && /^(?:max[-_ ]?tokens|length)$/i.test(attempts.at(-1)?.finish_reason ?? "");
   const evidence = { node_id: nodeId, session_id: session.session_id, round_id: roundId,
     outcome: confirmedTruncation ? "output_truncated" : "unknown", diagnostic: diagnostic ?? null,
     error: typeof error === "string" ? error.slice(0, 4000) : "Model failed without a retained error message",
-    attempts, usage_status: attempts.length ? "reported_execution_snapshots" : "unknown" };
+    attempts, usage_status: usages.size === 0 ? "unknown"
+      : usages.size < attempts.length ? "partial_execution_snapshots" : "reported_execution_snapshots" };
   return { ...evidence, artifact_sha256: e2eFixDigest(JSON.stringify(evidence)) };
 }

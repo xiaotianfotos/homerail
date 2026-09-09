@@ -50,3 +50,14 @@ test('report preserves failed host cost and omits private config, prompts and mo
   fs.writeFileSync(path.join(dir, 'config.sha256'), 'bad');
   assert.throws(() => reportTask(dir), /Policy digest mismatch/);
 });
+
+test('unmetered streamed failure remains incomplete alongside known prior usage', () => {
+  const row = { session_id: 's', round_id: 'r', execution_id: 'metered',
+    usage: { input_tokens: 101, output_tokens: 8, cache_read_input_tokens: 80 } };
+  const unmetered = { ...row, execution_id: 'unmetered', usage: {
+    input_tokens: null, output_tokens: null, cache_read_input_tokens: null,
+    output_observation: { stream_bytes: { reasoning: 16384 } } } };
+  const result = summarizeUsage([row, unmetered], 'worker_failure');
+  assert.equal(result.status, 'incomplete'); assert.equal(result.unknown_records, 1);
+  assert.equal(result.total_tokens, 109); assert.equal(result.executions, 1);
+});

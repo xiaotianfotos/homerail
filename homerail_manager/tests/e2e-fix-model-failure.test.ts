@@ -93,6 +93,27 @@ nodes:
       output_observation: { stream_bytes: data.stream_bytes, message_bytes: data.message_bytes } });
     expect(JSON.stringify(result)).not.toContain("must not reach Judger");
   });
+  it.each([false, true])("retains unmetered streamed execution with prior usage=%s", priorUsage => {
+    const observation = { ...scope, type: "agent_debug", execution_id: "unmetered",
+      source: "deepseek-harness", message: "output_observation", data: {
+        version: 1, final: false, unit: "utf8_bytes", scope: "observed_root_session_events_not_tokens",
+        stream_bytes: { text: 0, reasoning: 16384, tool_arguments: 0 },
+        message_bytes: { text: 0, reasoning: 0, tool_arguments: 0 },
+        stream_events: 100, message_events: 0, interim_snapshots: 1,
+      } };
+    if (priorUsage) append(usage());
+    append(observation); append(observation);
+    append({ ...observation, session_id: "stale", execution_id: "stale" });
+    const result = read();
+    expect(result).toMatchObject({ outcome: "unknown",
+      usage_status: priorUsage ? "partial_execution_snapshots" : "unknown" });
+    expect(result.attempts.at(-1)).toMatchObject({
+      execution_id: "unmetered", input_tokens: null, output_tokens: null, cache_read_input_tokens: null,
+      duration_ms: null, finish_reason: null,
+      output_observation: { final: false, stream_bytes: { reasoning: 16384 } },
+    });
+    expect(result.attempts).toHaveLength(priorUsage ? 2 : 1);
+  });
   it("rejects malformed observations and does not use debug output as proof of truncation", () => {
     append({ ...scope, type: "agent_debug", execution_id: "execution-one", source: "deepseek-harness",
       message: "output_observation", data: { version: 1, final: true, unit: "tokens", output_tokens: 8191 } });

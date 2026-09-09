@@ -34,7 +34,7 @@
 | intent 后、进程启动前退出 | `durable-command.test.ts` intent prepared before restart，断言仅执行一次 | 按业务测试、CI、反馈三个阶段逐一映射仍待补齐 |
 | 已启动但 ack 丢失 | `durable-command.test.ts` lost acknowledgement；`e2e-fix-test.test.ts` lost create acknowledgement | Docker 的 unknown 不能作为不存在；不覆盖任意第三方模型会话接续 |
 | Manager 在等待/反馈边界重启 | `durable-command-workflow.test.ts` 实际 SIGKILL，原测试继续、恢复后仅消费一次；导出 owner epoch 和执行次数 | 新增独立 Manager 在第二轮 while/feedback 工作仍执行及已完成未消费时的实际 SIGKILL，均恢复两轮、两次执行且 owner epoch 为 1/2；真实 GitHub 等待断网/重启仍未独立注入 |
-| 首 token 后 Worker/Manager 退出 | `e2e-fix-model-failure.test.ts` 终态/会话 usage 绑定，原失败演练保留截断与耗费 | 实际首 token 后进程杀死及新会话阶段恢复，尚无完整端到端证明 |
+| 首 token 后 Worker/Manager 退出 | 新根 `issue245-stream-loss-proof-1`：真实 Qwen 输出 16385 字节后，专属 Worker 实际 SIGKILL/137；原生捕获断连失败，五条持久命令各消费一次 | 已证明输出日志保留、未知 token 不记作零、无候选/重复模型；发现并修正未计量执行从失败摘要丢失的缺陷。修正有回归覆盖，旧冻结运行未改写；此诊断不证明新会话接续或完整 E2E |
 | 测试被杀/OOM/安装失败 | `e2e-fix-test.ts` 分类执行中断并在同一候选有限重试；新增真实 SIGKILL 路由回归已通过：同候选两个实际容器，bootstrap 记录 SIGKILL 并退出 125，未派发第二个 Fixer/任何审查或 Judger | 新增 64MiB 容器实际 OOM、离线 npm ci/EUSAGE、缺失依赖快照均验证同候选最多两次容器且零额外 Fixer；准备成功及真正断言返修路径也通过。网络服务故障与跨进程各时点组合仍不作全面保证 |
 | 真实断言失败或负面审查 | 原生三轮测试、#245 第二轮实际返修、受控 #306 CI 失败日志反馈 | #245 已通过终态审计；仍保留第三轮无关修复的反例，不宣称任意 issue 收敛 |
 | 双恢复/过期 owner | `durable-command.test.ts` superseded owners、一次消费；恢复事务与旧 lease 测试 | 业务阶段 × 前/中/后完整交叉矩阵仍为部分 |
