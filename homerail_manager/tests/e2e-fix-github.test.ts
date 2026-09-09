@@ -201,6 +201,74 @@ describe.skipIf(process.platform !== "linux")("trusted GitHub stage providers wi
         recovered_pid: recovered.pid, same_custody: true, same_deadline: true, dispatches: 1, github_transport: "injected", model_calls: 0 }));
     }
   }, 20000);
+  it.each(["inflight", "finished-unconsumed"])("recovers the native CI gateway after Manager SIGKILL with %s work", async phase => {
+    config.github!.wait_ms = 60000;
+    const a = candidate(); const publication = e2eFixGitHubProviders(github).publish(config, a, root);
+    fs.writeFileSync(path.join(root, "observer-input.json"), JSON.stringify({ config, candidate: a, publication }));
+    fs.writeFileSync(path.join(root, "observer-remote.json"), JSON.stringify({ pr: github.pr, run: null }));
+    const read = (name: string) => JSON.parse(fs.readFileSync(path.join(root, name), "utf8"));
+    const manager = (mode: string) => {
+      const child = spawn(process.execPath, ["--import", "tsx", path.resolve("tests/fixtures/durable-ci-manager.ts"), root, mode],
+        { stdio: ["ignore", "ignore", "pipe"] });
+      children.push(child); let errors = ""; child.stderr.on("data", chunk => { errors += chunk; });
+      return { child, errors: () => errors };
+    };
+    const first = manager("start");
+    await vi.waitFor(() => {
+      if (first.child.exitCode !== null) throw new Error(first.errors());
+      expect(fs.existsSync(path.join(root, "observer-waiting.json"))).toBe(true);
+    }, { timeout: 10000 });
+    const before = read("start-ci-manager.json"), observer = read("observer-waiting.json");
+    expect(before.commands).toHaveLength(1);
+    const custody = fs.readFileSync(path.join(root, "github/1/ci-run.json"), "utf8");
+    const deadline = fs.readFileSync(path.join(root, "github/1/ci-deadline.json"), "utf8");
+    const ended = new Promise(resolve => first.child.once("exit", resolve));
+    first.child.kill("SIGKILL"); await ended;
+    expect(first.child.signalCode).toBe("SIGKILL");
+    fs.writeFileSync(path.join(root, "manager-fault.json"), JSON.stringify({ phase, first_pid: first.child.pid,
+      signal: first.child.signalCode, observer_pid: observer.pid, custody, deadline }));
+    const release = () => {
+      const remote = read("observer-remote.json"); remote.run.status = "completed";
+      fs.writeFileSync(path.join(root, "observer-remote.tmp"), JSON.stringify(remote));
+      fs.renameSync(path.join(root, "observer-remote.tmp"), path.join(root, "observer-remote.json"));
+    };
+    if (phase === "finished-unconsumed") {
+      release();
+      await vi.waitFor(() => {
+        expect(fs.existsSync(path.join(root, "manager-home/trusted-commands", before.commands[0].execution_id, "receipt.json"))).toBe(true);
+      }, { timeout: 5000 });
+    }
+    const second = manager("recover");
+    await vi.waitFor(() => {
+      if (second.child.exitCode !== null && second.child.exitCode !== 0) throw new Error(second.errors());
+      expect(fs.existsSync(path.join(root, "recover-ci-manager.json"))).toBe(true);
+    }, { timeout: 10000 });
+    const restored = read("recover-ci-manager.json");
+    expect(restored.pid).not.toBe(before.pid); expect(restored.session.sessionId).toBe(before.session.sessionId);
+    if (phase === "inflight") release();
+    await vi.waitFor(() => expect(fs.existsSync(path.join(root, "ci-manager-proof.json"))).toBe(true), { timeout: 5000 });
+    const proof = read("ci-manager-proof.json"), result = read("observer-result.json");
+    expect(result.pid).toBe(observer.pid);
+    expect(proof.snapshot.metadata.status).toBe("completed"); expect(proof.model_dispatches).toBe(0);
+    expect(proof.snapshot.handoffs).toHaveLength(1);
+    expect(proof.snapshot.handoffs[0].content).toMatchObject({ status: "completed", workflow_run_id: "99", workflow_attempt: 1, candidate: a });
+    expect(proof.commands).toEqual([{ ...before.commands[0], consumed: 1, owner_epoch: 2 }]);
+    expect(fs.readFileSync(path.join(root, "github/1/ci-run.json"), "utf8")).toBe(custody);
+    expect(fs.readFileSync(path.join(root, "github/1/ci-deadline.json"), "utf8")).toBe(deadline);
+    const requests = fs.readFileSync(path.join(root, "observer-requests.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(new Set(requests.map(r => r.pid))).toEqual(new Set([observer.pid]));
+    expect(requests.filter(r => r.method === "POST")).toHaveLength(1);
+    expect([github.pushes, github.creates]).toEqual([1, 1]);
+    const exported = process.env.HOMERAIL_E2E_FIX_EVIDENCE_DIR;
+    if (exported) {
+      const destination = path.join(exported, "ci-manager-sigkill", phase, path.basename(root));
+      fs.mkdirSync(destination, { recursive: true });
+      for (const name of ["manager-fault.json", "start-ci-manager.json", "recover-ci-manager.json", "ci-manager-proof.json", "observer-input.json", "observer-remote.json", "observer-result.json", "observer-requests.jsonl"])
+        fs.copyFileSync(path.join(root, name), path.join(destination, name));
+      fs.cpSync(path.join(root, "manager-home/trusted-commands"), path.join(destination, "trusted-commands"), { recursive: true });
+      fs.cpSync(path.join(root, "github"), path.join(destination, "github"), { recursive: true });
+    }
+  }, 35000);
   it("retries unavailable checkout logs within the same deadline", () => {
     const a = candidate(); const provider = e2eFixGitHubProviders(github);
     const publication = provider.publish(config, a, root); const logs = github.logs.bind(github); let reads = 0;

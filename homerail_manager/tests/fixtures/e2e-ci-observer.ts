@@ -39,3 +39,5 @@ const provider = e2eFixGitHubProviders({
 });
 const result = provider.ci(config, candidate, publication, directory);
 write("observer-result.json", { pid: process.pid, result });
+
+console.log(JSON.stringify(result));

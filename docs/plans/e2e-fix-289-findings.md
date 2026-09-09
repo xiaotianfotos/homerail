@@ -407,3 +407,19 @@ Codex 方案及 Qwen Fixer。程序确认已落盘的 4033 个流事件、16385 
 会话状态改为 completed，节点状态仍为 FAILED；故保留原生 capture 时已写下的
 失败证据，不篡改会话状态来绕过校验。此项实验证明故障边界，不代表丢失的模型
 会话可无损接续，也不作为完整 E2E 通过。
+
+
+## Manager 退出时接回原 CI 观察阶段
+
+新增两个实际 Manager SIGKILL 用例：CI 观察仍在运行，以及观察已完成但
+Manager 尚未消费回执。测试调用真实 CI provider，通过注入 GitHub transport
+提供固定远端状态；Manager 重启只使用正常冷恢复启动钩子，不手写 handoff。
+两种情况下观察进程 PID 均保持不变，候选、CI run/attempt、原截止时间不变，
+原生命令 owner epoch 从 1 变为 2，唯一结果仅消费一次，CI 派发一次、模型调用零次。
+保留注入信号、前后 Manager 身份、观察请求、原始 stdout/stderr/receipt 和独立审计。
+
+第一版测试在 run_completed 回调内读取消费标记，看到事务尚未提交时的 0，
+因此两个断言失败。核对 consumeDurableCommand 后，测试改在下一事件循环读取
+已提交事实；未修改产品事务或放宽断言。随后全部 19 项 GitHub 阶段测试通过，
+最终两个恢复用例再次导出并核验原始证据。这补充原生 CI 等待恢复证明，不等同
+真实 GitHub 服务故障，也没有重复真实模型或创建实验 PR。
