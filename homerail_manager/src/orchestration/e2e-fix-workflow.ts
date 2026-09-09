@@ -198,7 +198,10 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
       description: "Bounded native repair/review/CI loop; trusted stages own evidence and side effects.",
       // Native handoffs include program/gateway nodes, not just model calls.
       // Freeze enough bounded admission for the full worst-case round path.
-      policies: { max_parallelism: 3, max_dispatches: options.maxRounds * 7,
+      // Seven model roles per full round, plus one contract correction and one
+      // transient dispatch retry per role across the root (runtime counters persist
+      // across feedback). Both redispatch types consume the same dispatch budget.
+      policies: { max_parallelism: 3, max_dispatches: (options.maxRounds + 1 + 1) * 7,
         max_corrections_per_node: 1,
         max_handoffs: options.maxRounds * 24 + 4, max_edge_traversals: options.maxRounds },
       contracts: { TaskReference: { type: "object", required: ["task_id"], properties: { task_id: text } }, Plan: plan, Patch: patch, Review: review, Judgment: judgment },

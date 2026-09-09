@@ -55,7 +55,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "review-source-projection" | "blocked-plan" | "stagnation-test" | "stagnation-same-plan" | "oom-test" | "install-failure" | "setup-success" | "missing-template" | "interrupted-test" | "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+type Scenario = "review-source-projection" | "blocked-plan" | "stagnation-test" | "stagnation-same-plan" | "oom-test" | "install-failure" | "setup-success" | "missing-template" | "interrupted-test" | "review-contract-correct" | "review-contract-correct-retry" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
   | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
@@ -63,7 +63,12 @@ class Models implements DAGDispatcher {
   executor!: GraphExecutor;
   calls: DispatchEnvelope[] = [];
   error?: unknown;
+  failedDispatches: DispatchEnvelope[] = [];
   dispatch(envelope: DispatchEnvelope) {
+    if (this.scenario === "review-contract-correct-retry" && envelope.nodeId === "plan" && !this.failedDispatches.length) {
+      this.failedDispatches.push(envelope);
+      return { status: "failed" as const, reason: "Injected pre-execution transport failure", retryable: true };
+    }
     this.calls.push(envelope);
     queueMicrotask(() => {
       try {
@@ -174,7 +179,7 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["review-source-projection", "blocked-plan", "stagnation-test", "stagnation-same-plan", "oom-test", "install-failure", "setup-success", "missing-template", "interrupted-test", "review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+  it.each<Scenario>(["review-source-projection", "blocked-plan", "stagnation-test", "stagnation-same-plan", "oom-test", "install-failure", "setup-success", "missing-template", "interrupted-test", "review-contract-correct", "review-contract-correct-retry", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
     "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
@@ -184,6 +189,8 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
     const unsubscribers: Array<() => void> = [];
     try {
       const configuration = config(root, process.env.HOMERAIL_E2E_FIX_TEST_IMAGE);
+      // A correction must still leave room for final CI judgment in the last allowed round.
+      if (scenario.startsWith("review-contract-correct")) configuration.max_rounds = 1;
       if (scenario === "oom-test") {
         configuration.tests[0].memory_mb = 64;
         configuration.tests[0].files["check.cjs"] = "const held=[];for(;;)held.push(Buffer.alloc(16*1024*1024,1));";
@@ -217,7 +224,7 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
       fs.writeFileSync(path.join(task, "fixture-scenario.json"), JSON.stringify(scenario));
       const stageCommands = Object.fromEntries(E2E_FIX_STAGES.map(stage => [stage, [process.execPath, "--import", "tsx",
         path.resolve("tests/fixtures/e2e-fix-native-stage.ts"), task, stage]])) as Record<E2eFixStage, string[]>;
-      const parsed = parseE2eFixWorkflow({ workflowId: "trusted-stages", maxRounds: 4, stageCommands, stageTimeoutMs: 30000 });
+      const parsed = parseE2eFixWorkflow({ workflowId: "trusted-stages", maxRounds: configuration.max_rounds, stageCommands, stageTimeoutMs: 30000 });
       // Existing frozen workflows lacked the conditional approval contract.
       // Keep this legacy fixture to prove the downstream gate still rejects it.
       if (scenario === "approve-observations") delete (parsed.meta.contracts!.Review as { allOf?: unknown }).allOf;
@@ -379,6 +386,13 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
           return;
         }
         expect(snapshot.handoffs.filter(h => h.fromNode === "review_a")).toHaveLength(1);
+        expect(snapshot.metadata.status).toBe("completed");
+        expect(models.calls.filter(c => c.nodeId === "judge_ci")).toHaveLength(1);
+        expect(snapshot.metadata.counters!.dispatches).toBe(scenario === "review-contract-correct-retry" ? 9 : 8);
+        if (scenario === "review-contract-correct-retry") {
+          expect(models.failedDispatches).toHaveLength(1);
+          expect(snapshot.metadata.counters!.dispatch_retries.plan).toBe(1);
+        }
       }
       if (scenario === "blocked-plan") {
         expect(snapshot.metadata.status).toBe("failed");
@@ -558,7 +572,7 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
       expect(models.calls.filter(c => c.nodeId === "fix")).toHaveLength(rounds);
       // Corrections retain the logical session/broker fence; each Worker
       // execution is separately scoped. Genuine repair rounds get fresh sessions.
-      expect(new Set(models.calls.map(c => c.sessionId)).size).toBe(models.calls.length - (scenario === "review-contract-correct" ? 1 : 0));
+      expect(new Set(models.calls.map(c => c.sessionId)).size).toBe(models.calls.length - (scenario.startsWith("review-contract-correct") ? 1 : 0));
       expect(models.calls.every(c => Buffer.byteLength(JSON.stringify(c.inputs)) <= 96000)).toBe(true);
       expect(snapshot.handoffs.filter(h => h.fromNode === "test")).toHaveLength(rounds);
     } finally {
