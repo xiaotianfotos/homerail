@@ -462,3 +462,9 @@ initialize 成功并写出 initialized 后再发送 model/list，正确处理写
 重复初始化响应和迟到回调（采用 #307 最终候选，替代重复的 #305）。
 本地合并后 Manager 类型检查及三组相关测试共 77 项通过；完整集成 CI 和
 最终实现 PR 的同 head 审查仍分别验收，不沿用历史演练票数。
+
+整合后的首次完整本地 CI 在第二轮 feedback/SIGKILL 用例发现夹具竞态：
+父进程等到 `start-manager.json` 存在即读取，子进程直接写最终路径，导致
+`Unexpected end of JSON input`。保留 ca2a5ea 的失败回执与日志；将三个
+Manager 恢复夹具的就绪/完成 JSON 改为同目录临时文件写完后 rename 发布。
+这修复测试证据的跨进程就绪信号，不改业务恢复策略，也不放宽断言。

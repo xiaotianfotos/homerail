@@ -1,6 +1,7 @@
 // A separate Manager runtime process for the SIGKILL recovery test. The test
 // parent may kill/restart this process and release the test, but never handoff.
 import fs from "node:fs";
+import { publishFixtureJson } from "./publish-fixture-json.js";
 import path from "node:path";
 import { GraphExecutor } from "../../src/orchestration/graph-executor.js";
 import { FakeDAGDispatcher } from "../../src/orchestration/dag-dispatcher.js";
@@ -16,7 +17,7 @@ const dispatcher = new FakeDAGDispatcher();
 const executor = new GraphExecutor(dispatcher);
 const keepAlive = setInterval(() => {}, 1000);
 subscribe("dag:run_completed", () => {
-  fs.writeFileSync(path.join(root, "recovered-proof.json"), JSON.stringify({
+  publishFixtureJson(path.join(root, "recovered-proof.json"), JSON.stringify({
     manager_pid: process.pid, status: getActiveRun("root")?.status, snapshot: loadRunSnapshot("root"),
     count: fs.readFileSync(path.join(root, "workspace", "root", "count"), "utf8"),
   }));
@@ -42,4 +43,4 @@ if (mode === "start") {
   if (!recovery.recovered.includes("root")) throw new Error(JSON.stringify(recovery));
   resumeRecoveredDurableCommandGateways(dispatcher);
 }
-fs.writeFileSync(path.join(root, `${mode}-manager.json`), JSON.stringify({ pid: process.pid, session: getActiveRun("root")?.nodeSessions.get("test") }));
+publishFixtureJson(path.join(root, `${mode}-manager.json`), JSON.stringify({ pid: process.pid, session: getActiveRun("root")?.nodeSessions.get("test") }));

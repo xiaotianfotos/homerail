@@ -1,6 +1,7 @@
 // Real process recovery around a second native feedback iteration. There are
 // no model/GitHub calls; only the normal startup hook can resume scheduling.
 import fs from "node:fs";
+import { publishFixtureJson } from "./publish-fixture-json.js";
 import path from "node:path";
 import { GraphExecutor } from "../../src/orchestration/graph-executor.js";
 import { FakeDAGDispatcher } from "../../src/orchestration/dag-dispatcher.js";
@@ -19,11 +20,11 @@ const record = () => ({ pid: process.pid, session: getActiveRun("root")?.nodeSes
   snapshot: loadRunSnapshot("root"), count: fs.existsSync(path.join(workspace, "count")) ? fs.readFileSync(path.join(workspace, "count"), "utf8") : "" });
 const timer = setInterval(() => {
   if (mode === "start" && record().count === "xx" && !fs.existsSync(path.join(root, "start-manager.json"))) {
-    fs.writeFileSync(path.join(root, "start-manager.json"), JSON.stringify(record()));
+    publishFixtureJson(path.join(root, "start-manager.json"), JSON.stringify(record()));
   }
 }, 20);
 subscribe("dag:run_completed", () => {
-  fs.writeFileSync(path.join(root, "recovered-proof.json"), JSON.stringify(record()));
+  publishFixtureJson(path.join(root, "recovered-proof.json"), JSON.stringify(record()));
   clearInterval(timer);
 });
 if (mode === "start") {
@@ -51,6 +52,6 @@ if (mode === "start") {
   if (!recovery.recovered.includes("root")) throw new Error(JSON.stringify(recovery));
   // Capture the restored second-session identity before an already finished
   // command can advance the graph through the normal startup hook.
-  fs.writeFileSync(path.join(root, "recover-manager.json"), JSON.stringify(record()));
+  publishFixtureJson(path.join(root, "recover-manager.json"), JSON.stringify(record()));
   resumeRecoveredDurableCommandGateways(dispatcher);
 }

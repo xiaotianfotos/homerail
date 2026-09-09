@@ -1,6 +1,6 @@
 // Separate Manager lifecycle around the actual CI provider observer. GitHub is
 // injected by e2e-ci-observer; the test parent never hands off a stage result.
-import fs from "node:fs";
+import { publishFixtureJson } from "./publish-fixture-json.js";
 import path from "node:path";
 import { GraphExecutor } from "../../src/orchestration/graph-executor.js";
 import { FakeDAGDispatcher } from "../../src/orchestration/dag-dispatcher.js";
@@ -23,7 +23,7 @@ subscribe("dag:run_completed", () => {
   // run_completed is emitted inside the consume transaction; capture its
   // committed row on the next event-loop turn, not from inside apply().
   setImmediate(() => {
-    fs.writeFileSync(path.join(root, "ci-manager-proof.json"), JSON.stringify(record()));
+    publishFixtureJson(path.join(root, "ci-manager-proof.json"), JSON.stringify(record()));
     clearInterval(keepAlive);
   });
 });
@@ -40,10 +40,10 @@ if (mode === "start") {
       { from: "ci.failed", to: "failed.result", condition: "on_failure" }] } };
   executor.createRun("root", parseWorkflowSource(JSON.stringify(workflow)), JSON.stringify("observe original owned CI"));
   executor.tick("root");
-  fs.writeFileSync(path.join(root, "start-ci-manager.json"), JSON.stringify(record()));
+  publishFixtureJson(path.join(root, "start-ci-manager.json"), JSON.stringify(record()));
 } else {
   const recovery = recoverAllActiveRuns();
   if (!recovery.recovered.includes("root")) throw new Error(JSON.stringify(recovery));
-  fs.writeFileSync(path.join(root, "recover-ci-manager.json"), JSON.stringify(record()));
+  publishFixtureJson(path.join(root, "recover-ci-manager.json"), JSON.stringify(record()));
   resumeRecoveredDurableCommandGateways(dispatcher);
 }
