@@ -467,7 +467,7 @@ export function getDagWorkflowRevision(workflowId: string, revision: number): Da
   return row ? _revisionFromRow(row) : undefined;
 }
 
-function _parseProfileYaml(yamlText: string, workflowIdOverride?: string): Omit<DagRuntimeProfile, "profile_key" | "created_at" | "updated_at"> {
+function _parseProfileYaml(yamlText: string, workflowIdOverride?: string, resolveSettings = true): Omit<DagRuntimeProfile, "profile_key" | "created_at" | "updated_at"> {
   const raw = YAML.parse(yamlText);
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error("Profile YAML root must be an object.");
@@ -481,7 +481,7 @@ function _parseProfileYaml(yamlText: string, workflowIdOverride?: string): Omit<
   const defaultEntry = _profileEntry(record.default ?? record.defaults);
   const agents = _entriesFromJson(record.agents);
   _assertProfileHasNoProviderModel(record);
-  _assertProfileEntriesResolvable(defaultEntry, agents);
+  _assertProfileEntriesResolvable(defaultEntry, agents, resolveSettings);
   return {
     workflow_id: workflowId,
     profile_id: profileId,
@@ -496,6 +496,11 @@ export function inspectDagRuntimeProfileYaml(
   yamlText: string,
 ): Omit<DagRuntimeProfile, "profile_key" | "created_at" | "updated_at"> {
   return _parseProfileYaml(yamlText);
+}
+
+/** Offline preparation only. Sync/admission must still resolve live settings. */
+export function inspectDagRuntimeProfileStructure(yamlText: string) {
+  return _parseProfileYaml(yamlText, undefined, false);
 }
 
 function _assertProfileHasNoProviderModel(root: Record<string, unknown>): void {
@@ -520,12 +525,13 @@ function _assertProfileHasNoProviderModel(root: Record<string, unknown>): void {
   }
 }
 
-function _assertProfileEntriesResolvable(defaultEntry: DagRuntimeProfileEntry | undefined, agents: Record<string, DagRuntimeProfileEntry>): void {
+function _assertProfileEntriesResolvable(defaultEntry: DagRuntimeProfileEntry | undefined, agents: Record<string, DagRuntimeProfileEntry>, resolveSettings = true): void {
   for (const [label, entry] of [["default", defaultEntry] as const, ...Object.entries(agents) as Array<[string, DagRuntimeProfileEntry]>]) {
     if (!entry) continue;
     if (entry.llm_setting_id && entry.model_alias) {
       throw new Error(`Profile entry '${label}' must use either llm_setting_id or model_alias, not both.`);
     }
+    if (!resolveSettings) continue;
     if (entry.llm_setting_id) {
       const setting = getSetting(entry.llm_setting_id);
       if (!setting?.is_active || !setting.supports_llm || isVoiceServiceSetting(setting)) {

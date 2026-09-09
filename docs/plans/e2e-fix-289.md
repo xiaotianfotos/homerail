@@ -503,3 +503,10 @@ DO NOT MERGE，源码主分支及真实修复 PR 不变。
 是模拟。实际试验已由原生发布创建 PR #306，首轮 CI 正在等待，尚无远端闭环
 成功结论。最终 `production_eligible` 必须保持 false，替身审查不能计为真实票，
 该试验不能替代真实模型读取 CI 失败并完成修复的证据。
+
+## 可复现的宿主准备入口
+
+`node scripts/e2e-fix.mjs freeze-runtime|prepare` 现可从仓库内生成固定身份的
+任务、原生 DAG、模型 profile 和摘要清单，详见 [操作说明](../e2e-fix.md)。
+13 项相关测试及真实保留配置的 CLI 准备验证通过，没有派发模型或创建 PR。
+统一 start/创建对账命令仍待实现，prepared 状态不等于运行或验收成功。
