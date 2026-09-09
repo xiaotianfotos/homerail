@@ -93,3 +93,12 @@ small probe is not a universal tokenizer-compatibility guarantee.
 本次统计也复核了四个主要真实问题/成本对照任务的已保存 DSH usage：它们报告的
 缓存读写计数均为零，因此已有对照数字不受这次归一化修正影响。这个结论只涵盖
 已核对的那些产物，不代表所有历史尝试或供应商未报告的缓存用量。
+
+A subsequent local native DAG verified Manager → Node → provisioned Docker
+Worker dispatch on the policy-bound route. One model request used 684 input
+and 75 output tokens, with a 65536-token reserve in a 262144-token window.
+The Manager retained the authenticated policy-handshake debug event and
+matching execution-scoped usage; Docker events confirmed creation, start and
+cleanup of the selected image. This local diagnostic had only a handoff node
+and terminal nodes, with no repair or publication stage. It proves native
+transport configuration; earlier real-issue E2E proofs remain separate.

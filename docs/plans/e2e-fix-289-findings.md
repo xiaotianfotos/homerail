@@ -468,3 +468,10 @@ initialize 成功并写出 initialized 后再发送 model/list，正确处理写
 `Unexpected end of JSON input`。保留 ca2a5ea 的失败回执与日志；将三个
 Manager 恢复夹具的就绪/完成 JSON 改为同目录临时文件写完后 rename 发布。
 这修复测试证据的跨进程就绪信号，不改业务恢复策略，也不放宽断言。
+
+本地 `qwen-native-admission-proof-1` 补齐网关原生派发验证：一次模型执行，
+完整输入 684、输出 75 token，Worker 的策略摘要/输出额度与网关逐请求证据
+一致，Docker 创建、启动和清理事件绑定实际容器与镜像。图中没有发布节点。
+准备时缺少 run input contract 被编译器拒绝、误用 provider_id 被 API 400
+拒绝，两者均为零模型调用且已保留。相同 provider/model 设置采用 upsert，
+本次更新了隔离实验环境的原有模型设置，没有更改生产环境。
