@@ -700,7 +700,7 @@ export function inspectionRoutesHandler(
   // A launcher must detect read-only creation reconciliation support before
   // issuing a request that can spend model tokens. No credentials in this view.
   if (pathname === "/api/e2e-fix/capabilities" && req.method === "GET") {
-    _ok(res, "E2E Fix creation identity support", { creation_identity_version: 1 });
+    _ok(res, "E2E Fix creation identity support", { creation_identity_version: 1, idempotent_create_version: 1 });
     return true;
   }
 

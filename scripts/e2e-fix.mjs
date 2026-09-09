@@ -6,6 +6,7 @@ const usage = `Usage (on the Linux Manager host, after npm run build:packages):
   node scripts/e2e-fix.mjs prepare /absolute/preparation-input.json
   node scripts/e2e-fix.mjs start /absolute/prepared-directory
   node scripts/e2e-fix.mjs reconcile /absolute/prepared-directory
+  node scripts/e2e-fix.mjs recover-start /absolute/prepared-directory
 
 freeze-runtime prints the pinned runtime descriptor. prepare writes a private
 task, native workflow, runtime profile and digest manifest; it does not start
@@ -17,7 +18,7 @@ try {
   const [command, argument, ...extra] = process.argv.slice(2);
   if (command === '--help' || command === '-h') console.log(usage);
   else {
-    if (!argument || extra.length || !['freeze-runtime', 'prepare', 'start', 'reconcile'].includes(command)) throw new Error(usage);
+    if (!argument || extra.length || !['freeze-runtime', 'prepare', 'start', 'reconcile', 'recover-start'].includes(command)) throw new Error(usage);
     const modulePath = new URL('../homerail_manager/dist/runtime/', import.meta.url);
     if (!fs.existsSync(new URL('e2e-fix-prepare.js', modulePath))) throw new Error('Build packages first: npm run build:packages');
     if (command === 'freeze-runtime') {

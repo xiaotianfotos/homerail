@@ -6,6 +6,11 @@ import { creationRequestDigest } from "../orchestration/run-creation-identity.js
 import { e2eFixDigest } from "./e2e-fix-candidates.js";
 
 export type E2eFixLaunchTransport = (route: string, body?: unknown) => Promise<any | null>;
+export class E2eFixLaunchHttpError extends Error {
+  constructor(readonly status: number, readonly code: string | null) {
+    super(`Manager request failed: HTTP ${status}${code ? " (" + code + ")" : ""}`);
+  }
+}
 const files = ["task/config.json", "task/config.sha256", "runtime.json", "workflow.json", "profile.json"];
 const read = (file: string) => JSON.parse(fs.readFileSync(file, "utf8"));
 
@@ -38,7 +43,12 @@ export function e2eFixLaunchTransport(managerUrl: string, token: string): E2eFix
       signal: AbortSignal.timeout(15000), redirect: "error" });
     if (response.status === 404 && body === undefined) return null;
     // Never persist/print an arbitrary response body or a credential header.
-    if (!response.ok) throw new Error(`Manager request failed: HTTP ${response.status}`);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as any;
+      const code = body?.data?.code;
+      throw new E2eFixLaunchHttpError(response.status,
+        ["dag_resources_unavailable", "dag_resources_preparing", "RUN_CREATION_CONFLICT"].includes(code) ? code : null);
+    }
     const result = await response.json() as any;
     if (result.success === false) throw new Error("Manager rejected request");
     return result.data ?? result;
@@ -74,11 +84,12 @@ function requestDigest(payload: any) {
     expectedCanonicalHash: payload.canonical_hash, expectedProfileUpdatedAt: payload.profile_updated_at });
 }
 
-/** Exactly one create attempt. All later invocations reconcile through GET.
- * A missing root after an uncertain request remains unknown, not unexecuted. */
-export async function launchE2eFix(directory: string, managerUrl: string, action: "start" | "reconcile",
+/** Ordinary start/reconcile never repeat create. Explicit recover-start uses
+ * at most two durable retries of the exact intent against an idempotent Manager.
+ * A missing root is not treated as proof that an earlier request did not run. */
+export async function launchE2eFix(directory: string, managerUrl: string, action: "start" | "reconcile" | "recover-start",
   transport: E2eFixLaunchTransport = e2eFixLaunchTransport(managerUrl, process.env.HOMERAIL_DAG_MUTATION_TOKEN ?? "")) {
-  if (!["start", "reconcile"].includes(action)) throw new Error("invalid launch action");
+  if (!["start", "reconcile", "recover-start"].includes(action)) throw new Error("invalid launch action");
   const p = prepared(directory), base = e2eFixManagerUrl(managerUrl);
   const intentFile = path.join(directory, "launch-intent.json"), ackFile = path.join(directory, "launched.json");
   const route = `/api/runs/${encodeURIComponent(p.config.root_run_id)}`;
@@ -90,6 +101,18 @@ export async function launchE2eFix(directory: string, managerUrl: string, action
       || !Number.isSafeInteger(v.workflow_revision) || v.workflow_revision < 1 || !/^[a-f0-9]{64}$/.test(v.canonical_hash)
       || typeof v.profile_updated_at !== "string" || !v.profile_updated_at || intent.request_sha256 !== requestDigest(v)) throw new Error("launch intent identity mismatch");
     return intent;
+  };
+  const submit = async (payload: unknown, name: string) => {
+    let observation: Record<string, unknown>;
+    try {
+      await transport("/api/runs/create-and-run", payload);
+      observation = { response: "received" };
+    } catch (error) {
+      observation = { response: "error", http_status: error instanceof E2eFixLaunchHttpError ? error.status : null,
+        code: error instanceof E2eFixLaunchHttpError ? error.code : null };
+    }
+    // Store only structured facts, never arbitrary error text or credentials.
+    once(path.join(directory, name), { ...observation, request_sha256: requestDigest(payload), at: Date.now() });
   };
   const reconcile = async () => {
     if (!fs.existsSync(intentFile)) return { status: "not_submitted", root_run_id: p.config.root_run_id };
@@ -106,6 +129,31 @@ export async function launchE2eFix(directory: string, managerUrl: string, action
     return { status: "observed", root_run_id: existing.runId, run_status: existing.status };
   };
   if (!fs.existsSync(intentFile) && (fs.existsSync(ackFile) || fs.existsSync(path.join(directory, "task/rounds")))) throw new Error("execution evidence exists without launch intent; investigate instead of recreating");
+  if (action === "recover-start") {
+    const observed = await reconcile();
+    if (observed.status !== "unknown") return observed;
+    if (fs.existsSync(ackFile) || fs.existsSync(path.join(directory, "task/rounds"))) {
+      return { ...observed, reason: "Previously observed or executed root is now missing; restore its Manager state, never recreate it." };
+    }
+    const capabilities = await transport("/api/e2e-fix/capabilities");
+    if (capabilities?.idempotent_create_version !== 1) throw new Error("Manager must guarantee idempotent creation for explicit recovery");
+    const intent = readIntent();
+    // One persistent slot per explicit recovery invocation. Do not immediately
+    // consume the next slot when another caller owns an unfinished attempt.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const claim = path.join(directory, `launch-recovery-${attempt}.json`);
+      const receipt = `launch-recovery-${attempt}-response.json`;
+      if (!once(claim, { request_sha256: intent.request_sha256 })) {
+        if (!isDeepStrictEqual(read(claim), { request_sha256: intent.request_sha256 })) throw new Error("recovery claim identity mismatch");
+        if (!fs.existsSync(path.join(directory, receipt))) return reconcile();
+        if (read(path.join(directory, receipt)).request_sha256 !== intent.request_sha256) throw new Error("recovery response identity mismatch");
+        continue;
+      }
+      await submit(intent.payload, receipt);
+      return reconcile();
+    }
+    return { ...observed, reason: "Both explicit creation recovery attempts are consumed; original evidence retained." };
+  }
   if (action === "reconcile" || fs.existsSync(intentFile)) return reconcile();
   const capabilities = await transport("/api/e2e-fix/capabilities");
   if (capabilities?.creation_identity_version !== 1) throw new Error("Manager must support E2E Fix creation identity before starting");
@@ -122,9 +170,6 @@ export async function launchE2eFix(directory: string, managerUrl: string, action
     || !/^[a-f0-9]{64}$/.test(payload.canonical_hash) || typeof payload.profile_updated_at !== "string" || !payload.profile_updated_at) throw new Error("invalid synced revision identity");
   const intent = { version: 1, manager_url: base, prepared_sha256: p.manifestSha, payload, request_sha256: requestDigest(payload) };
   if (!once(intentFile, intent)) return reconcile();
-  // Any error after intent publication is conservative unknown. Even a lost
-  // successful create response is handled by read-only reconciliation.
-  try { await transport("/api/runs/create-and-run", payload); }
-  catch { /* The original request may have succeeded. Never resend it here. */ }
+  await submit(payload, "launch-response.json");
   return reconcile();
 }

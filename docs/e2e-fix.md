@@ -99,9 +99,18 @@ start 先检查准备清单和 Manager 的创建身份能力，再同步 workflo
 身份冲突退出码为 1。保留现场，并在有明确状态变化后再对账，避免不断询问模型。
 
 若进程在写 intent 后、实际发送前退出，与“已发送但应答丢失”可能无法区分。
-当前入口保守保留 unknown，没有自动重发机制；配置准入失败的自动修复也未提供。
-不要删除 intent 或换 root 试探重跑。需要经独立证据确认后使用受支持恢复协议，
-这项限制不等于阶段执行可以任意恢复。准备/启动命令不安装监督器；运行完成或异常
+普通 start/reconcile 保留 unknown。确认原 Manager 数据仍在、修复准入环境后，
+可显式运行 `node scripts/e2e-fix.mjs recover-start /absolute/prepared-directory`。
+它先只读对账；若仍不可见，要求 Manager 声明创建幂等能力，再使用原 intent 中
+完全相同的请求，最多消耗两个持久恢复名额，不重新同步配置或更换 root。
+安全性依赖 Manager 按原始创建请求摘要去重，不是把 404 当作“之前没执行”。
+已有 launched 回执或阶段证据却丢失 root 时拒绝重建，应恢复原 Manager 数据。
+一个恢复名额已领取但回执不完整时也保留 unknown，不能自动跳到下一份执行。
+
+创建结果保存在 `launch-response.json`，恢复结果单独保存。只记录 HTTP 状态和
+已知错误码，不存任意响应正文、错误文本或凭证。旧版本丢失的创建应答无法事后
+补造。配置准入失败的自动修复尚未提供；不要删除 intent 或换 root 试探重跑。
+这项启动恢复不代表任意业务阶段可以恢复。准备/启动命令不安装监督器；运行完成或异常
 唤醒应另接事件监督程序，不能把短连接 CLI 留作业务调度器。
 
 ## English
@@ -125,8 +134,12 @@ All later calls reconcile through GET only; matching persisted request identity
 produces `launched.json`. Credentials are never saved. Ordinary `hr run` cannot
 replace this identity contract. An observed root is not E2E acceptance.
 
-Unknown creation outcomes remain unknown; this entrypoint does not automatically
-retry an intent left before sending or repair rejected admission. Preserve evidence
-and use a supported recovery procedure after investigation, never a new root as a
-probe. Completion/exception supervision is configured separately. Byte/time/round
+Ordinary start/reconcile never retry an unknown creation. After repairing admission
+and verifying that the original Manager data is intact, explicit `recover-start`
+permits two persisted retries of the exact original request against a Manager that
+advertises idempotent creation. It never resyncs policy or creates another identity.
+A missing previously observed/executed root requires restoring Manager state; an
+unfinished claimed retry remains unknown. Structured HTTP outcomes are retained
+without arbitrary error bodies or credentials. Completion/exception supervision
+is configured separately. Byte/time/round
 limits are not a task-wide token budget or a proof of successful execution.

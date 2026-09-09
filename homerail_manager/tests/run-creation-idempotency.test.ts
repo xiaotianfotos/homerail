@@ -434,7 +434,7 @@ describe("Run creation idempotency", () => {
       const request={runId:"http-pinned",workflow_id:"idem-test",profile:"deterministic",prompt:"hello",workflow_revision:first.workflowRevision,canonical_hash:first.canonicalHash};
       expect((await post("/api/runs",request)).status).toBe(201);
       const capabilities = await fetch(url + "/api/e2e-fix/capabilities");
-      expect(await capabilities.json()).toMatchObject({ data: { creation_identity_version: 1 } });
+      expect(await capabilities.json()).toMatchObject({ data: { creation_identity_version: 1, idempotent_create_version: 1 } });
       const observed = await fetch(url + "/api/runs/http-pinned");
       const observation = await observed.json() as { data: Record<string, unknown> };
       expect(observation.data).toMatchObject({ runId: "http-pinned", workflowId: "idem-test",
