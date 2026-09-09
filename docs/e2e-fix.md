@@ -165,42 +165,38 @@ progress do not reset this counter. This conservative content comparison may
 miss reworded or volatile diagnostics; independent round/time bounds still
 apply. It is not a provider token budget or proof of semantic convergence.
 
-## 无法制定有效方案 / No evidenced repair plan
+## 无法制定方案 / Planner blockers
 
-CI Judger 的 `retry_strategy` 会和失败日志一起进入下一轮。Planner 若无法在
-冻结范围内制定有依据的修复，应返回 `blocked_reason`，保留原授权路径，
-不为重新跑 CI 而安排无关清理。普通宿主 Plan 的该字段使用 null，并在传输后
-移除。程序保存原始 Planner 证据及 `planner_blocked.json`，随后由
-`freeze_plan` 的失败终止边停止；该状态是 failed，不是修复完成，也不会派发
-Fixer、测试或发布。重新授权范围应创建明确的新策略，不能改写既有冻结配置。
+CI Judger 的反馈和 `retry_strategy` 会进入下一轮。Planner 无法在授权范围内
+制定有用方案时，可返回 `blocked_reason`；这不是每轮必须提交的因果证明。
+普通宿主 Plan 使用 null，并在传输后移除。程序保留明确的 blocker 后停止，
+不自行扩大授权范围。审查对相关性的判断交给独立 Reviewer。
 
-CI revision strategies are retained in the next Planner context. If no
-evidenced repair fits the frozen scope, the Planner sets `blocked_reason`
-and keeps the authorized paths instead of proposing unrelated cleanup. The
-host schema uses null for an ordinary plan and removes it after transport.
-The trusted stage saves the original Planner evidence and a blocker artifact,
-then terminates through the freeze-plan failure route before dispatching the
-Fixer. This is a failed, explainable run, not successful repair or an automatic
-scope expansion. Semantic relevance remains a responsibility of the model
-roles; this contract cannot independently prove causality from arbitrary code.
+The Planner may report `blocked_reason` when it cannot produce a useful plan
+within the authorized scope. This optional blocker is not a mandatory causal
+repair certificate. The host schema uses null for an ordinary plan. A declared
+blocker stops the run without expanding scope; reviewers decide relevance.
 
-## 返修审查上下文 / Repair review context
+## 审查上下文与多票决策 / Review context and voting
 
 可信测试阶段向每位 Reviewer 和候选 Judger 提供本轮冻结方案及摘要、上轮失败
-和策略、真实父提交到候选的差异。累计差异仍以原始 base 为起点，避免新一轮
-掩盖早先改动。完整源码存于本轮不可变 `test_sources.json`，测试输出绑定其
-摘要。完整源码导致上下文超限时，程序尝试提供累计差异，并明确指出未提供的
-源码和证据文件；不能据此充分判断时，Reviewer 应 abstain，Judger 应 pause。
-失败原因、方案、意见和票数不会为了适配上下文而截断，投影后仍超限则拒绝。
-该机制补齐语义判断输入，不保证模型一定识别无关修复。
+和策略、真实父提交到候选的差异，作为判断参考。Reviewer 自主评估正确性和
+相关性；如果认为此前失败与当前候选无关，可以说明理由并投通过票。Judger
+尊重有效的独立多票结果，不另设“必须证明修复因果关系”的否决门槛。
 
-Reviewers and the candidate Judger receive the frozen plan and digest, prior
-failure and retry strategy, and the verified parent-to-candidate diff. The
-cumulative diff still starts from the original base. Complete source is kept
-in immutable `test_sources.json` with a digest in the trusted test output. If
-full source exceeds the context bound, the program attempts a cumulative diff
-projection and explicitly identifies the omitted source. Reviewers must abstain
-and the Judger must pause if the supplied context is insufficient. Repair
-targets, findings, and votes are never truncated to fit; oversized projections
-are rejected. This supplies evidence for semantic assessment, not a guarantee
-that a model will detect every unrelated repair.
+仍须满足已配置的独立通过票数（本任务为三名 Reviewer 中至少两票）、意见
+处置、可信测试及同一提交的 CI；模型通过票不能把失败或未知的 CI 变成成功。
+Review 输出保持简单的 vote、summary、findings，不增加强制返修分类字段。
+
+累计差异以原始 base 为起点。完整源码保存在本轮不可变 `test_sources.json`，
+测试输出绑定摘要。完整源码导致超限时，程序尝试累计差异投影并标明省略范围；
+Reviewer 自行判断这些材料是否足够。失败原因、意见和票数不因超限而被截断。
+
+Reviewers receive the frozen plan, prior feedback and verified round diff as
+context. They decide correctness and relevance, and may approve after explaining
+why an earlier failure is unrelated. The Judger respects valid independent
+majority decisions without an additional causal-repair veto. Reports remain
+vote/summary/findings. Configured independent approvals, finding dispositions,
+trusted tests and same-head CI are still required; votes cannot turn failed or
+unknown execution into success. Complete source is retained with a digest;
+oversized source may be projected to a clearly labelled cumulative diff.
