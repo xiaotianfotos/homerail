@@ -177,6 +177,11 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
   } else if (stage === "freeze_plan") {
     const context = read("context"); const evidence = modelEvidence("plan", one("plan")); const plan = evidence.value;
     if (!Array.isArray(plan.allowed_paths) || !plan.allowed_paths.length || plan.allowed_paths.some((p: string) => !config.allowed_paths.includes(p))) throw new Error("Codex plan exceeds frozen scope");
+    if (typeof plan.blocked_reason === "string" && plan.blocked_reason.trim()) {
+      write("planner", evidence);
+      write("planner_blocked", { ...reference(), reason: plan.blocked_reason, planner_artifact_sha256: digest(evidence) });
+      throw new Error("Codex Planner cannot produce an evidenced in-scope repair: " + plan.blocked_reason);
+    }
     const previousPlan = context.previous?.evidence?.previous_plan;
     if (context.previous?.evidence?.stagnation?.action === "replan"
       && (!previousPlan || sameE2eFixPlan(plan, previousPlan))) {
@@ -322,7 +327,8 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const acceptance = evaluateE2eFixAcceptance({ candidate, policy, fixer_dispatch_id: fixer.dispatch_id, fixer_session_id: fixer.session_id,
       tests: read("test").tests, reviews, judgment, publication: read("publish").publication, ci: read("ci").ci });
     result = { ...reference(), candidate, action: evidence.value.verdict === "revise" && read("ci").outcome === "code_failure" ? "revise" : acceptance.eligible ? "complete" : "pause",
-      reason: evidence.value.reason, feedback: { ci: read("ci").ci, details: read("ci").ci_feedback }, acceptance, mode: config.mode, production_eligible: config.mode === "production" && acceptance.eligible };
+      reason: evidence.value.reason, feedback: { ci: read("ci").ci, details: read("ci").ci_feedback,
+        retry_strategy: evidence.value.retry_strategy ?? null }, acceptance, mode: config.mode, production_eligible: config.mode === "production" && acceptance.eligible };
     result = recordProgress(result, { phase: "ci", outcome: read("ci").outcome,
       checks: read("ci").ci.jobs.map((job: any) => ({ id: job.key, result: job.conclusion,
         diagnostic: job.conclusion === "success" ? "" : read("ci").ci_feedback?.logs?.find((log: any) => log.job === config.github?.job_names[job.key])?.tail ?? "" })),

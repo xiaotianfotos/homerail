@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 单逻辑根 DAG，测试失败→负面审查→修复，无外部逐轮推进 | `e2e-fix-workflow.test.ts` 三轮拓扑测试及 `e2e-fix-stage.test.ts` 的真实 Git/Docker 阶段 | 控制流已通过；测试模型是替身，不能代替真实修复能力 |
 | 原生 Codex Planner/Judger、Qwen Fixer/Reviewer | #291 的 PR #304、#245 的 PR #305，均有原生命令、实际会话、测试及独立终态审计 | 两个真实任务首轮成功；不能单独证明反馈收敛 |
-| 至少一个真实问题根据实际失败自动返修并最终完成 | #245 无旧补丁演练 `issue245-e2e-unseeded-6`，第一轮可信测试失败，第二轮通过并创建 PR #307 | 已发生真实候选反馈；最终 CI 与独立终态核验待完成 |
+| 至少一个真实问题根据实际失败自动返修并最终完成 | #245 无旧补丁演练 `issue245-e2e-unseeded-6`，第一轮可信测试失败，第二轮通过并创建 PR #307 | 已发生真实候选反馈；第二轮 Windows CI 随后失败，第三轮更新仍是同 PR，但其修改未修复失败原因；终态核验待完成，不能凭后续绿灯宣称 CI 缺陷已修复 |
 | 同 PR 的真实 CI 红→返修→绿 | 受控 PR #306，CI `34293274363` 失败→`34294533900` 五项成功，19 个可信命令、两轮同根/同 PR | 控制流通过；真实 GitHub/Git/Docker，全部模型角色是确定性替身，`production_eligible=false`；fixture 禁止合并 |
 | 每轮新上下文、完整证据与成本 | #304/#305 独立审计通过；`scripts/e2e-fix-report.mjs` 去重累计 usage，保留未知字段 | 真实返修新会话需随 #307 最终审计；全任务 token 硬预算仍未实现 |
 | 可重现产品入口 | `scripts/e2e-fix.mjs` prepare/start/reconcile/recover-start，#245 原 root 丢失创建结果后实际恢复成功 | 启动对账已验证；不能推导任意阶段/进程可无损恢复 |
@@ -30,7 +30,7 @@
 | create 已接受但应答丢失 | `e2e-fix-launch.test.ts` lost create / concurrent callers；原生创建幂等 HTTP 测试 | 显式恢复只复用相同 intent，已执行 root 的 Manager 数据丢失禁止重新创建；不保证跨丢失数据库恢复 |
 | intent 后、进程启动前退出 | `durable-command.test.ts` intent prepared before restart，断言仅执行一次 | 按业务测试、CI、反馈三个阶段逐一映射仍待补齐 |
 | 已启动但 ack 丢失 | `durable-command.test.ts` lost acknowledgement；`e2e-fix-test.test.ts` lost create acknowledgement | Docker 的 unknown 不能作为不存在；不覆盖任意第三方模型会话接续 |
-| Manager 在等待/反馈边界重启 | `durable-command-workflow.test.ts` 实际 SIGKILL，原测试继续、恢复后仅消费一次；导出 owner epoch 和执行次数 | 实际 CI 等待、反馈边界的专门重启演练未全部覆盖 |
+| Manager 在等待/反馈边界重启 | `durable-command-workflow.test.ts` 实际 SIGKILL，原测试继续、恢复后仅消费一次；导出 owner epoch 和执行次数 | 新增独立 Manager 在第二轮 while/feedback 工作仍执行及已完成未消费时的实际 SIGKILL，均恢复两轮、两次执行且 owner epoch 为 1/2；真实 GitHub 等待断网/重启仍未独立注入 |
 | 首 token 后 Worker/Manager 退出 | `e2e-fix-model-failure.test.ts` 终态/会话 usage 绑定，原失败演练保留截断与耗费 | 实际首 token 后进程杀死及新会话阶段恢复，尚无完整端到端证明 |
 | 测试被杀/OOM/安装失败 | `e2e-fix-test.ts` 分类执行中断并在同一候选有限重试；新增真实 SIGKILL 路由回归已通过：同候选两个实际容器，bootstrap 记录 SIGKILL 并退出 125，未派发第二个 Fixer/任何审查或 Judger | OOM 和安装失败的全部独立注入未覆盖；不能把断言失败当基础设施重试 |
 | 真实断言失败或负面审查 | 原生三轮测试、#245 第二轮实际返修、受控 #306 CI 失败日志反馈 | #245 最终成功待终态审计；不宣称任意 issue 收敛 |

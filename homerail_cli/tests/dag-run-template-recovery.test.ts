@@ -38,6 +38,9 @@ describe("known-run submission recovery", () => {
 
   async function exercise(options: { terminal?: string; unavailable?: "missing" | "network" | "wrong_id";
       httpError?: number; noRunId?: boolean; lateVisibility?: boolean; invalidTimeout?: boolean; stalledStatus?: boolean; falseSuccess?: boolean; longInterval?: boolean } = {}) {
+    // This helper mocks every request. Advance its polling/deadline clock
+    // explicitly so Windows scheduling cannot consume the 30ms test budget.
+    vi.useFakeTimers();
     const calls: Array<{ url: string; method: string }> = [];
     let polls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
@@ -68,7 +71,9 @@ describe("known-run submission recovery", () => {
     const args = ["node", "hr", "--json", "dag", "run-template", "recover", "--input", "{}",
       "--wait", "--interval", options.longInterval ? "0.25" : "0.001", "--timeout", options.invalidTimeout ? "invalid" : "0.03"];
     if (!options.noRunId) args.push("--run-id", RUN);
-    await createProgram().parseAsync(args);
+    const pending = createProgram().parseAsync(args);
+    await vi.runAllTimersAsync();
+    await pending;
     return { calls, polls, output: log.mock.calls.map(x => String(x[0])), errors: error.mock.calls.map(x => String(x[0])) };
   }
 
@@ -180,9 +185,10 @@ describe("known-run submission recovery", () => {
     expect(process.exitCode).toBe(75); expect(r.output).toEqual([]);
   });
   for (const mode of ["stalledStatus", "longInterval"] as const) it(`recovery deadline bounds ${mode} and never adopts a late response`, async () => {
-    const started = performance.now();
+    const started = Date.now();
+    vi.useFakeTimers({ now: started });
     const r = await exercise(mode === "stalledStatus" ? {stalledStatus: true} : {longInterval: true, unavailable: "missing"});
-    expect(performance.now()-started).toBeLessThan(180);
+    expect(Date.now() - started).toBeLessThan(180);
     expect(process.exitCode).toBe(75); expect(r.output).toEqual([]);
     expect(r.calls.filter(x => x.url.endsWith("/create-and-run"))).toHaveLength(1);
   }, 1500);

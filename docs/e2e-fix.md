@@ -164,3 +164,22 @@ evidence, and costs remain available. Candidate hashes and model claims of
 progress do not reset this counter. This conservative content comparison may
 miss reworded or volatile diagnostics; independent round/time bounds still
 apply. It is not a provider token budget or proof of semantic convergence.
+
+## 无法制定有效方案 / No evidenced repair plan
+
+CI Judger 的 `retry_strategy` 会和失败日志一起进入下一轮。Planner 若无法在
+冻结范围内制定有依据的修复，应返回 `blocked_reason`，保留原授权路径，
+不为重新跑 CI 而安排无关清理。普通宿主 Plan 的该字段使用 null，并在传输后
+移除。程序保存原始 Planner 证据及 `planner_blocked.json`，随后由
+`freeze_plan` 的失败终止边停止；该状态是 failed，不是修复完成，也不会派发
+Fixer、测试或发布。重新授权范围应创建明确的新策略，不能改写既有冻结配置。
+
+CI revision strategies are retained in the next Planner context. If no
+evidenced repair fits the frozen scope, the Planner sets `blocked_reason`
+and keeps the authorized paths instead of proposing unrelated cleanup. The
+host schema uses null for an ordinary plan and removes it after transport.
+The trusted stage saves the original Planner evidence and a blocker artifact,
+then terminates through the freeze-plan failure route before dispatching the
+Fixer. This is a failed, explainable run, not successful repair or an automatic
+scope expansion. Semantic relevance remains a responsibility of the model
+roles; this contract cannot independently prove causality from arbitrary code.

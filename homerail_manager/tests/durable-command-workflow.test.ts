@@ -139,4 +139,59 @@ describe.skipIf(process.platform !== "linux")("native durable command gateway", 
       fs.cpSync(path.join(root, "trusted-commands"), path.join(destination, "trusted-commands"), { recursive: true });
     }
   }, 20000);
+
+  it.each(["inflight", "finished-unconsumed"])("recovers the second feedback iteration after SIGKILL with %s work", async phase => {
+    const manager = (mode: string) => {
+      const child = spawn(process.execPath, ["--import", "tsx", path.resolve("tests/fixtures/durable-feedback-manager.ts"), root, mode], { stdio: ["ignore", "pipe", "pipe"] });
+      children.push(child);
+      let log = ""; child.stderr.on("data", bytes => { log += bytes; });
+      return { child, log: () => log };
+    };
+    const read = (name: string) => JSON.parse(fs.readFileSync(path.join(root, name), "utf8"));
+    const first = manager("start");
+    await vi.waitFor(() => {
+      if (first.child.exitCode !== null) throw new Error(first.log());
+      expect(fs.existsSync(path.join(root, "start-manager.json"))).toBe(true);
+    }, { timeout: 10000 });
+    const before = read("start-manager.json");
+    expect(before.count).toBe("xx");
+    expect(before.snapshot.metadata.counters.gateway_iterations.cycle).toBe(2);
+    const ended = new Promise(resolve => first.child.once("exit", resolve));
+    first.child.kill("SIGKILL"); await ended;
+    expect(first.child.signalCode).toBe("SIGKILL");
+    const release = () => fs.writeFileSync(path.join(root, "workspace", "root", "release"), "finish original second execution");
+    if (phase === "finished-unconsumed") {
+      release();
+      await vi.waitFor(() => {
+        const dir = path.join(root, "trusted-commands");
+        expect(fs.readdirSync(dir).filter(id => fs.existsSync(path.join(dir, id, "receipt.json")))).toHaveLength(2);
+      }, { timeout: 5000 });
+    }
+    const second = manager("recover");
+    await vi.waitFor(() => {
+      if (second.child.exitCode !== null) throw new Error(second.log());
+      expect(fs.existsSync(path.join(root, "recover-manager.json"))).toBe(true);
+    }, { timeout: 10000 });
+    const restored = read("recover-manager.json");
+    expect(restored.pid).not.toBe(before.pid);
+    expect(restored.session.sessionId).toBe(before.session.sessionId);
+    expect(restored.snapshot.metadata.counters.gateway_iterations.cycle).toBe(2);
+    if (phase === "inflight") release();
+    await vi.waitFor(() => expect(fs.existsSync(path.join(root, "recovered-proof.json"))).toBe(true), { timeout: 5000 });
+    const proof = read("recovered-proof.json");
+    expect(proof.count).toBe("xx");
+    expect(proof.snapshot.metadata.status).toBe("completed");
+    expect(proof.snapshot.handoffs.filter((h: any) => h.fromNode === "work")).toHaveLength(2);
+    const commands = getDb().prepare("SELECT consumed, owner_epoch FROM dag_durable_commands").all() as Array<{ consumed: number; owner_epoch: number }>;
+    expect(commands).toHaveLength(2);
+    expect(commands.every(c => c.consumed === 1)).toBe(true);
+    expect(commands.map(c => c.owner_epoch).sort()).toEqual([1, 2]);
+    const destination = process.env.HOMERAIL_E2E_FIX_EVIDENCE_DIR;
+    if (destination) {
+      const folder = path.join(destination, "feedback-sigkill", phase, path.basename(root));
+      fs.mkdirSync(folder, { recursive: true });
+      for (const name of ["start-manager.json", "recover-manager.json", "recovered-proof.json"]) fs.copyFileSync(path.join(root, name), path.join(folder, name));
+      fs.cpSync(path.join(root, "trusted-commands"), path.join(folder, "trusted-commands"), { recursive: true });
+    }
+  }, 30000);
 });

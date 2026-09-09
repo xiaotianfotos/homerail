@@ -54,7 +54,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "stagnation-test" | "stagnation-same-plan" | "interrupted-test" | "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+type Scenario = "blocked-plan" | "stagnation-test" | "stagnation-same-plan" | "interrupted-test" | "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
   | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
@@ -129,7 +129,7 @@ class Models implements DAGDispatcher {
               evidence_sha256: [i === 1 ? "0".repeat(64) : evidence.evidence_sha256[0]] })));
           }
           result = { dispositions, verdict: good || disputed || this.scenario === "model-accept" ? "accept" : "revise",
-            ...((this.scenario.startsWith("model-") && this.scenario !== "model-no-strategy") || this.scenario === "review-context-budget"
+            ...((this.scenario.startsWith("model-") && this.scenario !== "model-no-strategy") || ["review-context-budget", "ci-feedback"].includes(this.scenario)
               ? { retry_strategy: "Use one short unique edit under the fixed output budget" } : {}),
             reason: good ? "All supplied evidence supports acceptance" : "Address the real retained failure" };
         }
@@ -140,6 +140,9 @@ class Models implements DAGDispatcher {
         if (envelope.nodeId === "plan" && this.scenario === "stagnation-test" && value.round === 3) {
           result = { allowed_paths: ["sum.cjs"], strategy: "Trace operand signs and replace the incorrect arithmetic operation" };
         }
+        if (envelope.nodeId === "plan" && this.scenario === "blocked-plan") result = {
+          strategy: "No evidenced in-scope repair", allowed_paths: ["sum.cjs"], blocked_reason: "The failing recovery test is outside the authorized scope",
+        };
         appendNodeUsage({ runId: envelope.runId, nodeId: envelope.nodeId, scope: { session_id: envelope.sessionId },
           usage: { input_tokens: 101, output_tokens: 13, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, timestamp: Date.now() });
         appendNodeUsage({ runId: envelope.runId, nodeId: envelope.nodeId,
@@ -160,7 +163,7 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["stagnation-test", "stagnation-same-plan", "interrupted-test", "review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+  it.each<Scenario>(["blocked-plan", "stagnation-test", "stagnation-same-plan", "interrupted-test", "review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
     "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
@@ -348,6 +351,16 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         }
         expect(snapshot.handoffs.filter(h => h.fromNode === "review_a")).toHaveLength(1);
       }
+      if (scenario === "blocked-plan") {
+        expect(snapshot.metadata.status).toBe("failed");
+        expect(models.calls.map(c => c.nodeId)).toEqual(["plan"]);
+        const reason = JSON.parse(fs.readFileSync(path.join(task, "rounds", "1", "planner_blocked.json"), "utf8"));
+        expect(reason.reason).toContain("outside the authorized scope");
+        expect(fs.existsSync(path.join(task, "rounds", "1", "planner.json"))).toBe(true);
+        expect(fs.existsSync(path.join(task, "rounds", "1", "capture.json"))).toBe(false);
+        expect(fs.existsSync(path.join(task, "simulated-pr.json"))).toBe(false);
+        return;
+      }
       if (scenario.startsWith("stagnation-")) {
         const read = (round: number, name: string) => JSON.parse(fs.readFileSync(path.join(task, "rounds", String(round), name + ".json"), "utf8"));
         const count = scenario === "stagnation-test" ? 3 : 2;
@@ -457,6 +470,8 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
       } else if (scenario === "ci-feedback") {
         expect(read(1, "ci").outcome).toBe("code_failure");
         expect(read(2, "context").previous.evidence.details.logs[0].tail).toContain("CI fixture assertion failure");
+        expect(read(2, "context").previous.evidence.retry_strategy).toBe(read(1, "ci_judger").value.retry_strategy);
+        expect(read(2, "planner").value.strategy).toBe(read(1, "ci_judger").value.retry_strategy);
         expect(read(2, "publish").publication.pr).toBe(read(1, "publish").publication.pr);
         expect(models.calls.filter(c => c.nodeId === "judge_ci")).toHaveLength(2);
       }

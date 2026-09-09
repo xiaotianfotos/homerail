@@ -28,14 +28,14 @@ createInterface({input:process.stdin}).on('line',line=>{
  else if(q.method==='config/read') reply({config:{mcp_servers:{danger:{command:'private-command'}}}});
  else if(q.method==='thread/start') reply({thread:{id:'thread-1'}});
  else if(q.method==='turn/start') {
-  if(mode==='strict-judge'||mode==='strict-patch'){
+  if(mode==='strict-judge'||mode==='strict-patch'||mode==='strict-plan'){
    const valid=s=>!s||typeof s!=='object'||((!s.properties||(s.additionalProperties===false&&Object.keys(s.properties).every(k=>s.required?.includes(k))))&&Object.values(s.properties??{}).every(valid)&&(!s.items||valid(s.items))&&(!s.anyOf||s.anyOf.every(valid)));
    if(!valid(q.params.outputSchema)){out({id:q.id,error:{message:'invalid_json_schema: all properties must be required'}});return;}
   }
   reply({turn:{id:'turn-1'}}); if(mode==='timeout') return;
   if(mode==='provider-error'){event('error',{message:'invalid_json_schema: missing retry_strategy',willRetry:false});return;}
   if(mode==='tool') event('item/started',{item:{type:'commandExecution',id:'bad',command:'forbidden'}});
-  event('item/completed',{item:{type:'agentMessage',id:'result',phase:'final_answer',text:mode==='invalid'?'{}':JSON.stringify(mode==='strict-patch'?{summary:'bounded patch',edits:[{path:'sum.cjs',old:'a-b',new:'a+b'}]}:mode==='strict-judge'?{verdict:'pause',reason:'unknown execution',retry_strategy:null,dispositions:[]}:{strategy:'minimal change'})}});
+  event('item/completed',{item:{type:'agentMessage',id:'result',phase:'final_answer',text:mode==='invalid'?'{}':JSON.stringify(mode==='strict-plan'?{strategy:'bounded plan',allowed_paths:['sum.cjs'],blocked_reason:null}:mode==='strict-patch'?{summary:'bounded patch',edits:[{path:'sum.cjs',old:'a-b',new:'a+b'}]}:mode==='strict-judge'?{verdict:'pause',reason:'unknown execution',retry_strategy:null,dispositions:[]}:{strategy:'minimal change'})}});
   event('thread/tokenUsage/updated',{threadId:'thread-1',turnId:'turn-1',tokenUsage:{total:{inputTokens:100,outputTokens:5}}});
   event('turn/completed',{turn:{id:mode==='wrong-turn'?'turn-other':'turn-1',status:mode==='failed'?'failed':'completed'}});
  } else reply({});
@@ -73,6 +73,14 @@ describe.skipIf(process.platform === "win32")("fresh structured host Codex trans
     expect(normalizeE2eFixHostCodexOutput(role, value)).toEqual({ verdict: "pause", reason: "unknown execution", dispositions: [] });
     const revision = { verdict: "revise", reason: "truncated", retry_strategy: "Use smaller replacements", dispositions: [] };
     expect(normalizeE2eFixHostCodexOutput(role, revision)).toEqual(revision);
+  });
+  it("transports nullable planner blockers without weakening the strict provider schema", async () => {
+    const { root, binary } = fixture("strict-plan");
+    const value = await runHostCodexStructuredTurn({ model: "fixture-model", workspace: root, prompt: "failure evidence", instructions: "plan",
+      schema: e2eFixHostCodexSchema("plan"), timeoutMs: 5000, outputBytes: 4000, codexBin: binary, evidence: () => {} });
+    expect(normalizeE2eFixHostCodexOutput("plan", value)).toEqual({ strategy: "bounded plan", allowed_paths: ["sum.cjs"] });
+    const blocked = { strategy: "No evidenced repair", allowed_paths: ["sum.cjs"], blocked_reason: "Failure is outside frozen scope" };
+    expect(normalizeE2eFixHostCodexOutput("plan", blocked)).toEqual(blocked);
   });
   it("returns a strict patch through a fresh restricted host session", async () => {
     const { root, binary } = fixture("strict-patch");

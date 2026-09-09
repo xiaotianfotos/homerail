@@ -29,7 +29,8 @@ export interface E2eFixWorkflowOptions {
 const text = { type: "string", minLength: 1, maxLength: 8000 };
 const plan = {
   type: "object", additionalProperties: false, required: ["strategy", "allowed_paths"],
-  properties: { strategy: text, allowed_paths: { type: "array", minItems: 1, maxItems: 20, items: text } },
+  properties: { strategy: text, allowed_paths: { type: "array", minItems: 1, maxItems: 20, items: text },
+    blocked_reason: { ...text, description: "Set when no evidenced repair is possible within the frozen scope. Stops before Fixer; do not propose unrelated edits merely to obtain another CI run." } },
 };
 const patch = {
   type: "object", additionalProperties: false, required: ["summary", "edits"],
@@ -202,7 +203,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
         max_handoffs: options.maxRounds * 24 + 4, max_edge_traversals: options.maxRounds },
       contracts: { TaskReference: { type: "object", required: ["task_id"], properties: { task_id: text } }, Plan: plan, Patch: patch, Review: review, Judgment: judgment },
       agents: {
-        planner: { system: "You are the Codex Planner. Propose a bounded strategy and allowed paths using the supplied issue, source and prior evidence. When previous.evidence.stagnation.action is replan, change the previous strategy or scope using the retained failure; cosmetic whitespace changes are rejected before Fixer dispatch. Return Plan via handoff; do not claim tests ran." },
+        planner: { system: "You are the Codex Planner. Propose a bounded strategy and allowed paths using the supplied issue, source and prior evidence. Apply the Judger retry_strategy to every revision. If the failure cannot be addressed within frozen scope or lacks a causal connection to a proposed change, set blocked_reason and retain the allowed scope without proposing unrelated cleanup. When previous.evidence.stagnation.action is replan, change the previous strategy or scope using the retained failure; cosmetic whitespace changes are rejected before Fixer dispatch. Return Plan via handoff; do not claim tests ran." },
         fixer: { system: "Apply the supplied frozen Codex plan by proposing minimal exact old/new edits. Use short uniquely matching snippets, never repeat an entire existing file when a local edit suffices. Multiple edits to one file are allowed only when each old snippet matches the supplied original source exactly once and their ranges do not overlap; do not target text introduced by another edit. Return Patch via handoff. Do not expand scope, execute publication or approve your own work." },
         ...Object.fromEntries(["a", "b", "c"].map(id => [`reviewer_${id}`, {
           system: "Independently review this candidate and its test evidence. Return Review via handoff. findings contains actionable unresolved defects only; put positive observations and review coverage in summary. An approve vote requires findings: []; use request_changes for defects and abstain for insufficient evidence. Do not modify files, invent execution evidence, or consult another reviewer vote.",

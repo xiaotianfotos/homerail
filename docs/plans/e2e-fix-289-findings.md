@@ -269,3 +269,28 @@ Qwen 新会话完成修改，通过两项可信检查与三票审查并创建 PR
 四项单元测试及两个真实 Git/Docker 原生循环通过：三份仅注释不同的错误
 候选在第三次被程序暂停；另一场景重复方案被拒绝，第三次 Fixer 从未执行。
 模型角色为确定性替身，此证据只验证控制流，独立于 #245 的真实模型演练。
+
+## 真实 CI 反馈暴露的策略丢失与无关修复
+
+PR #307 第二轮 head `6279b78a5323433a13b2ecdc65cb5def68340c65` 的 Windows
+CI run `34297227683` 失败于 CLI 的 `dag-run-template-recovery.test.ts`：
+模拟请求须至少四次轮询，而测试只给 30ms 真实时间。测试现用受控时间推进，
+保留真实 HTTP 对账用例；21 项相关检查通过。尚未以新提交的 Windows CI 验证。
+
+原生 CI Judger 要求返修，但 complete 阶段丢掉 retry_strategy。第三轮 Planner
+明确说没有策略且无证据表明失败与允许的模型目录代码相关，却仍提出四处
+测试增强；PR #307 更新为 `dda59677e4584ba21652d519b0cb953eef200c8f`，
+CI run `34298573799` 正在运行。即使该 run 变绿，不能把无关修改算作修复
+Windows 失败。真实第一轮未处理 Promise rejection → 第二轮修复是另一条
+有效候选反馈证据，须分别评价。所有旧模型输出和策略保持不变。
+
+当前修正：CI feedback 保留 Judger 策略；Plan 新增可选 blocked_reason，
+宿主严格 schema 使用 nullable 传输，正常结果归一化为旧形状。受限/无因果
+依据时，程序留存 Planner 和 blocker，终止于 freeze_plan_failed，不派发
+Fixer，也不发布。宿主 schema、原生停止和策略传递回归通过。这不能替代
+模型对修复相关性的语义审查；不保证所有模型都主动报告 blocker。
+
+同时新增两个独立 Manager 进程故障试验：在原生第二轮反馈工作执行中、
+以及已完成但未消费时 SIGKILL 后重启，保留第二轮会话与计数、首轮不重跑，
+两次命令恰好各消费一次，owner epoch 为 1/2。模型/GitHub 不在该故障 fixture
+中调用；原真实演练没有被故障注入或人工推进。
