@@ -54,7 +54,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+type Scenario = "interrupted-test" | "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
   | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
@@ -154,7 +154,7 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+  it.each<Scenario>(["interrupted-test", "review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
     "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
@@ -164,6 +164,7 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
     const unsubscribers: Array<() => void> = [];
     try {
       const configuration = config(root, process.env.HOMERAIL_E2E_FIX_TEST_IMAGE);
+      if (scenario === "interrupted-test") configuration.tests[0].files["check.cjs"] = "process.kill(process.pid, 'SIGKILL');";
       if (scenario.startsWith("review-context-")) {
         configuration.context_bytes = 64000;
         configuration.issue.body += "\n" + "Retain the complete issue acceptance scope. ".repeat(scenario === "review-context-oversize" ? 1000 : 900);
@@ -340,6 +341,28 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
           return;
         }
         expect(snapshot.handoffs.filter(h => h.fromNode === "review_a")).toHaveLength(1);
+      }
+      if (scenario === "interrupted-test") {
+        const read = (name: string) => JSON.parse(fs.readFileSync(path.join(task, "rounds", "1", name + ".json"), "utf8"));
+        expect(read("test").outcome).toBe("infrastructure_failure");
+        // The native test route stops before spending any reviewer/Judger tokens.
+        expect(fs.existsSync(path.join(task, "rounds", "1", "candidate_judger.json"))).toBe(false);
+        expect(models.calls.some(c => c.nodeId.startsWith("judge_"))).toBe(false);
+        expect(snapshot.metadata.status).toBe("cancelled");
+        const attempts = path.join(task, "rounds", "1", "tests", configuration.tests[0].id);
+        expect(fs.readdirSync(attempts).sort()).toEqual(["1", "2"]);
+        const receipts = [1, 2].map(attempt => JSON.parse(fs.readFileSync(path.join(attempts, String(attempt), "receipt.json"), "utf8")));
+        expect(receipts.every(r => r.result === "interrupted" && r.exit_code === 125)).toBe(true);
+        // The frozen bootstrap maps a killed child to its reserved exit 125.
+        for (const attempt of [1, 2]) expect(fs.readFileSync(path.join(attempts, String(attempt), "test.log"), "utf8"))
+          .toContain("trusted test command did not complete SIGKILL");
+        expect(receipts[0].candidate).toEqual(receipts[1].candidate);
+        expect(new Set(receipts.map(r => r.container_id)).size).toBe(2);
+        expect(models.calls.filter(c => c.nodeId === "fix")).toHaveLength(1);
+        expect(models.calls.filter(c => c.nodeId === "plan")).toHaveLength(1);
+        expect(models.calls.some(c => c.nodeId.startsWith("review_"))).toBe(false);
+        expect(fs.existsSync(path.join(task, "simulated-pr.json"))).toBe(false);
+        return;
       }
       const unknownCi = ["unknown-ci", "stale-ci"].includes(scenario);
       const blockedReview = ["approve-observations", "unresolved-review", "duplicate-disposition"].includes(scenario);
