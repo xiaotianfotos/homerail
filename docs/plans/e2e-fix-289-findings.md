@@ -364,3 +364,25 @@ Docker OOMKilled 均为 true）、离线 npm ci 缺少 lockfile 的真实 EUSAGE
 PR 调用，最终 cancelled。成功准备和三轮修复分别正常完成。模型与 GitHub
 是明确标注的替身；不能将这些计数当成实际模型 token 使用。另 14 项隔离
 契约检查与 Manager 类型检查通过，覆盖无效/篡改 setup 参数的执行前拒绝。
+
+
+## 同题单次修复与预算能力核验
+
+独立原生单次对照 `issue245-single-shot-baseline-1` 在相同 #245/base/配置/
+冻结测试下首轮通过，两项真实 Docker 检查及模型/命令来源已独立核对。
+Planner+Fixer 共 68079 token；原循环第一次 70304 且失败，含第一次 Judger
+到第二轮过测共 150771。详情见 [成本对照](e2e-fix-289-cost-comparison.md)。
+结果不支持“循环必然省 token”，支持已有循环挽救一次真实失败。
+
+还发现性能记录的明确边界：Worker prompt-runner 收到成功 handoff 后提前
+退出事件迭代，可能未消费 backend done 的 duration。此时记录的用量有效，
+但没有模型耗时；本次报告保留 unknown，不把整图时间或字节计数当作生成速率。
+
+Codex CLI 0.153.4 的独立受限通路探针，在 turn/start 前设置 tokenBudget=1，
+实际收到 `ephemeral thread does not support goals`，未发出 turn/start，零
+模型调用。现有宿主角色使用临时会话，不能直接借用 goal API 实现其硬预算。
+[官方 app-server 文档](https://learn.chatgpt.com/docs/app-server#manage-a-thread-goal)
+描述 goal 状态/预算接口，[配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)
+将上下文窗口和自动压缩阈值分列；这些设置不能单凭名称当作单次输出硬限制。
+探针只是当前通路的能力结果，不证明其他通路都没有硬限制。全任务 token
+硬预算仍未实现；已向用户提出交付范围选择，未默认视为批准延期。

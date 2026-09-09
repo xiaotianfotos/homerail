@@ -1,8 +1,8 @@
 # E2E Fix 验收账本
 
-核验基线：完整本地 CI 已通过 `d9dfad9c8fc9676406f1c2bc54121868f4614ed6`；
-此后测试准备分类改动已通过 6 个真实 Docker 原生用例、14 项隔离契约检查及
-类型检查，等待新提交完整 CI。
+核验基线：完整本地 CI 已通过 `2905cb42b5553c273e8de80fbf608a191a65e52b`，
+包括测试准备、真实 OOM/离线安装失败及 CI 观察恢复用例。
+独立同题单次修复对照已完成，结果见 [成本对照](e2e-fix-289-cost-comparison.md)。
 这是原始 [实施计划](e2e-fix-289.md) 的逐项差距账本，不替换或缩减验收要求。
 2026-09-09 的完整本地 `npm run ci` 已核验通过，启用了真实 Docker 原生阶段测试；
 本地通过不代表实现 PR 的 Windows、UI coverage、Docker smoke 或独立审查通过。
@@ -18,6 +18,7 @@
 | 同 PR 的真实 CI 红→返修→绿 | 受控 PR #306，CI `34293274363` 失败→`34294533900` 五项成功，19 个可信命令、两轮同根/同 PR | 控制流通过；真实 GitHub/Git/Docker，全部模型角色是确定性替身，`production_eligible=false`；fixture 禁止合并 |
 | 每轮新上下文、完整证据与成本 | #304/#305 独立审计通过；`scripts/e2e-fix-report.mjs` 去重累计 usage，保留未知字段 | 真实返修新会话已随 #307 最终审计；全任务 token 硬预算仍未实现 |
 | 可重现产品入口 | `scripts/e2e-fix.mjs` prepare/start/reconcile/recover-start，#245 原 root 丢失创建结果后实际恢复成功 | 启动对账已验证；不能推导任意阶段/进程可无损恢复 |
+| 同题单次修复成本对照 | 新根 `issue245-single-shot-baseline-1`，同 issue/base/配置/冻结测试，独立 Codex 方案及 Qwen 修复；首轮过测，68079 token | 已完成候选阶段的一次对照，原循环到第二轮首次过测为 150771 token；不包含对照 PR/审查，不宣称统计显著或普遍节省 |
 | 一个集中实现 PR、同 head 必需 CI 全绿、至少两票完整独立审查、全部 finding 裁决 | 尚无最终实现 PR | 未完成；演练 PR 的票数不能给实现 PR 使用 |
 
 ## 原始故障矩阵
