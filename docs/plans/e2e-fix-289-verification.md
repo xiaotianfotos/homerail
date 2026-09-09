@@ -1,8 +1,10 @@
 # E2E Fix 验收账本
 
-核验基线：完整本地 CI 已通过 `bc6837d731522e0b929dc1e43369b9e87b574d9b`，
-包括测试准备、真实 OOM/离线安装失败、CI 观察恢复及未计量执行证据用例。
-后续新增 Manager 在 CI 等待中的两种实际 SIGKILL 用例及全部 19 项 GitHub 阶段测试通过。
+核验基线：整合修复后的 `780b33073d0b26fe5660ba65f9441bc3c4b92f81`
+完整本地 CI 已通过（408 秒），包括测试准备、真实 OOM/离线安装失败、
+CI 观察恢复、Manager 实际 SIGKILL 及未计量执行证据用例。
+七个包共 3880 项测试通过、4 项平台/条件跳过，脚本契约另有 220 项通过；
+原生 Docker 夹具已启用。不可把这些本地跳过项当作已执行的检查。
 独立同题单次修复对照已完成，结果见 [成本对照](e2e-fix-289-cost-comparison.md)。
 这是原始 [实施计划](e2e-fix-289.md) 的逐项差距账本，不替换或缩减验收要求。
 2026-09-09 的完整本地 `npm run ci` 已核验通过，启用了真实 Docker 原生阶段测试；
@@ -20,7 +22,7 @@
 | 每轮新上下文、完整证据与成本 | #304/#305 独立审计通过；`scripts/e2e-fix-report.mjs` 去重累计 usage，保留未知字段 | 真实返修新会话已随 #307 最终审计；已增加可选本地 tokenizer 路由及 Worker 策略绑定，实际双请求计数与供应商 usage 匹配；已补原生 Manager→Node→Worker 单节点派发证明（759 token、64K 输出预留），未重做整项 issue 发布演练；宿主 Codex token 容量与全任务预算仍有缺口 |
 | 可重现产品入口 | `scripts/e2e-fix.mjs` prepare/start/reconcile/recover-start，#245 原 root 丢失创建结果后实际恢复成功 | 启动对账已验证；不能推导任意阶段/进程可无损恢复 |
 | 同题单次修复成本对照 | 新根 `issue245-single-shot-baseline-1`，同 issue/base/配置/冻结测试，独立 Codex 方案及 Qwen 修复；首轮过测，68079 token | 已完成候选阶段的一次对照，原循环到第二轮首次过测为 150771 token；不包含对照 PR/审查，不宣称统计显著或普遍节省 |
-| 一个集中实现 PR、同 head 必需 CI 全绿、至少两票完整独立审查、全部 finding 裁决 | 统一实现 PR #308；初版 6756d38 完整本地 CI 通过，远端完整 CI/内置审查已启动 | 未完成；关闭的演练 PR 票数不能给实现 PR 使用。后续改动先本地验证，再更新 #308，不再为测试创建 PR |
+| 一个集中实现 PR、同 head 必需 CI 全绿、至少两票完整独立审查、全部 finding 裁决 | 统一实现 PR #308；初版 6756d38 的 CI 34310392958 五项通过，审查 34310395515 三票完整批准、零 findings；整合版 780b330 完整本地 CI 通过 | 整合版远端验收未完成；旧 head 和关闭的演练 PR 票数不能给新 head 使用。后续改动先本地验证，再更新 #308，不再为测试创建 PR |
 
 ## 原始故障矩阵
 
@@ -44,14 +46,14 @@
 | CI 断网、attempt/head 漂移 | `e2e-fix-github.test.ts` duplicate-run / attempt-drift / wrong-checkout / missing/skipped jobs；原生 unknown/stale CI 路由 | 已增加持久期限/读取重试/终态重放及实际观察进程 SIGKILL 回归；另以 #307 原已完成 CI 做真实 GET、声明读取故障和 SIGKILL 的只读恢复证明，14 GET/零修改；新增原生 CI gateway 在 Manager 实际重启后通过正常启动钩子恢复，原 observer 不重启；模拟 GitHub 的两种边界均通过，实际服务断网仍未证明 |
 | 伪造报告、改 hash、删测试、改 runner | `durable-command.test.ts` model-written report 拒绝；candidate/runtime/test 专项篡改测试 | 测试证据来自可信程序和宿主权限边界；hash 自身不是执行证明 |
 | 相同失败、无效修改、超预算 | `e2e-fix-candidates.test.ts` no-op/重叠/旧片段拒绝；工作流轮数上限；截断后相同计划拒绝 | 新增保守失败指纹：第二次重规划、第三次暂停，单元与真实 Docker 原生循环已通过；变动诊断可能不匹配。全任务 token 预算/预留、跨新 attempt 预算归并仍未完成 |
-| 两票通过但有效 blocker/可证伪 finding | protocol 独立票/身份/完整处置测试；原生 unresolved/dismissed/duplicate-disposition | 实现 PR 的真实审查和逐条处置尚未进行 |
+| 两票通过但有效 blocker/可证伪 finding | protocol 独立票/身份/完整处置测试；原生 unresolved/dismissed/duplicate-disposition | 实现 PR 初版真实审查三票通过且无 findings，无需处置；整合版仍待同 head 审查。三次独立执行实际使用两种模型身份，不宣称三个模型家族 |
 
 ## 后续执行次序
 
 1. #307 终态、实际反馈、会话 usage 和 GitHub checkout 已核验；已用真实 Reviewer 诊断验证上下文送达；按用户决定尊重其相关性判断和多票结果，不再把因果证明作为附加验收条件。保留失败尝试。
 2. 补齐故障矩阵实质缺口及预算/停滞约束。每项新增测试须说明实际注入点、副作用数量和恢复边界。
 3. 更新统一操作文档和两项真实问题报告，明确首次成功与反馈成功、模型替身与真实模型的分母。
-4. 创建集中实现 PR，完成同 head 的全部必需 CI 与至少两票完整独立审查，处置有效问题后才可宣称交付。
+4. 更新已有的集中实现 PR #308，完成同 head 的全部必需 CI 与至少两票完整独立审查，处置有效问题后才可宣称交付。
 
 自动唤醒属于产品可选运行机制；本任务的 `autofix-event` 注册与发送已由用户取消。
 继续工作时直接复用程序记录，不为等待重新注册通知，也不伪造完成通知文件供审计使用。
