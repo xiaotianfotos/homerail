@@ -18,6 +18,8 @@ export interface E2eFixWorkflowOptions {
   maxRounds: number;
   stageCommands: Record<E2eFixStage, string[]>;
   stageTimeoutMs?: number;
+  /** Caller-approved design; only Fixer and reviewers are model nodes. */
+  fixedDesign?: boolean;
   /** Synchronous transport exists only for the original control-flow fixture. */
   durableStages?: boolean;
   /** Explicit trusted host transport for planning/judgment and optional fixing. */
@@ -69,6 +71,7 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
   if (!Number.isSafeInteger(options.maxRounds) || options.maxRounds < 1 || options.maxRounds > 20) {
     throw new Error("E2E Fix maxRounds must be an integer from 1 to 20");
   }
+  if (options.fixedDesign && options.hostCodexCommands) throw new Error("fixed-design workflow cannot use host Codex commands");
   const timeout = options.stageTimeoutMs ?? 30_000;
   if (!Number.isSafeInteger(timeout) || timeout < 100 || timeout > 3_600_000) throw new Error("invalid stage timeout");
   const nodes: Record<string, unknown> = {};
@@ -190,6 +193,29 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
   feedback("completion_route.revise");
   for (const name of ["test_route", "candidate_route", "completion_route"]) edge(`${name}.pause`, `${name}_paused.evidence`);
 
+  if (options.fixedDesign) {
+    // Publication precedes review. A new head always receives new independent
+    // votes; no external Planner/Judger is called on the feedback path.
+    for (const name of ["plan", "judge_candidate", "judge_ci"]) delete nodes[name];
+    (nodes.freeze_plan as { inputs: object }).inputs = inputs("context");
+    (nodes.record_candidate_judgment as { inputs: object }).inputs = inputs("evidence");
+    (nodes.complete as { inputs: object }).inputs = inputs("ci");
+    const remove = new Set([
+      "context.ready>plan.evidence", "plan.result>freeze_plan.plan",
+      "candidate_evidence.ready>judge_candidate.evidence", "judge_candidate.result>record_candidate_judgment.judgment",
+      "candidate_route.publish>publish.decision", "publish.ready>ci.publication",
+      "ci.ready>judge_ci.evidence", "judge_ci.result>complete.judgment",
+      "test_route.review>review_evidence.test",
+      ...["a", "b", "c"].map(id => `test_route.review>review_${id}.evidence`),
+    ]);
+    for (let i = edges.length - 1; i >= 0; i--) if (remove.has(`${edges[i].from}>${edges[i].to}`)) edges.splice(i, 1);
+    edge("test_route.review", "publish.decision");
+    for (const id of ["a", "b", "c"]) edge("publish.ready", `review_${id}.evidence`);
+    edge("publish.ready", "review_evidence.test");
+    route("candidate_route", "action", { revise: "revise", verify_ci: "verify_ci" }, "pause");
+    edge("candidate_route.verify_ci", "ci.publication");
+  }
+
 
   return {
     api_version: "homerail.ai/v1", kind: "Workflow",
@@ -198,20 +224,20 @@ export function buildE2eFixWorkflow(options: E2eFixWorkflowOptions) {
       description: "Bounded native repair/review/CI loop; trusted stages own evidence and side effects.",
       // Native handoffs include program/gateway nodes, not just model calls.
       // Freeze enough bounded admission for the full worst-case round path.
-      // Seven model roles per full round, plus one contract correction and one
+      // Four model roles in fixed-design mode (seven in legacy mode), plus one correction and one
       // transient dispatch retry per role across the root (runtime counters persist
       // across feedback). Both redispatch types consume the same dispatch budget.
-      policies: { max_parallelism: 3, max_dispatches: (options.maxRounds + 1 + 1) * 7,
+      policies: { max_parallelism: 3, max_dispatches: (options.maxRounds + 1 + 1) * (options.fixedDesign ? 4 : 7),
         max_corrections_per_node: 1,
         max_handoffs: options.maxRounds * 24 + 4, max_edge_traversals: options.maxRounds },
-      contracts: { TaskReference: { type: "object", required: ["task_id"], properties: { task_id: text } }, Plan: plan, Patch: patch, Review: review, Judgment: judgment },
+      contracts: { TaskReference: { type: "object", required: ["task_id"], properties: { task_id: text } }, ...(options.fixedDesign ? {} : { Plan: plan, Judgment: judgment }), Patch: patch, Review: review },
       agents: {
-        planner: { system: "You are the Codex Planner. Propose a bounded strategy and allowed paths using the supplied issue, source and prior evidence. Use the Judger feedback and respect the independent reviewers' relevance decisions. You may set blocked_reason if you cannot produce a useful plan within the authorized scope; do not expand that scope. When previous.evidence.stagnation.action is replan, change the previous strategy or scope using the retained failure; cosmetic whitespace changes are rejected before Fixer dispatch. Return Plan via handoff; do not claim tests ran." },
-        fixer: { system: "Apply the supplied frozen Codex plan by proposing minimal exact old/new edits. Use short uniquely matching snippets, never repeat an entire existing file when a local edit suffices. Multiple edits to one file are allowed only when each old snippet matches the supplied original source exactly once and their ranges do not overlap; do not target text introduced by another edit. Return Patch via handoff. Do not expand scope, execute publication or approve your own work." },
+        ...(options.fixedDesign ? {} : { planner: { system: "You are the Codex Planner. Propose a bounded strategy and allowed paths using the supplied issue, source and prior evidence. Use the Judger feedback and respect the independent reviewers' relevance decisions. You may set blocked_reason if you cannot produce a useful plan within the authorized scope; do not expand that scope. When previous.evidence.stagnation.action is replan, change the previous strategy or scope using the retained failure; cosmetic whitespace changes are rejected before Fixer dispatch. Return Plan via handoff; do not claim tests ran." } }),
+        fixer: { system: "Implement the supplied fixed design and address prior test/PR-review feedback within its scope. Apply the supplied frozen plan by proposing minimal exact old/new edits. Use short uniquely matching snippets, never repeat an entire existing file when a local edit suffices. Multiple edits to one file are allowed only when each old snippet matches the supplied original source exactly once and their ranges do not overlap; do not target text introduced by another edit. Return Patch via handoff. When feedback requests a new approach, revise the implementation approach without changing the caller design. Do not expand scope, execute publication or approve your own work." },
         ...Object.fromEntries(["a", "b", "c"].map(id => [`reviewer_${id}`, {
-          system: "Independently review this candidate and its test evidence, including repair_context.plan, previous failure/strategy, and the parent-to-candidate round_diff. Use your judgment to assess correctness, scope and relevance. You may conclude that a prior failure is unrelated and approve the candidate; explain that decision in summary. Return Review via handoff. findings contains actionable unresolved defects only; put positive observations and review coverage in summary. An approve vote requires findings: []; use request_changes for defects and abstain for insufficient evidence, including omitted source needed for your review. Do not modify files, invent execution evidence, or consult another reviewer vote.",
+          system: "Independently review this PR candidate and its test evidence, including repair_context.plan, previous failure/strategy, and the parent-to-candidate round_diff. Use your judgment to assess correctness, scope and relevance. You may conclude that a prior failure is unrelated and approve the candidate; explain that decision in summary. Return Review via handoff. findings contains actionable unresolved defects only; put positive observations and review coverage in summary. An approve vote requires findings: []; use request_changes for defects and abstain for insufficient evidence, including omitted source needed for your review. Do not modify files, invent execution evidence, or consult another reviewer vote.",
         }])),
-        judger: { system: "You are the Codex Judger. Evaluate supplied authoritative evidence, distinguish code failure from infrastructure/unknown, and return accept/revise/pause with reasons. Respect independent reviewers' votes and their relevance decisions. Do not impose a separate causal-repair requirement or veto an otherwise valid review majority solely because a prior failure is judged unrelated. For CI judgment use the supplied candidate judgment, reports, and same-head CI; this stage does not provide source for another code review. An accept proposal is still checked by trusted program policy. Do not change policy or publish directly." },
+        ...(options.fixedDesign ? {} : { judger: { system: "You are the Codex Judger. Evaluate supplied authoritative evidence, distinguish code failure from infrastructure/unknown, and return accept/revise/pause with reasons. Respect independent reviewers' votes and their relevance decisions. Do not impose a separate causal-repair requirement or veto an otherwise valid review majority solely because a prior failure is judged unrelated. For CI judgment use the supplied candidate judgment, reports, and same-head CI; this stage does not provide source for another code review. An accept proposal is still checked by trusted program policy. Do not change policy or publish directly." } }),
       },
       nodes, edges,
     },

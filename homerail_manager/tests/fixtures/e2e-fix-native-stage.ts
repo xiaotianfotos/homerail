@@ -15,9 +15,9 @@ const providers: E2eFixStageProviders = {
   },
   ci(config, candidate, publication, directory) {
     const scenario = JSON.parse(fs.readFileSync(path.join(directory, "fixture-scenario.json"), "utf8"));
-    const unknown = scenario === "unknown-ci";
+    const unknown = ["unknown-ci", "fixed-unknown-ci"].includes(scenario);
     const stale = scenario === "stale-ci";
-    const failed = scenario === "ci-feedback" && candidate.round === 1;
+    const failed = ["ci-feedback", "fixed-ci-feedback"].includes(scenario) && candidate.round === 1;
     return { candidate, artifact_sha256: e2eFixDigest("simulated-ci:" + candidate.head), pr: publication.pr,
       workflow_run_id: "simulated-ci", workflow_attempt: 1, workflow_path: config.policy.ci_workflow_path,
       observed_pr_head: stale ? config.base : candidate.head, status: unknown ? "unknown" : "completed", jobs: config.policy.required_ci_jobs.map(key => ({ key, conclusion: stale || failed ? "failure" : "success" })),

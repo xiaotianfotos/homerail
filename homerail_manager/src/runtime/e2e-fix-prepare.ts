@@ -4,7 +4,7 @@ import { buildE2eFixWorkflow, parseE2eFixWorkflow } from "../orchestration/e2e-f
 import { inspectDagRuntimeProfileStructure } from "../persistence/dag-workflows.js";
 import { e2eFixDigest, immutableE2eFixFile } from "./e2e-fix-candidates.js";
 import { freezeE2eFixTask, type E2eFixTaskConfig } from "./e2e-fix-stage.js";
-import { loadFrozenE2eFixRuntime, frozenE2eFixStageCommands, frozenE2eFixHostCodexCommands } from "./e2e-fix-runtime.js";
+import { loadFrozenE2eFixRuntime, frozenE2eFixStageCommands } from "./e2e-fix-runtime.js";
 
 /** Host-local preparation only: never dispatch a model, run tests or publish.
  * A complete manifest is the commit marker. An interrupted directory is kept
@@ -20,7 +20,7 @@ export function prepareE2eFix(input: {
   const directory = path.join(fs.realpathSync(path.dirname(input.directory)), path.basename(input.directory));
   const config = structuredClone(input.config);
   // This entrypoint always uses the real GitHub stage adapter.
-  if (config.mode !== "production" || !config.host_codex) throw new Error("prepare requires production mode and explicit host Codex planning/judgment");
+  if (config.mode !== "production" || !config.design || config.host_codex) throw new Error("prepare requires a fixed design and no host Codex dependency");
   const source = fs.realpathSync(config.source_repo);
   if (directory === source || directory.startsWith(source + path.sep)) throw new Error("task artifacts must be outside the source repository");
   const runtime = loadFrozenE2eFixRuntime(input.runtime.directory, input.runtime.sha256);
@@ -33,7 +33,7 @@ export function prepareE2eFix(input: {
     workflowId: config.root_run_id, maxRounds: config.max_rounds,
     stageTimeoutMs: input.stage_timeout_ms,
     stageCommands: frozenE2eFixStageCommands(runtime, taskDirectory),
-    hostCodexCommands: frozenE2eFixHostCodexCommands(runtime, taskDirectory, { fixer: config.host_codex.fixer }),
+    fixedDesign: true,
   };
   parseE2eFixWorkflow(options);
   // mkdir without recursive is the exclusive preparation claim; never remove

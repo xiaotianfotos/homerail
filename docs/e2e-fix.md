@@ -1,7 +1,10 @@
-# E2E Fix：宿主配置准备 / Host preparation
+# E2E Fix：既定设计上的自动开发与 PR 返修 / Fixed-design repair
 
-E2E Fix 把方案、修复、可信测试、审查、Judger、PR 和 CI 放在一个有界原生
-工作流中。当前准备入口适用于 Linux Manager 宿主；配置、候选库和冻结运行时
+E2E Fix 接收调用者已经确定的设计，在一个原生工作流内执行：
+本地模型开发 → 可信测试 → 创建或更新同一个 PR → 独立模型审查 → CI。
+测试、审查或 CI 失败时，证据回到新的 Fixer 会话继续修改。
+新任务没有 Planner/Judger 节点，不要求 Codex 安装、账号或登录。
+设计和授权范围在准备时冻结；循环只调整实现，不重新调用设计者。当前准备入口适用于 Linux Manager 宿主；配置、候选库和冻结运行时
 必须留在宿主私有目录，不能放进被修复仓库或挂载给模型 Worker。
 
 状态：仓库提供准备、启动与启动应答丢失后的只读对账命令。
@@ -51,19 +54,21 @@ node scripts/e2e-fix.mjs prepare /srv/homerail-private/preparation-input.json
   受信任的准备命令，例如 `["npm", "ci", "--offline", "--ignore-scripts"]`。
   准备和测试共享容器、工作副本与总超时；网络仍关闭，所需包须预置在镜像中。
   准备失败与 OOM/中断按 `max_infra_retries` 重试同一候选，耗尽后停止；
-  真正的测试非零退出保留为代码失败，交回 Judger。
+  真正的测试非零退出保留为代码失败，直接作为下一轮 Fixer 的反馈。
 - `policy`：required_tests、required_ci_jobs、ci_workflow_path；reviewer_ids 固定为
   review_a/review_b/review_c，review_approvals 按批准的验收政策设置（本任务至少 2）。
 - `github`：base_ref、job_names（逻辑检查 ID 到实际 GitHub job 名称的完整映射）、
   wait_ms、poll_ms 和 checkout_ref（受信任 checkout action 的完整 commit SHA）。
   发布使用宿主 `gh` 身份，默认创建 draft PR；模型不持有 GitHub 写入凭证。
 - max_rounds、max_infra_retries、context_bytes、total_timeout_ms、runtime_sha256；
-  `host_codex` 的 model、timeout_ms、output_bytes，及可选 fixer。
-  Planner/Judger 始终走宿主 Codex；fixer=true 时 Fixer 也走宿主。
+  `design: { "strategy": "已确定的设计、预期行为和实现要求" }`。
+  新入口拒绝 `host_codex`，模型选择来自 profile 的 default 和各角色配置。
+  Fixer 为 `fix`，三名 Reviewer 为 `review_a`、`review_b`、`review_c`；
+  可以使用同一个本地模型的独立会话，也可以分别配置其他模型。
 
 字节上限不是 token 上限。模型输出额度由所选后端/Worker 配置决定，prepare
 不会调整它。需要 64K 输出时，必须另行配置并核验实际调用的 65536 限额；
-任务总 token 硬预算目前仍未交付，不能以轮次/时间/字节预算冒称它已存在。
+不额外设置任务总 token 消费上限。上下文容量和输出额度仍须符合模型实际能力。
 
 ## 产物及下一步
 
@@ -73,7 +78,7 @@ command 的路径已绑定最终目录，准备后不得移动。重复命令拒
 保留现场，没有 prepared.json 的目录不应启动。不要通过删除旧运行记录重置预算。
 
 后续启动必须在同一宿主配置 `HOMERAIL_HOME`、固定解释器的
-`HOMERAIL_DAG_COMMAND_ALLOWLIST`、宿主 Codex 登录、Docker 和 GitHub 身份。
+`HOMERAIL_DAG_COMMAND_ALLOWLIST`、模型设置、Docker 和 GitHub 身份。
 只提交一次创建请求；应答未知时按原 root 对账，不另起 root。正常执行由 Manager
 持续推进，后台程序仅在异常或结束通知。恢复约束见 [恢复协议](e2e-fix-recovery.md)，
 费用汇总见 [证据报告](e2e-fix-report.md)，完整验收边界见 [实施计划](plans/e2e-fix-289.md)。
@@ -154,62 +159,40 @@ without arbitrary error bodies or credentials. Completion/exception supervision
 is configured separately. Byte/time/round
 limits are not a task-wide token budget or a proof of successful execution.
 
-## 重复失败与暂停 / Repeated failures and pause
+## 多票审查与同一 PR / Review and revision
 
-可信阶段对失败检查结果及诊断、未解决审查意见和失败类型生成指纹；不使用
-候选 head、计划 hash、会话 ID 或模型自报“已改进”作为进展。连续第二次相同
-失败将前一份方案和 replan 要求送入下一轮；程序在 Fixer 派发前拒绝仅空白/
-路径排列变化的旧方案。第三次仍相同则暂停，即使 Judger 再次要求 revise。
-原候选、测试日志、Judger 原始意见和各轮成本继续保留，不自动增加运行预算。
+本地测试通过后，可信程序创建或更新任务自己的 PR，再向三名独立 Reviewer
+发送该 PR 的仓库、编号、候选 head、设计、差异和真实测试证据。Reviewer
+不会提前看到其他人的票。每个新 head 都重新审查，旧票不能给新提交使用。
 
-此指纹是保守的停滞信号，不是语义等价判定。它仅归一化 ANSI 颜色、行尾和
-意见/检查顺序；保留断言数值、代码位置和完整诊断。改写意见或变化的日志可能
-不能匹配，独立的轮数和时间上限仍生效。全任务供应商 token 硬预算尚未提供。
+完成门禁直接使用冻结的 `review_approvals`（至少 2）：独立完整通过票达到
+阈值、必需测试及同 head CI 全部通过。程序不再要求额外 AI Judger 批准，
+也不伪造 Judger 会话或把少数意见改写成“已驳回”。少数反对意见照常保留；
+相关性判断交给 Reviewer，多数票决定审查是否通过。单份 approve 报告的
+findings 必须为空，正面说明放在 summary。
 
-Trusted stages fingerprint retained failing checks and diagnostics, unresolved
-findings, and failure categories. A second identical consecutive failure
-requires a changed Codex plan before another Fixer dispatch. A third identical
-failure pauses even if the Judger asks to revise again. All candidates, raw
-evidence, and costs remain available. Candidate hashes and model claims of
-progress do not reset this counter. This conservative content comparison may
-miss reworded or volatile diagnostics; independent round/time bounds still
-apply. It is not a provider token budget or proof of semantic convergence.
+票数不足时，所有 findings 和审查摘要送回 Fixer。测试失败直接反馈真实日志；
+CI 失败则反馈失败 job 日志。下一轮继续同一 PR，使用新的 Fixer/Reviewer 会话。
+发布本身不代表审查通过，只有完成回执才表示全部门禁满足。程序仍负责 Git/PR
+写入与身份对账，模型不持有 GitHub 发布凭证。
 
-## 无法制定方案 / Planner blockers
+Independent reviewers see the published PR identity, fixed design, candidate diff
+and trusted test evidence. The configured majority directly decides review passage;
+there is no Planner or model Judger in newly prepared workflows. Dissent is retained,
+not rewritten as a model dismissal. Each new head receives fresh reviews. Failed
+local tests, insufficient votes and failed CI feed the next fresh Fixer session,
+which updates the same PR. Publication alone is not acceptance.
 
-CI Judger 的反馈和 `retry_strategy` 会进入下一轮。Planner 无法在授权范围内
-制定有用方案时，可返回 `blocked_reason`；这不是每轮必须提交的因果证明。
-普通宿主 Plan 使用 null，并在传输后移除。程序保留明确的 blocker 后停止，
-不自行扩大授权范围。审查对相关性的判断交给独立 Reviewer。
+## 失败与恢复 / Failure and recovery
 
-The Planner may report `blocked_reason` when it cannot produce a useful plan
-within the authorized scope. This optional blocker is not a mandatory causal
-repair certificate. The host schema uses null for an ordinary plan. A declared
-blocker stops the run without expanding scope; reviewers decide relevance.
+设计不随返修变化。重复失败第二次出现时，Fixer 收到改变实现方式的提示；
+第三次仍无变化则保留候选和证据并暂停。确认的输出截断可反馈重试；未知模型
+执行、未知发布结果或越界修改不被当作成功，也不盲目重复副作用。已声明的
+持久阶段恢复继续保留，详见[恢复协议](e2e-fix-recovery.md)。
 
-## 审查上下文与多票决策 / Review context and voting
-
-可信测试阶段向每位 Reviewer 和候选 Judger 提供本轮冻结方案及摘要、上轮失败
-和策略、真实父提交到候选的差异，作为判断参考。Reviewer 自主评估正确性和
-相关性；如果认为此前失败与当前候选无关，可以说明理由并投通过票。Judger
-尊重有效的独立多票结果，不另设“必须证明修复因果关系”的否决门槛。
-
-仍须满足已配置的独立通过票数（本任务为三名 Reviewer 中至少两票）、意见
-处置、可信测试及同一提交的 CI；模型通过票不能把失败或未知的 CI 变成成功。
-Review 输出保持简单的 vote、summary、findings，不增加强制返修分类字段。
-
-累计差异以原始 base 为起点。完整源码保存在本轮不可变 `test_sources.json`，
-测试输出绑定摘要。完整源码导致超限时，程序尝试累计差异投影并标明省略范围；
-Reviewer 自行判断这些材料是否足够。失败原因、意见和票数不因超限而被截断。
-
-Reviewers receive the frozen plan, prior feedback and verified round diff as
-context. They decide correctness and relevance, and may approve after explaining
-why an earlier failure is unrelated. The Judger respects valid independent
-majority decisions without an additional causal-repair veto. Reports remain
-vote/summary/findings. Configured independent approvals, finding dispositions,
-trusted tests and same-head CI are still required; votes cannot turn failed or
-unknown execution into success. Complete source is retained with a digest;
-oversized source may be projected to a clearly labelled cumulative diff.
+Older frozen runs may contain host Codex roles and their original recovery protocol.
+Their evidence remains readable; new `prepare` calls require a fixed design and
+reject host Codex configuration. Byte/time/round controls are not token billing caps.
 
 本地 FreeToken/Qwen 可配置[tokenizer 请求前准入](e2e-fix-token-admission.md)。
 该路由与 Worker 策略摘要须一起配置，不能把原有字节上限或模型声明的窗口误称为已启用 token 校验。

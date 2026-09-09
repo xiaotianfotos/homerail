@@ -96,6 +96,10 @@ export const E2eFixAcceptanceInputSchema = z.object({
 }).strict();
 export type E2eFixAcceptanceInput = z.infer<typeof E2eFixAcceptanceInputSchema>;
 
+// Fixed-design runs use authenticated reviewer votes directly, without a model Judger.
+export const E2eFixReviewAcceptanceInputSchema = E2eFixAcceptanceInputSchema.omit({ judgment: true });
+export type E2eFixReviewAcceptanceInput = z.infer<typeof E2eFixReviewAcceptanceInputSchema>;
+
 export interface E2eFixAcceptanceResult {
   eligible: boolean;
   reasons: string[];
@@ -109,16 +113,26 @@ export function sameE2eFixCandidate(a: E2eFixCandidate, b: E2eFixCandidate): boo
 
 /** Check already authenticated records; a model's boolean/hash is not proof. */
 export function evaluateE2eFixAcceptance(value: unknown): E2eFixAcceptanceResult {
-  const parsed = E2eFixAcceptanceInputSchema.safeParse(value);
+  return evaluateAcceptance(value, true);
+}
+
+/** Trusted program gate for fixed-design repair: reviewers own the voting decision. */
+export function evaluateE2eFixReviewAcceptance(value: unknown): E2eFixAcceptanceResult {
+  return evaluateAcceptance(value, false);
+}
+
+function evaluateAcceptance(value: unknown, withJudger: boolean): E2eFixAcceptanceResult {
+  const parsed = (withJudger ? E2eFixAcceptanceInputSchema : E2eFixReviewAcceptanceInputSchema).safeParse(value);
   if (!parsed.success) return { eligible: false, reasons: ["invalid_evidence_contract"], approvals: 0 };
   const x = parsed.data;
+  const judgment = withJudger ? (x as E2eFixAcceptanceInput).judgment : undefined;
   const reasons = new Set<string>();
   const fail = (reason: string) => reasons.add(reason);
   const unique = (values: string[]) => new Set(values).size === values.length;
   const equalSet = (a: string[], b: string[]) => a.length === b.length && unique(a) && unique(b)
     && a.every(v => b.includes(v));
   if (x.policy.sha256 !== x.candidate.policy_sha256) fail("policy_changed");
-  if ([...x.tests, ...x.reviews, x.judgment, x.publication, x.ci]
+  if ([...x.tests, ...x.reviews, ...(judgment ? [judgment] : []), x.publication, x.ci]
     .some(e => !sameE2eFixCandidate(e.candidate, x.candidate))) fail("candidate_identity_mismatch");
 
   // The adapter selects one authoritative attempt per required check. Never
@@ -131,17 +145,19 @@ export function evaluateE2eFixAcceptance(value: unknown): E2eFixAcceptanceResult
   }
 
   if (!equalSet(x.reviews.map(r => r.reviewer_id), x.policy.reviewer_ids)) fail("reviewer_set_mismatch");
-  if (!unique([x.fixer_dispatch_id, x.judgment.dispatch_id, ...x.reviews.map(r => r.dispatch_id)])
-    || !unique([x.fixer_session_id, x.judgment.session_id, ...x.reviews.map(r => r.session_id)])) fail("roles_not_independent");
+  if (!unique([x.fixer_dispatch_id, ...(judgment ? [judgment.dispatch_id] : []), ...x.reviews.map(r => r.dispatch_id)])
+    || !unique([x.fixer_session_id, ...(judgment ? [judgment.session_id] : []), ...x.reviews.map(r => r.session_id)])) fail("roles_not_independent");
   if (x.reviews.some(r => r.status !== "complete" && r.vote !== "abstain")) fail("incomplete_review_cannot_vote");
   if (x.reviews.some(r => r.vote === "approve" && r.finding_ids.length > 0)) fail("approve_with_findings");
   const approvals = x.reviews.filter(r => r.status === "complete" && r.vote === "approve").length;
   if (approvals < x.policy.review_approvals) fail("insufficient_approvals");
-  if (x.judgment.verdict !== "accept") fail("judger_not_accepted");
-  if (!equalSet(x.judgment.review_artifact_sha256, x.reviews.map(r => r.artifact_sha256))) fail("judger_review_set_mismatch");
-  const findings = [...new Set(x.reviews.flatMap(r => r.finding_ids))];
-  if (!equalSet(findings, x.judgment.dispositions.map(d => d.finding_id))) fail("finding_disposition_mismatch");
-  if (x.judgment.dispositions.some(d => d.action !== "dismiss")) fail("unresolved_findings");
+  if (judgment) {
+    if (judgment.verdict !== "accept") fail("judger_not_accepted");
+    if (!equalSet(judgment.review_artifact_sha256, x.reviews.map(r => r.artifact_sha256))) fail("judger_review_set_mismatch");
+    const findings = [...new Set(x.reviews.flatMap(r => r.finding_ids))];
+    if (!equalSet(findings, judgment.dispositions.map(d => d.finding_id))) fail("finding_disposition_mismatch");
+    if (judgment.dispositions.some(d => d.action !== "dismiss")) fail("unresolved_findings");
+  }
 
   if (x.publication.state !== "open" || x.publication.observed_head !== x.candidate.head) fail("publication_not_current");
   if (x.ci.status !== "completed" || x.ci.observed_pr_head !== x.candidate.head) fail("ci_not_current");
