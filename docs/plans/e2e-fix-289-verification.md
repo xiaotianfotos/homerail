@@ -20,7 +20,7 @@
 | 每轮新上下文、完整证据与成本 | #304/#305 独立审计通过；`scripts/e2e-fix-report.mjs` 去重累计 usage，保留未知字段 | 真实返修新会话已随 #307 最终审计；已增加可选本地 tokenizer 路由及 Worker 策略绑定，实际双请求计数与供应商 usage 匹配；尚未用于完整 root 演练，宿主 Codex token 容量与全任务预算仍有缺口 |
 | 可重现产品入口 | `scripts/e2e-fix.mjs` prepare/start/reconcile/recover-start，#245 原 root 丢失创建结果后实际恢复成功 | 启动对账已验证；不能推导任意阶段/进程可无损恢复 |
 | 同题单次修复成本对照 | 新根 `issue245-single-shot-baseline-1`，同 issue/base/配置/冻结测试，独立 Codex 方案及 Qwen 修复；首轮过测，68079 token | 已完成候选阶段的一次对照，原循环到第二轮首次过测为 150771 token；不包含对照 PR/审查，不宣称统计显著或普遍节省 |
-| 一个集中实现 PR、同 head 必需 CI 全绿、至少两票完整独立审查、全部 finding 裁决 | 尚无最终实现 PR | 未完成；演练 PR 的票数不能给实现 PR 使用 |
+| 一个集中实现 PR、同 head 必需 CI 全绿、至少两票完整独立审查、全部 finding 裁决 | 统一实现 PR #308；初版 6756d38 完整本地 CI 通过，远端完整 CI/内置审查已启动 | 未完成；关闭的演练 PR 票数不能给实现 PR 使用。后续改动先本地验证，再更新 #308，不再为测试创建 PR |
 
 ## 原始故障矩阵
 

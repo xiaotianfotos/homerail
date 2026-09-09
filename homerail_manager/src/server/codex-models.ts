@@ -140,6 +140,7 @@ function queryCodexModels(
     }
 
     let settled = false;
+    let initializeHandled = false;
     let stdout = "";
     let stderr = "";
     let nextRequestId = 2;
@@ -160,20 +161,28 @@ function queryCodexModels(
       else resolve(catalog ?? { binary: resolution.command, models: [] });
     }
 
-    function send(id: number, method: string, params: Record<string, unknown>): void {
+    function send(id: number | undefined, method: string, params: Record<string, unknown>, onWrite?: () => void): void {
       if (settled || child.stdin.destroyed || !child.stdin.writable) {
         finish(new Error("Codex app-server stdin closed before the request could be sent"));
         return;
       }
-      child.stdin.write(
-        `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
-        (error) => {
-          if (error) finish(error);
-        },
-      );
+      const message: Record<string, unknown> = { jsonrpc: "2.0", method, params };
+      if (id !== undefined) message.id = id;
+      try {
+        child.stdin.write(
+          `${JSON.stringify(message)}\n`,
+          (error) => {
+            if (error) { finish(error); return; }
+            if (!settled && onWrite) onWrite();
+          },
+        );
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
     }
 
     function requestModelPage(cursor?: string): void {
+      if (settled) return;
       pendingModelRequestId = nextRequestId;
       nextRequestId += 1;
       send(pendingModelRequestId, "model/list", {
@@ -188,6 +197,7 @@ function queryCodexModels(
       const lines = stdout.split("\n");
       stdout = lines.pop() ?? "";
       for (const line of lines) {
+        if (settled) return;
         if (!line.trim()) continue;
         let message: Record<string, unknown>;
         try {
@@ -196,14 +206,16 @@ function queryCodexModels(
           continue;
         }
         if (message.id === 1) {
+          if (initializeHandled) continue;
+          initializeHandled = true;
           if (message.error) {
             finish(new Error(errorMessage(message.error)));
             return;
           }
-          requestModelPage();
+          send(undefined, "initialized", {}, () => requestModelPage());
           continue;
         }
-        if (message.id !== pendingModelRequestId) continue;
+        if (pendingModelRequestId === 0 || message.id !== pendingModelRequestId) continue;
         if (message.error) {
           finish(new Error(errorMessage(message.error)));
           return;
@@ -252,6 +264,7 @@ function queryCodexModels(
       },
       capabilities: {
         experimentalApi: true,
+        requestAttestation: false,
         optOutNotificationMethods: null,
       },
     });
