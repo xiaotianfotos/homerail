@@ -148,17 +148,67 @@ export function e2eFixGitHubProviders(transport: E2eFixGitHubTransport = live): 
     ci(config, candidate, publication, directory) {
       const c = context(config, candidate, directory);
       if (read(path.join(c.base, "pr.json")).number !== publication.pr) throw new Error("CI publication custody mismatch");
-      const workflow = transport.api("GET", `${c.api}/actions/workflows/${encodeURIComponent(path.basename(config.policy.ci_workflow_path))}`);
+      const evidenceFile = path.join(c.round, "ci-evidence.json");
+      const retained = fs.existsSync(evidenceFile) ? read(evidenceFile) : null;
+      const deadlineFile = path.join(c.round, "ci-deadline.json");
+      if (!fs.existsSync(deadlineFile)) save(deadlineFile, { deadline: transport.now() + c.github.wait_ms });
+      const { deadline } = read(deadlineFile);
+      if (!Number.isSafeInteger(deadline)) throw new Error("invalid CI observation deadline");
+      // Only transport failures are retried. Identity/inventory validation stays
+      // outside this wrapper and fails immediately. No mutation is retried here.
+      const retryRead = <T>(operation: string, readRemote: () => T): T => {
+        if (retained) return readRemote();
+        for (;;) {
+          if (transport.now() > deadline) throw new Error("CI observation deadline");
+          let value: T;
+          try { value = readRemote(); }
+          catch {
+            c.observation("ci-read-error", { operation, at: transport.now() });
+            const remaining = deadline - transport.now();
+            if (remaining <= 0) throw new Error("CI observation deadline");
+            transport.sleep(Math.min(c.github.poll_ms, remaining));
+            continue;
+          }
+          if (transport.now() > deadline) throw new Error("CI observation deadline");
+          return value;
+        }
+      };
+      const get = (endpoint: string) => retryRead(endpoint, () => transport.api("GET", endpoint));
+      const workflow = get(`${c.api}/actions/workflows/${encodeURIComponent(path.basename(config.policy.ci_workflow_path))}`);
       if (workflow.path !== config.policy.ci_workflow_path || workflow.state !== "active") throw new Error("CI workflow identity/state mismatch");
       save(path.join(c.round, "ci-intent.json"), { candidate, pr: publication.pr, workflow: workflow.id, branch: c.branch, target_ref: candidate.head });
-      const pr = () => { const value = transport.api("GET", `${c.api}/pulls/${publication.pr}`); c.observation("pr", value); if (!c.prValid(value)) throw new Error("PR changed during CI observation"); return value; };
+      const pr = () => { const value = get(`${c.api}/pulls/${publication.pr}`); c.observation("pr", value); if (!c.prValid(value)) throw new Error("PR changed during CI observation"); return value; };
       pr();
       const custody = path.join(c.round, "ci-run.json");
       let run: any = fs.existsSync(custody) ? read(custody) : null;
+      const result = (raw: any) => {
+        const complete = !raw.failure && raw.run?.status === "completed" && raw.jobs.length > 0;
+        const checkoutVerified = raw.checkout.length === config.policy.required_ci_jobs.length
+          && raw.checkout.every((item: any) => item.head === candidate.head);
+        const mapped = config.policy.required_ci_jobs.map(key => {
+          const matches = raw.jobs.filter((job: any) => job.name === c.github.job_names[key]);
+          const conclusion = matches.length === 1 && matches[0].status === "completed" ? matches[0].conclusion : "unknown";
+          return { key, conclusion: (["success", "failure", "skipped", "cancelled", "timed_out"].includes(conclusion) ? conclusion : "unknown") as E2eFixAcceptanceInput["ci"]["jobs"][number]["conclusion"] };
+        });
+        return { candidate, artifact_sha256: digest(raw), pr: publication.pr, workflow_run_id: String(run?.id ?? "unknown"), workflow_attempt: run?.attempt ?? 1,
+          workflow_path: config.policy.ci_workflow_path, observed_pr_head: candidate.head, status: complete && checkoutVerified ? "completed" as const : "unknown" as const, jobs: mapped,
+          feedback: { failure: raw.failure ?? (!complete ? "CI observation deadline" : !checkoutVerified ? "CI checkout identity unverified" : null), logs: raw.logs, checkout: raw.checkout } };
+      };
+      if (retained) {
+        // Recheck current custody, but never replace the already consumed verdict
+        // with a later observation or dispatch another workflow.
+        if (run) {
+          const current = get(`${c.api}/actions/runs/${run.id}`);
+          if (current.id !== run.id || current.run_attempt !== run.attempt || current.head_sha !== candidate.head
+            || current.head_branch !== c.branch || current.event !== "workflow_dispatch" || current.workflow_id !== workflow.id
+            || !(current.path === workflow.path || current.path?.startsWith(workflow.path + "@"))) throw new Error("CI run/attempt identity drift");
+        }
+        return result(retained);
+      }
       const listing = `${c.api}/actions/workflows/${workflow.id}/runs?event=workflow_dispatch&head_sha=${candidate.head}&branch=${encodeURIComponent(c.branch)}&per_page=100`;
       const baselineFile = path.join(c.round, "ci-before-dispatch.json");
       if (!fs.existsSync(baselineFile)) {
-        const before = transport.api("GET", listing);
+        const before = get(listing);
         if (!Array.isArray(before.workflow_runs) || before.workflow_runs.length >= 100) throw new Error("incomplete pre-dispatch CI inventory");
         save(baselineFile, before.workflow_runs.map((r: any) => r.id));
       }
@@ -167,53 +217,46 @@ export function e2eFixGitHubProviders(transport: E2eFixGitHubTransport = live): 
         try { transport.api("POST", `${c.api}/actions/workflows/${workflow.id}/dispatches`, { ref: c.branch, inputs: { target_ref: candidate.head } }); }
         catch { /* The dispatch may be running; query before making any claim. */ }
       }
-      const start = transport.now(); let observation: any = null; let jobs: any[] = []; let failure: string | null = null;
+      let observation: any = null; let jobs: any[] = []; let failure: string | null = null;
       const validRun = (r: any) => r.head_sha === candidate.head && r.head_branch === c.branch && r.event === "workflow_dispatch"
         && r.workflow_id === workflow.id && (r.path === workflow.path || r.path?.startsWith(workflow.path + "@"));
-      while (transport.now() - start <= c.github.wait_ms) {
+      while (transport.now() <= deadline) {
         try {
           pr();
           if (!run) {
-            const listed = transport.api("GET", listing);
+            const listed = get(listing);
             if (!Array.isArray(listed.workflow_runs) || listed.workflow_runs.length >= 100) throw new Error("incomplete CI dispatch inventory");
             const runs = listed.workflow_runs.filter((r: any) => !baseline.includes(r.id));
             if (runs.length > 1 || runs.some((r: any) => !validRun(r))) throw new Error("ambiguous or mismatched CI dispatch");
             if (runs.length) { run = { id: runs[0].id, attempt: runs[0].run_attempt }; save(custody, run); }
           }
           if (run) {
-            observation = transport.api("GET", `${c.api}/actions/runs/${run.id}`); c.observation("ci-run", observation);
+            observation = get(`${c.api}/actions/runs/${run.id}`); c.observation("ci-run", observation);
             if (!validRun(observation) || observation.id !== run.id || observation.run_attempt !== run.attempt) throw new Error("CI run/attempt identity drift");
             if (observation.status === "completed") {
-              const response = transport.api("GET", `${c.api}/actions/runs/${run.id}/attempts/${run.attempt}/jobs?per_page=100`);
+              const response = get(`${c.api}/actions/runs/${run.id}/attempts/${run.attempt}/jobs?per_page=100`);
               if (!Array.isArray(response.jobs) || response.total_count !== response.jobs.length) throw new Error("incomplete CI job inventory");
               jobs = response.jobs; c.observation("ci-jobs", response); pr(); break;
             }
           }
         } catch { failure = "CI observation unavailable or identity changed"; break; }
-        transport.sleep(c.github.poll_ms);
+        const remaining = deadline - transport.now();
+        if (remaining <= 0) break;
+        transport.sleep(Math.min(c.github.poll_ms, remaining));
       }
-      const complete = !failure && observation?.status === "completed" && jobs.length > 0;
-      const mapped = config.policy.required_ci_jobs.map(key => {
-        const matches = jobs.filter(j => j.name === c.github.job_names[key]);
-        const conclusion = matches.length === 1 && matches[0].status === "completed" ? matches[0].conclusion : "unknown";
-        return { key, conclusion: (["success", "failure", "skipped", "cancelled", "timed_out"].includes(conclusion) ? conclusion : "unknown") as E2eFixAcceptanceInput["ci"]["jobs"][number]["conclusion"] };
-      });
       const logs: unknown[] = []; const checkout: Array<{ key: string; head: string | null; log_sha256?: string }> = [];
       for (const key of config.policy.required_ci_jobs) {
         const matching = jobs.filter(j => j.name === c.github.job_names[key]);
         if (matching.length !== 1 || matching[0].status !== "completed") { checkout.push({ key, head: null }); continue; }
         const job = matching[0];
         try {
-          const log = transport.logs(config.repo, job.id); c.observation(`job-${job.id}-log`, log);
+          const log = retryRead(`job-${job.id}-log`, () => transport.logs(config.repo, job.id)); c.observation(`job-${job.id}-log`, log);
           checkout.push({ key, head: e2eFixCheckoutHead(log, c.github.checkout_ref), log_sha256: digest(log) });
           if (job.conclusion === "failure") logs.push({ job: job.name, tail: log.slice(-6000) });
         } catch { checkout.push({ key, head: null }); logs.push({ job: job.name, log_status: "unavailable" }); }
       }
-      const checkoutVerified = checkout.every(c => c.head === candidate.head);
-      const raw = { run: observation, jobs, failure, logs, checkout }; save(path.join(c.round, "ci-evidence.json"), raw);
-      return { candidate, artifact_sha256: digest(raw), pr: publication.pr, workflow_run_id: String(run?.id ?? "unknown"), workflow_attempt: run?.attempt ?? 1,
-        workflow_path: config.policy.ci_workflow_path, observed_pr_head: candidate.head, status: complete && checkoutVerified ? "completed" : "unknown", jobs: mapped,
-        feedback: { failure: failure ?? (!complete ? "CI observation deadline" : !checkoutVerified ? "CI checkout identity unverified" : null), logs, checkout } };
+      const raw = { run: observation, jobs, failure, logs, checkout }; save(evidenceFile, raw);
+      return result(raw);
     },
   };
 }

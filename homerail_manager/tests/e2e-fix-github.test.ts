@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { E2eFixCandidates } from "../src/runtime/e2e-fix-candidates.js";
 import { e2eFixGitHubProviders, e2eFixCheckoutHead, type E2eFixGitHubTransport } from "../src/runtime/e2e-fix-github.js";
 import type { E2eFixTaskConfig } from "../src/runtime/e2e-fix-stage.js";
@@ -62,7 +62,14 @@ describe.skipIf(process.platform !== "linux")("trusted GitHub stage providers wi
       github: { base_ref: "main", job_names: { unit: "Unit (Linux)" }, wait_ms: 1000, poll_ms: 1000, checkout_ref: "f".repeat(40) } };
     store = new E2eFixCandidates(path.join(root, "candidates")); store.seed(repo, config.base); github = new GitHub();
   });
-  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  const children: ChildProcess[] = [];
+  afterEach(async () => {
+    await Promise.all(children.splice(0).map(child => new Promise<void>(resolve => {
+      if (child.exitCode !== null || child.signalCode !== null) return resolve();
+      child.once("exit", () => resolve()); child.kill("SIGKILL");
+    })));
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const candidate = (round = 1, parent?: string) => store.capture({ task_id: config.task_id, root_run_id: config.root_run_id, round,
     plan_sha256: "b".repeat(64), policy_sha256: "c".repeat(64), repo: config.repo, base: config.base, parent: parent ?? config.base,
     allowed_paths: ["sum.cjs"], protected_paths: [".github"], summary: "Repair addition", edits: [{ path: "sum.cjs", old: `module.exports=${round - 1};`, new: `module.exports=${round};` }] });
@@ -104,6 +111,124 @@ describe.skipIf(process.platform !== "linux")("trusted GitHub stage providers wi
     expect(e2eFixCheckoutHead(`##[group]Run npm test\n${spoof}`, "f".repeat(40))).toBeNull();
     github.head = "a".repeat(40);
     expect(e2eFixCheckoutHead(github.logs() + `\n[command]/usr/bin/git log -1 --format=%H\n${"b".repeat(40)}`, "f".repeat(40))).toBe(github.head);
+  });
+  it("recovers a transient run read failure without repeating publication or dispatch", () => {
+    const provider = e2eFixGitHubProviders(github); const a = candidate();
+    const publication = provider.publish(config, a, root);
+    const api = github.api.bind(github); let reads = 0;
+    github.api = (method, endpoint, body) => {
+      if (endpoint.endsWith("/actions/runs/99") && ++reads === 1) throw new Error("network unavailable");
+      return api(method, endpoint, body);
+    };
+    expect(provider.ci(config, a, publication, root).status).toBe("completed");
+    expect(reads).toBe(2);
+    expect([github.pushes, github.creates, github.dispatches]).toEqual([1, 1, 1]);
+  });
+  it("reuses terminal evidence when GitHub adds later run metadata", () => {
+    const provider = e2eFixGitHubProviders(github); const a = candidate();
+    const publication = provider.publish(config, a, root);
+    const first = provider.ci(config, a, publication, root);
+    github.run.updated_at = "2026-09-09T00:00:00Z";
+    expect(e2eFixGitHubProviders(github).ci(config, a, publication, root)).toEqual(first);
+    expect(github.dispatches).toBe(1);
+  });
+  it("preserves the observation deadline and owned run after observer interruption", () => {
+    const provider = e2eFixGitHubProviders(github); const a = candidate();
+    const publication = provider.publish(config, a, root);
+    const api = github.api.bind(github);
+    github.api = (method, endpoint, body) => {
+      const value = api(method, endpoint, body);
+      if (endpoint.endsWith("/actions/runs/99")) value.status = "in_progress";
+      return value;
+    };
+    github.sleep = () => { throw new Error("observer process stopped"); };
+    expect(() => provider.ci(config, a, publication, root)).toThrow("observer process stopped");
+    const custody = fs.readFileSync(path.join(root, "github/1/ci-run.json"), "utf8");
+    github.time = 1001;
+    github.sleep = ms => { github.time += ms; };
+    github.api = api;
+    expect(() => e2eFixGitHubProviders(github).ci(config, a, publication, root)).toThrow(/deadline/);
+    expect(fs.readFileSync(path.join(root, "github/1/ci-run.json"), "utf8")).toBe(custody);
+    expect([github.pushes, github.creates, github.dispatches]).toEqual([1, 1, 1]);
+  });
+  it("recovers the same owned CI after SIGKILL of its observer process", async () => {
+    config.github!.wait_ms = 60000;
+    const a = candidate(); const publication = e2eFixGitHubProviders(github).publish(config, a, root);
+    fs.writeFileSync(path.join(root, "observer-input.json"), JSON.stringify({ config, candidate: a, publication }));
+    fs.writeFileSync(path.join(root, "observer-remote.json"), JSON.stringify({ pr: github.pr, run: null }));
+    const observer = () => {
+      const child = spawn(process.execPath, ["--import", "tsx", path.resolve("tests/fixtures/e2e-ci-observer.ts"), root], { stdio: ["ignore", "ignore", "pipe"] });
+      children.push(child); let errors = "";
+      child.stderr.on("data", chunk => { errors += chunk; });
+      return { child, errors: () => errors };
+    };
+    const first = observer();
+    await vi.waitFor(() => {
+      if (first.child.exitCode !== null) throw new Error(first.errors());
+      expect(fs.existsSync(path.join(root, "observer-waiting.json"))).toBe(true);
+    }, { timeout: 8000 });
+    const ended = new Promise(resolve => first.child.once("exit", resolve));
+    first.child.kill("SIGKILL"); await ended;
+    expect(first.child.signalCode).toBe("SIGKILL");
+    const custodyFile = path.join(root, "github/1/ci-run.json");
+    const deadlineFile = path.join(root, "github/1/ci-deadline.json");
+    const custody = fs.readFileSync(custodyFile, "utf8"); const deadline = fs.readFileSync(deadlineFile, "utf8");
+    const remote = JSON.parse(fs.readFileSync(path.join(root, "observer-remote.json"), "utf8"));
+    remote.run.status = "completed";
+    fs.writeFileSync(path.join(root, "observer-remote.json"), JSON.stringify(remote));
+    const second = observer();
+    await vi.waitFor(() => {
+      if (second.child.exitCode !== null && second.child.exitCode !== 0) throw new Error(second.errors());
+      expect(fs.existsSync(path.join(root, "observer-result.json"))).toBe(true);
+    }, { timeout: 8000 });
+    const recovered = JSON.parse(fs.readFileSync(path.join(root, "observer-result.json"), "utf8"));
+    expect(recovered.pid).not.toBe(first.child.pid);
+    expect(recovered.result).toMatchObject({ status: "completed", workflow_run_id: "99", workflow_attempt: 1, candidate: a });
+    expect(fs.readFileSync(custodyFile, "utf8")).toBe(custody);
+    expect(fs.readFileSync(deadlineFile, "utf8")).toBe(deadline);
+    const requests = fs.readFileSync(path.join(root, "observer-requests.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(requests.filter(r => r.method === "POST")).toHaveLength(1);
+    expect(requests.filter(r => r.pid === recovered.pid).every(r => r.method === "GET")).toBe(true);
+    expect([github.pushes, github.creates]).toEqual([1, 1]);
+    const exportDir = process.env.HOMERAIL_E2E_FIX_EVIDENCE_DIR;
+    if (exportDir) {
+      const destination = path.join(exportDir, "ci-observer-sigkill", path.basename(root));
+      fs.mkdirSync(destination, { recursive: true });
+      for (const name of ["observer-input.json", "observer-remote.json", "observer-result.json", "observer-requests.jsonl", "observer-waiting.json"])
+        fs.copyFileSync(path.join(root, name), path.join(destination, name));
+      fs.cpSync(path.join(root, "github"), path.join(destination, "github"), { recursive: true });
+      fs.writeFileSync(path.join(destination, "proof.json"), JSON.stringify({ process_fault: "SIGKILL", first_pid: first.child.pid,
+        recovered_pid: recovered.pid, same_custody: true, same_deadline: true, dispatches: 1, github_transport: "injected", model_calls: 0 }));
+    }
+  }, 20000);
+  it("retries unavailable checkout logs within the same deadline", () => {
+    const a = candidate(); const provider = e2eFixGitHubProviders(github);
+    const publication = provider.publish(config, a, root); const logs = github.logs.bind(github); let reads = 0;
+    github.logs = () => { if (++reads === 1) throw new Error("logs temporarily unavailable"); return logs(); };
+    expect(provider.ci(config, a, publication, root).status).toBe("completed");
+    expect(reads).toBe(2); expect(github.dispatches).toBe(1);
+  });
+  it("keeps an exhausted observation unknown and does not refresh its deadline on replay", () => {
+    const a = candidate(); const provider = e2eFixGitHubProviders(github);
+    const publication = provider.publish(config, a, root); const api = github.api.bind(github);
+    github.api = (method, endpoint, body) => {
+      if (endpoint.endsWith("/actions/runs/99")) throw new Error("persistent outage");
+      return api(method, endpoint, body);
+    };
+    const first = provider.ci(config, a, publication, root);
+    expect(first.status).toBe("unknown"); expect(github.time).toBe(1000);
+    github.api = api; github.time = 5000;
+    expect(provider.ci(config, a, publication, root)).toEqual(first);
+    expect(github.dispatches).toBe(1);
+  });
+  it("refuses current head or attempt drift when replaying retained CI evidence", () => {
+    const a = candidate(); const provider = e2eFixGitHubProviders(github);
+    const publication = provider.publish(config, a, root); provider.ci(config, a, publication, root);
+    github.driftAttempt = true;
+    expect(() => provider.ci(config, a, publication, root)).toThrow(/identity drift/);
+    github.driftAttempt = false; github.pr.head.sha = "f".repeat(40);
+    expect(() => provider.ci(config, a, publication, root)).toThrow(/PR changed/);
+    expect(github.dispatches).toBe(1);
   });
   it("retains failed-job logs for the next Codex plan", () => {
     github.jobs[0].conclusion = "failure"; const provider = e2eFixGitHubProviders(github); const a = candidate();

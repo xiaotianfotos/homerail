@@ -286,3 +286,31 @@ also require an exact match with the retained Manager dispatch projection.
 
 新回执绑定当时的 Manager 派发模型身份。受限汇总恢复兼容旧回执：重新核对
 全部旧字段，保留原字节，来源投影另存，不查询当前设置冒充历史，也不重跑模型。
+
+
+## CI 观察恢复 / CI observation recovery
+
+GitHub CI provider 在首次观察前保存 `ci-deadline.json`。瞬时 GET 或日志读取
+失败由可信程序在该期限内重试；不会重新 push、创建 PR 或 dispatch workflow。
+重新进入观察时复用原 `ci-run.json` 的 run/attempt 和原期限。身份不匹配、
+不完整或歧义的 inventory 仍立即停止；超期不会被重新进入延长。
+
+终态 `ci-evidence.json` 保持不可变。重新读取时先核对当前 PR 和 CI 身份，
+再复用原结果，不因 GitHub 后续增加元数据而重写证据；原 unknown 也不会
+悄悄升级成成功。此 provider 的读取恢复不意味着原生 DAG 的任意失败阶段都
+支持自动重派发，不能以此绕过冻结阶段或原任务期限。
+
+The GitHub CI provider persists its observation deadline before its first read.
+Transient GET/log failures retry within that deadline; writes are never retried
+by this mechanism. Re-entry retains the owned run/attempt and deadline. Invalid
+identities or incomplete/ambiguous inventories stop immediately. Final evidence
+is reused after checking current PR/run identity, including a retained unknown
+outcome. This does not authorize arbitrary native stage redispatch or extend the
+root run deadline.
+
+验证包括实际观察进程 SIGKILL 后在新进程复用同 run/attempt、原 deadline、
+一次 dispatch 的回归测试（GitHub transport 为替身）。另在 #307 原第三轮
+证据的独立副本上注入一次声明的读取故障及真实 SIGKILL，恢复后以真实 GitHub
+GET/日志核对原 CI `34298573799` attempt 1 的五项成功；仅 14 次 GET，零
+修改请求、零模型调用，未改写原证据。后者证明已完成 CI 的观察恢复，不是
+真实 GitHub 服务故障或仍执行中的远端 CI 重启。

@@ -1,6 +1,7 @@
 # E2E Fix 验收账本
 
-核验基线：实现 `2c6640bcf44af3ecc31f9678440f408591fcef7f`。
+核验基线：完整本地 CI 已通过 `7712de09b63d6c49bba3c764872f4cd1b4fcb61d`；
+此后 CI 观察恢复改动已通过 17 项定向测试及类型检查，等待新提交完整 CI。
 这是原始 [实施计划](e2e-fix-289.md) 的逐项差距账本，不替换或缩减验收要求。
 2026-09-09 的完整本地 `npm run ci` 已核验通过，启用了真实 Docker 原生阶段测试；
 本地通过不代表实现 PR 的 Windows、UI coverage、Docker smoke 或独立审查通过。
@@ -37,7 +38,7 @@
 | 双恢复/过期 owner | `durable-command.test.ts` superseded owners、一次消费；恢复事务与旧 lease 测试 | 业务阶段 × 前/中/后完整交叉矩阵仍为部分 |
 | 重复事件、迟到回执、完成后篡改 | `durable-command-workflow.test.ts` cancellation fences late completion；测试回执/log 篡改拒绝；通知去重测试 | 当前任务已按用户要求取消自动通知，不能为了验收重新开启 |
 | PR 创建/更新应答丢失 | `e2e-fix-github.test.ts` 两轮同 PR、push/create/dispatch 丢应答，断言次数 | 注入 API transport；真实 GitHub 丢应答注入尚未做，unknown 时保留暂停 |
-| CI 断网、attempt/head 漂移 | `e2e-fix-github.test.ts` duplicate-run / attempt-drift / wrong-checkout / missing/skipped jobs；原生 unknown/stale CI 路由 | 断网后同观察恢复的完整实机故障演练待补齐 |
+| CI 断网、attempt/head 漂移 | `e2e-fix-github.test.ts` duplicate-run / attempt-drift / wrong-checkout / missing/skipped jobs；原生 unknown/stale CI 路由 | 已增加持久期限/读取重试/终态重放及实际观察进程 SIGKILL 回归；另以 #307 原已完成 CI 做真实 GET、声明读取故障和 SIGKILL 的只读恢复证明，14 GET/零修改；实际服务断网及原生阶段自动恢复仍未证明 |
 | 伪造报告、改 hash、删测试、改 runner | `durable-command.test.ts` model-written report 拒绝；candidate/runtime/test 专项篡改测试 | 测试证据来自可信程序和宿主权限边界；hash 自身不是执行证明 |
 | 相同失败、无效修改、超预算 | `e2e-fix-candidates.test.ts` no-op/重叠/旧片段拒绝；工作流轮数上限；截断后相同计划拒绝 | 新增保守失败指纹：第二次重规划、第三次暂停，单元与真实 Docker 原生循环已通过；变动诊断可能不匹配。全任务 token 预算/预留、跨新 attempt 预算归并仍未完成 |
 | 两票通过但有效 blocker/可证伪 finding | protocol 独立票/身份/完整处置测试；原生 unresolved/dismissed/duplicate-disposition | 实现 PR 的真实审查和逐条处置尚未进行 |
