@@ -39,7 +39,7 @@
 | PR 创建/更新应答丢失 | `e2e-fix-github.test.ts` 两轮同 PR、push/create/dispatch 丢应答，断言次数 | 注入 API transport；真实 GitHub 丢应答注入尚未做，unknown 时保留暂停 |
 | CI 断网、attempt/head 漂移 | `e2e-fix-github.test.ts` duplicate-run / attempt-drift / wrong-checkout / missing/skipped jobs；原生 unknown/stale CI 路由 | 断网后同观察恢复的完整实机故障演练待补齐 |
 | 伪造报告、改 hash、删测试、改 runner | `durable-command.test.ts` model-written report 拒绝；candidate/runtime/test 专项篡改测试 | 测试证据来自可信程序和宿主权限边界；hash 自身不是执行证明 |
-| 相同失败、无效修改、超预算 | `e2e-fix-candidates.test.ts` no-op/重叠/旧片段拒绝；工作流轮数上限；截断后相同计划拒绝 | 通用失败指纹停滞检测、全任务 token 预算/预留、跨新 attempt 预算归并仍未完成 |
+| 相同失败、无效修改、超预算 | `e2e-fix-candidates.test.ts` no-op/重叠/旧片段拒绝；工作流轮数上限；截断后相同计划拒绝 | 新增保守失败指纹：第二次重规划、第三次暂停，单元与真实 Docker 原生循环已通过；变动诊断可能不匹配。全任务 token 预算/预留、跨新 attempt 预算归并仍未完成 |
 | 两票通过但有效 blocker/可证伪 finding | protocol 独立票/身份/完整处置测试；原生 unresolved/dismissed/duplicate-disposition | 实现 PR 的真实审查和逐条处置尚未进行 |
 
 ## 后续执行次序

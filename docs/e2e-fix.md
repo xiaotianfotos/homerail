@@ -143,3 +143,24 @@ unfinished claimed retry remains unknown. Structured HTTP outcomes are retained
 without arbitrary error bodies or credentials. Completion/exception supervision
 is configured separately. Byte/time/round
 limits are not a task-wide token budget or a proof of successful execution.
+
+## 重复失败与暂停 / Repeated failures and pause
+
+可信阶段对失败检查结果及诊断、未解决审查意见和失败类型生成指纹；不使用
+候选 head、计划 hash、会话 ID 或模型自报“已改进”作为进展。连续第二次相同
+失败将前一份方案和 replan 要求送入下一轮；程序在 Fixer 派发前拒绝仅空白/
+路径排列变化的旧方案。第三次仍相同则暂停，即使 Judger 再次要求 revise。
+原候选、测试日志、Judger 原始意见和各轮成本继续保留，不自动增加运行预算。
+
+此指纹是保守的停滞信号，不是语义等价判定。它仅归一化 ANSI 颜色、行尾和
+意见/检查顺序；保留断言数值、代码位置和完整诊断。改写意见或变化的日志可能
+不能匹配，独立的轮数和时间上限仍生效。全任务供应商 token 硬预算尚未提供。
+
+Trusted stages fingerprint retained failing checks and diagnostics, unresolved
+findings, and failure categories. A second identical consecutive failure
+requires a changed Codex plan before another Fixer dispatch. A third identical
+failure pauses even if the Judger asks to revise again. All candidates, raw
+evidence, and costs remain available. Candidate hashes and model claims of
+progress do not reset this counter. This conservative content comparison may
+miss reworded or volatile diagnostics; independent round/time bounds still
+apply. It is not a provider token budget or proof of semantic convergence.

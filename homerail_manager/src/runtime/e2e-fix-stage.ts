@@ -14,6 +14,7 @@ import { validateE2eFixGitHub, type E2eFixGitHubConfig } from "./e2e-fix-github.
 import { assertE2eFixStageRuntime } from "./e2e-fix-stage-runtime.js";
 import { projectE2eFixReviewContext } from "./e2e-fix-review-context.js";
 import { readE2eFixModelRuntime, verifyLegacyE2eFixModelArtifact } from "./e2e-fix-model-runtime.js";
+import { assessE2eFixProgress, e2eFixFailureFingerprint, sameE2eFixPlan, type E2eFixFailureObservation } from "./e2e-fix-progress.js";
 
 const digest = (value: unknown) => e2eFixDigest(JSON.stringify(value));
 type Policy = E2eFixAcceptanceInput["policy"];
@@ -104,6 +105,22 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
   const bound = (candidate: E2eFixCandidate, value: unknown) => ({ candidate, artifact_sha256: digest(value) });
   const candidates = new E2eFixCandidates(path.join(directory, "candidates"));
   const policy: Policy = { ...config.policy, sha256: policyDigest };
+  const recordProgress = (decision: any, observation: E2eFixFailureObservation) => {
+    if (decision.action !== "revise") return decision;
+    const previous: Array<string | null> = [];
+    for (let prior = 1; prior < round; prior++) {
+      const dir = path.join(directory, "rounds", String(prior));
+      const file = path.join(dir, fs.existsSync(path.join(dir, "complete.json")) ? "complete.json" : "record_candidate_judgment.json");
+      previous.push(JSON.parse(fs.readFileSync(file, "utf8")).stagnation?.failure_sha256 ?? null);
+    }
+    const stagnation = assessE2eFixProgress(e2eFixFailureFingerprint(observation), previous);
+    return { ...decision, stagnation,
+      action: stagnation.action === "pause" ? "pause" : decision.action,
+      reason: stagnation.action === "pause" ? `Three consecutive unchanged failures; retained candidates require a new external decision. Judger: ${decision.reason}` : decision.reason,
+      feedback: { ...decision.feedback, stagnation,
+        ...(stagnation.action === "replan" ? { previous_plan: read("freeze_plan").plan,
+          previous_plan_sha256: read("freeze_plan").plan_sha256 } : {}) } };
+  };
   const modelEvidence = (node: string, submitted: unknown): ModelEvidence => {
     const current = loadRunMetadata(config.root_run_id)!;
     const session = getDagSessionIndex(config.root_run_id, node);
@@ -161,6 +178,10 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const context = read("context"); const evidence = modelEvidence("plan", one("plan")); const plan = evidence.value;
     if (!Array.isArray(plan.allowed_paths) || !plan.allowed_paths.length || plan.allowed_paths.some((p: string) => !config.allowed_paths.includes(p))) throw new Error("Codex plan exceeds frozen scope");
     const previousPlan = context.previous?.evidence?.previous_plan;
+    if (context.previous?.evidence?.stagnation?.action === "replan"
+      && (!previousPlan || sameE2eFixPlan(plan, previousPlan))) {
+      throw new Error("repeated failure requires a changed Codex plan before another Fixer dispatch");
+    }
     if (context.previous?.evidence?.model_failure && previousPlan
       && plan.strategy.trim() === previousPlan.strategy.trim()
       && isDeepStrictEqual([...new Set(plan.allowed_paths)].sort(), [...new Set(previousPlan.allowed_paths)].sort())) {
@@ -268,6 +289,11 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
         retry_strategy: proposed.retry_strategy ?? null, ...(tested.proposal_error ? { proposal_error: tested.proposal_error } : {}),
         ...(tested.model_failure ? { model_failure: tested.model_failure,
           previous_plan: read("freeze_plan").plan, previous_plan_sha256: read("freeze_plan").plan_sha256 } : {}) }, dispositions };
+    result = recordProgress(result, { phase: "candidate", outcome: tested.outcome,
+      checks: tested.tests.map((t: any) => ({ id: t.check_id, result: t.result,
+        diagnostic: t.result === "passed" ? "" : tested.test_summaries.find((s: any) => s.check_id === t.check_id)?.log_tail ?? "" })),
+      findings: result.feedback.findings.map((f: any) => f.message),
+      detail: tested.proposal_error ?? tested.model_failure?.outcome ?? "" });
   } else if (stage === "publish" || stage === "ci") {
     if (!providers || providers.mode !== config.mode) throw new Error("publication/CI provider is not configured for this run mode");
     const decision = read("record_candidate_judgment");
@@ -297,6 +323,10 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
       tests: read("test").tests, reviews, judgment, publication: read("publish").publication, ci: read("ci").ci });
     result = { ...reference(), candidate, action: evidence.value.verdict === "revise" && read("ci").outcome === "code_failure" ? "revise" : acceptance.eligible ? "complete" : "pause",
       reason: evidence.value.reason, feedback: { ci: read("ci").ci, details: read("ci").ci_feedback }, acceptance, mode: config.mode, production_eligible: config.mode === "production" && acceptance.eligible };
+    result = recordProgress(result, { phase: "ci", outcome: read("ci").outcome,
+      checks: read("ci").ci.jobs.map((job: any) => ({ id: job.key, result: job.conclusion,
+        diagnostic: job.conclusion === "success" ? "" : read("ci").ci_feedback?.logs?.find((log: any) => log.job === config.github?.job_names[job.key])?.tail ?? "" })),
+      findings: [], detail: JSON.stringify((read("ci").ci_feedback?.logs ?? []).map((log: any) => ({ job: log.job ?? "", tail: log.tail ?? "" }))) });
   } else throw new Error("unknown E2E Fix stage");
   if (Buffer.byteLength(JSON.stringify(result)) > config.context_bytes) throw new Error("stage output exceeds frozen context bound");
   write(stage, result);
