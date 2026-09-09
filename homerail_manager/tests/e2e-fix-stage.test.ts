@@ -55,7 +55,7 @@ describe("trusted E2E Fix task configuration", () => {
   });
 });
 
-type Scenario = "review-source-projection" | "blocked-plan" | "stagnation-test" | "stagnation-same-plan" | "interrupted-test" | "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
+type Scenario = "review-source-projection" | "blocked-plan" | "stagnation-test" | "stagnation-same-plan" | "oom-test" | "install-failure" | "setup-success" | "missing-template" | "interrupted-test" | "review-contract-correct" | "review-contract-exhausted" | "approve-observations" | "test-review-loop" | "review-context-budget" | "review-context-oversize" | "invalid-proposal" | "unknown-ci" | "stale-ci" | "unresolved-review" | "dismissed-review" | "duplicate-disposition" | "ci-feedback"
   | "model-truncated" | "model-unknown" | "model-accept" | "model-same-plan" | "model-no-strategy" | "model-stale-evidence";
 
 class Models implements DAGDispatcher {
@@ -174,7 +174,7 @@ class Models implements DAGDispatcher {
 }
 
 describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TEST_IMAGE)("native graph with trusted stages and real Docker tests", () => {
-  it.each<Scenario>(["review-source-projection", "blocked-plan", "stagnation-test", "stagnation-same-plan", "interrupted-test", "review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
+  it.each<Scenario>(["review-source-projection", "blocked-plan", "stagnation-test", "stagnation-same-plan", "oom-test", "install-failure", "setup-success", "missing-template", "interrupted-test", "review-contract-correct", "review-contract-exhausted", "approve-observations", "test-review-loop", "review-context-budget", "review-context-oversize", "invalid-proposal", "unknown-ci", "stale-ci", "unresolved-review", "dismissed-review", "duplicate-disposition", "ci-feedback",
     "model-truncated", "model-unknown", "model-accept", "model-same-plan", "model-no-strategy", "model-stale-evidence"])("autonomously handles %s in one root", async (scenario) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "homerail-e2e-native-stages-"));
     const oldHome = process.env.HOMERAIL_HOME; const oldAllow = process.env.HOMERAIL_DAG_COMMAND_ALLOWLIST;
@@ -184,6 +184,17 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
     const unsubscribers: Array<() => void> = [];
     try {
       const configuration = config(root, process.env.HOMERAIL_E2E_FIX_TEST_IMAGE);
+      if (scenario === "oom-test") {
+        configuration.tests[0].memory_mb = 64;
+        configuration.tests[0].files["check.cjs"] = "const held=[];for(;;)held.push(Buffer.alloc(16*1024*1024,1));";
+      }
+      if (scenario === "install-failure") configuration.tests[0].setup_argv = ["npm", "ci", "--offline", "--ignore-scripts", "--no-audit", "--no-fund"];
+      if (scenario === "setup-success") {
+        configuration.tests[0].setup_argv = ["node", "/checks/setup.cjs"];
+        configuration.tests[0].files["setup.cjs"] = "require('node:fs').writeFileSync('/work/setup-ready','done');";
+        configuration.tests[0].files["check.cjs"] = "require('node:assert/strict').equal(require('node:fs').readFileSync('/work/setup-ready','utf8'),'done');" + configuration.tests[0].files["check.cjs"];
+      }
+      if (scenario === "missing-template") configuration.tests[0].workspace_template = "/opt/homerail-missing-dependencies";
       if (scenario === "interrupted-test") configuration.tests[0].files["check.cjs"] = "process.kill(process.pid, 'SIGKILL');";
       if (scenario.startsWith("review-context-")) {
         configuration.context_bytes = 64000;
@@ -399,7 +410,7 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         expect(fs.existsSync(path.join(task, "simulated-pr.json"))).toBe(false);
         return;
       }
-      if (scenario === "interrupted-test") {
+      if (["interrupted-test", "missing-template", "install-failure", "oom-test"].includes(scenario)) {
         const read = (name: string) => JSON.parse(fs.readFileSync(path.join(task, "rounds", "1", name + ".json"), "utf8"));
         expect(read("test").outcome).toBe("infrastructure_failure");
         // The native test route stops before spending any reviewer/Judger tokens.
@@ -409,10 +420,19 @@ describe.skipIf(process.platform !== "linux" || !process.env.HOMERAIL_E2E_FIX_TE
         const attempts = path.join(task, "rounds", "1", "tests", configuration.tests[0].id);
         expect(fs.readdirSync(attempts).sort()).toEqual(["1", "2"]);
         const receipts = [1, 2].map(attempt => JSON.parse(fs.readFileSync(path.join(attempts, String(attempt), "receipt.json"), "utf8")));
-        expect(receipts.every(r => r.result === "interrupted" && r.exit_code === 125)).toBe(true);
-        // The frozen bootstrap maps a killed child to its reserved exit 125.
-        for (const attempt of [1, 2]) expect(fs.readFileSync(path.join(attempts, String(attempt), "test.log"), "utf8"))
-          .toContain("trusted test command did not complete SIGKILL");
+        expect(receipts.every(r => r.result === "interrupted")).toBe(true);
+        if (scenario === "oom-test") {
+          // Verify Docker's actual cgroup OOM observation, not an invented exit 137.
+          expect(receipts.every(r => r.state.OOMKilled === true)).toBe(true);
+        } else {
+          expect(receipts.every(r => r.exit_code === 125)).toBe(true);
+          for (const attempt of [1, 2]) {
+            const log = fs.readFileSync(path.join(attempts, String(attempt), "test.log"), "utf8");
+            expect(log).toContain(scenario === "interrupted-test" ? "trusted test command did not complete SIGKILL" : "trusted test preparation failed");
+            if (scenario === "install-failure") expect(log).toContain("npm error code EUSAGE");
+            expect(log).not.toContain("assertion completed");
+          }
+        }
         expect(receipts[0].candidate).toEqual(receipts[1].candidate);
         expect(new Set(receipts.map(r => r.container_id)).size).toBe(2);
         expect(models.calls.filter(c => c.nodeId === "fix")).toHaveLength(1);

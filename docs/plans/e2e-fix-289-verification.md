@@ -1,7 +1,8 @@
 # E2E Fix 验收账本
 
-核验基线：完整本地 CI 已通过 `7712de09b63d6c49bba3c764872f4cd1b4fcb61d`；
-此后 CI 观察恢复改动已通过 17 项定向测试及类型检查，等待新提交完整 CI。
+核验基线：完整本地 CI 已通过 `d9dfad9c8fc9676406f1c2bc54121868f4614ed6`；
+此后测试准备分类改动已通过 6 个真实 Docker 原生用例、14 项隔离契约检查及
+类型检查，等待新提交完整 CI。
 这是原始 [实施计划](e2e-fix-289.md) 的逐项差距账本，不替换或缩减验收要求。
 2026-09-09 的完整本地 `npm run ci` 已核验通过，启用了真实 Docker 原生阶段测试；
 本地通过不代表实现 PR 的 Windows、UI coverage、Docker smoke 或独立审查通过。
@@ -33,7 +34,7 @@
 | 已启动但 ack 丢失 | `durable-command.test.ts` lost acknowledgement；`e2e-fix-test.test.ts` lost create acknowledgement | Docker 的 unknown 不能作为不存在；不覆盖任意第三方模型会话接续 |
 | Manager 在等待/反馈边界重启 | `durable-command-workflow.test.ts` 实际 SIGKILL，原测试继续、恢复后仅消费一次；导出 owner epoch 和执行次数 | 新增独立 Manager 在第二轮 while/feedback 工作仍执行及已完成未消费时的实际 SIGKILL，均恢复两轮、两次执行且 owner epoch 为 1/2；真实 GitHub 等待断网/重启仍未独立注入 |
 | 首 token 后 Worker/Manager 退出 | `e2e-fix-model-failure.test.ts` 终态/会话 usage 绑定，原失败演练保留截断与耗费 | 实际首 token 后进程杀死及新会话阶段恢复，尚无完整端到端证明 |
-| 测试被杀/OOM/安装失败 | `e2e-fix-test.ts` 分类执行中断并在同一候选有限重试；新增真实 SIGKILL 路由回归已通过：同候选两个实际容器，bootstrap 记录 SIGKILL 并退出 125，未派发第二个 Fixer/任何审查或 Judger | OOM 和安装失败的全部独立注入未覆盖；不能把断言失败当基础设施重试 |
+| 测试被杀/OOM/安装失败 | `e2e-fix-test.ts` 分类执行中断并在同一候选有限重试；新增真实 SIGKILL 路由回归已通过：同候选两个实际容器，bootstrap 记录 SIGKILL 并退出 125，未派发第二个 Fixer/任何审查或 Judger | 新增 64MiB 容器实际 OOM、离线 npm ci/EUSAGE、缺失依赖快照均验证同候选最多两次容器且零额外 Fixer；准备成功及真正断言返修路径也通过。网络服务故障与跨进程各时点组合仍不作全面保证 |
 | 真实断言失败或负面审查 | 原生三轮测试、#245 第二轮实际返修、受控 #306 CI 失败日志反馈 | #245 已通过终态审计；仍保留第三轮无关修复的反例，不宣称任意 issue 收敛 |
 | 双恢复/过期 owner | `durable-command.test.ts` superseded owners、一次消费；恢复事务与旧 lease 测试 | 业务阶段 × 前/中/后完整交叉矩阵仍为部分 |
 | 重复事件、迟到回执、完成后篡改 | `durable-command-workflow.test.ts` cancellation fences late completion；测试回执/log 篡改拒绝；通知去重测试 | 当前任务已按用户要求取消自动通知，不能为了验收重新开启 |

@@ -347,3 +347,20 @@ SIGKILL 后复用原 run/attempt/期限且总共一次 dispatch。该测试使�
 3136843 后由 3136978 恢复，14 次 GET、零修改请求、零模型调用；五项必需
 job 成功且 checkout head 相同。原始任务证据摘要未改变。诊断不是实际
 GitHub 服务断网或原生 Manager 阶段自动重启的证明，相关差距仍保留。
+
+
+## 依赖准备失败被误判为代码失败
+
+真实 Docker 原生 DAG 回归先在旧实现复现：缺失 `workspace_template` 使
+bootstrap 以 1 退出，测试结果被标成 code_failure。已将复制/权限准备异常
+归为保留的基础设施退出状态 125，并增加可选、冻结的 `setup_argv`：安装
+或准备失败不会执行断言，也不会立即交给 Fixer 改业务逻辑。该命令和测试
+共享隔离容器及超时，网络仍关闭；真正断言失败不被吞成基础设施故障。
+
+六个实际 Git/Docker 原生用例通过：64MiB 容器真实 OOM（两次 receipt 的
+Docker OOMKilled 均为 true）、离线 npm ci 缺少 lockfile 的真实 EUSAGE、
+缺失依赖快照、SIGKILL、准备成功、原三轮测试/审查返修。四种故障均保留
+同一候选的两次不同容器回执，Planner/Fixer 各一次，零 Reviewer/Judger/
+PR 调用，最终 cancelled。成功准备和三轮修复分别正常完成。模型与 GitHub
+是明确标注的替身；不能将这些计数当成实际模型 token 使用。另 14 项隔离
+契约检查与 Manager 类型检查通过，覆盖无效/篡改 setup 参数的执行前拒绝。

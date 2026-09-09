@@ -47,6 +47,11 @@ node scripts/e2e-fix.mjs prepare /srv/homerail-private/preparation-input.json
 - `tests`：每个测试的唯一 id、不可变 Docker image SHA、argv、cwd、timeout_ms、
   memory_mb/workspace_mb/cpus/pids_limit 和受信任的 `files`。定义见
   `homerail_manager/src/runtime/e2e-fix-test.ts`。先用实际隔离执行器复现基线缺陷。
+  可选 `workspace_template` 从固定镜像复制依赖；可选 `setup_argv` 在断言前执行
+  受信任的准备命令，例如 `["npm", "ci", "--offline", "--ignore-scripts"]`。
+  准备和测试共享容器、工作副本与总超时；网络仍关闭，所需包须预置在镜像中。
+  准备失败与 OOM/中断按 `max_infra_retries` 重试同一候选，耗尽后停止；
+  真正的测试非零退出保留为代码失败，交回 Judger。
 - `policy`：required_tests、required_ci_jobs、ci_workflow_path；reviewer_ids 固定为
   review_a/review_b/review_c，review_approvals 按批准的验收政策设置（本任务至少 2）。
 - `github`：base_ref、job_names（逻辑检查 ID 到实际 GitHub job 名称的完整映射）、
@@ -126,6 +131,11 @@ An incomplete directory is retained for investigation. The runtime manifest is p
 during preparation; the bootstrap verifies the entire inventory before stage execution.
 Use trusted test definitions and an explicit GitHub check policy. Model credentials
 belong in Manager settings, and GitHub publication uses the host identity.
+An optional frozen `setup_argv` runs after dependency/source copying and before
+assertions in the same isolated container and timeout. Networking stays disabled;
+provide offline dependencies in the pinned image. Preparation failures, OOM and
+interruptions use bounded retries of the same candidate, then stop. Ordinary test
+failures remain code feedback. The model cannot rewrite this test definition.
 
 Use `start` / `reconcile` with an explicit `HOMERAIL_MANAGER_URL` and the existing
 mutation-token environment. Start verifies capability support, syncs the frozen

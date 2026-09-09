@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { E2eFixCandidates } from "../src/runtime/e2e-fix-candidates.js";
-import { E2eFixIsolatedTest, e2eFixDocker, type E2eFixDocker, type E2eFixTestDefinition } from "../src/runtime/e2e-fix-test.js";
+import { E2eFixIsolatedTest, e2eFixDocker, validateE2eFixTestDefinition, type E2eFixDocker, type E2eFixTestDefinition } from "../src/runtime/e2e-fix-test.js";
 
 const candidate = { task_id: "test", root_run_id: "root", round: 1, plan_sha256: "a".repeat(64), policy_sha256: "b".repeat(64),
   repo: "fixture/repo", base: "c".repeat(40), head: "d".repeat(40), tree: "e".repeat(40) };
@@ -83,6 +83,17 @@ describe.skipIf(process.platform !== "linux")("isolated test stage contract", ()
   it("an incomplete output capture cannot pass even when the container exits zero", () => {
     const docker = new DockerFixture(); docker.incompleteCapture = true;
     expect(job(docker).run()).toMatchObject({ result: "interrupted", exit_code: 0 });
+  });
+  it.each([[], "npm ci", ["npm", ""], ["npm", "ci\0"]].map(setup => ({ setup })))("rejects malformed setup argv $setup before execution", ({ setup }) => {
+    expect(() => validateE2eFixTestDefinition({ ...definition(), setup_argv: setup as string[] })).toThrow(/invalid frozen/);
+  });
+  it("rejects a changed setup command before any Docker operation", () => {
+    const docker = new DockerFixture();
+    const intent = { candidate: boundCandidate, definition: { ...definition(), setup_argv: ["npm", "ci", "--offline"] }, snapshot, candidate_store: path.join(root, "private") };
+    const stage = new E2eFixIsolatedTest(path.join(root, "setup-job"), intent, docker.docker);
+    intent.definition.setup_argv = ["node", "-e", "process.exit(0)"];
+    expect(() => stage.run()).toThrow(/test intent changed/);
+    expect(docker.calls).toHaveLength(0);
   });
   it("rejects drift of frozen tests before any Docker operation", () => {
     const docker = new DockerFixture(); const stage = job(docker);

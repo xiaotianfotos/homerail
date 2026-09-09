@@ -10,6 +10,8 @@ export interface E2eFixTestDefinition {
   files: Record<string, string>;
   /** Optional dependency snapshot baked into the frozen image from trusted base. */
   workspace_template?: string;
+  /** Optional frozen dependency/setup command; a nonzero exit is infrastructure failure. */
+  setup_argv?: string[];
   memory_mb: number; workspace_mb: number; cpus: number; pids_limit: number;
 }
 export interface E2eFixTestIntent {
@@ -33,17 +35,25 @@ export const e2eFixDocker: E2eFixDocker = (args, timeout = 30000) => {
 // copy is writable; tests, source evidence and all host custody remain outside.
 const BOOTSTRAP = `import fs from 'node:fs';import path from 'node:path';import {spawnSync} from 'node:child_process';
 const d=JSON.parse(fs.readFileSync('/checks/definition.json','utf8'));
-if(d.workspace_template)fs.cpSync(d.workspace_template,'/work',{recursive:true,dereference:false});
-fs.cpSync('/candidate','/work',{recursive:true,force:true});
-function writable(dir){for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isDirectory())writable(p);else if(e.isFile())fs.chmodSync(p,fs.statSync(p).mode|0o200);}}
-writable('/work');
-const r=spawnSync(d.argv[0],d.argv.slice(1),{cwd:path.join('/work',d.cwd),stdio:'inherit',env:{PATH:'/usr/local/bin:/usr/bin:/bin',HOME:'/tmp',TMPDIR:'/tmp',CI:'1',NPM_CONFIG_OFFLINE:'true'}});
+const env={PATH:'/usr/local/bin:/usr/bin:/bin',HOME:'/tmp',TMPDIR:'/tmp',CI:'1',NPM_CONFIG_OFFLINE:'true'};
+const run=argv=>spawnSync(argv[0],argv.slice(1),{cwd:path.join('/work',d.cwd),stdio:'inherit',env});
+try {
+  if(d.workspace_template)fs.cpSync(d.workspace_template,'/work',{recursive:true,dereference:false});
+  fs.cpSync('/candidate','/work',{recursive:true,force:true});
+  function writable(dir){for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isDirectory())writable(p);else if(e.isFile())fs.chmodSync(p,fs.statSync(p).mode|0o200);}}
+  writable('/work');
+  if(d.setup_argv){const r=run(d.setup_argv);if(r.error||r.signal||r.status!==0)throw new Error('setup command failed: '+(r.error?.message||r.signal||r.status));}
+} catch(error){console.error('trusted test preparation failed',error?.message||String(error));process.exit(125);}
+const r=run(d.argv);
 if(r.error||r.signal){console.error('trusted test command did not complete',r.error?.message||r.signal);process.exit(125);}
 process.exit(r.status??125);\n`;
 
+
 export function validateE2eFixTestDefinition(d: E2eFixTestDefinition): void {
+  const validArgv = (argv: unknown): argv is string[] => Array.isArray(argv) && argv.length > 0 && argv.length <= 100
+    && argv.every(a => typeof a === "string" && a.length > 0 && !a.includes("\0"));
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(d.id) || !/^sha256:[a-f0-9]{64}$/.test(d.image)
-    || !Array.isArray(d.argv) || !d.argv.length || d.argv.length > 100 || d.argv.some(a => typeof a !== "string" || !a || a.includes("\0"))
+    || !validArgv(d.argv) || (d.setup_argv !== undefined && !validArgv(d.setup_argv))
     || !Number.isSafeInteger(d.timeout_ms) || d.timeout_ms < 100 || d.timeout_ms > 3_600_000
     || !Number.isSafeInteger(d.memory_mb) || d.memory_mb < 64 || d.memory_mb > 16384
     || !Number.isSafeInteger(d.workspace_mb) || d.workspace_mb < 16 || d.workspace_mb > 16384
