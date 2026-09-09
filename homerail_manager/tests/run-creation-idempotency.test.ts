@@ -433,6 +433,14 @@ describe("Run creation idempotency", () => {
     try {
       const request={runId:"http-pinned",workflow_id:"idem-test",profile:"deterministic",prompt:"hello",workflow_revision:first.workflowRevision,canonical_hash:first.canonicalHash};
       expect((await post("/api/runs",request)).status).toBe(201);
+      const capabilities = await fetch(url + "/api/e2e-fix/capabilities");
+      expect(await capabilities.json()).toMatchObject({ data: { creation_identity_version: 1, idempotent_create_version: 1 } });
+      const observed = await fetch(url + "/api/runs/http-pinned");
+      const observation = await observed.json() as { data: Record<string, unknown> };
+      expect(observation.data).toMatchObject({ runId: "http-pinned", workflowId: "idem-test",
+        workflowRevision: request.workflow_revision, canonicalHash: request.canonical_hash,
+        creationRequestDigest: loadRunMetadata("http-pinned")!.creationRequestDigest });
+      expect(observation.data).not.toHaveProperty("initialPrompt");
       expect((await post("/api/runs",{...request,workflow_revision:99}))).toMatchObject({status:409,body:{data:{reason:"request_mismatch",code:"RUN_CREATION_CONFLICT"}}});
       expect((await post("/api/runs",{...request,runId:"invalid-version",workflow_revision:0})).status).toBe(400);
       expect((await post("/api/runs/create-and-run",request)).status).toBe(503);

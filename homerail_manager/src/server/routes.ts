@@ -1,4 +1,5 @@
 import * as http from "node:http";
+import { inspectDispatchRecovery } from "../runtime/dag-dispatch-recovery.js";
 import {
   loadRunMetadata,
   loadRunSnapshot,
@@ -565,6 +566,16 @@ export function inspectionRoutesHandler(
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
 
   // GET /api/runs
+  const dispatchRecoveryMatch = pathname.match(/^\/api\/runs\/([^/]+)\/pre-dispatch-recovery$/);
+  if (dispatchRecoveryMatch && req.method === "GET") {
+    try { _ok(res, "Pre-dispatch recovery checkpoint", inspectDispatchRecovery(decodeURIComponent(dispatchRecoveryMatch[1]))); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      json(res, 400, { success: false, message, error: message });
+    }
+    return true;
+  }
+
   if (pathname === "/api/runs" && req.method === "GET") {
     const runs = listPersistedRunSummaries();
     _ok(res, `Found ${runs.length} runs`, { runs, total: runs.length });
@@ -683,6 +694,13 @@ export function inspectionRoutesHandler(
   // GET /api/config/diagnostics
   if (pathname === "/api/config/diagnostics" && req.method === "GET") {
     _ok(res, "Runtime diagnostics retrieved", getDiagnostics(0));
+    return true;
+  }
+
+  // A launcher must detect read-only creation reconciliation support before
+  // issuing a request that can spend model tokens. No credentials in this view.
+  if (pathname === "/api/e2e-fix/capabilities" && req.method === "GET") {
+    _ok(res, "E2E Fix creation identity support", { creation_identity_version: 1, idempotent_create_version: 1 });
     return true;
   }
 
@@ -1007,6 +1025,9 @@ export function inspectionRoutesHandler(
     _ok(res, "Run metadata retrieved", {
       runId: metadata.runId,
       workflowId: metadata.workflowId,
+      workflowRevision: metadata.workflowRevision,
+      canonicalHash: metadata.canonicalHash,
+      creationRequestDigest: metadata.creationRequestDigest,
       workflowName: metadata.workflowName,
       nodeCount: metadata.nodeCount,
       agents: metadata.agents,

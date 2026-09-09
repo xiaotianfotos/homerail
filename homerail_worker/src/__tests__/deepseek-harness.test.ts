@@ -18,6 +18,7 @@ const tempRoots: string[] = [];
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -51,6 +52,60 @@ async function collect(
 }
 
 describe("DeepSeekHarnessAdapter", () => {
+  it("normalizes disjoint pi-ai input/cache categories into inclusive HomeRail input usage", async () => {
+    const events = await collect(new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime }),
+      context({ environmentVariables: { DSH_FAKE_CACHE_WRITE: "3" } }));
+    expect(events.at(-1)).toMatchObject({ type: "done", usage: { input_tokens: 12, output_tokens: 3,
+      cache_read_input_tokens: 2, cache_creation_input_tokens: 3 } });
+  });
+
+  it.each(["digest", "model", "reserve", "window", "unavailable"])("refuses mismatched context admission %s before starting the backend", async fault => {
+    const root = tempRoot(), recordFile = join(root, "runtime.jsonl"), hash = "a".repeat(64);
+    const policy = { policy_sha256: fault === "digest" ? "b".repeat(64) : hash,
+      model: fault === "model" ? "another-model" : "test-model", context_window: fault === "window" ? 65536 : 262144,
+      min_output_tokens: fault === "reserve" ? 131072 : 65536, max_output_tokens: 131072 };
+    const fetcher = vi.fn(async () => Response.json(policy, { status: fault === "unavailable" ? 503 : 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const events = await collect(new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime, maxTokens: 65536,
+      contextPolicySha256: hash }), context({ environmentVariables: { DSH_FAKE_RECORD_FILE: recordFile } }));
+    expect(events.some(event => event.type === "error")).toBe(true);
+    expect(events.some(event => event.type === "tool_use")).toBe(false);
+    expect(existsSync(recordFile)).toBe(false);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("binds the verified tokenizer route and model capacity before model dispatch", async () => {
+    const root = tempRoot(), recordFile = join(root, "runtime.jsonl"), hash = "a".repeat(64);
+    const policy = { policy_sha256: hash, model: "test-model", context_window: 262144,
+      min_output_tokens: 65536, max_output_tokens: 65536 };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(policy)));
+    const events = await collect(new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime, maxTokens: 65536 }),
+      context({ environmentVariables: { DSH_FAKE_RECORD_FILE: recordFile, HOMERAIL_DSH_CONTEXT_POLICY_SHA256: hash } }));
+    const verification = events.findIndex(event => event.type === "debug" && event.message === "context_policy_verified");
+    expect(verification).toBeGreaterThanOrEqual(0);
+    expect(verification).toBeLessThan(events.findIndex(event => event.type === "tool_use"));
+    expect(events[verification]).toMatchObject({ data: policy });
+    const recorded = JSON.parse(readFileSync(recordFile, "utf8").trim());
+    expect(recorded.contextWindow).toBe(262144);
+    expect(recorded.params.maxTokens).toBe(65536);
+  });
+
+  it.each(["stream", "message"])("retains content-free %s truncation diagnostics without inventing a handoff", async mode => {
+    vi.stubEnv("DSH_FAKE_TRUNCATED_OUTPUT", mode);
+    const events = await collect(new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime }), context());
+    const observations = events.filter(e => e.type === "debug" && e.message === "output_observation");
+    expect(observations.at(-1)).toMatchObject({ data: {
+      final: true, unit: "utf8_bytes", message_events: 1,
+      stream_bytes: { text: 0, reasoning: mode === "stream" ? Buffer.byteLength("私密推理test-secret") : 0,
+        tool_arguments: mode === "stream" ? Buffer.byteLength('{"port":"done","content":') : 0 },
+      message_bytes: { text: 0, reasoning: Buffer.byteLength("私密推理test-secret"),
+        tool_arguments: Buffer.byteLength('{"port":"done","content":') },
+    } });
+    expect(JSON.stringify(observations)).not.toMatch(/test-secret|私密推理|handoff|partial-message/);
+    expect(events.some(e => e.type === "tool_use")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "done", finish_reason: "max-tokens", usage: { output_tokens: 8191 } });
+  });
+
   it("exposes the configured output limit before handoff can end consumption", async () => {
     const adapter = new DeepSeekHarnessAdapter({ runtimeBin: fakeRuntime, maxTokens: 16_384 });
     const events = await collect(adapter, context());
@@ -138,7 +193,7 @@ describe("DeepSeekHarnessAdapter", () => {
     expect(events).toContainEqual({
       type: "usage",
       usage: {
-        input_tokens: 7,
+        input_tokens: 9,
         output_tokens: 3,
         cache_read_input_tokens: 2,
         cache_creation_input_tokens: 0,

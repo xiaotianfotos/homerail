@@ -209,7 +209,7 @@ export function createHandoffTool(state: DagToolsState): DagToolDefinition {
         content: [
           {
             type: "text" as const,
-            text: `交接成功\n端口: ${port}${downstreamInfo}`,
+            text: `交接内容已记录，等待 Manager 校验。\n端口: ${port}${downstreamInfo}`,
           },
         ],
       };

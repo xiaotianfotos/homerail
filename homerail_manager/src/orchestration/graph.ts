@@ -75,6 +75,7 @@ export interface DAGGatewayConfig {
   max_items?: number;
   command?: string[];
   command_field?: string;
+  durable?: boolean;
   stdin_field?: string;
   cwd?: string;
   timeout_ms?: number;

@@ -179,17 +179,18 @@ describe("Manager HTTP mutation trust gate", () => {
     expect(generalMutation.status).toBe(415);
   });
 
-  it("starts LAN/public configurations without an admin token", () => {
-    process.env.HOMERAIL_MANAGER_HOST = "0.0.0.0";
-    expect(() => createServer(0, undefined, undefined, false)).not.toThrow();
-
-    process.env[HOMERAIL_MANAGER_ADMIN_TOKEN] = "short";
-    expect(() => createServer(0, undefined, undefined, false)).not.toThrow();
-
-    process.env.HOMERAIL_MANAGER_HOST = "127.0.0.1";
-    delete process.env[HOMERAIL_MANAGER_ADMIN_TOKEN];
-    process.env.HOMERAIL_MANAGER_PUBLIC_URL = "https://manager.example.test";
-    expect(() => createServer(0, undefined, undefined, false)).not.toThrow();
+  it.each([
+    { host: "0.0.0.0", token: undefined, publicUrl: undefined },
+    { host: "0.0.0.0", token: "short", publicUrl: undefined },
+    { host: "127.0.0.1", token: undefined, publicUrl: "https://manager.example.test" },
+  ])("starts and closes public configuration $host / $publicUrl", async ({ host, token, publicUrl }) => {
+    process.env.HOMERAIL_MANAGER_HOST = host;
+    if (token) process.env[HOMERAIL_MANAGER_ADMIN_TOKEN] = token;
+    if (publicUrl) process.env.HOMERAIL_MANAGER_PUBLIC_URL = publicUrl;
+    // Retain every instance for afterEach. Constructing and discarding an
+    // unbound server leaks its trigger, cleanup and lease-reaper schedulers.
+    await start();
+    expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
   });
 
   it("allows LAN operation without a token", async () => {

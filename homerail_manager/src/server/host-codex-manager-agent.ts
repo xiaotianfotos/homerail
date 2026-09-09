@@ -7,6 +7,7 @@ import { createInterface, type Interface as ReadlineInterface } from "node:readl
 import { ensureDefaultWorkspacePath, getHomerailHome } from "../config/env.js";
 import { repoRoot, resolveAssetDirectory } from "../assets/root.js";
 import { MANAGER_RUNTIME_VERSION } from "../runtime-version.js";
+import { validateJsonContract } from "../orchestration/json-contract.js";
 import {
   codexBinaryNotFoundMessage,
   codexCommandForSpawn,
@@ -275,6 +276,9 @@ interface AgentRunContext {
   model_catalog_path?: string;
   /** Prompt without replayed chat history, used after resuming a persisted native thread. */
   resumedPrompt?: string;
+  /** Fixed host-only structured roles; no inherited tools or persistent session. */
+  restrictedRole?: boolean;
+  outputSchema?: Record<string, unknown>;
 }
 
 interface JsonRpcRequest {
@@ -391,8 +395,8 @@ export function _setHostCodexAgentEventRunnerForTest(runner?: HostCodexAgentEven
   hostAgentEventRunnerOverride = runner;
 }
 
-export function _buildCodexAppServerArgsForTest(context?: Pick<AgentRunContext, "provider" | "baseUrl" | "apiKey" | "protocol" | "model_catalog_path">): string[] {
-  return context?.protocol === CODEX_RESPONSES_PROTOCOL
+export function _buildCodexAppServerArgsForTest(context?: Pick<AgentRunContext, "provider" | "baseUrl" | "apiKey" | "protocol" | "model_catalog_path" | "restrictedRole">): string[] {
+  const args = context?.protocol === CODEX_RESPONSES_PROTOCOL
     ? codexResponsesAppServerArgs({
         providerName: context.provider,
         baseUrl: context.baseUrl,
@@ -400,6 +404,13 @@ export function _buildCodexAppServerArgsForTest(context?: Pick<AgentRunContext, 
         modelCatalogPath: context.model_catalog_path,
       })
     : ["app-server"];
+  if (context?.restrictedRole) args.push(
+    "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "apps",
+    "--disable", "multi_agent", "--disable", "skill_search", "--disable", "shell_snapshot",
+    "--enable", "skip_host_skill_discovery", "-c", 'web_search="disabled"',
+    "-c", "project_doc_max_bytes=0",
+  );
+  return args;
 }
 
 export function buildCodexLiveAppServerArgs(): string[] {
@@ -416,10 +427,11 @@ export function _buildCodexThreadStartParamsForTest(input: {
   dynamicTools: Array<Record<string, unknown>>;
   reasoningEffort?: CodexReasoningEffort;
   ephemeral?: boolean;
+  restrictedConfig?: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
     // Preserve the model-native Codex contract. HomeRail supplements it.
-    baseInstructions: null,
+    baseInstructions: input.restrictedConfig ? "You are a bounded structured reasoning role. Use only supplied evidence and return the requested JSON." : null,
     developerInstructions: input.systemPrompt ?? null,
     cwd: input.cwd,
     model: input.model,
@@ -429,8 +441,10 @@ export function _buildCodexThreadStartParamsForTest(input: {
     sandbox: input.sandbox,
     ephemeral: input.ephemeral ?? true,
     dynamicTools: input.dynamicTools,
-    tools: { web_search: { context_size: "medium" } },
-    ...(input.reasoningEffort ? { config: { model_reasoning_effort: input.reasoningEffort } } : {}),
+    ...(input.restrictedConfig ? { config: { ...input.restrictedConfig,
+      ...(input.reasoningEffort ? { model_reasoning_effort: input.reasoningEffort } : {}) } }
+      : { tools: { web_search: { context_size: "medium" } },
+        ...(input.reasoningEffort ? { config: { model_reasoning_effort: input.reasoningEffort } } : {}) }),
   };
 }
 
@@ -465,8 +479,10 @@ export function _buildCodexTurnStartParamsForTest(input: {
   model: string;
   reasoningEffort?: CodexReasoningEffort;
   serviceTier?: string | null;
+  outputSchema?: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
+    ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
     threadId: input.threadId,
     input: input.prompt ? [{ type: "text", text: input.prompt, text_elements: [] }] : [],
     cwd: input.cwd,
@@ -2702,6 +2718,51 @@ export async function runHostCodexManagerAgentTurn(
   return result;
 }
 
+/** One fresh account-backed model turn. This transport owns no DAG transitions. */
+export async function runHostCodexStructuredTurn(input: {
+  model: string; workspace: string; prompt: string; instructions: string;
+  schema: Record<string, unknown>; timeoutMs: number; outputBytes: number;
+  codexBin?: string;
+  evidence: (event: Record<string, unknown>) => void;
+}): Promise<unknown> {
+  if (!input.model.trim() || !path.isAbsolute(input.workspace)
+    || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 100 || input.timeoutMs > 3_600_000
+    || !Number.isSafeInteger(input.outputBytes) || input.outputBytes < 100 || input.outputBytes > 96000
+    || Buffer.byteLength(input.prompt) > 96000) throw new Error("invalid structured Codex bounds");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), input.timeoutMs);
+  let output = ""; let bytes = 0; let completed = false; let thread = ""; let turn = "";
+  try {
+    for await (const event of new HostCodexAppServerAdapter(input.codexBin).run(input.prompt, [], {
+      model: input.model, workspace: input.workspace, systemPrompt: input.instructions,
+      apiKey: "", baseUrl: "", persistSession: false, restrictedRole: true,
+      outputSchema: input.schema, reasoning_effort: "medium", abortSignal: controller.signal,
+    })) {
+      if (event.type === "debug" && ["thread_created", "turn_started", "turn_result", "token_usage"].includes(event.message)) {
+        input.evidence({ event: event.message, ...event.data });
+        if (event.message === "thread_created") thread = String(event.data?.thread_id ?? "");
+        if (event.message === "turn_started") turn = String(event.data?.turn_id ?? "");
+        if (event.message === "turn_result") {
+          completed = event.data?.status === "completed" && event.data?.turn_id === turn;
+          if (!completed) throw new Error("Codex turn did not complete successfully");
+        }
+      }
+      if (event.type === "error") throw new Error(event.message);
+      if (event.type === "tool_use") throw new Error("restricted Codex role attempted an unexpected tool");
+      if (event.type === "text" || event.type === "thinking" || event.type === "commentary") {
+        bytes += Buffer.byteLength(event.text);
+        if (bytes > input.outputBytes) throw new Error("Codex output byte budget exceeded");
+        if (event.type === "text") output += event.text;
+      }
+    }
+    if (controller.signal.aborted || !completed || !thread || !turn) throw new Error("Codex result lacks successful thread/turn evidence");
+    const value = JSON.parse(output);
+    const result = validateJsonContract(input.schema, value);
+    if (!result.valid) throw new Error("Codex output contract failed: " + result.details);
+    return value;
+  } finally { clearTimeout(timer); }
+}
+
 class HostCodexAppServerAdapter {
   private process: ChildProcess | null = null;
   private rl: ReadlineInterface | null = null;
@@ -2770,6 +2831,11 @@ class HostCodexAppServerAdapter {
     let activeThreadId: string | undefined;
     let activeTurnId: string | undefined;
     const abortHandler = context.abortSignal ? () => {
+      if (context.restrictedRole) {
+        this.enqueueProtocolError("Restricted Codex role aborted");
+        this.shutdown();
+        return;
+      }
       if (!activeThreadId || !activeTurnId) return;
       void this.sendRequest("turn/interrupt", {
         threadId: activeThreadId,
@@ -2817,7 +2883,7 @@ class HostCodexAppServerAdapter {
       yield this.debugEvent("appserver_initialized", this.redactSecrets(initResult));
       const dynamicTools = this.buildDynamicToolSpecs(tools);
       const cwd = context.workspace ?? process.cwd();
-      const modelProvider = context.protocol === CODEX_RESPONSES_PROTOCOL
+      const modelProvider = context.restrictedRole ? "openai" : context.protocol === CODEX_RESPONSES_PROTOCOL
         ? HOMERAIL_CODEX_MODEL_PROVIDER_ID
         : context.provider;
       const skillRoots = Array.from(new Set((context.skillRoots ?? [])
@@ -2842,7 +2908,23 @@ class HostCodexAppServerAdapter {
         });
       }
 
-      const sandbox = process.env.HOMERAIL_CODEX_MANAGER_SANDBOX || "danger-full-access";
+      let restrictedConfig: Record<string, unknown> | undefined;
+      if (context.restrictedRole) {
+        const account = await this.sendRequest("account/read", { refreshToken: false });
+        if ((account.account as Record<string, unknown> | undefined)?.type !== "chatgpt") throw new Error("host Codex role requires ChatGPT account login");
+        // Read the resolved configuration without persisting it: it may contain
+        // credentials. Override every inherited MCP server before thread creation.
+        const resolved = await this.sendRequest("config/read", { includeLayers: false });
+        const config = resolved.config as Record<string, unknown> | undefined;
+        if (!config || typeof config !== "object") throw new Error("restricted role could not resolve Codex configuration");
+        const servers = config.mcp_servers as Record<string, unknown> | undefined;
+        restrictedConfig = {
+          mcp_servers: Object.fromEntries(Object.keys(servers ?? {}).map(name => [name, { enabled: false }])),
+          web_search: "disabled", project_doc_max_bytes: 0,
+          developer_instructions: "",
+        };
+      }
+      const sandbox = context.restrictedRole ? "read-only" : process.env.HOMERAIL_CODEX_MANAGER_SANDBOX || "danger-full-access";
       const toolDigest = createHash("sha256").update(JSON.stringify({
         instruction_transport: NATIVE_THREAD_CONTRACT_VERSION,
         dynamic_tools: dynamicTools,
@@ -2901,6 +2983,7 @@ class HostCodexAppServerAdapter {
           dynamicTools,
           reasoningEffort: context.reasoning_effort,
           ephemeral: !nativeSessionKey,
+          restrictedConfig,
         }));
         threadId = resultThreadId(threadResult);
         if (!threadId) throw new Error("thread/start response did not include a thread id");
@@ -2921,6 +3004,7 @@ class HostCodexAppServerAdapter {
         const turnResult = await this.sendRequest("turn/start", _buildCodexTurnStartParamsForTest({
           threadId,
           prompt: resumedNativeThread ? context.resumedPrompt ?? prompt : prompt,
+          outputSchema: context.outputSchema,
           cwd,
           model: context.model,
           reasoningEffort: context.reasoning_effort,
@@ -2987,9 +3071,12 @@ class HostCodexAppServerAdapter {
       if (abortHandler && context.abortSignal) {
         context.abortSignal.removeEventListener("abort", abortHandler);
       }
-      yield this.debugEvent("appserver_done", { stderr_tail: stderr.slice(-2000) || null });
+      // A consumer can throw/break on an error event. Its iterator.return()
+      // enters this finally but stops at the next yield; cleanup must precede
+      // that yield or the app-server child and its pipes remain alive.
       this.shutdown();
       threadLease?.release();
+      yield this.debugEvent("appserver_done", { stderr_tail: stderr.slice(-2000) || null });
     }
     yield { type: "done" };
   }
@@ -3264,7 +3351,15 @@ class HostCodexAppServerAdapter {
         events.push({ type: "error", message });
         break;
       }
+      case "thread/tokenUsage/updated": {
+        events.push({ type: "debug", source: "host-codex-appserver", message: "token_usage",
+          data: { thread_id: payload.threadId, turn_id: payload.turnId, usage: payload.tokenUsage } });
+        break;
+      }
       case "turn/completed": {
+        const turn = payload.turn as Record<string, unknown> | undefined;
+        events.push({ type: "debug", source: "host-codex-appserver", message: "turn_result",
+          data: { turn_id: turn?.id, status: turn?.status, error: turn?.error ?? null } });
         for (const [itemId, state] of this.agentMessages) {
           const text = state.deltas.join("");
           if (text) events.push(state.phase === "commentary"

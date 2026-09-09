@@ -58,7 +58,10 @@ const CLEARABLE_TABLES = new Set([
   "dag_activity_events",
   "dag_events",
   "dag_run_admissions",
+  "dag_dispatch_recoveries",
+  "dag_e2e_fix_review_recoveries",
   "dag_runs",
+  "dag_durable_commands",
   "dag_workflow_revisions",
   "dag_runtime_profiles",
   "dag_workflows",
@@ -4960,6 +4963,40 @@ function initializeSchema(db: SqliteDatabase, filePath: string): void {
       FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_dag_metrics_run ON dag_metrics(run_id, seq);
+
+    CREATE TABLE IF NOT EXISTS dag_durable_commands (
+      execution_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      identity_json TEXT NOT NULL,
+      spec_json TEXT NOT NULL,
+      spec_digest TEXT NOT NULL,
+      runner_digest TEXT NOT NULL,
+      owner TEXT,
+      owner_epoch INTEGER NOT NULL DEFAULT 0,
+      receipt_digest TEXT,
+      consumed INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_dag_durable_commands_run ON dag_durable_commands(run_id);
+
+    CREATE TABLE IF NOT EXISTS dag_dispatch_recoveries (
+      run_id TEXT PRIMARY KEY,
+      node_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      before_json TEXT NOT NULL,
+      failed_sha256 TEXT NOT NULL,
+      request_json TEXT,
+      receipt_json TEXT,
+      FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS dag_e2e_fix_review_recoveries (
+      run_id TEXT PRIMARY KEY,
+      policy_sha256 TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      before_json TEXT NOT NULL,
+      receipt_json TEXT NOT NULL,
+      FOREIGN KEY(run_id) REFERENCES dag_runs(run_id) ON DELETE CASCADE
+    );
 
     CREATE TABLE IF NOT EXISTS dag_approvals (
       run_id TEXT NOT NULL,

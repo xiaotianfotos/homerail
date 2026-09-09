@@ -802,6 +802,9 @@ export class DagEnvironmentController {
       const tags = Array.isArray(inspection.RepoTags)
         ? inspection.RepoTags.filter((tag): tag is string => typeof tag === "string")
         : [];
+      const digests = Array.isArray(inspection.RepoDigests)
+        ? inspection.RepoDigests.filter((digest): digest is string => typeof digest === "string")
+        : [];
       const source = nonEmpty(labels[HOMERAIL_WORKER_SOURCE_LABEL]);
       const protocol = nonEmpty(labels[HOMERAIL_WORKER_PROTOCOL_LABEL]);
       const workerVersion = nonEmpty(labels[HOMERAIL_WORKER_VERSION_LABEL]);
@@ -821,7 +824,7 @@ export class DagEnvironmentController {
           source,
           sourceFingerprint,
         ),
-        selected: tags.includes(this.workerImage),
+        selected: tags.includes(this.workerImage) || id === this.workerImage || digests.includes(this.workerImage),
       };
       const previous = byId.get(id);
       if (previous) {

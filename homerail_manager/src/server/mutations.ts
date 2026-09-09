@@ -965,6 +965,25 @@ export function mutationRoutesHandler(
     return true;
   }
 
+  const dispatchRecoveryMatch = pathname.match(/^\/api\/runs\/([^/]+)\/pre-dispatch-recovery$/);
+  if (dispatchRecoveryMatch && req.method === "POST") {
+    const runId = decodeURIComponent(dispatchRecoveryMatch[1]);
+    _readJsonBody(req, 16_384).then(body => {
+      const result = changeOrchestrator.recoverPreDispatch(runId, body);
+      _ok(res, "Pre-dispatch recovery committed", result);
+    }).catch(error => _badRequest(res, error instanceof Error ? error.message : String(error)));
+    return true;
+  }
+
+  const reviewRecoveryMatch = pathname.match(/^\/api\/runs\/([^/]+)\/e2e-fix-review-recovery$/);
+  if (reviewRecoveryMatch && req.method === "POST") {
+    const runId = decodeURIComponent(reviewRecoveryMatch[1]);
+    _readJsonBody(req, 16_384).then(body => {
+      _ok(res, "E2E Fix review recovery committed", changeOrchestrator.recoverE2eFixReview(runId, body));
+    }).catch(error => _badRequest(res, error instanceof Error ? error.message : String(error)));
+    return true;
+  }
+
   // POST /api/runs/:run_id/inject
   // Accept BOTH snake_case (`node_id`) and camelCase
   // (`nodeId`) keys for backwards-compatibility with older

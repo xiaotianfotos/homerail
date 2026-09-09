@@ -270,6 +270,41 @@ GET /api/dag/workflows/:workflow_id/revisions
 GET /api/dag/workflows/:workflow_id/revisions/:revision
 ```
 
+## Durable command execution (Linux Manager)
+
+A trusted static `command` node can set `config.durable: true`. It retains the
+same stdin, output parsing, success/failure ports and executable allowlist as a
+synchronous command, but runs in a detached host process. `command_field` is
+not permitted in this mode. The timeout remains bounded at one hour and output
+at `capture_limit` bytes per stream; overflow fails the command.
+
+The Manager records the intent before starting the process. The execution ID
+binds run, node, round, session and attempt. Feedback dispatches get fresh
+command sessions. Runner bytes, intent and logs are pinned in a host-private
+`HOMERAIL_HOME/trusted-commands` directory, outside run workspaces. Workers must
+not receive that directory as a mount. A receipt records the actual exit code,
+signal, timeout/cancellation and log digests; a model's test report is not a
+substitute for the receipt.
+
+On cold recovery, the Manager reconnects to a supported running command or
+consumes its completed receipt. A one-way execution claim prevents a duplicate
+child when launch acknowledgement is lost. A superseded observation owner
+cannot commit a DAG handoff; handoff persistence and receipt consumption share
+a database transaction. Filesystem notifications and a program liveness timer
+observe execution without calling a model or emitting unchanged-state updates.
+
+If an execution was claimed but its runner is lost without a valid receipt,
+the result is **unknown** and routes to the failure port. It is not automatically
+rerun. Cancellation records a request and stops the positively identified
+command group. A host reboot cannot resume an arbitrary process; external
+operations still need their own reconciliation adapter.
+
+This is a trusted-program transport, not a security sandbox or an E2E Fix asset.
+The command inherits the host environment and permissions, just as synchronous
+commands do. A trusted test adapter must run candidate code in an isolated
+container, freeze candidate/test identities and reconcile GitHub operations.
+Do not directly execute untrusted candidate code with Manager privileges.
+
 ## Legacy Compatibility
 
 Unversioned HomeRail YAML remains accepted as `legacy/v0`. Its aliases, inline

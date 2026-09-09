@@ -21,6 +21,7 @@ import {
   type HarnessNotification,
 } from "@deepseek-ai/dsh-sdk-client";
 import { sanitizedAgentChildEnv } from "./child-env.js";
+import { DeepSeekHarnessOutputObservation } from "./deepseek-harness-output.js";
 import type {
   AgentClient,
   AgentEvent,
@@ -43,6 +44,7 @@ interface DeepSeekHarnessAdapterOptions {
   runtimeBin?: string;
   cordisConfigPath?: string;
   maxTokens?: number;
+  contextPolicySha256?: string;
 }
 
 interface ToolBridge {
@@ -127,6 +129,7 @@ function dshReasoningEffort(
 function dshProviderProfile(
   context: AgentRunContext,
   maxTokens: number,
+  contextWindow = DEFAULT_DSH_CONTEXT_WINDOW,
 ): { provider: string; reasoningEffort?: string; providersJson: string } {
   const provider = context.provider?.trim();
   if (!provider) throw new Error("DeepSeek Harness requires the selected model provider");
@@ -136,7 +139,7 @@ function dshProviderProfile(
   const reasoningEffort = dshReasoningEffort(context.reasoningEffort, context.reasoningEffortMap);
   const model = {
     id: context.model,
-    contextWindow: DEFAULT_DSH_CONTEXT_WINDOW,
+    contextWindow,
     maxTokens,
     ...(context.reasoningEffortMap === undefined
       ? {}
@@ -157,6 +160,27 @@ function dshProviderProfile(
       },
     }),
   };
+}
+
+/** Bind optional token admission to the exact operator-owned gateway policy.
+ * The gateway counts the final serialized messages/tools on every request;
+ * the Worker must not substitute prompt bytes for that count. */
+async function verifyContextPolicy(context: AgentRunContext, expected: string, maxTokens: number) {
+  if (!/^[a-f0-9]{64}$/.test(expected)) throw new Error("invalid DSH context policy digest");
+  const response = await fetch(normalizeBaseUrl(context.baseUrl) + "/context-policy", {
+    headers: { Authorization: `Bearer ${context.apiKey}` }, signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new Error("context admission route unavailable");
+  const policy = await response.json() as Record<string, unknown>;
+  if (policy.policy_sha256 !== expected || policy.model !== context.model
+    || !Number.isSafeInteger(policy.context_window) || !Number.isSafeInteger(policy.min_output_tokens)
+    || !Number.isSafeInteger(policy.max_output_tokens)
+    || (policy.min_output_tokens as number) < 65536 || (policy.min_output_tokens as number) > maxTokens
+    || maxTokens > (policy.max_output_tokens as number) || maxTokens >= (policy.context_window as number)) {
+    throw new Error("context admission policy does not match selected model and output reserve");
+  }
+  return { policy_sha256: expected, model: context.model, context_window: policy.context_window as number,
+    min_output_tokens: policy.min_output_tokens as number, max_output_tokens: policy.max_output_tokens as number };
 }
 
 function defaultCordisConfigPath(): string {
@@ -210,7 +234,10 @@ function contentText(value: unknown): string {
 function addUsage(total: AgentUsage, value: unknown): AgentUsage {
   if (!isRecord(value)) return { ...total };
   return {
-    input_tokens: (total.input_tokens ?? 0) + numberOrZero(value.inputTokens),
+    // pi-ai/DSH inputTokens excludes cache reads and writes. HomeRail's
+    // input_tokens includes them; cache fields are subsets, never extra cost.
+    input_tokens: (total.input_tokens ?? 0) + numberOrZero(value.inputTokens)
+      + numberOrZero(value.cacheReadTokens) + numberOrZero(value.cacheWriteTokens),
     output_tokens: (total.output_tokens ?? 0) + numberOrZero(value.outputTokens),
     cache_read_input_tokens: (total.cache_read_input_tokens ?? 0) + numberOrZero(value.cacheReadTokens),
     cache_creation_input_tokens: (total.cache_creation_input_tokens ?? 0) + numberOrZero(value.cacheWriteTokens),
@@ -348,6 +375,7 @@ export class DeepSeekHarnessAdapter implements AgentClient {
   private readonly runtimeBin: string;
   private readonly cordisConfigPath: string;
   private readonly maxTokens: number;
+  private readonly contextPolicySha256?: string;
 
   constructor(options: DeepSeekHarnessAdapterOptions = {}) {
     this.runtimeBin = resolve(
@@ -360,6 +388,10 @@ export class DeepSeekHarnessAdapter implements AgentClient {
         ?? process.env.HOMERAIL_DSH_CORDIS_CONFIG?.trim()
         ?? defaultCordisConfigPath(),
     );
+    this.contextPolicySha256 = options.contextPolicySha256 ?? process.env.HOMERAIL_DSH_CONTEXT_POLICY_SHA256?.trim();
+    if (this.contextPolicySha256 && !/^[a-f0-9]{64}$/.test(this.contextPolicySha256)) {
+      throw new Error("invalid DSH context policy digest");
+    }
     this.maxTokens = parseMaxTokens(
       options.maxTokens ?? process.env.HOMERAIL_DSH_MAX_TOKENS?.trim(),
     );
@@ -380,9 +412,15 @@ export class DeepSeekHarnessAdapter implements AgentClient {
     let aggregateUsage: AgentUsage = {};
     let latestFinishReason: string | null = null;
     const queue = new AsyncQueue<AgentEvent>();
+    const outputObservation = new DeepSeekHarnessOutputObservation();
 
     try {
-      const providerProfile = dshProviderProfile(context, this.maxTokens);
+      const expectedPolicy = this.contextPolicySha256 ?? context.environmentVariables?.HOMERAIL_DSH_CONTEXT_POLICY_SHA256;
+      const contextPolicy = expectedPolicy
+        ? await verifyContextPolicy(context, expectedPolicy, this.maxTokens)
+        : null;
+      const providerProfile = dshProviderProfile(context, this.maxTokens, contextPolicy?.context_window);
+      if (contextPolicy) yield { type: "debug", source: "deepseek-harness", message: "context_policy_verified", data: contextPolicy };
       const maxBuiltinToolCalls = context.maxBuiltinToolCalls;
       const builtinTools = context.handoffOnly || !context.allowedBuiltinTools?.length
         ? []
@@ -449,6 +487,7 @@ export class DeepSeekHarnessAdapter implements AgentClient {
             : [],
           workspace: context.workspace ?? process.cwd(),
           process_isolation: true,
+          usage_semantics: "input_tokens_include_cache",
           resume_supported: false,
         },
       };
@@ -507,6 +546,10 @@ export class DeepSeekHarnessAdapter implements AgentClient {
               if (!isPromptReceipt(notification, sessionId, messageId)) continue;
               receivedPrompt = true;
             }
+            if (notification.method === "session.event" && notification.params.sessionId === sessionId) {
+              const observation = outputObservation.observe(notification.params.event);
+              if (observation) queue.push(observation);
+            }
             const mapped = notificationEvents(notification, aggregateUsage);
             aggregateUsage = mapped.usage;
             if (mapped.finish !== null) latestFinishReason = mapped.finish;
@@ -520,6 +563,8 @@ export class DeepSeekHarnessAdapter implements AgentClient {
 
       for await (const event of queue) yield event;
       await runTask;
+      const observation = outputObservation.end();
+      if (observation) yield observation;
       yield {
         type: "done",
         usage: aggregateUsage,
@@ -528,6 +573,8 @@ export class DeepSeekHarnessAdapter implements AgentClient {
         output_token_limit: this.maxTokens,
       };
     } catch (error) {
+      const observation = outputObservation.end();
+      if (observation) yield observation;
       const message = redactSecret(error instanceof Error ? error.message : String(error), context.apiKey);
       yield { type: "error", message: `DeepSeek Harness failed: ${message}` };
       yield {

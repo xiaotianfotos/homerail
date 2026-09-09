@@ -41,6 +41,24 @@ describe("prompt runner", () => {
     process.env.LLM_BASE_URL = "https://llm.example.test/v1";
   });
 
+  it("binds output diagnostics to the same execution and native session as usage", async () => {
+    registerAgentBackend("test-output-observation", () => ({ run() { return (async function* () {
+      yield { type: "debug" as const, source: "deepseek-harness", message: "output_observation", data: { version: 1 } };
+      yield { type: "done" as const, usage: { input_tokens: 10, output_tokens: 20 }, finish_reason: "max-tokens" };
+    })(); } }));
+    const sent: string[] = [];
+    await runPrompt({ task: "do something", sender: "test", runId: "run-observation",
+      dagConfig: makeConfigWith({ session_id: "session-observation", round_id: "round-0001" }) }, {
+      wsSend: d => sent.push(d), agentBackend: "test-output-observation",
+    });
+    const streams = sent.map(s => JSON.parse(s)).filter(m => m.type === "stream").map(m => m.data);
+    const debug = streams.find(m => m.event === "agent_debug");
+    const usage = streams.find(m => m.event === "usage");
+    expect(debug).toMatchObject({ run_id: "run-observation", node_id: "coder",
+      session_id: "session-observation", round_id: "round-0001", execution_id: expect.any(String) });
+    expect(debug.execution_id).toBe(usage.execution_id);
+  });
+
   it("sends content and SESSION_END", async () => {
     // Register a mock agent
     const events: AgentEvent[] = [

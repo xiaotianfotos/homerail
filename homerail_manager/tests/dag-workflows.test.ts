@@ -9,6 +9,7 @@ import { GraphExecutor } from "../src/orchestration/graph-executor.js";
 import {
   _clearDagWorkflowTablesForTest,
   getDagRuntimeProfile,
+  inspectDagRuntimeProfileStructure,
   upsertDagRuntimeProfileFromYaml,
   upsertDagWorkflowFromYaml,
 } from "../src/persistence/dag-workflows.js";
@@ -59,6 +60,14 @@ describe("DAG workflow persistence", () => {
     if (oldHome === undefined) delete process.env.HOMERAIL_HOME;
     else process.env.HOMERAIL_HOME = oldHome;
     fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it("offline profile inspection cannot bypass setting resolution at sync", () => {
+    const yaml = JSON.stringify({ profile_id: "offline", workflow_id: "workflow", default: { llm_setting_id: "missing" } });
+    expect(inspectDagRuntimeProfileStructure(yaml).default?.llm_setting_id).toBe("missing");
+    expect(() => upsertDagRuntimeProfileFromYaml({ yaml_text: yaml })).toThrow(/unavailable LLM setting/);
+    expect(() => inspectDagRuntimeProfileStructure(JSON.stringify({ profile_id: "offline", workflow_id: "workflow",
+      default: { llm_setting_id: "missing", model_alias: "also-missing" } }))).toThrow(/either/);
   });
 
   it("runs a synced DB workflow with a DB runtime profile", () => {

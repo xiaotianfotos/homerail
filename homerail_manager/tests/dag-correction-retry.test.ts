@@ -205,6 +205,38 @@ spec:
     expect(prompt).toContain("never use it merely to report this correction error");
   });
 
+  it.each([0, 2])("does not retry or auto-promote truncated output with correction budget %i", (budget) => {
+    const runId = `truncated-${budget}`;
+    const run = createActiveRun(runId, parseDAGYaml(correctionYaml(budget)));
+    const dispatcher = new FlakyDispatcher({ status: "dispatched", targetType: "fake", targetId: "first" });
+    dispatchReadyNodes(runId, dispatcher);
+    const session = run.nodeSessions.get("start")?.sessionId;
+    expect(requestNodeCorrection(runId, "start", "agent ended without DAG handoff", {
+      finish_reason: "max-tokens", output_tokens: 8191, output_token_limit: 8192,
+    })).toMatchObject({ status: "unavailable", reason: expect.stringContaining("changed-input recovery") });
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(0);
+    expect(dispatcher.calls).toHaveLength(1);
+    expect(run.counters.corrections.start).toBeUndefined();
+    expect(run.dagRun.mailboxes.get("start")?.has("correction")).toBe(false);
+    expect(run.nodeSessions.get("start")?.sessionId).toBe(session);
+    // Both WebSocket transports use this failure path for unavailable recovery.
+    failActiveRun(runId, "start", "agent ended without DAG handoff");
+    expect(run.status).toBe("failed");
+    expect(run.dagRun.handoffedNodes.has("start")).toBe(false);
+  });
+
+  it("can repair a retained rejected handoff after output truncation", () => {
+    const runId = "truncated-retained-payload";
+    createActiveRun(runId, parseDAGYaml(correctionYaml()));
+    const dispatcher = new FlakyDispatcher({ status: "dispatched", targetType: "fake", targetId: "first" });
+    dispatchReadyNodes(runId, dispatcher);
+    expect(requestNodeCorrection(runId, "start", "invalid handoff", {
+      finish_reason: "length",
+    }, { port: "done", content: { result: "retained draft" } }).status).toBe("scheduled");
+    expect(dispatchReadyNodes(runId, dispatcher)).toBe(1);
+    expect(dispatcher.calls[1].inputs.correction?.[0]).toContain("retained draft");
+  });
+
   it("includes the exact workspace evidence contract when report repair is required", () => {
     const parsed = parseWorkflowSource(`
 api_version: homerail.ai/v1
@@ -354,7 +386,7 @@ spec:
     expect(getActiveRun("run-auto-handoff-contract")?.counters.abort_reason).toBeUndefined();
   });
 
-  it("uses a canonical broker result instead of failing after handoff correction exhaustion", () => {
+  it.each([false, true])("uses a canonical broker result after correction exhaustion (truncated: %s)", (truncated) => {
     createCredential({
       id: "github-autofix",
       credential_type: "api_key",
@@ -428,6 +460,7 @@ spec:
       "run-canonical-broker-handoff",
       "review",
       "DAG_HANDOFF_CONTRACT_VIOLATION review.reviewed",
+      truncated ? { finish_reason: "max-tokens", output_tokens: 8191, output_token_limit: 8192 } : undefined,
     ).status).toBe("exhausted");
     const run = autoHandoffAfterCorrectionExhausted(
       "run-canonical-broker-handoff",

@@ -44,6 +44,7 @@ import { emit } from "../events/bus.js";
 import {
   consumeRecoveredDagActorLiveCommandFallbacks,
   dispatchRecoveredRuns,
+  resumeRecoveredDurableCommandGateways,
   failActiveRun,
 } from "../runtime/active-runs.js";
 import { recoverDagActorLiveCommands } from "../runtime/dag-actor-live-command-runtime.js";
@@ -571,6 +572,7 @@ export function createServer(
     onHandoffApplied: workerWebsocketOptions.onHandoffApplied,
   };
   setupWorkerWebSocket(server, workerWebsocketOptions);
+  server.once("listening", () => resumeRecoveredDurableCommandGateways(actualDispatcher));
   setupNodeWebSocket(server, nodeWebsocketOptions);
   setupEventWebSocket(server);
   setupBrowserToolsWebSocket(server, { authToken: browserToolsAuthToken });
