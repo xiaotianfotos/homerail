@@ -28,7 +28,7 @@ describe.skipIf(process.platform !== "linux")("offline E2E Fix preparation", () 
       policy: { required_tests: ["sum"], reviewer_ids: ["review_a", "review_b", "review_c"], review_approvals: 2,
         required_ci_jobs: ["unit"], ci_workflow_path: ".github/workflows/ci.yml" },
       max_rounds: 3, max_infra_retries: 1, context_bytes: 64000, total_timeout_ms: 100000,
-      runtime_sha256: sha, host_codex: { model: "fixture-codex", timeout_ms: 30000, output_bytes: 64000 },
+      runtime_sha256: sha, design: { strategy: "Implement signed addition and preserve negative results" },
       github: { base_ref: "main", job_names: { unit: "Unit tests" }, wait_ms: 30000, poll_ms: 1000, checkout_ref: "c".repeat(40) },
     };
     return { directory: path.join(root, "prepared"), config, runtime: { directory: runtime, sha256: sha },
@@ -42,23 +42,28 @@ describe.skipIf(process.platform !== "linux")("offline E2E Fix preparation", () 
     const workflow = JSON.parse(fs.readFileSync(path.join(value.directory, "workflow.json"), "utf8"));
     const parsed = parseWorkflowSource(JSON.stringify(workflow));
     expect(parsed.graph.nodes.find(n => n.node_id === "fix")!.node_type).toBe("agent");
-    for (const id of ["plan", "judge_candidate", "judge_ci", "test", "publish", "ci"]) {
+    for (const id of ["test", "publish", "ci", "freeze_plan", "record_candidate_judgment", "complete"]) {
       const node = workflow.spec.nodes[id];
       expect(node.config.durable).toBe(true);
       expect(node.config.command).toContain(path.join(value.directory, "task"));
       expect(node.config.command).toContain(value.runtime.sha256);
     }
+    for (const id of ["plan", "judge_candidate", "judge_ci"]) expect(workflow.spec.nodes[id]).toBeUndefined();
+    expect(Object.keys(workflow.spec.agents).sort()).toEqual(["fixer", "reviewer_a", "reviewer_b", "reviewer_c"]);
+    expect(JSON.stringify(workflow)).not.toContain("host-codex");
     expect(fs.statSync(value.directory).mode & 0o077).toBe(0);
     expect(fs.readdirSync(path.join(value.directory, "task")).sort()).toEqual(["config.json", "config.sha256"]);
     const before = fs.readFileSync(path.join(value.directory, "prepared.json"));
     expect(() => prepareE2eFix(value)).toThrow(/exist/i);
     expect(fs.readFileSync(path.join(value.directory, "prepared.json"))).toEqual(before);
   });
-  it("keeps optional host Fixer as a native command", () => {
-    const value = input(); value.config.host_codex!.fixer = true; prepareE2eFix(value);
-    const workflow = JSON.parse(fs.readFileSync(path.join(value.directory, "workflow.json"), "utf8"));
-    expect(workflow.spec.nodes.fix.kind).toBe("command");
-    expect(workflow.spec.nodes.fix.config.command.slice(-2)).toEqual(["host-codex", "fix"]);
+  it("requires the caller design and rejects a host Codex dependency", () => {
+    const value = input(); delete value.config.design;
+    expect(() => prepareE2eFix(value)).toThrow(/fixed design/);
+    value.config.design = { strategy: "Signed addition" };
+    value.config.host_codex = { model: "fixture", timeout_ms: 30000, output_bytes: 64000 };
+    expect(() => prepareE2eFix(value)).toThrow(/no host Codex/);
+    expect(fs.existsSync(value.directory)).toBe(false);
   });
   it("rejects wrong runtime/profile identity and credentials before creating custody", () => {
     const value = input(); value.config.runtime_sha256 = "d".repeat(64);

@@ -185,25 +185,13 @@ commands, recovery, expiry, and concurrency-slot behavior.
 
 An optional [tokenizer-based local-model route](docs/e2e-fix-token-admission.md) checks complete requests and preserves the configured output reserve before forwarding.
 
-Experimental E2E Fix also supports [recovery from a runtime configuration failure
-before the first Worker dispatch](docs/e2e-fix-recovery.md), preserving completed
-Planner evidence and the original root and round.
-An operator may also authorize one frozen runtime replacement for a verified
-first-round review-aggregation overflow, preserving completed model/test evidence.
-This assisted recovery keeps the original policy and deadline; see the same guide.
-An explicitly frozen `host_codex.fixer: true` configuration can use a native
-host Codex Fixer with separate local-model reviewers. It returns a structured
-patch; trusted programs still apply changes, execute tests and publish.
-See [configuration and failure boundaries](docs/e2e-fix-recovery.md).
-Oversized review evidence can project full source into a base-to-candidate diff
-while preserving the complete issue and findings. Review approvals require empty
-`findings`; positive observations belong in `summary`.
-New workflows reject contradictory approvals at handoff and allow one native
-node correction, retaining completed fixes, tests and other reviewers.
-
-New E2E Fix workflows also route confirmed Fixer output truncation to the
-in-graph Judger for a bounded strategy revision; unknown execution pauses.
-Fixers can submit multiple non-overlapping exact snippets per authorized file.
+[E2E Fix](docs/e2e-fix.md) accepts a fixed caller design. A local Fixer develops
+and passes trusted tests before publishing or updating the same PR for independent
+model review. Insufficient approvals or failed CI feed a fresh Fixer session.
+New tasks have no Codex dependency and no Planner/Judger nodes: the configured
+review majority and same-head CI determine acceptance. Design, candidate history
+and per-round evidence persist; see [recovery boundaries](docs/e2e-fix-recovery.md).
+Older frozen host Codex tasks remain readable; new preparation rejects that configuration.
 Trusted candidate snapshots normalize storage permissions and pass validation
 before publication; invalid published snapshots are rejected without rewriting.
 DSH provides bounded, content-free output byte diagnostics to distinguish

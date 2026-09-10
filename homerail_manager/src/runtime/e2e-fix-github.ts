@@ -87,7 +87,7 @@ export function e2eFixGitHubProviders(transport: E2eFixGitHubTransport = live): 
     fs.mkdirSync(round, { recursive: true, mode: 0o700 });
     const branch = `codex/e2e-fix-${config.task_id}-${digest(config.root_run_id).slice(0, 10)}`;
     const marker = `<!-- homerail-e2e-fix:${config.task_id}:${config.root_run_id} -->`;
-    const body = `Related to #${config.issue.number}\n\n${config.issue.title}\n\nThis PR is maintained by the E2E Fix workflow. Trusted tests and independent review gate each published candidate.\n\n${marker}`;
+    const body = `Related to #${config.issue.number}\n\n${config.issue.title}\n\nThis PR is maintained by the E2E Fix workflow. ${config.design ? "Trusted local tests gate publication. Independent models review this PR head; completion requires the configured approval majority and all required CI checks." : "Trusted tests and independent review gate each published candidate."}\n\n${marker}`;
     save(path.join(base, "identity.json"), { repo: config.repo, branch, base: github.base_ref, marker, body });
     const api = `repos/${config.repo}`;
     const prValid = (pr: any) => pr.state === "open" && pr.head?.sha === candidate.head && pr.head?.ref === branch

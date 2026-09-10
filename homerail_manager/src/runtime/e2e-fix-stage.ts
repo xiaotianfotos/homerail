@@ -3,7 +3,7 @@ import { readE2eFixHostCodexEvidence } from "./e2e-fix-host-codex.js";
 import { readE2eFixModelFailure } from "./e2e-fix-model-failure.js";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { E2eFixAcceptancePolicySchema, evaluateE2eFixAcceptance, sameE2eFixCandidate, type E2eFixAcceptanceInput, type E2eFixCandidate } from "homerail-protocol";
+import { E2eFixAcceptancePolicySchema, evaluateE2eFixAcceptance, evaluateE2eFixReviewAcceptance, sameE2eFixCandidate, type E2eFixAcceptanceInput, type E2eFixCandidate } from "homerail-protocol";
 import { getDurableCommand, type DurableCommandIdentity } from "./durable-command.js";
 import { getDagSessionIndex } from "../persistence/dag-session-index.js";
 import { loadRunMetadata, loadRunSnapshot, loadNodeUsages } from "../persistence/store.js";
@@ -12,7 +12,7 @@ import { E2eFixIsolatedTest, validateE2eFixTestDefinition, type E2eFixTestDefini
 import type { E2eFixStage } from "../orchestration/e2e-fix-workflow.js";
 import { validateE2eFixGitHub, type E2eFixGitHubConfig } from "./e2e-fix-github.js";
 import { assertE2eFixStageRuntime } from "./e2e-fix-stage-runtime.js";
-import { projectE2eFixReviewContext } from "./e2e-fix-review-context.js";
+import { projectE2eFixReviewContext, publishE2eFixReviewContext } from "./e2e-fix-review-context.js";
 import { readE2eFixModelRuntime, verifyLegacyE2eFixModelArtifact } from "./e2e-fix-model-runtime.js";
 import { assessE2eFixProgress, e2eFixFailureFingerprint, sameE2eFixPlan, type E2eFixFailureObservation } from "./e2e-fix-progress.js";
 
@@ -27,6 +27,9 @@ export interface E2eFixTaskConfig {
   max_rounds: number; max_infra_retries: number; context_bytes: number; total_timeout_ms: number;
   runtime_sha256?: string;
   github?: E2eFixGitHubConfig;
+  /** Caller-approved design. Fixed for every revision; no model Planner/Judger. */
+  design?: { strategy: string };
+  /** Legacy frozen tasks only; new preparation requires design instead. */
   host_codex?: { model: string; timeout_ms: number; output_bytes: number; fixer?: boolean };
 }
 export interface E2eFixStageProviders {
@@ -53,6 +56,10 @@ export function freezeE2eFixTask(directory: string, config: E2eFixTaskConfig): s
     || (config.mode === "production" && !/^[a-f0-9]{64}$/.test(config.runtime_sha256 ?? ""))
     || (config.runtime_sha256 !== undefined && !/^[a-f0-9]{64}$/.test(config.runtime_sha256))
     || new Set(config.allowed_paths).size !== config.allowed_paths.length) throw new Error("invalid frozen E2E Fix configuration");
+  if (config.design !== undefined && (!config.design || typeof config.design.strategy !== "string"
+    || !config.design.strategy.trim() || Object.keys(config.design).some(k => k !== "strategy") || config.host_codex)) {
+    throw new Error("fixed design requires a nonempty strategy and no host Codex dependency");
+  }
   if (config.host_codex && ((config.host_codex.fixer !== undefined && typeof config.host_codex.fixer !== "boolean") || !config.host_codex.model?.trim()
     || !Number.isInteger(config.host_codex.timeout_ms) || config.host_codex.timeout_ms < 1000 || config.host_codex.timeout_ms > 3_500_000
     || !Number.isInteger(config.host_codex.output_bytes) || config.host_codex.output_bytes < 1000 || config.host_codex.output_bytes > 96000)) throw new Error("invalid frozen host Codex bounds");
@@ -116,7 +123,7 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     const stagnation = assessE2eFixProgress(e2eFixFailureFingerprint(observation), previous);
     return { ...decision, stagnation,
       action: stagnation.action === "pause" ? "pause" : decision.action,
-      reason: stagnation.action === "pause" ? `Three consecutive unchanged failures; retained candidates require a new external decision. Judger: ${decision.reason}` : decision.reason,
+      reason: stagnation.action === "pause" ? `Three consecutive unchanged failures; retained candidates require a new external decision. ${config.design ? "Feedback" : "Judger"}: ${decision.reason}` : decision.reason,
       feedback: { ...decision.feedback, stagnation,
         ...(stagnation.action === "replan" ? { previous_plan: read("freeze_plan").plan,
           previous_plan_sha256: read("freeze_plan").plan_sha256 } : {}) } };
@@ -175,24 +182,31 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     result = { ...reference(), issue: config.issue, allowed_paths: config.allowed_paths,
       sources: candidates.source(parent, config.allowed_paths), parent, previous };
   } else if (stage === "freeze_plan") {
-    const context = read("context"); const evidence = modelEvidence("plan", one("plan")); const plan = evidence.value;
-    if (!Array.isArray(plan.allowed_paths) || !plan.allowed_paths.length || plan.allowed_paths.some((p: string) => !config.allowed_paths.includes(p))) throw new Error("Codex plan exceeds frozen scope");
-    if (typeof plan.blocked_reason === "string" && plan.blocked_reason.trim()) {
+    const context = read("context");
+    let plan: any;
+    if (config.design) {
+      plan = { strategy: config.design.strategy, allowed_paths: config.allowed_paths };
+      write("design", { ...reference(), source: "caller", plan_sha256: digest(plan), plan });
+    } else {
+      const evidence = modelEvidence("plan", one("plan")); plan = evidence.value;
+      if (!Array.isArray(plan.allowed_paths) || !plan.allowed_paths.length || plan.allowed_paths.some((p: string) => !config.allowed_paths.includes(p))) throw new Error("Codex plan exceeds frozen scope");
+      if (typeof plan.blocked_reason === "string" && plan.blocked_reason.trim()) {
+        write("planner", evidence);
+        write("planner_blocked", { ...reference(), reason: plan.blocked_reason, planner_artifact_sha256: digest(evidence) });
+        throw new Error("Codex Planner cannot produce an evidenced in-scope repair: " + plan.blocked_reason);
+      }
+      const previousPlan = context.previous?.evidence?.previous_plan;
+      if (context.previous?.evidence?.stagnation?.action === "replan"
+        && (!previousPlan || sameE2eFixPlan(plan, previousPlan))) {
+        throw new Error("repeated failure requires a changed Codex plan before another Fixer dispatch");
+      }
+      if (context.previous?.evidence?.model_failure && previousPlan
+        && plan.strategy.trim() === previousPlan.strategy.trim()
+        && isDeepStrictEqual([...new Set(plan.allowed_paths)].sort(), [...new Set(previousPlan.allowed_paths)].sort())) {
+        throw new Error("model failure recovery requires a changed Codex plan");
+      }
       write("planner", evidence);
-      write("planner_blocked", { ...reference(), reason: plan.blocked_reason, planner_artifact_sha256: digest(evidence) });
-      throw new Error("Codex Planner cannot produce an evidenced in-scope repair: " + plan.blocked_reason);
     }
-    const previousPlan = context.previous?.evidence?.previous_plan;
-    if (context.previous?.evidence?.stagnation?.action === "replan"
-      && (!previousPlan || sameE2eFixPlan(plan, previousPlan))) {
-      throw new Error("repeated failure requires a changed Codex plan before another Fixer dispatch");
-    }
-    if (context.previous?.evidence?.model_failure && previousPlan
-      && plan.strategy.trim() === previousPlan.strategy.trim()
-      && isDeepStrictEqual([...new Set(plan.allowed_paths)].sort(), [...new Set(previousPlan.allowed_paths)].sort())) {
-      throw new Error("model failure recovery requires a changed Codex plan");
-    }
-    write("planner", evidence);
     result = { ...reference(), plan, plan_sha256: digest(plan), sources: Object.fromEntries(plan.allowed_paths.map((p: string) => [p, context.sources[p]])), parent: context.parent, issue: config.issue, previous: context.previous };
   } else if (stage === "capture") {
     const frozen = read("freeze_plan");
@@ -255,6 +269,7 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
       { artifact: "test_sources.json", reviewersHadFullSources: false });
   } else if (stage === "review_evidence") {
     const tested = read("test");
+    const reviewerInput = config.design ? read("publish") : tested;
     const reports = config.policy.reviewer_ids.map(node => {
       const latest = loadRunSnapshot(config.root_run_id)?.handoffs.filter(h => h.fromNode === node && h.port === "result").at(-1);
       let evidence = modelEvidence(node, latest?.content);
@@ -273,38 +288,58 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     });
     // Keep each finding body once. Reports reference those bodies by ID; the
     // complete original reviewer output remains in its immutable artifact.
-    result = { ...tested, outcome: "reviewed", reports: reports.map(({ findings: _, ...report }) => report), findings: reports.flatMap(r => r.findings),
+    result = { ...reviewerInput, outcome: "reviewed", reports: reports.map(({ findings: _, ...report }) => report), findings: reports.flatMap(r => r.findings),
       evidence_sha256: [...tested.tests.map((t: { artifact_sha256: string }) => t.artifact_sha256), ...reports.map(r => r.artifact_sha256)] };
     const invalidApprovals = reports.filter(r => r.vote === "approve" && r.finding_ids.length);
     if (invalidApprovals.length) result.review_contract_errors = invalidApprovals.map(r => ({ reviewer_id: r.reviewer_id,
       code: "approve_with_findings", reason: "Approval requires empty findings. This report cannot count toward publication, even if the Judger dismisses its findings." }));
     result = projectE2eFixReviewContext(result, candidates, config.context_bytes,
-      { artifact: tested.source_evidence?.artifact ?? "test.json", reviewersHadFullSources: Boolean(tested.sources) });
+      { artifact: tested.source_evidence?.artifact ?? "test.json", reviewersHadFullSources: Boolean(reviewerInput.sources) });
   } else if (stage === "record_candidate_judgment") {
     const tested = read("test"); const reviewed = fs.existsSync(path.join(folder, "review_evidence.json")) ? read("review_evidence") : null;
-    const evidence = modelEvidence("judge_candidate", one("judgment")); write("candidate_judger", evidence);
-    const proposed = evidence.value;
-    const findings = reviewed?.findings ?? [];
-    const dispositions = proposed.dispositions ?? [];
-    const dispositionIds = dispositions.map((d: any) => d.finding_id);
-    const exactDispositions = dispositionIds.length === findings.length && new Set(dispositionIds).size === dispositionIds.length
-      && dispositionIds.every((id: string) => findings.some((f: { id: string }) => f.id === id));
-    const isDismissed = (f: { id: string }) => exactDispositions && dispositions.some((d: any) => d.finding_id === f.id && d.action === "dismiss"
-      && typeof d.reason === "string" && d.reason.trim() && d.evidence_sha256?.length && d.evidence_sha256.every((sha: string) => reviewed.evidence_sha256.includes(sha)));
-    const dismissed = exactDispositions && findings.every(isDismissed);
-    const independentSessions = [tested.model_failure?.session_id ?? read("fixer").session_id, evidence.session_id, ...(reviewed?.reports.map((r: any) => r.session_id) ?? [])];
-    const approved = tested.outcome === "passed" && new Set(independentSessions).size === independentSessions.length
-      && reviewed?.reports.every((r: any) => r.vote !== "approve" || !r.finding_ids.length)
-      && reviewed?.reports.filter((r: any) => r.vote === "approve").length >= policy.review_approvals && dismissed;
-    const canRevise = !tested.model_failure || (tested.model_failure.outcome === "output_truncated"
-      && typeof proposed.retry_strategy === "string" && proposed.retry_strategy.trim().length > 0);
-    result = { ...reference(), candidate: tested.candidate, action: proposed.verdict === "revise" && canRevise ? "revise" : proposed.verdict === "accept" && approved ? "publish" : "pause",
-      // Keep full reviewer findings and Judger dispositions in their immutable
-      // artifacts; the next fresh-context plan needs only unresolved concerns.
-      reason: proposed.reason, feedback: { tests: tested.test_summaries, findings: findings.filter((f: { id: string }) => !isDismissed(f)),
-        retry_strategy: proposed.retry_strategy ?? null, ...(tested.proposal_error ? { proposal_error: tested.proposal_error } : {}),
-        ...(tested.model_failure ? { model_failure: tested.model_failure,
-          previous_plan: read("freeze_plan").plan, previous_plan_sha256: read("freeze_plan").plan_sha256 } : {}) }, dispositions };
+    if (config.design) {
+      const reports = reviewed?.reports ?? [];
+      const sessions = [tested.model_failure?.session_id ?? read("fixer").session_id, ...reports.map((r: any) => r.session_id)];
+      const approvals = reports.filter((r: any) => r.status === "complete" && r.vote === "approve" && !r.finding_ids.length).length;
+      const passed = tested.outcome === "passed" && reports.length === policy.reviewer_ids.length
+        && new Set(sessions).size === sessions.length && !reviewed?.review_contract_errors?.length && approvals >= policy.review_approvals;
+      const canRevise = ["code_failure", "proposal_rejected", "passed"].includes(tested.outcome)
+        || tested.model_failure?.outcome === "output_truncated";
+      result = { ...reference(), candidate: tested.candidate, action: passed ? "verify_ci" : canRevise ? "revise" : "pause",
+        decision_source: "trusted_review_quorum", approvals,
+        reason: passed ? "The configured independent PR review majority approved this head"
+          : reviewed ? "PR review did not reach the configured approval threshold" : "Address the retained test or repair execution failure",
+        feedback: { tests: tested.test_summaries, findings: reviewed?.findings ?? [],
+          reviews: reports.map((r: any) => ({ reviewer_id: r.reviewer_id, vote: r.vote, summary: r.summary })),
+          retry_strategy: "Keep the caller design fixed; change the implementation using the retained test and review feedback. Use short, unique edits.",
+          ...(tested.proposal_error ? { proposal_error: tested.proposal_error } : {}),
+          ...(tested.model_failure ? { model_failure: tested.model_failure } : {}) } };
+      write("review_decision", result);
+    } else {
+      const evidence = modelEvidence("judge_candidate", one("judgment")); write("candidate_judger", evidence);
+      const proposed = evidence.value;
+      const findings = reviewed?.findings ?? [];
+      const dispositions = proposed.dispositions ?? [];
+      const dispositionIds = dispositions.map((d: any) => d.finding_id);
+      const exactDispositions = dispositionIds.length === findings.length && new Set(dispositionIds).size === dispositionIds.length
+        && dispositionIds.every((id: string) => findings.some((f: { id: string }) => f.id === id));
+      const isDismissed = (f: { id: string }) => exactDispositions && dispositions.some((d: any) => d.finding_id === f.id && d.action === "dismiss"
+        && typeof d.reason === "string" && d.reason.trim() && d.evidence_sha256?.length && d.evidence_sha256.every((sha: string) => reviewed.evidence_sha256.includes(sha)));
+      const dismissed = exactDispositions && findings.every(isDismissed);
+      const independentSessions = [tested.model_failure?.session_id ?? read("fixer").session_id, evidence.session_id, ...(reviewed?.reports.map((r: any) => r.session_id) ?? [])];
+      const approved = tested.outcome === "passed" && new Set(independentSessions).size === independentSessions.length
+        && reviewed?.reports.every((r: any) => r.vote !== "approve" || !r.finding_ids.length)
+        && reviewed?.reports.filter((r: any) => r.vote === "approve").length >= policy.review_approvals && dismissed;
+      const canRevise = !tested.model_failure || (tested.model_failure.outcome === "output_truncated"
+        && typeof proposed.retry_strategy === "string" && proposed.retry_strategy.trim().length > 0);
+      result = { ...reference(), candidate: tested.candidate, action: proposed.verdict === "revise" && canRevise ? "revise" : proposed.verdict === "accept" && approved ? "publish" : "pause",
+        // Keep full reviewer findings and Judger dispositions in their immutable
+        // artifacts; the next fresh-context plan needs only unresolved concerns.
+        reason: proposed.reason, feedback: { tests: tested.test_summaries, findings: findings.filter((f: { id: string }) => !isDismissed(f)),
+          retry_strategy: proposed.retry_strategy ?? null, ...(tested.proposal_error ? { proposal_error: tested.proposal_error } : {}),
+          ...(tested.model_failure ? { model_failure: tested.model_failure,
+            previous_plan: read("freeze_plan").plan, previous_plan_sha256: read("freeze_plan").plan_sha256 } : {}) }, dispositions };
+    }
     result = recordProgress(result, { phase: "candidate", outcome: tested.outcome,
       checks: tested.tests.map((t: any) => ({ id: t.check_id, result: t.result,
         diagnostic: t.result === "passed" ? "" : tested.test_summaries.find((s: any) => s.check_id === t.check_id)?.log_tail ?? "" })),
@@ -312,10 +347,23 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
       detail: tested.proposal_error ?? tested.model_failure?.outcome ?? "" });
   } else if (stage === "publish" || stage === "ci") {
     if (!providers || providers.mode !== config.mode) throw new Error("publication/CI provider is not configured for this run mode");
-    const decision = read("record_candidate_judgment");
-    if (decision.action !== "publish") throw new Error("publication lacks trusted candidate judgment");
+    const decision = config.design && stage === "publish" ? read("test") : read("record_candidate_judgment");
+    if (config.design ? (stage === "publish" ? decision.outcome !== "passed" : decision.action !== "verify_ci") : decision.action !== "publish") {
+      throw new Error("publication/CI lacks its trusted test or review decision");
+    }
     const candidate = decision.candidate;
-    if (stage === "publish") result = { ...reference(), candidate, publication: providers.publish(config, candidate, directory) };
+    if (stage === "publish") {
+      if (config.design) {
+        result = publishE2eFixReviewContext(read("test"), candidates, config.context_bytes,
+          () => providers.publish(config, candidate, directory));
+      } else {
+        const publication = providers.publish(config, candidate, directory);
+        if (!sameE2eFixCandidate(publication.candidate, candidate) || publication.state !== "open" || publication.observed_head !== candidate.head) {
+          throw new Error("published PR does not match the tested candidate");
+        }
+        result = { ...reference(), candidate, publication };
+      }
+    }
     else {
       const publication = read("publish").publication; const { feedback, ...ci } = providers.ci(config, candidate, publication, directory);
       const conclusions = policy.required_ci_jobs.map(key => ci.jobs.find(j => j.key === key)?.conclusion);
@@ -330,16 +378,28 @@ export function runE2eFixStage(directory: string, stage: E2eFixStage, rawInput: 
     }
   } else if (stage === "complete") {
     const candidate = read("capture").candidate; const fixer = read("fixer"); const reports = read("review_evidence").reports;
-    const evidence = modelEvidence("judge_ci", one("judgment")); write("ci_judger", evidence);
-    const judgment = { ...bound(candidate, evidence), dispatch_id: evidence.dispatch_id, session_id: evidence.session_id,
-      verdict: evidence.value.verdict, review_artifact_sha256: reports.map((r: any) => r.artifact_sha256), dispositions: read("record_candidate_judgment").dispositions };
-    // Strip rendering-only report fields before the strict shared gate.
-    const reviews = reports.map(({ findings: _findings, summary: _summary, ...report }: any) => report);
-    const acceptance = evaluateE2eFixAcceptance({ candidate, policy, fixer_dispatch_id: fixer.dispatch_id, fixer_session_id: fixer.session_id,
-      tests: read("test").tests, reviews, judgment, publication: read("publish").publication, ci: read("ci").ci });
-    result = { ...reference(), candidate, action: evidence.value.verdict === "revise" && read("ci").outcome === "code_failure" ? "revise" : acceptance.eligible ? "complete" : "pause",
-      reason: evidence.value.reason, feedback: { ci: read("ci").ci, details: read("ci").ci_feedback,
-        retry_strategy: evidence.value.retry_strategy ?? null }, acceptance, mode: config.mode, production_eligible: config.mode === "production" && acceptance.eligible };
+    if (config.design) {
+      const reviews = reports.map(({ findings: _findings, summary: _summary, ...report }: any) => report);
+      const acceptance = evaluateE2eFixReviewAcceptance({ candidate, policy, fixer_dispatch_id: fixer.dispatch_id, fixer_session_id: fixer.session_id,
+        tests: read("test").tests, reviews, publication: read("publish").publication, ci: read("ci").ci });
+      result = { ...reference(), candidate, decision_source: "trusted_review_quorum",
+        action: read("ci").outcome === "code_failure" ? "revise" : acceptance.eligible ? "complete" : "pause",
+        reason: acceptance.eligible ? "Independent PR review and all required same-head checks passed" : "Required CI failed or could not be verified",
+        feedback: { ci: read("ci").ci, details: read("ci").ci_feedback,
+          retry_strategy: "Repair the failing CI checks within the unchanged caller design and obtain fresh PR reviews." },
+        acceptance, mode: config.mode, production_eligible: config.mode === "production" && acceptance.eligible };
+    } else {
+      const evidence = modelEvidence("judge_ci", one("judgment")); write("ci_judger", evidence);
+      const judgment = { ...bound(candidate, evidence), dispatch_id: evidence.dispatch_id, session_id: evidence.session_id,
+        verdict: evidence.value.verdict, review_artifact_sha256: reports.map((r: any) => r.artifact_sha256), dispositions: read("record_candidate_judgment").dispositions };
+      // Strip rendering-only report fields before the strict shared gate.
+      const reviews = reports.map(({ findings: _findings, summary: _summary, ...report }: any) => report);
+      const acceptance = evaluateE2eFixAcceptance({ candidate, policy, fixer_dispatch_id: fixer.dispatch_id, fixer_session_id: fixer.session_id,
+        tests: read("test").tests, reviews, judgment, publication: read("publish").publication, ci: read("ci").ci });
+      result = { ...reference(), candidate, action: evidence.value.verdict === "revise" && read("ci").outcome === "code_failure" ? "revise" : acceptance.eligible ? "complete" : "pause",
+        reason: evidence.value.reason, feedback: { ci: read("ci").ci, details: read("ci").ci_feedback,
+          retry_strategy: evidence.value.retry_strategy ?? null }, acceptance, mode: config.mode, production_eligible: config.mode === "production" && acceptance.eligible };
+    }
     result = recordProgress(result, { phase: "ci", outcome: read("ci").outcome,
       checks: read("ci").ci.jobs.map((job: any) => ({ id: job.key, result: job.conclusion,
         diagnostic: job.conclusion === "success" ? "" : read("ci").ci_feedback?.logs?.find((log: any) => log.job === config.github?.job_names[job.key])?.tail ?? "" })),

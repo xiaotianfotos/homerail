@@ -1,3 +1,4 @@
+import { evaluateE2eFixReviewAcceptance } from "../src/e2e-fix.js";
 import { describe, expect, it } from "vitest";
 import { evaluateE2eFixAcceptance, type E2eFixAcceptanceInput } from "../src/e2e-fix.js";
 
@@ -130,5 +131,31 @@ describe("E2E Fix frozen completion policy (trusted-store records only)", () => 
   it("rejects insufficient approvals and impossible threshold policies", () => {
     const x = evidence(); x.reviews[0].vote = "abstain"; rejected(x, "insufficient_approvals");
     const y = evidence(); y.policy.review_approvals = 4; rejected(y, "invalid_evidence_contract");
+  });
+});
+
+
+describe("fixed-design review quorum without a model Judger", () => {
+  const input = () => { const { judgment: _judgment, ...value } = evidence(); return value; };
+  it("accepts the configured majority without inventing a Judger or erasing dissent", () => {
+    const x = input();
+    expect(x.reviews[2].finding_ids.length).toBeGreaterThan(0);
+    expect(evaluateE2eFixReviewAcceptance(x)).toEqual({ eligible: true, reasons: [], approvals: 2 });
+    expect(evaluateE2eFixAcceptance(x).eligible).toBe(false); // Legacy policy still requires its actual Judger.
+  });
+  it("rejects a supplied model judgment in the program-only gate", () => {
+    expect(evaluateE2eFixReviewAcceptance(evidence()).eligible).toBe(false);
+  });
+  it("does not let majority votes bypass failed CI or stale PR identity", () => {
+    const x = input(); x.ci.jobs[0].conclusion = "failure";
+    expect(evaluateE2eFixReviewAcceptance(x).eligible).toBe(false);
+    x.ci.jobs[0].conclusion = "success"; x.publication.observed_head = "f".repeat(40);
+    expect(evaluateE2eFixReviewAcceptance(x).eligible).toBe(false);
+  });
+  it("requires independent complete approvals and keeps missing votes nonpassing", () => {
+    const x = input(); x.reviews[1].session_id = x.fixer_session_id;
+    expect(evaluateE2eFixReviewAcceptance(x).reasons).toContain("roles_not_independent");
+    x.reviews[1].session_id = "another-review-session"; x.reviews[1].status = "incomplete";
+    expect(evaluateE2eFixReviewAcceptance(x).eligible).toBe(false);
   });
 });
