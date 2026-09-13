@@ -88,4 +88,6 @@ structure validator passed; real Manager handler/GraphExecutor integration and
 systemd SIGKILL recovery passed. The test DAG command executed once, ordinary
 progress produced zero notifications, and completion produced one accepted
 Codex queue delivery. The current task inspected and acknowledged the persisted
-event. Idle-task wakeup and a whole-host reboot were not validated in that run.
+event. The callback subsequently arrived in the same active Codex task and its
+already-acknowledged event was deduplicated. Idle-task wakeup and a whole-host
+reboot were not validated in that run.
