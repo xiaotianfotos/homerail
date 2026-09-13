@@ -397,7 +397,7 @@ def deliver(root, record, event_id, *, redeliver=False):
         # No server/model text is interpolated into a wake message.
         command = [record['python'], record['runtime'] + '/dag_subscription.py', '--home', str(root.parent.parent)]
         message = (f'[homerail-dag-event {event_id}] {entry["event"]["kind"]}. '
-                   'Use $homerail-dag-supervision event consumption instructions. '
+                   'Use $homerail-dag-ops event consumption instructions. '
                    f'Subscription {record["id"]}; run {record["spec"]["run_id"]}. '
                    f'Read event with {shlex.join(command + ["event", record["id"], event_id])}. '
                    f'Verify event_digest {entry["event_digest"]} and current DAG identity, '

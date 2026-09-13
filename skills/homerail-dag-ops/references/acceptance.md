@@ -43,7 +43,7 @@ The observer never creates, retries, resumes, cancels, or approves a DAG.
    no production restart or host reboot is used as a test.
 8. Documentation states Linux/user-systemd requirements, how to end the model
    turn, acknowledgment semantics, retry limits, recovery commands and mechanism
-   boundaries. Keep the branch diff inside this skill, install it by symlink for Codex, and
+   boundaries. Keep changes inside skill directories and their installation guidance, install it by symlink for Codex, and
    commit a reviewable result; do not merge or deploy HomeRail.
 
 ## Boundaries
@@ -62,7 +62,7 @@ Run from the repository root:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
-  -s skills/homerail-dag-supervision/scripts -p 'test_*.py' -v
+  -s skills/homerail-dag-ops/scripts -p 'test_*.py' -v
 ```
 
 For the opt-in integration check, build the existing protocol, plugin SDK, and
@@ -70,7 +70,7 @@ Manager packages first with their respective `npm --prefix <package> run build`.
 Then run:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 skills/homerail-dag-supervision/scripts/check_integration.py \
+PYTHONDONTWRITEBYTECODE=1 python3 skills/homerail-dag-ops/scripts/check_integration.py \
   --evidence /absolute/fresh/private/evidence-directory
 ```
 
@@ -97,3 +97,21 @@ failed the existing `durable-command-workflow.test.ts` finished-unconsumed
 SIGKILL recovery case; the same test passed in a detached baseline checkout,
 and the subsequent full CI passed without source changes. Retain both logs;
 this does not establish a diagnosis or fix for that intermittent failure.
+
+## Unified DAG skill acceptance
+
+The unified `homerail-dag-ops` entry covers design, execution, background waiting,
+decision handling and output verification. Its references are loaded by task
+stage. The separate supervision entry is removed; the existing patterns ID is
+a short compatibility link to the canonical pattern reference. New Codex DAG
+installs expose only `homerail-dag-ops`. Frozen observer receipts remain valid.
+
+After consolidation on 2026-09-13, all 15 observer tests, 59 focused Manager
+skill/schema/bootstrap tests and 5 existing showcase-contract tests passed.
+All local Markdown references resolved and four affected skill entrypoints
+passed structure validation. The relocated integration fixture passed real
+Manager handler/GraphExecutor execution, observer SIGKILL recovery, one command
+execution, one terminal event and ACK with a deterministic notification sink.
+No new real Codex callback or idle-task wake test was performed in this pass.
+The earlier full-CI and actual-Codex results above predate this consolidation;
+the focused checks validate the changed skill loading and script paths.

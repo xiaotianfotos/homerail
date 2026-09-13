@@ -1,12 +1,9 @@
 ---
 name: homerail-cli
 description: |
-  Exact HomeRail local-source TypeScript CLI command and configuration reference.
-  Use when: (1) configuring or invoking the homerail CLI from a local checkout,
-  (2) listing orchestration templates, starting runs, checking status,
-  (3) supervising DAG runs, inspecting chats/handoffs/scorecards,
-  (4) injecting instructions or replaying runs, or (5) translating a known HomeRail operation into an exact hr command.
-  For workflow topology selection use homerail-dag-patterns; for multi-Actor Surface lifecycle and operational procedure use homerail-dag-ops.
+  HomeRail CLI syntax, flags, configuration, and command reference.
+  Use to translate a known operation into an exact hr command or diagnose CLI configuration.
+  Use homerail-dag-ops for the full DAG design, execution, supervision, and inspection workflow.
   For deployment, service startup, or skill installation, use homerail-install-ops first.
 ---
 
@@ -231,14 +228,18 @@ waits for the deterministic two-node DAG to reach `completed`.
 
 ### DAG Supervision and Inspection
 
+For asynchronous Codex work, follow `homerail-dag-ops`: register its background
+listener and end the model turn. The commands below are syntax references for
+foreground inspection, not a sequence to repeat during unchanged progress.
+
 ```bash
-# Cursor-based supervision (preferred for live monitoring)
+# Foreground operator supervision (not an autonomous model polling loop)
 hr dag supervise <run_id>
 
-# Single tick with cursor (for agent-driven loops)
+# One requested cursor snapshot
 hr dag supervise <run_id> --tick --cursor <cursor>
 
-# Interval polling watch
+# Foreground interval watch when explicitly needed by the operator
 hr dag watch <run_id> --interval 5 --timeout 600
 
 # Quick status snapshot
@@ -366,53 +367,14 @@ single-node, read-only local harness diagnosis run that clones fresh source, tri
 CLI deployment path on an isolated non-default Manager port, and creates a
 deployment-blocker or coverage-blocker issue only on failure.
 
-## DAG YAML Reference
+## Workflow authoring
 
-Templates live in `assets/orchestrations/` and follow this minimal structure:
-
-```yaml
-name: my-pipeline
-description: "Short description of the pipeline"
-
-agents:
-  my-agent:
-    system: |
-      You are a worker agent.
-      When finished, call handoff(port="done", content=result).
-
-nodes:
-  step-a:
-    name: "Step A"
-    agent: my-agent
-    after: []
-    outputs:
-      done:
-        to: ""  # empty string = terminal node
-```
-
-Provider/model runtime selection comes from database LLM settings configured by
-the CLI or settings UI. DB runtime profiles may select a default `model_alias`
-or `llm_setting_id`, plus per-agent overrides and `agent_type`. YAML DAG
-templates themselves must not contain provider/model/key/base_url runtime
-fields. Supported public backend names include `claude-sdk`, `kimi-code`,
-`kimi_code`, `codex_appserver`, and `deterministic`.
-Do not use `direct-llm` or Chat Completions for Coding Plan / Agent Plan
-accounts. Kimi should use the Kimi Code CLI harness (`kimi-code`); other
-Coding Plan providers should use the Claude Code compatible harness
-(`claude-sdk`) with an Anthropic-compatible endpoint.
-Prefer hyphenated names in new YAML (`kimi-code`) unless you are preserving an
-older template.
-
-### Key Fields
-
-| Field | Location | Description |
-|-------|----------|-------------|
-| `name` | top-level | Template display name shown by `hr templates list` |
-| `agents.<key>.system` | agent | Inline system prompt |
-| `agents.<key>.system_file` | agent | External prompt file (relative to YAML) |
-| `nodes.<id>.agent` | node | Agent assignment |
-| `nodes.<id>.after` | node | List of predecessor node IDs |
-| `nodes.<id>.outputs.<port>.to` | node | Route target `"node.in:port"` or `""` for terminal |
+Use `homerail-dag-ops` and its pattern reference for authoring. Inspect the live
+`hr dag schema`, validate before syncing, and use the current WorkflowSpec
+`api_version` / `kind` / `metadata` / `spec` envelope with explicit edges and
+terminal outcomes. Existing legacy templates may still execute, but do not copy
+their old implicit-terminal or unbounded-feedback shape into a new workflow.
+Model selection belongs in database LLM settings and runtime profiles.
 
 ## MCP Tools Available to DAG Agents
 
