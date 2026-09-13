@@ -91,3 +91,9 @@ Codex queue delivery. The current task inspected and acknowledged the persisted
 event. The callback subsequently arrived in the same active Codex task and its
 already-acknowledged event was deduplicated. Idle-task wakeup and a whole-host
 reboot were not validated in that run.
+
+Root `npm run ci` also passed on rerun. The first run and one focused recheck
+failed the existing `durable-command-workflow.test.ts` finished-unconsumed
+SIGKILL recovery case; the same test passed in a detached baseline checkout,
+and the subsequent full CI passed without source changes. Retain both logs;
+this does not establish a diagnosis or fix for that intermittent failure.
