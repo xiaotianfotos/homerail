@@ -33,6 +33,7 @@ for root in "${CODEX_HOME:-$HOME/.codex}/skills" "$HOME/.claude/skills"; do
   for skill in "$repo"/skills/homerail-*; do
     [ -d "$skill" ] || continue
     name="$(basename "$skill")"
+    [ "$name" = "homerail-dag-patterns" ] && continue  # legacy compatibility entry
     dst="$root/$name"
 
     if [ -L "$dst" ]; then
@@ -63,6 +64,7 @@ foreach ($root in $roots) {
   New-Item -ItemType Directory -Force -Path $root | Out-Null
 
   Get-ChildItem (Join-Path $repo "skills") -Directory -Filter "homerail-*" | ForEach-Object {
+    if ($_.Name -eq "homerail-dag-patterns") { return } # legacy compatibility entry
     $dst = Join-Path $root $_.Name
 
     if ((Test-Path $dst) -and ((Get-Item $dst).LinkType)) {
@@ -97,5 +99,20 @@ Direct invocation examples:
 
 - Codex: `$homerail-install-ops`
 - Claude Code: `/homerail-install-ops`
-- DAG pattern selection in Codex: `$homerail-dag-patterns`
-- DAG pattern selection in Claude Code: `/homerail-dag-patterns`
+- DAG design, execution and supervision in Codex: `$homerail-dag-ops`
+- DAG design, execution and inspection in Claude Code: `/homerail-dag-ops`
+
+For DAG work, install only `homerail-dag-ops`; its references and scripts contain
+pattern design, event listening, decisions, and verification. The old
+`homerail-dag-patterns` name is a compatibility entry for existing integrations,
+not another skill required by the unified workflow. The separate
+`homerail-dag-supervision` skill has been merged into `homerail-dag-ops`.
+
+When upgrading, link `homerail-dag-ops` first, then remove obsolete DAG skill
+links only if they point into this checkout. Preserve user-owned directories or
+custom links. Existing frozen observer runtimes and journals remain valid;
+consume their callbacks through `homerail-dag-ops` without recreating DAG runs.
+
+A link in `~/.codex/skills` is available across this user's project directories.
+The source checkout must remain available. Other operating-system users or
+isolated Codex homes need their own link.

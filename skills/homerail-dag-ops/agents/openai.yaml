@@ -1,4 +1,4 @@
 interface:
-  display_name: "HomeRail DAG Ops"
-  short_description: "Run, monitor, inspect, and author HomeRail DAG workflows."
-  default_prompt: "Use $homerail-dag-ops to run a HomeRail DAG, monitor it, inspect handoffs, or write a DAG template."
+  display_name: "HomeRail DAG"
+  short_description: "Design, run, and supervise DAGs through one workflow."
+  default_prompt: "Use $homerail-dag-ops to complete this task with a HomeRail DAG, wait for actionable events, and verify the result."
