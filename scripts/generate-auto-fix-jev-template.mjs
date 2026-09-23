@@ -12,6 +12,8 @@ function once(text,from,to) {
 }
 
 export function renderAutoFixJev(base) {
+  // Git may check templates out with CRLF on Windows; anchors use LF.
+  base=base.replace(/\r\n/g,'\n');
   let value=once(base,'  id: auto-fix-v2\n  name: HomeRail Auto Fix v2',
     '  id: auto-fix-jev\n  name: HomeRail Auto Fix + Jev (experimental)');
   value=once(value,'    safety: manager-broker-only','    safety: manager-broker-only\n    experimental: "true"');
@@ -103,6 +105,6 @@ export function renderAutoFixJev(base) {
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const rendered=renderAutoFixJev(fs.readFileSync(source,'utf8'));
   if(process.argv.includes('--check')) {
-    if(fs.readFileSync(output,'utf8')!==rendered) throw Error('Auto Fix Jev template is stale');
+    if(fs.readFileSync(output,'utf8').replace(/\r\n/g,'\n')!==rendered) throw Error('Auto Fix Jev template is stale');
   } else fs.writeFileSync(output,rendered);
 }
