@@ -1,3 +1,5 @@
+import type { NativeCodexSubscriptionSelection } from "homerail-protocol";
+
 /** Ports whose handoffs represent a negative branch rather than success. */
 export const FAILURE_PORT_NAMES: ReadonlySet<string> = new Set([
   "failed",
@@ -9,6 +11,7 @@ export const FAILURE_PORT_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 export interface DAGAgentConfig {
+  native_subscription?: NativeCodexSubscriptionSelection;
   agent_type?: string;
   llm_setting_id?: string;
   llm?: {

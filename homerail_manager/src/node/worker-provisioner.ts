@@ -19,6 +19,7 @@ import type { DagWorkspaceAccess, DagWorkspaceInputProjection } from "homerail-p
 /* -------------------------------------------------------------------------- */
 
 export interface ProvisionerOptions {
+  executionMode?: "native_codex_subscription";
   image?: string;
   workspace?: Record<string, unknown>;
   workspaceReadOnly?: boolean;
@@ -42,6 +43,7 @@ export interface ProvisionerOptions {
     nodeId: string,
     workspaceId: string,
     opts: {
+      executionMode?: "native_codex_subscription";
       image?: string;
       workspace?: Record<string, unknown>;
       workspaceReadOnly?: boolean;
@@ -142,6 +144,7 @@ export async function provisionWorkerContainer(
   const runtimeStatusFn = options?.runtimeStatusFn ?? defaultRuntimeStatusFn;
 
   const createResult = await createFn(nodeId, workspaceId, {
+    executionMode: options?.executionMode,
     image: options?.image,
     workspace: options?.workspace,
     workspaceReadOnly: options?.workspaceReadOnly,

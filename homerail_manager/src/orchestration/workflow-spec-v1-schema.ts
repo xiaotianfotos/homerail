@@ -674,6 +674,11 @@ export const WorkflowSpecV1Schema = Type.Object({
       }, { additionalProperties: false }),
     ]), { maxProperties: 64 })),
     agents: Type.Record(Identifier, Type.Object({
+      native_subscription: Type.Optional(Type.Object({
+        provider: Type.Literal("codex"),
+        model: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" }),
+        reasoning_effort: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" }),
+      }, { additionalProperties: false })),
       description: Type.Optional(ShortText),
       system: Type.Optional(LongText),
       skills: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {

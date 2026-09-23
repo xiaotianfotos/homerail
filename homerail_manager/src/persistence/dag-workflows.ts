@@ -672,6 +672,9 @@ export function applyDagRuntimeProfile(parsed: ParsedDAG, profile: DagRuntimePro
   for (const agentId of agentIds) {
     const base = parsed.meta.agents?.[agentId] ?? {};
     const override = profile.agents[agentId] ?? profile.default;
+    if (base.native_subscription !== undefined && override !== undefined) {
+      throw new Error(`Runtime profiles cannot override native_subscription agent ${agentId}`);
+    }
     agents[agentId] = {
       ...base,
       llm_setting_id: override?.llm_setting_id ?? base.llm_setting_id,

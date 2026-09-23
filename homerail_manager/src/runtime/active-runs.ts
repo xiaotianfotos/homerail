@@ -62,6 +62,8 @@ import {
 } from "homerail-protocol";
 import { resolveAgentRuntimeConfig } from "./agent-runtime-resolver.js";
 import { preflightDagAgentRuntimes } from "./dag-runtime-preflight.js";
+import { resolveNativeSubscriptionAgent, assertNativeSubscriptionPolicy, assertNativeSubscriptionDag } from "./native-subscription-runtime.js";
+import { NATIVE_CODEX_SUBSCRIPTION_CAPABILITY } from "homerail-protocol";
 import { loadWorkflowConcurrencyPolicy, reserveWorkflowRun, releaseWorkflowRunReservation } from "../persistence/dag-run-admission.js";
 import { assertNoWorkerExecution, getDispatchRecovery, recordDispatchRecovery, recoveryDigest, parseDispatchRecoveryRequest,
   type DispatchRecoveryReceipt } from "./dag-dispatch-recovery.js";
@@ -278,6 +280,7 @@ export interface ActiveRun {
   brokerState: Record<string, unknown>;
   initialPrompt?: string;
   creationRequestDigest?: string;
+  nativeSubscriptionBindings?: PersistedRunMetadata["nativeSubscriptionBindings"];
   nodeCount?: number;
   agents?: Record<string, DAGAgentConfig>;
   workspace?: Record<string, unknown>;
@@ -1344,6 +1347,7 @@ export function restoreActiveRun(
     brokerState: metadata.brokerState ? structuredClone(metadata.brokerState) : {},
     initialPrompt: metadata.initialPrompt,
     creationRequestDigest: metadata.creationRequestDigest,
+    nativeSubscriptionBindings: metadata.nativeSubscriptionBindings ? structuredClone(metadata.nativeSubscriptionBindings) : undefined,
     nodeCount: metadata.nodeCount,
     agents: metadata.agents
       ? { ...metadata.agents }
@@ -3693,6 +3697,9 @@ export function appendRunNode(
   _assertLogicalActorIdentities(nextGraph.nodes);
 
   const existingAgentConfig = run.agents?.[node.agent];
+  if (existingAgentConfig?.native_subscription !== undefined && request.agentConfig !== undefined) {
+    throw new Error(`Dynamic node append cannot override native_subscription agent ${node.agent}`);
+  }
   const nextAgentConfig = request.agentConfig
     ? {
         ...request.agentConfig,
@@ -3706,6 +3713,10 @@ export function appendRunNode(
       }
     : undefined;
   const existingSkillContext = getDagRunSkillContext(runId, node.agent);
+  assertNativeSubscriptionDag(nextGraph, {
+    ...run.agents,
+    ...(nextAgentConfig ? { [node.agent]: nextAgentConfig } : {}),
+  });
   if (existingAgentConfig && !existingSkillContext) {
     throw new Error(`DAG run ${runId} agent ${node.agent} is missing its pinned Skill Context`);
   }
@@ -6048,6 +6059,10 @@ function _isDeterministicDagAgent(agentConfig: DAGAgentConfig): boolean {
 }
 
 function _withDispatchCredentials(agentConfig: DAGAgentConfig): DispatchCredentialResolution {
+  if (agentConfig.native_subscription !== undefined) {
+    try { return { ok: true, agentConfig: resolveNativeSubscriptionAgent(agentConfig) }; }
+    catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
+  }
   if (_isDisabledDirectLlmAgent(agentConfig)) {
     return {
       ok: false,
@@ -6119,6 +6134,9 @@ function _advisorConfigs(run: ActiveRun, node: DAGGraphNode): DispatchCredential
     const advisorAgent = run.agents?.[agentId];
     if (!id || !agentId || !advisorAgent) {
       return { ok: false, reason: `advisor binding '${id || "<unknown>"}' references unavailable agent '${agentId}'` };
+    }
+    if (advisorAgent.native_subscription !== undefined) {
+      return { ok: false, reason: "native_subscription agents must run as dedicated DAG workers, not advisors" };
     }
     const resolved = _withDispatchCredentials(advisorAgent);
     if (!resolved.ok) return resolved;
@@ -6383,6 +6401,12 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
   }
   const credentials = _withDispatchCredentials(agentConfig);
   if (!credentials.ok) return { ...credentials, runtimeConfigurationFailure: true };
+  if (agentConfig.native_subscription !== undefined) {
+    try { assertNativeSubscriptionPolicy(_agentRuntimeConfig(node)); }
+    catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error), runtimeConfigurationFailure: true };
+    }
+  }
   const advisorResolution = _advisorConfigs(run, node);
   if (!advisorResolution.ok) return advisorResolution;
   let credentialProjections: DagCredentialProjection[];
@@ -6478,7 +6502,9 @@ function _buildDispatchEnvelope(run: ActiveRun, nodeId: string): DispatchEnvelop
       workspace: run.workspace,
       image: node.image,
       container_group: node.container_group,
-      requiredCapabilities: _requiredDispatchCapabilities(run, node),
+      requiredCapabilities: agentConfig.native_subscription === undefined
+        ? _requiredDispatchCapabilities(run, node)
+        : [...new Set([...(_requiredDispatchCapabilities(run, node) ?? []), NATIVE_CODEX_SUBSCRIPTION_CAPABILITY])],
       advisors: advisorResolution.advisors,
       workspaceAccess: _workspaceAccess(run, node),
       builtinToolPolicy: _builtinToolPolicy(node),
@@ -6515,6 +6541,34 @@ export function buildCurrentDispatchEnvelope(
   const run = store.get(runId);
   if (!run) return { ok: false, reason: `unknown run ${runId}` };
   return _buildDispatchEnvelope(run, nodeId);
+}
+
+export function getNativeSubscriptionBinding(runId: string, nodeId: string): { nodeId: string; dispatchAttempted: boolean } | undefined {
+  const run = store.get(runId);
+  const bindings = run ? run.nativeSubscriptionBindings : loadRunMetadata(runId)?.nativeSubscriptionBindings;
+  return bindings?.[nodeId];
+}
+
+/** Persist the execution location in existing run metadata, before provisioning or sending. */
+export function bindNativeSubscriptionNode(
+  runId: string, nodeId: string, hostNodeId: string, dispatchAttempted = false,
+): { nodeId: string; dispatchAttempted: boolean } {
+  const run = store.get(runId);
+  const logicalNode = run?.dagRun.graph.nodes.find((node) => node.node_id === nodeId);
+  if (!run || !logicalNode || run.agents?.[logicalNode.agent]?.native_subscription === undefined) {
+    throw new Error("Native subscription binding requires an active, explicitly selected agent");
+  }
+  const existing = run.nativeSubscriptionBindings?.[nodeId];
+  if (existing && existing.nodeId !== hostNodeId) {
+    throw new Error("Native subscription history is pinned to another Node; automatic migration is forbidden");
+  }
+  if (existing && (!dispatchAttempted || existing.dispatchAttempted)) return existing;
+  const previous = run.nativeSubscriptionBindings;
+  const binding = { nodeId: hostNodeId, dispatchAttempted: existing?.dispatchAttempted === true || dispatchAttempted };
+  run.nativeSubscriptionBindings = { ...previous, [nodeId]: binding };
+  try { writeRunMetadata(runId, serializeRunMetadata(run)); }
+  catch (error) { run.nativeSubscriptionBindings = previous; throw error; }
+  return binding;
 }
 
 function _markRoundCommandsDelivered(run: ActiveRun, nodeId: string): void {

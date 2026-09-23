@@ -386,6 +386,38 @@ describe("CodexAppServerAdapter", () => {
     expect(doneEvents).toHaveLength(1);
   }, 15000);
 
+  it.each([1, 3])("ends ordinary cancellation without an error without terminal acknowledgement (maxIterations=%i)", async (maxIterations) => {
+    const mockProc = createMockProcess();
+    setupMocksWithFs(mockProc);
+    const { CodexAppServerAdapter } = await import("../agent/codex-appserver.js");
+    const adapter = new CodexAppServerAdapter(undefined, 20);
+    const controller = new AbortController();
+    const events: AgentEvent[] = [];
+    const answered = new Set<unknown>();
+    const responder = setInterval(() => {
+      for (const request of mockProc.stdinCapture.getJsonLines()) {
+        if (!("id" in request) || answered.has(request.id)) continue;
+        answered.add(request.id);
+        const result = request.method === "thread/start" ? { thread_id: "cancel-thread" }
+          : request.method === "turn/start" ? { turn_id: "cancel-turn" } : {};
+        writeResponse(mockProc, request.id as number, result);
+      }
+    }, 1);
+    try {
+      for await (const event of adapter.run("hi", [], { ...ctx, maxIterations, abortSignal: controller.signal })) {
+        events.push(event);
+        if (event.type === "debug" && event.message === "turn_started") controller.abort();
+      }
+    } finally {
+      clearInterval(responder);
+    }
+    expect(findRequest(mockProc, "turn/interrupt")?.params).toEqual({ threadId: "cancel-thread", turnId: "cancel-turn" });
+    expect(events.filter(event => event.type === "error")).toEqual([]);
+    expect(events.some(event => event.type === "turn_complete")).toBe(false);
+    expect(events.filter(event => event.type === "done")).toHaveLength(1);
+    expect(mockProc.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("keeps a silent turn alive with content-free reasoning heartbeats", async () => {
     const mockProc = createMockProcess();
     setupMocksWithFs(mockProc);

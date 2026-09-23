@@ -1,4 +1,6 @@
 import { normalizeWorkspaceAccess } from "homerail-protocol";
+import type { NativeCodexSubscriptionSelection } from "homerail-protocol";
+import { assertNativeSubscriptionPolicy } from "../runtime/native-subscription-runtime.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { LineCounter, isNode, parseDocument, type Document } from "yaml";
@@ -108,6 +110,7 @@ export interface CanonicalWorkflowIR {
     enabled: boolean;
   }>;
   agents: Record<string, {
+    native_subscription?: NativeCodexSubscriptionSelection;
     description?: string;
     system?: string;
     skills: string[];
@@ -538,6 +541,12 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
       add(`${nodePath}/agent`, "DAG_SEMANTIC_UNKNOWN_AGENT", `unknown agent '${node.agent}'`);
     }
     if (node.kind === "agent") {
+      if (agents[node.agent]?.native_subscription !== undefined) {
+        try { assertNativeSubscriptionPolicy(node); }
+        catch (error) {
+          add(nodePath, "DAG_SEMANTIC_NATIVE_SUBSCRIPTION_POLICY", error instanceof Error ? error.message : String(error));
+        }
+      }
       validateWorkspacePolicyPaths(node.workspace_access, `${nodePath}/workspace_access`);
       if (
         node.workspace_access?.git_metadata_read_only === true
@@ -579,6 +588,9 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
       const advisorIds = new Set<string>();
       for (let index = 0; index < (node.advisors ?? []).length; index++) {
         const advisor = node.advisors![index];
+        if (agents[advisor.agent]?.native_subscription !== undefined) {
+          add(`${nodePath}/advisors/${index}/agent`, "DAG_SEMANTIC_NATIVE_SUBSCRIPTION_ADVISOR", "native_subscription agents must run as dedicated DAG workers, not advisors");
+        }
         if (!agents[advisor.agent]) {
           add(`${nodePath}/advisors/${index}/agent`, "DAG_SEMANTIC_UNKNOWN_AGENT", `unknown advisor agent '${advisor.agent}'`);
         }
@@ -753,6 +765,12 @@ function semanticDiagnostics(context: SourceContext, workflow: WorkflowSpecV1): 
         add(`${nodePath}/config/max_parallelism`, "DAG_SEMANTIC_INVALID_PARALLELISM", "max_parallelism cannot exceed max_items");
       }
       const workerPolicy = node.config.worker_policy;
+      if (agents[node.config.worker_agent]?.native_subscription !== undefined) {
+        try { assertNativeSubscriptionPolicy(workerPolicy ?? {}); }
+        catch (error) {
+          add(`${nodePath}/config/worker_policy`, "DAG_SEMANTIC_NATIVE_SUBSCRIPTION_POLICY", error instanceof Error ? error.message : String(error));
+        }
+      }
       validateWorkspacePolicyPaths(
         workerPolicy?.workspace_access,
         `${nodePath}/config/worker_policy/workspace_access`,
@@ -1260,6 +1278,7 @@ function compileV1(workflow: WorkflowSpecV1): CanonicalWorkflowIR {
     agents: Object.fromEntries(Object.entries(workflow.spec.agents)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([id, agent]) => [id, {
+        ...(agent.native_subscription === undefined ? {} : { native_subscription: { ...agent.native_subscription } }),
         ...(agent.description ? { description: agent.description } : {}),
         ...(agent.system ? { system: agent.system } : {}),
         skills: [...(agent.skills ?? [])].sort(),
@@ -1398,6 +1417,7 @@ function compileLegacy(parsed: ParsedDAG): CanonicalWorkflowIR {
     agents: Object.fromEntries(Object.entries(metaAgents)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([id, agent]) => [id, {
+        ...(agent.native_subscription === undefined ? {} : { native_subscription: { ...agent.native_subscription } }),
         ...(agent.description ? { description: agent.description } : {}),
         ...(agent.system ? { system: agent.system } : {}),
         skills: [...(agent.skills ?? [])].sort(),
@@ -1746,6 +1766,7 @@ export function projectCanonicalWorkflowToParsedDAG(canonical: CanonicalWorkflow
     };
   });
   const agents = Object.fromEntries(Object.entries(canonical.agents).map(([id, agent]) => [id, {
+    ...(agent.native_subscription === undefined ? {} : { native_subscription: { ...agent.native_subscription } }),
     ...(agent.description ? { description: agent.description } : {}),
     ...(agent.system ? { system: agent.system } : {}),
     ...(agent.skills.length > 0 ? { skills: agent.skills } : {}),
@@ -2000,6 +2021,7 @@ export function canonicalWorkflowToV1Document(canonical: CanonicalWorkflowIR): R
       } : {}),
       ...(Object.keys(canonical.triggers).length > 0 ? { triggers: canonical.triggers } : {}),
       agents: Object.fromEntries(Object.entries(canonical.agents).map(([id, agent]) => [id, {
+        ...(agent.native_subscription === undefined ? {} : { native_subscription: { ...agent.native_subscription } }),
         ...(agent.description ? { description: agent.description } : {}),
         ...(agent.system ? { system: agent.system } : {}),
         ...(agent.skills.length > 0 ? { skills: agent.skills } : {}),

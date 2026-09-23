@@ -12,6 +12,7 @@ import type {
   WorkspaceArtifactUploadSpec,
 } from "../storage/workspace-artifact-uploader.js";
 import type { PluginRuntimeService } from "../runtime/plugin-runtime-service.js";
+import { NativeCodexWorkerService, NATIVE_CODEX_EXECUTION_MODE } from "../runtime/native-codex-worker.js";
 
 export interface LifecycleRequest {
   type: "lifecycle_request";
@@ -36,6 +37,7 @@ const SUPPORTED_RESOURCE_TYPES = new Set(["container", "worker", "workspace_arti
 export interface LifecycleHandlerOptions {
   workspaceArtifactUploader?: (spec: WorkspaceArtifactUploadSpec) => Promise<WorkspaceArtifactUploadResult>;
   pluginRuntime?: PluginRuntimeService;
+  nativeCodexWorker?: NativeCodexWorkerService;
 }
 
 export async function handleLifecycleRequest(
@@ -79,7 +81,7 @@ function redactLifecycleSecrets(message: string, spec: Record<string, unknown>):
   const env = spec.env && typeof spec.env === "object" && !Array.isArray(spec.env)
     ? spec.env as Record<string, unknown>
     : {};
-  const secrets = [env.HOMERAIL_MANAGER_ADMIN_TOKEN, env.HOMERAIL_PLUGIN_CAPABILITY_SECRET]
+  const secrets = [env.HOMERAIL_MANAGER_ADMIN_TOKEN, env.HOMERAIL_PLUGIN_CAPABILITY_SECRET, env.HOMERAIL_WORKER_TOKEN]
     .filter((value): value is string => typeof value === "string" && value.length > 0);
   let redacted = secrets.reduce(
     (value, secret) => value.split(secret).join("***REDACTED***"),
@@ -96,6 +98,26 @@ async function dispatchOperation(
   spec: Record<string, unknown>,
   options: LifecycleHandlerOptions,
 ): Promise<Record<string, unknown> | undefined> {
+  if (spec.execution_mode !== undefined || NativeCodexWorkerService.isWorkerId(spec.container_id)) {
+    if (resource_type !== "worker") throw new Error("Native execution selection is only valid for worker resources");
+    if (spec.execution_mode !== undefined && spec.execution_mode !== NATIVE_CODEX_EXECUTION_MODE) {
+      throw new Error("Unsupported Worker execution_mode");
+    }
+    const native = options.nativeCodexWorker;
+    if (!native) throw new Error("Native Codex subscription is not enabled on this Node");
+    if (operation === "create") return await native.create(spec) as unknown as Record<string, unknown>;
+    if (!NativeCodexWorkerService.isWorkerId(spec.container_id)
+      || Object.keys(spec).some((key) => key !== "container_id")) {
+      throw new Error("Native Worker lifecycle accepts only its Node-owned container_id");
+    }
+    const id = spec.container_id;
+    if (operation === "start") await native.start(id);
+    else if (operation === "stop") await native.stop(id);
+    else if (operation === "remove") await native.remove(id);
+    else if (operation === "inspect") return native.inspect(id) as unknown as Record<string, unknown>;
+    else throw new Error(`Unsupported Native Codex Worker operation: ${operation}`);
+    return undefined;
+  }
   if (resource_type === "workspace_artifact") {
     if (operation !== "archive_upload") throw new Error(`unsupported workspace artifact operation: ${operation}`);
     if (!options.workspaceArtifactUploader) throw new Error("workspace artifact uploader is not configured");

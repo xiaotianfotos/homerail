@@ -12,10 +12,12 @@ function norm(value: string | undefined): string {
 }
 
 function effectiveProvider(agent: DAGAgentConfig, dag: ParsedDAG): string {
+  if (agent.native_subscription !== undefined) return "openai";
   return agent.llm?.provider ?? dag.meta.llm?.provider ?? "";
 }
 
 function effectiveModel(agent: DAGAgentConfig, dag: ParsedDAG): string {
+  if (agent.native_subscription !== undefined) return agent.native_subscription.model;
   return agent.llm?.model ?? agent.model ?? dag.meta.llm?.model ?? "";
 }
 

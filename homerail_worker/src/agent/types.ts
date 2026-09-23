@@ -130,6 +130,9 @@ export interface AgentRunContext {
   sessionId?: string;
   /** Resume the backend-native transcript identified by sessionId. */
   resumeSession?: boolean;
+  /** Stable native thread tool declarations, before turn-local correction filtering.
+   * Handlers remain restricted to the tools passed to run(). */
+  nativeSessionTools?: AgentToolDefinition[];
   /** Keep backend configuration and transcript storage across turns. */
   persistSession?: boolean;
   abortSignal?: AbortSignal;

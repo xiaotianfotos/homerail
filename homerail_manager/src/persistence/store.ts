@@ -35,6 +35,7 @@ export interface SerializableRun {
   brokerState?: Record<string, unknown>;
   initialPrompt?: string;
   creationRequestDigest?: string;
+  nativeSubscriptionBindings?: PersistedRunMetadata["nativeSubscriptionBindings"];
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; allowed_surface_views?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;
@@ -275,6 +276,7 @@ export function serializeRunMetadata(run: SerializableRun): PersistedRunMetadata
     brokerState: run.brokerState ? structuredClone(run.brokerState) : undefined,
     initialPrompt: run.initialPrompt,
     creationRequestDigest: run.creationRequestDigest,
+    ...(run.nativeSubscriptionBindings ? { nativeSubscriptionBindings: structuredClone(run.nativeSubscriptionBindings) } : {}),
     nodeCount: run.nodeCount,
     agents: run.agents,
     workspace: run.workspace,

@@ -83,6 +83,8 @@ export interface PersistedRunMetadata {
   brokerState?: Record<string, unknown>;
   initialPrompt?: string;
   creationRequestDigest?: string;
+  /** Manager-owned location and ambiguous-send evidence for native account history. */
+  nativeSubscriptionBindings?: Record<string, { nodeId: string; dispatchAttempted: boolean }>;
   nodeCount?: number;
   agents?: Record<string, { agent_type?: string; model?: string; system?: string; description?: string; skills?: string[]; allowed_surface_views?: string[]; extra?: Record<string, unknown> }>;
   workspace?: Record<string, unknown>;

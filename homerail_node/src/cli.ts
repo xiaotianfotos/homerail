@@ -10,6 +10,7 @@ import type { ExecutionProvider } from "./providers/types.js";
 import { NodeRuntimeAttestationAuthority } from "./security/runtime-attestation-key.js";
 import { PluginRuntimeService } from "./runtime/plugin-runtime-service.js";
 import * as os from "node:os";
+import { NATIVE_CODEX_CAPABILITY, resolveNativeCodexWorkerService } from "./runtime/native-codex-worker.js";
 
 // --- arg parsing (hand-rolled, no deps) ---
 
@@ -191,6 +192,8 @@ async function main(): Promise<void> {
 
   const provider = resolveProvider(args.provider);
   const pluginRuntime = resolvePluginRuntimeService(args, provider);
+  const nativeCodexWorker = resolveNativeCodexWorkerService({ managerUrl: args.managerUrl, projectId: args.projectId });
+  if (nativeCodexWorker) appendCapability(args.capabilities, NATIVE_CODEX_CAPABILITY);
 
   const client = createNodeClient({
     managerUrl: args.managerUrl,
@@ -199,6 +202,7 @@ async function main(): Promise<void> {
     provider,
     capabilities: args.capabilities,
     pluginRuntime,
+    nativeCodexWorker,
     token: args.token,
     allowInsecureRemote: args.allowInsecureRemoteWs,
   });
@@ -206,12 +210,13 @@ async function main(): Promise<void> {
   await client.connect();
   console.log(`HOMERAIL_NODE_READY node_id=${args.nodeId}`);
 
-  const shutdown = () => {
+  const shutdown = async () => {
+    await nativeCodexWorker?.close();
     client.close();
     process.exit(0);
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
 
   setInterval(() => {}, 1 << 30);
 }

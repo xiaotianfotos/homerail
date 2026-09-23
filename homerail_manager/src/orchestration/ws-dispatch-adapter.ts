@@ -1,4 +1,10 @@
 import { normalizeWorkspaceAccess } from "homerail-protocol";
+import {
+  CODEX_SUBSCRIPTION_PROTOCOL,
+  NATIVE_CODEX_SUBSCRIPTION_CAPABILITY,
+  NATIVE_CODEX_SUBSCRIPTION_EXECUTION_MODE,
+} from "homerail-protocol";
+import { assertNativeSubscriptionPolicy, assertNativeSubscriptionWorkspace, resolveNativeSubscriptionAgent } from "../runtime/native-subscription-runtime.js";
 import type {
   DAGDispatcher,
   DispatchEnvelope,
@@ -26,6 +32,8 @@ import {
 } from "../node/worker-provisioner.js";
 import {
   buildCurrentDispatchEnvelope,
+  bindNativeSubscriptionNode,
+  getNativeSubscriptionBinding,
   dispatchReadyNodes,
   failActiveRun,
   getActiveRun,
@@ -53,7 +61,7 @@ import {
   summarizeDagWorkerSkillContextV1,
 } from "homerail-protocol";
 import WebSocket from "ws";
-import { dagWorkspaceInputProjections } from "../persistence/run-input-artifacts.js";
+import { dagWorkspaceInputProjections, listDagRunInputs } from "../persistence/run-input-artifacts.js";
 
 const OFFLINE_RETRY_MIN_MS = 1_000;
 const OFFLINE_RETRY_MAX_MS = 30_000;
@@ -122,6 +130,34 @@ function requiresIsolatedWorkspace(envelope: DispatchEnvelope): boolean {
   return envelope.workspaceAccess !== undefined || envelope.workspace?.mode === "isolated";
 }
 
+function isNativeSubscription(envelope: DispatchEnvelope): boolean {
+  return envelope.agentConfig.native_subscription !== undefined
+    || envelope.agentConfig.llm?.protocol === CODEX_SUBSCRIPTION_PROTOCOL;
+}
+
+function assertNativeSubscriptionEnvelope(envelope: DispatchEnvelope): void {
+  assertNativeSubscriptionWorkspace(envelope.workspace);
+  const { llm, ...selection } = envelope.agentConfig;
+  const resolved = resolveNativeSubscriptionAgent(selection);
+  if (envelope.agentConfig.agent_type !== "codex_appserver" || !llm
+    || Object.keys(llm).some((key) => !["provider", "protocol", "model", "reasoning_effort"].includes(key))
+    || llm.provider !== resolved.llm!.provider || llm.protocol !== CODEX_SUBSCRIPTION_PROTOCOL
+    || llm.model !== resolved.llm!.model || llm.reasoning_effort !== resolved.llm!.reasoning_effort) {
+    throw new Error("native_subscription dispatch must retain the exact subscription selection without API overrides");
+  }
+  assertNativeSubscriptionPolicy({
+    codex_sandbox: envelope.codexSandbox,
+    builtin_tool_policy: envelope.builtinToolPolicy,
+    allowed_builtin_tools: envelope.allowedBuiltinTools,
+    workspace_access: envelope.workspaceAccess,
+    credentials: envelope.credentialProjections,
+    advisors: envelope.advisors,
+  });
+  if (envelope.image || envelope.container_group || listDagRunInputs(envelope.runId).length > 0) {
+    throw new Error("native_subscription does not support container configuration or projected workspace inputs");
+  }
+}
+
 export function normalizeAgentBackend(agentType: string | undefined): string | undefined {
   return normalizeManagerAgentRuntimeAgentType(agentType);
 }
@@ -161,13 +197,13 @@ export class WsDispatchAdapter implements DAGDispatcher {
       : this.managerBaseUrl;
   }
 
-  private getManagerWorkerWsUrl(workerId: string): string {
-    const base = this.managerWorkerWsBaseUrl
+  private getManagerWorkerWsUrl(workerId: string, nativeSubscription = false): string {
+    const base = !nativeSubscription && this.managerWorkerWsBaseUrl
       ? (typeof this.managerWorkerWsBaseUrl === "function"
           ? this.managerWorkerWsBaseUrl()
           : this.managerWorkerWsBaseUrl)
       : this.getManagerBaseUrl().replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-    return `${base.replace(/\/$/, "")}/ws/projects/${this.projectId}/workers/${workerId}`;
+    return `${base.replace(/\/$/, "")}/ws/projects/${encodeURIComponent(this.projectId)}/workers/${encodeURIComponent(workerId)}`;
   }
 
   private _dispatchKey(runId: string, nodeId: string): string {
@@ -294,6 +330,15 @@ export class WsDispatchAdapter implements DAGDispatcher {
   }
 
   dispatch(envelope: DispatchEnvelope): DispatchResult {
+    if (isNativeSubscription(envelope)) {
+      try {
+        assertNativeSubscriptionEnvelope(envelope);
+        this._nativeSubscriptionBinding(envelope);
+        envelope = { ...envelope, requiredCapabilities: [...new Set([
+          ...(envelope.requiredCapabilities ?? []), NATIVE_CODEX_SUBSCRIPTION_CAPABILITY,
+        ])] };
+      } catch (error) { return { status: "failed", reason: String(error), retryable: false }; }
+    }
     if (envelope.workspaceAccess !== undefined) {
       try { envelope = { ...envelope, workspaceAccess: normalizeWorkspaceAccess(envelope.workspaceAccess) }; }
       catch (error) { return { status: "failed", reason: String(error), retryable: false }; }
@@ -334,6 +379,24 @@ export class WsDispatchAdapter implements DAGDispatcher {
       candidate.socket.readyState === WebSocket.OPEN
       && !(excluded?.targetType === "node" && excluded.targetId === candidate.node_id)
     );
+    if (isNativeSubscription(envelope)) {
+      const binding = getNativeSubscriptionBinding(envelope.runId, envelope.nodeId);
+      const candidates = openNodes.filter((candidate) => candidate.project_id === this.projectId
+        && candidate.capabilities.includes(NATIVE_CODEX_SUBSCRIPTION_CAPABILITY)
+        && (!binding || candidate.node_id === binding.nodeId));
+      if (candidates.length > 1) {
+        return { status: "failed", reason: "native_subscription requires one matching Node; automatic account selection is forbidden", retryable: false };
+      }
+      const nativeNode = this.provisionerOpts && candidates[0];
+      if (nativeNode) {
+        try { bindNativeSubscriptionNode(envelope.runId, envelope.nodeId, nativeNode.node_id); }
+        catch (error) { return { status: "failed", reason: String(error), retryable: false }; }
+        this._startProvisioning(envelope, nativeNode.node_id);
+        return { status: "skipped", reason: "provisioning_in_progress" };
+      }
+      if (binding) return this._deferOfflineDispatch(envelope, `native_subscription history is pinned to unavailable Node ${binding.nodeId}; no migration or fallback is permitted`);
+      return this._deferOfflineDispatch(envelope, "native_subscription requires an opted-in native-codex-subscription Node; no fallback is permitted");
+    }
     // Try to find a Docker-capable node for provisioning.
     if (this.provisionerOpts) {
       const dockerNode = openNodes.find(
@@ -391,6 +454,8 @@ export class WsDispatchAdapter implements DAGDispatcher {
     const workers = getAllWorkers().filter(
       (w) =>
         w.socket.readyState === WebSocket.OPEN &&
+        (isNativeSubscription(envelope) === w.capabilities.includes(NATIVE_CODEX_SUBSCRIPTION_CAPABILITY)) &&
+        (!isNativeSubscription(envelope) || w.project_id === this.projectId) &&
         hasCapabilities(w.capabilities, envelope.requiredCapabilities) &&
         !(excluded?.targetType === "worker" && excluded.targetId === w.worker_id),
     );
@@ -445,7 +510,20 @@ export class WsDispatchAdapter implements DAGDispatcher {
       lease_generation: lease.lease_generation,
       statuses: ["active"],
       limit: 1,
-    }).some((worker) => worker.worker_id === workerId);
+    }).some((worker) => worker.worker_id === workerId
+      && (!isNativeSubscription(envelope)
+        || worker.docker_node_id === getNativeSubscriptionBinding(envelope.runId, envelope.nodeId)?.nodeId));
+  }
+
+  private _nativeSubscriptionBinding(envelope: DispatchEnvelope): void {
+    if (getNativeSubscriptionBinding(envelope.runId, envelope.nodeId)) return;
+    if (!envelope.activity?.actorId) throw new Error("Native subscription requires a logical actor identity");
+    const previous = listDagProvisionedWorkers({
+      run_id: envelope.runId, actor_id: envelope.activity.actorId, limit: 1_000,
+    }).filter((worker) => worker.node_id === envelope.nodeId && worker.container_id.startsWith("native-codex-worker-"));
+    const hosts = [...new Set(previous.map((worker) => worker.docker_node_id))];
+    if (hosts.length > 1) throw new Error("Native subscription history has conflicting Node ownership; explicit recovery is required");
+    if (hosts[0]) bindNativeSubscriptionNode(envelope.runId, envelope.nodeId, hosts[0], true);
   }
 
   private _dispatchToNode(
@@ -485,6 +563,14 @@ export class WsDispatchAdapter implements DAGDispatcher {
       );
     }
     try {
+      if (isNativeSubscription(bound.envelope)) {
+        const binding = getNativeSubscriptionBinding(envelope.runId, envelope.nodeId);
+        if (!binding) throw new Error("Native subscription dispatch has no persistent Node binding");
+        bound.envelope = { ...bound.envelope, nativeSessionRequired: binding.dispatchAttempted };
+        // A send may succeed even when the caller loses the response. Once
+        // attempted, require existing native history on every later dispatch.
+        bindNativeSubscriptionNode(envelope.runId, envelope.nodeId, binding.nodeId, true);
+      }
       socket.send(JSON.stringify({ type: "prompt", envelope: bound.envelope }));
     } catch (error) {
       this._releaseFailedDispatchLease(bound.lease);
@@ -610,15 +696,17 @@ export class WsDispatchAdapter implements DAGDispatcher {
       `provisioned-${envelope.runId}-${envelope.nodeId}-${randomUUID()}`,
     );
     const agentBackend = normalizeAgentBackend(envelope.agentConfig.agent_type);
+    const nativeSubscription = isNativeSubscription(envelope);
     const codexNestedSandbox = agentBackend === "codex_appserver"
       && envelope.builtinToolPolicy === "backend_native";
-    const workspaceInputs = dagWorkspaceInputProjections(envelope.runId);
+    const workspaceInputs = nativeSubscription ? [] : dagWorkspaceInputProjections(envelope.runId);
     const workspaceAccess = envelope.workspaceAccess === undefined
       ? undefined : normalizeWorkspaceAccess(envelope.workspaceAccess);
     const workspaceWritableSubpath = workspaceAccess?.writable_paths.length === 1
       ? workspaceAccess.writable_paths[0] : undefined;
     const provisionerOpts: ProvisionerOptions = {
       ...this.provisionerOpts,
+      executionMode: undefined,
       image: envelope.image ?? this.provisionerOpts?.image,
       workspace: this.provisionerOpts?.workspace ?? envelope.workspace,
       workspaceReadOnly: workspaceAccess !== undefined,
@@ -640,6 +728,27 @@ export class WsDispatchAdapter implements DAGDispatcher {
         HOMERAIL_WORKER_ID: workerId,
       },
     };
+    if (nativeSubscription) {
+      // Reuse lifecycle/registration/lease cleanup, with no container or ambient
+      // environment settings crossing the trusted native Node boundary.
+      provisionerOpts.executionMode = NATIVE_CODEX_SUBSCRIPTION_EXECUTION_MODE;
+      provisionerOpts.image = undefined;
+      // Preserve the validated workflow mode, never ambient provisioning paths.
+      provisionerOpts.workspace = envelope.workspace;
+      provisionerOpts.workspaceWritableSubpath = undefined;
+      provisionerOpts.workspaceInputs = undefined;
+      provisionerOpts.workspaceGitMetadataReadOnly = undefined;
+      provisionerOpts.codexNestedSandbox = undefined;
+      provisionerOpts.labels = undefined;
+      provisionerOpts.extraHosts = undefined;
+      provisionerOpts.env = {
+        AGENT_BACKEND: "codex_appserver",
+        MANAGER_WORKER_WS_URL: this.getManagerWorkerWsUrl(workerId, true),
+        HOMERAIL_WORKER_ID: workerId,
+        ...(this.provisionerOpts?.env?.HOMERAIL_WORKER_TOKEN
+          ? { HOMERAIL_WORKER_TOKEN: this.provisionerOpts.env.HOMERAIL_WORKER_TOKEN } : {}),
+      };
+    }
 
     // Fire-and-forget async provisioning
     provisionWorkerContainer(

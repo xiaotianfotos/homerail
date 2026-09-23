@@ -1,10 +1,12 @@
 import type { DAGAgentConfig, DAGGraphData } from "../orchestration/graph.js";
 import { resolveAgentRuntimeConfig } from "./agent-runtime-resolver.js";
+import { assertNativeSubscriptionDag, resolveNativeSubscriptionAgent } from "./native-subscription-runtime.js";
 import { normalizeManagerAgentRuntimeAgentType, isDisabledDirectLlmAgentType } from "homerail-protocol";
 
 /** Resolve every reachable role, including advisors, without persisting or
  * exposing the resolved credentials. Run before any native command can spend. */
 export function preflightDagAgentRuntimes(graph: DAGGraphData, agents: Record<string, DAGAgentConfig> = {}): void {
+  assertNativeSubscriptionDag(graph, agents);
   const used = new Set<string>();
   for (const node of graph.nodes) {
     if (node.node_type?.endsWith("_gateway")) continue;
@@ -17,6 +19,10 @@ export function preflightDagAgentRuntimes(graph: DAGGraphData, agents: Record<st
   }
   for (const id of used) {
     const config = agents[id] ?? {};
+    if (config.native_subscription !== undefined) {
+      resolveNativeSubscriptionAgent(config);
+      continue;
+    }
     if (isDisabledDirectLlmAgentType(config.agent_type)) throw new Error(`Agent ${id}: direct-llm is disabled`);
     if (normalizeManagerAgentRuntimeAgentType(config.agent_type) === "deterministic") continue;
     try {

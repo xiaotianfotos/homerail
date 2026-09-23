@@ -85,6 +85,7 @@ export function rejectAllPendingRequests(node: NodeState, reason: string): void 
 }
 
 export interface WorkerCreateOptions {
+  executionMode?: "native_codex_subscription";
   env?: Record<string, string>;
   labels?: Record<string, string>;
   image?: string;
@@ -105,6 +106,16 @@ export function sendWorkerCreateRequest(
   workspaceId: string,
   options: WorkerCreateOptions = {},
 ): Promise<LifecycleResult> {
+  if (options.executionMode === "native_codex_subscription") {
+    return sendLifecycleRequest(nodeId, "worker", "create", {
+      execution_mode: options.executionMode,
+      workspace_id: workspaceId,
+      workspace: options.workspace,
+      workspace_read_only: options.workspaceReadOnly === true,
+      workspace_access: options.workspaceAccess,
+      env: options.env,
+    }, { timeoutMs: options.timeoutMs });
+  }
   return sendLifecycleRequest(
     nodeId,
     "worker",

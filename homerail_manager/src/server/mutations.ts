@@ -19,7 +19,7 @@ import { getSetting } from "../persistence/llm-settings.js";
 import { loadRunMetadata } from "../persistence/store.js";
 import { ManagerAgentRuntimeError, runManagerAgentTurn } from "./manager-agent-runtime.js";
 import { pinHomeRailBrowserUiTurnBinding } from "./browser-ui-tools.js";
-import { dagResourcesUnavailableForRun } from "./dag-resource-status.js";
+import { dagResourcesUnavailableForRun, nativeSubscriptionResourcesUnavailableForRun } from "./dag-resource-status.js";
 import { fireDagEventTrigger } from "../runtime/dag-triggers.js";
 import { updateDagState } from "../persistence/dag-runtime-primitives.js";
 import { WorkflowRunAdmissionError } from "../persistence/dag-run-admission.js";
@@ -272,6 +272,7 @@ export function mutationRoutesHandler(
   changeOrchestrator: ChangeOrchestrator,
   managerAgentOptions?: HostShellManagerAgentOptions,
   managerAgentConfigOptions: ManagerAgentConfigRoutesOptions = {},
+  dagProjectId = process.env.HOMERAIL_PROJECT_ID ?? "p1",
 ): boolean {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
 
@@ -549,11 +550,13 @@ export function mutationRoutesHandler(
             changeOrchestrator.createRun(request);
           }
           if (!existing || existing.status === "active") {
-            const unavailable = dagResourcesUnavailableForRun();
+            const unavailable = changeOrchestrator.usesOnlyNativeSubscriptionWorkers(request)
+              ? nativeSubscriptionResourcesUnavailableForRun(dagProjectId)
+              : dagResourcesUnavailableForRun();
             if (unavailable) {
               _unavailable(res, unavailable.message, {
                 code: unavailable.code,
-                dag_resources: unavailable.status,
+                ...("status" in unavailable ? { dag_resources: unavailable.status } : {}),
               });
               return;
             }
@@ -585,16 +588,18 @@ export function mutationRoutesHandler(
   // POST /api/runs/:run_id/invoke
   const invokeMatch = pathname.match(/^\/api\/runs\/([^/]+)\/invoke$/);
   if (invokeMatch && req.method === "POST") {
-    const unavailable = dagResourcesUnavailableForRun();
-    if (unavailable) {
-      _unavailable(res, unavailable.message, {
-        code: unavailable.code,
-        dag_resources: unavailable.status,
-      });
-      return true;
-    }
     const runId = decodeURIComponent(invokeMatch[1]);
     try {
+      const unavailable = changeOrchestrator.usesOnlyNativeSubscriptionWorkers({ runId })
+        ? nativeSubscriptionResourcesUnavailableForRun(dagProjectId)
+        : dagResourcesUnavailableForRun();
+      if (unavailable) {
+        _unavailable(res, unavailable.message, {
+          code: unavailable.code,
+          ...("status" in unavailable ? { dag_resources: unavailable.status } : {}),
+        });
+        return true;
+      }
       const result = changeOrchestrator.invokeRun(runId);
       _ok(res, "Run invoked", result);
     } catch (err) {

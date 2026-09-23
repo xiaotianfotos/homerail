@@ -7,6 +7,7 @@
 import { randomUUID } from "node:crypto";
 import {
   CODEX_RESPONSES_PROTOCOL,
+  CODEX_SUBSCRIPTION_PROTOCOL,
   DEFAULT_MANAGER_AGENT_RUNTIME_AGENT_TYPE,
   normalizeManagerAgentRuntimeAgentType,
   validateDagActorSurfaceMediaV1,
@@ -71,6 +72,8 @@ export interface PromptJob {
   llmApiKey?: string;
   llmBaseUrl?: string;
   llmAnthropicAuthMode?: "api_key" | "auth_token";
+  /** Manager has already attempted a native dispatch; never replace missing history. */
+  nativeSessionRequired?: boolean;
   checkpointResume?: {
     parentSessionId?: string;
     entryUuid?: string;
@@ -120,6 +123,7 @@ function resolveLlmBaseUrl(job: PromptJob): string {
 
 function resolveAgentBaseUrl(job: PromptJob, agentBackend?: string): string {
   const backend = (agentBackend ?? process.env.AGENT_BACKEND ?? "").trim();
+  if (backend === "codex_appserver" && job.llmProtocol === CODEX_SUBSCRIPTION_PROTOCOL) return job.llmBaseUrl ?? "";
   if (backend === "deterministic") {
     return job.llmBaseUrl ?? process.env.LLM_BASE_URL ?? "";
   }
@@ -128,12 +132,15 @@ function resolveAgentBaseUrl(job: PromptJob, agentBackend?: string): string {
 
 function assertAgentRuntimeProtocol(agentBackend: string | undefined, protocol: string | undefined): void {
   const backend = normalizeManagerAgentRuntimeAgentType(agentBackend ?? process.env.AGENT_BACKEND);
+  if (protocol === CODEX_SUBSCRIPTION_PROTOCOL && backend !== "codex_appserver") {
+    throw new Error("Native Codex subscription requires the codex_appserver backend; executor fallback is disabled");
+  }
   if (backend === "claude-sdk" && protocol !== "anthropic_compatible") {
     throw new Error(
       "Claude SDK requires an Anthropic-compatible endpoint; missing or non-Anthropic protocol is not allowed for harness execution.",
     );
   }
-  if (backend === "codex_appserver" && protocol !== CODEX_RESPONSES_PROTOCOL) {
+  if (backend === "codex_appserver" && protocol !== CODEX_RESPONSES_PROTOCOL && protocol !== CODEX_SUBSCRIPTION_PROTOCOL) {
     throw new Error(
       "Codex app-server requires a Responses-compatible endpoint; Chat Completions and Anthropic protocols are not valid Codex wire transports.",
     );
@@ -577,6 +584,12 @@ export async function runPrompt(
   });
 
   try {
+    if (process.env.HOMERAIL_CODEX_SUBSCRIPTION_ENABLED === "1" && job.llmProtocol !== CODEX_SUBSCRIPTION_PROTOCOL) {
+      throw new Error("This host Worker accepts only explicitly selected native Codex subscription tasks");
+    }
+    if (process.env.HOMERAIL_CODEX_SUBSCRIPTION_ENABLED === "1" && typeof job.nativeSessionRequired !== "boolean") {
+      throw new Error("Native Codex task is missing the Manager's session-continuity requirement");
+    }
     if (workspacePolicy) {
       workspaceBefore = snapshotWorkspace(workspace, workspacePolicy);
       sendStream({
@@ -593,7 +606,7 @@ export async function runPrompt(
       job.dagConfig.builtin_tool_policy,
       job.dagConfig.workspace_access,
     );
-    const dependencyProjection = effectiveAgentBackend === "codex_appserver" && !correctionOnly
+    const dependencyProjection = effectiveAgentBackend === "codex_appserver" && !correctionOnly && job.llmProtocol !== CODEX_SUBSCRIPTION_PROTOCOL
       ? materializeTrustedWorkspaceDependencies(workspace, dagState.workspaceAccess)
       : { projected: [], already_present: [], skipped: [] };
     const readyDependencyPackages = [
@@ -626,7 +639,7 @@ export async function runPrompt(
       provider: job.llmProvider,
       protocol: job.llmProtocol,
       model: job.dagConfig.model,
-      apiKey: job.llmApiKey ?? process.env.LLM_API_KEY ?? "",
+      apiKey: job.llmApiKey ?? (job.llmProtocol === CODEX_SUBSCRIPTION_PROTOCOL ? "" : process.env.LLM_API_KEY ?? ""),
       baseUrl: resolveAgentBaseUrl(job, agentBackend),
       reasoningEffort: job.dagConfig.reasoning_effort,
       reasoningEffortMap: job.dagConfig.reasoning_effort_map,
@@ -634,7 +647,13 @@ export async function runPrompt(
       serviceTier: job.dagConfig.service_tier,
       anthropicAuthMode: job.llmAnthropicAuthMode,
       workspace,
-      sessionId: job.dagConfig.session_id ?? job.runId,
+      sessionId: job.llmProtocol === CODEX_SUBSCRIPTION_PROTOCOL
+        ? JSON.stringify([job.runId, job.dagConfig.node_id])
+        : job.dagConfig.session_id ?? job.runId,
+      ...(job.llmProtocol === CODEX_SUBSCRIPTION_PROTOCOL ? {
+        resumeSession: job.nativeSessionRequired === true,
+        nativeSessionTools: selectedDagTools.map(({ name, description, input_schema }) => ({ name, description, input_schema })),
+      } : {}),
       abortSignal: deps.abortSignal,
       turnController: deps.turnController,
       handoffOnly: correctionOnly && !correctionRepairsWorkspaceEvidence && !readOnlyReviewRecovery,
@@ -665,6 +684,7 @@ export async function runPrompt(
       // Best-effort.
     }
     let errorMessage: string | null = null;
+    let nativeTurnCompleted = false;
     for await (const event of agent.run(effectiveTask, dagTools, context)) {
       switch (event.type) {
         case "text":
@@ -789,6 +809,9 @@ export async function runPrompt(
           audit?.transcript.write({ event: "error", message: errorMessage });
           appendSessionTranscript("error", errorMessage);
           break;
+        case "turn_complete":
+          nativeTurnCompleted = true;
+          break;
         case "usage":
           // The claude-sdk adapter emits running-total snapshots (one per
           // assistant message, carrying the cumulative total so far), so
@@ -815,10 +838,16 @@ export async function runPrompt(
       // If handoff was called, stop processing. Emit the final accumulated
       // usage first so the manager can persist per-node token totals even
       // when the node yields early via handoff.
-      if (dagState.yielded) {
+      if (dagState.yielded && job.llmProtocol !== CODEX_SUBSCRIPTION_PROTOCOL) {
         emitUsage();
         break;
       }
+    }
+    if (job.llmProtocol === CODEX_SUBSCRIPTION_PROTOCOL && (errorMessage || !nativeTurnCompleted || deps.abortSignal?.aborted)) {
+      // A tool-level handoff is provisional until the native turn confirms
+      // success. Never publish a partial result from a failed/cancelled turn.
+      dagState.yielded = false;
+      errorMessage ??= "Native Codex turn did not acknowledge successful completion";
     }
     // Normal completion (no handoff, no error) — emit usage once more so
     // the manager records totals before the node-error fallback fires.

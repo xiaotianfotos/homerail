@@ -1,6 +1,8 @@
 import type { ParsedDAG } from "./graph.js";
+import { assertNativeSubscriptionDag } from "../runtime/native-subscription-runtime.js";
 
 export function assertNoYamlProviderRuntime(parsed: ParsedDAG): void {
+  assertNativeSubscriptionDag(parsed.graph, parsed.meta.agents);
   const failures: string[] = [];
   const rootLlm = parsed.meta.llm;
   if (rootLlm?.provider) failures.push("llm.provider");

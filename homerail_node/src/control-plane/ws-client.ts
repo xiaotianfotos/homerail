@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import type { ExecutionProvider } from "../providers/types.js";
 import { handleLifecycleRequest, type LifecycleRequest, type LifecycleResponse } from "./lifecycle-handler.js";
 import type { PluginRuntimeService } from "../runtime/plugin-runtime-service.js";
+import { NATIVE_CODEX_CAPABILITY, type NativeCodexWorkerService } from "../runtime/native-codex-worker.js";
 import { assertSecureControlPlaneUrl } from "./security.js";
 import { createWorkspaceArtifactUploader } from "../storage/workspace-artifact-uploader.js";
 
@@ -16,6 +17,7 @@ export interface NodeClientOptions {
   reconnectInitialDelayMs?: number;
   reconnectMaxDelayMs?: number;
   pluginRuntime?: PluginRuntimeService;
+  nativeCodexWorker?: NativeCodexWorkerService;
 }
 
 export interface NodeClient {
@@ -26,6 +28,9 @@ export interface NodeClient {
 
 export function createNodeClient(options: NodeClientOptions): NodeClient {
   const { managerUrl, projectId, nodeId, provider } = options;
+  if (options.capabilities?.includes(NATIVE_CODEX_CAPABILITY) && !options.nativeCodexWorker) {
+    throw new Error("Native Codex capability requires a locally configured Worker service");
+  }
   let ws: WebSocket | null = null;
   let registered = false;
   let closed = false;
@@ -125,6 +130,7 @@ export function createNodeClient(options: NodeClientOptions): NodeClient {
           handleLifecycleRequest(request, provider, send, {
             workspaceArtifactUploader,
             pluginRuntime: options.pluginRuntime,
+            nativeCodexWorker: options.nativeCodexWorker,
           }).catch(() => {
             // Handler already sends error response
           });
@@ -161,6 +167,7 @@ export function createNodeClient(options: NodeClientOptions): NodeClient {
 
     close() {
       closed = true;
+      void options.nativeCodexWorker?.close();
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;

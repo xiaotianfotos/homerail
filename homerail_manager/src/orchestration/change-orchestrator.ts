@@ -50,6 +50,7 @@ import {
 } from "../runtime/dag-actor-live-command-runtime.js";
 import { creationRequestDigest, RunCreationConflictError } from "./run-creation-identity.js";
 import { preflightDagAgentRuntimes } from "../runtime/dag-runtime-preflight.js";
+import { usesOnlyNativeSubscriptionWorkers } from "../runtime/native-subscription-runtime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = process.env.HOMERAIL_REPO_ROOT
@@ -222,6 +223,9 @@ function _applyProfile(
   const wildcard = profile.agents?.["*"];
   if (wildcard) {
     for (const agentId of Object.keys(agents)) {
+      if (agents[agentId]?.native_subscription !== undefined) {
+        throw new Error(`Runtime profiles cannot override native_subscription agent ${agentId}`);
+      }
       agents[agentId] = {
         ...agents[agentId],
         agent_type: wildcard.agent_type ?? agents[agentId]?.agent_type,
@@ -234,6 +238,9 @@ function _applyProfile(
     for (const [agentId, mapping] of Object.entries(profile.agents)) {
       if (agentId === "*") continue;
       if (agents[agentId]) {
+        if (agents[agentId].native_subscription !== undefined) {
+          throw new Error(`Runtime profiles cannot override native_subscription agent ${agentId}`);
+        }
         agents[agentId] = {
           ...agents[agentId],
           agent_type: mapping.agent_type ?? agents[agentId]?.agent_type,
@@ -251,6 +258,9 @@ function _applyProfile(
 
 function _applyRunRuntimeSelection(parsed: ParsedDAG, llmSettingId: string | undefined): ParsedDAG {
   if (!llmSettingId) return parsed;
+  if (Object.values(parsed.meta.agents ?? {}).some((agent) => agent.native_subscription !== undefined)) {
+    throw new Error("Run llmSettingId cannot override native_subscription agents");
+  }
   const agentIds = new Set([
     ...Object.keys(parsed.meta.agents ?? {}),
     ...parsed.graph.nodes
@@ -322,6 +332,19 @@ function _applyRuntimeProfile(parsed: ParsedDAG, request: CreateRunRequest): Par
 export class ChangeOrchestrator {
   constructor(private graphExecutor: GraphExecutor) {}
 
+  /** Read-only admission classification. Unknown workflows keep the ordinary resource gate. */
+  usesOnlyNativeSubscriptionWorkers(request: CreateRunRequest): boolean {
+    const existing = request.runId ? loadRunMetadata(request.runId) : undefined;
+    if (existing) {
+      return usesOnlyNativeSubscriptionWorkers(existing.graph, existing.agents);
+    }
+    let parsed: ParsedDAG;
+    try { parsed = _loadDagForRequest(request); } catch { return false; }
+    assertNoYamlProviderRuntime(parsed);
+    const selected = _applyRunRuntimeSelection(_applyRuntimeProfile(parsed, request), request.llmSettingId);
+    return usesOnlyNativeSubscriptionWorkers(selected.graph, selected.meta.agents);
+  }
+
   createRun(request: CreateRunRequest): CreateRunResponse {
     const digest = creationRequestDigest(request);
 
@@ -365,6 +388,9 @@ export class ChangeOrchestrator {
     const inputScope = request.inputScope?.trim();
     let inputArtifacts: ReturnType<typeof resolveDagRunInputBindings> | undefined;
     if (requestedInputArtifacts.length > 0) {
+      if (Object.values(dagWithRuntime.meta.agents ?? {}).some(agent => agent.native_subscription !== undefined)) {
+        throw new Error("native_subscription does not support run input artifact projections; remove input_artifacts before creating the run");
+      }
       if (!inputScope) throw new Error("input_scope is required when input_artifacts are bound");
       inputArtifacts = resolveDagRunInputBindings(inputScope, requestedInputArtifacts);
     }

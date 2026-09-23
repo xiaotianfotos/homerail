@@ -16,6 +16,8 @@ export interface DispatchEnvelope {
   sessionId?: string;
   agentId: string;
   agentConfig: DAGAgentConfig;
+  /** Require an existing native history binding after any prior send attempt. */
+  nativeSessionRequired?: boolean;
   /** Immutable, digest-pinned Skill bodies for this logical Agent. */
   skillContext?: DagWorkerSkillContextV1;
   inputs: Record<string, unknown[]>;

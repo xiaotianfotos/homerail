@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getHomerailHome } from "../config/env.js";
+import { getAllNodes } from "../node/registry.js";
+import { NATIVE_CODEX_SUBSCRIPTION_CAPABILITY } from "homerail-protocol";
 
 export type WorkerImageStatus = "unknown" | "checking" | "building" | "ready" | "error" | "skipped";
 
@@ -104,4 +106,16 @@ export function dagResourcesUnavailableForRun(status = readDagResourceStatus()):
     };
   }
   return null;
+}
+
+/** Native-only DAGs require the explicitly opted-in Node, not a Docker image. */
+export function nativeSubscriptionResourcesUnavailableForRun(
+  projectId = process.env.HOMERAIL_PROJECT_ID ?? "p1",
+): { code: string; message: string } | null {
+  const ready = getAllNodes().some((node) => node.socket.readyState === 1 && node.project_id === projectId
+    && node.capabilities.includes(NATIVE_CODEX_SUBSCRIPTION_CAPABILITY));
+  return ready ? null : {
+    code: "native_subscription_node_unavailable",
+    message: "No opted-in native-codex-subscription Node is connected. No API or Docker fallback is permitted.",
+  };
 }

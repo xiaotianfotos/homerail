@@ -375,7 +375,7 @@ export function createServer(
       return;
     }
 
-    if (mutationRoutesHandler(req, res, changeOrchestrator, managerAgentRuntimeOptions, managerAgentConfigOptions)) {
+    if (mutationRoutesHandler(req, res, changeOrchestrator, managerAgentRuntimeOptions, managerAgentConfigOptions, adapterOptions.projectId)) {
       return;
     }
 

@@ -103,6 +103,7 @@ let activePrompt:
   | (ActivePromptLiveSteering & {
       abortController: AbortController;
       commandRoutes: Set<Promise<unknown>>;
+      completed: Promise<void>;
       deliverInbox?: (content: unknown) => void;
     })
   | null = null;
@@ -334,6 +335,7 @@ client.on("task", async (msg) => {
     llmApiKey: apiKey,
     llmBaseUrl: baseUrl,
     llmAnthropicAuthMode: anthropicAuthMode,
+    nativeSessionRequired: typeof envelope?.nativeSessionRequired === "boolean" ? envelope.nativeSessionRequired : undefined,
     checkpointResume,
     actorCheckpoint,
     skillContextSummary: preparedSkillContext.summary,
@@ -360,7 +362,10 @@ client.on("task", async (msg) => {
     interruptFallback: () => abortController.abort(),
   });
   const commandRoutes = new Set<Promise<unknown>>();
+  let resolveCompleted!: () => void;
+  const completed = new Promise<void>((resolve) => { resolveCompleted = resolve; });
   activePrompt = {
+    completed,
     identity: activePromptTransportIdentity({
       runId,
       nodeId: dagConfig.node_id,
@@ -416,17 +421,21 @@ client.on("task", async (msg) => {
     };
     console.error("[homerail_worker] prompt runner error:", err);
   } finally {
-    credentialProjection.cleanup();
-    const closeResult = await turnController.close({
-      outcome: promptResult.status === "completed" ? "completed" : "failed",
-      ...(promptResult.status === "failed" ? { reason: promptResult.reason } : {}),
-    });
-    if (closeResult.driverError) {
-      console.error("[homerail_worker] agent turn driver close error:", closeResult.driverError);
-    }
-    await Promise.allSettled([...commandRoutes]);
-    if (activePrompt?.controller === turnController) {
-      activePrompt = null;
+    try {
+      credentialProjection.cleanup();
+      const closeResult = await turnController.close({
+        outcome: promptResult.status === "completed" ? "completed" : "failed",
+        ...(promptResult.status === "failed" ? { reason: promptResult.reason } : {}),
+      });
+      if (closeResult.driverError) {
+        console.error("[homerail_worker] agent turn driver close error:", closeResult.driverError);
+      }
+      await Promise.allSettled([...commandRoutes]);
+      if (activePrompt?.controller === turnController) {
+        activePrompt = null;
+      }
+    } finally {
+      resolveCompleted();
     }
   }
   // Manager validation or correction may target this same worker. Send
@@ -526,16 +535,19 @@ client.on("dag_inbox", (msg) => {
 
 // ── Graceful shutdown ────────────────────────────────────────
 
+let shuttingDown = false;
 async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("[homerail_worker] shutting down...");
   const prompt = activePrompt;
   if (prompt) {
     prompt.abortController.abort(new Error("Worker shutting down"));
-    await prompt.controller.close({
-      outcome: "failed",
-      reason: "Worker shutting down",
-    });
-    await Promise.allSettled([...prompt.commandRoutes]);
+    // Let runPrompt close its native transcript and release its session lease
+    // before the Node performs final process-group cleanup.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([prompt.completed, new Promise<void>((resolve) => { timer = setTimeout(resolve, 8_000); })]);
+    if (timer) clearTimeout(timer);
   }
   client.close();
   pendingCredentialBrokerCalls.close();
