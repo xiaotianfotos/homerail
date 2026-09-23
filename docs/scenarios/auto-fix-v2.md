@@ -3,6 +3,10 @@
 Auto Fix v2 is implemented as a separate, opt-in workflow. It does not replace
 the existing `auto-fix` trigger.
 
+For optional Jev factual advice before each repair, select the separate
+[experimental Auto Fix + Jev template](auto-fix-jev.md). The v2 default and
+its acceptance rules remain unchanged.
+
 Local deterministic coverage is green. Before a live pilot, deploy a Manager
 release containing this workflow, sync its mixed-model profile, install the
 `github-autofix` encrypted credential, and create a dedicated Draft PR for a

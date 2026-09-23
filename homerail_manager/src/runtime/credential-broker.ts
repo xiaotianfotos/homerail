@@ -25,6 +25,7 @@ import {
   type CredentialBrokerMutationResolution,
 } from "../persistence/credential-broker-mutations.js";
 import { subscribe } from "../events/bus.js";
+import { typesafeSystemOne } from "./typesafe-broker.js";
 import { assessDagTransportFence } from "../orchestration/response-bridge.js";
 import {
   getActiveRun,
@@ -903,6 +904,7 @@ registerCredentialBroker("lark_bot", "bot_info", async ({ credential, secret, si
 });
 
 registerCredentialBroker("github_pr", "pull_request_snapshot", githubPullRequestSnapshot);
+registerCredentialBroker("typesafe", "system_one", typesafeSystemOne);
 registerCredentialBroker("github_pr", "read_file", githubReadFile);
 registerCredentialBroker("github_pr", "read_diff", githubReadDiff);
 registerCredentialBroker("github_pr", "assess_review", githubAssessReview);

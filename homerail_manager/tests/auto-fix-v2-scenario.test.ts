@@ -30,7 +30,6 @@ import {
   recordActiveRunBrokerActionSuccess,
 } from "../src/runtime/active-runs.js";
 
-const TEMPLATE = path.resolve(import.meta.dirname, "../../assets/orchestrations/auto-fix-v2.yaml.template");
 const MANIFEST_SHA256 = "1".repeat(64);
 
 class RecordingDispatcher implements DAGDispatcher {
@@ -72,7 +71,8 @@ async function tickUntil(
   throw new Error(typeof message === "function" ? message() : message);
 }
 
-describe("Auto Fix v2 local-test convergence architecture", () => {
+describe.each(["auto-fix-v2", "auto-fix-jev"])("%s local-test convergence architecture", (templateId) => {
+  const TEMPLATE = path.resolve(import.meta.dirname, `../../assets/orchestrations/${templateId}.yaml.template`);
   let home: string;
   let previousHome: string | undefined;
   let previousCommandAllowlist: string | undefined;
@@ -91,6 +91,10 @@ describe("Auto Fix v2 local-test convergence architecture", () => {
       credential_type: "api_key",
       name: "Autofix broker token",
       secret: { value: "fake-github-token" },
+    }, { actor: "test" });
+
+    if (templateId === "auto-fix-jev") createCredential({
+      id: "jev-autofix", credential_type: "api_key", name: "Jev test", secret: { value: "fake-jev-token" },
     }, { actor: "test" });
 
     const repository = path.join(home, "workspace", "autofix-v2-run", "repo");
@@ -265,6 +269,16 @@ describe("Auto Fix v2 local-test convergence architecture", () => {
     };
   }
 
+  function adviceReceipt(nodeId: string, sessionId: string) {
+    if (templateId !== "auto-fix-jev") return {};
+    recordActiveRunBrokerActionSuccess({
+      run_id: "autofix-v2-run", node_id: nodeId, session_id: sessionId,
+      credential_ref: "jev-autofix", broker: "typesafe", action: "system_one",
+      result: { status: "unavailable", evidence_id: head, request_sha256: "2".repeat(64) },
+    });
+    return { jev_advice: { status: "unavailable", request_sha256: "2".repeat(64), disposition: "unavailable" } };
+  }
+
   function recordMutationEvidence(nodeId: string, sessionId: string) {
     for (const [action, result] of [
       ["pull_request_snapshot", { head_sha: head }],
@@ -354,6 +368,7 @@ describe("Auto Fix v2 local-test convergence architecture", () => {
     );
     handoffActiveRun("autofix-v2-run", fixer.nodeId, "result", {
       status: "fixed",
+      ...adviceReceipt(fixer.nodeId, fixer.sessionId!),
       previous_head_sha: head,
       head_sha: head,
       manifest_sha256: MANIFEST_SHA256,
@@ -374,7 +389,7 @@ describe("Auto Fix v2 local-test convergence architecture", () => {
   it("compiles without online-CI nodes and declares Manager-verified local reports", () => {
     const source = fs.readFileSync(TEMPLATE, "utf8");
     const parsed = parseWorkflowSource(source);
-    expect(parsed.meta.workflow_id).toBe("auto-fix-v2");
+    expect(parsed.meta.workflow_id).toBe(templateId);
     expect(parsed.meta.agents?.analyzer).toBeUndefined();
     expect(source).not.toMatch(/action:\s*(?:validate_head|required_checks|checks_snapshot)/);
     expect(source).not.toMatch(/\bmax_[a-z_]*tool_calls[a-z_]*:/);
@@ -632,6 +647,7 @@ describe("Auto Fix v2 local-test convergence architecture", () => {
     const fixReport = writeReport(path.join(home, "workspace", "autofix-v2-run", fixPath), "fix", "passed");
     handoffActiveRun("autofix-v2-run", fixer.nodeId, "result", {
       status: "fixed",
+      ...adviceReceipt(fixer.nodeId, fixer.sessionId!),
       previous_head_sha: head,
       head_sha: head,
       manifest_sha256: MANIFEST_SHA256,
@@ -677,6 +693,7 @@ describe("Auto Fix v2 local-test convergence architecture", () => {
     );
     handoffActiveRun("autofix-v2-run", secondFixer.nodeId, "result", {
       status: "fixed",
+      ...adviceReceipt(secondFixer.nodeId, secondFixer.sessionId!),
       previous_head_sha: head,
       head_sha: head,
       manifest_sha256: MANIFEST_SHA256,
@@ -748,6 +765,35 @@ describe("Auto Fix v2 local-test convergence architecture", () => {
     );
     expect(getActiveRun("autofix-v2-run")?.dagRun.nodeStates.get("verify_confirmation")).toBe("FAILED");
     expect(getActiveRun("autofix-v2-run")?.dagRun.nodeStates.get("finalize_ready")).not.toBe("COMPLETED");
+  }, 30_000);
+
+  if (templateId === "auto-fix-jev") it("rejects missing, fabricated and wrong-head Jev receipts before accepting a repair", async () => {
+    const dispatcher = new RecordingDispatcher();
+    const executor = new GraphExecutor(dispatcher);
+    const { initial, testReportSha } = await reachInitialReview(executor, dispatcher);
+    const requested = reviewDecision(testReportSha, false);
+    recordReviewEvidence("review_initial", initial.sessionId!, requested);
+    handoffActiveRun("autofix-v2-run", "review_initial", "reviewed", requested);
+    await tickUntil(executor, () => dispatcher.dispatched.some(e => e.nodeId === "fix__item_0001"), "missing fixer");
+    const fixer = dispatcher.dispatched.find(e => e.nodeId === "fix__item_0001")!;
+    recordMutationEvidence(fixer.nodeId, fixer.sessionId!);
+    const report = writeReport(path.join(home, "workspace", "autofix-v2-run", "fixers/fix/inv_0001/item_0001"), "fix", "passed");
+    const result = { status: "fixed", previous_head_sha: head, head_sha: head, manifest_sha256: MANIFEST_SHA256,
+      summary: "fixed", test_report: report,
+      jev_advice: { status: "assessed", request_sha256: "2".repeat(64), disposition: "used" } };
+    const handoff = () => handoffActiveRun("autofix-v2-run", fixer.nodeId, "result", result);
+    expect(handoff).toThrow(/DAG_HANDOFF_BROKER_REQUIREMENT_MISSING/);
+    const record = (evidenceId: string, requestHash: string) => recordActiveRunBrokerActionSuccess({
+      run_id: "autofix-v2-run", node_id: fixer.nodeId, session_id: fixer.sessionId!,
+      credential_ref: "jev-autofix", broker: "typesafe", action: "system_one",
+      result: { status: "assessed", evidence_id: evidenceId, request_sha256: requestHash },
+    });
+    record("c".repeat(40), "2".repeat(64));
+    expect(handoff).toThrow(/DAG_HANDOFF_BROKER_RESULT_MISMATCH/);
+    record(head, "3".repeat(64));
+    expect(handoff).toThrow(/DAG_HANDOFF_BROKER_RESULT_MISMATCH/);
+    record(head, "2".repeat(64));
+    expect(handoff).not.toThrow();
   }, 30_000);
 
   it("runs four real fixers before exhausting to needs_human", async () => {
