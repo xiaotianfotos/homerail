@@ -2793,6 +2793,11 @@ class HostCodexAppServerAdapter {
       yield { type: "done" };
       return;
     }
+    if (context.abortSignal?.aborted) {
+      yield { type: "error", message: "Codex app-server aborted before start" };
+      yield { type: "done" };
+      return;
+    }
     const nativeSessionKey = context.persistSession && context.sessionId?.trim()
       ? context.sessionId.trim()
       : undefined;

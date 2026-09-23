@@ -60,9 +60,16 @@ describe.skipIf(process.platform === "win32")("fresh structured host Codex trans
   });
   it.each(["failed", "wrong-turn", "invalid", "tool", "timeout", "wrong-auth", "provider-error"])("rejects %s without returning model approval or leaking its process", async mode => {
     const { root, binary } = fixture(mode);
-    await expect(runHostCodexStructuredTurn({ model: "fixture-model", workspace: root, prompt: "issue", instructions: "plan",
-      schema, timeoutMs: mode === "timeout" ? 300 : 5000, outputBytes: 4000, codexBin: binary, evidence: () => {} })).rejects.toThrow();
-    const pid = Number(fs.readFileSync(path.join(root, "pid"), "utf8"));
+    const result = runHostCodexStructuredTurn({ model: "fixture-model", workspace: root, prompt: "issue", instructions: "plan",
+      schema, timeoutMs: mode === "timeout" ? 300 : 5000, outputBytes: 4000, codexBin: binary, evidence: () => {} });
+    await expect(result).rejects.toThrow(mode === "timeout" ? /abort/i : undefined);
+    const pidPath = path.join(root, "pid");
+    // The deadline can expire before the fixture child starts under CI load.
+    if (!fs.existsSync(pidPath)) {
+      expect(mode).toBe("timeout");
+      return;
+    }
+    const pid = Number(fs.readFileSync(pidPath, "utf8"));
     await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 3000, interval: 20 });
   });
   it.each(["judge_candidate", "judge_ci"] as const)("uses a strict provider schema and nullable strategy for %s", async role => {
