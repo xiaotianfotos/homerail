@@ -174,8 +174,13 @@ describe.skipIf(process.platform === "win32")("native Codex Worker process lifec
     expect(() => process.kill(childState.pid, 0)).toThrow();
     // Linux can retain a reparented zombie until init reaps it; it cannot run.
     await waitFor(() => {
-      if (process.platform === "linux" && existsSync(`/proc/${childState.childPid}/stat`)) {
-        return readFileSync(`/proc/${childState.childPid}/stat`, "utf8").split(") ")[1]![0] === "Z";
+      if (process.platform === "linux") {
+        try {
+          return readFileSync(`/proc/${childState.childPid}/stat`, "utf8").split(") ")[1]![0] === "Z";
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+          throw error;
+        }
       }
       try { process.kill(childState.childPid, 0); return false; } catch { return true; }
     });
