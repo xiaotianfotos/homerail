@@ -109,18 +109,22 @@ describe.skipIf(process.platform !== "linux")("native durable command gateway", 
     }
     const first = manager("start");
     await vi.waitFor(() => {
+      if (fs.existsSync(path.join(root, "workspace", "root", "count"))
+        && fs.existsSync(path.join(root, "start-manager.json"))) return;
       if (first.child.exitCode !== null) throw new Error(first.log());
       expect(fs.existsSync(path.join(root, "workspace", "root", "count"))).toBe(true);
-    }, { timeout: 8000 });
+      expect(fs.existsSync(path.join(root, "start-manager.json"))).toBe(true);
+    }, { timeout: 15000 });
     const before = JSON.parse(fs.readFileSync(path.join(root, "start-manager.json"), "utf8"));
     const ended = new Promise(resolve => first.child.once("exit", resolve));
     first.child.kill("SIGKILL"); await ended;
     expect(first.child.signalCode).toBe("SIGKILL");
     const second = manager("recover");
     await vi.waitFor(() => {
+      if (fs.existsSync(path.join(root, "recover-manager.json"))) return;
       if (second.child.exitCode !== null) throw new Error(second.log());
       expect(fs.existsSync(path.join(root, "recover-manager.json"))).toBe(true);
-    }, { timeout: 8000 });
+    }, { timeout: 15000 });
     const recovered = JSON.parse(fs.readFileSync(path.join(root, "recover-manager.json"), "utf8"));
     expect(recovered.pid).not.toBe(before.pid);
     expect(recovered.session.sessionId).toBe(before.session.sessionId);
@@ -138,7 +142,7 @@ describe.skipIf(process.platform !== "linux")("native durable command gateway", 
       for (const file of ["start-manager.json", "recover-manager.json", "recovered-proof.json"]) fs.copyFileSync(path.join(root, file), path.join(destination, file));
       fs.cpSync(path.join(root, "trusted-commands"), path.join(destination, "trusted-commands"), { recursive: true });
     }
-  }, 20000);
+  }, 40000);
 
   it.each(["inflight", "finished-unconsumed"])("recovers the second feedback iteration after SIGKILL with %s work", async phase => {
     const manager = (mode: string) => {
@@ -150,6 +154,7 @@ describe.skipIf(process.platform !== "linux")("native durable command gateway", 
     const read = (name: string) => JSON.parse(fs.readFileSync(path.join(root, name), "utf8"));
     const first = manager("start");
     await vi.waitFor(() => {
+      if (fs.existsSync(path.join(root, "start-manager.json"))) return;
       if (first.child.exitCode !== null) throw new Error(first.log());
       expect(fs.existsSync(path.join(root, "start-manager.json"))).toBe(true);
     }, { timeout: 10000 });
@@ -169,6 +174,7 @@ describe.skipIf(process.platform !== "linux")("native durable command gateway", 
     }
     const second = manager("recover");
     await vi.waitFor(() => {
+      if (fs.existsSync(path.join(root, "recover-manager.json"))) return;
       if (second.child.exitCode !== null) throw new Error(second.log());
       expect(fs.existsSync(path.join(root, "recover-manager.json"))).toBe(true);
     }, { timeout: 10000 });

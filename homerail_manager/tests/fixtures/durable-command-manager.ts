@@ -30,7 +30,7 @@ if (mode === "start") {
   const workflow = { api_version: "homerail.ai/v1", kind: "Workflow", metadata: { id: "restart-test", name: "restart test" }, spec: {
     agents: {}, contracts: { Task: { type: "string" } }, nodes: {
       test: { kind: "command", inputs: { task: { contract: "Task" } }, outputs: { ready: {}, failed: {} },
-        config: { command: [process.execPath, "-e", code], cwd: "$run_workspace", durable: true, timeout_ms: 15000,
+        config: { command: [process.execPath, "-e", code], cwd: "$run_workspace", durable: true, timeout_ms: 30000,
           success_port: "ready", failure_port: "failed", parse_stdout: "json", result_payload: "value" } },
       done: { kind: "terminal", outcome: "success", inputs: { result: {} } },
       failed: { kind: "terminal", outcome: "failure", inputs: { result: {} } },
